@@ -26,7 +26,13 @@ nonisolated struct ProgressionStageData: Decodable, Sendable {
     let key: String
     let label: String
     let probability: Double?
-    let trend24h: Double?
+    /// `trend_24h`. See `TolerantNumeric` for why the key is spelled `trend24H`.
+    @TolerantNumeric var trend24h: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case key, label, probability
+        case trend24h = "trend24H"
+    }
 }
 
 // MARK: - Game Markets Response
@@ -126,12 +132,20 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let americanOdds: Int?
     let rank: Int?
-    let rankChange24h: Int?
-    let probabilityChange24h: Double?
+    /// `rank_change_24h` / `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var rankChange24h: Int?
+    @TolerantNumeric var probabilityChange24h: Double?
     let openingProbability: Double?
     let openingAmericanOdds: Int?
     let isWinner: Bool?
     let lastUpdated: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, probability, americanOdds, rank
+        case rankChange24h = "rankChange24H"
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, openingAmericanOdds, isWinner, lastUpdated
+    }
 }
 
 // MARK: - Related Futures Response
@@ -141,9 +155,15 @@ nonisolated struct SeriesMarketOutcome: Decodable, Identifiable, Sendable {
     let outcomeId: Int
     let name: String
     let probability: Double?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
 
     var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcomeId, name, probability
+        case probabilityChange24h = "probabilityChange24H"
+    }
 }
 
 /// Series-level market related to an event detail page.
@@ -191,7 +211,8 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let outcomeName: String
     let probability: Double?
     let americanOdds: Int?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
     let openingProbability: Double?
     let rank: Int?
     let relevanceScore: Double?
@@ -204,6 +225,16 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let matchedPlayer: MatchedPlayer?
 
     var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case marketId, marketName, cleanLabel, displayCategory, mergeGroup
+        case playoffStage, playoffStageType, stageOrder, marketTier, category, source
+        case outcomeId, outcomeName, probability, americanOdds
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, rank, relevanceScore, relevanceReason
+        case lastUpdated, nextUpdateExpected, resolutionDate, bookmakerCount
+        case allSources, matchedPlayer
+    }
 }
 
 /// Matched player metadata attached to a related future.
@@ -232,7 +263,8 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let category: String?
     let source: String?
     let probability: Double?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
     let rank: Int?
     let totalOutcomes: Int?
     let resolutionDate: String?
@@ -240,6 +272,13 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let canonicalMarketKey: String?
 
     var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcomeId, outcomeName, marketId, marketName, marketTier
+        case category, source, probability
+        case probabilityChange24h = "probabilityChange24H"
+        case rank, totalOutcomes, resolutionDate, matchedTeam, canonicalMarketKey
+    }
 }
 
 /// Team metadata attached to a team futures item.
@@ -277,7 +316,8 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let name: String
     let currentProbability: Double?
     let rank: Int?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
     let openingProbability: Double?
     // Team enrichment
     let teamId: Int?
@@ -290,5 +330,13 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let location: String?
     let espnId: String?
 
-    // CodingKeys not needed — camelCase matches JSON snake_case via keyDecodingStrategy
+    // Every plain camelCase property below does match its snake_case key via
+    // `.convertFromSnakeCase` — but a digits-plus-letters suffix does NOT, which
+    // is why `probabilityChange24h` needs an explicit key. See `TolerantNumeric`.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, currentProbability, rank
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, teamId, logoSmall, logoLarge
+        case primaryColor, secondaryColor, abbreviation, record, location, espnId
+    }
 }

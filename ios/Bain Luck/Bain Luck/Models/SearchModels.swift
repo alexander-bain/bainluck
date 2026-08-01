@@ -153,12 +153,20 @@ nonisolated struct FuturesMover: Decodable, Identifiable, Sendable {
     let marketId: Int
     let marketName: String?
     let currentProbability: Double?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h` / `rank_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
     let currentAmericanOdds: Int?
     let rank: Int?
-    let rankChange24h: Int?
+    @TolerantNumeric var rankChange24h: Int?
 
     var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcomeId, name, marketId, marketName, currentProbability
+        case probabilityChange24h = "probabilityChange24H"
+        case currentAmericanOdds, rank
+        case rankChange24h = "rankChange24H"
+    }
 }
 
 // MARK: - Typeahead Response

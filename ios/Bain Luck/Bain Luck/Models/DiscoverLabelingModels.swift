@@ -75,7 +75,19 @@ nonisolated struct DiscoverLabelingOutcome: Codable, Sendable {
     let name: String?
     let probability: Double?
     let currentProbability: Double?
-    let probabilityChange24h: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    ///
+    /// This is the one affected type with an encode path: it rides inside
+    /// `DiscoverLabelingCardSnapshot` to `POST /api/admin/judgments`. That
+    /// endpoint stores `top_outcomes` opaquely (`_normalize_card_snapshot`
+    /// reads no inner key), so the encoded spelling is storage, not a contract —
+    /// but it must round-trip back into this same property, which it does.
+    @TolerantNumeric var probabilityChange24h: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, probability, currentProbability
+        case probabilityChange24h = "probabilityChange24H"
+    }
 }
 
 nonisolated struct DiscoverLabelingCardSnapshot: Encodable, Sendable {

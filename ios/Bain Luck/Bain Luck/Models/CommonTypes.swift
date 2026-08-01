@@ -1,5 +1,67 @@
 import Foundation
 
+// MARK: - Numeric-Suffix Decode Contract
+
+/// Why `…24h` / `…7d` properties need explicit `CodingKeys` everywhere.
+///
+/// The client decodes with `.convertFromSnakeCase`, which capitalises each
+/// underscore-separated component after the first. `"24h".capitalized` is
+/// `"24H"` — a digit is not a cased character, so ICU title-cases the `h` as if
+/// it were the word's first letter. So the backend's `probability_change_24h`
+/// arrives as the key `probabilityChange24H`, which matches no property spelled
+/// `probabilityChange24h`, and the value is silently dropped on every response.
+///
+/// `.convertToSnakeCase` is **not** the inverse: the key `probabilityChange24H`
+/// encodes back out as `probability_change24_h`. That is fine where the payload
+/// is stored opaquely (see `DiscoverLabelingOutcome`) but means an encoded key
+/// must never be assumed to equal the backend's key.
+///
+/// Two rules for any new field whose name ends in digits-plus-letters:
+/// 1. give it an explicit `CodingKeys` case whose raw value is the *converted*
+///    key (`case foo24h = "foo24H"`), or name the property `foo24H` outright as
+///    `LeagueGridModels` does; and
+/// 2. mark it `@TolerantNumeric` so a malformed value degrades to `nil` instead
+///    of failing the whole item.
+///
+/// A numeric payload field that decodes to `nil` rather than throwing when the
+/// value is absent, null, or the wrong JSON type. One bad number must not erase
+/// its own item or that item's healthy siblings.
+@propertyWrapper
+nonisolated struct TolerantNumeric<Value: Codable & Sendable>: Codable, Sendable {
+    let wrappedValue: Value?
+
+    init(wrappedValue: Value?) {
+        self.wrappedValue = wrappedValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        wrappedValue = try? container.decode(Value.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let wrappedValue {
+            try container.encode(wrappedValue)
+        } else {
+            try container.encodeNil()
+        }
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// A missing key must mean "no value", not a thrown error. The synthesized
+    /// `init(from:)` calls `decode(_:forKey:)` (not `decodeIfPresent`) because
+    /// the property's declared type is the non-optional wrapper, so without this
+    /// overload an absent `…24h` key would fail the whole item.
+    func decode<Value>(
+        _ type: TolerantNumeric<Value>.Type,
+        forKey key: Key
+    ) throws -> TolerantNumeric<Value> {
+        (try? decodeIfPresent(type, forKey: key)) ?? TolerantNumeric(wrappedValue: nil)
+    }
+}
+
 // MARK: - Team Data
 
 /// Shared team branding, record, and standings data used across event views.

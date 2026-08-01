@@ -140,13 +140,17 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
         name = try container.decode(String.self, forKey: .name)
         probability = (try? container.decode(Double.self, forKey: .probability)) ?? 0
         rank = try container.decodeIfPresent(Int.self, forKey: .rank)
-        movement24h = try container.decodeIfPresent(Double.self, forKey: .movement24h)
+        // Tolerant: a malformed movement value must not erase this golfer or the
+        // rest of the field.
+        movement24h = try? container.decodeIfPresent(Double.self, forKey: .movement24h)
         openingProbability = try container.decodeIfPresent(Double.self, forKey: .openingProbability)
         americanOdds = try container.decodeIfPresent(Int.self, forKey: .americanOdds)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, probability, rank, movement24h = "movement24h", openingProbability, americanOdds
+        // `movement_24h` converts to the key `movement24H`, not `movement24h` —
+        // the previous raw value here matched nothing. See `TolerantNumeric`.
+        case name, probability, rank, movement24h = "movement24H", openingProbability, americanOdds
     }
 }
 
@@ -183,10 +187,18 @@ nonisolated struct GolfMoverData: Decodable, Sendable, Identifiable {
     let name: String
     let tournamentKey: String?
     let tournamentName: String?
-    let movement24h: Double?
+    /// `movement_24h`. See `TolerantNumeric`. Decode-only today — `biggestMovers`
+    /// is parsed but no view reads it, so repairing the key changes no pixel.
+    @TolerantNumeric var movement24h: Double?
     let probability: Double?
 
     var id: String { name + (tournamentKey ?? "") }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, tournamentKey, tournamentName
+        case movement24h = "movement24H"
+        case probability
+    }
 }
 
 /// Scheduled golf event shown on the golf landing page.

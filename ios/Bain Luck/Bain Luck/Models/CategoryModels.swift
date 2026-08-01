@@ -68,8 +68,16 @@ nonisolated struct PoliticsCandidate: Decodable, Identifiable, Sendable {
     let kalshi: Double?
     let poly: Double?
     let merged: Double
-    let change7d: Double?
+    /// `change_7d`. `"7d".capitalized == "7D"`, so the key is `change7D`.
+    /// See `TolerantNumeric`.
+    @TolerantNumeric var change7d: Double?
     let history: [ProbPoint]?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, party, kalshi, poly, merged
+        case change7d = "change7D"
+        case history
+    }
 }
 
 /// Historical probability point for a politics candidate.
@@ -147,17 +155,30 @@ nonisolated struct EntMarketRow: Decodable, Identifiable, Sendable {
     let kind: String?
     let topOutcomes: [EntOutcome]
     let outcomeCount: Int
-    let volume24h: Int?
+    /// `volume_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var volume24h: Int?
     let resolutionDate: String?
     let imageUrl: String?
     let hook: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case q, prob, src, marketId, externalId, kind, topOutcomes, outcomeCount
+        case volume24h = "volume24H"
+        case resolutionDate, imageUrl, hook
+    }
 }
 
 /// Outcome probability and movement for an entertainment market.
 nonisolated struct EntOutcome: Decodable, Sendable {
     let name: String
     let prob: Double
-    let delta24h: Double?
+    /// `delta_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var delta24h: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, prob
+        case delta24h = "delta24H"
+    }
 }
 
 /// Group of related entertainment threshold markets for one title or entity.
