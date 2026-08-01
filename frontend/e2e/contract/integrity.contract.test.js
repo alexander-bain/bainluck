@@ -388,6 +388,73 @@ describe("trace containment policy", () => {
     assert.match(config, /video:\s*"off"/);
   });
 
+  /**
+   * L2-229. Playwright's `actionTimeout` defaults to 0, which means unbounded —
+   * a single auto-waiting call then runs until the whole test times out.
+   *
+   * That is not merely slow, it destroys evidence. When the test budget expires
+   * Playwright tears the context down, so the journey never reaches
+   * `journey.finish()`: no assertion is graded, and the terminal screenshot
+   * fires against a closed page. The manifest gets `infra_error` and an EMPTY
+   * artifacts array — a red that proves nothing and is indistinguishable from a
+   * rail that never ran. Run 30722940887 was exactly this, caused by one
+   * `innerText()` on a `<main>` element that does not exist on that page.
+   *
+   * The bound must also leave the journey room to finish, so it is required to
+   * be a real fraction of the test timeout rather than merely present.
+   */
+  it("bounds every action so a hang cannot eat the whole evidence budget", () => {
+    const config = fs.readFileSync(path.join(__dirname, "..", "playwright.config.ts"), "utf8");
+
+    const action = config.match(/actionTimeout:\s*([0-9_]+)/);
+    assert.ok(
+      action,
+      "playwright.config.ts must set `actionTimeout` — the default of 0 is unbounded, " +
+        "and an action that outlives the test budget yields a screenshot-less infra_error"
+    );
+
+    const testTimeout = config.match(/timeout:\s*([0-9_]+)/);
+    assert.ok(testTimeout, "the config must declare a test timeout");
+
+    const actionMs = Number(action[1].replace(/_/g, ""));
+    const testMs = Number(testTimeout[1].replace(/_/g, ""));
+    assert.ok(actionMs > 0, "actionTimeout: 0 is the unbounded default, not a bound");
+    assert.ok(
+      actionMs <= testMs / 4,
+      `actionTimeout (${actionMs}ms) must leave the journey budget to finish and ` +
+        `photograph what it saw — expected at most a quarter of the ${testMs}ms test timeout`
+    );
+  });
+
+  /**
+   * L2-229. The specific call that burned run 30722940887. `/calibration`
+   * renders no `<main>` landmark, so an unguarded `main` read there waits on an
+   * element that will never appear. Any spec reading a landmark must either
+   * check it exists first or bound the read explicitly — reading it bare is the
+   * hang that produced an evidence-free failure on both projects.
+   */
+  it("never reads a landmark region without a guard or an explicit bound", () => {
+    const specDir = path.join(__dirname, "..", "specs");
+    const offenders = [];
+
+    for (const file of fs.readdirSync(specDir).filter((f) => f.endsWith(".spec.ts"))) {
+      const src = fs.readFileSync(path.join(specDir, file), "utf8");
+      // `.innerText()` / `.textContent()` with an empty argument list: no
+      // timeout was passed, so it inherits the config bound at best and waits
+      // forever if that bound is ever removed.
+      for (const m of src.matchAll(/locator\(\s*["'](main|body)["']\s*\)[\s\S]{0,80}?\.(innerText|textContent)\(\)/g)) {
+        offenders.push(`${file}: ${m[0].replace(/\s+/g, " ").slice(0, 70)}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "read a landmark only after `count()` proves it exists, or pass an explicit timeout:\n" +
+        offenders.join("\n")
+    );
+  });
+
   it("does not upload the raw playwright output directories", () => {
     const workflow = fs.readFileSync(
       path.join(__dirname, "..", "..", "..", ".github", "workflows", "browser-audit.yml"),

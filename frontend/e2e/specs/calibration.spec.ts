@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/audit";
+import { test, expect, readContentRegionText } from "../fixtures/audit";
 
 /**
  * L2-228 — the public calibration journey.
@@ -185,7 +185,21 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   }
 
   const failedApiCalls = apiCalls.filter((c) => c.status >= 400);
-  const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
+
+  // The blank-page check needs the page's content region. `/calibration`
+  // renders NO `<main>` element — unlike the Discover surfaces this rail was
+  // built against — so reading `main` here waited on an element that is never
+  // going to exist. With Playwright's default unbounded `actionTimeout` that
+  // consumed the entire remaining test budget, and the journey died before it
+  // could grade a single assertion or take its terminal screenshot: run
+  // 30722940887 came back `infra_error` with an empty artifacts array, on both
+  // projects, and would have done so even with a perfectly healthy page.
+  //
+  // `readContentRegionText` falls back to `body` when there is no `main`, and
+  // bounds the read either way. (The missing landmark is a real accessibility
+  // gap on that page, but the file belongs to another lane — recorded for its
+  // owner, not fixed here.)
+  const mainText = await readContentRegionText(page);
 
   await journey.finish({
     journeyId: "calibration.anonymous",

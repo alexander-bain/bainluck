@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/audit";
+import { test, expect, readContentRegionText } from "../fixtures/audit";
 
 /**
  * L2-221 Item 1/2 — the anonymous Discover deploy smoke.
@@ -94,7 +94,7 @@ for (const target of PATHS) {
     // empty" in the manifest rather than only in a screenshot.
     const skeletonVisible = await page.locator(SKELETON).first().isVisible().catch(() => false);
 
-    const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
+    const mainText = await readContentRegionText(page);
 
     await journey.finish({
       journeyId: `${target.journeyId}`,

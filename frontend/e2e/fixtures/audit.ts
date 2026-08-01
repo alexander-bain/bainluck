@@ -324,6 +324,35 @@ export class JourneyRecorder {
   }
 }
 
+/**
+ * Read the page's content region for the blank-page check, without ever
+ * waiting on a landmark that may not exist.
+ *
+ * L2-229. Every spec used to do this inline as
+ * `page.locator("main").first().innerText()`. On the Discover surfaces that is
+ * fine — they render a `<main>`. On `/calibration` there is no `<main>` at
+ * all, and because Playwright's `actionTimeout` defaulted to unbounded, that
+ * one call sat there until the 90s test budget expired. Playwright then tore
+ * the context down, so the journey never reached `finish()`: nothing was
+ * graded and the terminal screenshot fired against a closed page. Run
+ * 30722940887 came back `infra_error` with an empty artifacts array on both
+ * projects — a red that proves nothing, which is worse than a red that
+ * explains itself.
+ *
+ * `count()` resolves immediately and never waits, so choosing the fallback
+ * costs no budget. `body` is the honest region for a page with no `main`
+ * landmark: the caller is testing for blankness, not for semantics. The read
+ * is bounded explicitly as well as by the config, because this specific call
+ * is the one that has already destroyed a run's evidence once.
+ */
+export async function readContentRegionText(page: Page, timeoutMs = 5_000): Promise<string> {
+  const region =
+    (await page.locator("main").count()) > 0
+      ? page.locator("main").first()
+      : page.locator("body").first();
+  return (await region.innerText({ timeout: timeoutMs }).catch(() => "")) || "";
+}
+
 export const test = base.extend<{ journey: JourneyRecorder }>({
   journey: async ({ page }, use, testInfo) => {
     const recorder = new JourneyRecorder(

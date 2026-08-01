@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/audit";
+import { test, expect, readContentRegionText } from "../fixtures/audit";
 
 /**
  * L2-227 — rendered truth for the five championship grids.
@@ -94,7 +94,7 @@ for (const league of LEAGUES) {
     // Every cell must be able to say what it is.
     const unnamed = observed.filter((c) => !c.state || !c.label);
 
-    const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
+    const mainText = await readContentRegionText(page);
 
     await journey.finish({
       journeyId: league.journeyId,
@@ -137,7 +137,7 @@ test("adjacent league page still renders its progression table", async ({ page, 
     .catch(() => null);
 
   const rowCount = await page.locator(ROW).count().catch(() => 0);
-  const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
+  const mainText = await readContentRegionText(page);
 
   await journey.finish({
     journeyId: "grid.adjacent_league_page",

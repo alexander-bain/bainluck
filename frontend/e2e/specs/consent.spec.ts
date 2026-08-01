@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/audit";
+import { test, expect, readContentRegionText } from "../fixtures/audit";
 import type { TelemetryExpectation } from "../helpers/journey";
 
 /**
@@ -69,7 +69,7 @@ async function watch(page: import("@playwright/test").Page): Promise<void> {
 }
 
 async function mainNonBlank(page: import("@playwright/test").Page): Promise<boolean> {
-  const text = (await page.locator("main").first().innerText().catch(() => "")) || "";
+  const text = await readContentRegionText(page);
   return text.trim().length > 40;
 }
 

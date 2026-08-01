@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/audit";
+import { test, expect, readContentRegionText } from "../fixtures/audit";
 import type { Page, Response } from "@playwright/test";
 
 /**
@@ -137,7 +137,7 @@ for (const path of PATHS) {
         expect(coldFeed.backendElapsedMs).toBeLessThanOrEqual(coldFeed.roundTripMs + 50);
       }
 
-      const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
+      const mainText = await readContentRegionText(page);
       await journey.finish({
         journeyId: `discover.latency${path === "/" ? ".landing" : ".route"}`,
         expectedPath: path,

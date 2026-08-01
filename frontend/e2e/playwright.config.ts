@@ -46,6 +46,26 @@ export default defineConfig({
   outputDir: process.env.AUDIT_RESULTS_DIR || "test-results",
   use: {
     baseURL: process.env.TRACE_BASE_URL || "https://www.bainluck.com",
+    // L2-229: no single action may consume the whole test budget.
+    //
+    // Playwright's default `actionTimeout` is 0 — meaning UNBOUNDED, capped
+    // only by the 90s test timeout above. That is a false-green hazard in an
+    // evidence rail, and the calibration pack's first real run proved it: the
+    // spec read `page.locator("main").innerText()`, `/calibration` renders no
+    // `<main>` at all, and that one auto-waiting call sat there until the test
+    // died. The journey never reached `journey.finish()`, so no assertion was
+    // graded and the terminal screenshot fired against an already-torn-down
+    // context — producing `infra_error` with an EMPTY artifacts array.
+    //
+    // An evidence-free red is the exact shape this rail exists to prevent: it
+    // is indistinguishable from a rail that never ran, and it tells you
+    // nothing about the page. Bounding actions means a hung or missing element
+    // fails as a NAMED assertion with a screenshot attached, while the journey
+    // still has budget left to record and photograph what it saw.
+    //
+    // 10s is far above any healthy interaction and far below the 90s budget,
+    // so several bounded failures can stack and the journey still finishes.
+    actionTimeout: 10_000,
     // Trace, video and HAR are ALL off in phase 1 (L2-223).
     //
     // L2-221 shipped `trace: "on"` directly beneath a comment explaining why
