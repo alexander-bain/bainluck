@@ -387,10 +387,32 @@ class TestRacquetGameStats:
         )
 
     def test_real_baseball_total_runs_unaffected(self):
-        assert (
-            detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
-            == "baseball"
-        )
+        """The #1230 racquet guard must not swallow a real baseball total.
+
+        The clock is FROZEN here (gotcha #44). "runs" is not in
+        ``_STAT_TO_SPORT``, so "Total Runs O/U" is an AMBIGUOUS stat that
+        resolves via ``_seasonal_sport_for_college_matchup()`` — baseball only in
+        May–Jul. Asserting "baseball" against the wall clock therefore made this
+        test flip to "football" the moment UTC rolled into August, turning master
+        red with no code change (it broke between 23:31 UTC Jul 31 and 00:08 UTC
+        Aug 1, blocking every lane's deploy). Freezing the month keeps the
+        assertion about the racquet guard, which is what this class tests.
+
+        NB: that "Total Runs" needs a season to be read as baseball at all is a
+        separate latent gap in the categoriser, not something this test asserts.
+        """
+        import app.utils.futures_categorization as fc
+
+        class _FrozenJuly(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 7, 15, 12, 0, tzinfo=tz or timezone.utc)
+
+        with patch.object(fc, "datetime", _FrozenJuly):
+            assert (
+                detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
+                == "baseball"
+            )
 
 
 # =============================================================================
