@@ -1,0 +1,149 @@
+{
+  "schema_version": "grid-register-eval/v1",
+  "register_schema_version": "grid-register/v1",
+  "audited_commit": "80e4f83b741af3b0c5d2175781dc82d35dceebf9",
+  "allowed_sources": ["odds_api", "kalshi", "polymarket", "datagolf"],
+  "league_contracts": {
+    "nba": {"season": "2026-27", "entity_kind": "team", "stages": ["make_playoffs", "division", "conference", "championship"]},
+    "nhl": {"season": "2026-27", "entity_kind": "team", "stages": ["make_playoffs", "division", "conference", "championship"]},
+    "mlb": {"season": "2026", "entity_kind": "team", "stages": ["make_playoffs", "division", "pennant", "championship"]},
+    "nfl": {"season": "2026", "entity_kind": "team", "stages": ["make_playoffs", "division", "conference", "championship"]},
+    "golf": {"season": "2026-open-001", "entity_kind": "competitor", "stages": ["make_cut", "top_20", "top_10", "top_5", "win"]}
+  },
+  "application_repair_contract": {
+    "identity_only": true,
+    "cell_key": ["league", "season", "stage", "entity_key", "source"],
+    "source_identity": ["source", "market_id", "outcome_id"],
+    "reader_states": ["live", "won", "eliminated", "missing", "unavailable"],
+    "publication": "validate full next version, then atomically replace; retain last-good on any invalid, ambiguous, cancelled, or partial build",
+    "sentinel": "exact immutable identity rename and authoritative settlement may propose version+1; disappearance, split, collision, wrong entity, and new season require P2 needs-triage",
+    "forbidden": ["runtime_fuzzy_match", "silent_50_percent", "probability_or_blend_change", "partial_mixed_version_publish"]
+  },
+  "rendered_state_matrix": [
+    {"register_status": "live", "terminal_result": null, "render_state": "live", "probability": "required_0_to_1"},
+    {"register_status": "settled", "terminal_result": "won", "render_state": "won", "probability": null},
+    {"register_status": "settled", "terminal_result": "eliminated", "render_state": "eliminated", "probability": null},
+    {"register_status": "missing", "terminal_result": null, "render_state": "missing", "probability": null},
+    {"register_status": "unavailable", "terminal_result": null, "render_state": "unavailable", "probability": null}
+  ],
+  "cases": [
+    {
+      "id": "nba-exact-live",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"championship","entity_key":"nba:bos","entity_name":"Boston Celtics","source":"kalshi","market_id":"m-nba-title","outcome_id":"o-bos","external_id":"KXNBA-27-BOS","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","season":"2026-27","market_id":"m-nba-title","outcome_id":"o-bos","external_id":"KXNBA-27-BOS","status":"live"}],
+      "rendered":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","state":"live","probability":0.22}],
+      "expected":{"classification":"clean","action":"no_change","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "nhl-alias-preserves-identity",
+      "register": {"schema_version":"grid-register/v1","league":"nhl","season":"2026-27","version":2,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"conference","entity_key":"nhl:lak","entity_name":"Los Angeles Kings","source":"polymarket","market_id":"m-nhl-west","outcome_id":"o-lak","external_id":"poly-la-kings","status":"live","evidence":{"kind":"approved_alias_los_angeles_kings","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"conference","entity_key":"nhl:lak","source":"polymarket","season":"2026-27","market_id":"m-nhl-west","outcome_id":"o-lak","external_id":"poly-la-kings","status":"live"}],
+      "rendered":[{"stage":"conference","entity_key":"nhl:lak","source":"polymarket","state":"live","probability":0.18}],
+      "expected":{"classification":"clean","action":"no_change","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "mlb-unambiguous-rename",
+      "register": {"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":4,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"pennant","entity_key":"mlb:lad","entity_name":"Los Angeles Dodgers","source":"kalshi","market_id":"m-nl","outcome_id":"o-lad","external_id":"KXMLBNL-26-LAD","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"pennant","entity_key":"mlb:lad","source":"kalshi","season":"2026","market_id":"m-nl","outcome_id":"o-lad","external_id":"KXMLBPENNANTNL-26-LAD","status":"live"}],
+      "rendered":[{"stage":"pennant","entity_key":"mlb:lad","source":"kalshi","state":"live","probability":0.41}],
+      "proposed_register":{"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":5,"supersedes_version":4,"generated_at":"2026-08-01T01:00:00Z","entries":[{"stage":"pennant","entity_key":"mlb:lad","entity_name":"Los Angeles Dodgers","source":"kalshi","market_id":"m-nl","outcome_id":"o-lad","external_id":"KXMLBPENNANTNL-26-LAD","status":"live","evidence":{"kind":"same_immutable_ids_renamed","observed_at":"2026-08-01T01:00:00Z"}}]},
+      "expected":{"classification":"unambiguous_drift","action":"publish_new_version","publish":true,"counters":{"live":1}}
+    },
+    {
+      "id": "nfl-authoritative-settlement",
+      "register": {"schema_version":"grid-register/v1","league":"nfl","season":"2026","version":6,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"division","entity_key":"nfl:buf","entity_name":"Buffalo Bills","source":"kalshi","market_id":"m-afce","outcome_id":"o-buf","external_id":"KXNFLAFCE-26-BUF","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"division","entity_key":"nfl:buf","source":"kalshi","season":"2026","market_id":"m-afce","outcome_id":"o-buf","external_id":"KXNFLAFCE-26-BUF","status":"settled","terminal_result":"won"}],
+      "rendered":[{"stage":"division","entity_key":"nfl:buf","source":"kalshi","state":"live","probability":0.99}],
+      "proposed_register":{"schema_version":"grid-register/v1","league":"nfl","season":"2026","version":7,"supersedes_version":6,"generated_at":"2026-08-01T01:00:00Z","entries":[{"stage":"division","entity_key":"nfl:buf","entity_name":"Buffalo Bills","source":"kalshi","market_id":"m-afce","outcome_id":"o-buf","external_id":"KXNFLAFCE-26-BUF","status":"settled","terminal_result":"won","evidence":{"kind":"authoritative_source_settlement","observed_at":"2026-08-01T01:00:00Z"}}]},
+      "expected":{"classification":"render_contract_failure","action":"block_release","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "golf-exact-competitor",
+      "register": {"schema_version":"grid-register/v1","league":"golf","season":"2026-open-001","version":1,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"top_10","entity_key":"dg:1001","entity_name":"Synthetic Golfer","source":"datagolf","market_id":"m-open-top10","outcome_id":"o-dg1001","external_id":"datagolf:pga:open001:top_10","status":"live","evidence":{"kind":"datagolf_competitor_id","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"top_10","entity_key":"dg:1001","source":"datagolf","season":"2026-open-001","market_id":"m-open-top10","outcome_id":"o-dg1001","external_id":"datagolf:pga:open001:top_10","status":"live"}],
+      "rendered":[{"stage":"top_10","entity_key":"dg:1001","source":"datagolf","state":"live","probability":0.37}],
+      "expected":{"classification":"clean","action":"no_change","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "missing-is-honest-empty",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"division","entity_key":"nba:lac","entity_name":"Los Angeles Clippers","source":"polymarket","market_id":null,"outcome_id":null,"external_id":null,"status":"missing","evidence":{"kind":"complete_source_scan_no_mapping","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[],
+      "rendered":[{"stage":"division","entity_key":"nba:lac","source":"polymarket","state":"missing","probability":null}],
+      "expected":{"classification":"clean","action":"no_change","publish":false,"counters":{"missing":1}}
+    },
+    {
+      "id": "reject-silent-fifty-fallback",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"division","entity_key":"nba:lac","entity_name":"Los Angeles Clippers","source":"polymarket","market_id":null,"outcome_id":null,"external_id":null,"status":"missing","evidence":{"kind":"complete_source_scan_no_mapping","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[],
+      "rendered":[{"stage":"division","entity_key":"nba:lac","source":"polymarket","state":"live","probability":0.5}],
+      "expected":{"classification":"render_contract_failure","action":"block_release","publish":false,"counters":{"missing":1}}
+    },
+    {
+      "id": "reject-stale-live-settled",
+      "register": {"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":8,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"division","entity_key":"mlb:nyy","entity_name":"New York Yankees","source":"odds_api","market_id":"m-ale","outcome_id":"o-nyy","external_id":"baseball_mlb_ale","status":"settled","terminal_result":"eliminated","evidence":{"kind":"authoritative_settlement","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"division","entity_key":"mlb:nyy","source":"odds_api","season":"2026","market_id":"m-ale","outcome_id":"o-nyy","external_id":"baseball_mlb_ale","status":"settled","terminal_result":"eliminated"}],
+      "rendered":[{"stage":"division","entity_key":"mlb:nyy","source":"odds_api","state":"live","probability":0.01}],
+      "expected":{"classification":"render_contract_failure","action":"block_release","publish":false,"counters":{"settled":1}}
+    },
+    {
+      "id": "source-split-is-ambiguous",
+      "register": {"schema_version":"grid-register/v1","league":"nhl","season":"2026-27","version":2,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"conference","entity_key":"nhl:edm","entity_name":"Edmonton Oilers","source":"polymarket","market_id":"m-west-old","outcome_id":"o-edm-old","external_id":"poly-west-old","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"conference","entity_key":"nhl:edm","source":"polymarket","season":"2026-27","market_id":"m-west-a","outcome_id":"o-edm-a","external_id":"poly-west-a","status":"live"},{"stage":"conference","entity_key":"nhl:edm","source":"polymarket","season":"2026-27","market_id":"m-west-b","outcome_id":"o-edm-b","external_id":"poly-west-b","status":"live"}],
+      "rendered":[{"stage":"conference","entity_key":"nhl:edm","source":"polymarket","state":"live","probability":0.34}],
+      "expected":{"classification":"needs_ruling","action":"file_p2_needs_triage","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "wrong-team-identity-drift",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"championship","entity_key":"nba:bos","entity_name":"Boston Celtics","source":"kalshi","market_id":"m-title","outcome_id":"o-bos","external_id":"KXNBA-27-BOS","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","season":"2026-27","market_id":"m-title","outcome_id":"o-lac","external_id":"KXNBA-27-LAC","status":"live"}],
+      "rendered":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","state":"live","probability":0.22}],
+      "expected":{"classification":"needs_ruling","action":"file_p2_needs_triage","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "next-season-does-not-replace-current",
+      "register": {"schema_version":"grid-register/v1","league":"nfl","season":"2026","version":6,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"championship","entity_key":"nfl:kc","entity_name":"Kansas City Chiefs","source":"odds_api","market_id":"m-sb-26","outcome_id":"o-kc-26","external_id":"americanfootball_nfl_championship_2026","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"championship","entity_key":"nfl:kc","source":"odds_api","season":"2026","market_id":"m-sb-26","outcome_id":"o-kc-26","external_id":"americanfootball_nfl_championship_2026","status":"live"},{"stage":"championship","entity_key":"nfl:kc","source":"odds_api","season":"2027","market_id":"m-sb-27","outcome_id":"o-kc-27","external_id":"americanfootball_nfl_championship_2027","status":"live"}],
+      "rendered":[{"stage":"championship","entity_key":"nfl:kc","source":"odds_api","state":"live","probability":0.16}],
+      "expected":{"classification":"needs_ruling","action":"file_p2_needs_triage","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "reject-cross-season-entry",
+      "register": {"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":4,"generated_at":"2026-08-01T00:00:00Z","entries":[{"league":"mlb","season":"2025","stage":"championship","entity_key":"mlb:sea","entity_name":"Seattle Mariners","source":"kalshi","market_id":"m-ws-25","outcome_id":"o-sea-25","external_id":"KXMLB-25-SEA","status":"live","evidence":{"kind":"stale_prior_season","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[],"rendered":[],
+      "expected":{"classification":"invalid","action":"reject_register","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "reject-duplicate-cell-source",
+      "register": {"schema_version":"grid-register/v1","league":"golf","season":"2026-open-001","version":1,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"win","entity_key":"dg:1001","entity_name":"Synthetic Golfer","source":"datagolf","market_id":"m-win","outcome_id":"o-1","external_id":"dg-win","status":"live","evidence":{"kind":"datagolf_competitor_id","observed_at":"2026-08-01T00:00:00Z"}},{"stage":"win","entity_key":"dg:1001","entity_name":"Synthetic Golfer","source":"datagolf","market_id":"m-win-duplicate","outcome_id":"o-1b","external_id":"dg-win-duplicate","status":"live","evidence":{"kind":"fuzzy_duplicate","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[],"rendered":[],
+      "expected":{"classification":"invalid","action":"reject_register","publish":false,"counters":{"live":2}}
+    },
+    {
+      "id": "reject-identity-reused-across-cells",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"conference","entity_key":"nba:bos","entity_name":"Boston Celtics","source":"kalshi","market_id":"m-east","outcome_id":"o-bos","external_id":"kx-east-bos","status":"live","evidence":{"kind":"exact","observed_at":"2026-08-01T00:00:00Z"}},{"stage":"conference","entity_key":"nba:nyk","entity_name":"New York Knicks","source":"kalshi","market_id":"m-east","outcome_id":"o-bos","external_id":"kx-east-bos","status":"live","evidence":{"kind":"wrong_team_collision","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[],"rendered":[],
+      "expected":{"classification":"invalid","action":"reject_register","publish":false,"counters":{"live":2}}
+    },
+    {
+      "id": "reject-malformed-register",
+      "register": {"schema_version":"grid-register/v1","league":"mlb","version":0,"generated_at":"not-a-date","entries":"not-a-list"},
+      "candidates":[],"rendered":[],
+      "expected":{"classification":"invalid","action":"reject_register","publish":false,"counters":{}}
+    },
+    {
+      "id": "poison-candidate-blocks-publication-not-sibling-read",
+      "register": {"schema_version":"grid-register/v1","league":"nba","season":"2026-27","version":3,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"championship","entity_key":"nba:bos","entity_name":"Boston Celtics","source":"kalshi","market_id":"m-title","outcome_id":"o-bos","external_id":"KXNBA-27-BOS","status":"live","evidence":{"kind":"exact_source_identity","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","season":"2026-27","market_id":"m-title","outcome_id":"o-bos","external_id":"KXNBA-27-BOS","status":"live"},"poison-row"],
+      "rendered":[{"stage":"championship","entity_key":"nba:bos","source":"kalshi","state":"live","probability":0.22}],
+      "expected":{"classification":"needs_ruling","action":"file_p2_needs_triage","publish":false,"counters":{"live":1}}
+    },
+    {
+      "id": "reject-nonmonotonic-version-transition",
+      "register": {"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":4,"generated_at":"2026-08-01T00:00:00Z","entries":[{"stage":"championship","entity_key":"mlb:lad","entity_name":"Los Angeles Dodgers","source":"kalshi","market_id":"m-ws","outcome_id":"o-lad","external_id":"old","status":"live","evidence":{"kind":"exact","observed_at":"2026-08-01T00:00:00Z"}}]},
+      "candidates":[{"stage":"championship","entity_key":"mlb:lad","source":"kalshi","season":"2026","market_id":"m-ws","outcome_id":"o-lad","external_id":"new","status":"live"}],
+      "rendered":[{"stage":"championship","entity_key":"mlb:lad","source":"kalshi","state":"live","probability":0.31}],
+      "proposed_register":{"schema_version":"grid-register/v1","league":"mlb","season":"2026","version":4,"supersedes_version":3,"generated_at":"2026-08-01T01:00:00Z","entries":[{"stage":"championship","entity_key":"mlb:lad","entity_name":"Los Angeles Dodgers","source":"kalshi","market_id":"m-ws","outcome_id":"o-lad","external_id":"new","status":"live","evidence":{"kind":"rename","observed_at":"2026-08-01T01:00:00Z"}}]},
+      "expected":{"classification":"unambiguous_drift","action":"publish_new_version","publish":false,"counters":{"live":1}}
+    }
+  ]
+}
