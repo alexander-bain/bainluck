@@ -1238,6 +1238,73 @@ async def get_grid_register_sentinel_last(
     return _sentinel_last_payload("bainluck:grid_register_sentinel:last")
 
 
+@router.get("/grid-register/proposal")
+async def get_grid_register_proposal(
+    request: Request,
+    league: str = Query(..., description="League slug, e.g. nba/nhl/mlb/nfl"),
+    secret: str = Query(None, description="Admin secret for authorization"),
+    include_entries: bool = Query(True, description="Include the full proposed register body"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue #296: read-only grid-register proposal for pre-commit review.
+
+    Register files are committed to the repo, but they can only be *generated*
+    against production inventory — there is no local DATABASE_URL, which is why
+    Queue 295 shipped the generator with no register alongside it. This rail runs
+    the SAME shared observation path as ``scripts/generate_grid_register.py`` and
+    the daily sentinel (``generate_register``), then returns the proposed
+    register, every unresolved ambiguity, and the validator's findings, so the
+    file can be reviewed by a human and committed by hand.
+
+    Strictly read-only: it writes no register file and touches no market data
+    (gotcha #21). A proposal that fails validation comes back with its findings
+    and ``publishable: false`` — it is never presented as ready to commit.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.config.league_configs import get_all_league_slugs, get_league_config
+    from app.services.grid_register_source import generate_register
+    from app.utils.grid_register import build_contract, register_filename, validate_register
+
+    config = get_league_config(league)
+    if not config:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown league {league!r}; have {sorted(get_all_league_slugs())}",
+        )
+
+    register, unresolved = await generate_register(db, config)
+
+    contract = build_contract({
+        config.slug: {
+            "season": config.season_pattern,
+            "stages": [c.key for c in config.columns],
+        },
+    })
+    findings = validate_register(register, contract)
+
+    status_counts: dict[str, int] = {}
+    for entry in register["entries"]:
+        status_counts[entry["status"]] = status_counts.get(entry["status"], 0) + 1
+    reasons: dict[str, int] = {}
+    for row in unresolved:
+        reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
+
+    return {
+        "league": config.slug,
+        "season": config.season_pattern,
+        "filename": register_filename(config.slug, config.season_pattern),
+        "entries_total": len(register["entries"]),
+        "status_counts": dict(sorted(status_counts.items())),
+        "unresolved_total": len(unresolved),
+        "unresolved_reasons": dict(sorted(reasons.items())),
+        "findings": findings,
+        "publishable": not findings,
+        "register": register if include_entries else None,
+        "unresolved": unresolved,
+    }
+
+
 @router.post("/board-sentinel/run")
 async def trigger_board_sentinel(
     request: Request,
