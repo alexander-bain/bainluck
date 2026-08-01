@@ -79,6 +79,16 @@ async function getAuthTokenWithTimeout(): Promise<string | null> {
 }
 
 /**
+ * An HTTP error from `apiFetch`, carrying the status and the raw `detail` body
+ * so a page can distinguish a typed degradation (a structured `detail` object)
+ * from a generic failure and render accordingly.
+ */
+export interface ApiError extends Error {
+  status?: number;
+  detail?: unknown;
+}
+
+/**
  * Base fetch wrapper with error handling and optional auth
  */
 async function apiFetch<T>(
@@ -134,7 +144,23 @@ async function apiFetch<T>(
 
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-        throw new Error(error.detail || `API error: ${res.status}`);
+        // `detail` is a string on most routes but a structured object on the
+        // typed-degradation routes (e.g. /api/calibration's unavailable
+        // response). Stringifying an object here yields "[object Object]", so
+        // read its message and hand the whole thing to the caller instead —
+        // that's what lets a page render an honest state rather than a generic
+        // "Failed to load".
+        const detail: unknown = error?.detail;
+        const message =
+          typeof detail === "string" && detail
+            ? detail
+            : typeof (detail as { message?: unknown })?.message === "string"
+              ? (detail as { message: string }).message
+              : `API error: ${res.status}`;
+        const apiError = new Error(message) as ApiError;
+        apiError.status = res.status;
+        apiError.detail = detail;
+        throw apiError;
       }
 
       // Observability hook (L2-189). Runs before body parse so callers can read
@@ -1786,7 +1812,20 @@ export interface CalibrationBucket {
   ci_upper: number;
 }
 
+/**
+ * Queue 297: how fresh the served snapshot is. Absent (or `status !== "stale"`)
+ * means the payload is current. When present and stale, the page MUST say so —
+ * a dated last-good is honest, an undated one presented as live is not.
+ */
+export interface CalibrationCacheState {
+  status: string; // "stale" when serving a last-good copy
+  reason?: string; // main_key_absent | redis_unavailable | compute_deadline
+  generated_at?: string; // when the served snapshot was actually built
+  age_s?: number; // how old it is, in seconds
+}
+
 export interface CalibrationData {
+  cache?: CalibrationCacheState | null;
   buckets: CalibrationBucket[];
   total_markets: number;
   total_outcomes: number;

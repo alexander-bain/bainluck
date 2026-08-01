@@ -787,8 +787,66 @@ async def public_calibration(
     import json as _json
 
     from app.utils import request_cache as _rc
+    from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S, snapshot_verdict
 
     _lg_key = "calibration:main"
+
+    # Queue 297 Item 1: ONE absolute budget for the whole handler. Each tier below
+    # already had its own bound, but the reported failure was ~18s of opaque
+    # spinning — two ~9s compute attempts, each individually legal. A whole-request
+    # budget is the only thing that catches that shape.
+    _started = time.monotonic()
+
+    def _remaining_ms() -> float:
+        return _rc.CALIBRATION_ROUTE_BUDGET_MS - (time.monotonic() - _started) * 1000
+
+    def _expected_version():
+        try:
+            from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+            return CALIBRATION_POPULATION_VERSION
+        except Exception:  # noqa: BLE001 — a version we can't read isn't a mismatch
+            return None
+
+    def _degraded(payload: dict, reason: str, verdict=None) -> dict:
+        """A last-good copy, marked stale and dated so the page can say how old it is.
+
+        Never presented as current: ``status`` is always ``stale`` and the age is
+        explicit, so the banner can render "as of <time>" rather than implying the
+        numbers are live.
+        """
+        out = dict(payload)
+        cache = {"status": "stale", "reason": reason}
+        if verdict is not None:
+            if verdict.age_s is not None:
+                cache["age_s"] = round(verdict.age_s)
+            if verdict.generated_at:
+                cache["generated_at"] = verdict.generated_at
+        elif isinstance(payload.get("generated_at"), str):
+            cache["generated_at"] = payload["generated_at"]
+        out["cache"] = cache
+        return out
+
+    def _unavailable(reason: str) -> HTTPException:
+        """The typed unavailable response — honest, actionable, never opaque.
+
+        Still a 503 (the semantics are right and Retry-After is meaningful), but
+        the body is structured so the page renders a dated "temporarily
+        unavailable, retry" state instead of a bare "Failed to load".
+        """
+        return HTTPException(
+            status_code=503,
+            detail={
+                "status": "unavailable",
+                "reason": reason,
+                "retry_after_s": 30,
+                "message": (
+                    "Calibration data is temporarily unavailable. It is rebuilt "
+                    "hourly — please retry shortly."
+                ),
+            },
+            headers={"Retry-After": "30"},
+        )
 
     # 1. In-process cache (survives between requests on same dyno). A
     #    stale-marked copy (Tier 2b, main key absent) is deliberately NOT served
@@ -836,17 +894,30 @@ async def public_calibration(
             )
             if lg.is_ok:
                 data = _json.loads(lg.value)
-                if isinstance(data, dict):
+                # Queue 297 Item 1: only a TRUSTWORTHY last-good may be served. A
+                # cross-process durable key can be malformed, written by an older
+                # population version, or simply ancient — serving any of those as
+                # "the calibration curve" is the dishonesty this item closes. A
+                # rejected copy falls through to the cold compute below.
+                verdict = snapshot_verdict(
+                    data,
+                    expected_version=_expected_version(),
+                    max_age_s=SERVE_MAX_AGE_S,
+                )
+                if verdict.is_servable:
                     # Queue #284 Item 3: build the stale-marked copy BEFORE it is
                     # memoized, so a later same-dyno Tier-1 hit cannot serve an
                     # unmarked (falsely-fresh) copy. The process cache and the
                     # durable last-good both store the marked payload.
-                    degraded = dict(data)
-                    degraded["cache"] = {"status": "stale", "reason": "main_key_absent"}
+                    degraded = _degraded(data, "main_key_absent", verdict)
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
+                logger.warning(
+                    "calibration: durable last-good rejected (%s: %s)",
+                    verdict.status, verdict.reason,
+                )
         except Exception:
             pass
 
@@ -857,22 +928,31 @@ async def public_calibration(
         stale = (
             _cache["data"]
             if isinstance(_cache["data"], dict)
-            else _rc.recall_last_good(_lg_key)
+            # Queue 297: age-bound the process-local copy too. Its SHAPE is not the
+            # risk (this process served it earlier), but a long-lived dyno could
+            # otherwise keep serving a week-old curve as though Redis were merely
+            # blipping.
+            else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
         )
         if isinstance(stale, dict):
-            degraded = dict(stale)
-            degraded["cache"] = {"status": "stale", "reason": "redis_unavailable"}
-            return degraded
+            return _degraded(stale, "redis_unavailable")
 
     # 4. Clean cache miss (Redis empty) with nothing cached — compute via the ONE
     #    shared canonical path, but under a HARD deadline so it can never run to
     #    the router cutoff. On breach: serve last-good if any, else fail fast.
     from app.tasks.precompute_calibration import compute_calibration_payload
 
+    # The compute gets whatever is left of the absolute budget, never more than its
+    # own deadline. If the earlier tiers already burned the budget, we do not start
+    # a compute we cannot finish — we answer honestly now (Item 1: never spin).
+    compute_deadline_ms = min(_rc.CALIBRATION_COMPUTE_DEADLINE_MS, _remaining_ms())
+    if compute_deadline_ms <= 0:
+        raise _unavailable("route_budget_exhausted")
+
     try:
         data = await _rc.run_with_deadline(
             compute_calibration_payload(db),
-            deadline_ms=_rc.CALIBRATION_COMPUTE_DEADLINE_MS,
+            deadline_ms=int(compute_deadline_ms),
         )
         _cache["data"] = data
         _cache["timestamp"] = now
@@ -884,17 +964,11 @@ async def public_calibration(
         stale = (
             _cache["data"]
             if isinstance(_cache["data"], dict)
-            else _rc.recall_last_good(_lg_key)
+            else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
         )
         if isinstance(stale, dict):
-            degraded = dict(stale)
-            degraded["cache"] = {"status": "stale", "reason": "compute_deadline"}
-            return degraded
-        raise HTTPException(
-            status_code=503,
-            detail="Calibration data is warming up. Please retry shortly.",
-            headers={"Retry-After": "30"},
-        )
+            return _degraded(stale, "compute_deadline")
+        raise _unavailable("no_trustworthy_snapshot")
 
 
 # ---------------------------------------------------------------------------

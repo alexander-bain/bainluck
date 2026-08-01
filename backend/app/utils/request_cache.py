@@ -70,6 +70,14 @@ FEED_TOTAL_BUDGET_MS = _env_int("FEED_TOTAL_BUDGET_MS", 25000)
 # The precompute beat keeps Redis warm, so a request-path compute is rare and,
 # when it happens, either finishes fast or fails fast + explicit.
 CALIBRATION_COMPUTE_DEADLINE_MS = _env_int("CALIBRATION_COMPUTE_DEADLINE_MS", 9000)
+# Queue 297: the ABSOLUTE /api/calibration request budget, covering every tier
+# (process cache, Redis main, durable last-good, cold compute) rather than any
+# single stage. The reported public failure was ~18s of opaque spinning before
+# "Failed to load calibration data" — two ~9s compute attempts back to back, each
+# individually inside its own deadline. A per-stage bound cannot catch that; only
+# a whole-request budget can. Set well under the 30s router cutoff so the page
+# always gets a typed answer with time to spare.
+CALIBRATION_ROUTE_BUDGET_MS = _env_int("CALIBRATION_ROUTE_BUDGET_MS", 12000)
 
 # Typed outcome of a bounded Redis op — miss/timeout/error are distinguishable so
 # a caller can serve last-good on a *failure* but cold-compute on a genuine miss.

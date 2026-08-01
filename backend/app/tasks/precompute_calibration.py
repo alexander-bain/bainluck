@@ -2669,6 +2669,71 @@ def _build_truth_evidence(
     }
 
 
+def _read_published_baseline(rc) -> Any:
+    """The artifact a candidate must be judged against, or ``None``.
+
+    Prefers the fresh ``main`` key and falls back to the durable ``last_good``.
+    The fallback matters: on a 50MB ``allkeys-lru`` instance ``main`` (2h TTL) is
+    evicted long before ``last_good`` (7d), and without it the gate would read
+    "no prior artifact", call the build a first publish, and wave through exactly
+    the collapsed population it exists to stop.
+
+    Every failure here is non-fatal and degrades to ``None`` (publish allowed) —
+    an unreadable cache is a cache problem, never a reason to stop publishing.
+    """
+    for key in (_MAIN_KEY, _MAIN_LAST_GOOD_KEY):
+        try:
+            raw = rc.get(key)
+        except Exception as exc:  # noqa: BLE001 — baseline is best-effort
+            logger.warning("calibration gate: baseline read of %s failed: %s", key, exc)
+            continue
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except Exception:  # noqa: BLE001 — a corrupt prior value is not a baseline
+            logger.warning("calibration gate: baseline at %s is not valid JSON", key)
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _file_publish_gate_rejection(verdict, *, marker: str = "calibration-publish-gate") -> dict:
+    """File (or comment on) ONE deduped P2 issue carrying the rejection diff.
+
+    Best-effort and fully contained: the rejection itself is already recorded by
+    the raising caller, so a GitHub outage must never turn a preserved-last-good
+    into an unhandled exception. Dedup is by the verdict's failure-class
+    fingerprint, so an hourly beat reproducing the same bad shape comments once
+    per run on one issue instead of filing a new issue every hour.
+    """
+    try:
+        from app.tasks.sentinel_filing import reconcile_issue
+        from app.utils.calibration_publish_gate import rejection_issue_body
+
+        return reconcile_issue(
+            red=True,
+            fingerprint=verdict.fingerprint,
+            marker_key=marker,
+            labels=["type:bug", "area:calibration", "priority:p2", "needs-triage"],
+            title=(
+                "Calibration publish gate rejected a candidate build "
+                f"({', '.join(verdict.codes)})"
+            ),
+            body=rejection_issue_body(verdict, fingerprint_marker=marker),
+            title_prefix="Calibration publish gate",
+            red_comment=(
+                "The publish gate rejected another candidate with the same "
+                f"failure class (`{', '.join(verdict.codes)}`). "
+                f"{verdict.summary()} The last published snapshot is still being served."
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — alerting must never mask the rejection
+        logger.warning("calibration gate: rejection filing failed: %s", exc)
+        return {"action": "error", "error": str(exc)[:200]}
+
+
 def _publish_calibration_main(rc, payload_json: str) -> dict:
     """Publish the serialized main payload to the durable + fresh keys (Queue 272).
 
@@ -2747,6 +2812,44 @@ async def _precompute_calibration_main():
     payload_bytes = len(payload_json)
 
     rc = get_redis_client()
+
+    # Queue 297 Item 3: the ATOMIC PUBLISH GATE. Everything above built a
+    # *candidate*; nothing published yet. Compare it against the currently
+    # published artifact and only then perform one publication of main +
+    # last_good. Queue 272's `_main_payload_is_publishable` already refused an
+    # EMPTY payload; it could not refuse a complete-looking but wrong one — a
+    # build that lost two thirds of the population, or whose well-traded/thin
+    # ordering inverted, replaced the good copy silently. A rejected candidate
+    # touches neither key, so the last published snapshot keeps serving.
+    from app.utils.calibration_publish_gate import evaluate_publish
+
+    baseline = _read_published_baseline(rc)
+    verdict = evaluate_publish(response, baseline)
+    gate = {
+        "ok": verdict.ok,
+        "first_publish": verdict.first_publish,
+        "version_bumped": verdict.version_bumped,
+        "codes": verdict.codes,
+        "fingerprint": verdict.fingerprint,
+        "candidate_population": verdict.candidate.get("population"),
+        "published_population": verdict.published.get("population"),
+        "candidate_version": verdict.candidate.get("population_version"),
+        "published_version": verdict.published.get("population_version"),
+    }
+
+    if not verdict.ok:
+        filing = _file_publish_gate_rejection(verdict)
+        logger.error(
+            "calibration publish gate REJECTED candidate (%s): %s [filing=%s]",
+            ", ".join(verdict.codes), verdict.summary(), filing.get("action"),
+        )
+        raise RuntimeError(
+            f"calibration publish gate rejected the candidate "
+            f"({', '.join(verdict.codes)}): {verdict.summary()} — "
+            f"nothing published, prior snapshot preserved "
+            f"(fingerprint {verdict.fingerprint}, filing {filing.get('action')})"
+        )
+
     t2 = time.monotonic()
     stages = _publish_calibration_main(rc, payload_json)
     publish_ms = round((time.monotonic() - t2) * 1000)
@@ -2760,6 +2863,7 @@ async def _precompute_calibration_main():
         "serialize_ms": serialize_ms,
         "publish_ms": publish_ms,
         "publish": stages,
+        "gate": gate,
     }
 
     # A failed FRESH-key publish is not a success even if the compute was fine —

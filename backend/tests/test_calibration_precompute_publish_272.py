@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,11 +39,38 @@ from app.tasks.precompute_calibration import (
 
 
 def _payload(*, buckets=1, outcomes=635464):
+    """A publishable payload.
+
+    Queue 297 added an atomic publish gate that refuses a structurally
+    INCOMPLETE candidate, so this fixture now carries the required sections
+    (see ``calibration_publish_gate.REQUIRED_SECTIONS``). These tests are about
+    publication mechanics, not payload shape — the minimal three-key dict was a
+    fixture convenience, and a build actually missing these sections is exactly
+    what the gate is supposed to stop.
+    """
     return {
         "buckets": [{"bucket": i} for i in range(buckets)],
         "total_outcomes": outcomes,
-        "generated_at": "2026-07-28T18:24:25+00:00",
+        "total_markets": outcomes // 4,
+        "total_winners": outcomes // 2,
+        "by_category": [{"category": "politics", "outcomes": outcomes}],
+        "by_source": [{"source": "kalshi", "outcomes": outcomes}],
+        "liquidity_filter": {"applies_to": "kalshi"},
+        "mex_normalization": {"applies_to": "all"},
+        "truth_evidence": {"contract_ok": True},
+        "generated_at": _RECENT_GENERATED_AT,
     }
+
+
+# Queue 297 age-bounds a servable last-good at 7 days, so a hardcoded date would
+# silently age out of the fixture's own contract and red the suite one week after
+# it was written. Anchored 2 days back at a FIXED hour (gotcha #44: never seed
+# relative to `now` across a date boundary).
+_RECENT_GENERATED_AT = (
+    (datetime.now(timezone.utc) - timedelta(days=2))
+    .replace(hour=12, minute=0, second=0, microsecond=0)
+    .isoformat()
+)
 
 
 class _FakeCM:
@@ -324,7 +352,12 @@ async def test_route_serves_durable_last_good_on_main_miss(monkeypatch):
 
     assert out["total_outcomes"] == 635464
     assert out["generated_at"] == payload["generated_at"]
-    assert out["cache"] == {"status": "stale", "reason": "main_key_absent"}
+    assert out["cache"]["status"] == "stale"
+    assert out["cache"]["reason"] == "main_key_absent"
+    # Queue 297 Item 1: a degraded copy must be DATED, so the banner can say how
+    # old it is instead of implying the numbers are current.
+    assert out["cache"]["generated_at"] == payload["generated_at"]
+    assert out["cache"]["age_s"] >= 0
     assert "bainluck:calibration:main:last_good" in client.gets
 
     calibration._cache["data"] = None
@@ -389,14 +422,16 @@ async def test_stale_last_good_memoized_copy_stays_marked_across_requests(monkey
     )
 
     first = await calibration.public_calibration(db=object(), bust=0)
-    assert first["cache"] == {"status": "stale", "reason": "main_key_absent"}
+    assert first["cache"]["status"] == "stale"
+    assert first["cache"]["reason"] == "main_key_absent"
     # THE contract: the memoized copy itself carries the stale marker.
     assert calibration._cache["data"].get("cache", {}).get("status") == "stale"
 
     # A second same-dyno request (main still absent) is ALSO stale — never a
     # falsely-fresh memoized copy.
     second = await calibration.public_calibration(db=object(), bust=0)
-    assert second["cache"] == {"status": "stale", "reason": "main_key_absent"}
+    assert second["cache"]["status"] == "stale"
+    assert second["cache"]["reason"] == "main_key_absent"
 
     calibration._cache["data"] = None
     calibration._cache["timestamp"] = 0

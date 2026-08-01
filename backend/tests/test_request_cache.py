@@ -9,6 +9,7 @@ lives in tests/integration/test_cache_failure_seam.py.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -91,6 +92,12 @@ def test_last_good_ignores_none_and_empty_key():
 
 def test_last_good_age_bound():
     rc.remember_last_good("k", {"a": 1})
+    # `recall_last_good` expires on `elapsed > max_age_s`, so with max_age_s=0 the
+    # entry must be measurably older than 0s. Two adjacent `time.time()` calls can
+    # return the SAME float, making elapsed exactly 0.0 and the entry not-yet-
+    # expired — an intermittent red with no defect behind it. Sleep past the clock
+    # granularity so the assertion tests the age bound, not the timer.
+    time.sleep(0.002)
     assert rc.recall_last_good("k", max_age_s=0) is None  # already older than 0s
     assert rc.recall_last_good("k", max_age_s=1000) == {"a": 1}
 

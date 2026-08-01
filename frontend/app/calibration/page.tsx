@@ -5,7 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchCalibration, fetchCalibrationExamples, CalibrationBucket, CalibrationExample } from "@/lib/api";
+import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket, CalibrationExample } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
@@ -159,6 +159,16 @@ function aggregateBuckets(
     .sort((a, b) => a.midpoint - b.midpoint);
 }
 
+/** Queue 297: how old a served last-good snapshot is, in plain words. */
+function formatAge(seconds: number): string {
+  if (seconds < 90) return "moments";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 48) return `${hours} hr`;
+  return `${Math.round(seconds / 86400)} days`;
+}
+
 function brierScore(buckets: CalibrationBucket[], filter?: (b: CalibrationBucket) => boolean): number {
   let n = 0, sq = 0;
   for (const b of buckets) {
@@ -294,9 +304,25 @@ export default function CalibrationPage() {
   }, [normalized, categories, cohortFilter]);
 
   if (error) {
+    // Queue 297 Item 1: the backend now answers a genuine outage with a TYPED
+    // unavailable body instead of an opaque failure, so say what is actually
+    // happening — the curve is rebuilt hourly and a retry is worth making.
+    // Anything else still falls through to the generic error state.
+    const detail = (error as ApiError).detail as
+      | { status?: string; message?: string }
+      | undefined;
+    const unavailable = detail?.status === "unavailable";
     return (
       <div className="max-w-6xl mx-auto">
-        <ErrorState message="Failed to load calibration data" onRetry={() => window.location.reload()} />
+        <ErrorState
+          message={
+            unavailable
+              ? detail?.message ||
+                "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly."
+              : "Failed to load calibration data"
+          }
+          onRetry={() => window.location.reload()}
+        />
       </div>
     );
   }
@@ -332,6 +358,26 @@ export default function CalibrationPage() {
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
+      {/* Queue 297 Item 1: when we are serving a last-good snapshot rather than a
+          current one, say so and date it. A stale curve is fine; a stale curve
+          presented as live is not. */}
+      {data.cache?.status === "stale" && (
+        <div
+          role="status"
+          className="rounded-lg border border-surface-border bg-surface-card px-4 py-3 text-sm text-text-secondary"
+        >
+          <strong className="text-text-primary">Showing the last complete snapshot.</strong>{" "}
+          These numbers were built{" "}
+          {data.cache.generated_at
+            ? new Date(data.cache.generated_at).toLocaleString("en-US", {
+                month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+              })
+            : "earlier"}
+          {typeof data.cache.age_s === "number" && ` (${formatAge(data.cache.age_s)} ago)`}
+          {" "}and are not being refreshed right now. The curve rebuilds hourly.
+        </div>
+      )}
+
       {/* Hero */}
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
