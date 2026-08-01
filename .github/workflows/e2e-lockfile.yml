@@ -1,0 +1,106 @@
+name: Regenerate frontend/e2e lockfile (manual)
+
+# L2-229 Item 0 — the mechanism of record for producing
+# `frontend/e2e/package-lock.json`.
+#
+# WHY THIS EXISTS AT ALL. The e2e tree is deliberately kept out of the main
+# frontend dependency graph, so its lockfile has to be generated on its own.
+# That is normally a one-line local command — except the development machine
+# this repo is worked on from has no route to registry.npmjs.org: its only
+# egress is an agent proxy that answers 503 for the registry, and a direct
+# connection is refused at the network layer. L2-228 hit that wall and, quite
+# correctly, refused the alternative: a hand-authored lockfile means invented
+# `integrity` hashes, which is precisely the fabricated-evidence shape this
+# whole rail exists to make impossible.
+#
+# A GitHub runner does have registry access. So the lockfile is generated
+# HERE, by npm, from the real registry, and downloaded for commit. Nothing is
+# authored by hand and nothing is trusted that npm did not compute.
+#
+# HOW TO USE IT.
+#   1. Dispatch this workflow.
+#   2. Download the `e2e-package-lock` artifact.
+#   3. Commit the file at frontend/e2e/package-lock.json.
+#   4. In that same commit, restore `cache: npm` + `cache-dependency-path:
+#      frontend/e2e/package-lock.json` in browser-audit.yml. The packaging
+#      contract asserts the cache path resolves, so it goes green with it.
+#
+# This workflow only ever writes an artifact. It cannot commit, cannot push,
+# and holds no credential beyond `contents: read`.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile:
+    name: Resolve the pinned e2e dependency graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          # The version browser-audit.yml pins. Resolving on a different major
+          # can emit a lockfile the audit runner's npm then rewrites.
+          node-version: "20"
+
+      - name: Resolve the graph and write the lockfile
+        # `--package-lock-only`: resolve and write the lock, install nothing.
+        # `--ignore-scripts`: no lifecycle script runs, here or downstream.
+        # `--registry`: stated explicitly so the artifact cannot silently come
+        # from whatever a future runner image happens to default to.
+        run: |
+          set -euo pipefail
+          npm install \
+            --package-lock-only \
+            --ignore-scripts \
+            --registry=https://registry.npmjs.org/
+          test -f package-lock.json
+
+      - name: Prove `npm ci` accepts it
+        # Generating a lockfile and shipping it unverified would just move the
+        # guess downstream. `npm ci` is the exact command browser-audit.yml
+        # runs, and it exits non-zero when the lock disagrees with
+        # package.json — so run it here, before anyone commits the file.
+        run: npm ci --ignore-scripts
+
+      - name: Report what was resolved
+        # Printed so the diff can be read against something before it is
+        # committed: an unexpected package, registry or version is visible
+        # here rather than buried in a few hundred lines of generated JSON.
+        run: |
+          set -euo pipefail
+          node -e '
+            const lock = require("./package-lock.json");
+            const pkgs = Object.entries(lock.packages || {}).filter(([p]) => p);
+            console.log(`lockfileVersion: ${lock.lockfileVersion}`);
+            console.log(`packages: ${pkgs.length}`);
+            for (const [path, meta] of pkgs) {
+              const host = meta.resolved ? new URL(meta.resolved).host : "(no tarball)";
+              console.log(`  ${path}@${meta.version ?? "?"}  ${host}  ${meta.integrity ?? "(no integrity)"}`);
+            }
+            const foreign = pkgs.filter(
+              ([, m]) => m.resolved && new URL(m.resolved).host !== "registry.npmjs.org"
+            );
+            if (foreign.length) {
+              console.error("::error::a dependency resolved off registry.npmjs.org");
+              process.exit(1);
+            }
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-package-lock
+          path: frontend/e2e/package-lock.json
+          retention-days: 7
+          if-no-files-found: error
