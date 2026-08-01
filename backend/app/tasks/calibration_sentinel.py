@@ -880,19 +880,30 @@ async def _run_calibration_sentinel(
 
     # Cache the full run so it's inspectable without re-scanning (the backtest /
     # ops read path) — findings can be large, so keep 14 days, not forever.
-    try:
-        import json as _json
+    # Queue 298 (#1512): durable row first, Redis as the accelerator. The
+    # backtest run keeps its own separate identity, exactly as it keeps its own
+    # Redis key — the two must never overwrite each other.
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        from app.tasks.redis_state import get_redis_client
-
-        key = (
+    _backtest = stats["mode"] == "backtest"
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:calibration:backtest" if _backtest else "sentinel:calibration",
+        redis_key=(
             "bainluck:calibration_sentinel:last_backtest"
-            if stats["mode"] == "backtest"
+            if _backtest
             else "bainluck:calibration_sentinel:last"
-        )
-        get_redis_client().setex(key, 14 * 86400, _json.dumps(stats, default=str))
-    except Exception as exc:
-        logger.warning("Sentinel result cache write failed: %s", exc)
+        ),
+        stats=stats,
+        source="calibration_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("calibration sentinel evidence")
 
     logger.info(
         "Calibration sentinel (%s): %d cohorts, %d flagged (%d unexplained, %d explained), %d filed",

@@ -945,7 +945,67 @@ async def public_calibration(
             # tier. Never swallow this without saying so.
             logger.warning("calibration: durable last-good read failed", exc_info=True)
 
-    # 3. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
+    # 3. DURABLE substrate (Queue 298, #1512). Everything above this line is an
+    #    accelerator living in one 50MB allkeys-lru Redis: on eviction, on a TLS
+    #    failure, or on a fresh dyno, all of it is gone at once — which is how the
+    #    public page reached "Failed to load" while a perfectly good snapshot had
+    #    been computed hours earlier. This tier is the survivor, and it is
+    #    deliberately ABOVE the process-local fallback: durable is the authority,
+    #    process memory is only ever an accelerator.
+    #
+    #    It is cheap (one indexed primary-key read of a bounded payload, bounded
+    #    by its own statement_timeout) and it is only paid when the fast tiers
+    #    have already failed. ``bust`` skips it to force a genuine recompute.
+    if not bust:
+        try:
+            from app.services.durable_snapshots import read_snapshot
+
+            durable = await read_snapshot(
+                db,
+                "calibration:main",
+                expected_version=_expected_version(),
+                max_age_s=SERVE_MAX_AGE_S,
+            )
+            if durable.ok and isinstance(durable.envelope.payload, dict):
+                payload = durable.envelope.payload
+                # The envelope already proved version, checksum, completeness and
+                # age. The SHAPE still gets Q297's full check, because a durable
+                # row can be ancient and written under an older payload contract —
+                # the same reason the Redis last-good keeps it.
+                verdict = snapshot_verdict(
+                    payload, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
+                )
+                if verdict.is_servable:
+                    degraded = _degraded(
+                        payload,
+                        "redis_unavailable_durable" if _redis_failed else "main_key_absent_durable",
+                        verdict,
+                    )
+                    # Additive provenance so an operator (and the page) can see
+                    # WHICH tier answered and how old it is — never a silent
+                    # substitution dressed up as current.
+                    degraded["provenance"] = durable.envelope.provenance(
+                        served_from="durable"
+                    )
+                    _cache["data"] = degraded
+                    _cache["timestamp"] = now
+                    _rc.remember_last_good(_lg_key, degraded)
+                    return degraded
+                logger.warning(
+                    "calibration: durable snapshot rejected on shape (%s: %s)",
+                    verdict.status, verdict.reason,
+                )
+            elif not durable.missing:
+                logger.warning(
+                    "calibration: durable snapshot unusable (%s: %s)",
+                    durable.status, durable.error,
+                )
+        except Exception:
+            # Never let the durable tier's own failure take down the request —
+            # but never swallow it silently either (the Q297 lesson).
+            logger.warning("calibration: durable snapshot read failed", exc_info=True)
+
+    # 4. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
     #    payload over recomputing during Redis flakiness (Queue 271 Item 2).
     #    ``bust`` explicitly asks for a fresh recompute, so it skips this.
     if _redis_failed and not bust:
@@ -961,7 +1021,7 @@ async def public_calibration(
         if isinstance(stale, dict):
             return _degraded(stale, "redis_unavailable")
 
-    # 4. Clean cache miss (Redis empty) with nothing cached — compute via the ONE
+    # 5. Clean cache miss (Redis empty, nothing durable) — compute via the ONE
     #    shared canonical path, but under a HARD deadline so it can never run to
     #    the router cutoff. On breach: serve last-good if any, else fail fast.
     from app.tasks.precompute_calibration import compute_calibration_payload

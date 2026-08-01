@@ -408,6 +408,49 @@ def settled_fingerprint(concept_key: str) -> str:
     return hashlib.sha1(f"settled-concept:{concept_key}".encode("utf-8")).hexdigest()[:12]
 
 
+def _streaks_from_scorecard(prev: dict) -> dict[str, int]:
+    """Pull the per-concept green streaks out of a scorecard payload."""
+    out: dict[str, int] = {}
+    for c in (prev or {}).get("concepts", []) or []:
+        ck = c.get("concept_key")
+        gs = c.get("green_streak")
+        if ck and isinstance(gs, int):
+            out[ck] = gs
+    return out
+
+
+async def _load_prior_green_streaks_durable() -> dict[str, int]:
+    """Queue 298 (#1512): read the prior scorecard from the DURABLE row first.
+
+    This is not cosmetic. The streak drives #1177 close discipline, and it is
+    derived from the last scorecard — which lives in a Redis that is chronically
+    evicting at 49.5/50MB. A missing scorecard silently restarts every streak at
+    1, so under sustained eviction the streak can NEVER reach its close
+    threshold and nothing is ever auto-closed. Reading the retained copy makes
+    the streak survive the eviction that was quietly disabling it.
+
+    Best-effort throughout: any failure returns {} and streaks restart, which
+    only delays a close (fails safe), exactly as before.
+    """
+    try:
+        from app.services.durable_snapshots import (
+            SENTINEL_MAX_AGE_S,
+            SENTINEL_SCHEMA_VERSION,
+            read_snapshot_standalone,
+        )
+
+        read = await read_snapshot_standalone(
+            "sentinel:settled-concept",
+            expected_version=SENTINEL_SCHEMA_VERSION,
+            max_age_s=SENTINEL_MAX_AGE_S,
+        )
+        if read.ok and isinstance(read.envelope.payload, dict):
+            return _streaks_from_scorecard(read.envelope.payload)
+    except Exception as exc:  # noqa: BLE001 — instrumentation must never break a run
+        logger.warning("Settled sentinel: durable green-streak load failed: %s", exc)
+    return _load_prior_green_streaks()
+
+
 def _load_prior_green_streaks() -> dict[str, int]:
     """Read each concept's green_streak from the LAST cached scorecard. The streak
     is derived from the scorecard (the proven read/write path) rather than a
@@ -662,7 +705,7 @@ async def _run_settled_concept_sentinel(
     n_green = 0
     n_red = 0
     # #1177 close discipline: prior per-concept green streaks from the last scorecard.
-    prior_streaks = _load_prior_green_streaks()
+    prior_streaks = await _load_prior_green_streaks_durable()
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
         for entry in targets:
@@ -749,15 +792,22 @@ async def _run_settled_concept_sentinel(
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    try:
-        import json as _json
+    # Queue 298 (#1512): durable row first, Redis as the accelerator.
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
-            "bainluck:settled_concept_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
-        )
-    except Exception as exc:
-        logger.warning("Settled sentinel: Redis cache write failed: %s", exc)
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:settled-concept",
+        redis_key="bainluck:settled_concept_sentinel:last",
+        stats=stats,
+        source="settled_concept_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("settled concept sentinel evidence")
 
     return stats

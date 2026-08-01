@@ -278,10 +278,20 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
         async def __aexit__(self, *a):
             return False
 
+    async def _durable_ok(envelope):
+        return {"status": "ok", "identity": envelope.identity,
+                "generation": envelope.generation}
+
     with patch(
         "app.tasks.base.get_task_session", return_value=_Sess()
     ), patch(
         "app.tasks.redis_state.get_redis_client", return_value=_RC()
+    ), patch(
+        # Queue 298 made the durable write a precondition of publishing. This
+        # test is about payload IDENTITY between the two serve paths, not about
+        # durability, and `_FakeDB` does not model the upsert — so stub the
+        # substrate and let the publish proceed.
+        "app.services.durable_snapshots.publish_snapshot_standalone", _durable_ok
     ):
         result = await precompute_calibration._precompute_calibration_main()
 

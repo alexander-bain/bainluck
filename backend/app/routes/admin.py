@@ -1035,7 +1035,7 @@ async def trigger_calibration_sentinel(
     return {"status": "enqueued", "task_id": result.id}
 
 
-def _sentinel_last_payload(key: str) -> dict:
+async def _sentinel_last_payload(key: str, db=None, *, identity: str | None = None) -> dict:
     """Shared fail-honest read for every cached sentinel ``/last`` rail (#1197).
 
     Each of these rails used to be a bare ``get_redis_client().get(key)`` plus
@@ -1048,9 +1048,38 @@ def _sentinel_last_payload(key: str) -> dict:
     * bytes that do not decode                   → ``unparseable`` + error class
     * decodes to a non-object                    → ``wrong_shape``
 
-    The happy path returns the sentinel's persisted payload verbatim, so every
-    existing consumer of these rails is unaffected.
+    Queue 298 (#1512) adds the tier that makes those distinctions worth having.
+    Typing an unreadable Redis correctly did not put the evidence back — the
+    scorecards were being EVICTED from a 49.5/50MB allkeys-lru instance, so a
+    healthy nightly beat still read ``no_run_cached`` by morning. When the
+    producer has been migrated to the durable substrate, the rail now serves the
+    retained verdict with an additive dated ``provenance`` block; ``no_run_cached``
+    is reserved for the case where BOTH tiers genuinely have nothing.
+
+    The happy path still returns the sentinel's persisted payload verbatim, so
+    every existing consumer of these rails is unaffected.
     """
+    # The durable tier is strictly ADDITIVE: if it can serve a trustworthy
+    # retained verdict it does (that is the whole point — an evicted key or a
+    # dead Redis no longer erases the evidence), and in every other case we fall
+    # through to the Queue 294 classification below, unchanged. That keeps a
+    # dependency loss a bounded 503 and a genuine absence ``no_run_cached``,
+    # rather than trading one blind answer for another.
+    if identity is not None and db is not None:
+        try:
+            from app.services.durable_snapshots import read_sentinel_evidence
+
+            served = await read_sentinel_evidence(db, identity=identity, redis_key=key)
+            if served is not None:
+                return served
+        except Exception:  # noqa: BLE001 — never let the new tier break the rail
+            logger.warning(
+                "sentinel rail %s: durable read failed, falling back to Redis",
+                identity, exc_info=True,
+            )
+
+    # Un-migrated families (the Board Sentinel, whose producer is owned by an
+    # active sibling edit) and every unservable case keep the Queue 294 behavior.
     read = health_reads.read_json_key(key)
     if read.unavailable:
         raise HTTPException(status_code=503, detail=f"Redis unavailable: {read.error}")
@@ -1078,6 +1107,7 @@ async def get_calibration_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
     backtest: bool = Query(False, description="Read the last backtest run instead of the last live run"),
+    db: AsyncSession = Depends(get_db),
 ):
     """#1054: read the last cached Calibration Sentinel run (findings + filed
     issues). Lets an enqueued worker run be inspected without a web-request scan."""
@@ -1088,7 +1118,8 @@ async def get_calibration_sentinel_last(
         if backtest
         else "bainluck:calibration_sentinel:last"
     )
-    return _sentinel_last_payload(key)
+    identity = "sentinel:calibration:backtest" if backtest else "sentinel:calibration"
+    return await _sentinel_last_payload(key, db, identity=identity)
 
 
 @router.post("/flow-sentinel/run")
@@ -1126,13 +1157,16 @@ async def trigger_flow_sentinel(
 async def get_flow_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
 ):
     """#1078: read the last cached Flow Sentinel run (scorecard + filed issues).
     Lets an enqueued worker run be inspected without re-running the flows, and is
     the persisted scorecard the cockpit can tile later."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:flow_sentinel:last")
+    return await _sentinel_last_payload(
+        "bainluck:flow_sentinel:last", db, identity="sentinel:flow"
+    )
 
 
 @router.get("/mlb-schedule-coverage")
@@ -1187,13 +1221,16 @@ async def trigger_grid_sentinel(
 async def get_grid_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Queue #196: read the last cached Grid Sentinel run (verdict scorecard +
     filed issues). Lets an enqueued worker run be inspected without re-running,
     and is the persisted scorecard the cockpit grid tile consumes."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:grid_sentinel:last")
+    return await _sentinel_last_payload(
+        "bainluck:grid_sentinel:last", db, identity="sentinel:grid"
+    )
 
 
 @router.post("/grid-register-sentinel/run")
@@ -1229,13 +1266,16 @@ async def trigger_grid_register_sentinel(
 async def get_grid_register_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Queue #295: read the last cached Grid Register Sentinel run — per-league
     register version, age, missing/settled/live counts, drift and ambiguity
     counts, and any failure cause."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:grid_register_sentinel:last")
+    return await _sentinel_last_payload(
+        "bainluck:grid_register_sentinel:last", db, identity="sentinel:grid-register"
+    )
 
 
 @router.get("/grid-register/proposal")
@@ -1344,7 +1384,10 @@ async def get_board_sentinel_last(
     the persisted verdict the cockpit board tile consumes."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:board_sentinel:last")
+    # Not yet migrated to the durable substrate: the Board Sentinel producer is
+    # owned by an active sibling edit and is excluded from Queue 298. This rail
+    # keeps the Queue 294 typed-Redis behavior until that lands.
+    return await _sentinel_last_payload("bainluck:board_sentinel:last")
 
 
 @router.post("/horizon-sentinel/run")
@@ -1382,13 +1425,16 @@ async def trigger_horizon_sentinel(
 async def get_horizon_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Queue #223: read the last cached Horizon Sentinel run (scorecard + filed
     issues). Lets an enqueued worker run be inspected without re-running the
     calendar walk."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:horizon_sentinel:last")
+    return await _sentinel_last_payload(
+        "bainluck:horizon_sentinel:last", db, identity="sentinel:horizon"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1646,12 +1692,15 @@ async def trigger_settled_concept_sentinel(
 async def get_settled_concept_sentinel_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Queue #226: read the last cached Settled-Concept Sentinel run (scorecard +
     filed issues) without re-running the checks."""
     _check_admin_secret(secret, request=request)
 
-    return _sentinel_last_payload("bainluck:settled_concept_sentinel:last")
+    return await _sentinel_last_payload(
+        "bainluck:settled_concept_sentinel:last", db, identity="sentinel:settled-concept"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -10,9 +10,31 @@ import asyncio
 import importlib
 from datetime import date
 
+import pytest
+
 # The Celery task registered as ``app.tasks.settled_concept_sentinel`` shadows the
 # submodule attribute on ``app.tasks``, so import the module explicitly.
 scs = importlib.import_module("app.tasks.settled_concept_sentinel")
+
+
+@pytest.fixture(autouse=True)
+def _durable_substrate(monkeypatch):
+    """Stub the durable substrate these detection tests do not provide.
+
+    Queue 298 made the sentinel's evidence write REQUIRED: a run whose scorecard
+    was not persisted may no longer report success. These tests exercise
+    detection/scorecard/filing with no Postgres, so the substrate is stubbed
+    here — the real persistence contract (durable-first ordering, and the run
+    failing when the durable write fails) is pinned in
+    ``tests/test_durable_state_298.py`` and ``tests/test_sentinel_durable_evidence_298.py``.
+    """
+    import app.services.durable_snapshots as dsnap
+
+    async def _ok(envelope):
+        return {"status": "ok", "identity": envelope.identity,
+                "generation": envelope.generation}
+
+    monkeypatch.setattr(dsnap, "publish_snapshot_standalone", _ok)
 
 
 # ---------------------------------------------------------------------------

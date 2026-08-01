@@ -170,7 +170,12 @@ async def test_precompute_success_publishes_and_reports_stages():
     # stage timings present (truthful terminal — Item 1)
     for k in ("compute_ms", "serialize_ms", "publish_ms"):
         assert k in summary
-    assert summary["publish"] == {"last_good": "ok", "main": "ok"}
+    # Queue 298: the durable row is published alongside the two Redis keys, and
+    # its stage is reported with them.
+    assert summary["publish"]["last_good"] == "ok"
+    assert summary["publish"]["main"] == "ok"
+    assert summary["publish"]["durable"] == "ok"
+    assert summary["publication"]["success"] is True
     written = {c.args[0] for c in rc.set.call_args_list}
     assert written == {_MAIN_KEY, _MAIN_LAST_GOOD_KEY}
 
@@ -190,8 +195,15 @@ async def test_precompute_empty_payload_never_published():
     rc.delete.assert_not_called()
 
 
-async def test_precompute_main_publish_failure_raises_but_keeps_last_good():
-    """Publish failure is a task failure, not a success — and never DELs."""
+async def test_precompute_main_publish_failure_is_degraded_not_failed():
+    """Queue 298 moved the success criterion from Redis to the durable row.
+
+    Before, a failed ``main`` SET raised — correct when Redis WAS the survivor.
+    It is not any more: the durable row is, and once it has landed the run has
+    genuinely done its job. The route serves the durable copy (dated) until
+    Redis recovers, so failing the task here would only add a false alarm. The
+    failure is still recorded in the stages and logged loudly.
+    """
     rc = MagicMock()
     payload = _payload()
 
@@ -205,12 +217,42 @@ async def test_precompute_main_publish_failure_raises_but_keeps_last_good():
     with patch("app.tasks.base.get_task_session", return_value=_FakeCM(payload)), patch(
         "app.tasks.redis_state.get_redis_client", return_value=rc
     ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)):
-        with pytest.raises(RuntimeError, match="main-key publish failed"):
-            await _precompute_calibration_main()
+        summary = await _precompute_calibration_main()
 
-    # last-good SET was still attempted (durable survivor); nothing was DEL'd.
+    assert summary["status"] == "ok"
+    assert summary["publish"]["main"] == "error"
+    assert summary["publish"]["durable"] == "ok"
+    assert summary["publication"]["success"] is True
+    # last-good SET was still attempted; nothing was DEL'd.
     written = {c.args[0] for c in rc.set.call_args_list}
     assert _MAIN_LAST_GOOD_KEY in written
+    rc.delete.assert_not_called()
+
+
+async def test_precompute_durable_failure_fails_the_run_and_skips_redis():
+    """The inverse, and the one that now matters: no durable row, no success.
+
+    A run that persisted nothing must not report success — otherwise the task
+    metric and any Review/Verify evidence citing it claim a completed run whose
+    output does not exist. Redis is left untouched so the accelerator can never
+    lead the durable store.
+    """
+    rc = MagicMock()
+    payload = _payload()
+
+    async def _durable_fails(envelope):
+        return {"status": "error", "identity": envelope.identity,
+                "generation": envelope.generation, "error": "db down"}
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(payload)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)), patch(
+        "app.services.durable_snapshots.publish_snapshot_standalone", _durable_fails
+    ):
+        with pytest.raises(RuntimeError, match="durable publication did not succeed"):
+            await _precompute_calibration_main()
+
+    rc.set.assert_not_called()
     rc.delete.assert_not_called()
 
 

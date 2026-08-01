@@ -424,12 +424,23 @@ async def _run_grid_register_sentinel(
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     stats["generated_at"] = _now().isoformat()
 
-    try:
-        from app.tasks.redis_state import get_redis_client
+    # Queue 298 (#1512): durable row first, Redis as the accelerator.
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        get_redis_client().setex(REDIS_KEY, 14 * 86400, json.dumps(stats, default=str))
-    except Exception as exc:
-        logger.warning("Grid register sentinel cache write failed: %s", exc)
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:grid-register",
+        redis_key=REDIS_KEY,
+        stats=stats,
+        source="grid_register_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("grid register sentinel evidence")
 
     logger.info(
         "Grid register sentinel (%s): %d/%d registers clean, %d need a ruling, "

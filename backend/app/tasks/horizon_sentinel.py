@@ -394,15 +394,22 @@ async def _run_horizon_sentinel(
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    try:
-        import json as _json
+    # Queue 298 (#1512): durable row first, Redis as the accelerator.
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
-            "bainluck:horizon_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
-        )
-    except Exception as exc:
-        logger.warning("Horizon sentinel: Redis cache write failed: %s", exc)
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:horizon",
+        redis_key="bainluck:horizon_sentinel:last",
+        stats=stats,
+        source="horizon_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("horizon sentinel evidence")
 
     return stats

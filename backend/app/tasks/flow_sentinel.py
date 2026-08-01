@@ -1573,17 +1573,26 @@ async def _run_flow_sentinel(
     from datetime import datetime as _dt, timezone as _tz
     stats["generated_at"] = _dt.now(_tz.utc).isoformat()
 
-    # Cache the run so the cockpit / ops read path can tile it without re-running.
-    try:
-        import json as _json
+    # Persist the run so the cockpit / ops read path can tile it without
+    # re-running. Queue 298 (#1512): durable row FIRST, Redis as the accelerator.
+    # This used to be a bare SETEX whose failure was logged and swallowed, so an
+    # evicted or unwritten scorecard still reported a healthy run.
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
-            "bainluck:flow_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
-        )
-    except Exception as exc:
-        logger.warning("Flow sentinel result cache write failed: %s", exc)
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:flow",
+        redis_key="bainluck:flow_sentinel:last",
+        stats=stats,
+        source="flow_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("flow sentinel evidence")
 
     logger.info(
         "Flow sentinel (%s%s): %d/%d verified flows passed (%d UNKNOWN of %d "

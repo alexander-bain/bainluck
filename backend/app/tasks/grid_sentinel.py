@@ -824,17 +824,24 @@ async def _run_grid_sentinel(
     from datetime import datetime as _dt, timezone as _tz
     stats["generated_at"] = _dt.now(_tz.utc).isoformat()
 
-    # Cache for the cockpit / ops read path.
-    try:
-        import json as _json
+    # Persist for the cockpit / ops read path — durable row first, Redis as the
+    # accelerator (Queue 298, #1512).
+    from app.services.durable_snapshots import publish_sentinel_evidence
+    from app.utils.durable_state import evaluate_publication
 
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
-            "bainluck:grid_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
-        )
-    except Exception as exc:
-        logger.warning("Grid sentinel result cache write failed: %s", exc)
+    stages = await publish_sentinel_evidence(
+        identity="sentinel:grid",
+        redis_key="bainluck:grid_sentinel:last",
+        stats=stats,
+        source="grid_sentinel",
+    )
+    stats["persistence"] = stages
+    evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if stages["durable"] in ("ok", "superseded") else "error",
+        volatile_write=stages.get("volatile", "not_attempted"),
+        stages=stages,
+    ).raise_if_failed("grid sentinel evidence")
 
     logger.info(
         "Grid sentinel (%s): %d/%d grids green, %d issues filed in %.1fs",

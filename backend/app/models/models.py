@@ -1809,3 +1809,42 @@ class DiscoverLabelEvalRun(Base):
         Index("ix_discover_label_eval_name_captured", "eval_name", "captured_at"),
         Index("ix_discover_label_eval_status_captured", "status", "captured_at"),
     )
+
+
+class DurableStateSnapshot(Base):
+    """Cross-process last-good state that must outlive Redis (Queue 298, #1512).
+
+    ONE narrow row per artifact identity — the calibration payload and each
+    sentinel's verdict scorecard. Deliberately generic and deliberately small:
+    C117 found no existing durable-state primitive to reuse, and ruled that the
+    domain JSONB tables must not be repurposed for it.
+
+    Not a history table. Each identity keeps exactly its latest trustworthy
+    generation, replaced in one atomic statement guarded by ``generation``, so a
+    slow/failed writer can never destroy a newer good copy (see
+    ``app.services.durable_snapshots.publish_snapshot``).
+    """
+
+    __tablename__ = "durable_state_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: Stable artifact name, e.g. ``calibration:main`` / ``sentinel:flow``.
+    identity: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
+    #: The PAYLOAD's contract version (calibration's population_version, a
+    #: sentinel's scorecard version) — not the envelope format version.
+    schema_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    #: Monotonic build ordering; epoch-ms of ``generated_at`` (see
+    #: ``durable_state.generation_for``). Guards the atomic replace.
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    #: sha256 of the canonical payload — catches a torn write that still parses.
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: False means "do not serve this": a partial build that was recorded but is
+    #: not a trustworthy answer.
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Producer that wrote it, for provenance on the served payload.
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="unknown")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

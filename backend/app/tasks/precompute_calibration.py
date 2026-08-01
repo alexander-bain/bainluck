@@ -42,6 +42,13 @@ _MAIN_CACHE_TTL = 7200
 # failed/partial publish can never destroy a usable prior payload (Item 1).
 _MAIN_LAST_GOOD_KEY = "bainluck:calibration:main:last_good"
 _MAIN_KEY = "bainluck:calibration:main"
+
+# Queue 298 (#1512): both keys above live in the SAME 50MB allkeys-lru Redis, so
+# "durable last_good" was only ever durable against TTL, never against eviction
+# or a dead store — and a fresh web dyno has no process cache either. The real
+# survivor is now a row in `durable_state_snapshots` under this identity, written
+# BEFORE either Redis key. The Redis pair stays exactly as it is: accelerators.
+_DURABLE_IDENTITY = "calibration:main"
 # 7 days: long enough to bridge any realistic compute-perf incident while the
 # underlying query cost is worked separately, short enough to self-expire if the
 # beat is fully retired.
@@ -2859,7 +2866,46 @@ async def _precompute_calibration_main():
         )
 
     t2 = time.monotonic()
-    stages = _publish_calibration_main(rc, payload_json)
+
+    # Queue 298 Item 2: DURABLE FIRST. The candidate passed the gate, so publish
+    # the survivor before touching either accelerator. Ordering is the contract:
+    # if we wrote Redis first and the durable write then failed, the volatile
+    # copy would be AHEAD of the durable one — a torn pair the readers must treat
+    # as untrustworthy. Writing durable first makes that state unreachable in the
+    # happy path and diagnosable when it does appear.
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.calibration_publish_gate import _parse_generated_at
+    from app.utils.durable_state import DurableEnvelope, evaluate_publication
+
+    envelope = DurableEnvelope.build(
+        identity=_DURABLE_IDENTITY,
+        schema_version=CALIBRATION_POPULATION_VERSION,
+        payload=response,
+        # Generation is derived from the build's OWN stamp, so ordering survives
+        # a retry and matches what the route reads back.
+        generated_at=_parse_generated_at(response.get("generated_at")),
+        source="precompute_calibration",
+    )
+    durable_stage = await publish_snapshot_standalone(envelope)
+
+    # A durable write that lost the generation race is still a good copy on disk.
+    durable_ok = durable_stage["status"] in ("ok", "superseded")
+
+    # Never publish a volatile copy the durable store does not back: that is the
+    # torn pair, and it is worse than having no accelerator at all.
+    stages: dict = {}
+    if durable_ok:
+        stages = _publish_calibration_main(rc, payload_json)
+    else:
+        logger.error(
+            "calibration publish: durable write FAILED (%s) — skipping the Redis "
+            "accelerators so volatile can never lead durable; prior last-good preserved",
+            durable_stage.get("error") or durable_stage["status"],
+        )
+    stages["durable"] = durable_stage["status"]
+    if durable_stage.get("error"):
+        stages["durable_error"] = durable_stage["error"]
+    stages["durable_generation"] = envelope.generation
     publish_ms = round((time.monotonic() - t2) * 1000)
 
     summary = {
@@ -2874,13 +2920,39 @@ async def _precompute_calibration_main():
         "gate": gate,
     }
 
-    # A failed FRESH-key publish is not a success even if the compute was fine —
-    # record it as a failure (last-good stays intact for the route to serve).
+    # Queue 298 Item 2: the DURABLE write is what makes a run a success, not the
+    # accelerator. Before this, a failed ``main`` SET raised while a failed
+    # last_good SET was merely logged — exactly backwards once the survivor moved
+    # off Redis. A run that saved the payload durably has done its job even if
+    # Redis is unreachable; a run that did NOT must never report success, or the
+    # task metric (and any Review/Verify evidence citing it) claims a completed
+    # run that persisted nothing.
+    outcome = evaluate_publication(
+        compute_complete=True,
+        durable_write="ok" if durable_ok else "error",
+        volatile_write=(
+            "ok" if stages.get("main") == "ok"
+            else "not_attempted" if "main" not in stages
+            else "error"
+        ),
+        stages=stages,
+    )
+    summary["publication"] = {
+        "success": outcome.success,
+        "errors": outcome.errors,
+        "durable": durable_stage["status"],
+        "durable_generation": envelope.generation,
+    }
+    outcome.raise_if_failed("calibration publish")
+
     if stages.get("main") != "ok":
-        raise RuntimeError(
-            f"calibration main-key publish failed "
-            f"(last_good={stages.get('last_good')}, main={stages.get('main')}, "
-            f"err={stages.get('main_error')}); prior last-good preserved"
+        # Durable landed, so this is a degraded-but-successful publish: the route
+        # will serve the durable copy with an honest dated marker until Redis
+        # recovers. Loud, but not a task failure.
+        logger.warning(
+            "calibration publish: durable OK but Redis accelerator failed "
+            "(last_good=%s, main=%s, err=%s) — route will serve the durable copy",
+            stages.get("last_good"), stages.get("main"), stages.get("main_error"),
         )
 
     logger.info(

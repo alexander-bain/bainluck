@@ -27,6 +27,24 @@ from app.utils.grid_register import (
     validate_transition,
 )
 
+
+@pytest.fixture(autouse=True)
+def _durable_substrate(monkeypatch):
+    """Stub the durable substrate these tests do not provide.
+
+    Queue 298 made the sentinel's evidence write REQUIRED: a run whose scorecard
+    was not persisted may no longer report success. These tests have no Postgres,
+    so the substrate is stubbed; the persistence contract itself is pinned in
+    ``tests/test_sentinel_durable_evidence_298.py``.
+    """
+    import app.services.durable_snapshots as dsnap
+
+    async def _ok(envelope):
+        return {"status": "ok", "identity": envelope.identity,
+                "generation": envelope.generation}
+
+    monkeypatch.setattr(dsnap, "publish_snapshot_standalone", _ok)
+
 NOW = "2026-08-01T00:00:00+00:00"
 SPECS = {"nba": {"season": "2026-27", "entity_kind": "team",
                  "stages": ["make_playoffs", "division", "conference", "championship"]}}
