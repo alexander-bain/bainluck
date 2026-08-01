@@ -196,23 +196,24 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "20"
-          # L2-228: `cache: npm` + `cache-dependency-path` are REMOVED until
-          # `frontend/e2e/package-lock.json` is committed.
+          # L2-229: restored, in the same commit that adds the lockfile.
           #
-          # setup-node's cache step hard-fails when its dependency path does not
-          # resolve ("Some specified paths were not resolved, unable to cache
-          # dependencies"), and the lockfile has never existed in any commit. So
-          # a pure speed optimisation was aborting the job at SETUP — before the
-          # contract fixtures, which are deliberately placed ahead of any
-          # install precisely so they always run. The rail's most important
-          # always-on gate was the first casualty of a missing cache key, and
-          # the honest `npm ci` error nobody ever got to see was replaced by a
-          # confusing one about caching. Verified against run 30721023236.
+          # These two lines were removed by L2-228 because setup-node's cache
+          # step HARD-FAILS when its dependency path does not resolve ("Some
+          # specified paths were not resolved, unable to cache dependencies"),
+          # and the lockfile had never existed in any commit. A pure speed
+          # optimisation was therefore aborting the job at SETUP — before the
+          # contract fixtures, which sit ahead of any install precisely so they
+          # always run. The rail's most important always-on gate was the first
+          # casualty of a missing cache key, and the honest `npm ci` error
+          # nobody ever got to see was replaced by a confusing one about
+          # caching. Verified against run 30721023236.
           #
-          # Restore both lines in the same commit that adds the lockfile.
-          # Nothing is weakened by their absence: `npm ci` remains the
-          # reproducibility gate, and it still refuses to install without a
-          # lockfile that agrees with package.json.
+          # The packaging contract asserts every `cache-dependency-path` in
+          # this file resolves to a real file, so the pair cannot come back
+          # ahead of the lockfile again.
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
 
       - name: Contract fixtures (no dependencies, no browser, no network)
         # Runs BEFORE any install: `node --test` needs nothing but Node. If the
