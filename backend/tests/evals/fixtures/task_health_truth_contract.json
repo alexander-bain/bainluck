@@ -1,0 +1,751 @@
+{
+  "policy": {
+    "contract_version": "task-health-truth/v1",
+    "case_schema_version": "task-health-case/v1",
+    "event_schema_version": "task-run-event/v1",
+    "window_hours": 24,
+    "future_tolerance_seconds": 60,
+    "degraded_consecutive_failures": 2,
+    "critical_consecutive_failures": 5,
+    "degraded_failure_ratio": 0.25,
+    "critical_failure_ratio": 0.75,
+    "policy_note": "Fixture-declared mechanical policy; not production threshold approval."
+  },
+  "event_contract": {
+    "complete_success": "completed all declared work",
+    "complete_failure": "ordinary terminal failure",
+    "partial": "returned without completing all declared work; never a success",
+    "cancelled": "terminal failure",
+    "soft_limit": "terminal failure",
+    "hard_kill": "terminal failure or missing-history UNKNOWN when no terminal event survived"
+  },
+  "cases": [
+    {
+      "id": "healthy_hourly",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "h1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "h2",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1100
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 2,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 2,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "healthy",
+        "reasons": []
+      }
+    },
+    {
+      "id": "five_failures_then_success",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "f1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T06:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "f2",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T07:00:00Z",
+          "state": "soft_limit",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "f3",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T08:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "f4",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T09:00:00Z",
+          "state": "cancelled",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "f5",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "hard_kill",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "ok",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 5,
+          "partials": 0,
+          "terminal": 6,
+          "failure_ratio": 0.833333,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "critical",
+        "reasons": [
+          "ROLLING_FAILURE_RATIO_CRITICAL"
+        ]
+      }
+    },
+    {
+      "id": "old_failures_outside_window",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 6,
+        "freshness_hours": 8
+      },
+      "events": [
+        {
+          "event_id": "old",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-07-31T10:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "new",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T08:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "healthy",
+        "reasons": []
+      }
+    },
+    {
+      "id": "exact_24h_boundary_excluded",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 6,
+        "freshness_hours": 8
+      },
+      "events": [
+        {
+          "event_id": "edge",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-07-31T12:00:00.000000Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "inside",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T06:00:00.123456+00:00",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "healthy",
+        "reasons": []
+      }
+    },
+    {
+      "id": "healthy_daily_sparse",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 24,
+        "freshness_hours": 28
+      },
+      "events": [
+        {
+          "event_id": "d1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-07-31T12:30:00Z",
+          "state": "complete_success",
+          "duration_ms": 2000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "healthy",
+        "reasons": []
+      }
+    },
+    {
+      "id": "healthy_six_hour_sparse",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 6,
+        "freshness_hours": 8
+      },
+      "events": [
+        {
+          "event_id": "s1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T05:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 2000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "healthy",
+        "reasons": []
+      }
+    },
+    {
+      "id": "never_run",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": null,
+        "consecutive_failures": 0,
+        "freshness": "unknown",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "NEVER_RUN"
+        ]
+      }
+    },
+    {
+      "id": "history_evicted",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": false,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": null,
+        "consecutive_failures": 0,
+        "freshness": "unknown",
+        "completeness": "unknown",
+        "health": "unknown",
+        "reasons": [
+          "HISTORY_INCOMPLETE"
+        ]
+      }
+    },
+    {
+      "id": "partial_budget_return",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 6,
+        "freshness_hours": 8
+      },
+      "events": [
+        {
+          "event_id": "p1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "partial",
+          "duration_ms": 814000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 1,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "partial",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "degraded",
+        "reasons": [
+          "INCOMPLETE_RUNS"
+        ]
+      }
+    },
+    {
+      "id": "failure_after_success",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "ok1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "bad1",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 1,
+          "partials": 0,
+          "terminal": 2,
+          "failure_ratio": 0.5,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_failure",
+        "consecutive_failures": 1,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "degraded",
+        "reasons": [
+          "ROLLING_FAILURE_RATIO_DEGRADED"
+        ]
+      }
+    },
+    {
+      "id": "out_of_order_events",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "later",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "earlier",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 1,
+          "partials": 0,
+          "terminal": 2,
+          "failure_ratio": 0.5,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "degraded",
+        "reasons": [
+          "ROLLING_FAILURE_RATIO_DEGRADED"
+        ]
+      }
+    },
+    {
+      "id": "duplicate_event",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "dup",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        {
+          "event_id": "dup",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_failure",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "DUPLICATE_EVENT_ID"
+        ]
+      }
+    },
+    {
+      "id": "poison_first",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        null,
+        {
+          "event_id": "ok",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "POISON_EVENT"
+        ]
+      }
+    },
+    {
+      "id": "poison_middle",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T10:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        "poison",
+        {
+          "event_id": "b",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 2,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 2,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "POISON_EVENT"
+        ]
+      }
+    },
+    {
+      "id": "poison_last",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "ok",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        },
+        42
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 1,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 1,
+          "failure_ratio": 0.0,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "POISON_EVENT"
+        ]
+      }
+    },
+    {
+      "id": "future_clock_skew",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "future",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-08-01T12:02:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "fresh",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "FUTURE_EVENT"
+        ]
+      }
+    },
+    {
+      "id": "mixed_event_schema",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 1,
+        "freshness_hours": 2
+      },
+      "events": [
+        {
+          "event_id": "old",
+          "schema_version": "task-run-event/v0",
+          "at": "2026-08-01T11:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": null,
+        "consecutive_failures": 0,
+        "freshness": "unknown",
+        "completeness": "complete",
+        "health": "unknown",
+        "reasons": [
+          "EVENT_SCHEMA_MISMATCH"
+        ]
+      }
+    },
+    {
+      "id": "stale_daily_task",
+      "schema_version": "task-health-case/v1",
+      "evaluation_at": "2026-08-01T12:00:00Z",
+      "history_complete": true,
+      "schedule": {
+        "interval_hours": 24,
+        "freshness_hours": 28
+      },
+      "events": [
+        {
+          "event_id": "stale",
+          "schema_version": "task-run-event/v1",
+          "at": "2026-07-31T07:00:00Z",
+          "state": "complete_success",
+          "duration_ms": 1000
+        }
+      ],
+      "expected": {
+        "rolling": {
+          "successes": 0,
+          "failures": 0,
+          "partials": 0,
+          "terminal": 0,
+          "failure_ratio": null,
+          "boundary": "(evaluation_at-window, evaluation_at]"
+        },
+        "last_terminal_state": "complete_success",
+        "consecutive_failures": 0,
+        "freshness": "stale",
+        "completeness": "complete",
+        "health": "critical",
+        "reasons": [
+          "STALE_LAST_TERMINAL"
+        ]
+      }
+    }
+  ]
+}
