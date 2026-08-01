@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import FuturesMarket, FuturesOutcome, Team
 from app.utils.grid_register import ALLOWED_SOURCES, SCHEMA_VERSION
 from app.utils.name_normalization import normalize_team_name
+from app.utils.resolution_authority import can_write_winner
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,40 @@ async def build_candidates(
                 })
                 continue
             entity_key, entity_name = resolved
-            settled = outcome.is_winner is not None or market.status == "resolved"
+            graded = outcome.is_winner is not None
+
+            # An ``is_winner`` value only means "settled" if something was
+            # ENTITLED to write it. Reading the bare column conflates a real
+            # settlement with an unattributed grade, and production is full of
+            # the latter: on 2026-08-01 all 61 outcomes of the two LIVE "MLB
+            # World Series Champion 2026" markets carried is_winner=False with
+            # resolution_source=NULL (authority tier -1) on status='open'. Trusting
+            # that column would have written "eliminated" into every MLB cell of a
+            # season still being played — a fabricated result on the serving path,
+            # which is the one outcome worse than a missing cell.
+            #
+            # ``can_write_winner`` is the ladder's own predicate for this exact
+            # invariant (#845), so the register cannot drift from it: a grade
+            # counts on a resolved/closed market, or on any market when an
+            # authoritative external settlement asserted it. That second clause is
+            # what keeps gotcha #33 working — Kalshi markets that settle but stay
+            # status='open' still read as settled, because api_settlement is tier 3.
+            if not graded and market.status == "resolved":
+                # A settled market whose outcome was never graded has no honest
+                # status: it is not live, and calling it "eliminated" invents a
+                # result. Report it instead of publishing a guess.
+                unresolved.append({
+                    "reason": "settled_market_ungraded",
+                    "stage": stage,
+                    "source": market.source,
+                    "market_id": market.id,
+                    "outcome_id": outcome.id,
+                    "outcome_name": outcome.name,
+                    "market_name": market.name,
+                })
+                continue
+
+            settled = graded and can_write_winner(market.status, outcome.resolution_source)
             candidates.append({
                 "stage": stage,
                 "entity_key": entity_key,
