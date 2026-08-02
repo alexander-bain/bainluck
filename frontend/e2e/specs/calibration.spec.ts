@@ -151,18 +151,41 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     .isVisible()
     .catch(() => false);
 
+  const pageRootVisible = await pageRoot.isVisible().catch(() => false);
+
+  /**
+   * Read a hook attribute WITHOUT ever throwing.
+   *
+   * The first version of this called `getAttribute` bare. When the page was in
+   * its error state the hook did not exist, so the call sat on the default
+   * action timeout and then threw — killing the test before `journey.finish()`
+   * ran, which meant the run produced two failed journeys with ZERO artifacts
+   * and the manifest validator rejected it for having no evidence. Exactly the
+   * L2-229 failure (an unbounded wait eating the proof), reached a new way.
+   *
+   * A missing hook must degrade to `null` and be GRADED below, not abort the
+   * run before it can screenshot what it saw.
+   */
+  const hookAttr = (locator: typeof pageRoot, name: string): Promise<string | null> =>
+    locator.getAttribute(name, { timeout: 2_000 }).catch(() => null);
+
   // The payload contract the page says it rendered. Recorded, never asserted to
   // a literal: pinning "q299" here would make the rail a tripwire for Lane 1's
   // legitimate population bumps. Its VALUE is the parity evidence — the native
   // proof compares against this, and a blank means the page rendered a payload
   // that would not name its own contract.
-  const populationVersion = (await pageRoot.getAttribute("data-population-version")) ?? "";
-  const cacheStatus = (await pageRoot.getAttribute("data-cache-status")) ?? "";
-  const cohortN = await page
-    .locator('[data-testid="calibration-population-count"]')
-    .first()
-    .getAttribute("data-cohort-n")
-    .catch(() => null);
+  const populationVersion = (await hookAttr(pageRoot, "data-population-version")) ?? "";
+  const cacheStatus = (await hookAttr(pageRoot, "data-cache-status")) ?? "";
+  const cohortN = await hookAttr(
+    page.locator('[data-testid="calibration-population-count"]').first(),
+    "data-cohort-n",
+  );
+  // When the page renders its unavailable/error state it names it as data, so
+  // the report can say WHICH failure this was instead of "something was red".
+  const errorStateName = await hookAttr(
+    page.locator('[data-testid="calibration-error"]').first(),
+    "data-error-state-name",
+  );
 
   // Read every stat card in one pass, by hook. The value element is addressed
   // directly (`<hook>-value`) rather than by sibling position, so a reshuffle
@@ -301,17 +324,19 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     failedApiCalls.map((c) => `${c.url} → ${c.status}`),
     "the calibration API must not return an error status",
   ).toEqual([]);
-  expect(errorVisible, `"${ERROR_COPY}" must not be rendered`).toBe(false);
+  // Most diagnostic first. When the API is down, `errorStateName` names which
+  // failure it was, so the first red line is the cause and not a symptom.
+  expect(
+    errorVisible ? `page rendered its error state: ${errorStateName ?? "unnamed"}` : null,
+    `"${ERROR_COPY}" / the unavailable state must not be rendered`,
+  ).toBeNull();
   expect(loadingVisible, "the loading state must not still be mounted").toBe(false);
   expect(methodologyVisible, "the methodology section must render").toBe(true);
   expect(cohortControlVisible, "the well-traded/thin control must render").toBe(true);
 
   // L2-231. The hooks themselves are evidence: if the page root is absent, every
-  // hook-based read above degraded to "" and the run must not be read as green.
-  expect(
-    await pageRoot.isVisible().catch(() => false),
-    "the calibration page root hook must render",
-  ).toBe(true);
+  // hook-based read above degraded to null and the run must not be read as green.
+  expect(pageRootVisible, "the calibration page root hook must render").toBe(true);
   // Not a literal version — the value is recorded, its PRESENCE is asserted. A
   // payload that will not name its own population contract is exactly what
   // C111 P2 / Q297 §3 made un-serveable, so a blank here is a real regression.

@@ -62,6 +62,8 @@ function declarations(hook: string): number {
  */
 const SINGLETON_HOOKS = [
   "calibration-page",
+  "calibration-error",
+  "calibration-loading",
   "calibration-stale-banner",
   "calibration-generated-at",
   "calibration-population-count",
@@ -137,6 +139,19 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
   test("the activity section publishes its computed direction", () => {
     // This is what lets the rail check prose-vs-numbers without parsing prose.
     expect(SOURCE).toContain("data-activity-direction={activity.direction}");
+  });
+
+  test("the failure state names itself, and is never the loaded-page hook", () => {
+    // A rebuild window, a hard fetch failure and a rendering regression all look
+    // identical to a rail that can only observe "the page hook is missing". The
+    // name distinguishes them; conflating error with loaded is how a broken
+    // deploy reads as a slow one.
+    const i = SOURCE.indexOf('data-testid="calibration-error"');
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 320);
+    expect(block).toContain("data-error-state-name=");
+    expect(block).toContain('"load-failed"');
+    expect(block).not.toContain("calibration-page");
   });
 
   test("parked categories publish Queue 299's disposition", () => {

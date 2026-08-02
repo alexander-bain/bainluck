@@ -318,11 +318,20 @@ export default function CalibrationPage() {
     // happening — the curve is rebuilt hourly and a retry is worth making.
     // Anything else still falls through to the generic error state.
     const detail = (error as ApiError).detail as
-      | { status?: string; message?: string }
+      | { status?: string; message?: string; reason?: string }
       | undefined;
     const unavailable = detail?.status === "unavailable";
     return (
-      <div className="max-w-6xl mx-auto">
+      // L2-231 Item 1: the failure states carry their own hooks, and NAME
+      // themselves as data. Without this the browser rail could only observe
+      // "the loaded-page hook is missing" and had no way to say whether that was
+      // a rebuild window, a hard fetch failure, or a rendering regression — and
+      // its reads on the absent hooks timed out and destroyed the evidence.
+      <div
+        className="max-w-6xl mx-auto"
+        data-testid="calibration-error"
+        data-error-state-name={unavailable ? (detail?.reason || "unavailable") : "load-failed"}
+      >
         <ErrorState
           message={
             unavailable
@@ -338,7 +347,7 @@ export default function CalibrationPage() {
 
   if (!data || !normalized) {
     return (
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto" data-testid="calibration-loading">
         <LoadingState message="Loading calibration data..." />
       </div>
     );
