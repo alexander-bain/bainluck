@@ -436,3 +436,33 @@ def test_unnamespaced_key_still_gets_a_class():
 
     assert _redis_key_class("background") == "background"
     assert _redis_key_class("") == "(root)"
+
+
+# --- Budget-guard containment ----------------------------------------------
+
+
+def test_only_our_own_statement_timeout_is_contained():
+    """The guard must contain its OWN cancellation and nothing else.
+
+    The first organic beat after the bound shipped proved why this matters:
+    Part A drained its backlog, Part B ran out of statement budget, and the
+    cancellation propagated all the way to the function-level handler — so
+    Parts C and D never ran at all. Containment fixes that. But containment
+    that is too broad is worse than none: a genuine query bug swallowed as
+    "ran out of time" means the part silently does nothing forever, which is
+    exactly how `_fix_golf_commence_times` stayed dead for months (gotcha #45).
+    """
+    from app.tasks.backfill_winners import _is_statement_timeout
+
+    class QueryCanceledError(Exception):
+        pass
+
+    assert _is_statement_timeout(QueryCanceledError("canceling statement"))
+    assert _is_statement_timeout(
+        Exception("canceling statement due to statement timeout")
+    )
+    # Anything else must propagate rather than be reported as a budget stop.
+    assert not _is_statement_timeout(Exception("column fo.sport_key does not exist"))
+    assert not _is_statement_timeout(Exception("deadlock detected"))
+    assert not _is_statement_timeout(Exception("connection reset by peer"))
+    assert not _is_statement_timeout(ValueError("nope"))

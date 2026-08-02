@@ -6664,6 +6664,21 @@ async def _precompute_bookmaker_calibration():
     return stats
 
 
+def _is_statement_timeout(exc: BaseException) -> bool:
+    """Is this the budget guard firing, or a real error?
+
+    Only a cancellation caused by our own ``SET LOCAL statement_timeout`` may be
+    contained and moved past; anything else must propagate. Deliberately narrow
+    — a catch-all here would swallow a genuine query bug as "ran out of time"
+    and the part would silently do nothing forever (gotcha #45's lesson: never
+    catch-all around scheduled work).
+    """
+    if exc.__class__.__name__.startswith("QueryCanceled"):
+        return True
+    text_form = str(exc).lower()
+    return "statement timeout" in text_form or "querycancelederror" in text_form
+
+
 async def _compute_calibration_prices():
     """Pre-compute calibration_probability on resolved outcomes.
 
@@ -6734,6 +6749,41 @@ async def _compute_calibration_prices():
         """
         budget_ms = max(int((_cal_remaining() - reserve_s) * 1000), 5_000)
         await session.execute(text(f"SET LOCAL statement_timeout = {budget_ms}"))
+
+    async def _run_bounded(session, sql, params, part: str):
+        """Run ONE bounded batch, containing its timeout to this Part.
+
+        The first organic beat on the bounded version (14:18:52 UTC) proved the
+        bound works and the handling did not: Part A drained 73,885 rows, Part B
+        then ran out of budget and its statement_timeout fired — and because the
+        cancellation propagated to the function-level handler, Parts C and D
+        were skipped entirely. A budget guard that takes down the parts AFTER
+        it is not a budget guard, it is a new failure mode (gotcha #42 in
+        another costume). A timed-out batch now ends its own Part, records
+        where it stopped, and lets the rest of the run proceed.
+        """
+        try:
+            await _bound_next_statement(session)
+            return await session.execute(sql, params)
+        except Exception as exc:  # noqa: BLE001 — classified, then contained
+            await session.rollback()
+            if not _is_statement_timeout(exc):
+                raise
+            stats["stopped_at"] = stats.get("stopped_at") or part
+            stats.setdefault("timed_out_parts", []).append(part)
+            logger.info(
+                "Calibration %s: out of statement budget — stopping this part, "
+                "the remaining parts still get their slice",
+                part,
+            )
+            return None
+
+    # Part A drains its backlog fast now that the cursor reaches it, but on the
+    # first runs after that unblocking it can legitimately want the entire
+    # window (73,885 rows on the first one). Cap its share so A2/B/C/D always
+    # get a slice and every part stays net-positive per run — the same reasoning
+    # as _RESET_MIN_BUDGET_S, applied to the part that can now actually finish.
+    _PART_A_BUDGET_S = _CAL_DEADLINE_S * 0.55
 
     # Queue 300 — the Part-B/Part-D fixed point. Part D nulls any outcome whose
     # calibration price is just its (extreme, illiquid) opening probability.
@@ -6823,6 +6873,9 @@ async def _compute_calibration_prices():
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = "part_a"
                     break
+                if (_cal_time.monotonic() - _cal_start) > _PART_A_BUDGET_S:
+                    stats["stopped_at"] = stats.get("stopped_at") or "part_a_share"
+                    break
                 # Queue #167 (#941/#1054) writer-side guard: for Kalshi
                 # player-prop "<subject>: N+" OVER props, a settled no-bid snapshot
                 # (yes_bid=0, yes_ask≈1.00) that lands before commence_time is a
@@ -6844,8 +6897,7 @@ async def _compute_calibration_prices():
                               CASE WHEN nc.is_threshold THEN NULL
                                    ELSE nc.opening_probability END
                           )"""
-                await _bound_next_statement(session)
-                result_a = await session.execute(text(f"""
+                result_a = await _run_bounded(session, text(f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
                                    fo.opening_probability,
@@ -6883,7 +6935,9 @@ async def _compute_calibration_prices():
                         SELECT (SELECT COUNT(*) FROM upd) AS updated,
                                (SELECT COUNT(*) FROM needs_cal) AS scanned,
                                (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
-                    """), {"cursor": part_a_cursor, "batch": _CAL_BATCH})
+                    """), {"cursor": part_a_cursor, "batch": _CAL_BATCH}, "part_a")
+                if result_a is None:
+                    break
                 row_a = result_a.mappings().first()
                 await session.commit()
                 scanned_a = int(row_a["scanned"] or 0)
@@ -7082,8 +7136,7 @@ async def _compute_calibration_prices():
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = stats["stopped_at"] or "part_b"
                     break
-                await _bound_next_statement(session)
-                result_b = await session.execute(text(f"""
+                result_b = await _run_bounded(session, text(f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fo.opening_captured_at,
                                    fo.opening_probability
@@ -7118,7 +7171,9 @@ async def _compute_calibration_prices():
                         SELECT (SELECT COUNT(*) FROM upd) AS updated,
                                (SELECT COUNT(*) FROM needs_cal) AS scanned,
                                (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
-                    """), {"cursor": part_b_cursor, "batch": _CAL_BATCH})
+                    """), {"cursor": part_b_cursor, "batch": _CAL_BATCH}, "part_b")
+                if result_b is None:
+                    break
                 row_b = result_b.mappings().first()
                 await session.commit()
                 scanned_b = int(row_b["scanned"] or 0)
@@ -7189,7 +7244,14 @@ async def _compute_calibration_prices():
             # Outcomes with ≤2 snapshots at extreme prices (≥0.95 or ≤0.05)
             # where calibration fell back to opening are illiquid threshold
             # tails (e.g. "Player: 3+ Goals" at 0.99 with 1 snapshot).
-            illiquid_result = await session.execute(text("""
+            #
+            # Queue 300: this was the one unbounded statement left in the run —
+            # no deadline check, no statement timeout — so an already-spent
+            # budget could still be pushed past the 600s soft limit here. It is
+            # idempotent cleanup that runs every beat, so skipping it on an
+            # exhausted budget costs one cycle and protects the whole run.
+            stats["illiquid_tails_nulled"] = 0
+            illiquid_result = await _run_bounded(session, text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
                     FROM futures_markets fm
@@ -7204,14 +7266,15 @@ async def _compute_calibration_prices():
                           WHERE fos.outcome_id = fo.id
                           LIMIT 3 OFFSET 2
                       )
-                """))
-            stats["illiquid_tails_nulled"] = illiquid_result.rowcount
-            if illiquid_result.rowcount > 0:
-                await session.commit()
-                logger.info(
-                    "Part D: nulled %d untradeable outcomes from calibration",
-                    illiquid_result.rowcount,
-                )
+                """), {}, "part_d")
+            if illiquid_result is not None:
+                stats["illiquid_tails_nulled"] = illiquid_result.rowcount
+                if illiquid_result.rowcount > 0:
+                    await session.commit()
+                    logger.info(
+                        "Part D: nulled %d untradeable outcomes from calibration",
+                        illiquid_result.rowcount,
+                    )
 
     except Exception as e:
         stats["errors"].append(str(e))
