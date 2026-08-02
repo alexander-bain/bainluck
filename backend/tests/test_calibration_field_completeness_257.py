@@ -144,10 +144,17 @@ class TestSingleCanonicalPopulation:
         assert "virtual_market" not in src
 
     def test_precompute_task_caches_shared_payload(self):
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
-        # The scheduled task is a thin wrapper: compute the shared payload, publish.
+        # Queue 300M split the beat into an orchestrator (ledger + checkpoint)
+        # and the build itself. The invariant this guards is unchanged: the
+        # scheduled path computes the ONE shared payload and publishes it — it
+        # never grows its own copy of the population.
+        src = (
+            inspect.getsource(precompute_calibration._precompute_calibration_main)
+            + inspect.getsource(precompute_calibration._run_calibration_main_build)
+        )
         assert "compute_calibration_payload" in src
         assert "_publish_calibration_main" in src
+        assert "ranked_outcomes" not in src
         # Queue 272 (#1459): publication writes the canonical main key (via the
         # helper + module constant), plus the durable last-good survivor key.
         pub = inspect.getsource(precompute_calibration._publish_calibration_main)
@@ -211,15 +218,23 @@ class _FakeDB:
             _Result(one=SimpleNamespace(lo=None, hi=None)),      # date_range
         ]
 
-    async def execute(self, statement):
+    async def execute(self, statement, params=None):
         # Queue 274: the beat arms a `SET LOCAL statement_timeout` on its session
         # before the compute; that non-result statement must not consume one of the
         # queued query results (it would shift the whole sequence by one).
-        if "statement_timeout" in str(statement).lower():
-            return _Result()
+        # Queue 300M adds the same exemption for the overlap advisory lock (which
+        # is the one statement here that carries bind params).
+        text_form = str(statement).lower()
+        if "statement_timeout" in text_form or "advisory" in text_form:
+            return _Result(scalar=True)
         if not self._results:
             return _Result()
         return self._results.pop(0)
+
+    async def commit(self):
+        # Queue 300M commits at each phase boundary so a checkpoint can only
+        # advance behind committed work. Read-only here; nothing to do.
+        return None
 
 
 @pytest.fixture(autouse=True)
@@ -282,6 +297,11 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
         return {"status": "ok", "identity": envelope.identity,
                 "generation": envelope.generation}
 
+    async def _durable_missing(*_a, **_k):
+        from app.utils.durable_state import EnvelopeRead
+
+        return EnvelopeRead(status="missing", tier="durable")
+
     with patch(
         "app.tasks.base.get_task_session", return_value=_Sess()
     ), patch(
@@ -292,6 +312,12 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
         # durability, and `_FakeDB` does not model the upsert — so stub the
         # substrate and let the publish proceed.
         "app.services.durable_snapshots.publish_snapshot_standalone", _durable_ok
+    ), patch(
+        # Queue 300M reads the phase ledger + checkpoint before building. Those
+        # reads share this test's single fake session, and an unstubbed SELECT
+        # would consume two of its queued query results and shift the whole
+        # sequence. "Nothing stored yet" is also the honest first-run state.
+        "app.services.durable_snapshots.read_snapshot_standalone", _durable_missing
     ):
         result = await precompute_calibration._precompute_calibration_main()
 

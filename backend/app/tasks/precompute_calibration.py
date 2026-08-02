@@ -2176,7 +2176,7 @@ def _build_nonexclusive_bundle_census(futures_rows) -> dict:
     }
 
 
-async def compute_calibration_payload(db) -> dict:
+async def compute_calibration_payload(db, *, runner=None) -> dict:
     """The single canonical /api/calibration payload computation (Queue #257 Item 1).
 
     ONE eligible population + ONE normalization divisor, shared by BOTH serve
@@ -2197,18 +2197,39 @@ async def compute_calibration_payload(db) -> dict:
     session); all reads run on it and the response dict is returned WITHOUT
     writing Redis (the caching wrapper does that). Read-side only — never mutates
     is_winner / calibration_probability (gotcha #21).
+
+    Queue 300M (#1479/#1513) — ``runner``. Optional; when absent (the route's
+    in-request cold-cache fallback) this function behaves EXACTLY as it did
+    before: one transaction, eleven reads, no timing, no resume. When the
+    scheduled build passes a :class:`~app.tasks.calibration_main_build.PhaseRunner`
+    the same eleven reads are grouped into three measured, separately-committed
+    phases — ``futures`` (the population CTE), ``sports`` (the three events
+    reads) and ``diagnostics`` (the seven transparency reads) — each of which
+    can be carried forward by the next beat if this one runs out of window.
+    The population filters, grouping, metrics and thresholds are untouched;
+    what changes is only WHEN each read's transaction ends and whether its
+    result has to be recomputed from scratch after an interruption.
     """
     from sqlalchemy import func, select
 
     from app.models import FuturesMarket
+    from app.tasks.calibration_main_build import NULL_RUNNER
     from app.tasks.redis_state import get_redis_client
+    from app.utils.calibration_phase_ledger import (
+        PHASE_AGGREGATE,
+        PHASE_DIAGNOSTICS,
+        PHASE_FUTURES,
+        PHASE_SPORTS,
+    )
+
+    runner = runner or NULL_RUNNER
 
     # nullcontext preserves the historical block structure (the queries below
     # keep their original indentation) while running on the caller-provided
     # session instead of opening its own — so both serve paths share one body.
     with contextlib.nullcontext():
         # -----------------------------------------------------------
-        # Query 1: Main futures calibration buckets
+        # PHASE 1 (futures) — Query 1: Main futures calibration buckets
         # -----------------------------------------------------------
         main_sql = text(
             "WITH "
@@ -2340,8 +2361,15 @@ async def compute_calibration_payload(db) -> dict:
             GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
             ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
         """)
-        result = await db.execute(main_sql)
-        rows = result.all()
+        rows = runner.reuse(PHASE_FUTURES, "rows")
+        if rows is None:
+            runner.begin(PHASE_FUTURES)
+            await runner.apply_statement_timeout(db, PHASE_FUTURES)
+            result = await db.execute(main_sql)
+            rows = result.all()
+            await runner.commit(db)
+            runner.record(PHASE_FUTURES, "rows", rows, kind="rows")
+            runner.complete(PHASE_FUTURES)
 
         # #940 phase-1 transparency: included/excluded counts are constant across
         # every returned row (CROSS JOIN to the 1-row liq_summary).
@@ -2457,8 +2485,16 @@ async def compute_calibration_payload(db) -> dict:
         )
 
         # -----------------------------------------------------------
-        # Query 2: Ground-truth sports calibration from events table
+        # PHASE 2 (sports) — Queries 2-4: ground-truth events calibration.
+        # Grouped as one phase because all three read the same table under the
+        # same eligibility shape; splitting them further would buy nothing and
+        # cost three extra checkpoint writes.
         # -----------------------------------------------------------
+        _sports_carried = runner.is_carried(PHASE_SPORTS)
+        if not _sports_carried:
+            runner.begin(PHASE_SPORTS)
+
+        # Query 2: Ground-truth sports calibration from events table
         events_sql = text("""
             SELECT
                 LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
@@ -2500,8 +2536,12 @@ async def compute_calibration_payload(db) -> dict:
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
         """)
-        events_result = await db.execute(events_sql)
-        events_rows = events_result.all()
+        events_rows = runner.reuse(PHASE_SPORTS, "events_rows")
+        if events_rows is None:
+            await runner.apply_statement_timeout(db, PHASE_SPORTS)
+            events_result = await db.execute(events_sql)
+            events_rows = events_result.all()
+            runner.record(PHASE_SPORTS, "events_rows", events_rows, kind="rows")
 
         # -----------------------------------------------------------
         # Query 3: Spread calibration
@@ -2545,8 +2585,11 @@ async def compute_calibration_payload(db) -> dict:
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
         """)
-        spreads_result = await db.execute(spreads_sql)
-        spreads_rows = spreads_result.all()
+        spreads_rows = runner.reuse(PHASE_SPORTS, "spreads_rows")
+        if spreads_rows is None:
+            spreads_result = await db.execute(spreads_sql)
+            spreads_rows = spreads_result.all()
+            runner.record(PHASE_SPORTS, "spreads_rows", spreads_rows, kind="rows")
 
         # -----------------------------------------------------------
         # Query 4: Totals calibration
@@ -2590,8 +2633,24 @@ async def compute_calibration_payload(db) -> dict:
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
         """)
-        totals_result = await db.execute(totals_sql)
-        totals_rows = totals_result.all()
+        totals_rows = runner.reuse(PHASE_SPORTS, "totals_rows")
+        if totals_rows is None:
+            totals_result = await db.execute(totals_sql)
+            totals_rows = totals_result.all()
+            runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
+
+        if not _sports_carried:
+            await runner.commit(db)
+            runner.complete(PHASE_SPORTS)
+
+        # -----------------------------------------------------------
+        # PHASE 3 (diagnostics) — Queries 5-11: the transparency reads. Every
+        # one is a small aggregate, and none of them feeds the published
+        # buckets, so they share one phase and one checkpoint.
+        # -----------------------------------------------------------
+        _diagnostics_carried = runner.is_carried(PHASE_DIAGNOSTICS)
+        if not _diagnostics_carried:
+            runner.begin(PHASE_DIAGNOSTICS)
 
         # -----------------------------------------------------------
         # Query 5: Per-bookmaker calibration from Redis
@@ -2621,12 +2680,16 @@ async def compute_calibration_payload(db) -> dict:
         # -----------------------------------------------------------
         # Query 6: Total resolved markets count
         # -----------------------------------------------------------
-        total_markets_result = await db.execute(
-            select(func.count()).select_from(FuturesMarket).where(
-                FuturesMarket.status == "resolved"
+        total_markets = runner.reuse(PHASE_DIAGNOSTICS, "total_markets")
+        if total_markets is None:
+            await runner.apply_statement_timeout(db, PHASE_DIAGNOSTICS)
+            total_markets_result = await db.execute(
+                select(func.count()).select_from(FuturesMarket).where(
+                    FuturesMarket.status == "resolved"
+                )
             )
-        )
-        total_markets = total_markets_result.scalar()
+            total_markets = total_markets_result.scalar()
+            runner.record(PHASE_DIAGNOSTICS, "total_markets", total_markets)
 
         # -----------------------------------------------------------
         # Query 7: Closing line coverage
@@ -2641,8 +2704,11 @@ async def compute_calibration_payload(db) -> dict:
             WHERE status IN ('completed', 'closed')
               AND home_score IS NOT NULL AND away_score IS NOT NULL
         """)
-        closing_result = await db.execute(closing_sql)
-        closing_row = closing_result.one()
+        closing_row = runner.reuse(PHASE_DIAGNOSTICS, "closing_row")
+        if closing_row is None:
+            closing_result = await db.execute(closing_sql)
+            closing_row = closing_result.one()
+            runner.record(PHASE_DIAGNOSTICS, "closing_row", closing_row, kind="row")
 
         # -----------------------------------------------------------
         # Query 8: #762 void-filter transparency — how many eligible resolved
@@ -2660,8 +2726,11 @@ async def compute_calibration_payload(db) -> dict:
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
         """)
-        void_result = await db.execute(void_sql)
-        void_excluded = int(void_result.scalar() or 0)
+        void_excluded = runner.reuse(PHASE_DIAGNOSTICS, "void_excluded")
+        if void_excluded is None:
+            void_result = await db.execute(void_sql)
+            void_excluded = int(void_result.scalar() or 0)
+            runner.record(PHASE_DIAGNOSTICS, "void_excluded", void_excluded)
 
         # -----------------------------------------------------------
         # Query 9: #754-curve heuristic-exclusion transparency — how many
@@ -2684,8 +2753,11 @@ async def compute_calibration_payload(db) -> dict:
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
             GROUP BY fm.source
         """)
-        heur_result = await db.execute(heur_sql)
-        heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
+        heuristic_excluded = runner.reuse(PHASE_DIAGNOSTICS, "heuristic_excluded")
+        if heuristic_excluded is None:
+            heur_result = await db.execute(heur_sql)
+            heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
+            runner.record(PHASE_DIAGNOSTICS, "heuristic_excluded", heuristic_excluded)
 
         # -----------------------------------------------------------
         # Query 10: Queue #158 (#1011) soccer 2-way exclusion transparency —
@@ -2718,8 +2790,11 @@ async def compute_calibration_payload(db) -> dict:
             JOIN sports s ON s.id = outcomes.sport_id
             WHERE s.key LIKE 'soccer_%'
         """)
-        soccer_2way_result = await db.execute(soccer_2way_sql)
-        soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
+        soccer_2way_excluded = runner.reuse(PHASE_DIAGNOSTICS, "soccer_2way_excluded")
+        if soccer_2way_excluded is None:
+            soccer_2way_result = await db.execute(soccer_2way_sql)
+            soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
+            runner.record(PHASE_DIAGNOSTICS, "soccer_2way_excluded", soccer_2way_excluded)
 
         # -----------------------------------------------------------
         # Query 11: Queue #261 Item 3 — truth-evidence census. Over the SAME
@@ -2754,15 +2829,62 @@ async def compute_calibration_payload(db) -> dict:
               -- keeps the census a faithful pre-liquidity classification.
             GROUP BY 1
         """)
-        truth_result = await db.execute(truth_sql)
-        truth_by_class = {
-            r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
-            for r in truth_result.all()
-        }
+        truth_by_class = runner.reuse(PHASE_DIAGNOSTICS, "truth_by_class")
+        if truth_by_class is None:
+            truth_result = await db.execute(truth_sql)
+            truth_by_class = {
+                r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
+                for r in truth_result.all()
+            }
+            runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
+
+        # -----------------------------------------------------------
+        # Query 12: L2-78 Item 0 (flagged since L2-73) — the true resolved-data
+        # span for the calibration hero. Cheap MIN/MAX over resolved futures
+        # resolution_date (the Kalshi/Polymarket bulk of the curve), but BOUNDED
+        # to a sane window so data-quality artifacts can't define the hero: a
+        # resolved market must have resolved in the past (resolution_date <=
+        # NOW() — a future date on a 'resolved' row is a bad date) and within the
+        # last 5 years (these sources are all recent; a 2011 date is a parse
+        # artifact, seen live). Without the bound the raw MIN/MAX read
+        # Jul-2011–Jul-2029. None-safe; the hero falls back to generated_at.
+        #
+        # Queue 300M moved this read UP from the post-processing block into the
+        # diagnostics phase. It had been the one read outside every measured
+        # boundary — the twelfth of what the queue called eleven — so it was
+        # neither timed, bounded by a phase statement timeout, nor resumable.
+        # Nothing about the query changed; only where it is accounted for.
+        date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
+        if date_range is None:
+            try:
+                dr = (
+                    await db.execute(
+                        text(
+                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+                            "FROM futures_markets "
+                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+                            "AND resolution_date <= NOW() "
+                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
+                        )
+                    )
+                ).one()
+                if dr.lo and dr.hi:
+                    date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
+            except Exception:
+                logger.warning("calibration date_range aggregate failed", exc_info=True)
+            runner.record(PHASE_DIAGNOSTICS, "date_range", date_range)
+
+        if not _diagnostics_carried:
+            await runner.commit(db)
+            runner.complete(PHASE_DIAGNOSTICS)
 
     # -----------------------------------------------------------
-    # Post-processing (runs outside the DB session)
+    # PHASE 4 (aggregate) — post-processing, outside the DB session. Row
+    # materialization, bucket assembly, Wilson CIs and the bootstrap MCE. Never
+    # resumable (it consumes every read above), but very much measurable: until
+    # Queue 300M it was the one stretch of the build no budget could see.
     # -----------------------------------------------------------
+    runner.begin(PHASE_AGGREGATE)
     all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
     total_outcomes = sum(r.n for r in all_rows)
     total_winners = sum(r.winners for r in all_rows)
@@ -3023,32 +3145,8 @@ async def compute_calibration_payload(db) -> dict:
     spreads_summary = _source_summary("odds_api_spreads")
     totals_summary = _source_summary("odds_api_totals")
 
-    # L2-78 Item 0 (flagged since L2-73): the true resolved-data span for the
-    # calibration hero. Cheap MIN/MAX over resolved futures resolution_date (the
-    # Kalshi/Polymarket bulk of the curve), but BOUNDED to a sane window so
-    # data-quality artifacts can't define the hero: a resolved market must have
-    # resolved in the past (resolution_date <= NOW() — a future date on a
-    # 'resolved' row is a bad date) and within the last 5 years (these sources
-    # are all recent; a 2011 date is a parse artifact, seen live). Without the
-    # bound the raw MIN/MAX read Jul-2011–Jul-2029. None-safe; the hero falls
-    # back to generated_at when absent.
-    date_range = None
-    try:
-        dr = (
-            await db.execute(
-                text(
-                    "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
-                    "FROM futures_markets "
-                    "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
-                    "AND resolution_date <= NOW() "
-                    "AND resolution_date >= NOW() - INTERVAL '5 years'"
-                )
-            )
-        ).one()
-        if dr.lo and dr.hi:
-            date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
-    except Exception:
-        logger.warning("calibration date_range aggregate failed", exc_info=True)
+    # ``date_range`` is read in the diagnostics phase above (Queue 300M) so it
+    # sits inside a measured, bounded, resumable boundary like every other read.
 
     response = {
         "closing_line_coverage": {
@@ -3240,6 +3338,7 @@ async def compute_calibration_payload(db) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    runner.complete(PHASE_AGGREGATE)
     return response
 
 
@@ -3388,7 +3487,34 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
     return stages
 
 
-async def _precompute_calibration_main():
+def _main_input_fingerprint() -> str:
+    """Everything a carried phase output depends on, in one 32-char digest.
+
+    The population version alone is not enough: it is bumped deliberately and
+    rarely, while the eleven queries change under it all the time (four rungs
+    landed under q267 in Queue 299 alone). So the fingerprint hashes the SOURCE
+    of the compute function itself. Any edit to any query invalidates every
+    carried read, which is the only safe default — a payload half-built by the
+    old code and half by the new is worse than one that took an extra beat.
+    """
+    from app.utils.calibration_phase_ledger import input_fingerprint
+
+    try:
+        import inspect
+
+        source = inspect.getsource(compute_calibration_payload)
+    except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
+        source = f"unavailable:{time.time()}"
+    return input_fingerprint(CALIBRATION_POPULATION_VERSION, source)
+
+
+#: A carried read older than the FRESH key's own TTL cannot make the page any
+#: fresher than serving that key would have, so there is no reason to keep it.
+#: Derived from ``_MAIN_CACHE_TTL`` rather than chosen, so the two cannot drift.
+_CARRY_MAX_AGE_S = _MAIN_CACHE_TTL
+
+
+async def _run_calibration_main_build(runner=None):
     """Precompute the main /api/calibration payload and cache it in Redis.
 
     Thin caching wrapper over the shared ``compute_calibration_payload`` (Queue
@@ -3409,21 +3535,46 @@ async def _precompute_calibration_main():
         prior last-good intact.
     """
     from app.tasks.base import get_task_session
+    from app.tasks.calibration_main_build import NULL_RUNNER
     from app.tasks.redis_state import get_redis_client
+    from app.tasks.task_checkpoint import release_overlap_lock, try_acquire_overlap_lock
+    from app.utils.calibration_phase_ledger import MAIN_BUILD_TASK, PHASE_PUBLISH
+
+    runner = runner or NULL_RUNNER
 
     t0 = time.monotonic()
     async with get_task_session() as db:
+        # Queue 300M: one writer at a time. A second beat starting while the
+        # first is still building would advance the same checkpoint from two
+        # directions; a PostgreSQL session advisory lock is the right primitive
+        # because it cannot be evicted and it dies WITH the session — including
+        # on SIGKILL, which a Redis ``SET NX EX`` lock survives as a stale lock
+        # that blocks every subsequent beat.
+        if not await try_acquire_overlap_lock(db, MAIN_BUILD_TASK):
+            logger.info(
+                "calibration main build: another run holds the lock — skipping"
+            )
+            return {"status": "skipped", "reason": "overlap_lock_not_acquired"}
+
         # Queue 274 (#1479): bound EVERY query of this compute at the DB level so a
         # wedged/bloat-slow statement self-cancels at ~the Celery soft limit and
         # RELEASES its xmin, instead of being SIGKILLed at the hard limit into an
         # orphaned backend that pins autovacuum and drives the bloat spiral that
-        # broke organic recurrence. SET LOCAL scopes to this session's transaction
-        # (the fresh per-task engine/session from get_task_session), so it covers
-        # compute_calibration_payload's 11 sequential reads and nothing else.
+        # broke organic recurrence.
+        #
+        # Queue 300M refines WHERE that bound comes from. This up-front SET LOCAL
+        # remains the floor for the no-runner path; with a runner, each phase
+        # re-applies a tighter bound derived from the time actually left before
+        # the absolute deadline (see PhaseRunner.apply_statement_timeout), so the
+        # backstop keeps shrinking as the window closes instead of staying at a
+        # value only the first read could ever have used.
         await db.execute(
             text(f"SET LOCAL statement_timeout = {_MAIN_COMPUTE_STMT_TIMEOUT_MS}")
         )
-        response = await compute_calibration_payload(db)
+        try:
+            response = await compute_calibration_payload(db, runner=runner)
+        finally:
+            await release_overlap_lock(db, MAIN_BUILD_TASK)
     compute_ms = round((time.monotonic() - t0) * 1000)
 
     # A partial/empty compute must never overwrite a valid cache entry (Item 1).
@@ -3434,6 +3585,10 @@ async def _precompute_calibration_main():
             f"outcomes={response.get('total_outcomes') if isinstance(response, dict) else 'n/a'}) "
             f"after {compute_ms}ms — not published"
         )
+
+    # PHASE 4 (serialize_gate_publish). Deliberately NOT resumable: it consumes
+    # every other phase's output and must run against the run that publishes.
+    runner.begin(PHASE_PUBLISH)
 
     t1 = time.monotonic()
     payload_json = json.dumps(response)
@@ -3465,6 +3620,8 @@ async def _precompute_calibration_main():
         "candidate_version": verdict.candidate.get("population_version"),
         "published_version": verdict.published.get("population_version"),
     }
+
+    runner.outcome["gate"] = "pass" if verdict.ok else "refuse"
 
     if not verdict.ok:
         filing = _file_publish_gate_rejection(verdict)
@@ -3522,6 +3679,15 @@ async def _precompute_calibration_main():
     stages["durable_generation"] = envelope.generation
     publish_ms = round((time.monotonic() - t2) * 1000)
 
+    runner.outcome["durable"] = durable_stage["status"]
+    runner.outcome["volatile"] = (
+        "ok" if stages.get("main") == "ok"
+        else "not_attempted" if "main" not in stages
+        else "error"
+    )
+    runner.outcome["published"] = bool(durable_ok)
+    runner.outcome["artifact_generation"] = envelope.generation if durable_ok else None
+
     summary = {
         "buckets": len(response["buckets"]),
         "outcomes": response["total_outcomes"],
@@ -3575,7 +3741,211 @@ async def _precompute_calibration_main():
         summary["buckets"], summary["outcomes"], payload_bytes,
         compute_ms, publish_ms, stages.get("last_good"),
     )
+    runner.complete(PHASE_PUBLISH)
     summary["status"] = "ok"
+    return summary
+
+
+async def _precompute_calibration_main():
+    """Run ONE main calibration build, and make its progress durable (Queue 300M).
+
+    Everything about the build itself lives in :func:`_run_calibration_main_build`.
+    This wrapper exists for the two things that must happen whether that build
+    finished, timed out, was cancelled, or blew up:
+
+    **Bank what was earned.** The build's three read phases each commit and hand
+    their output to a durable checkpoint. A run that dies at the diagnostics
+    read no longer throws away the population CTE it spent most of its window
+    computing — the next beat carries it and starts where this one stopped.
+    That is the whole visible payoff: durable progress across runs, instead of
+    repeating the same 25 minutes and leaving the public page on yesterday's
+    snapshot.
+
+    **Write the ledger, always.** The phase ledger is the measurement rail Item
+    0 exists to build, and the runs whose timings matter most are precisely the
+    ones that failed. It records what every phase actually cost, and the NEXT
+    run's budgets are derived from it — which is why no budget is invented here.
+    A ledger write failure makes this run's progress UNKNOWN, never GREEN.
+
+    Three deliberate asymmetries in what happens to the checkpoint:
+
+    * A **complete publish** clears it. There is nothing left to resume.
+    * A **gate refusal** clears it too. The candidate was rejected for what it
+      contained, so carrying the same reads forward would rebuild the identical
+      rejected candidate every hour, forever. Refusal must force fresh reads.
+    * A **durable/Redis publication failure** keeps it. The payload was fine;
+      only persisting it failed, so the next beat should re-publish from the
+      carried reads rather than re-earn them.
+    """
+    from app.tasks.calibration_main_build import (
+        build_runner,
+        checkpoint_terminal,
+        clear_main_checkpoint,
+        save_main_checkpoint,
+        save_phase_ledger,
+    )
+    from app.utils.calibration_phase_ledger import (
+        RESUMABLE_PHASES,
+        REFUSE,
+        health_for,
+        phase_ledger_row,
+        terminal_for,
+    )
+
+    fingerprint = _main_input_fingerprint()
+    runner, action = await build_runner(
+        population_version=CALIBRATION_POPULATION_VERSION,
+        fingerprint=fingerprint,
+        carry_max_age_s=_CARRY_MAX_AGE_S,
+    )
+
+    if action == REFUSE:
+        # Another worker holds an unexpired lease on the checkpoint. Running a
+        # second build against it is how two workers each advance half of one.
+        logger.info(
+            "calibration main build: checkpoint leased by %s — skipping",
+            runner.checkpoint.owner,
+        )
+        runner.ledger.elapsed_ms = 0
+        ledger_write = await save_phase_ledger(
+            runner, {"terminal": "overlap_refused", "checkpoint_action": action}
+        )
+        return {
+            "status": "skipped",
+            "reason": "checkpoint_leased",
+            "owner": runner.checkpoint.owner,
+            "ledger_write": ledger_write,
+        }
+
+    summary: dict = {}
+    failure: BaseException | None = None
+    cancelled = False
+    try:
+        summary = await _run_calibration_main_build(runner)
+    except BaseException as exc:  # noqa: BLE001 — CancelledError must be recorded too
+        failure = exc
+        status = runner.abort(exc)
+        cancelled = status == "cancelled"
+        logger.error(
+            "calibration main build ended %s after %dms in phase group %s: %s",
+            status, runner.elapsed_ms(), list(runner.ledger.completed_required), exc,
+        )
+
+    runner.ledger.elapsed_ms = runner.elapsed_ms()
+    measured = sum(r.duration_ms for r in runner.ledger.records.values())
+    runner.ledger.unmeasured_overhead_ms = max(0, runner.ledger.elapsed_ms - measured)
+
+    published = bool(runner.outcome.get("published"))
+    gate_state = runner.outcome.get("gate")
+    terminal = terminal_for(
+        all_required_done=runner.ledger.all_required_done,
+        published=published,
+        error=failure is not None and not cancelled,
+        cancelled=cancelled,
+    )
+
+    # --- checkpoint -----------------------------------------------------------
+    checkpoint_write = "not_attempted"
+    checkpoint_advanced = False
+    banked: dict[str, str] = {}
+    try:
+        if terminal == "complete" or gate_state == "refuse":
+            ok = await clear_main_checkpoint(
+                population_version=CALIBRATION_POPULATION_VERSION,
+                fingerprint=fingerprint,
+                owner=runner.owner,
+            )
+            checkpoint_write = "ok" if ok else "error"
+        else:
+            checkpoint, banked = runner.build_checkpoint()
+            if checkpoint.completed_phases:
+                ok = await save_main_checkpoint(
+                    checkpoint, terminal=checkpoint_terminal(runner)
+                )
+                checkpoint_write = "ok" if ok else "error"
+                checkpoint_advanced = ok
+            else:
+                checkpoint_write = "nothing_to_bank"
+    except Exception as exc:  # noqa: BLE001 — a lost checkpoint is not a lost build
+        checkpoint_write = "error"
+        logger.warning("calibration main checkpoint write failed: %s", exc)
+
+    for phase in RESUMABLE_PHASES:
+        runner.ledger.note_checkpoint(
+            phase,
+            write=checkpoint_write if banked.get(phase) == "stored" else "not_attempted",
+            advanced=checkpoint_advanced and banked.get(phase) == "stored",
+        )
+
+    # --- ledger ---------------------------------------------------------------
+    ledger_write = await save_phase_ledger(
+        runner,
+        {
+            "terminal": terminal,
+            "checkpoint_action": action,
+            "checkpoint_write": checkpoint_write,
+            "banked": banked,
+            "carried": list(runner.carried_phases),
+            "outcome": runner.outcome,
+        },
+    )
+    health = health_for(
+        terminal=terminal,
+        ledger_write=ledger_write,
+        artifact_fresh=published,
+        artifact_generation=runner.outcome.get("artifact_generation"),
+    )
+
+    contract = phase_ledger_row(
+        runner.ledger,
+        terminal=terminal,
+        published=published,
+        durable=str(runner.outcome.get("durable")),
+        volatile=str(runner.outcome.get("volatile")),
+        artifact_generation=runner.outcome.get("artifact_generation"),
+        gate=str(gate_state),
+        checkpoint_action=action,
+        checkpoint_owner=runner.owner,
+        checkpoint_version=CALIBRATION_POPULATION_VERSION,
+        checkpoint_advanced=checkpoint_advanced,
+        # Nothing is published unless the whole build completed, so a run that
+        # did not complete has, by construction, left the prior artifact alone.
+        previous_preserved=True,
+        health_verdict=health,
+        artifact_fresh=published,
+        health_generation=runner.outcome.get("artifact_generation"),
+        cancellation=(
+            {"raised": True, "terminal_recorded": True, "swallowed": False}
+            if cancelled
+            else None
+        ),
+    )
+
+    if failure is not None:
+        # The build's own failure is the story; the ledger above is why the next
+        # beat will be cheaper. Re-raise so ``_tracked_run`` records a failure
+        # rather than a success with an empty summary.
+        raise failure
+
+    summary["phase_ledger"] = {
+        "terminal": terminal,
+        "health": health,
+        "plan": runner.ledger.plan.as_payload()["status"],
+        "checkpoint_action": action,
+        "checkpoint_write": checkpoint_write,
+        "ledger_write": ledger_write,
+        "carried": list(runner.carried_phases),
+        "banked": banked,
+        "phases": {
+            name: {
+                "status": record.status,
+                "duration_ms": record.duration_ms,
+                "budget_ms": record.budget_ms,
+            }
+            for name, record in runner.ledger.records.items()
+        },
+        "contract": contract,
+    }
     return summary
 
 

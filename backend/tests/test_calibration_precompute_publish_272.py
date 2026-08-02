@@ -88,7 +88,7 @@ class _FakeCM:
 
 
 def _patch_compute(response=None, *, raises=None):
-    async def _compute(db):
+    async def _compute(db, **_kwargs):
         if raises is not None:
             raise raises
         return response
@@ -420,7 +420,7 @@ async def test_route_bust_skips_durable_last_good(monkeypatch):
     client = _RouteRedis(main=None, last_good=json.dumps(_payload(buckets=1572)))
     monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
 
-    async def _compute(db):
+    async def _compute(db, **_kwargs):
         return fresh
 
     monkeypatch.setattr(

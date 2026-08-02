@@ -301,7 +301,7 @@ async def test_bust_skips_the_durable_tier_and_forces_a_recompute(monkeypatch):
 
     fresh = _payload()
 
-    async def _compute(db):
+    async def _compute(db, **_kwargs):
         return fresh
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _compute)
@@ -325,7 +325,7 @@ async def test_publisher_writes_durable_before_redis(monkeypatch):
     order: list[str] = []
     payload = _payload()
 
-    async def _compute(db):
+    async def _compute(db, **_kwargs):
         return payload
 
     class _Session:
@@ -370,7 +370,7 @@ async def test_publisher_fails_the_run_when_the_durable_write_fails(monkeypatch)
 
     payload = _payload()
 
-    async def _compute(db):
+    async def _compute(db, **_kwargs):
         return payload
 
     class _Session:
