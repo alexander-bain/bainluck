@@ -4404,114 +4404,377 @@ async def _compute_fair_fight_comparison():
     return {"status": "ok", "pairs": len(futures_pairs) + len(sports_pairs)}
 
 
+#: Half-open id window per chunk of the coverage sweep. Sized so ONE statement
+#: — the per-outcome LATERAL snapshot count, which is what actually costs — has
+#: to finish well inside :data:`_COVERAGE_CHUNK_TIMEOUT_MS`, rather than sized
+#: to "feels small". Bounding the loop was never the problem; bounding the
+#: single longest uninterrupted op is (the budget-guard-inner-op lesson).
+_COVERAGE_CHUNK_IDS = 50_000
+_COVERAGE_CHUNK_TIMEOUT_MS = 45_000
+#: soft_time_limit=600 on the task; stop planning new chunks with room to spare
+#: for the final publish + checkpoint write.
+_COVERAGE_DEADLINE_S = 480.0
+_COVERAGE_TASK = "coverage_metrics"
+
+
+def _merge_coverage_groups(
+    accumulator: dict[str, Any], rows: list[Any]
+) -> dict[str, Any]:
+    """Fold one chunk's GROUP BY result into the running accumulator.
+
+    Counts sum. ``avg_snapshots`` cannot be averaged across chunks, so the
+    accumulator carries ``snap_sum``/``snap_n`` and the average is derived once
+    at publication — averaging the per-chunk averages would silently weight a
+    500-outcome chunk the same as a 50,000-outcome one.
+    """
+    merged = dict(accumulator)
+    for r in rows:
+        key = f"{r.source}\x1f{r.age_bucket}\x1f{r.league or 'unknown'}"
+        cell = merged.get(key) or {
+            "source": r.source,
+            "age": r.age_bucket,
+            "league": r.league or "unknown",
+            "total": 0,
+            "has_opening": 0,
+            "has_cal_prob": 0,
+            "has_winner": 0,
+            "snap_sum": 0,
+            "snap_n": 0,
+        }
+        cell["total"] += int(r.total_resolved or 0)
+        cell["has_opening"] += int(r.has_opening or 0)
+        cell["has_cal_prob"] += int(r.has_cal_prob or 0)
+        cell["has_winner"] += int(r.has_winner or 0)
+        cell["snap_sum"] += int(r.snap_sum or 0)
+        cell["snap_n"] += int(r.snap_n or 0)
+        merged[key] = cell
+    return merged
+
+
+def _coverage_snapshot_from(accumulator: dict[str, Any]) -> dict:
+    """Build the published snapshot from a COMPLETE accumulator.
+
+    Same shape the single-statement version emitted — the sweep changed, the
+    metric did not.
+    """
+    from collections import defaultdict
+
+    cells = sorted(
+        accumulator.values(),
+        key=lambda c: (c["source"] or "", c["age"] or "", -c["total"]),
+    )
+    snapshot = {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "by_source_age_league": [
+            {
+                "source": c["source"],
+                "age": c["age"],
+                "league": c["league"],
+                "total": c["total"],
+                "has_opening": c["has_opening"],
+                "has_cal_prob": c["has_cal_prob"],
+                "has_winner": c["has_winner"],
+                "avg_snapshots": int(c["snap_sum"] / c["snap_n"]) if c["snap_n"] else 0,
+            }
+            for c in cells
+        ],
+        "totals": {},
+    }
+
+    by_source = defaultdict(lambda: {"total": 0, "opening": 0, "cal_prob": 0, "winner": 0})
+    for c in cells:
+        by_source[c["source"]]["total"] += c["total"]
+        by_source[c["source"]]["opening"] += c["has_opening"]
+        by_source[c["source"]]["cal_prob"] += c["has_cal_prob"]
+        by_source[c["source"]]["winner"] += c["has_winner"]
+
+    snapshot["totals"] = {
+        src: {
+            "total": s["total"],
+            "opening_pct": round(100 * s["opening"] / max(s["total"], 1), 1),
+            "cal_prob_pct": round(100 * s["cal_prob"] / max(s["total"], 1), 1),
+            "winner_pct": round(100 * s["winner"] / max(s["total"], 1), 1),
+        }
+        for src, s in by_source.items()
+    }
+    return snapshot
+
+
+_COVERAGE_CHUNK_SQL = text("""
+    SELECT
+        fm.source,
+        CASE
+            WHEN fm.resolution_date >= NOW() - INTERVAL '7 days' THEN '7d'
+            WHEN fm.resolution_date >= NOW() - INTERVAL '30 days' THEN '30d'
+            ELSE '90d+'
+        END AS age_bucket,
+        s.key AS league,
+        COUNT(*) AS total_resolved,
+        COUNT(fo.opening_probability) AS has_opening,
+        COUNT(fo.calibration_probability) AS has_cal_prob,
+        COUNT(CASE WHEN fo.is_winner IS NOT NULL THEN 1 END) AS has_winner,
+        SUM(COALESCE(snap_counts.cnt, 0)) AS snap_sum,
+        COUNT(*) AS snap_n
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fo.market_id = fm.id
+    LEFT JOIN sports s ON s.id = fm.sport_id
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS cnt
+        FROM futures_odds_snapshots fos
+        WHERE fos.outcome_id = fo.id
+    ) snap_counts ON true
+    WHERE fo.id >= :start AND fo.id < :end
+      AND fm.status = 'resolved'
+      AND fm.resolution_date IS NOT NULL
+    GROUP BY fm.source, age_bucket, s.key
+""")
+# NOTE (#1199): the backfill-winners/status cache (key
+# `bainluck:backfill_winners_status`) used to be piggybacked onto this task as a
+# second heavy `market_status` CTE. That block was removed — the dedicated
+# `precompute_backfill_winners_status` task owns that key, runs HOURLY at :35
+# with a 2h TTL, and writes the exact same shape. Running the CTE again here was
+# pure duplicate compute and was the second heavy query pushing this snapshot
+# over its soft_time_limit. Do NOT re-add it here.
+
+
 async def _snapshot_coverage_metrics():
     """Daily snapshot of coverage metrics for tracking progress over time.
 
-    Stores one row per day in a Redis sorted set keyed by date. Each row
-    captures opening_probability, is_winner, and calibration_probability
-    coverage per source and time window. This lets us answer "is coverage
+    Captures opening_probability, is_winner, and calibration_probability
+    coverage per source, age window, and league, so we can answer "is coverage
     improving?" without re-running heavy queries.
+
+    Queue 300 (#1513) — resumability. This was ONE statement: a per-outcome
+    ``LATERAL`` count over ``futures_odds_snapshots`` across every resolved
+    outcome. It had grown past the 600s soft limit, and because it was a single
+    statement there was no partial credit — every run lost 100% of its work.
+    Production at the time of the rewrite: ``coverage_metrics`` had **7
+    consecutive failures, 0 successes in 24h, health=critical**, every one of
+    them ``SoftTimeLimitExceeded`` at ~600s. The daily coverage rail had simply
+    been dark, while the beat kept firing and the task kept "running".
+
+    Now it is a stable ascending sweep over ``futures_outcomes.id`` in bounded
+    chunks, each with its own ``statement_timeout``, each folded into a
+    checkpoint that is written to the DURABLE store only after its chunk's read
+    committed. Consequences that matter:
+
+    * A soft limit stops the sweep where it is. The next beat resumes at the
+      cursor instead of starting over — monotonic progress across beats.
+    * Ascending id order means the oldest outcomes are reached FIRST, so a
+      bounded run can never be pinned to the head (gotcha #41).
+    * A chunk that times out twice is recorded by id range and the sweep
+      continues past it; the healthy siblings survive (gotcha #42) but the run
+      terminates ``partial`` and **does not publish**, because a snapshot with a
+      hole in it is not a coverage snapshot.
+    * Only a sweep that reaches the end of the population with no failed chunk
+      publishes anything. Partial progress cannot masquerade as a complete
+      artifact, which is the whole point of the C118 contract this conforms to.
     """
+    import time as _cov_time
+
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
+    from app.tasks.task_checkpoint import (
+        clear_checkpoint,
+        load_checkpoint,
+        release_overlap_lock,
+        save_checkpoint,
+        try_acquire_overlap_lock,
+    )
+    from app.utils.task_resumability import (
+        COMPLETE,
+        apply_chunk,
+        contract_row,
+        may_publish,
+        plan_chunks,
+        terminal_state,
+    )
 
-    stats = {"snapshots": 0, "errors": []}
+    started = _cov_time.monotonic()
+    stats: dict[str, Any] = {
+        "snapshots": 0,
+        "errors": [],
+        "terminal": "failed",
+        "chunks_this_run": 0,
+        "cursor_before": 0,
+        "cursor_after": 0,
+        "failed_chunks": [],
+        "published": False,
+        "ownership": "denied",
+        "version_action": "fresh",
+    }
+
+    def _remaining() -> float:
+        return _COVERAGE_DEADLINE_S - (_cov_time.monotonic() - started)
+
+    checkpoint, action = await load_checkpoint(
+        _COVERAGE_TASK, CALIBRATION_POPULATION_VERSION
+    )
+    stats["version_action"] = "invalidate" if action == "invalidate" else "reuse"
+    stats["cursor_before"] = checkpoint.cursor
+    stats["cursor_after"] = checkpoint.cursor
+    durable_ok = False
+    interrupted = False
+    exhausted = False
+    last_chunk = None
+    last_committed = False
+    rows_this_run = 0
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT
-                        fm.source,
-                        CASE
-                            WHEN fm.resolution_date >= NOW() - INTERVAL '7 days' THEN '7d'
-                            WHEN fm.resolution_date >= NOW() - INTERVAL '30 days' THEN '30d'
-                            ELSE '90d+'
-                        END AS age_bucket,
-                        s.key AS league,
-                        COUNT(*) AS total_resolved,
-                        COUNT(fo.opening_probability) AS has_opening,
-                        COUNT(fo.calibration_probability) AS has_cal_prob,
-                        COUNT(CASE WHEN fo.is_winner IS NOT NULL THEN 1 END) AS has_winner,
-                        AVG(CASE WHEN snap_counts.cnt IS NOT NULL THEN snap_counts.cnt ELSE 0 END)::int AS avg_snapshots
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fo.market_id = fm.id
-                    LEFT JOIN sports s ON s.id = fm.sport_id
-                    LEFT JOIN LATERAL (
-                        SELECT COUNT(*) AS cnt
-                        FROM futures_odds_snapshots fos
-                        WHERE fos.outcome_id = fo.id
-                    ) snap_counts ON true
-                    WHERE fm.status = 'resolved'
-                      AND fm.resolution_date IS NOT NULL
-                    GROUP BY fm.source, age_bucket, s.key
-                    ORDER BY fm.source, age_bucket, total_resolved DESC
-                """)
-            )
-            rows = result.fetchall()
+            if not await try_acquire_overlap_lock(session, _COVERAGE_TASK):
+                # Another beat owns the sweep. Doing nothing is the correct
+                # behaviour; running a second sweep against the same cursor is
+                # how duplicate work becomes double-counted coverage.
+                stats["terminal"] = "partial"
+                stats["skipped"] = "overlap_lock_not_acquired"
+                logger.info("Coverage snapshot: another run holds the lock — skipping")
+                return stats
+            stats["ownership"] = "acquired"
 
-            snapshot = {
-                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "computed_at": datetime.now(timezone.utc).isoformat(),
-                "by_source_age_league": [
+            upper = (
+                await session.execute(
+                    text("SELECT COALESCE(MAX(id), 0) + 1 FROM futures_outcomes")
+                )
+            ).scalar() or 1
+
+            for chunk in plan_chunks(
+                cursor=checkpoint.cursor,
+                upper_bound=int(upper),
+                chunk_size=_COVERAGE_CHUNK_IDS,
+            ):
+                if _remaining() <= 0:
+                    interrupted = True
+                    break
+
+                rows = None
+                failed = False
+                for attempt in (1, 2):
+                    try:
+                        await session.execute(
+                            text(
+                                f"SET LOCAL statement_timeout = {_COVERAGE_CHUNK_TIMEOUT_MS}"
+                            )
+                        )
+                        result = await session.execute(
+                            _COVERAGE_CHUNK_SQL, {"start": chunk.start, "end": chunk.end}
+                        )
+                        rows = result.fetchall()
+                        await session.commit()
+                        break
+                    except Exception as exc:  # noqa: BLE001 — poison containment
+                        await session.rollback()
+                        if attempt == 2:
+                            failed = True
+                            stats["failed_chunks"].append(chunk.id)
+                            stats["errors"].append(f"{chunk.id}: {str(exc)[:120]}")
+                            logger.warning(
+                                "Coverage snapshot: chunk %s failed twice (%s) — "
+                                "continuing so the rest of the sweep survives",
+                                chunk.id,
+                                str(exc)[:120],
+                            )
+
+                last_chunk = chunk
+                last_committed = not failed
+                if failed:
+                    checkpoint = apply_chunk(checkpoint, chunk, committed=False, failed=True)
+                else:
+                    rows_this_run += len(rows or [])
+                    checkpoint = apply_chunk(
+                        checkpoint,
+                        chunk,
+                        committed=True,
+                        rows_committed=len(rows or []),
+                        accumulator=_merge_coverage_groups(
+                            checkpoint.accumulator, rows or []
+                        ),
+                    )
+                stats["chunks_this_run"] += 1
+                stats["cursor_after"] = checkpoint.cursor
+
+                # The cursor is persisted only AFTER the chunk's read committed.
+                durable_ok = await save_checkpoint(
+                    _COVERAGE_TASK,
+                    checkpoint,
+                    terminal="partial",
+                    extra={"upper_bound": int(upper)},
+                )
+            else:
+                exhausted = checkpoint.cursor >= int(upper)
+
+            stats["terminal"] = terminal_state(
+                exhausted=exhausted,
+                failed_chunks=checkpoint.failed_chunks,
+                interrupted=interrupted,
+            )
+
+            if may_publish(
+                terminal=stats["terminal"],
+                durable_generation_committed=durable_ok or not stats["chunks_this_run"],
+                interrupted=interrupted,
+            ):
+                snapshot = _coverage_snapshot_from(checkpoint.accumulator)
+                rc = get_redis_client()
+                rc.hset(
+                    "bainluck:coverage_snapshots",
+                    snapshot["date"],
+                    json.dumps(snapshot),
+                )
+                rc.expire("bainluck:coverage_snapshots", 90 * 86400)
+                stats["snapshots"] = len(snapshot["by_source_age_league"])
+                stats["published"] = True
+                await clear_checkpoint(_COVERAGE_TASK, CALIBRATION_POPULATION_VERSION)
+                logger.info(
+                    "Coverage snapshot: %s — %s",
+                    snapshot["date"],
                     {
-                        "source": r.source,
-                        "age": r.age_bucket,
-                        "league": r.league or "unknown",
-                        "total": r.total_resolved,
-                        "has_opening": r.has_opening,
-                        "has_cal_prob": r.has_cal_prob,
-                        "has_winner": r.has_winner,
-                        "avg_snapshots": r.avg_snapshots,
-                    }
-                    for r in rows
-                ],
-                "totals": {},
-            }
+                        src: f'{s["cal_prob_pct"]}% cal_prob'
+                        for src, s in snapshot["totals"].items()
+                    },
+                )
+            else:
+                logger.info(
+                    "Coverage snapshot: %s at cursor %d/%d (%d chunks this run, "
+                    "%d failed) — not publishing a partial artifact",
+                    stats["terminal"],
+                    checkpoint.cursor,
+                    int(upper),
+                    stats["chunks_this_run"],
+                    len(checkpoint.failed_chunks),
+                )
 
-            from collections import defaultdict
-            by_source = defaultdict(lambda: {"total": 0, "opening": 0, "cal_prob": 0, "winner": 0})
-            for r in rows:
-                by_source[r.source]["total"] += r.total_resolved
-                by_source[r.source]["opening"] += r.has_opening
-                by_source[r.source]["cal_prob"] += r.has_cal_prob
-                by_source[r.source]["winner"] += r.has_winner
-
-            snapshot["totals"] = {
-                src: {
-                    "total": s["total"],
-                    "opening_pct": round(100 * s["opening"] / max(s["total"], 1), 1),
-                    "cal_prob_pct": round(100 * s["cal_prob"] / max(s["total"], 1), 1),
-                    "winner_pct": round(100 * s["winner"] / max(s["total"], 1), 1),
-                }
-                for src, s in by_source.items()
-            }
-
-            rc = get_redis_client()
-            date_key = snapshot["date"]
-            rc.hset("bainluck:coverage_snapshots", date_key, json.dumps(snapshot))
-            rc.expire("bainluck:coverage_snapshots", 90 * 86400)
-
-            stats["snapshots"] = len(rows)
-            logger.info(
-                "Coverage snapshot: %s — %s",
-                date_key,
-                {src: f'{s["cal_prob_pct"]}% cal_prob' for src, s in snapshot["totals"].items()},
-            )
-
-            # NOTE (#1199): the backfill-winners/status cache (key
-            # `bainluck:backfill_winners_status`) used to be piggybacked here as a
-            # second heavy `market_status` CTE. That inline block was removed — the
-            # dedicated `precompute_backfill_winners_status` task now owns that key,
-            # runs HOURLY at :35 with a 2h TTL (always fresh), and writes the exact
-            # same shape. Running the CTE again here was pure duplicate compute and
-            # was the second heavy query occasionally pushing this daily snapshot
-            # over its 600s soft_time_limit (~1/24h SoftTimeLimitExceeded). With it
-            # gone the task runs a single LATERAL scan and completes well under the
-            # limit. Do NOT re-add it here.
+            await release_overlap_lock(session, _COVERAGE_TASK)
 
     except Exception as e:
         stats["errors"].append(str(e)[:200])
+        stats["terminal"] = "failed"
         logger.error("Coverage snapshot error: %s", e)
 
+    if last_chunk is not None:
+        stats["contract"] = contract_row(
+            task=_COVERAGE_TASK,
+            population_version=CALIBRATION_POPULATION_VERSION,
+            checkpoint_version=CALIBRATION_POPULATION_VERSION,
+            version_action=stats["version_action"],
+            cursor_before=last_chunk.start,
+            chunk=last_chunk,
+            committed=last_committed,
+            rows_attempted=last_chunk.end - last_chunk.start,
+            rows_committed=last_chunk.end - last_chunk.start if last_committed else 0,
+            rows_failed=0 if last_committed else last_chunk.end - last_chunk.start,
+            interruption="soft_after_commit" if interrupted else "none",
+            ownership=stats["ownership"],
+            terminal=stats["terminal"],
+            published=stats["published"],
+            durable_generation_committed=durable_ok,
+            all_phases_complete=stats["terminal"] == COMPLETE,
+            metrics_available=True,
+            checked=rows_this_run,
+            healthy_siblings_survive=True,
+        )
+    stats["elapsed_s"] = round(_cov_time.monotonic() - started, 1)
     return stats
+
+

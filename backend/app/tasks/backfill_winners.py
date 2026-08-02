@@ -6720,6 +6720,51 @@ async def _compute_calibration_prices():
     def _cal_remaining() -> float:
         return _CAL_DEADLINE_S - (_cal_time.monotonic() - _cal_start)
 
+    async def _bound_next_statement(session, reserve_s: float = 10.0) -> None:
+        """Cap the NEXT statement at what is actually left of the budget.
+
+        Queue 300: the wall-clock deadline was checked BETWEEN batches only, so
+        a single long statement could — and did — sail past it. The last
+        "successful" production run finished at ``elapsed_s=598.5`` against a
+        540s deadline with ``stopped_at=None``: no loop check ever fired,
+        because the overshoot happened INSIDE one statement, 1.5s from the 600s
+        soft limit. Bounding the loop is not bounding the work (the
+        budget-guard-inner-op lesson); this bounds the longest single
+        uninterrupted op, which is the thing that was overrunning.
+        """
+        budget_ms = max(int((_cal_remaining() - reserve_s) * 1000), 5_000)
+        await session.execute(text(f"SET LOCAL statement_timeout = {budget_ms}"))
+
+    # Queue 300 — the Part-B/Part-D fixed point. Part D nulls any outcome whose
+    # calibration price is just its (extreme, illiquid) opening probability.
+    # Parts A and B, on the very next run, saw those same rows as NULL and
+    # refilled them from opening — and Part D nulled them again. Production
+    # evidence from the last passing run: Part B filled 20,190 and Part D nulled
+    # 24,027, run after run, forever. That churn is why the NULL population
+    # never drained and why every run spent its whole budget and still hit the
+    # soft limit: the task was not slow, it was doing the same work repeatedly.
+    #
+    # This predicate is the SQL mirror of Part D's condition. Applying it to the
+    # A/B write guards makes the pipeline a fixed point in the other direction:
+    # those rows are left NULL by the part that would fill them, which is
+    # exactly where Part D was going to leave them anyway. The terminal state of
+    # every row is unchanged — only the pointless round trip is gone. It is NOT
+    # a regrade and NOT a population change (Queue 300's gate); it changes when
+    # a row settles, not what it settles to.
+    _WOULD_CHURN = """
+                          AND NOT (
+                              {value} = nc.opening_probability
+                              AND nc.opening_probability IS NOT NULL
+                              AND (nc.opening_probability >= 0.95
+                                   OR nc.opening_probability <= 0.05)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM futures_odds_snapshots fos_d
+                                  WHERE fos_d.outcome_id = nc.outcome_id
+                                  LIMIT 3 OFFSET 2
+                              )
+                          )
+    """
+
     try:
         async with get_task_session() as session:
             stats["reset"] = 0
@@ -6760,6 +6805,20 @@ async def _compute_calibration_prices():
             # of DISTINCT ON which joins then sorts the full result set.
             # ORDER BY commence_time DESC so recent games are processed first.
             part_a_total = 0
+            # Queue 300: a stable ASCENDING cursor over futures_outcomes.id
+            # replaces the old `ORDER BY commence_time DESC ... LIMIT 20000` +
+            # `if rowcount == 0: break`. Two things were wrong with that. The
+            # window was re-selected from the head every batch, so any block of
+            # rows that CANNOT be filled (a threshold outcome with no bid-backed
+            # snapshot, or — after the churn guard below — an illiquid extreme
+            # tail) sat permanently at the front of it; and because the loop
+            # stopped the moment a batch filled nothing, one such block ended
+            # the whole Part while older fillable rows were still waiting behind
+            # it. The cursor moves past scanned-but-unfilled rows, so the old
+            # tail is always reachable (gotcha #41) and the sweep terminates
+            # when there is genuinely nothing left to look at rather than when
+            # it stops being lucky.
+            part_a_cursor = 0
             for _ in range(400):
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = "part_a"
@@ -6780,7 +6839,13 @@ async def _compute_calibration_prices():
                 # the SQL mirror of precompute_calibration.KALSHI_PROP_THRESHOLD_NAME_RE
                 # (keep in sync); it is FALSE for every non-Kalshi/non-prop row so
                 # this branch is a provable no-op for all other sources.
-                result_a = await session.execute(text("""
+                _part_a_value = """COALESCE(
+                              closing.probability,
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          )"""
+                await _bound_next_statement(session)
+                result_a = await session.execute(text(f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
                                    fo.opening_probability,
@@ -6793,43 +6858,48 @@ async def _compute_calibration_prices():
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
                               AND e.commence_time IS NOT NULL
-                            ORDER BY e.commence_time DESC
-                            LIMIT 20000
+                              AND fo.id > :cursor
+                            ORDER BY fo.id
+                            LIMIT :batch
+                        ), upd AS (
+                            UPDATE futures_outcomes fo
+                            SET calibration_probability = {_part_a_value}
+                            FROM needs_cal nc
+                            LEFT JOIN LATERAL (
+                                SELECT fos.probability
+                                FROM futures_odds_snapshots fos
+                                WHERE fos.outcome_id = nc.outcome_id
+                                  AND fos.captured_at < nc.commence_time
+                                  AND fos.probability > 0 AND fos.probability < 1
+                                  AND (NOT nc.is_threshold OR fos.yes_bid > 0)
+                                ORDER BY fos.captured_at DESC
+                                LIMIT 1
+                            ) closing ON true
+                            WHERE fo.id = nc.outcome_id
+                              AND {_part_a_value} IS NOT NULL
+                              {_WOULD_CHURN.format(value=_part_a_value)}
+                            RETURNING fo.id
                         )
-                        UPDATE futures_outcomes fo
-                        SET calibration_probability = COALESCE(
-                            closing.probability,
-                            CASE WHEN nc.is_threshold THEN NULL
-                                 ELSE nc.opening_probability END
-                        )
-                        FROM needs_cal nc
-                        LEFT JOIN LATERAL (
-                            SELECT fos.probability
-                            FROM futures_odds_snapshots fos
-                            WHERE fos.outcome_id = nc.outcome_id
-                              AND fos.captured_at < nc.commence_time
-                              AND fos.probability > 0 AND fos.probability < 1
-                              AND (NOT nc.is_threshold OR fos.yes_bid > 0)
-                            ORDER BY fos.captured_at DESC
-                            LIMIT 1
-                        ) closing ON true
-                        WHERE fo.id = nc.outcome_id
-                          AND COALESCE(
-                              closing.probability,
-                              CASE WHEN nc.is_threshold THEN NULL
-                                   ELSE nc.opening_probability END
-                          ) IS NOT NULL
-                    """))
+                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
+                               (SELECT COUNT(*) FROM needs_cal) AS scanned,
+                               (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
+                    """), {"cursor": part_a_cursor, "batch": _CAL_BATCH})
+                row_a = result_a.mappings().first()
                 await session.commit()
-                part_a_total += result_a.rowcount
-                if result_a.rowcount == 0:
+                scanned_a = int(row_a["scanned"] or 0)
+                part_a_total += int(row_a["updated"] or 0)
+                if scanned_a == 0:
                     break
+                part_a_cursor = int(row_a["max_id"] or part_a_cursor)
                 logger.info(
-                    "Calibration Part A: batch processed %d (total %d)",
-                    result_a.rowcount,
+                    "Calibration Part A: scanned %d, filled %d (total %d, cursor %d)",
+                    scanned_a,
+                    int(row_a["updated"] or 0),
                     part_a_total,
+                    part_a_cursor,
                 )
             stats["with_commence"] = part_a_total
+            stats["part_a_cursor"] = part_a_cursor
 
             # Part A1-dg: DataGolf outcomes — opening_probability IS the calibration
             # price (model prediction, not a market price). No snapshot lookup needed.
@@ -6998,11 +7068,22 @@ async def _compute_calibration_prices():
             # economics, etc.) that have no tournament start date.
             # Batched at 100K. LATERAL subquery for efficient index seeks.
             part_b_total = 0
+            # Queue 300: this is where the churn lived. The old window was
+            # `LIMIT 20000` with NO ORDER BY at all — an unstable window that in
+            # practice returned the same physical rows every batch, and those
+            # rows were the ~24k illiquid extreme tails Part D had nulled at the
+            # end of the previous run. Part B refilled them from opening, Part D
+            # nulled them again, and the genuinely unpriced tail behind them was
+            # never reached. Stable ascending id + the Part-D churn guard breaks
+            # the loop from both ends.
+            part_b_cursor = 0
+            _part_b_value = "COALESCE(settled.probability, nc.opening_probability)"
             for _ in range(400):
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = stats["stopped_at"] or "part_b"
                     break
-                result_b = await session.execute(text("""
+                await _bound_next_statement(session)
+                result_b = await session.execute(text(f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fo.opening_captured_at,
                                    fo.opening_probability
@@ -7012,36 +7093,48 @@ async def _compute_calibration_prices():
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
                               AND (fm.event_id IS NULL OR e.commence_time IS NULL)
-                            LIMIT 20000
+                              AND fo.id > :cursor
+                            ORDER BY fo.id
+                            LIMIT :batch
+                        ), upd AS (
+                            UPDATE futures_outcomes fo
+                            SET calibration_probability = {_part_b_value}
+                            FROM needs_cal nc
+                            LEFT JOIN LATERAL (
+                                SELECT fos.probability
+                                FROM futures_odds_snapshots fos
+                                WHERE fos.outcome_id = nc.outcome_id
+                                  AND nc.opening_captured_at IS NOT NULL
+                                  AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
+                                  AND fos.probability > 0 AND fos.probability < 1
+                                ORDER BY fos.captured_at ASC
+                                LIMIT 1
+                            ) settled ON true
+                            WHERE fo.id = nc.outcome_id
+                              AND {_part_b_value} IS NOT NULL
+                              {_WOULD_CHURN.format(value=_part_b_value)}
+                            RETURNING fo.id
                         )
-                        UPDATE futures_outcomes fo
-                        SET calibration_probability = COALESCE(
-                            settled.probability, nc.opening_probability
-                        )
-                        FROM needs_cal nc
-                        LEFT JOIN LATERAL (
-                            SELECT fos.probability
-                            FROM futures_odds_snapshots fos
-                            WHERE fos.outcome_id = nc.outcome_id
-                              AND nc.opening_captured_at IS NOT NULL
-                              AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
-                              AND fos.probability > 0 AND fos.probability < 1
-                            ORDER BY fos.captured_at ASC
-                            LIMIT 1
-                        ) settled ON true
-                        WHERE fo.id = nc.outcome_id
-                          AND COALESCE(settled.probability, nc.opening_probability) IS NOT NULL
-                    """))
+                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
+                               (SELECT COUNT(*) FROM needs_cal) AS scanned,
+                               (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
+                    """), {"cursor": part_b_cursor, "batch": _CAL_BATCH})
+                row_b = result_b.mappings().first()
                 await session.commit()
-                part_b_total += result_b.rowcount
-                if result_b.rowcount == 0:
+                scanned_b = int(row_b["scanned"] or 0)
+                part_b_total += int(row_b["updated"] or 0)
+                if scanned_b == 0:
                     break
+                part_b_cursor = int(row_b["max_id"] or part_b_cursor)
                 logger.info(
-                    "Calibration Part B: batch processed %d (total %d)",
-                    result_b.rowcount,
+                    "Calibration Part B: scanned %d, filled %d (total %d, cursor %d)",
+                    scanned_b,
+                    int(row_b["updated"] or 0),
                     part_b_total,
+                    part_b_cursor,
                 )
             stats["without_commence"] = part_b_total
+            stats["part_b_cursor"] = part_b_cursor
 
             # Part C: Rescue EVENT-LINKED outcomes where Part A fell back to
             # opening_probability (no pre-event snapshots existed).
@@ -7125,6 +7218,17 @@ async def _compute_calibration_prices():
         logger.error("Compute calibration prices error: %s", e)
 
     stats["elapsed_s"] = round(_cal_time.monotonic() - _cal_start, 1)
+    # Queue 300: say which of the three things happened, rather than leaving the
+    # caller to infer it from a `stopped_at` that used to stay None even on a
+    # run that overran its own deadline by a minute.
+    from app.utils.task_resumability import terminal_state as _terminal_state
+
+    stats["terminal"] = _terminal_state(
+        exhausted=stats.get("stopped_at") is None,
+        failed_chunks=(),
+        interrupted=stats.get("stopped_at") is not None,
+        error=bool(stats["errors"]),
+    )
     logger.info(
         "Calibration prices: reset=%d, reset_golf_hockey=%d, reset_a2=%d, "
         "event_linked=%d, non_event=%d, rescued=%d, sanity_reverted=%d, "

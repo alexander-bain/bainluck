@@ -276,3 +276,135 @@ async def celery_debug(request: Request, secret: str = Query(None)):
 
     return result
 
+
+
+@router.get("/redis-census")
+async def redis_census(
+    request: Request,
+    secret: str = Query(None),
+    scan_limit: int = Query(20000, ge=100, le=200000),
+    sample_per_class: int = Query(5, ge=1, le=25),
+):
+    """Bounded, read-only census of what is actually occupying Redis.
+
+    Queue 300 Item 2 needs an evidence-backed answer to "would code-only
+    controls reclaim enough, or does the plan have to grow?", and that question
+    is unanswerable from ``used_memory`` alone — you need to know WHICH key
+    classes hold the bytes. No rail existed for that, so this is it.
+
+    Every part of it is deliberately bounded, because a diagnostic that can
+    wedge the instance it is diagnosing is worse than no diagnostic:
+
+    * ``SCAN`` with a cursor and a hard ``scan_limit`` ceiling — never
+      ``KEYS``, which is O(N) and blocks the single-threaded server.
+    * ``MEMORY USAGE`` is sampled (``sample_per_class`` keys per class), not
+      called per key, and its own ``SAMPLES 0`` estimate is used for
+      collections.
+    * The client comes from ``get_redis_client()``, which carries the mandatory
+      socket/connect timeouts (gotcha #39).
+
+    Strictly read-only: no write, no delete, no ``FLUSH``, no config change.
+    Sizing decisions belong to Alex; this endpoint only supplies the numbers.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from collections import defaultdict
+
+    from app.tasks.redis_state import get_redis_client
+
+    out: dict = {"scan_limit": scan_limit, "truncated": False}
+    try:
+        r = get_redis_client()
+        info_mem = r.info("memory")
+        info_stats = r.info("stats")
+        info_clients = r.info("clients")
+        out["memory"] = {
+            "used_memory": info_mem.get("used_memory"),
+            "used_memory_human": info_mem.get("used_memory_human"),
+            "used_memory_peak_human": info_mem.get("used_memory_peak_human"),
+            "maxmemory": info_mem.get("maxmemory"),
+            "maxmemory_human": info_mem.get("maxmemory_human"),
+            "maxmemory_policy": info_mem.get("maxmemory_policy"),
+            "mem_fragmentation_ratio": info_mem.get("mem_fragmentation_ratio"),
+        }
+        maxmem = info_mem.get("maxmemory") or 0
+        used = info_mem.get("used_memory") or 0
+        out["memory"]["pct_of_maxmemory"] = (
+            round(100.0 * used / maxmem, 2) if maxmem else None
+        )
+        # Eviction is the number that decides the argument: a high used_memory
+        # on an LRU instance is normal; keys actually being EVICTED is data loss.
+        out["eviction"] = {
+            "evicted_keys": info_stats.get("evicted_keys"),
+            "expired_keys": info_stats.get("expired_keys"),
+            "keyspace_hits": info_stats.get("keyspace_hits"),
+            "keyspace_misses": info_stats.get("keyspace_misses"),
+        }
+        out["clients"] = {
+            "connected_clients": info_clients.get("connected_clients"),
+            "blocked_clients": info_clients.get("blocked_clients"),
+            "rejected_connections": info_stats.get("rejected_connections"),
+        }
+        out["dbsize"] = r.dbsize()
+
+        classes: dict = defaultdict(
+            lambda: {"keys": 0, "sampled": 0, "sampled_bytes": 0, "no_ttl": 0, "ttls": []}
+        )
+        scanned = 0
+        cursor = 0
+        while True:
+            cursor, batch = r.scan(cursor=cursor, count=500)
+            for raw in batch:
+                key = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+                # Class = first two colon segments, so `bainluck:calibration:x`
+                # and `bainluck:calibration:y` roll up together.
+                cls = ":".join(key.split(":")[:2]) or "(root)"
+                cell = classes[cls]
+                cell["keys"] += 1
+                if cell["sampled"] < sample_per_class:
+                    try:
+                        size = r.memory_usage(key, samples=0)
+                        if size:
+                            cell["sampled_bytes"] += int(size)
+                            cell["sampled"] += 1
+                    except Exception:  # noqa: BLE001 — a sample is optional
+                        pass
+                    ttl = r.ttl(key)
+                    if ttl is None or ttl < 0:
+                        cell["no_ttl"] += 1
+                    else:
+                        cell["ttls"].append(int(ttl))
+                scanned += 1
+            if cursor == 0:
+                break
+            if scanned >= scan_limit:
+                out["truncated"] = True
+                break
+
+        out["scanned"] = scanned
+        summary = []
+        for cls, cell in classes.items():
+            avg = cell["sampled_bytes"] / cell["sampled"] if cell["sampled"] else 0
+            summary.append(
+                {
+                    "class": cls,
+                    "keys": cell["keys"],
+                    "avg_sampled_bytes": int(avg),
+                    # Estimate, clearly labelled: avg of a small sample times the
+                    # key count. Good enough to rank classes, never precise.
+                    "est_total_bytes": int(avg * cell["keys"]),
+                    "sampled": cell["sampled"],
+                    "sampled_without_ttl": cell["no_ttl"],
+                    "min_ttl_s": min(cell["ttls"]) if cell["ttls"] else None,
+                    "max_ttl_s": max(cell["ttls"]) if cell["ttls"] else None,
+                }
+            )
+        summary.sort(key=lambda c: -c["est_total_bytes"])
+        out["classes"] = summary[:60]
+        out["note"] = (
+            "est_total_bytes is avg_sampled_bytes * keys — a ranking estimate, "
+            "not a measurement. Read-only; no keys were written or removed."
+        )
+    except Exception as e:  # noqa: BLE001
+        out["error"] = str(e)[:300]
+    return out
