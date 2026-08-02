@@ -38,14 +38,17 @@ const path = require("node:path");
  *
  * ## Why it lives HERE and not in jest
  *
- * `npx jest` is not wired into any GitHub Actions workflow — `ci.yml` runs
- * backend pytest, `npm run build` (ESLint only; `ignoreBuildErrors: true` means
- * it is not even a TypeScript gate), and this `node --test` suite. So a jest
- * assertion is a local gate and a code-review aid, not something that can stop
- * a merge. This suite is the frontend's only always-on CI gate that can execute
- * arbitrary checks, it needs no install and no network, and a cross-system
- * version contract is exactly the kind of invariant that has to be enforced
- * where it cannot be skipped.
+ * When this was written, `npx jest` was not wired into any GitHub Actions
+ * workflow, so a jest assertion was a local gate and a code-review aid rather
+ * than something that could stop a merge. **L2-233 changed that**: `ci.yml`'s
+ * frontend-build job now runs the full jest suite, and deploy needs that job.
+ *
+ * It stays here anyway, and the reason is stronger than the original one. This
+ * suite needs no install, no lockfile and no network — it is the frontend's
+ * only gate that still executes when the dependency graph is broken. The jest
+ * gate cannot run if `npm ci` fails, and a cross-system version contract is
+ * exactly the invariant you want enforced on the day something else is already
+ * wrong. Reading it as text with no parser is part of the same property.
  *
  * Both files are read as TEXT and matched with a narrow regex rather than
  * imported: one is Python, the other is TypeScript, and this runner is plain

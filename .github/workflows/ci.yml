@@ -46,6 +46,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Unit tests (Jest)
+        # L2-233. 116 suites / 1,393 tests that, until this step existed, ran
+        # only on an engineer's laptop: no workflow invoked jest, and neither
+        # `jest` nor `ts-jest` was even declared in package.json — so `npx jest`
+        # after `npm ci` would have resolved nothing. Both halves are fixed in
+        # the commit that added this line.
+        #
+        # Ahead of the build deliberately: ~20s here versus ~2min there, so a
+        # broken test costs one short run instead of a full build first. Both
+        # are required — this job fails on either.
+        #
+        # No `--passWithNoTests`, no `continue-on-error`. Those, and the rest of
+        # what keeps this from silently becoming decoration, are asserted by
+        # frontend/__tests__/lib/ciJestGate.test.ts, plus a workflow-shape
+        # fixture in the e2e-contract job below that survives this step being
+        # deleted.
+        run: npm run test:ci
+
       - name: Build (includes TypeScript + ESLint)
         run: npm run build
 
