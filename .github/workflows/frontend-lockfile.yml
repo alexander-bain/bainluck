@@ -1,0 +1,216 @@
+name: Add the Jest toolchain to the frontend lockfile (manual)
+
+# L2-233 Item 0 — the mechanism of record for adding `jest` + `ts-jest` to
+# `frontend/package.json` and `frontend/package-lock.json`.
+#
+# WHY THIS EXISTS. `frontend/__tests__` holds 116 suites / 1,393 tests, and
+# `jest` + `ts-jest` are installed in the working `node_modules` on the machine
+# this repo is developed from — but neither is declared in `package.json`, and
+# neither appears in `package-lock.json` (the only `jest`-shaped entries there
+# are `jest-worker`, a transitive dependency of next/terser). So on a clean
+# `npm ci` checkout — which is exactly what CI does — `jest` does not exist.
+# That is why the suite has never been able to gate a deploy.
+#
+# Declaring the two packages is a one-line local command anywhere with registry
+# access. This machine has none: its only egress is an agent proxy that answers
+# 503 for registry.npmjs.org, and a direct connection is refused at the network
+# layer. Hand-authoring the lockfile entries would mean inventing `integrity`
+# hashes, which is the fabricated-evidence shape the whole gate exists to make
+# impossible. So the resolution happens HERE, by npm, against the real registry,
+# and the two files are downloaded for commit. (Same reasoning, same shape as
+# `e2e-lockfile.yml`, which did this for the browser rail in L2-229.)
+#
+# HOW TO USE IT.
+#   1. Dispatch this workflow.
+#   2. Download the `frontend-jest-manifest` artifact.
+#   3. Commit BOTH files together at frontend/package.json and
+#      frontend/package-lock.json. They must land in the SAME commit: a
+#      package.json that names a dependency the lockfile does not carry makes
+#      `npm ci` exit non-zero, which would red the frontend-build job and block
+#      deploy.
+#
+# This workflow only ever writes an artifact. It cannot commit, cannot push,
+# and holds no credential beyond `contents: read`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      jest_spec:
+        description: "jest version range (must match what the suite is proven against)"
+        default: "jest@^30.4.2"
+        required: true
+      ts_jest_spec:
+        description: "ts-jest version range"
+        default: "ts-jest@^29.4.11"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile:
+    name: Resolve jest + ts-jest into the frontend dependency graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          # The version ci.yml's frontend-build job pins. Resolving on a
+          # different major can emit a lockfile that runner's npm rewrites.
+          node-version: "20"
+
+      - name: Record the dependency graph BEFORE
+        # The whole risk of this operation is collateral: npm re-resolving
+        # unrelated carets and quietly upgrading production dependencies under
+        # cover of a test-tooling change. Snapshot every resolved version now so
+        # the check below can be an assertion instead of an eyeball.
+        run: |
+          set -euo pipefail
+          node -e '
+            const lock = require("./package-lock.json");
+            const out = {};
+            for (const [p, m] of Object.entries(lock.packages || {})) {
+              if (p) out[p] = m.version ?? null;
+            }
+            require("fs").writeFileSync("/tmp/before.json", JSON.stringify(out));
+            console.log(`packages before: ${Object.keys(out).length}`);
+          '
+
+      - name: Add the two dev dependencies
+        # A real install, not `--package-lock-only`: the next step runs the
+        # actual suite from this tree, and a lock-only resolve cannot prove
+        # jest executes. `--ignore-scripts` keeps lifecycle scripts out of it.
+        # `--registry` is stated explicitly so the artifact cannot silently come
+        # from whatever a future runner image happens to default to.
+        run: |
+          set -euo pipefail
+          npm install --save-dev --ignore-scripts \
+            --registry=https://registry.npmjs.org/ \
+            "${{ inputs.jest_spec }}" "${{ inputs.ts_jest_spec }}"
+          node -e '
+            const pkg = require("./package.json");
+            const dev = pkg.devDependencies || {};
+            for (const name of ["jest", "ts-jest"]) {
+              if (!dev[name]) {
+                console.error(`::error::package.json is missing devDependencies.${name} after install`);
+                process.exit(1);
+              }
+              console.log(`devDependencies.${name} = ${dev[name]}`);
+            }
+          '
+
+      - name: No pre-existing dependency may change version
+        # This is the "test-tooling change did not become a dependency upgrade"
+        # proof. Additions are the point; a changed or removed version is not,
+        # and it fails the run rather than riding along in a few thousand lines
+        # of generated JSON.
+        run: |
+          set -euo pipefail
+          node -e '
+            const before = require("/tmp/before.json");
+            const lock = require("./package-lock.json");
+            const after = {};
+            for (const [p, m] of Object.entries(lock.packages || {})) {
+              if (p) after[p] = m.version ?? null;
+            }
+            const changed = [], removed = [];
+            for (const [p, v] of Object.entries(before)) {
+              if (!(p in after)) removed.push(p);
+              else if (after[p] !== v) changed.push(`${p}: ${v} -> ${after[p]}`);
+            }
+            const added = Object.keys(after).filter((p) => !(p in before));
+            console.log(`added:   ${added.length}`);
+            console.log(`changed: ${changed.length}`);
+            console.log(`removed: ${removed.length}`);
+            for (const c of changed) console.log(`  CHANGED ${c}`);
+            for (const r of removed) console.log(`  REMOVED ${r}`);
+            if (changed.length || removed.length) {
+              console.error("::error::adding the jest toolchain moved a pre-existing dependency — that is a dependency upgrade, not a test-tooling change");
+              process.exit(1);
+            }
+          '
+
+      - name: Everything resolved from registry.npmjs.org
+        run: |
+          set -euo pipefail
+          node -e '
+            const lock = require("./package-lock.json");
+            const foreign = Object.entries(lock.packages || {}).filter(
+              ([p, m]) => p && m.resolved && new URL(m.resolved).host !== "registry.npmjs.org"
+            );
+            for (const [p, m] of foreign) console.error(`  ${p} <- ${m.resolved}`);
+            if (foreign.length) {
+              console.error("::error::a dependency resolved off registry.npmjs.org");
+              process.exit(1);
+            }
+            console.log("all tarballs resolve to registry.npmjs.org");
+          '
+
+      - name: Prove `npm ci` accepts it, from nothing
+        # Generating a lockfile and shipping it unverified just moves the guess
+        # downstream. `npm ci` is the exact command frontend-build runs, and it
+        # exits non-zero when the lock disagrees with package.json — so run it
+        # here, from a deleted node_modules, before anyone commits the files.
+        run: |
+          set -euo pipefail
+          rm -rf node_modules
+          npm ci
+
+      - name: Prove the suite actually runs from that clean install
+        # The point of the whole queue. If `npx jest` cannot execute against a
+        # lockfile-only install, the CI step this unblocks would be a red job on
+        # every push, and better to learn it here than on master.
+        run: |
+          set -euo pipefail
+          npx jest --ci --watchman=false 2>&1 | tee /tmp/jest.log
+          node -e '
+            const log = require("fs").readFileSync("/tmp/jest.log", "utf8");
+            const suites = /Test Suites:.*?(\d+) total/.exec(log);
+            const tests = /Tests:.*?(\d+) total/.exec(log);
+            if (!suites || !tests) {
+              console.error("::error::could not parse the jest summary — refusing to call this a pass");
+              process.exit(1);
+            }
+            console.log(`collected ${suites[1]} suites / ${tests[1]} tests`);
+            if (Number(suites[1]) < 100) {
+              console.error("::error::suspiciously few suites collected on a clean install");
+              process.exit(1);
+            }
+          '
+
+      - name: Report what was added
+        run: |
+          set -euo pipefail
+          node -e '
+            const lock = require("./package-lock.json");
+            const before = require("/tmp/before.json");
+            const added = Object.entries(lock.packages || {})
+              .filter(([p]) => p && !(p in before));
+            console.log(`lockfileVersion: ${lock.lockfileVersion}`);
+            console.log(`packages added:  ${added.length}`);
+            for (const [p, m] of added) console.log(`  ${p}@${m.version ?? "?"}`);
+          '
+          # Recorded for the follow-up: @types/jest is genuinely undeclared too
+          # (tsc --noEmit reports TS2582 "Cannot find name describe" across every
+          # test file). It is NOT added here — this queue is scoped to making the
+          # suite executable in CI, and ts-jest transpiles without type-checking,
+          # so it changes no gate. Printing the resolvable version means the next
+          # queue does not need another dispatch to learn it.
+          echo "@types/jest latest: $(npm view @types/jest version --registry=https://registry.npmjs.org/)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-jest-manifest
+          path: |
+            frontend/package.json
+            frontend/package-lock.json
+          retention-days: 7
+          if-no-files-found: error
