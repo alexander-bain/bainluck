@@ -29,8 +29,17 @@ pytestmark = pytest.mark.asyncio
 
 
 def _at(*, days_ago: float = 0.0) -> str:
-    """Fixed-hour stamp N days back (gotcha #44: never straddle midnight)."""
-    base = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+    """A stable stamp N days back that is ALWAYS in the past.
+
+    Deliberately not the ``.replace(hour=12)`` idiom used elsewhere: anchoring to
+    a fixed hour of *today* produces a FUTURE timestamp whenever the suite runs
+    before that hour, and this boundary rejects future stamps outright (clock
+    skew must surface, not be clamped). CI runs at ~00:0x UTC and caught it.
+    Truncating to the hour keeps it deterministic within a run.
+    """
+    base = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(
+        minute=0, second=0, microsecond=0
+    )
     return (base - timedelta(days=days_ago)).isoformat()
 
 
