@@ -441,10 +441,21 @@ async def redis_census(
                 "max_ttl_s": max(cell["ttls"]) if cell["ttls"] else None,
             }
             # Age, for the one class whose TTL is set from a config we control.
-            # Oldest sampled key = the one with the least time left.
+            # A TTL LONGER than the configured expiry cannot have been written
+            # under the current config — it is residue from a previous
+            # `result_expires`, and subtracting it yields a negative "age".
+            # So those keys are counted rather than aged, which also makes this
+            # the read that shows the old 24h residue draining away.
             if cls == "celery-task-meta-*" and cell["ttls"] and expires_s:
-                row["max_sampled_age_s"] = int(expires_s) - min(cell["ttls"])
-                row["min_sampled_age_s"] = int(expires_s) - max(cell["ttls"])
+                expires_s = int(expires_s)
+                current = [t for t in cell["ttls"] if t <= expires_s]
+                legacy = len(cell["ttls"]) - len(current)
+                row["sampled_ttl_over_configured_expiry"] = legacy
+                row["configured_expiry_s"] = expires_s
+                if current:
+                    # Oldest sampled key = the one with the least time left.
+                    row["max_sampled_age_s"] = expires_s - min(current)
+                    row["min_sampled_age_s"] = expires_s - max(current)
             summary.append(row)
         summary.sort(key=lambda c: -c["est_total_bytes"])
         out["classes"] = summary[:60]

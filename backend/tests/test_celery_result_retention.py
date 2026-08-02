@@ -450,6 +450,37 @@ async def test_census_derives_celery_result_key_age(monkeypatch):
     # Oldest key is the one with the least TTL left.
     assert row["max_sampled_age_s"] == RESULT_EXPIRES_S - 1200
     assert row["min_sampled_age_s"] == RESULT_EXPIRES_S - 3400
+    assert row["sampled_ttl_over_configured_expiry"] == 0
+
+
+@pytest.mark.asyncio
+async def test_census_counts_legacy_ttls_instead_of_reporting_negative_age(monkeypatch):
+    """A key with 47,348s left cannot have been written under a 3,600s expiry —
+    it is residue from the old 24h default. Subtracting gives a nonsense
+    negative age, so count it instead. This is also the read that shows the old
+    residue draining."""
+    keys = ["celery-task-meta-legacy", "celery-task-meta-fresh"]
+    out = await _run_census(
+        monkeypatch, keys, {keys[0]: 47348, keys[1]: 900}
+    )
+
+    row = next(c for c in out["classes"] if c["class"] == "celery-task-meta-*")
+    assert row["sampled_ttl_over_configured_expiry"] == 1
+    assert row["configured_expiry_s"] == RESULT_EXPIRES_S
+    # Only the in-config key contributes an age, and it is never negative.
+    assert row["max_sampled_age_s"] == RESULT_EXPIRES_S - 900
+    assert row["min_sampled_age_s"] == RESULT_EXPIRES_S - 900
+
+
+@pytest.mark.asyncio
+async def test_census_omits_age_when_every_sample_is_legacy(monkeypatch):
+    keys = ["celery-task-meta-legacy"]
+    out = await _run_census(monkeypatch, keys, {keys[0]: 82441})
+
+    row = next(c for c in out["classes"] if c["class"] == "celery-task-meta-*")
+    assert row["sampled_ttl_over_configured_expiry"] == 1
+    assert "max_sampled_age_s" not in row
+    assert "min_sampled_age_s" not in row
 
 
 @pytest.mark.asyncio
