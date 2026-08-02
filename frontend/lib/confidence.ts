@@ -12,7 +12,7 @@ export type ConfidenceTier = "high" | "moderate" | "low";
 
 // tier -> number of filled bars (out of 3). Backend keeps an identical map.
 export const CONFIDENCE_TIER_BARS: Record<ConfidenceTier, number> = {
-  high: 3,
+  high: 2,
   moderate: 2,
   low: 1,
 };
