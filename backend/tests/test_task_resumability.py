@@ -397,3 +397,42 @@ def test_empty_accumulator_publishes_an_empty_but_valid_snapshot():
 def test_new_checkpoint_is_at_zero():
     cp = new_checkpoint("coverage_metrics", VERSION)
     assert (cp.cursor, cp.chunks_done, cp.failed_chunks, cp.accumulator) == (0, 0, (), {})
+
+
+# --- Redis census key classing ---------------------------------------------
+
+
+def test_id_suffixed_families_fold_into_one_class():
+    """The census ranking is useless if a family fragments into one class per key.
+
+    Celery's result backend writes ``celery-task-meta-<uuid>``. Unfolded, each
+    key became its own "class", the top-N cut kept only the biggest individual
+    keys, and the family that actually dominated memory in aggregate did not
+    appear in the ranking at all.
+    """
+    from app.routes.admin_celery import _redis_key_class
+
+    assert (
+        _redis_key_class("celery-task-meta-a0572c97-e7a0-4181-9a7d-e788f63dcda5")
+        == _redis_key_class("celery-task-meta-9e163365-f7db-46cf-800c-42d5f9749d22")
+        == "celery-task-meta-*"
+    )
+    assert _redis_key_class("_kombu.binding.celeryev") == "_kombu.binding.*"
+
+
+def test_colon_namespaced_keys_roll_up_to_two_segments():
+    from app.routes.admin_celery import _redis_key_class
+
+    assert _redis_key_class("bainluck:calibration:main") == "bainluck:calibration"
+    assert _redis_key_class("bainluck:calibration:last_good") == "bainluck:calibration"
+    assert _redis_key_class("bainluck:category:politics") == "bainluck:category"
+    assert _redis_key_class("bainluck:category:politics") != _redis_key_class(
+        "bainluck:calibration:main"
+    )
+
+
+def test_unnamespaced_key_still_gets_a_class():
+    from app.routes.admin_celery import _redis_key_class
+
+    assert _redis_key_class("background") == "background"
+    assert _redis_key_class("") == "(root)"

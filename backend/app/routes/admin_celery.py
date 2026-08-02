@@ -278,12 +278,33 @@ async def celery_debug(request: Request, secret: str = Query(None)):
 
 
 
+#: Key families whose per-key suffix is an opaque id. Without folding these the
+#: census reports one "class" per key, the top-N cut keeps only the biggest
+#: individual keys, and a family that dominates memory in aggregate — celery's
+#: result backend does exactly this — disappears from the ranking.
+_REDIS_ID_SUFFIX_PREFIXES = (
+    "celery-task-meta-",
+    "_kombu.binding.",
+    "unacked",
+)
+
+
+def _redis_key_class(key: str) -> str:
+    """Fold a key into the family it belongs to, id suffixes and all."""
+    for prefix in _REDIS_ID_SUFFIX_PREFIXES:
+        if key.startswith(prefix):
+            return f"{prefix}*"
+    # Otherwise: first two colon segments, so `bainluck:calibration:x` and
+    # `bainluck:calibration:y` roll up together.
+    return ":".join(key.split(":")[:2]) or "(root)"
+
+
 @router.get("/redis-census")
 async def redis_census(
     request: Request,
     secret: str = Query(None),
     scan_limit: int = Query(20000, ge=100, le=200000),
-    sample_per_class: int = Query(5, ge=1, le=25),
+    sample_per_class: int = Query(12, ge=1, le=50),
 ):
     """Bounded, read-only census of what is actually occupying Redis.
 
@@ -356,9 +377,7 @@ async def redis_census(
             cursor, batch = r.scan(cursor=cursor, count=500)
             for raw in batch:
                 key = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-                # Class = first two colon segments, so `bainluck:calibration:x`
-                # and `bainluck:calibration:y` roll up together.
-                cls = ":".join(key.split(":")[:2]) or "(root)"
+                cls = _redis_key_class(key)
                 cell = classes[cls]
                 cell["keys"] += 1
                 if cell["sampled"] < sample_per_class:
