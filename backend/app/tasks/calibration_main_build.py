@@ -29,6 +29,7 @@ Three things live here:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -262,6 +263,21 @@ class PhaseRunner:
         """True when a prior beat already banked this phase's whole output."""
         return self.ledger.records[phase].status == RESUMED
 
+    @contextlib.contextmanager
+    def stage(self, name: str):
+        """Time one named sub-phase stretch, whatever happens inside it.
+
+        Recorded on the way out even when the body raises, because the stage
+        that blew up is the one worth knowing the cost of. Stages carry no
+        budget and no resume semantics — they exist purely so no part of the
+        build is unaccounted for.
+        """
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.ledger.record_stage(name, int((time.monotonic() - started) * 1000))
+
     def classify_failure(self, exc: BaseException) -> str:
         """timeout | cancelled | failed — the three ways a phase can end badly."""
         import asyncio
@@ -462,6 +478,10 @@ class NullPhaseRunner:
 
     async def commit(self, db) -> None:  # noqa: D102
         return None
+
+    @contextlib.contextmanager
+    def stage(self, name: str):  # noqa: D102
+        yield
 
 
 NULL_RUNNER = NullPhaseRunner()

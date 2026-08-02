@@ -904,6 +904,49 @@ def test_every_read_and_the_python_aggregation_sit_inside_a_measured_phase():
     assert src.count("MIN(resolution_date)") == 1
 
 
+def test_every_read_and_publish_stretch_is_a_named_stage():
+    """Item 0's reconciliation list, asserted against the source.
+
+    r343's last success ran 1,502.5s with compute_ms=534.9s, serialize_ms=6 and
+    publish_ms=113 — 967.5s (64% of the window) in code no timer covered. The
+    baseline read and the publish gate were the only substantial part of that
+    stretch, and neither was measured. Both are stages now.
+    """
+    import inspect
+
+    from app.tasks import precompute_calibration as pc
+
+    src = inspect.getsource(pc.compute_calibration_payload) + inspect.getsource(
+        pc._run_calibration_main_build
+    )
+    for stage in (
+        "read:futures_population",
+        "read:events", "read:spreads", "read:totals",
+        "read:total_markets", "read:closing", "read:void",
+        "read:heuristic_excluded", "read:soccer_2way", "read:truth_census",
+        "read:date_range",
+        "serialize", "redis_client", "baseline_read", "publish_gate",
+        "durable_publish", "redis_accelerate",
+    ):
+        assert f'runner.stage("{stage}")' in src, stage
+
+
+def test_stages_accumulate_and_are_recorded_even_when_the_body_raises():
+    runner = _runner()
+    with runner.stage("read:events"):
+        pass
+    with runner.stage("read:events"):
+        pass
+    assert "read:events" in runner.ledger.stages
+
+    with pytest.raises(ValueError):
+        with runner.stage("publish_gate"):
+            raise ValueError("boom")
+    # The stage that blew up is the one worth knowing the cost of.
+    assert "publish_gate" in runner.ledger.stages
+    assert runner.ledger.as_payload()["stages"]["publish_gate"] >= 0
+
+
 def test_unmeasured_overhead_is_what_is_left_after_every_phase():
     runner = _runner()
     for phase in REQUIRED_PHASES:

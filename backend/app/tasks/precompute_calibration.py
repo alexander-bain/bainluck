@@ -2365,8 +2365,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         if rows is None:
             runner.begin(PHASE_FUTURES)
             await runner.apply_statement_timeout(db, PHASE_FUTURES)
-            result = await db.execute(main_sql)
-            rows = result.all()
+            with runner.stage("read:futures_population"):
+                result = await db.execute(main_sql)
+                rows = result.all()
             await runner.commit(db)
             runner.record(PHASE_FUTURES, "rows", rows, kind="rows")
             runner.complete(PHASE_FUTURES)
@@ -2539,8 +2540,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         events_rows = runner.reuse(PHASE_SPORTS, "events_rows")
         if events_rows is None:
             await runner.apply_statement_timeout(db, PHASE_SPORTS)
-            events_result = await db.execute(events_sql)
-            events_rows = events_result.all()
+            with runner.stage("read:events"):
+                events_result = await db.execute(events_sql)
+                events_rows = events_result.all()
             runner.record(PHASE_SPORTS, "events_rows", events_rows, kind="rows")
 
         # -----------------------------------------------------------
@@ -2587,8 +2589,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         spreads_rows = runner.reuse(PHASE_SPORTS, "spreads_rows")
         if spreads_rows is None:
-            spreads_result = await db.execute(spreads_sql)
-            spreads_rows = spreads_result.all()
+            with runner.stage("read:spreads"):
+                spreads_result = await db.execute(spreads_sql)
+                spreads_rows = spreads_result.all()
             runner.record(PHASE_SPORTS, "spreads_rows", spreads_rows, kind="rows")
 
         # -----------------------------------------------------------
@@ -2635,8 +2638,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         totals_rows = runner.reuse(PHASE_SPORTS, "totals_rows")
         if totals_rows is None:
-            totals_result = await db.execute(totals_sql)
-            totals_rows = totals_result.all()
+            with runner.stage("read:totals"):
+                totals_result = await db.execute(totals_sql)
+                totals_rows = totals_result.all()
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
 
         if not _sports_carried:
@@ -2683,12 +2687,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         total_markets = runner.reuse(PHASE_DIAGNOSTICS, "total_markets")
         if total_markets is None:
             await runner.apply_statement_timeout(db, PHASE_DIAGNOSTICS)
-            total_markets_result = await db.execute(
-                select(func.count()).select_from(FuturesMarket).where(
-                    FuturesMarket.status == "resolved"
+            with runner.stage("read:total_markets"):
+                total_markets_result = await db.execute(
+                    select(func.count()).select_from(FuturesMarket).where(
+                        FuturesMarket.status == "resolved"
+                    )
                 )
-            )
-            total_markets = total_markets_result.scalar()
+                total_markets = total_markets_result.scalar()
             runner.record(PHASE_DIAGNOSTICS, "total_markets", total_markets)
 
         # -----------------------------------------------------------
@@ -2706,8 +2711,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         closing_row = runner.reuse(PHASE_DIAGNOSTICS, "closing_row")
         if closing_row is None:
-            closing_result = await db.execute(closing_sql)
-            closing_row = closing_result.one()
+            with runner.stage("read:closing"):
+                closing_result = await db.execute(closing_sql)
+                closing_row = closing_result.one()
             runner.record(PHASE_DIAGNOSTICS, "closing_row", closing_row, kind="row")
 
         # -----------------------------------------------------------
@@ -2728,8 +2734,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         void_excluded = runner.reuse(PHASE_DIAGNOSTICS, "void_excluded")
         if void_excluded is None:
-            void_result = await db.execute(void_sql)
-            void_excluded = int(void_result.scalar() or 0)
+            with runner.stage("read:void"):
+                void_result = await db.execute(void_sql)
+                void_excluded = int(void_result.scalar() or 0)
             runner.record(PHASE_DIAGNOSTICS, "void_excluded", void_excluded)
 
         # -----------------------------------------------------------
@@ -2755,8 +2762,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         heuristic_excluded = runner.reuse(PHASE_DIAGNOSTICS, "heuristic_excluded")
         if heuristic_excluded is None:
-            heur_result = await db.execute(heur_sql)
-            heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
+            with runner.stage("read:heuristic_excluded"):
+                heur_result = await db.execute(heur_sql)
+                heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
             runner.record(PHASE_DIAGNOSTICS, "heuristic_excluded", heuristic_excluded)
 
         # -----------------------------------------------------------
@@ -2792,8 +2800,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         soccer_2way_excluded = runner.reuse(PHASE_DIAGNOSTICS, "soccer_2way_excluded")
         if soccer_2way_excluded is None:
-            soccer_2way_result = await db.execute(soccer_2way_sql)
-            soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
+            with runner.stage("read:soccer_2way"):
+                soccer_2way_result = await db.execute(soccer_2way_sql)
+                soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
             runner.record(PHASE_DIAGNOSTICS, "soccer_2way_excluded", soccer_2way_excluded)
 
         # -----------------------------------------------------------
@@ -2831,11 +2840,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         truth_by_class = runner.reuse(PHASE_DIAGNOSTICS, "truth_by_class")
         if truth_by_class is None:
-            truth_result = await db.execute(truth_sql)
-            truth_by_class = {
-                r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
-                for r in truth_result.all()
-            }
+            with runner.stage("read:truth_census"):
+                truth_result = await db.execute(truth_sql)
+                truth_by_class = {
+                    r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
+                    for r in truth_result.all()
+                }
             runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
 
         # -----------------------------------------------------------
@@ -2857,17 +2867,18 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
         if date_range is None:
             try:
-                dr = (
-                    await db.execute(
-                        text(
-                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
-                            "FROM futures_markets "
-                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
-                            "AND resolution_date <= NOW() "
-                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
+                with runner.stage("read:date_range"):
+                    dr = (
+                        await db.execute(
+                            text(
+                                "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+                                "FROM futures_markets "
+                                "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+                                "AND resolution_date <= NOW() "
+                                "AND resolution_date >= NOW() - INTERVAL '5 years'"
+                            )
                         )
-                    )
-                ).one()
+                    ).one()
                 if dr.lo and dr.hi:
                     date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
             except Exception:
@@ -3575,6 +3586,8 @@ async def _run_calibration_main_build(runner=None):
             response = await compute_calibration_payload(db, runner=runner)
         finally:
             await release_overlap_lock(db, MAIN_BUILD_TASK)
+    # ^ the `async with` exit rolls back, closes and DISPOSES the per-task
+    # engine. That teardown is real wall-clock the old `compute_ms` swallowed.
     compute_ms = round((time.monotonic() - t0) * 1000)
 
     # A partial/empty compute must never overwrite a valid cache entry (Item 1).
@@ -3591,11 +3604,13 @@ async def _run_calibration_main_build(runner=None):
     runner.begin(PHASE_PUBLISH)
 
     t1 = time.monotonic()
-    payload_json = json.dumps(response)
+    with runner.stage("serialize"):
+        payload_json = json.dumps(response)
     serialize_ms = round((time.monotonic() - t1) * 1000)
     payload_bytes = len(payload_json)
 
-    rc = get_redis_client()
+    with runner.stage("redis_client"):
+        rc = get_redis_client()
 
     # Queue 297 Item 3: the ATOMIC PUBLISH GATE. Everything above built a
     # *candidate*; nothing published yet. Compare it against the currently
@@ -3607,8 +3622,19 @@ async def _run_calibration_main_build(runner=None):
     # touches neither key, so the last published snapshot keeps serving.
     from app.utils.calibration_publish_gate import evaluate_publish
 
-    baseline = _read_published_baseline(rc)
-    verdict = evaluate_publish(response, baseline)
+    # Queue 300M Item 0: THIS is the stretch r343's arithmetic could not see.
+    # Its last success ran 1,502.5s total against compute_ms=534.9s,
+    # serialize_ms=6 and publish_ms=113 — leaving 967.5s (64% of the whole
+    # window) in code that no timer covered, of which this baseline read and
+    # gate are the only substantial part. The baseline read pulls up to two
+    # ~376KB Redis values and `json.loads` each (a C-level decode that holds
+    # the GIL for its whole duration — gotcha #38), then the gate builds a
+    # census over BOTH payloads. Timed separately from here on, so the next
+    # organic beat attributes those 967s instead of leaving them a mystery.
+    with runner.stage("baseline_read"):
+        baseline = _read_published_baseline(rc)
+    with runner.stage("publish_gate"):
+        verdict = evaluate_publish(response, baseline)
     gate = {
         "ok": verdict.ok,
         "first_publish": verdict.first_publish,
@@ -3624,7 +3650,8 @@ async def _run_calibration_main_build(runner=None):
     runner.outcome["gate"] = "pass" if verdict.ok else "refuse"
 
     if not verdict.ok:
-        filing = _file_publish_gate_rejection(verdict)
+        with runner.stage("gate_rejection_filing"):
+            filing = _file_publish_gate_rejection(verdict)
         logger.error(
             "calibration publish gate REJECTED candidate (%s): %s [filing=%s]",
             ", ".join(verdict.codes), verdict.summary(), filing.get("action"),
@@ -3657,7 +3684,8 @@ async def _run_calibration_main_build(runner=None):
         generated_at=_parse_generated_at(response.get("generated_at")),
         source="precompute_calibration",
     )
-    durable_stage = await publish_snapshot_standalone(envelope)
+    with runner.stage("durable_publish"):
+        durable_stage = await publish_snapshot_standalone(envelope)
 
     # A durable write that lost the generation race is still a good copy on disk.
     durable_ok = durable_stage["status"] in ("ok", "superseded")
@@ -3666,7 +3694,8 @@ async def _run_calibration_main_build(runner=None):
     # torn pair, and it is worse than having no accelerator at all.
     stages: dict = {}
     if durable_ok:
-        stages = _publish_calibration_main(rc, payload_json)
+        with runner.stage("redis_accelerate"):
+            stages = _publish_calibration_main(rc, payload_json)
     else:
         logger.error(
             "calibration publish: durable write FAILED (%s) — skipping the Redis "
@@ -3793,6 +3822,8 @@ async def _precompute_calibration_main():
     )
 
     fingerprint = _main_input_fingerprint()
+    # The two durable reads below are the only work outside the runner's own
+    # accounting, so they are the only thing left in unmeasured_overhead.
     runner, action = await build_runner(
         population_version=CALIBRATION_POPULATION_VERSION,
         fingerprint=fingerprint,
@@ -3936,6 +3967,12 @@ async def _precompute_calibration_main():
         "ledger_write": ledger_write,
         "carried": list(runner.carried_phases),
         "banked": banked,
+        # Item 0's reconciliation surface: every named stretch of the build,
+        # so the r343-style "where did 967s go?" question is answered by
+        # reading one field instead of subtracting three.
+        "stages": dict(sorted(runner.ledger.stages.items())),
+        "unmeasured_overhead_ms": runner.ledger.unmeasured_overhead_ms,
+        "elapsed_ms": runner.ledger.elapsed_ms,
         "phases": {
             name: {
                 "status": record.status,

@@ -432,6 +432,18 @@ class PhaseLedger:
         self.unmeasured_overhead_ms: int = 0
         self.elapsed_ms: int = 0
         self.ledger_write: str = "not_attempted"
+        #: Sub-phase timings. Phases are the BUDGET and RESUME unit; stages are
+        #: pure measurement inside one, and they are what turns "967s went
+        #: somewhere" into "967s went here". Recorded for every stage Queue
+        #: 300M Item 0 names — session acquisition, each read, serialization,
+        #: baseline/gate/filing, durable publish, Redis acceleration, session
+        #: cleanup — without adding a phase the C124 contract would have to
+        #: budget separately.
+        self.stages: dict[str, int] = {}
+
+    def record_stage(self, name: str, duration_ms: int) -> None:
+        """Add a stage observation. Repeats accumulate (7 diagnostic reads)."""
+        self.stages[name] = self.stages.get(name, 0) + max(0, int(duration_ms))
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -552,6 +564,7 @@ class PhaseLedger:
             "input_fingerprint": self.input_fingerprint,
             "plan": self.plan.as_payload(),
             "phases": [self.records[n].as_payload() for n in self.order],
+            "stages": dict(sorted(self.stages.items())),
             "elapsed_ms": self.elapsed_ms,
             "unmeasured_overhead_ms": self.unmeasured_overhead_ms,
             "completed_required": list(self.completed_required),
