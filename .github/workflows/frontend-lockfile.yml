@@ -43,6 +43,22 @@ on:
         description: "ts-jest version range"
         default: "ts-jest@^29.4.11"
         required: true
+      allow_version_change:
+        # Named, not waved through. The check below fails on ANY pre-existing
+        # package whose version moves; this input is the only way past it, and
+        # it puts the exact package and both versions on the run record where
+        # they can be read back later.
+        #
+        # First use (2026-08-02): `node_modules/semver` — npm re-resolved the
+        # hoisted copy 7.7.3 -> 7.8.5 while adding the jest tree. It is already
+        # `dev: true` in the lockfile (its consumers are @typescript-eslint and
+        # is-bun-module, both eslint tooling), so it reaches no browser bundle
+        # and no Vercel runtime, and 7.8.5 is inside every declared caret. That
+        # is a reviewed allowance, which is a different thing from a guard that
+        # does not notice.
+        description: "Comma-separated lockfile paths permitted to change version, e.g. node_modules/semver"
+        default: ""
+        required: false
 
 permissions:
   contents: read
@@ -112,28 +128,47 @@ jobs:
         # proof. Additions are the point; a changed or removed version is not,
         # and it fails the run rather than riding along in a few thousand lines
         # of generated JSON.
+        env:
+          ALLOW_VERSION_CHANGE: ${{ inputs.allow_version_change }}
         run: |
           set -euo pipefail
           node -e '
             const before = require("/tmp/before.json");
             const lock = require("./package-lock.json");
+            const allowed = new Set(
+              (process.env.ALLOW_VERSION_CHANGE || "")
+                .split(",").map((s) => s.trim()).filter(Boolean)
+            );
             const after = {};
             for (const [p, m] of Object.entries(lock.packages || {})) {
               if (p) after[p] = m.version ?? null;
             }
-            const changed = [], removed = [];
+            const changed = [], allowedChanges = [], removed = [];
             for (const [p, v] of Object.entries(before)) {
               if (!(p in after)) removed.push(p);
-              else if (after[p] !== v) changed.push(`${p}: ${v} -> ${after[p]}`);
+              else if (after[p] !== v) {
+                (allowed.has(p) ? allowedChanges : changed).push(`${p}: ${v} -> ${after[p]}`);
+              }
             }
             const added = Object.keys(after).filter((p) => !(p in before));
-            console.log(`added:   ${added.length}`);
-            console.log(`changed: ${changed.length}`);
-            console.log(`removed: ${removed.length}`);
+            console.log(`added:            ${added.length}`);
+            console.log(`changed:          ${changed.length}`);
+            console.log(`changed (allowed): ${allowedChanges.length}`);
+            console.log(`removed:          ${removed.length}`);
+            for (const c of allowedChanges) console.log(`  ALLOWED ${c}`);
             for (const c of changed) console.log(`  CHANGED ${c}`);
             for (const r of removed) console.log(`  REMOVED ${r}`);
+            // An allowance that is declared but never used is stale, and a
+            // stale allowance is a hole waiting for the next resolve to fall
+            // through. Fail on it too.
+            for (const p of allowed) {
+              if (!allowedChanges.some((c) => c.startsWith(`${p}: `))) {
+                console.error(`::error::allow_version_change names ${p}, but it did not change — remove the stale allowance`);
+                process.exit(1);
+              }
+            }
             if (changed.length || removed.length) {
-              console.error("::error::adding the jest toolchain moved a pre-existing dependency — that is a dependency upgrade, not a test-tooling change");
+              console.error("::error::adding the jest toolchain moved a pre-existing dependency — that is a dependency upgrade, not a test-tooling change. Review it, then name it in allow_version_change if it is genuinely safe.");
               process.exit(1);
             }
           '
