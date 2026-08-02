@@ -10,6 +10,10 @@ import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 import { describeActivityComparison, ece, mce, monthYear } from "@/lib/calibrationMath";
+import {
+  decideCalibrationContract,
+  CONTRACT_REFUSAL_MESSAGE,
+} from "@/lib/calibrationContract";
 import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 
@@ -312,6 +316,12 @@ export default function CalibrationPage() {
     });
   }, [normalized, categories, cohortFilter]);
 
+  // L2-232: may this build's labels go on this payload's numbers? Decided in one
+  // pure place (`lib/calibrationContract.ts`) so the precedence between refusal
+  // and the dated-degraded banner is a tested table rather than the order two
+  // JSX conditionals happen to sit in. Last hook before the conditional returns.
+  const contract = useMemo(() => decideCalibrationContract(data), [data]);
+
   if (error) {
     // Queue 297 Item 1: the backend now answers a genuine outage with a TYPED
     // unavailable body instead of an opaque failure, so say what is actually
@@ -321,27 +331,20 @@ export default function CalibrationPage() {
       | { status?: string; message?: string; reason?: string }
       | undefined;
     const unavailable = detail?.status === "unavailable";
+    // A transport/backend failure outranks every payload-level check below: we
+    // have no payload to judge. (Poison ordering, rung 1.)
     return (
-      // L2-231 Item 1: the failure states carry their own hooks, and NAME
-      // themselves as data. Without this the browser rail could only observe
-      // "the loaded-page hook is missing" and had no way to say whether that was
-      // a rebuild window, a hard fetch failure, or a rendering regression — and
-      // its reads on the absent hooks timed out and destroyed the evidence.
-      <div
-        className="max-w-6xl mx-auto"
-        data-testid="calibration-error"
-        data-error-state-name={unavailable ? (detail?.reason || "unavailable") : "load-failed"}
-      >
-        <ErrorState
-          message={
-            unavailable
-              ? detail?.message ||
-                "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly."
-              : "Failed to load calibration data"
-          }
-          onRetry={() => window.location.reload()}
-        />
-      </div>
+      <CalibrationUnavailable
+        stateName={unavailable ? (detail?.reason || "unavailable") : "load-failed"}
+        contractState="no-payload"
+        message={
+          unavailable
+            ? detail?.message ||
+              "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly."
+            : "Failed to load calibration data"
+        }
+        onRetry={() => window.location.reload()}
+      />
     );
   }
 
@@ -350,6 +353,25 @@ export default function CalibrationPage() {
       <div className="max-w-6xl mx-auto" data-testid="calibration-loading">
         <LoadingState message="Loading calibration data..." />
       </div>
+    );
+  }
+
+  // L2-232 Item 1. The payload arrived and parsed — and names a population this
+  // build cannot label. Everything below this line renders numbers under THIS
+  // build's descriptions, so this is where the page has to stop.
+  //
+  // Poison ordering, rung 2: this sits AFTER the transport error and the loading
+  // state (no payload can be judged) and BEFORE the stale banner. A payload that
+  // is both dated and incompatible must refuse, not render a mild "here's an
+  // older snapshot" caveat wrapped around numbers we will not stand behind.
+  if (!contract.render) {
+    return (
+      <CalibrationUnavailable
+        stateName="population-contract-refused"
+        contractState={contract.state}
+        servedVersion={contract.servedVersion}
+        message={CONTRACT_REFUSAL_MESSAGE}
+      />
     );
   }
 
@@ -384,26 +406,39 @@ export default function CalibrationPage() {
       data-testid="calibration-page"
       data-population-version={data.population_version ?? ""}
       data-cache-status={data.cache?.status ?? "fresh"}
+      /* L2-232: WHY the page considered itself allowed to render. "match" means
+         the served version is one this build's labels describe; "unverified"
+         means the payload named no population at all and is rendered without
+         that claim. A refusal never reaches this element. */
+      data-contract-state={contract.state}
     >
       {/* Queue 297 Item 1: when we are serving a last-good snapshot rather than a
           current one, say so and date it. A stale curve is fine; a stale curve
-          presented as live is not. */}
-      {data.cache?.status === "stale" && (
+          presented as live is not.
+
+          L2-232: gated on the contract decision, not on `cache.status` read
+          again here — one place decides, so "degraded" can never outrank a
+          refusal by virtue of being checked first. */}
+      {contract.degraded && (
         <div
           role="status"
           data-testid="calibration-stale-banner"
-          data-cache-reason={data.cache.reason ?? ""}
-          data-generated-at={data.cache.generated_at ?? ""}
+          data-cache-reason={data.cache?.reason ?? ""}
+          data-generated-at={data.cache?.generated_at ?? ""}
+          /* An undated last-good still banners — dropping it would lose the
+             honesty signal entirely — but it cannot say WHEN, and the rail
+             should be able to tell those two apart. */
+          data-degraded-dated={contract.degradedDated ? "true" : "false"}
           className="rounded-lg border border-surface-border bg-surface-card px-4 py-3 text-sm text-text-secondary"
         >
           <strong className="text-text-primary">Showing the last complete snapshot.</strong>{" "}
           These numbers were built{" "}
-          {data.cache.generated_at
+          {data.cache?.generated_at
             ? new Date(data.cache.generated_at).toLocaleString("en-US", {
                 month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
               })
             : "earlier"}
-          {typeof data.cache.age_s === "number" && ` (${formatAge(data.cache.age_s)} ago)`}
+          {typeof data.cache?.age_s === "number" && ` (${formatAge(data.cache.age_s)} ago)`}
           {" "}and are not being refreshed right now. The curve rebuilds hourly.
         </div>
       )}
@@ -1002,6 +1037,54 @@ export default function CalibrationPage() {
       </footer>
     </div>
     </ErrorBoundary>
+  );
+}
+
+// L2-231 Item 1 / L2-232: the ONE element the page renders when it will not show
+// numbers, whichever reason it has.
+//
+// Two properties are load-bearing:
+//
+//   1. `calibration-error` is declared exactly ONCE in this file. The rail
+//      selects it with `.first()`, so a second declaration would make the choice
+//      markup order rather than intent — and `calibrationAuditHooks.test.tsx`
+//      fails CI on a duplicate. Both the transport failure and the contract
+//      refusal therefore route through here rather than each rendering their own.
+//
+//   2. It NAMES itself as data. "the loaded-page hook is missing" is not a
+//      diagnosis: a rebuild window, a hard fetch failure, a refused population
+//      contract and a rendering regression all look identical from outside.
+//      `data-error-state-name` distinguishes them, and `data-contract-state`
+//      says whether a payload was even available to judge.
+//
+// `onRetry` is deliberately optional. The transport failures pass one — a reload
+// genuinely can fix those. The contract refusal does NOT: retrying the same
+// build against the same payload reproduces the same refusal, so offering the
+// button would be an invitation to a loop that cannot terminate. Recovery there
+// is a republish or a redeploy, and SWR's 5-minute poll picks up either without
+// the reader doing anything, which is what the copy promises.
+function CalibrationUnavailable({
+  stateName, contractState, message, onRetry, servedVersion,
+}: {
+  stateName: string;
+  contractState: string;
+  message: string;
+  onRetry?: () => void;
+  servedVersion?: string;
+}) {
+  return (
+    <div
+      className="max-w-6xl mx-auto"
+      data-testid="calibration-error"
+      data-error-state-name={stateName}
+      data-contract-state={contractState}
+      /* The version is EVIDENCE, not copy: published where the rail can grade
+         the exact mismatch, and kept out of the reader's sentence, where a bare
+         "q267" is unexplained jargon. */
+      data-served-population-version={servedVersion ?? ""}
+    >
+      <ErrorState message={message} onRetry={onRetry} />
+    </div>
   );
 }
 

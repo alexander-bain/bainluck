@@ -64,7 +64,29 @@ final class CalibrationRenderSmokeTests: XCTestCase {
     {"bucket_idx": 2, "source": "odds_api", "category": "baseball_mlb", "price_moved": null, "n": 400, "winners": 100, "avg_prob": 0.25, "sum_prob": 100.0, "sum_sq_err": 80.0, "ci_lower": 0.21, "ci_upper": 0.29}
     """
 
-    private static func payload(cache: String? = nil, version: String? = "q299") -> String {
+    /// L2-232: taken from the build's own compatible set, never written as a
+    /// literal.
+    ///
+    /// These fixtures used to hard-code `"q299"` as the HEALTHY version. When
+    /// L2-232 corrected the compatible set to the population the server actually
+    /// publishes, every "healthy" fixture silently became an INCOMPATIBLE one —
+    /// so all three states rasterised to the same refusal screen and the three
+    /// "these must differ" assertions went red at 47,296 identical bytes.
+    ///
+    /// That red was the suite doing its job, and it is worth stating why: a
+    /// hard-coded version in a test fixture is the same fragility as a
+    /// hard-coded version in a client, and it fails the same way — silently
+    /// asserting the wrong thing until something forces it into the open.
+    static let renderableVersion: String = CalibrationViewModel
+        .compatiblePopulationVersions.sorted().first ?? "q267"
+
+    /// Well-formed, and deliberately outside the compatible set.
+    static let unrenderableVersion = "q400"
+
+    private static func payload(
+        cache: String? = nil,
+        version: String? = CalibrationRenderSmokeTests.renderableVersion
+    ) -> String {
         let cacheLine = cache.map { "\"cache\": \($0)," } ?? ""
         let versionLine = version.map { "\"population_version\": \"\($0)\"," } ?? ""
         return """
@@ -88,10 +110,28 @@ final class CalibrationRenderSmokeTests: XCTestCase {
     {"status": "stale", "reason": "main_key_absent_durable", "generated_at": "2026-08-01T09:00:00+00:00", "age_s": 68400}
     """
 
+    /// L2-232. Every "differs from healthy" assertion below is worthless if the
+    /// healthy fixture is not actually renderable — three refusal screens differ
+    /// from nothing, and that is exactly how this suite failed when the compatible
+    /// set moved out from under a hard-coded fixture version. Asserted directly so
+    /// the next drift reports its own cause instead of "47,296 == 47,296".
+    func testTheFixtureVersionsAreWhatTheyClaimToBe() throws {
+        let healthy = CalibrationViewModel(preloaded: try decode(Self.payload()))
+        XCTAssertFalse(healthy.isIncompatible,
+                       "the healthy fixture (\(Self.renderableVersion)) is being refused")
+        XCTAssertEqual(healthy.populationVersionState, .matched)
+
+        let refused = CalibrationViewModel(
+            preloaded: try decode(Self.payload(version: Self.unrenderableVersion)))
+        XCTAssertTrue(refused.isIncompatible,
+                      "the mismatch fixture (\(Self.unrenderableVersion)) is being accepted")
+    }
+
     func testHealthyStaleAndIncompatibleAllRenderAndAreVisiblyDistinct() throws {
         let healthy = try render(Self.payload(), name: "healthy")
         let stale = try render(Self.payload(cache: Self.staleCache), name: "stale-last-good")
-        let mismatch = try render(Self.payload(version: "q267"), name: "version-mismatch")
+        let mismatch = try render(
+            Self.payload(version: Self.unrenderableVersion), name: "version-mismatch")
 
         for (name, png) in [("healthy", healthy), ("stale", stale), ("mismatch", mismatch)] {
             XCTAssertGreaterThan(png.count, 1_000, "\(name) render is suspiciously empty")
@@ -110,7 +150,10 @@ final class CalibrationRenderSmokeTests: XCTestCase {
 
     func testEmptyPayloadRendersWithoutCrashingAndDiffersFromHealthy() throws {
         let empty = try render(
-            #"{"buckets": [], "total_markets": 0, "total_outcomes": 0, "population_version": "q299"}"#,
+            // `\#(...)` — the raw-string form. A plain `\(...)` inside `#"…"#`
+            // is not interpolation, it is four literal characters, and the
+            // payload would carry the source text instead of a version.
+            #"{"buckets": [], "total_markets": 0, "total_outcomes": 0, "population_version": "\#(Self.renderableVersion)"}"#,
             name: "empty")
         XCTAssertGreaterThan(empty.count, 500)
         XCTAssertNotEqual(empty, try render(Self.payload(), name: "healthy-vs-empty"))
@@ -124,7 +167,7 @@ final class CalibrationRenderSmokeTests: XCTestCase {
         let movedWorse = Self.payload()
         let movedBetter = """
         {
-          "population_version": "q299",
+          "population_version": "\(Self.renderableVersion)",
           "buckets": [
             {"bucket_idx": 2, "source": "kalshi", "category": "baseball_mlb", "price_moved": true, "n": 200, "winners": 50, "avg_prob": 0.25, "sum_prob": 50.0, "sum_sq_err": 44.0, "ci_lower": 0.21, "ci_upper": 0.31},
             {"bucket_idx": 5, "source": "polymarket", "category": "politics", "price_moved": false, "n": 100, "winners": 75, "avg_prob": 0.55, "sum_prob": 55.0, "sum_sq_err": 24.0, "ci_lower": 0.65, "ci_upper": 0.84}

@@ -113,6 +113,34 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     expect(SOURCE).toContain("data-cache-status=");
   });
 
+  test("the page root says WHY it considered itself allowed to render", () => {
+    // L2-232. `data-population-version` records what the server sent;
+    // `data-contract-state` records what this build decided about it. Without
+    // the second, a rail sees the version and still cannot tell whether the page
+    // verified it or merely printed it — which is exactly the gap this queue closed.
+    expect(SOURCE).toContain("data-contract-state={contract.state}");
+  });
+
+  test("the refusal is gated on the decision, and returns before any numbers", () => {
+    // The whole point is that an incompatible payload never reaches the curve.
+    // If the guard were placed after the hero or the stat cards, the numbers
+    // would render under this build's labels before the page changed its mind.
+    const guard = SOURCE.indexOf("if (!contract.render)");
+    expect(guard).toBeGreaterThan(-1);
+    const pageRoot = SOURCE.indexOf('data-testid="calibration-page"');
+    expect(pageRoot).toBeGreaterThan(guard);
+  });
+
+  test("the stale banner is decided in one place, not re-derived at the JSX", () => {
+    // Reading `cache.status` again here is how "degraded" would silently outrank
+    // a refusal: two independent conditionals, and whichever is checked first
+    // wins. The banner renders off the same decision the refusal does.
+    expect(SOURCE).toContain("{contract.degraded && (");
+    const bannerIdx = SOURCE.indexOf('data-testid="calibration-stale-banner"');
+    const before = SOURCE.slice(Math.max(0, bannerIdx - 600), bannerIdx);
+    expect(before).not.toContain('data.cache?.status === "stale"');
+  });
+
   test("the stale banner is dated as data, not only as formatted prose", () => {
     const i = SOURCE.indexOf('data-testid="calibration-stale-banner"');
     expect(i).toBeGreaterThan(-1);
@@ -142,16 +170,42 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
   });
 
   test("the failure state names itself, and is never the loaded-page hook", () => {
-    // A rebuild window, a hard fetch failure and a rendering regression all look
-    // identical to a rail that can only observe "the page hook is missing". The
-    // name distinguishes them; conflating error with loaded is how a broken
-    // deploy reads as a slow one.
+    // A rebuild window, a hard fetch failure, a refused population contract and
+    // a rendering regression all look identical to a rail that can only observe
+    // "the page hook is missing". The name distinguishes them; conflating error
+    // with loaded is how a broken deploy reads as a slow one.
+    //
+    // L2-232 moved the element into `CalibrationUnavailable` so both the
+    // transport failure and the contract refusal can route through ONE
+    // declaration (the hook must stay a singleton — see above). So the shell is
+    // checked here, and the names its callers pass are checked below.
     const i = SOURCE.indexOf('data-testid="calibration-error"');
     expect(i).toBeGreaterThan(-1);
     const block = SOURCE.slice(i, i + 320);
-    expect(block).toContain("data-error-state-name=");
-    expect(block).toContain('"load-failed"');
+    expect(block).toContain("data-error-state-name={stateName}");
+    expect(block).toContain("data-contract-state={contractState}");
     expect(block).not.toContain("calibration-page");
+  });
+
+  test("every unavailable call site passes a state name, and none is blank", () => {
+    // The shell can only name a failure if its callers give it one. An empty or
+    // missing `stateName` reduces the rail back to "something was red".
+    const sites = [...SOURCE.matchAll(/<CalibrationUnavailable\b([\s\S]*?)\/>/g)];
+    // Two today: the transport failure and the contract refusal.
+    expect(sites.length).toBeGreaterThanOrEqual(2);
+    for (const [, props] of sites) {
+      expect(props).toMatch(/stateName=/);
+      expect(props).toMatch(/contractState=/);
+      expect(props).not.toMatch(/stateName=""/);
+      expect(props).not.toMatch(/contractState=""/);
+    }
+  });
+
+  test("the transport failure still distinguishes unavailable from load-failed", () => {
+    // Q297's typed 503 body says WHICH outage this is; collapsing it back to one
+    // generic name would lose the distinction the backend went to work to publish.
+    expect(SOURCE).toContain('"load-failed"');
+    expect(SOURCE).toContain('detail?.reason || "unavailable"');
   });
 
   test("parked categories publish Queue 299's disposition", () => {

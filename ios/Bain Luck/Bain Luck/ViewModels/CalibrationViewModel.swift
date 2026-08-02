@@ -220,22 +220,44 @@ final class CalibrationViewModel: ObservableObject {
             + "refreshed right now. The curve rebuilds hourly."
     }
 
-    /// The population contract this build renders. Bumped by the backend whenever
-    /// the published population changes materially (Queue 299: q267 -> q299).
+    /// The population contracts THIS BUILD's labels honestly describe.
     ///
     /// This is a CONTRACT check, not a freshness check. Native cannot recompute
     /// the population, so if the payload announces one this build was not written
     /// against, the honest answer is to refuse rather than to render current-looking
     /// labels over numbers built under different rules (C111 P2 / Q297 §3).
-    static let expectedPopulationVersion = "q299"
+    ///
+    /// L2-232 — WHY THIS IS A SET AND NOT ONE STRING.
+    ///
+    /// L2-231 shipped `expectedPopulationVersion = "q299"`, compared for equality.
+    /// Hours later `dc79c9b4` rolled the SERVER back to q267, because bumping the
+    /// backend constant had invalidated the only good cached artifact and taken
+    /// the public web page dark for ~90 minutes. The rollback was correct — and
+    /// it left this app refusing a perfectly valid payload, because its own
+    /// constant no longer matched. A client-side equality check turned the
+    /// server's recovery into a native outage.
+    ///
+    /// So the set holds every population this build can label, which makes a
+    /// server-side roll-forward OR roll-back between listed versions a non-event
+    /// here. `frontend/e2e/contract/populationVersion.contract.test.js` fails CI
+    /// if the backend's published version is missing from this list (and from
+    /// web's), so the two can no longer drift apart unobserved.
+    ///
+    /// Keep this in step with `COMPATIBLE_POPULATION_VERSIONS` in
+    /// `frontend/lib/calibrationContract.ts` — same claim, same rollout order:
+    /// widen the clients FIRST, bump the backend SECOND.
+    static let compatiblePopulationVersions: Set<String> = ["q267"]
 
     var populationVersion: String? { data?.populationVersion }
 
-    /// `nil` payload version means an older/lean payload that predates the
-    /// contract field — rendered, but never claimed as verified.
+    /// `nil`/blank payload version means an older/lean payload that predates the
+    /// contract field — rendered, but never claimed as verified. Refusing those
+    /// would hand any older cached copy the power to blank the screen.
     var populationVersionState: PopulationVersionState {
-        guard let v = data?.populationVersion else { return .unverified }
-        return v == Self.expectedPopulationVersion ? .matched : .mismatched(v)
+        guard let raw = data?.populationVersion else { return .unverified }
+        let v = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if v.isEmpty { return .unverified }
+        return Self.compatiblePopulationVersions.contains(v) ? .matched : .mismatched(v)
     }
 
     enum PopulationVersionState: Equatable {
@@ -253,10 +275,25 @@ final class CalibrationViewModel: ObservableObject {
         return false
     }
 
+    /// L2-232: the same sentence web renders (`CONTRACT_REFUSAL_MESSAGE` in
+    /// `frontend/lib/calibrationContract.ts`), for the same reasons.
+    ///
+    /// L2-231's wording printed both version strings — "This build reads
+    /// calibration population q299, but the server published q267" — which is
+    /// unexplained jargon to everyone outside this repo, and it blamed the
+    /// server for a disagreement the client was equally party to. The versions
+    /// are diagnostic, so they belong in the parity evidence, not in the
+    /// reader's sentence.
     var incompatibleMessage: String? {
-        guard case .mismatched(let served) = populationVersionState else { return nil }
-        return "This build reads calibration population \(Self.expectedPopulationVersion), "
-            + "but the server published \(served). Update the app to see the current curve."
+        guard case .mismatched = populationVersionState else { return nil }
+        // The tail differs from web's by one clause, deliberately: web promises
+        // the page "updates automatically" because SWR re-polls every 5 minutes,
+        // and native has no such poll — its recovery is the Retry button beside
+        // this text. Promising an automatic update here would be a lie about
+        // this surface, which is the class of thing this whole queue is about.
+        return "We're not showing calibration numbers right now — we can't confirm this "
+            + "app's descriptions match the data the server sent, and labelling them "
+            + "wrong would be worse than not showing them. Please check back shortly."
     }
 
     /// "3h" / "45m" / "20s" — mirrors the web page's `formatAge`. Pure, so it is

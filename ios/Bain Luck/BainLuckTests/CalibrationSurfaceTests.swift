@@ -43,10 +43,19 @@ final class CalibrationSurfaceTests: XCTestCase {
     {"bucket_idx": 2, "source": "odds_api", "category": "baseball_mlb", "price_moved": null, "n": 400, "winners": 100, "avg_prob": 0.25, "sum_prob": 100.0, "sum_sq_err": 80.0, "ci_lower": 0.21, "ci_upper": 0.29}
     """
 
-    /// A healthy, current payload at the population version this build expects.
+    /// A population version this build accepts, taken from the build's own set
+    /// rather than written as a literal — L2-232's whole point is that the set
+    /// changes and a hard-coded copy of it goes stale and starts lying.
+    static let acceptedVersion: String = CalibrationViewModel
+        .compatiblePopulationVersions.sorted().first ?? "q267"
+
+    /// A well-formed version that is deliberately NOT in the compatible set.
+    static let unknownVersion = "q400"
+
+    /// A healthy, current payload at a population version this build accepts.
     /// Carries a parked category with Queue 299's machine-readable disposition.
     private static func healthy(
-        populationVersion: String? = CalibrationViewModel.expectedPopulationVersion,
+        populationVersion: String? = CalibrationSurfaceTests.acceptedVersion,
         cache: String? = nil
     ) -> String {
         let versionLine = populationVersion.map { "\"population_version\": \"\($0)\"," } ?? ""
@@ -95,7 +104,7 @@ final class CalibrationSurfaceTests: XCTestCase {
     @MainActor
     func testHealthyPayloadDeclaresItsPopulationVersionAndRendersCurrent() throws {
         let vm = try model(Self.healthy())
-        XCTAssertEqual(vm.populationVersion, CalibrationViewModel.expectedPopulationVersion)
+        XCTAssertEqual(vm.populationVersion, Self.acceptedVersion)
         XCTAssertEqual(vm.populationVersionState, .matched)
         XCTAssertFalse(vm.isIncompatible)
         // No cache envelope == current. Nothing dated, nothing suppressed.
@@ -337,12 +346,77 @@ final class CalibrationSurfaceTests: XCTestCase {
 
     @MainActor
     func testVersionMismatchCannotMasqueradeAsCurrentData() throws {
-        let vm = try model(Self.healthy(populationVersion: "q267"))
-        XCTAssertEqual(vm.populationVersionState, .mismatched("q267"))
+        let vm = try model(Self.healthy(populationVersion: Self.unknownVersion))
+        XCTAssertEqual(vm.populationVersionState, .mismatched(Self.unknownVersion))
         XCTAssertTrue(vm.isIncompatible)
+        XCTAssertNotNil(vm.incompatibleMessage)
+    }
+
+    // MARK: - 4b. L2-232 — the set, and what it is for
+
+    @MainActor
+    func testEveryVersionInTheCompatibleSetIsAccepted() throws {
+        // "previous-compatible". The set exists so a server roll-FORWARD or
+        // roll-BACK between listed versions is a non-event on this surface. If
+        // only one entry actually rendered, the set would be decoration — and
+        // this is precisely the assertion that would have caught L2-231 shipping
+        // a lone "q299" that `dc79c9b4` then invalidated by rolling back.
+        for v in CalibrationViewModel.compatiblePopulationVersions {
+            let vm = try model(Self.healthy(populationVersion: v))
+            XCTAssertEqual(vm.populationVersionState, .matched, "version \(v)")
+            XCTAssertFalse(vm.isIncompatible, "version \(v)")
+            XCTAssertNil(vm.incompatibleMessage, "version \(v)")
+        }
+    }
+
+    @MainActor
+    func testTheCompatibleSetIsNotEmpty() {
+        // An empty set refuses EVERY payload and takes the screen dark on a
+        // typo — the same class of failure this whole change is about.
+        XCTAssertFalse(CalibrationViewModel.compatiblePopulationVersions.isEmpty)
+    }
+
+    @MainActor
+    func testTheRefusalNamesNoVersionToTheReader() throws {
+        // L2-231 printed "This build reads calibration population q299, but the
+        // server published q267" — unexplained jargon to every reader outside
+        // this repo, and it blamed the server for a disagreement the client was
+        // equally party to. The versions are diagnostic, not editorial.
+        let vm = try model(Self.healthy(populationVersion: Self.unknownVersion))
         let message = try XCTUnwrap(vm.incompatibleMessage)
-        XCTAssertTrue(message.contains("q267"), message)
-        XCTAssertTrue(message.contains(CalibrationViewModel.expectedPopulationVersion), message)
+        XCTAssertFalse(message.contains(Self.unknownVersion), message)
+        XCTAssertFalse(message.contains(Self.acceptedVersion), message)
+        XCTAssertFalse(message.lowercased().contains("population"), message)
+    }
+
+    @MainActor
+    func testBlankVersionIsUnverifiedRatherThanRefused() throws {
+        // A whitespace-only value carries no claim. Refusing on it would let a
+        // serialization quirk blank the screen — matching web's decision table.
+        for blank in ["", "   "] {
+            let vm = try model(Self.healthy(populationVersion: blank))
+            XCTAssertEqual(vm.populationVersionState, .unverified, "blank \(blank.count)")
+            XCTAssertFalse(vm.isIncompatible)
+        }
+    }
+
+    @MainActor
+    func testSurroundingWhitespaceDoesNotMakeAGoodVersionIncompatible() throws {
+        let vm = try model(Self.healthy(populationVersion: " \(Self.acceptedVersion) "))
+        XCTAssertEqual(vm.populationVersionState, .matched)
+        XCTAssertFalse(vm.isIncompatible)
+    }
+
+    @MainActor
+    func testAStaleAndIncompatiblePayloadRefusesRatherThanBannering() throws {
+        // Poison ordering, native side. A dated "here's an older snapshot" frame
+        // around numbers this build cannot label downgrades a major refusal to a
+        // minor caveat. The refusal has to win.
+        let vm = try model(Self.healthy(
+            populationVersion: Self.unknownVersion,
+            cache: #"{"status": "stale", "reason": "main_key_absent", "age_s": 34657}"#
+        ))
+        XCTAssertTrue(vm.isIncompatible)
     }
 
     @MainActor
@@ -362,7 +436,7 @@ final class CalibrationSurfaceTests: XCTestCase {
     @MainActor
     func testEmptyPayloadInventsNoNumbers() throws {
         let vm = try model("""
-        {"buckets": [], "total_markets": 0, "total_outcomes": 0, "population_version": "\(CalibrationViewModel.expectedPopulationVersion)"}
+        {"buckets": [], "total_markets": 0, "total_outcomes": 0, "population_version": "\(Self.acceptedVersion)"}
         """)
         XCTAssertEqual(vm.cohortN, 0)
         XCTAssertEqual(vm.cohortECE, 0)

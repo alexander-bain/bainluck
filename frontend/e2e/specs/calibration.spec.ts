@@ -50,8 +50,16 @@ import { test, expect, readContentRegionText } from "../fixtures/audit";
  * missing anchor surfaces there rather than as a mystery red here.
  *
  * The page also publishes machine-readable state the rail grades on instead of
- * parsing prose: `data-population-version`, `data-cache-status`,
- * `data-cohort-n`, `data-activity-direction`, `data-disposition`.
+ * parsing prose: `data-population-version`, `data-contract-state`,
+ * `data-cache-status`, `data-cohort-n`, `data-activity-direction`,
+ * `data-disposition`.
+ *
+ * L2-232 added `data-contract-state`, and the pair matters more than either
+ * half. `data-population-version` is what the SERVER sent; `data-contract-state`
+ * is what this build DECIDED about it. Before the second existed, the page could
+ * publish a version it had made no judgement about — it decoded the contract and
+ * rendered the curve regardless — so a rail reading only the version string
+ * could not tell a verified population from an unchecked one.
  */
 
 /** The declared page budget. The journey waits within this and no longer. */
@@ -176,6 +184,12 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   // that would not name its own contract.
   const populationVersion = (await hookAttr(pageRoot, "data-population-version")) ?? "";
   const cacheStatus = (await hookAttr(pageRoot, "data-cache-status")) ?? "";
+  // L2-232. `data-population-version` says what the server SENT;
+  // `data-contract-state` says what this build DECIDED about it. Recording only
+  // the first cannot distinguish "the page verified this population" from "the
+  // page printed the string and rendered anyway" — which is precisely the gap
+  // L2-232 closed. Recorded here, and asserted below.
+  const contractState = (await hookAttr(pageRoot, "data-contract-state")) ?? "";
   const cohortN = await hookAttr(
     page.locator('[data-testid="calibration-population-count"]').first(),
     "data-cohort-n",
@@ -345,6 +359,19 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     "the page must declare the payload's population version",
   ).not.toBe("");
   expect(cohortN, "the population count must publish its cohort n").not.toBeNull();
+  // L2-232. The two states that may render are "match" (the served population is
+  // one this build's labels describe) and "unverified" (the payload named none,
+  // so nothing is claimed). "incompatible" and "malformed" REFUSE, and a refusal
+  // cannot reach the page root at all — so seeing either here would mean the
+  // guard was bypassed and the curve rendered under labels we cannot vouch for.
+  expect(
+    contractState,
+    `the page must declare how it judged the population contract (got "${contractState}")`,
+  ).not.toBe("");
+  expect(
+    ["match", "unverified"],
+    `the page rendered the curve while judging the payload "${contractState}"`,
+  ).toContain(contractState);
   // A stale snapshot is legitimate and must be BANNERED; what is not legitimate
   // is a stale payload rendered with no banner at all.
   if (cacheStatus === "stale") {
