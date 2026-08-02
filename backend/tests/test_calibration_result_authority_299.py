@@ -434,10 +434,18 @@ class TestPublishOrPark:
     def test_publish_bar_is_the_shipped_sample_gate(self):
         assert pc._DEFAULT_MIN_CATEGORY_OUTCOMES == 1000
 
-    def test_population_version_bumped_for_the_intentional_drift(self):
-        """The publish gate refuses >5% population drift unless the version says
-        the change was deliberate. Repairing four rungs is deliberate."""
-        assert pc.CALIBRATION_POPULATION_VERSION == "q299"
+    def test_population_version_is_not_bumped_ahead_of_a_built_artifact(self):
+        """A version bump must never precede the artifact it describes.
+
+        Bumping first (tried and reverted 2026-08-02) makes ``snapshot_verdict``
+        reject BOTH the live key and the 7-day last-good as ``wrong_version``
+        the instant the dyno boots, so /calibration goes dark until the next
+        hourly build completes — unbounded on a task known to overrun its window
+        (#1479/#1513). The population change therefore lands under the CURRENT
+        version so the publish gate measures its drift against a real baseline
+        while the page keeps serving; the bump is a deliberate follow-up.
+        """
+        assert pc.CALIBRATION_POPULATION_VERSION == "q267"
 
 
 class TestC119ContractBinding:

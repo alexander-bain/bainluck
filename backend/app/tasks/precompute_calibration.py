@@ -116,7 +116,28 @@ def _main_payload_is_publishable(response: Any) -> bool:
 #   3. orphan partitions (a 'field' with <=1 captured member), and
 #   4. exclusivity EVIDENCE gating normalization — the default-true
 #      ``mutually_exclusive`` flag is no longer accepted as proof of a partition.
-CALIBRATION_POPULATION_VERSION = "q299"
+#
+# THE VERSION IS DELIBERATELY *NOT* BUMPED YET, and that ordering is the point.
+#
+# Bumping it first (tried 2026-08-02, reverted the same hour) took /calibration
+# DARK: ``snapshot_verdict`` refuses a cached artifact whose population_version
+# is not the one the deployed build expects, so the moment the web dyno booted
+# expecting "q299" BOTH the live key and the 7-day last-good became
+# ``wrong_version`` — and the replacement could not exist until the next hourly
+# precompute completed. Q297's gate protects against a BAD build replacing a
+# good one; it has no protection against a version bump that invalidates the
+# only good copy before its successor is built. On a task already known to
+# overrun its window (#1479, #1513) that is an unbounded outage of the exact
+# page #1517 exists to keep lit.
+#
+# So the sequence is: land the population change under the CURRENT version, let
+# the publish gate compare the new candidate against the published q267 baseline
+# and MEASURE the drift it produces (rejecting and preserving last-good if that
+# drift exceeds its bars — the page stays up on good data either way), then bump
+# the version as a deliberate one-line follow-up once the numbers have been
+# reviewed. The gate's rejection report IS the exact-SHA census, obtained
+# without risking the page.
+CALIBRATION_POPULATION_VERSION = "q267"
 
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
