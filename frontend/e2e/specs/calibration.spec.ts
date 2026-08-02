@@ -81,6 +81,22 @@ const COHORT_CONTROL = /Well-traded only|Include thin\/untraded/;
 /** A rendered value that is not a finite number, however it got there. */
 const NON_FINITE = /NaN|Infinity|undefined|null/i;
 
+/**
+ * L2-230 / C111 [P1]. Copy that asserts one cohort is SUPERIOR. The page used
+ * to print "outcomes where the price moved are dramatically better calibrated"
+ * unconditionally, and `unchangedECE / movedECE` labelled "more accurately
+ * calibrated" — which on 2026-08-02 rendered "0.6x more accurately calibrated"
+ * beside stat cards reading 1.7pp and 1.0pp. These strings must never come back.
+ */
+const SUPERIORITY_COPY = /more accurately calibrated|dramatically better calibrated/i;
+
+/** The activity section's heading — the anchor for the pixels-vs-prose check. */
+const ACTIVITY_HEADING = "Does Trading Activity Matter?";
+/** The two cohort stat cards inside that section. */
+const ACTIVITY_STATS = ["Active Trading", "Opening Price Only"] as const;
+/** The direction-aware sentence, if one is rendered. */
+const HIGHER_ERROR_CLAIM = /the (price-moved|price-unchanged) cohort carries the higher calibration error/;
+
 interface StatCard {
   label: string;
   value: string;
@@ -201,6 +217,51 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   // owner, not fixed here.)
   const mainText = await readContentRegionText(page);
 
+  // ── L2-230: does the trading-activity PROSE agree with the NUMBERS beside it?
+  //
+  // This is deliberately NOT an assertion about which cohort ought to win —
+  // that stays out of the rail, per the gate above. It is the weaker, strictly
+  // mechanical property the shipped bug violated: the sentence named a winner
+  // that its own two stat cards contradicted. So read both values and the
+  // sentence, and require they point the same way.
+  //
+  // The section is conditional (it renders only when both cohorts have
+  // outcomes), so its absence is not a failure — but a present section with
+  // reversed prose is.
+  const activitySection = page.getByText(ACTIVITY_HEADING, { exact: false }).first();
+  const activityPresent = await activitySection.isVisible().catch(() => false);
+  const activityValues: Record<string, number> = {};
+  let activityClaim: string | null = null;
+
+  if (activityPresent) {
+    const section = activitySection.locator("xpath=ancestor::section[1]");
+    const sectionText = (await section.innerText().catch(() => "")) || "";
+    activityClaim = sectionText.match(HIGHER_ERROR_CLAIM)?.[1] ?? null;
+    for (const label of ACTIVITY_STATS) {
+      const card = section.getByText(label, { exact: true }).first().locator("xpath=..");
+      const raw = (
+        await card
+          .locator("> div")
+          .nth(1)
+          .innerText()
+          .catch(() => "")
+      ).trim();
+      const parsed = Number.parseFloat(raw.replace(/pp$/, ""));
+      if (Number.isFinite(parsed)) activityValues[label] = parsed;
+    }
+  }
+
+  // Which cohort the RENDERED numbers say is worse. "Active Trading" is the
+  // price-moved side; "Opening Price Only" is price-unchanged.
+  const moved = activityValues["Active Trading"];
+  const unchanged = activityValues["Opening Price Only"];
+  const numbersSayHigher =
+    Number.isFinite(moved) && Number.isFinite(unchanged) && moved !== unchanged
+      ? moved > unchanged
+        ? "price-moved"
+        : "price-unchanged"
+      : null;
+
   await journey.finish({
     journeyId: "calibration.anonymous",
     expectedPath: path,
@@ -236,4 +297,23 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     "no stat card may collapse to zero width or height",
   ).toEqual([]);
   expect(overlapping, "stat cards must not overlap each other").toEqual([]);
+
+  // L2-230. Ordered least-to-most specific so the first red line is the blunt one.
+  expect(
+    SUPERIORITY_COPY.test(mainText),
+    'no cohort may be sold as "more accurately calibrated" / "dramatically better"',
+  ).toBe(false);
+  if (activityPresent) {
+    expect(
+      Object.keys(activityValues).sort(),
+      "both activity cohort values must render as finite numbers",
+    ).toEqual([...ACTIVITY_STATS].sort());
+  }
+  if (numbersSayHigher && activityClaim) {
+    expect(
+      activityClaim,
+      `the prose names ${activityClaim} as worse, but the cards read ` +
+        `moved=${moved}pp / unchanged=${unchanged}pp`,
+    ).toBe(numbersSayHigher);
+  }
 });

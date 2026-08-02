@@ -9,7 +9,7 @@ import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
-import { ece, mce, monthYear } from "@/lib/calibrationMath";
+import { describeActivityComparison, ece, mce, monthYear } from "@/lib/calibrationMath";
 import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 
@@ -227,6 +227,15 @@ export default function CalibrationPage() {
   const unchangedN = useMemo(() => unchangedBuckets.reduce((s, b) => s + b.n, 0), [unchangedBuckets]);
   const movedECE = useMemo(() => ece(movedBuckets), [movedBuckets]);
   const unchangedECE = useMemo(() => ece(unchangedBuckets), [unchangedBuckets]);
+  // L2-230 / C111 [P1]: one place decides what the split says, from the same
+  // rounded values the stat cards print. See lib/calibrationMath.ts.
+  const activity = useMemo(
+    () => describeActivityComparison(
+      { ece: movedECE, n: movedN },
+      { ece: unchangedECE, n: unchangedN },
+    ),
+    [movedECE, movedN, unchangedECE, unchangedN]
+  );
 
   // L2-74 §C: the main chart/table default to WELL-TRADED — exclude never-moved
   // outcomes (price_moved===false); keep real trades (true) + sportsbook consensus
@@ -555,8 +564,8 @@ export default function CalibrationPage() {
             The calibration curve, split by whether real trading moved the price. Points on the
             diagonal = perfect calibration; above = outcomes happened <em>more</em> than predicted,
             below = <em>less</em>. Shaded band = &plusmn;5pp and point size reflects sample count.
-            Outcomes where the price moved (active trading) are dramatically better calibrated than
-            outcomes stuck at their opening price.
+            The two cohorts differ in source, category and market-shape mix, so whichever side
+            lands lower here is an observed ordering &mdash; not evidence that trading caused it.
           </p>
           <CalibrationChart
             series={[
@@ -567,21 +576,30 @@ export default function CalibrationPage() {
             height={400}
             thinFloor={MIN_CHART_BUCKET_N}
           />
+          {/* L2-230: the value colour is part of the claim. Hard-coding moved
+              green and unchanged orange asserted "moved is better" in pixels
+              even on the day moved measured 1.7pp against unchanged's 1.0pp,
+              so it follows the same direction the sentence below does. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
             <StatCard label="Active Trading"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
-              valueClass="text-green-600" />
+              valueClass={
+                activity.direction === "moved_higher" ? "text-orange-600"
+                  : activity.direction === "unchanged_higher" ? "text-green-600"
+                    : "text-text-primary"
+              } />
             <StatCard label="Opening Price Only"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
-              valueClass="text-orange-600" />
+              valueClass={
+                activity.direction === "unchanged_higher" ? "text-orange-600"
+                  : activity.direction === "moved_higher" ? "text-green-600"
+                    : "text-text-primary"
+              } />
           </div>
-          {movedECE > 0 && unchangedECE > 0 && (
-            <p className="text-sm text-text-secondary mt-3 text-center">
-              Markets with active trading are <strong>{(unchangedECE / movedECE).toFixed(1)}x</strong> more
-              accurately calibrated than markets using opening prices alone.
-            </p>
+          {activity.sentence && (
+            <p className="text-sm text-text-secondary mt-3 text-center">{activity.sentence}</p>
           )}
         </section>
       ) : (
