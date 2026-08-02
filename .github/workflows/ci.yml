@@ -64,8 +64,35 @@ jobs:
         # deleted.
         run: npm run test:ci
 
-      - name: Build (includes TypeScript + ESLint)
+      - name: Build (ESLint gate — NOT a TypeScript gate, see the step below)
         run: npm run build
+
+      - name: Type check (fail-on-new)
+        # L2-234. `npm run build` above has never enforced TypeScript:
+        # next.config.mjs sets `typescript.ignoreBuildErrors: true` (gotcha
+        # #10), so a wrong or missing type deploys green. This is the step that
+        # notices.
+        #
+        # It is a fail-on-new gate, not a clean one. There are 89 pre-existing
+        # errors, recorded per file in frontend/typecheck-baseline.json and
+        # owned by issue #1521; they do not fail the build, and one error more
+        # than them does. A clean gate today would red every push until all 89
+        # were cleared, and a step that reds every push acquires a `|| true`.
+        #
+        # The ratchet turns both ways: fixing an error without lowering the
+        # baseline also fails, with instructions, so the recorded count cannot
+        # drift above the real one and become silent headroom.
+        #
+        # AFTER the build deliberately — `.next/types/**` is generated route
+        # typing that tsconfig includes, so running before it would check a
+        # smaller program than a developer does locally and the two censuses
+        # would disagree.
+        #
+        # No `continue-on-error`. That, and the rest of what keeps this from
+        # becoming decoration, is asserted by
+        # frontend/__tests__/lib/ciTypecheckGate.test.ts, plus a workflow-shape
+        # fixture in the e2e-contract job that survives this step being deleted.
+        run: npm run typecheck
 
   e2e-contract:
     # L2-229 Item 1 — the browser-audit rail's fixtures, on ordinary push CI.

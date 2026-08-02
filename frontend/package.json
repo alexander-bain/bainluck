@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
-    "test:ci": "jest --ci"
+    "test:ci": "jest --ci",
+    "typecheck": "node scripts/tsc-census.js --run --check",
+    "typecheck:baseline": "node scripts/tsc-census.js --run --write-baseline"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
@@ -32,6 +34,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.12.0",
     "@types/nprogress": "^0.2.3",
     "@types/react": "^18.2.0",
