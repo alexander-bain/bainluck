@@ -1,47 +1,54 @@
-name: Add the Jest toolchain to the frontend lockfile (manual)
+name: Add a frontend dev dependency to the lockfile (manual)
 
-# L2-233 Item 0 — the mechanism of record for adding `jest` + `ts-jest` to
-# `frontend/package.json` and `frontend/package-lock.json`.
+# The mechanism of record for adding dev dependencies to
+# `frontend/package.json` + `frontend/package-lock.json` from a machine with no
+# registry access.
 #
-# WHY THIS EXISTS. `frontend/__tests__` holds 116 suites / 1,393 tests, and
-# `jest` + `ts-jest` are installed in the working `node_modules` on the machine
-# this repo is developed from — but neither is declared in `package.json`, and
-# neither appears in `package-lock.json` (the only `jest`-shaped entries there
-# are `jest-worker`, a transitive dependency of next/terser). So on a clean
-# `npm ci` checkout — which is exactly what CI does — `jest` does not exist.
-# That is why the suite has never been able to gate a deploy.
+# History:
+#   L2-233 — `jest` + `ts-jest`. The suite existed (116 suites / 1,393 tests)
+#            but neither package was declared, so on a clean `npm ci` checkout
+#            jest did not exist and the suite could never gate a deploy.
+#   L2-234 — `@types/jest`. Undeclared in exactly the same way, with a different
+#            consequence: `tsc --noEmit` reports TS2582/TS2304 on every jest
+#            global in every test file, which buries real type errors under
+#            thousands of lines of noise. See the typecheck census steps below.
 #
-# Declaring the two packages is a one-line local command anywhere with registry
-# access. This machine has none: its only egress is an agent proxy that answers
-# 503 for registry.npmjs.org, and a direct connection is refused at the network
-# layer. Hand-authoring the lockfile entries would mean inventing `integrity`
-# hashes, which is the fabricated-evidence shape the whole gate exists to make
-# impossible. So the resolution happens HERE, by npm, against the real registry,
-# and the two files are downloaded for commit. (Same reasoning, same shape as
-# `e2e-lockfile.yml`, which did this for the browser rail in L2-229.)
+# WHY THIS EXISTS. Adding a dev dependency is a one-line local command anywhere
+# with registry access. This machine has none: its only egress is an agent proxy
+# that answers 503 for registry.npmjs.org, and a direct connection is refused at
+# the network layer (`npm view` exits 124 on a 30s timeout). Hand-authoring the
+# lockfile entries would mean inventing `integrity` hashes, which is the
+# fabricated-evidence shape the whole gate exists to make impossible. So the
+# resolution happens HERE, by npm, against the real registry, and the files are
+# downloaded for commit. (Same reasoning, same shape as `e2e-lockfile.yml`,
+# which did this for the browser rail in L2-229.)
 #
 # HOW TO USE IT.
-#   1. Dispatch this workflow.
-#   2. Download the `frontend-jest-manifest` artifact.
-#   3. Commit BOTH files together at frontend/package.json and
-#      frontend/package-lock.json. They must land in the SAME commit: a
-#      package.json that names a dependency the lockfile does not carry makes
-#      `npm ci` exit non-zero, which would red the frontend-build job and block
-#      deploy.
+#   1. Dispatch this workflow with the spec(s) you want added.
+#   2. Download the `frontend-dep-manifest` artifact.
+#   3. Commit `package.json` and `package-lock.json` TOGETHER. They must land in
+#      the SAME commit: a package.json that names a dependency the lockfile does
+#      not carry makes `npm ci` exit non-zero, which reds frontend-build and
+#      blocks deploy.
+#   4. The artifact also carries the exact registry tarball of each package that
+#      was added at the top level, so a machine with no registry can unpack it
+#      into `node_modules` and reproduce the runner's typecheck. VERIFY IT
+#      FIRST against the `integrity` the lockfile records — the tarball is
+#      convenience, the lockfile hash is the proof:
+#        openssl dgst -sha512 -binary <pkg>.tgz | base64
 #
-# This workflow only ever writes an artifact. It cannot commit, cannot push,
-# and holds no credential beyond `contents: read`.
+# This workflow only ever writes an artifact. It cannot commit, cannot push, and
+# holds no credential beyond `contents: read`.
 
 on:
   workflow_dispatch:
     inputs:
-      jest_spec:
-        description: "jest version range (must match what the suite is proven against)"
-        default: "jest@^30.4.2"
-        required: true
-      ts_jest_spec:
-        description: "ts-jest version range"
-        default: "ts-jest@^29.4.11"
+      specs:
+        # Space-separated so one dispatch can add a coherent set (a package and
+        # its types) rather than leaving the tree in a half-declared state
+        # between two runs.
+        description: "Space-separated npm specs to add as devDependencies"
+        default: "@types/jest@^30.0.0"
         required: true
       allow_version_change:
         # Named, not waved through. The check below fails on ANY pre-existing
@@ -49,13 +56,13 @@ on:
         # it puts the exact package and both versions on the run record where
         # they can be read back later.
         #
-        # First use (2026-08-02): `node_modules/semver` — npm re-resolved the
-        # hoisted copy 7.7.3 -> 7.8.5 while adding the jest tree. It is already
-        # `dev: true` in the lockfile (its consumers are @typescript-eslint and
-        # is-bun-module, both eslint tooling), so it reaches no browser bundle
-        # and no Vercel runtime, and 7.8.5 is inside every declared caret. That
-        # is a reviewed allowance, which is a different thing from a guard that
-        # does not notice.
+        # First use (2026-08-02, L2-233): `node_modules/semver` — npm
+        # re-resolved the hoisted copy 7.7.3 -> 7.8.5 while adding the jest
+        # tree. It is already `dev: true` in the lockfile (its consumers are
+        # @typescript-eslint and is-bun-module, both eslint tooling), so it
+        # reaches no browser bundle and no Vercel runtime, and 7.8.5 is inside
+        # every declared caret. That is a reviewed allowance, which is a
+        # different thing from a guard that does not notice.
         description: "Comma-separated lockfile paths permitted to change version, e.g. node_modules/semver"
         default: ""
         required: false
@@ -65,9 +72,9 @@ permissions:
 
 jobs:
   lockfile:
-    name: Resolve jest + ts-jest into the frontend dependency graph
+    name: Resolve the requested specs into the frontend dependency graph
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: frontend
@@ -100,27 +107,51 @@ jobs:
             console.log(`packages before: ${Object.keys(out).length}`);
           '
 
-      - name: Add the two dev dependencies
-        # A real install, not `--package-lock-only`: the next step runs the
-        # actual suite from this tree, and a lock-only resolve cannot prove
-        # jest executes. `--ignore-scripts` keeps lifecycle scripts out of it.
-        # `--registry` is stated explicitly so the artifact cannot silently come
-        # from whatever a future runner image happens to default to.
+      - name: Typecheck census BEFORE
+        # The reason a types package is worth a dispatch at all is a number, and
+        # a number claimed from the machine that cannot install the package is
+        # not measured. Both censuses run HERE, on the same tree, minutes apart.
+        #
+        # `npm ci` (not `npm install`) so the BEFORE state is exactly what CI
+        # and Vercel see. `|| true` because tsc exits non-zero by design when it
+        # finds errors, and finding errors is the entire point of this step.
         run: |
           set -euo pipefail
+          npm ci
+          npx tsc --noEmit --incremental false > /tmp/tsc-before.txt 2>&1 || true
+          node scripts/tsc-census.js /tmp/tsc-before.txt /tmp/census-before.json
+
+      - name: Add the requested dev dependencies
+        # A real install, not `--package-lock-only`: later steps run the actual
+        # suite and the actual typecheck from this tree, and a lock-only resolve
+        # cannot prove either. `--ignore-scripts` keeps lifecycle scripts out.
+        # `--registry` is stated explicitly so the artifact cannot silently come
+        # from whatever a future runner image happens to default to.
+        env:
+          SPECS: ${{ inputs.specs }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
           npm install --save-dev --ignore-scripts \
             --registry=https://registry.npmjs.org/ \
-            "${{ inputs.jest_spec }}" "${{ inputs.ts_jest_spec }}"
+            $SPECS
           node -e '
             const pkg = require("./package.json");
             const dev = pkg.devDependencies || {};
-            for (const name of ["jest", "ts-jest"]) {
+            const specs = process.env.SPECS.split(/\s+/).filter(Boolean);
+            const names = [];
+            for (const spec of specs) {
+              // "@types/jest@^30.0.0" -> "@types/jest";  "jest@^30" -> "jest"
+              const at = spec.lastIndexOf("@");
+              const name = at > 0 ? spec.slice(0, at) : spec;
+              names.push(name);
               if (!dev[name]) {
                 console.error(`::error::package.json is missing devDependencies.${name} after install`);
                 process.exit(1);
               }
               console.log(`devDependencies.${name} = ${dev[name]}`);
             }
+            require("fs").writeFileSync("/tmp/added-names.json", JSON.stringify(names));
           '
 
       - name: No pre-existing dependency may change version
@@ -168,7 +199,7 @@ jobs:
               }
             }
             if (changed.length || removed.length) {
-              console.error("::error::adding the jest toolchain moved a pre-existing dependency — that is a dependency upgrade, not a test-tooling change. Review it, then name it in allow_version_change if it is genuinely safe.");
+              console.error("::error::adding these specs moved a pre-existing dependency — that is a dependency upgrade, not a test-tooling change. Review it, then name it in allow_version_change if it is genuinely safe.");
               process.exit(1);
             }
           '
@@ -200,9 +231,9 @@ jobs:
           npm ci
 
       - name: Prove the suite actually runs from that clean install
-        # The point of the whole queue. If `npx jest` cannot execute against a
-        # lockfile-only install, the CI step this unblocks would be a red job on
-        # every push, and better to learn it here than on master.
+        # If `npx jest` cannot execute against a lockfile-only install, the CI
+        # step this feeds would be a red job on every push, and better to learn
+        # it here than on master.
         run: |
           set -euo pipefail
           npx jest --ci --watchman=false 2>&1 | tee /tmp/jest.log
@@ -221,6 +252,47 @@ jobs:
             }
           '
 
+      - name: Typecheck census AFTER, and the delta
+        # The measured answer to "what did this actually buy". Prints per-code
+        # and per-file movement, and fails if the census got WORSE — adding type
+        # declarations must not introduce new errors anywhere.
+        run: |
+          set -euo pipefail
+          npx tsc --noEmit --incremental false > /tmp/tsc-after.txt 2>&1 || true
+          node scripts/tsc-census.js /tmp/tsc-after.txt /tmp/census-after.json
+          node scripts/tsc-census.js --delta /tmp/census-before.json /tmp/census-after.json
+          cp /tmp/tsc-after.txt /tmp/census-after.json /tmp/census-before.json .
+
+      - name: Pack the added packages for a registry-less machine
+        # So the development machine can reproduce this exact typecheck rather
+        # than take the runner's word for it. Only the top-level additions —
+        # transitive deps of a @types package are themselves @types packages and
+        # come down with them if needed. `npm pack` fetches the same tarball the
+        # lockfile records, so the local side can verify by hash and does not
+        # have to trust the artifact.
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tarballs
+          node -e '
+            const names = require("/tmp/added-names.json");
+            const lock = require("./package-lock.json");
+            const out = [];
+            for (const n of names) {
+              const m = lock.packages[`node_modules/${n}`];
+              if (!m) { console.error(`::error::${n} not in lockfile after install`); process.exit(1); }
+              out.push({ name: n, version: m.version, integrity: m.integrity, resolved: m.resolved });
+              console.log(`${n}@${m.version}  ${m.integrity}`);
+            }
+            require("fs").writeFileSync("/tmp/tarballs/added.json", JSON.stringify(out, null, 2));
+          '
+          node -e '
+            const { execSync } = require("child_process");
+            for (const p of require("/tmp/tarballs/added.json")) {
+              execSync(`npm pack ${p.name}@${p.version} --registry=https://registry.npmjs.org/ --pack-destination /tmp/tarballs`, { stdio: "inherit" });
+            }
+          '
+          cp -r /tmp/tarballs ./_tarballs
+
       - name: Report what was added
         run: |
           set -euo pipefail
@@ -233,19 +305,16 @@ jobs:
             console.log(`packages added:  ${added.length}`);
             for (const [p, m] of added) console.log(`  ${p}@${m.version ?? "?"}`);
           '
-          # Recorded for the follow-up: @types/jest is genuinely undeclared too
-          # (tsc --noEmit reports TS2582 "Cannot find name describe" across every
-          # test file). It is NOT added here — this queue is scoped to making the
-          # suite executable in CI, and ts-jest transpiles without type-checking,
-          # so it changes no gate. Printing the resolvable version means the next
-          # queue does not need another dispatch to learn it.
-          echo "@types/jest latest: $(npm view @types/jest version --registry=https://registry.npmjs.org/)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: frontend-jest-manifest
+          name: frontend-dep-manifest
           path: |
             frontend/package.json
             frontend/package-lock.json
+            frontend/tsc-after.txt
+            frontend/census-before.json
+            frontend/census-after.json
+            frontend/_tarballs
           retention-days: 7
           if-no-files-found: error
