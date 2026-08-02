@@ -88,6 +88,8 @@ if REDIS_URL.startswith("rediss://"):
 # the get_redis_client helpers (single source in config.py). Empty {} on platforms
 # without TCP_KEEPIDLE (macOS CI) — redis-py then falls back to plain keepalive.
 from app.tasks.config import socket_keepalive_options as _socket_keepalive_options
+from app.tasks.result_retention import RESULT_EXPIRES_S as _RESULT_EXPIRES_S
+from app.tasks.result_retention import apply_result_suppression as _apply_result_suppression
 
 _KEEPALIVE_OPTS = _socket_keepalive_options()
 
@@ -108,6 +110,13 @@ celery_config = {
     "task_track_started": True,
     "task_time_limit": 300,  # 5 minute timeout
     "worker_prefetch_multiplier": 1,
+    # Queue 300R Item 1: bound result residency explicitly. Celery's default is
+    # 24h, and on a 50MB allkeys-lru instance a 24h result key is not "stored",
+    # it is queued for eviction alongside everything else. Admin status polls
+    # read a task_id while the operator is on the page, so an hour is generous.
+    # The per-task half of this (suppressing results nothing can poll) is
+    # applied after the beat schedule — see result_retention.py.
+    "result_expires": _RESULT_EXPIRES_S,
     # ------------------------------------------------------------------------
     # Redis connection stability (#1197). The sustained TLS
     # `[SSL: UNEXPECTED_EOF_WHILE_READING]` ConnectionError volume (~135-180/24h,
@@ -2997,6 +3006,16 @@ celery_app.conf.beat_schedule = {
 for _beat_entry in celery_app.conf.beat_schedule.values():
     if _beat_entry.get("task") in HEAVY_TASKS:
         _beat_entry.setdefault("options", {})["queue"] = "heavy"
+
+
+# Queue 300R Item 1 — targeted result suppression. Must run AFTER the beat
+# schedule exists (it is derived from it) and after every task decorator has
+# run. Beat-only tasks with no HTTP dispatcher stop writing a celery-task-meta
+# key; anything an admin route can hand a task_id for keeps its result. Health
+# and observability are unaffected — those read the `bainluck:task_metrics:*`
+# hash written by `_tracked_run`, not the result backend. See
+# app/tasks/result_retention.py for the full argument and the drift guard.
+_SUPPRESSED_RESULT_TASKS = _apply_result_suppression(celery_app)
 
 
 # =============================================================================

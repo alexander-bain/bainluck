@@ -368,6 +368,29 @@ async def redis_census(
         }
         out["dbsize"] = r.dbsize()
 
+        # Queue 300R: a raw TTL is uninterpretable on its own — 3,000s remaining
+        # means "20 minutes old" under a 1h `result_expires` and "23 hours old"
+        # under Celery's 24h default. Report the configuration next to the
+        # observation so the census stays self-describing across the retention
+        # change, and so "Celery-result key count/age" is answerable from one
+        # read instead of two.
+        try:
+            from app.tasks import celery_app as _celery_app
+            from app.tasks.result_retention import (
+                RESULT_CONSUMER_TASKS,
+                beat_only_tasks,
+            )
+
+            out["celery_results"] = {
+                "result_expires_s": _celery_app.conf.result_expires,
+                "result_consumer_tasks": len(RESULT_CONSUMER_TASKS),
+                "suppressed_beat_tasks": len(
+                    beat_only_tasks(_celery_app.conf.beat_schedule)
+                ),
+            }
+        except Exception as exc:  # noqa: BLE001 — the census must survive it
+            out["celery_results"] = {"error": str(exc)[:200]}
+
         classes: dict = defaultdict(
             lambda: {"keys": 0, "sampled": 0, "sampled_bytes": 0, "no_ttl": 0, "ttls": []}
         )
@@ -401,23 +424,28 @@ async def redis_census(
                 break
 
         out["scanned"] = scanned
+        expires_s = (out.get("celery_results") or {}).get("result_expires_s")
         summary = []
         for cls, cell in classes.items():
             avg = cell["sampled_bytes"] / cell["sampled"] if cell["sampled"] else 0
-            summary.append(
-                {
-                    "class": cls,
-                    "keys": cell["keys"],
-                    "avg_sampled_bytes": int(avg),
-                    # Estimate, clearly labelled: avg of a small sample times the
-                    # key count. Good enough to rank classes, never precise.
-                    "est_total_bytes": int(avg * cell["keys"]),
-                    "sampled": cell["sampled"],
-                    "sampled_without_ttl": cell["no_ttl"],
-                    "min_ttl_s": min(cell["ttls"]) if cell["ttls"] else None,
-                    "max_ttl_s": max(cell["ttls"]) if cell["ttls"] else None,
-                }
-            )
+            row = {
+                "class": cls,
+                "keys": cell["keys"],
+                "avg_sampled_bytes": int(avg),
+                # Estimate, clearly labelled: avg of a small sample times the
+                # key count. Good enough to rank classes, never precise.
+                "est_total_bytes": int(avg * cell["keys"]),
+                "sampled": cell["sampled"],
+                "sampled_without_ttl": cell["no_ttl"],
+                "min_ttl_s": min(cell["ttls"]) if cell["ttls"] else None,
+                "max_ttl_s": max(cell["ttls"]) if cell["ttls"] else None,
+            }
+            # Age, for the one class whose TTL is set from a config we control.
+            # Oldest sampled key = the one with the least time left.
+            if cls == "celery-task-meta-*" and cell["ttls"] and expires_s:
+                row["max_sampled_age_s"] = int(expires_s) - min(cell["ttls"])
+                row["min_sampled_age_s"] = int(expires_s) - max(cell["ttls"])
+            summary.append(row)
         summary.sort(key=lambda c: -c["est_total_bytes"])
         out["classes"] = summary[:60]
         out["note"] = (
