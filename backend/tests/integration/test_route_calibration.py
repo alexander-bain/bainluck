@@ -276,6 +276,13 @@ class TestCalibrationPublicEndpoint:
             "golf_placeholder_filter",  # L2-79 Item 2 (#940/#762)
             "mex_normalization",  # Queue #157 (#1012)
             "esports_multi_bundle_filter",  # Queue #159 (#1010)
+            # Queue 299 (#1012): result authority before shape, then evidence-
+            # based exclusivity. Each rung ships its own rule + live count.
+            "no_winner_filter",  # rung 1: the market graded nobody
+            "draw_authority_filter",  # rung 2: draw-capable duel, no draw member
+            "orphan_partition_filter",  # rung 3: a 'field' with <=1 member
+            "exclusivity_evidence",  # rung 4: what now proves a partition
+            "nonexclusive_bundle_census",  # rung 4b: measured, not excluded
             "kalshi_prop_threshold_filter",  # Queue #186 (#941)
             "weather_wide_spread_filter",  # Queue #183 Item 4 (#182 twin)
             "void_filter",

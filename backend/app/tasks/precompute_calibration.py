@@ -73,6 +73,17 @@ _MAIN_LAST_GOOD_TTL = 604800
 _MAIN_COMPUTE_STMT_TIMEOUT_MS = 1500 * 1000
 
 
+def _sql_str_tuple(values) -> str:
+    """Render a set/iterable of plain strings as a deterministic SQL IN-list.
+
+    Sorted so the emitted SQL (and therefore the query plan cache key) is stable
+    across runs. Values are constants defined in this module — never user input —
+    and any embedded quote is doubled defensively so the fragment can't break out
+    of its literal.
+    """
+    return "(" + ", ".join(f"'{v.replace(chr(39), chr(39) * 2)}'" for v in sorted(values)) + ")"
+
+
 def _main_payload_is_publishable(response: Any) -> bool:
     """True if a computed calibration payload is complete enough to publish (Queue 272).
 
@@ -95,7 +106,17 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # q267 (C44 #1): the crude volume=0 eligibility gate was retired in favor of the
 # bid/trade evidence predicate, so bid-bearing zero-volume Kalshi rows now enter
 # the population and no-evidence phantoms are counted (not silently pre-dropped).
-CALIBRATION_POPULATION_VERSION = "q267"
+# Queue 299 (#1012): result-authority + exclusivity-evidence repair. Four
+# read-side rungs change the published population, so the version is bumped and
+# the publish gate's ±5% population / 20% per-category drift guard is told this
+# drift is INTENTIONAL rather than a collapse:
+#   1. no-winner markets (a market that graded NOBODY is UNKNOWN, not a set of
+#      losses) — "draw graded as two losses", all-loser markets, ungraded rows,
+#   2. draw-authority (a draw-capable duel captured without a draw member),
+#   3. orphan partitions (a 'field' with <=1 captured member), and
+#   4. exclusivity EVIDENCE gating normalization — the default-true
+#      ``mutually_exclusive`` flag is no longer accepted as proof of a partition.
+CALIBRATION_POPULATION_VERSION = "q299"
 
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
@@ -766,11 +787,292 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    return (
-        category == ESPORTS_MULTI_BUNDLE_CATEGORY
-        and n_outcomes >= 3
-        and n_winners >= 2
+    return category == ESPORTS_MULTI_BUNDLE_CATEGORY and market_is_nonexclusive_bundle(
+        n_outcomes, n_winners
     )
+
+
+# ---------------------------------------------------------------------------
+# Queue 299 (#1012) — RESULT AUTHORITY and EXCLUSIVITY EVIDENCE.
+#
+# r339's cricket ladder found the first failing layer is NOT "the market is bad
+# at cricket" (rung 5, never reached) but two structural layers above it:
+# markets whose RESULT was never established, and markets treated as
+# mutually-exclusive partitions on no evidence beyond a column whose default is
+# True. C119's 20-case corpus fixed the contract: exclusivity is decided by
+# EVIDENCE, never by a category label and never by the observed winner count
+# alone; where evidence cannot distinguish a loss from a draw / no-result /
+# ungraded row, the row is excluded as UNKNOWN, never published as False.
+#
+# All four rungs below are READ-SIDE ONLY (gotcha #21) — no stored is_winner or
+# calibration_probability is mutated, nothing is re-graded, and no capture
+# backfill is triggered. Each carries a rule text + live count in the payload so
+# the population change is transparent, never silent.
+# ---------------------------------------------------------------------------
+
+# Rung 1 — a resolved market that graded NOBODY a winner.
+#
+# ``is_winner`` is NOT NULL with a False default, so an ungraded outcome is
+# stored identically to a genuine loser. The market-level discriminator is
+# winner cardinality: a resolved multi-outcome question whose every member is
+# False either (a) never had its winner captured — the omitted-draw class, where
+# a drawn match makes both named sides lose (#1011), (b) is an orphan half of a
+# decomposed question whose winning half lives in another market, or (c) was
+# never graded at all. In every case the TRUTH IS UNKNOWN, and publishing the
+# members as confident losses drags the curve down with rows that were never
+# scoreable. ``malformed_binaries`` already caught this for 2-outcome
+# mutually-exclusive markets; the defect is not shape-specific, so this
+# generalizes the both-false leg to every shape and size (r339 census: cricket
+# 240 markets / 237 eligible outcomes, soccer 4,282 / 6,920, tennis 1,141 /
+# 2,397, hockey 307 / 1,475 — all-loser markets in every category).
+NO_WINNER_RULE_TEXT = (
+    "Excludes every resolved market with >=2 outcomes that graded NOBODY a "
+    "winner. is_winner has a False default, so an ungraded or never-captured "
+    "result is stored exactly like a real loss — an all-loser market is "
+    "therefore UNKNOWN truth (an omitted draw where both sides lose, an orphan "
+    "half whose winner lives in another market, or a market nothing ever "
+    "graded), not a set of confident losses. Generalizes the malformed-binary "
+    "both-false rule from 2-outcome mutually-exclusive markets to every shape. "
+    "Read-side only; never re-grades, never mutates resolutions."
+)
+
+
+def market_has_no_winner_authority(n_outcomes: int, n_winners: int) -> bool:
+    """True if a resolved market's result was never established (Queue 299).
+
+    Canonical, unit-tested mirror of the ``no_winner_markets`` CTE: a market
+    with >=2 outcomes and ZERO winners has no captured result, so its members
+    are excluded as UNKNOWN rather than published as losses. A 1-outcome market
+    is judged by :func:`market_is_orphan_partition` instead (a lone Yes/No claim
+    that legitimately resolved No is not an authority failure). Read-side only
+    (gotcha #21).
+    """
+    return n_outcomes >= 2 and n_winners == 0
+
+
+# Rung 2 — draw authority on a draw-capable question.
+#
+# A draw is a real result in soccer and cricket, so a match-winner question in
+# those sports is a THREE-way partition. #1011 established the defect for the
+# events curve (Odds API h2h stored 2-way home/away, dropping ~25% draw mass and
+# over-predicting the named sides by 7-18pp uniformly across ~20 leagues), and
+# the exclusion has been live there since Queue #158 — but scoped to the
+# ``soccer_*`` sport key on ``odds_api`` / ``odds_api_bookmaker`` only. The same
+# omission exists on the FUTURES curve (Kalshi/Polymarket duels), where r339
+# found soccer leagues (EPL 737, FIFA_WC 631, UCL 207 outcomes) sitting inside
+# the cricket cohort with no draw member at all.
+#
+# The predicate is SPORT-RULES authority, not category-as-shape: the category is
+# consulted only to answer "can this real-world contest end in a draw?", exactly
+# as the events-curve rule already does. Shape is still decided by evidence —
+# only a two-competitor ``duel`` qualifies, so threshold ladders, Yes/No claims
+# and genuinely 2-way questions (knockout advance, spreads, totals) are
+# untouched. A duel that DOES carry a draw/tie member has complete authority and
+# stays in. Census (2026-08-01): cricket 854 markets, soccer 712 — bounded.
+DRAW_CAPABLE_CATEGORIES = frozenset({"soccer", "cricket"})
+
+# Outcome names that constitute captured draw/no-result authority. Kept lowercase
+# and stripped; mirrors the SQL ``lower(btrim(fo.name)) IN (...)`` membership test.
+DRAW_AUTHORITY_OUTCOME_NAMES = frozenset(
+    {"draw", "tie", "tied", "drawn", "no result", "no-result", "abandoned"}
+)
+
+DRAW_AUTHORITY_RULE_TEXT = (
+    "Excludes two-competitor duels on draw-capable questions (soccer, cricket) "
+    "that captured no draw/tie member. A draw is a real result in those sports, "
+    "so the question is a three-way partition; storing only the two named sides "
+    "drops the draw mass and grades a drawn match as two losses (#1011: 7-18pp "
+    "over-prediction of the named sides across ~20 leagues). The draw was never "
+    "captured, so these rows cannot be re-graded — they are excluded as UNKNOWN. "
+    "Extends the events-curve soccer 2-way rule to the Kalshi/Polymarket futures "
+    "curve. The category answers only 'can this contest be drawn?'; shape is "
+    "still decided by evidence (duel), so ladders, Yes/No claims and genuinely "
+    "2-way questions stay in, as do duels that DO carry a draw member. "
+    "Read-side only; never mutates resolutions."
+)
+
+
+def market_omits_draw_authority(
+    category: str | None,
+    market_type: str | None,
+    n_outcomes: int,
+    draw_member_count: int,
+) -> bool:
+    """True if a draw-capable duel lacks the draw member it needs (Queue 299).
+
+    Canonical, unit-tested mirror of the ``draw_authority_markets`` CTE. The
+    contest must be draw-capable by the rules of the sport
+    (:data:`DRAW_CAPABLE_CATEGORIES`), the market must be a two-competitor
+    ``duel`` with exactly 2 outcomes, and NO outcome may name a draw/tie. A duel
+    carrying a draw member has complete authority and returns False, as does any
+    non-duel shape (ladders/claims are not match-winner questions). Read-side
+    only (gotcha #21).
+    """
+    return (
+        category in DRAW_CAPABLE_CATEGORIES
+        and market_type == "duel"
+        and n_outcomes == 2
+        and draw_member_count == 0
+    )
+
+
+# Rung 3 — orphan partitions.
+#
+# ``market_type='field'`` is the shape classifier's verdict ">2 named
+# competitors, one wins". A field that captured ONE member (or none) is a
+# partition with its siblings missing: its lone member's price is a fragment of
+# a distribution we never saw, and its result cannot be checked against the rest
+# of the field. r339 found 278 such Polymarket markets in cricket alone (avg
+# probability sum 0.514, 127 with zero winners). Deliberately narrow: a 1-outcome
+# CLAIM (a Kalshi/Poly Yes/No question) is a complete, scoreable prediction and
+# is NOT touched — only a market whose own declared shape is a field is judged
+# incomplete at <=1 member.
+ORPHAN_PARTITION_RULE_TEXT = (
+    "Excludes 'field' markets (>2 named competitors, one wins) that captured "
+    "<=1 member — an orphan half of a partition whose siblings are missing, so "
+    "its lone price is a fragment of a distribution never observed and its "
+    "result cannot be checked against the rest of the field. Scoped to the field "
+    "shape only: a standalone Yes/No claim with one outcome is a complete "
+    "prediction and stays in. Read-side only; never mutates resolutions."
+)
+
+
+def market_is_orphan_partition(market_type: str | None, n_outcomes: int) -> bool:
+    """True if a declared partition captured <=1 member (Queue 299).
+
+    Canonical, unit-tested mirror of the ``orphan_partition_markets`` CTE.
+    Read-side only (gotcha #21).
+    """
+    return market_type == "field" and n_outcomes <= 1
+
+
+# Rung 4 — EXCLUSIVITY EVIDENCE gates normalization.
+#
+# THE cricket finding, and the one with the widest blast radius. Normalization
+# divides every member of a market by the market's own probability sum, which is
+# only meaningful when the members really are one exhaustive partition. Until now
+# the gate was ``mutually_exclusive = true OR market_type = 'field'`` — and
+# ``futures_markets.mutually_exclusive`` DEFAULTS TO TRUE (app.utils.market_shape's
+# own docstring: "mutually_exclusive is TRUE for both yes/no claims AND
+# two-competitor duels", which is why the shape classifier exists at all). So the
+# flag is not evidence of anything. Census 2026-08-01 over resolved >=3-outcome
+# markets shows what that admitted:
+#
+#   * 51,424 markets  market_type='field', outcome_relation='unknown', exhaustive
+#                     NULL — the classifier explicitly declined to prove a partition,
+#   * 27,958 markets  cumulative-threshold ladders (exhaustive=false) — gotcha #17
+#                     co-winning Over rungs, divided by their own sibling sum,
+#   * 31,197 markets  field/competitors/exhaustive=true/expected_winners=1 — the
+#                     only class that ever had proof.
+#
+# The shape classifier already persists that proof per market in
+# ``market_metadata->'shape'`` (Queue #260 semantics v2), and its own Item 3 guard
+# only sets ``exhaustive`` when the source proves it — never inferred from ">2
+# named outcomes". So the fix is to require the POSITIVE verdict and stop
+# accepting the default-true flag. This is exactly C119's contract ("exclusivity
+# evidence, not category labels or observed one-winner count, authoritative") and
+# it is what stops an independent-binary bundle being divided by its sibling sum.
+#
+# A market that loses candidacy is NOT excluded from the curve — it simply flows
+# to the multi pool un-normalized, carrying its raw captured price. Nothing is
+# deleted by this rung; a price stops being rewritten on an unproven premise.
+EXCLUSIVITY_PROVED_RELATIONS = frozenset({"competitors", "exclusive_ranges"})
+
+EXCLUSIVITY_EVIDENCE_RULE_TEXT = (
+    "Per-market probability normalization now requires PROVED exclusivity from "
+    "the persisted shape classifier (market_type='field' AND shape.exhaustive=true "
+    "AND shape.expected_winners=1 AND an exclusive outcome relation), not the "
+    "futures_markets.mutually_exclusive column — whose default is True and which "
+    "the classifier's own docstring records as set for Yes/No claims and duels "
+    "alike, so it is not evidence. Census 2026-08-01: the old gate admitted 51,424 "
+    "markets whose relation the classifier declined to resolve and 27,958 "
+    "cumulative-threshold ladders (gotcha #17 co-winners) into a rule that divides "
+    "every member by the market's own sibling sum. Category is never consulted: "
+    "the same structure is judged identically in cricket, esports and "
+    "entertainment. A market that loses candidacy is NOT dropped — it flows to the "
+    "multi pool with its raw captured price. Read-side only; never mutates "
+    "resolutions."
+)
+
+
+def market_exclusivity_is_proved(
+    market_type: str | None,
+    exhaustive: object,
+    expected_winners: object,
+    outcome_relation: str | None,
+) -> bool:
+    """True if a market is a PROVED single-winner exhaustive partition (Queue 299).
+
+    Canonical, unit-tested mirror of the ``mex_field_candidates`` exclusivity
+    gate. Evidence comes from the persisted shape classifier
+    (``market_metadata->'shape'``), never from the default-true
+    ``mutually_exclusive`` column and never from the category:
+
+      * ``market_type == 'field'`` — the classifier's ">2 competitors, one wins"
+        display verdict, AND
+      * ``exhaustive`` is true — the classifier's Item 3 guard only sets this
+        when the SOURCE proves it, AND
+      * ``expected_winners == 1`` — a single-winner partition, not a Top-N /
+        participation contract, AND
+      * ``outcome_relation`` is an exclusive relation (named competitors or
+        exclusive ranges) — never ``cumulative_thresholds`` (co-winning ladder
+        rungs, gotcha #17), ``independent_participation`` or ``unknown``.
+
+    Values arrive from JSONB as strings on the SQL path, so ``'true'`` / ``'1'``
+    are accepted alongside the native ``True`` / ``1``. Anything unrecognised
+    fails closed. Read-side only (gotcha #21).
+    """
+    if market_type != "field":
+        return False
+    if str(exhaustive).strip().lower() != "true":
+        return False
+    if str(expected_winners).strip() != "1":
+        return False
+    return (outcome_relation or "") in EXCLUSIVITY_PROVED_RELATIONS
+
+
+# Rung 4b — the category-independent non-exclusive bundle, MEASURED not excluded.
+#
+# ``market_is_esports_multi_bundle`` is the same structural test wearing a
+# category allowlist, and C119 is right that the allowlist is not principled.
+# But the census that would justify deleting the class category-wide says the
+# opposite of what the esports evidence says: a blanket >=3-outcome / >=2-winner
+# exclusion removes 27,942 of hockey's 34,368 published outcomes (81%) and
+# 20,511 of tennis's 43,460 (47%) — two of the best-calibrated cohorts we have
+# (hockey ECE 0.87pp, tennis 2.42pp). Deleting well-calibrated data to satisfy a
+# shape rule would be a bigger error than the one being fixed, and Queue 299's
+# own Item 2 requires n/ECE be recomputed after each rung before it is believed.
+#
+# So the structural test is generalized as a MEASUREMENT: every category gets the
+# flag, the artifact publishes the in-curve n and ECE of the bundle cohort and of
+# the remainder per category, and the esports EXCLUSION stays exactly as it was
+# (its +9.2pp defect is measured, OPS-557). The next queue can then exclude on
+# evidence per cohort instead of guessing. Nothing is silently capped: the
+# census is published, and this comment is the reason the rung stopped here.
+NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT = (
+    "Category-independent census of the non-exclusive bundle shape (>=3 outcomes "
+    "resolving with >=2 winners — independent binaries packed into one market, so "
+    "not a partition at any price). The esports cohort is EXCLUDED from the curve "
+    "(OPS-557 measured +9.2pp there); every other category is MEASURED ONLY, "
+    "because a blanket exclusion would delete 81% of hockey (ECE 0.87pp) and 47% "
+    "of tennis (ECE 2.42pp) — well-calibrated cohorts with no evidence of the "
+    "esports defect. Publishing the per-category n/ECE of the bundle cohort vs the "
+    "remainder is what lets the exclusion decision be made on evidence rather than "
+    "on the shape label alone. Measurement only; changes no curve row."
+)
+
+
+def market_is_nonexclusive_bundle(n_outcomes: int, n_winners: int) -> bool:
+    """True if a market's members cannot be mutually exclusive (Queue 299).
+
+    Category-independent structural test: >=3 outcomes resolving with >=2
+    winners is direct evidence the members are independent questions packed into
+    one market, not a single-winner partition. Used to (a) keep such a market out
+    of normalization in EVERY category and (b) drive the published bundle census.
+    The esports curve exclusion (:func:`market_is_esports_multi_bundle`) is this
+    same predicate under its measured category scope. Read-side only (gotcha #21).
+    """
+    return n_outcomes >= 3 and n_winners >= 2
 
 
 # Queue #186 (#941, corrects #167): Kalshi player-prop threshold curve exclusion.
@@ -1234,7 +1536,17 @@ def _calibration_population_ctes(
                     COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                     fm.mutually_exclusive,
                     fm.market_type,
-                    fm.llm_league
+                    fm.llm_league,
+                    -- Queue 299 rung 4: the shape classifier's PERSISTED
+                    -- exclusivity evidence (app.utils.market_shape semantics v2,
+                    -- Queue #260). These three carry the only proof a market is
+                    -- a single-winner exhaustive partition; the
+                    -- ``mutually_exclusive`` column above defaults to True and
+                    -- is set for Yes/No claims and duels alike, so it is not
+                    -- evidence and no longer gates normalization.
+                    fm.market_metadata->'shape'->>'exhaustive' AS shape_exhaustive,
+                    fm.market_metadata->'shape'->>'expected_winners' AS shape_expected_winners,
+                    fm.market_metadata->'shape'->>'outcome_relation' AS shape_relation
                 FROM futures_markets fm
                 WHERE fm.status = 'resolved'
                   {market_info_extra}
@@ -1247,18 +1559,76 @@ def _calibration_population_ctes(
                       (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
                       false)
             ),
-            -- L2-79 Item 1: malformed 2-outcome mex binaries (winner count != 1).
-            -- Counts ALL outcomes of the market to determine the binary shape and
-            -- true winner count (not the eligibility-filtered subset).
-            malformed_binaries AS (
+            -- Queue 299: ONE per-market structural scan feeding every shape and
+            -- result-authority rung. Counts are over ALL outcomes of the market
+            -- (never the eligibility-filtered subset) — the same basis the
+            -- malformed-binary rule always used, so the shape and winner
+            -- cardinality reflect the market as captured, not as published.
+            -- Replaces the three separate full scans that previously computed
+            -- malformed_binaries / esports_multi_bundles / mex_win_counts.
+            market_result_shape AS (
                 SELECT fo.market_id,
-                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
+                    mi.category,
+                    mi.market_type,
+                    COUNT(*) AS n_outcomes,
+                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count,
+                    -- Queue 299 rung 2: captured draw/no-result authority.
+                    COUNT(*) FILTER (
+                        WHERE lower(btrim(fo.name)) IN {_sql_str_tuple(DRAW_AUTHORITY_OUTCOME_NAMES)}
+                    ) AS draw_member_count
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
+                GROUP BY fo.market_id, mi.category, mi.market_type
+            ),
+            -- L2-79 Item 1: malformed 2-outcome mex binaries (winner count != 1).
+            malformed_binaries AS (
+                SELECT mrs.market_id, mrs.win_count
+                FROM market_result_shape mrs
+                JOIN market_info mi ON mi.market_id = mrs.market_id
                 WHERE mi.mutually_exclusive = true
-                GROUP BY fo.market_id
-                HAVING COUNT(*) = 2
-                   AND COUNT(*) FILTER (WHERE fo.is_winner = true) <> 1
+                  AND mrs.n_outcomes = 2
+                  AND mrs.win_count <> 1
+            ),
+            -- Queue 299 rung 1: markets that graded NOBODY a winner. is_winner
+            -- has a False default, so an all-loser market is UNKNOWN truth (an
+            -- omitted draw graded as two losses, an orphan half, or a market
+            -- nothing ever graded) — not a set of confident losses. Generalizes
+            -- the malformed-binary both-false leg to every shape and size.
+            no_winner_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.n_outcomes >= 2 AND mrs.win_count = 0
+            ),
+            -- Queue 299 rung 2: draw-capable duels with no draw member. The
+            -- category answers only "can this contest be drawn?" (sport rules,
+            -- exactly as the events-curve soccer rule does); the SHAPE test is
+            -- evidence-based, so ladders, Yes/No claims and genuinely 2-way
+            -- questions are untouched, as are duels that DO carry a draw.
+            draw_authority_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.category IN {_sql_str_tuple(DRAW_CAPABLE_CATEGORIES)}
+                  AND mrs.market_type = 'duel'
+                  AND mrs.n_outcomes = 2
+                  AND mrs.draw_member_count = 0
+            ),
+            -- Queue 299 rung 3: a declared partition that captured <=1 member.
+            -- Field-shape only — a standalone Yes/No claim with one outcome is a
+            -- complete, scoreable prediction and is deliberately NOT caught.
+            orphan_partition_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.market_type = 'field' AND mrs.n_outcomes <= 1
+            ),
+            -- Queue 299 rung 4b: the category-independent non-exclusive bundle
+            -- (>=3 outcomes, >=2 winners). MEASUREMENT ONLY outside esports —
+            -- see NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT for why a blanket
+            -- exclusion is not shipped (it would delete 81% of hockey and 47%
+            -- of tennis, both well-calibrated).
+            nonexclusive_bundle_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.n_outcomes >= 3 AND mrs.win_count >= 2
             ),
             -- Queue #159 (#1010): esports malformed-MULTI "match bundle" markets —
             -- the >=3-outcome sibling of malformed_binaries and the exclusion-side
@@ -1272,14 +1642,16 @@ def _calibration_population_ctes(
             -- 0.487 = +9.2pp, avg per-market cp-sum 17.9). Counts ALL outcomes,
             -- mirroring malformed_binaries. Read-side only (gotcha #21) — the
             -- many-YES ladder grading is CORRECT, so exclude, never re-grade.
+            -- Queue 299: re-expressed over the shared market_result_shape scan
+            -- (identical membership) so the esports EXCLUSION and the
+            -- category-independent bundle CENSUS derive from one structural
+            -- test rather than two copies of it.
             esports_multi_bundles AS (
-                SELECT fo.market_id
-                FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
-                WHERE mi.category = 'esports'
-                GROUP BY fo.market_id
-                HAVING COUNT(*) >= 3
-                   AND COUNT(*) FILTER (WHERE fo.is_winner = true) >= 2
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                  AND mrs.n_outcomes >= 3
+                  AND mrs.win_count >= 2
             ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
@@ -1320,14 +1692,12 @@ def _calibration_population_ctes(
             -- mutually_exclusive flag UNSET and were escaping this gate raw
             -- (sum ~4.56). The win_count=1 / >=3 / sum>1.15 guards below keep a
             -- mis-shaped or multi-winner field from being normalized anyway.
-            mex_win_counts AS (
-                SELECT fo.market_id,
-                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
-                FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
-                WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
-                GROUP BY fo.market_id
-            ),
+            -- Queue 299: the winner cardinality now comes from the shared
+            -- market_result_shape scan (same count over ALL outcomes), and the
+            -- ``mutually_exclusive = true OR market_type = 'field'`` admission
+            -- test is REPLACED by proved exclusivity in mex_field_candidates
+            -- below — the column defaults to True and is set for Yes/No claims
+            -- and duels alike, so it never was evidence of a partition.
             -- Queue #262 Item 1: split the old single mex_norm_markets into a
             -- structural CANDIDATE detection (terminal price) + a price-expression
             -- DIVISOR, so a horizon can normalize on its snapshot yet still measure
@@ -1354,9 +1724,18 @@ def _calibration_population_ctes(
                     COUNT(*) AS terminal_eligible_n
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
-                JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
-                WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
-                  AND mwc.win_count = 1
+                JOIN market_result_shape mrs ON mrs.market_id = fo.market_id
+                -- Queue 299 rung 4: PROVED exclusivity only. The persisted shape
+                -- classifier must positively assert an exhaustive single-winner
+                -- field with an exclusive outcome relation; a default-true
+                -- ``mutually_exclusive`` flag, an ``unknown`` relation and a
+                -- cumulative-threshold ladder (gotcha #17 co-winners) are all
+                -- refused. Mirrors market_exclusivity_is_proved().
+                WHERE mi.market_type = 'field'
+                  AND mi.shape_exhaustive = 'true'
+                  AND mi.shape_expected_winners = '1'
+                  AND mi.shape_relation IN {_sql_str_tuple(EXCLUSIVITY_PROVED_RELATIONS)}
+                  AND mrs.win_count = 1
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist),
@@ -1491,6 +1870,17 @@ def _calibration_population_ctes(
                     mb.win_count AS malformed_win_count,
                     -- Queue #159 (#1010): esports match-bundle exclusion flag.
                     (emb.market_id IS NOT NULL) AS is_esports_bundle,
+                    -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
+                    -- not a set of losses (is_winner's default is False).
+                    (nwm.market_id IS NOT NULL) AS is_no_winner_market,
+                    -- Queue 299 rung 2: draw-capable duel with no draw member.
+                    (dam.market_id IS NOT NULL) AS is_draw_authority_missing,
+                    -- Queue 299 rung 3: a 'field' that captured <=1 member.
+                    (opm.market_id IS NOT NULL) AS is_orphan_partition,
+                    -- Queue 299 rung 4b: category-independent non-exclusive
+                    -- bundle. CENSUS ONLY — this flag does NOT gate ``deduped``
+                    -- outside esports (which keeps its own measured exclusion).
+                    (nbm.market_id IS NOT NULL) AS is_nonexclusive_bundle,
                     -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
                     -- sits in the >=0.80 band of an over-subscribed golf mex market.
                     (gpm.market_id IS NOT NULL
@@ -1534,6 +1924,10 @@ def _calibration_population_ctes(
                 {curve_price_join}
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
+                LEFT JOIN no_winner_markets nwm ON nwm.market_id = fo.market_id
+                LEFT JOIN draw_authority_markets dam ON dam.market_id = fo.market_id
+                LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
+                LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
                 LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
                 LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
@@ -1574,6 +1968,13 @@ def _calibration_population_ctes(
                           AND NOT ro.is_golf_placeholder
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
+                          -- Queue 299: the new rungs are published per-outcome
+                          -- exclusions too, so a field that loses a member to
+                          -- one of them is PARTIAL and must be dropped whole
+                          -- rather than normalized over its survivors.
+                          AND NOT ro.is_no_winner_market
+                          AND NOT ro.is_draw_authority_missing
+                          AND NOT ro.is_orphan_partition
                     ) AS survivor_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
@@ -1583,6 +1984,9 @@ def _calibration_population_ctes(
                           AND NOT ro.is_golf_placeholder
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
+                          AND NOT ro.is_no_winner_market
+                          AND NOT ro.is_draw_authority_missing
+                          AND NOT ro.is_orphan_partition
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
                 JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
@@ -1652,6 +2056,14 @@ def _calibration_population_ctes(
                     AND NOT ro.is_golf_placeholder
                     AND NOT ro.is_kalshi_prop_threshold
                     AND NOT ro.is_weather_wide_spread
+                    -- Queue 299 rungs 1-3 (#1012): result authority before
+                    -- shape. A market that graded nobody, a draw-capable duel
+                    -- with no draw member, and a 'field' with <=1 captured
+                    -- member are all UNKNOWN truth — excluded, never published
+                    -- as confident losses and never re-graded (gotcha #21).
+                    AND NOT ro.is_no_winner_market
+                    AND NOT ro.is_draw_authority_missing
+                    AND NOT ro.is_orphan_partition
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
@@ -1673,6 +2085,74 @@ def _calibration_population_ctes(
                         ELSE ro.rn = 1
                     END
             )"""
+
+
+def _ece_from_buckets(buckets: dict[int, dict]) -> float | None:
+    """Equal-weight-per-bucket |actual − predicted|, in percentage points.
+
+    The same definition ``_compute_horizon_mce(weighted=False)`` uses, expressed
+    over a ``{bucket_idx: {n, winners, sum_prob}}`` accumulator so the bundle
+    census can score a cohort without rebuilding bucket dicts. Returns None for
+    an empty cohort rather than a misleading 0.0.
+    """
+    live = [v for v in buckets.values() if v["n"] > 0]
+    if not live:
+        return None
+    total = 0.0
+    for v in live:
+        total += abs(v["winners"] / v["n"] - v["sum_prob"] / v["n"])
+    return round(total / len(live) * 100, 2)
+
+
+def _build_nonexclusive_bundle_census(futures_rows) -> dict:
+    """Per-category n/ECE for the non-exclusive bundle cohort (Queue 299 rung 4b).
+
+    ``futures_rows`` are the main futures buckets, grouped by
+    ``(bucket_idx, source, category, price_moved, is_nonexclusive_bundle)``.
+    Splits each category's PUBLISHED rows into the bundle cohort (>=3 outcomes
+    resolving with >=2 winners — structurally not a partition) and the
+    remainder, and scores both.
+
+    This is the evidence Item 2 asks for before the exclusion is generalized:
+    ``would_exclude_*`` is exactly what a category-independent exclusion would
+    remove, ``remainder_*`` is what the category's curve would become. Esports is
+    reported too, but its cohort is already excluded from the curve, so its
+    in-curve numbers are 0 by construction. Measurement only — no row moves.
+    """
+    per_cat: dict[str, dict[str, dict[int, dict]]] = {}
+    for r in futures_rows:
+        cat = r.category
+        cohort = "bundle" if getattr(r, "is_nonexclusive_bundle", False) else "remainder"
+        slot = per_cat.setdefault(cat, {"bundle": {}, "remainder": {}})[cohort]
+        acc = slot.setdefault(r.bucket_idx, {"n": 0, "winners": 0, "sum_prob": 0.0})
+        acc["n"] += r.n
+        acc["winners"] += r.winners
+        acc["sum_prob"] += float(r.sum_prob)
+
+    by_category = []
+    for cat in sorted(per_cat):
+        bundle, remainder = per_cat[cat]["bundle"], per_cat[cat]["remainder"]
+        bundle_n = sum(v["n"] for v in bundle.values())
+        remainder_n = sum(v["n"] for v in remainder.values())
+        if bundle_n == 0:
+            continue
+        by_category.append({
+            "category": cat,
+            "published_n": bundle_n + remainder_n,
+            "would_exclude_n": bundle_n,
+            "would_exclude_ece": _ece_from_buckets(bundle),
+            "remainder_n": remainder_n,
+            "remainder_ece": _ece_from_buckets(remainder),
+            # The publish bar the remainder would have to clear to stay charted.
+            "remainder_clears_sample_bar": remainder_n >= _DEFAULT_MIN_CATEGORY_OUTCOMES,
+        })
+    by_category.sort(key=lambda x: -x["would_exclude_n"])
+    return {
+        "rule": NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT,
+        "excluded_from_curve_for": [ESPORTS_MULTI_BUNDLE_CATEGORY],
+        "measured_only_for": "all other categories",
+        "by_category": by_category,
+    }
 
 
 async def compute_calibration_payload(db) -> dict:
@@ -1754,6 +2234,18 @@ async def compute_calibration_payload(db) -> dict:
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
+                    -- Queue 299 (#1012): result-authority + shape rung counts.
+                    -- Candidate-side (pre-dedup) counts, matching every other
+                    -- exclusion block, so each rung's size is transparent.
+                    COUNT(*) FILTER (WHERE is_no_winner_market) AS no_winner_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_no_winner_market) AS no_winner_markets,
+                    COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
+                    COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_orphan_partition) AS orphan_partition_markets,
+                    -- Census only (never gates the curve outside esports).
+                    COUNT(*) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_candidates,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_markets,
                     -- Queue #167 (#941/#1054): Kalshi player-prop threshold count.
                     COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded,
                     -- Queue #183 Item 4: weather wide-spread exclusion count.
@@ -1780,6 +2272,12 @@ async def compute_calibration_payload(db) -> dict:
                 FROM deduped
             )
             SELECT bucket_idx, source, category, price_moved,
+                -- Queue 299 rung 4b: carried as a GROUPING dimension (not a
+                -- filter) so the published bundle census can report the cohort's
+                -- own n/ECE against the remainder, per category. The Python
+                -- side merges these rows back on the original four keys, so the
+                -- served ``buckets`` list keeps its exact prior shape and size.
+                is_nonexclusive_bundle,
                 COUNT(*) AS n,
                 SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
                 AVG(adj_opening_probability) AS avg_prob,
@@ -1800,6 +2298,14 @@ async def compute_calibration_payload(db) -> dict:
                 MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
                 MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
+                MAX(ls.no_winner_excluded) AS no_winner_excluded,
+                MAX(ls.no_winner_markets) AS no_winner_markets,
+                MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
+                MAX(ls.draw_authority_markets) AS draw_authority_markets,
+                MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
+                MAX(ls.orphan_partition_markets) AS orphan_partition_markets,
+                MAX(ls.nonexclusive_bundle_candidates) AS nonexclusive_bundle_candidates,
+                MAX(ls.nonexclusive_bundle_markets) AS nonexclusive_bundle_markets,
                 MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
                 MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded,
                 -- Queue #259 Item 1 (C14 P2): published (post-dedup) counts.
@@ -1810,8 +2316,8 @@ async def compute_calibration_payload(db) -> dict:
             FROM bucketed
             CROSS JOIN liq_summary ls
             CROSS JOIN published_summary ps
-            GROUP BY bucket_idx, source, category, price_moved
-            ORDER BY bucket_idx, source, category, price_moved
+            GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
+            ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
         """)
         result = await db.execute(main_sql)
         rows = result.all()
@@ -1884,6 +2390,16 @@ async def compute_calibration_payload(db) -> dict:
                 if rows and getattr(rows[0], attr, None) is not None
                 else 0
             )
+
+        # Queue 299 (#1012): result-authority + shape rung counts.
+        no_winner_excluded = _int0("no_winner_excluded")
+        no_winner_markets_count = _int0("no_winner_markets")
+        draw_authority_excluded = _int0("draw_authority_excluded")
+        draw_authority_markets_count = _int0("draw_authority_markets")
+        orphan_partition_excluded = _int0("orphan_partition_excluded")
+        orphan_partition_markets_count = _int0("orphan_partition_markets")
+        nonexclusive_bundle_candidates = _int0("nonexclusive_bundle_candidates")
+        nonexclusive_bundle_markets_count = _int0("nonexclusive_bundle_markets")
 
         mex_candidate_markets = _int0("mex_candidate_markets")
         mex_normalized_markets = _int0("mex_normalized_markets")
@@ -2230,17 +2746,42 @@ async def compute_calibration_payload(db) -> dict:
     total_outcomes = sum(r.n for r in all_rows)
     total_winners = sum(r.winners for r in all_rows)
 
+    # Queue 299 rung 4b: the futures query now groups by is_nonexclusive_bundle as
+    # well, purely so the bundle cohort can be measured. Build the census from the
+    # split rows FIRST, then merge them back on the original four keys so the
+    # served ``buckets`` list is byte-for-byte the shape it was before — the
+    # census must not cost payload size or change any published bucket.
+    nonexclusive_bundle_census = _build_nonexclusive_bundle_census(rows)
+
     # Build bucket dicts with Wilson CIs
-    bucket_dicts = []
+    merged: dict[tuple, dict] = {}
+    merged_order: list[tuple] = []
     for r in all_rows:
-        ci_lo, ci_hi = _wilson_ci(r.winners, r.n)
+        key = (r.bucket_idx, r.source, r.category, getattr(r, "price_moved", None))
+        acc = merged.get(key)
+        if acc is None:
+            acc = {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0}
+            merged[key] = acc
+            merged_order.append(key)
+        acc["n"] += r.n
+        acc["winners"] += r.winners
+        acc["sum_prob"] += float(r.sum_prob)
+        acc["sum_sq_err"] += float(r.sum_sq_err)
+
+    bucket_dicts = []
+    for key in merged_order:
+        acc = merged[key]
+        bucket_idx, source, category, price_moved = key
+        ci_lo, ci_hi = _wilson_ci(acc["winners"], acc["n"])
         bucket_dicts.append({
-            "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
-            "price_moved": getattr(r, "price_moved", None),
-            "n": r.n, "winners": r.winners,
-            "avg_prob": round(float(r.avg_prob), 4),
-            "sum_prob": round(float(r.sum_prob), 4),
-            "sum_sq_err": round(float(r.sum_sq_err), 4),
+            "bucket_idx": bucket_idx, "source": source, "category": category,
+            "price_moved": price_moved,
+            "n": acc["n"], "winners": acc["winners"],
+            # avg_prob is recomputed from the merged mass (sum_prob / n) rather
+            # than averaged across split rows, so it stays exact.
+            "avg_prob": round(acc["sum_prob"] / acc["n"], 4) if acc["n"] else 0.0,
+            "sum_prob": round(acc["sum_prob"], 4),
+            "sum_sq_err": round(acc["sum_sq_err"], 4),
             "ci_lower": round(ci_lo, 4),
             "ci_upper": round(ci_hi, 4),
         })
@@ -2317,7 +2858,22 @@ async def compute_calibration_payload(db) -> dict:
             # Below the bar: excluded from the published chart list, but
             # recorded (with its count) so the exclusion is transparent, never
             # silent. It still counts toward the overall/per-source curves.
-            small_sample_categories.append({"category": cat, "outcomes": total_n})
+            #
+            # Queue 299 Item 3 (#1012): the disposition is now machine-readable.
+            # A cohort whose defective rows have been excluded can legitimately
+            # fall under the sample bar — the honest answer then is "parked",
+            # not a quietly missing chart and not a rescued-looking curve. This
+            # is the exact case r339 predicted for cricket.
+            small_sample_categories.append({
+                "category": cat,
+                "outcomes": total_n,
+                "disposition": "parked_below_publish_bar",
+                "publish_bar": _min_cat_outcomes,
+                "ece": _compute_horizon_mce([
+                    {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+                    for v in buckets_by_idx.values()
+                ]),
+            })
             continue
         _cat_buckets = [
             {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
@@ -2580,6 +3136,43 @@ async def compute_calibration_payload(db) -> dict:
             "applies_to": "esports",
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
+        },
+        # Queue 299 rung 1 (#1012): result authority before anything else.
+        "no_winner_filter": {
+            "applies_to": "all",
+            "rule": NO_WINNER_RULE_TEXT,
+            "excluded": no_winner_excluded,
+            "excluded_markets": no_winner_markets_count,
+        },
+        # Queue 299 rung 2 (#1012): draw authority on draw-capable questions.
+        "draw_authority_filter": {
+            "applies_to": ", ".join(sorted(DRAW_CAPABLE_CATEGORIES)),
+            "rule": DRAW_AUTHORITY_RULE_TEXT,
+            "excluded": draw_authority_excluded,
+            "excluded_markets": draw_authority_markets_count,
+            "draw_member_names": sorted(DRAW_AUTHORITY_OUTCOME_NAMES),
+        },
+        # Queue 299 rung 3 (#1012): orphan partitions.
+        "orphan_partition_filter": {
+            "applies_to": "all (field shape only)",
+            "rule": ORPHAN_PARTITION_RULE_TEXT,
+            "excluded": orphan_partition_excluded,
+            "excluded_markets": orphan_partition_markets_count,
+        },
+        # Queue 299 rung 4 (#1012): what now counts as proof of exclusivity.
+        "exclusivity_evidence": {
+            "applies_to": "all",
+            "rule": EXCLUSIVITY_EVIDENCE_RULE_TEXT,
+            "required_market_type": "field",
+            "required_relations": sorted(EXCLUSIVITY_PROVED_RELATIONS),
+            "mutually_exclusive_column_accepted": False,
+            "category_consulted_for_shape": False,
+        },
+        # Queue 299 rung 4b (#1012): measured, not excluded — see the rule text.
+        "nonexclusive_bundle_census": {
+            **nonexclusive_bundle_census,
+            "candidate_outcomes": nonexclusive_bundle_candidates,
+            "candidate_markets": nonexclusive_bundle_markets_count,
         },
         "kalshi_prop_threshold_filter": {  # Queue #186 (#941, corrects #167)
             "applies_to": "kalshi",

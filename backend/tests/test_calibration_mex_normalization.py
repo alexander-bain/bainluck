@@ -74,11 +74,17 @@ class TestPrecomputeQueryEmbedsNormalization:
     def test_main_query_embeds_mex_normalization(self):
         src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
                + precompute_calibration._calibration_population_ctes())
-        # The support CTEs.
-        assert "mex_win_counts" in src
-        assert "mex_norm_markets" in src
+        # The support CTEs. Queue 299 folded the winner-cardinality scan into
+        # the shared ``market_result_shape`` CTE (one scan feeding every shape
+        # and result-authority rung) and split candidate detection from the
+        # price-expression divisor (#262), so assert on the live CTE names —
+        # the old ``mex_win_counts`` / ``mex_norm_markets`` strings now survive
+        # only in lineage comments and no longer prove anything.
+        assert "market_result_shape AS (" in src
+        assert "mex_field_candidates AS (" in src
+        assert "mex_field_divisor AS (" in src
         # Winner-count structure gate (genuine single-winner partition).
-        assert "win_count = 1" in src
+        assert "mrs.win_count = 1" in src
         # Applied as the divisor in the completeness-gated ``normalized`` CTE
         # (Queue #257 Item 1 moved the division out of ranked_outcomes so it can
         # be gated on field completeness).

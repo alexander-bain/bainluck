@@ -88,9 +88,14 @@ class TestPrecomputeQueryEmbedsExclusions:
     def test_main_query_embeds_malformed_binary_exclusion(self):
         src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
                + precompute_calibration._calibration_population_ctes())
-        # The CTE that identifies malformed binaries.
+        # The CTE that identifies malformed binaries. Queue 299 re-expressed it
+        # over the shared ``market_result_shape`` per-market scan (same
+        # membership: a 2-outcome mex market whose winner count is not 1), so
+        # the binary-shape test now reads off that CTE's counts instead of its
+        # own HAVING clause.
         assert "malformed_binaries" in src
-        assert "HAVING COUNT(*) = 2" in src
+        assert "mrs.n_outcomes = 2" in src
+        assert "mrs.win_count <> 1" in src
         # Applied in the deduped WHERE (the published denominator).
         assert "NOT ro.is_malformed_binary" in src
         # Transparency counts + payload surface.

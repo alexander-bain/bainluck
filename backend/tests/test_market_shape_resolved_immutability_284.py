@@ -51,11 +51,23 @@ def test_census_is_write_free_and_dry_run_by_contract():
 
 
 def test_census_does_not_bump_population_version():
-    """No resolved rewrite ships in this queue, so CALIBRATION_POPULATION_VERSION
-    is unchanged — the census only REPORTS that a future apply would require one."""
-    from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+    """The census must never bump CALIBRATION_POPULATION_VERSION itself — it only
+    REPORTS that a future resolved rewrite would require one.
 
-    assert CALIBRATION_POPULATION_VERSION == "q267"
+    Originally pinned to the literal "q267", which conflated "this census shipped
+    no rewrite" with "nothing else may ever bump the version". Queue 299 bumps it
+    for an unrelated, deliberate population change (result-authority repair), so
+    the assertion now states the real invariant: the constant is never mentioned
+    in the census source, and the census reports whatever it currently is."""
+    import re
+
+    src = inspect.getsource(census_resolved_market_shapes)
+    # It reports the live constant...
+    assert "current_population_version" in src
+    assert "CALIBRATION_POPULATION_VERSION" in src
+    # ...and never hardcodes a version string of its own, so it can neither pin
+    # nor advance the population contract.
+    assert re.search(r"""['"]q\d+['"]""", src) is None
 
 
 # --- functional census run (mocked session + redis) ------------------------
@@ -133,7 +145,12 @@ async def test_census_reports_transitions_membership_and_bump(monkeypatch):
     assert census["transitions"] == {"duel->claim": 1, "field->claim": 1}
     assert census["affected_published_membership"] == 1
     assert census["requires_population_version_bump"] is True
-    assert census["current_population_version"] == "q267"
+    # Reports the LIVE constant, whatever it is — not a frozen literal (Queue 299
+    # bumps it to q299 for the result-authority repair, which is not this
+    # census's business).
+    from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+    assert census["current_population_version"] == CALIBRATION_POPULATION_VERSION
 
     # It NEVER issued a mutating statement.
     assert all(
