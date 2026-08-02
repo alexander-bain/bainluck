@@ -171,7 +171,7 @@ describe("L2-234: the baseline is a real, owned, current inventory", () => {
   });
 
   it("its total agrees with its own per-file counts", () => {
-    const summed = Object.values(baseline.byFile).reduce((a, b) => a + b, 0);
+    const summed: string = Object.values(baseline.byFile).reduce((a, b) => a + b, 0);
     expect(baseline.total).toBe(summed);
   });
 
