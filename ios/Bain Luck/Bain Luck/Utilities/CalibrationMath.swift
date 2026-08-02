@@ -133,4 +133,107 @@ nonisolated enum CalibrationMath {
     private static func round1(_ fraction: Double) -> Double {
         (fraction * 1000).rounded() / 10
     }
+
+    // MARK: - Trading-activity comparison (L2-230 web parity)
+
+    /// Decimal places every ECE on the calibration surface is rendered with.
+    private static let eceDisplayDP = 1
+
+    /// Which cohort carries the HIGHER error, judged at display precision.
+    nonisolated enum ActivityDirection: String, Sendable {
+        case movedHigher = "moved_higher"
+        case unchangedHigher = "unchanged_higher"
+        case tied
+        case unknown
+    }
+
+    /// The rendered description of the activity split. `sentence == nil` means
+    /// render no comparison at all.
+    nonisolated struct ActivityComparison: Sendable {
+        let direction: ActivityDirection
+        let movedText: String?
+        let unchangedText: String?
+        let ratioText: String?
+        let sentence: String?
+
+        static let unrenderable = ActivityComparison(
+            direction: .unknown, movedText: nil, unchangedText: nil,
+            ratioText: nil, sentence: nil
+        )
+    }
+
+    /// A cohort is usable only if it has outcomes AND a finite, non-negative ECE.
+    private static func cohortValue(ece: Double?, n: Int?) -> Double? {
+        guard let n, n > 0 else { return nil }
+        guard let e = ece, e.isFinite, e >= 0 else { return nil }
+        // Round to what the reader actually sees before anything is compared.
+        return (e * 10).rounded() / 10
+    }
+
+    private static func fixed1(_ v: Double) -> String { String(format: "%.1f", v) }
+
+    /// Direction-aware, causation-free description of the trading-activity split.
+    ///
+    /// A 1:1 port of the web's `describeActivityComparison`
+    /// (`frontend/lib/calibrationMath.ts`), shipped in L2-230 to end this exact
+    /// sentence on the public page:
+    ///
+    ///     "Markets with active trading are 0.6x more accurately calibrated."
+    ///
+    /// It rendered beside stat cards reading 1.7pp (moved) and 1.0pp (unchanged)
+    /// — a ratio BELOW 1 sold as superiority, inverting the two numbers next to
+    /// it. Native kept printing it verbatim after the web fix, which is the
+    /// divergence L2-231 Item 0 found. Two rules make the replacement safe:
+    ///
+    ///   1. Compare at DISPLAY precision. If both cards show "1.0pp", prose that
+    ///      ranks one above the other contradicts the pixels beside it. Rounding
+    ///      first makes the tie state fall out, and makes 0.05pp the tolerance
+    ///      rather than an invented threshold.
+    ///   2. Never infer cause. C111 [P2] showed this aggregate is composition
+    ///      sensitive: a synthetic mix where moved was better within BOTH strata
+    ///      still inverted in aggregate. An ordering is an ordering. When one
+    ///      cannot be computed honestly we say nothing — nothing > unhelpful.
+    static func describeActivity(
+        movedECE: Double?, movedN: Int?,
+        unchangedECE: Double?, unchangedN: Int?
+    ) -> ActivityComparison {
+        guard let m = cohortValue(ece: movedECE, n: movedN),
+              let u = cohortValue(ece: unchangedECE, n: unchangedN)
+        else { return .unrenderable }
+
+        let movedText = fixed1(m)
+        let unchangedText = fixed1(u)
+        let lead = "Price moved sits at \(movedText)pp and price unchanged at \(unchangedText)pp"
+
+        if m == u {
+            return ActivityComparison(
+                direction: .tied, movedText: movedText, unchangedText: unchangedText,
+                ratioText: nil,
+                sentence: "\(lead) \u{2014} effectively the same calibration error in this sample."
+            )
+        }
+
+        let movedHigher = m > u
+        let higher = movedHigher ? m : u
+        let lower = movedHigher ? u : m
+        let higherLabel = movedHigher ? "price-moved" : "price-unchanged"
+        let lowerLabel = movedHigher ? "price-unchanged" : "price-moved"
+
+        // Suppressed when the smaller side rounds to 0.0pp (division by zero) and
+        // when it would print "1.0x", which reads as "the same" beside prose that
+        // just said one is higher.
+        var ratioText: String?
+        if lower > 0 {
+            let r = fixed1(higher / lower)
+            if r != "1.0" { ratioText = r }
+        }
+        let tail = ratioText.map { ", \($0)x the \(lowerLabel) cohort's" } ?? ""
+
+        return ActivityComparison(
+            direction: movedHigher ? .movedHigher : .unchangedHigher,
+            movedText: movedText, unchangedText: unchangedText, ratioText: ratioText,
+            sentence: "\(lead) \u{2014} in this sample the \(higherLabel) cohort carries the "
+                + "higher calibration error\(tail)."
+        )
+    }
 }

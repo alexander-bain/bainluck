@@ -1838,7 +1838,24 @@ export interface CalibrationData {
   // #997: minimum resolved-outcome count for a chartable sub-category, set
   // server-side (Redis-tunable) so web + native gate on the same bar.
   min_category_outcomes?: number;
-  small_sample_categories?: { category: string; outcomes: number }[];
+  // Queue 299 (#1012) made the held-out disposition machine-readable: a cohort
+  // whose defective rows were excluded can legitimately fall under the sample
+  // bar, and "parked" is the honest answer — not a quietly missing chart.
+  // Optional: older cached payloads carry only category + outcomes.
+  small_sample_categories?: {
+    category: string;
+    outcomes: number;
+    disposition?: string;
+    publish_bar?: number;
+    ece?: number | null;
+  }[];
+  /**
+   * Queue 297 Item 3 / C111 P2: the payload names its own population contract
+   * (e.g. "q299"). Without it a last-good snapshot built under an older
+   * population could be served under current UI labels and no consumer — web,
+   * native, or the browser rail — could tell.
+   */
+  population_version?: string;
   // L2-73 payload v2 (#999 §F): display semantics server-side so web + native
   // render the same story. All optional (older cached payloads omit them).
   date_range?: { start: string; end: string } | null;

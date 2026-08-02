@@ -23,12 +23,39 @@ final class CalibrationViewModel: ObservableObject {
 
     private var buckets: [CalibrationBucket] { data?.buckets ?? [] }
 
+    // MARK: - Init
+
+    init() {}
+
+    /// Preloaded-payload initializer.
+    ///
+    /// The production path is `load()`. This exists so the surface's payload
+    /// STATES — dated last-good, version mismatch, empty, parked category — can
+    /// be exercised directly. Those are states the server produces and a
+    /// happy-path network stub never reaches, and they are precisely where
+    /// native was silently diverging from web (L2-231 Item 0).
+    init(preloaded: CalibrationData) {
+        self.data = preloaded
+        self.loading = false
+    }
+
     // MARK: - Loading
 
     func load() async {
         loading = true; error = nil
         do { data = try await APIClient.shared.fetchCalibration() } catch { self.error = error.localizedDescription }
         loading = false
+    }
+
+    /// First-load only.
+    ///
+    /// The surface's `.task` used to call `load()` unconditionally, and `load()`
+    /// flips `loading` to true before it awaits — so re-entering the tab replaced
+    /// an already-rendered curve with a spinner while the same numbers were
+    /// re-fetched. Explicit refresh still goes through `load()`.
+    func loadIfNeeded() async {
+        guard data == nil else { return }
+        await load()
     }
 
     // MARK: - Formatting helpers
@@ -38,6 +65,18 @@ final class CalibrationViewModel: ObservableObject {
     var formattedTotalOutcomes: String { data.map { Self.fmt($0.totalOutcomes) } ?? "\u{2014}" }
     var formattedMarkets: String { data.map { Self.fmt($0.totalMarkets) } ?? "\u{2014}" }
     var formattedCohortOutcomes: String { data == nil ? "\u{2014}" : Self.fmt(cohortN) }
+
+    /// The population the hero claims to have analyzed.
+    ///
+    /// Web's hero says "{cohortN} well-traded resolved predictions ({fullN}
+    /// including thinly-traded)". Native said "{totalOutcomes} resolved
+    /// predictions" — the FULL total, a different number under the well-traded
+    /// default, presented as the same claim. Same population, same qualifier.
+    var heroPopulationText: String {
+        guard data != nil else { return "\u{2014}" }
+        if includeThin { return formattedCohortOutcomes }
+        return "\(formattedCohortOutcomes) well-traded (\(Self.fmt(fullN)) including thinly-traded)"
+    }
 
     // MARK: - Sample gate
 
@@ -141,6 +180,94 @@ final class CalibrationViewModel: ObservableObject {
     var unchangedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved == false } }
     var movedECE: Double { CalibrationMath.ece(movedBuckets) }
     var unchangedECE: Double { CalibrationMath.ece(unchangedBuckets) }
+
+    /// L2-231 Item 2: the direction-aware, causation-free comparison the web page
+    /// has rendered since L2-230. Native printed the superseded superiority claim
+    /// (`unchangedECE / movedECE` labelled "more accurately calibrated") until now.
+    var activity: CalibrationMath.ActivityComparison {
+        CalibrationMath.describeActivity(
+            movedECE: movedECE, movedN: movedN,
+            unchangedECE: unchangedECE, unchangedN: unchangedN
+        )
+    }
+
+    // MARK: - Freshness and population contract (Queue 297 / L2-231 Item 2)
+
+    /// True when the served payload is a dated last-good copy rather than a
+    /// current one. Web banners this; native rendered it as live.
+    var isStale: Bool { data?.cache?.isStale == true }
+
+    /// "Showing the last complete snapshot" subtitle: when it was actually built,
+    /// and how old that is. Nil when the payload is current.
+    ///
+    /// Deliberately falls back to the payload's own `generated_at` and then to a
+    /// bare "earlier": a stale payload whose envelope omits the date is still
+    /// stale, and dropping the banner because we cannot format a date would
+    /// present it as live — the exact failure the banner exists to prevent.
+    var staleBannerDetail: String? {
+        guard let cache = data?.cache, cache.isStale else { return nil }
+        let built = cache.generatedAt ?? data?.generatedAt
+        let whenText: String
+        if let built, let date = Self.parseISO(built) {
+            let f = DateFormatter()
+            f.dateFormat = "MMM d, h:mm a"
+            whenText = f.string(from: date)
+        } else {
+            whenText = "earlier"
+        }
+        let age = cache.ageS.map { " (\(Self.formatAge($0)) ago)" } ?? ""
+        return "These numbers were built \(whenText)\(age) and are not being "
+            + "refreshed right now. The curve rebuilds hourly."
+    }
+
+    /// The population contract this build renders. Bumped by the backend whenever
+    /// the published population changes materially (Queue 299: q267 -> q299).
+    ///
+    /// This is a CONTRACT check, not a freshness check. Native cannot recompute
+    /// the population, so if the payload announces one this build was not written
+    /// against, the honest answer is to refuse rather than to render current-looking
+    /// labels over numbers built under different rules (C111 P2 / Q297 §3).
+    static let expectedPopulationVersion = "q299"
+
+    var populationVersion: String? { data?.populationVersion }
+
+    /// `nil` payload version means an older/lean payload that predates the
+    /// contract field — rendered, but never claimed as verified.
+    var populationVersionState: PopulationVersionState {
+        guard let v = data?.populationVersion else { return .unverified }
+        return v == Self.expectedPopulationVersion ? .matched : .mismatched(v)
+    }
+
+    enum PopulationVersionState: Equatable {
+        case matched
+        /// The payload names a population this build does not know how to label.
+        case mismatched(String)
+        /// The payload does not name its population at all.
+        case unverified
+    }
+
+    /// A version-mismatched payload must not masquerade as current data. The view
+    /// renders an explicit incompatible state instead of the curve.
+    var isIncompatible: Bool {
+        if case .mismatched = populationVersionState { return true }
+        return false
+    }
+
+    var incompatibleMessage: String? {
+        guard case .mismatched(let served) = populationVersionState else { return nil }
+        return "This build reads calibration population \(Self.expectedPopulationVersion), "
+            + "but the server published \(served). Update the app to see the current curve."
+    }
+
+    /// "3h" / "45m" / "20s" — mirrors the web page's `formatAge`. Pure, so it is
+    /// `nonisolated`: the class is `@MainActor` and a static would otherwise
+    /// inherit that isolation for no reason.
+    nonisolated static func formatAge(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        if s >= 3600 { return "\(s / 3600)h" }
+        if s >= 60 { return "\(s / 60)m" }
+        return "\(s)s"
+    }
 
     // MARK: - Payload-v2 trust content
 

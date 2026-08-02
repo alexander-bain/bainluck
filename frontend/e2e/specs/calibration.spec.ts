@@ -28,30 +28,30 @@ import { test, expect, readContentRegionText } from "../fixtures/audit";
  * legitimate repairs instead of a check on rendering. This pack proves the page
  * renders honest, finite, non-collapsed numbers — not which numbers are right.
  *
- * ## On selectors: no test hooks, on purpose
+ * ## On selectors: `data-testid` hooks (L2-231 Item 1)
  *
- * The Discover packs bind to `data-testid` hooks that L2-223 added to those
- * components. This pack does not, because `frontend/app/calibration/page.tsx`
- * is Lane 1's active file (Queue 297 Item 1 is rewriting its degraded-state
- * rendering right now) and the Lane-2 gate forbids touching it.
+ * This pack originally bound to stat-card LABEL TEXT and then read the value
+ * positionally as `> div` index 1 of the label's parent, because
+ * `app/calibration/page.tsx` was Lane 1's active file and the Lane-2 gate
+ * forbade touching it. Q297 landed and the file is free, so the hooks are in
+ * and the prose selectors are out. Two things improve:
  *
- * So the selectors below are chosen to be **fail-closed**. That is the property
- * that matters, and it is not the same as "stable":
+ *   - An editorial reword no longer breaks the rail. That was a maintenance
+ *     tax, not a correctness hole — but it was a real one.
+ *   - The positional read is gone, and that one WAS a correctness hole:
+ *     `> div` index 1 is satisfied by whatever sits second, so a reshuffle
+ *     inside `StatCard` would have moved the read onto the DETAIL line — a
+ *     string that also contains digits and would therefore still have passed
+ *     the finite-number assertion. Fail-open, on a wrong number. Exactly the
+ *     C96 [P1] class. `[data-testid="<card>-value"]` names the number itself.
  *
- *   - A fail-OPEN selector matches something it shouldn't and reports green.
- *     `main div.break-inside-avoid` was one — `DiscoverSkeletonGrid` carried the
- *     same Tailwind layout class, so a page stuck on skeletons "found a card".
- *     That is the C96 [P1] false green and it is banned here: no assertion
- *     below is satisfied by a layout class.
- *   - A fail-CLOSED selector stops matching and reports red. An editorial
- *     reword of the stat-card label "Brier Score" breaks this spec loudly. That
- *     is a maintenance cost, not a correctness hole, and it is the correct
- *     trade while the file belongs to another lane.
+ * `frontend/__tests__/components/calibrationAuditHooks.test.tsx` is the
+ * tripwire: it fails in CI if a hook is dropped, renamed, or duplicated, so a
+ * missing anchor surfaces there rather than as a mystery red here.
  *
- * `section#methodology` is a real id and is the one genuinely stable anchor on
- * the page. When Q297 lands and the file is free, the right follow-up is to add
- * `data-testid` hooks plus a `__tests__` guard, exactly as L2-223 did for
- * Discover, and drop the label matching.
+ * The page also publishes machine-readable state the rail grades on instead of
+ * parsing prose: `data-population-version`, `data-cache-status`,
+ * `data-cohort-n`, `data-activity-direction`, `data-disposition`.
  */
 
 /** The declared page budget. The journey waits within this and no longer. */
@@ -63,20 +63,19 @@ const ERROR_COPY = "Failed to load calibration data";
 const LOADING_COPY = "Loading calibration data...";
 
 /**
- * Stat-card labels the page renders (`StatCard` at page.tsx:881). Located by
- * label text, then read positionally WITHIN that card — the card is found
- * semantically, so the positional read cannot wander onto another element.
+ * The five headline stat cards, by hook. Each renders its number under
+ * `<hook>-value`, so the value is addressed directly rather than by position.
  */
-const STAT_LABELS = [
-  "Resolved Outcomes",
-  "Calibration Error (ECE)",
-  "Brier Score",
-  "Sources",
-  "Categories",
+const STAT_HOOKS = [
+  "calibration-stat-outcomes",
+  "calibration-stat-ece",
+  "calibration-stat-brier",
+  "calibration-stat-sources",
+  "calibration-stat-categories",
 ] as const;
 
 /** The well-traded / thin toggle, which governs every table and curve below. */
-const COHORT_CONTROL = /Well-traded only|Include thin\/untraded/;
+const COHORT_CONTROL = '[data-testid="calibration-cohort-toggle"]';
 
 /** A rendered value that is not a finite number, however it got there. */
 const NON_FINITE = /NaN|Infinity|undefined|null/i;
@@ -90,12 +89,11 @@ const NON_FINITE = /NaN|Infinity|undefined|null/i;
  */
 const SUPERIORITY_COPY = /more accurately calibrated|dramatically better calibrated/i;
 
-/** The activity section's heading — the anchor for the pixels-vs-prose check. */
-const ACTIVITY_HEADING = "Does Trading Activity Matter?";
-/** The two cohort stat cards inside that section. */
-const ACTIVITY_STATS = ["Active Trading", "Opening Price Only"] as const;
-/** The direction-aware sentence, if one is rendered. */
-const HIGHER_ERROR_CLAIM = /the (price-moved|price-unchanged) cohort carries the higher calibration error/;
+/** The activity section — the anchor for the pixels-vs-prose check. */
+const ACTIVITY_SECTION = '[data-testid="calibration-activity-section"]';
+/** The two cohort stat cards inside that section, moved side first. */
+const ACTIVITY_MOVED = "calibration-activity-moved";
+const ACTIVITY_UNCHANGED = "calibration-activity-unchanged";
 
 interface StatCard {
   label: string;
@@ -128,6 +126,7 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
 
   const errorLocator = page.getByText(ERROR_COPY, { exact: false }).first();
   const methodology = page.locator("section#methodology").first();
+  const pageRoot = page.locator('[data-testid="calibration-page"]').first();
 
   // Race the two terminal outcomes. A healthy page resolves as soon as the
   // methodology section mounts; a broken one resolves as soon as the error copy
@@ -147,30 +146,42 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     .catch(() => false);
   const methodologyVisible = await methodology.isVisible().catch(() => false);
   const cohortControlVisible = await page
-    .getByText(COHORT_CONTROL)
+    .locator(COHORT_CONTROL)
     .first()
     .isVisible()
     .catch(() => false);
 
-  // Read every stat card in one pass: its label, its rendered value, and its
-  // box. `StatCard` renders [label, value, detail] as three sibling divs, so
-  // the value is child 1 of the card the label lives in.
+  // The payload contract the page says it rendered. Recorded, never asserted to
+  // a literal: pinning "q299" here would make the rail a tripwire for Lane 1's
+  // legitimate population bumps. Its VALUE is the parity evidence — the native
+  // proof compares against this, and a blank means the page rendered a payload
+  // that would not name its own contract.
+  const populationVersion = (await pageRoot.getAttribute("data-population-version")) ?? "";
+  const cacheStatus = (await pageRoot.getAttribute("data-cache-status")) ?? "";
+  const cohortN = await page
+    .locator('[data-testid="calibration-population-count"]')
+    .first()
+    .getAttribute("data-cohort-n")
+    .catch(() => null);
+
+  // Read every stat card in one pass, by hook. The value element is addressed
+  // directly (`<hook>-value`) rather than by sibling position, so a reshuffle
+  // inside StatCard cannot silently move the read onto the detail line.
   const stats: StatCard[] = [];
-  for (const label of STAT_LABELS) {
-    const labelNode = page.getByText(label, { exact: true }).first();
-    if (!(await labelNode.isVisible().catch(() => false))) {
-      stats.push({ label, value: "", box: null });
+  for (const hook of STAT_HOOKS) {
+    const card = page.locator(`[data-testid="${hook}"]`).first();
+    if (!(await card.isVisible().catch(() => false))) {
+      stats.push({ label: hook, value: "", box: null });
       continue;
     }
-    const card = labelNode.locator("xpath=..");
     const value = (
-      await card
-        .locator("> div")
-        .nth(1)
+      await page
+        .locator(`[data-testid="${hook}-value"]`)
+        .first()
         .innerText()
         .catch(() => "")
     ).trim();
-    stats.push({ label, value, box: await card.boundingBox().catch(() => null) });
+    stats.push({ label: hook, value, box: await card.boundingBox().catch(() => null) });
   }
 
   const missing = stats.filter((s) => s.box === null);
@@ -228,38 +239,48 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   // The section is conditional (it renders only when both cohorts have
   // outcomes), so its absence is not a failure — but a present section with
   // reversed prose is.
-  const activitySection = page.getByText(ACTIVITY_HEADING, { exact: false }).first();
+  // Same check as before, now read from hooks instead of prose. The page states
+  // its own computed direction in `data-activity-direction`, so this compares
+  // the page's CLAIM against the page's own two rendered NUMBERS — no regex over
+  // a sentence, and no dependence on how that sentence is worded.
+  const activitySection = page.locator(ACTIVITY_SECTION).first();
   const activityPresent = await activitySection.isVisible().catch(() => false);
   const activityValues: Record<string, number> = {};
-  let activityClaim: string | null = null;
+  let activityDirection: string | null = null;
+
+  const readActivityValue = async (hook: string): Promise<void> => {
+    const raw = (
+      await page
+        .locator(`[data-testid="${hook}-value"]`)
+        .first()
+        .innerText()
+        .catch(() => "")
+    ).trim();
+    const parsed = Number.parseFloat(raw.replace(/pp$/, ""));
+    if (Number.isFinite(parsed)) activityValues[hook] = parsed;
+  };
 
   if (activityPresent) {
-    const section = activitySection.locator("xpath=ancestor::section[1]");
-    const sectionText = (await section.innerText().catch(() => "")) || "";
-    activityClaim = sectionText.match(HIGHER_ERROR_CLAIM)?.[1] ?? null;
-    for (const label of ACTIVITY_STATS) {
-      const card = section.getByText(label, { exact: true }).first().locator("xpath=..");
-      const raw = (
-        await card
-          .locator("> div")
-          .nth(1)
-          .innerText()
-          .catch(() => "")
-      ).trim();
-      const parsed = Number.parseFloat(raw.replace(/pp$/, ""));
-      if (Number.isFinite(parsed)) activityValues[label] = parsed;
-    }
+    activityDirection = await activitySection.getAttribute("data-activity-direction");
+    await readActivityValue(ACTIVITY_MOVED);
+    await readActivityValue(ACTIVITY_UNCHANGED);
   }
 
   // Which cohort the RENDERED numbers say is worse. "Active Trading" is the
   // price-moved side; "Opening Price Only" is price-unchanged.
-  const moved = activityValues["Active Trading"];
-  const unchanged = activityValues["Opening Price Only"];
+  const moved = activityValues[ACTIVITY_MOVED];
+  const unchanged = activityValues[ACTIVITY_UNCHANGED];
+  // The page rounds both to 1dp before comparing (that is what the reader sees),
+  // so the rail must too — otherwise two cards both showing "1.0pp" would be
+  // graded as ordered here and reported as a contradiction of an honest tie.
+  const round1 = (v: number) => Math.round(v * 10) / 10;
   const numbersSayHigher =
-    Number.isFinite(moved) && Number.isFinite(unchanged) && moved !== unchanged
-      ? moved > unchanged
-        ? "price-moved"
-        : "price-unchanged"
+    Number.isFinite(moved) && Number.isFinite(unchanged)
+      ? round1(moved) === round1(unchanged)
+        ? "tied"
+        : round1(moved) > round1(unchanged)
+          ? "moved_higher"
+          : "unchanged_higher"
       : null;
 
   await journey.finish({
@@ -284,6 +305,29 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   expect(loadingVisible, "the loading state must not still be mounted").toBe(false);
   expect(methodologyVisible, "the methodology section must render").toBe(true);
   expect(cohortControlVisible, "the well-traded/thin control must render").toBe(true);
+
+  // L2-231. The hooks themselves are evidence: if the page root is absent, every
+  // hook-based read above degraded to "" and the run must not be read as green.
+  expect(
+    await pageRoot.isVisible().catch(() => false),
+    "the calibration page root hook must render",
+  ).toBe(true);
+  // Not a literal version — the value is recorded, its PRESENCE is asserted. A
+  // payload that will not name its own population contract is exactly what
+  // C111 P2 / Q297 §3 made un-serveable, so a blank here is a real regression.
+  expect(
+    populationVersion,
+    "the page must declare the payload's population version",
+  ).not.toBe("");
+  expect(cohortN, "the population count must publish its cohort n").not.toBeNull();
+  // A stale snapshot is legitimate and must be BANNERED; what is not legitimate
+  // is a stale payload rendered with no banner at all.
+  if (cacheStatus === "stale") {
+    expect(
+      await page.locator('[data-testid="calibration-stale-banner"]').first().isVisible().catch(() => false),
+      "a stale payload must render the dated last-good banner",
+    ).toBe(true);
+  }
   expect(
     missing.map((s) => s.label),
     "every stat card must render",
@@ -307,12 +351,12 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     expect(
       Object.keys(activityValues).sort(),
       "both activity cohort values must render as finite numbers",
-    ).toEqual([...ACTIVITY_STATS].sort());
+    ).toEqual([ACTIVITY_MOVED, ACTIVITY_UNCHANGED].sort());
   }
-  if (numbersSayHigher && activityClaim) {
+  if (numbersSayHigher && activityDirection) {
     expect(
-      activityClaim,
-      `the prose names ${activityClaim} as worse, but the cards read ` +
+      activityDirection,
+      `the page claims "${activityDirection}", but its own cards read ` +
         `moved=${moved}pp / unchanged=${unchanged}pp`,
     ).toBe(numbersSayHigher);
   }

@@ -3,9 +3,40 @@ import SwiftUI
 
 // MARK: - Main View
 
+/// Owns the view model for the production navigation path. The surface itself
+/// takes the model as an `@ObservedObject` so it can also be driven from a fixed
+/// payload — see `CalibrationSurfaceView`.
 struct CalibrationView: View {
     @StateObject private var viewModel = CalibrationViewModel()
+
+    var body: some View { CalibrationSurfaceView(viewModel: viewModel) }
+}
+
+/// The calibration surface.
+///
+/// Split out from `CalibrationView` by L2-231 Item 2 so the rendered states can
+/// be proven. The states this queue is about — dated last-good, population
+/// version mismatch, empty payload — are states of the SERVER, so which one
+/// appears in a live screenshot is whatever `/api/calibration` happens to be
+/// serving. Taking the model as an `@ObservedObject` lets `ImageRenderer` drive
+/// the real view from a fixed payload instead (the L2-225 pattern).
+///
+/// `@StateObject` cannot do that job: under `ImageRenderer` the injected
+/// instance is not adopted and the view renders its default (loading) state, so
+/// every fixture rasterised identically — which is how this split was found.
+struct CalibrationSurfaceView: View {
+    @ObservedObject var viewModel: CalibrationViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Whether the loaded content is wrapped in a `ScrollView`. Always true in
+    /// the app.
+    ///
+    /// `ImageRenderer` proposes no scrollable height, so a `ScrollView` lays out
+    /// to nothing and every payload rasterises to the same empty frame — which
+    /// is not a rendering bug, just an un-renderable container. Dropping only
+    /// the container keeps the render evidence on the REAL body, branches and
+    /// all, instead of on a test-only copy of it.
+    var scrolls: Bool = true
 
     private var contentMaxWidth: CGFloat {
         #if os(macOS)
@@ -25,26 +56,69 @@ struct CalibrationView: View {
                     Text(error).font(.subheadline).foregroundStyle(.secondary)
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
+            } else if viewModel.isIncompatible {
+                // L2-231 Item 2: a payload built under a population contract this
+                // build does not know cannot be rendered under this build's labels
+                // — that is how an older curve gets presented as the current one.
+                // Refusing is the honest answer; a stale-looking number is not.
+                VStack(spacing: 12) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.largeTitle).foregroundStyle(.secondary)
+                    Text(viewModel.incompatibleMessage ?? "")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
+                }
+                .padding(.horizontal, 24)
             } else { scrollContent }
         }
         .navigationTitle("Calibration")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task { await viewModel.load() }
+        .task { await viewModel.loadIfNeeded() }
     }
 
+    @ViewBuilder
     private var scrollContent: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                heroSection; statCardsSection; cohortToggleBanner
-                sourceComparisonSection; benchmarkSection
-                calibrationChartSection; tradingActivitySection; categoryBreakdownSection
-                nicheSection; correctionsSection
+        if scrolls {
+            ScrollView { loadedStack }
+        } else {
+            loadedStack
+        }
+    }
+
+    private var loadedStack: some View {
+        VStack(spacing: 24) {
+            staleBanner
+            heroSection; statCardsSection; cohortToggleBanner
+            sourceComparisonSection; benchmarkSection
+            calibrationChartSection; tradingActivitySection; categoryBreakdownSection
+            nicheSection; correctionsSection
+        }
+        .padding(.horizontal).padding(.bottom, 32)
+        .frame(maxWidth: contentMaxWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Stale banner
+
+    // Queue 297 Item 1, ported to native by L2-231 Item 2. When the server is
+    // serving a last-good snapshot rather than a current one, say so and date it.
+    // A stale curve is fine; a stale curve presented as live is not — and native
+    // had no decode for the freshness envelope at all, so it presented every
+    // degraded payload as current.
+    @ViewBuilder
+    private var staleBanner: some View {
+        if let detail = viewModel.staleBannerDetail {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Showing the last complete snapshot.")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.primary)
+                Text(detail).font(.caption2).foregroundStyle(.secondary)
             }
-            .padding(.horizontal).padding(.bottom, 32)
-            .frame(maxWidth: contentMaxWidth)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -53,7 +127,12 @@ struct CalibrationView: View {
     private var heroSection: some View {
         VStack(spacing: 6) {
             Text("Do Prediction Markets Predict Anything?").font(.title2.weight(.bold))
-            Text("We compare \(viewModel.formattedTotalOutcomes) resolved predictions with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
+            // L2-231 Item 0 found this leading with total_outcomes while the web
+            // hero leads with the COHORT count — two different numbers whenever
+            // the well-traded default is on, presented as the same claim on two
+            // surfaces. It now names the same population the web page does, and
+            // the same one the OUTCOMES card below it already showed.
+            Text("We compare \(viewModel.heroPopulationText) resolved predictions with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Text("\(viewModel.dateRangeLabel.map { "Data \($0)" } ?? "\(viewModel.formattedTotalOutcomes) resolved outcomes") \u{00B7} Updated \(viewModel.updatedLabel)")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -252,20 +331,37 @@ struct CalibrationView: View {
         let movedN = viewModel.movedN, unchangedN = viewModel.unchangedN
         if movedN > 0 && unchangedN > 0 {
             let movedECE = viewModel.movedECE, unchangedECE = viewModel.unchangedECE
+            let activity = viewModel.activity
             cardSection("Does Trading Activity Matter?",
-                        sub: "The calibration curve split by whether real trading moved the price. Markets that keep trading tend to be better calibrated than markets that stay stale at their opening price.") {
+                        sub: "The calibration curve split by whether real trading moved the price. The two cohorts differ in source, category and market-shape mix, so whichever side lands lower here is an observed ordering \u{2014} not evidence that trading caused it.") {
                 calibrationChart(points: viewModel.points(from: viewModel.movedBuckets), color: .green, height: 220,
                                  secondSeries: (pts: viewModel.points(from: viewModel.unchangedBuckets), color: .red))
+                // L2-230: the value colour is part of the claim. Hard-coding moved
+                // green and unchanged red asserted "moved is better" in pixels even
+                // on the day moved measured 1.7pp against unchanged's 1.0pp, so it
+                // follows the same direction the sentence below does.
                 HStack(spacing: 10) {
-                    tradingCard("Active Trading", movedECE, movedN, .green)
-                    tradingCard("Opening Price Only", unchangedECE, unchangedN, .red)
+                    tradingCard("Active Trading", movedECE, movedN,
+                                Self.cohortColor(isHigher: activity.direction == .movedHigher,
+                                                 isLower: activity.direction == .unchangedHigher))
+                    tradingCard("Opening Price Only", unchangedECE, unchangedN,
+                                Self.cohortColor(isHigher: activity.direction == .unchangedHigher,
+                                                 isLower: activity.direction == .movedHigher))
                 }
-                if movedECE > 0 && unchangedECE > 0 {
-                    Text("Markets with active trading are \(String(format: "%.1f", unchangedECE / movedECE))x more accurately calibrated.")
+                if let sentence = activity.sentence {
+                    Text(sentence)
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                 }
             }
         }
+    }
+
+    /// Orange for the higher-error cohort, green for the lower, neutral on a tie
+    /// or when no honest ordering exists.
+    private static func cohortColor(isHigher: Bool, isLower: Bool) -> Color {
+        if isHigher { return .orange }
+        if isLower { return .green }
+        return .secondary
     }
 
     private func tradingCard(_ label: String, _ ece: Double, _ count: Int, _ color: Color) -> some View {

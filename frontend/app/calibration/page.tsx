@@ -366,13 +366,25 @@ export default function CalibrationPage() {
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
-    <div className="max-w-6xl mx-auto space-y-8 pb-12">
+    {/* L2-231 Item 1: the page root carries the declared population contract as
+        DATA, not prose. `data-population-version` is what lets the rail — and a
+        native-parity check — prove web and iOS rendered the SAME payload
+        contract, rather than two clients each rendering something plausible. */}
+    <div
+      className="max-w-6xl mx-auto space-y-8 pb-12"
+      data-testid="calibration-page"
+      data-population-version={data.population_version ?? ""}
+      data-cache-status={data.cache?.status ?? "fresh"}
+    >
       {/* Queue 297 Item 1: when we are serving a last-good snapshot rather than a
           current one, say so and date it. A stale curve is fine; a stale curve
           presented as live is not. */}
       {data.cache?.status === "stale" && (
         <div
           role="status"
+          data-testid="calibration-stale-banner"
+          data-cache-reason={data.cache.reason ?? ""}
+          data-generated-at={data.cache.generated_at ?? ""}
           className="rounded-lg border border-surface-border bg-surface-card px-4 py-3 text-sm text-text-secondary"
         >
           <strong className="text-text-primary">Showing the last complete snapshot.</strong>{" "}
@@ -396,7 +408,8 @@ export default function CalibrationPage() {
           Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
-        <p className="text-xs text-text-muted">
+        <p className="text-xs text-text-muted" data-testid="calibration-generated-at"
+          data-generated-at={data.generated_at ?? ""}>
           {data.date_range?.start && data.date_range?.end
             ? `Data ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}`
             : `${data.total_outcomes.toLocaleString()} resolved outcomes`}
@@ -409,24 +422,39 @@ export default function CalibrationPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
-          detail={includeThin
-            ? `all incl. thinly-traded · ${fullN.toLocaleString()} total`
-            : `well-traded (default) · ${fullN.toLocaleString()} total incl. thin`} />
+        {/* The population count the page LEADS with is the cohort count, not
+            total_outcomes — the two differ whenever the thin toggle is off, and
+            a native surface reading the other one diverges silently. Both are
+            published here as data so the parity check reads numbers, not text. */}
+        <div data-testid="calibration-population-count" data-cohort-n={cohortN} data-full-n={fullN}>
+          <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
+            testId="calibration-stat-outcomes"
+            detail={includeThin
+              ? `all incl. thinly-traded · ${fullN.toLocaleString()} total`
+              : `well-traded (default) · ${fullN.toLocaleString()} total incl. thin`} />
+        </div>
         <StatCard label="Calibration Error (ECE)"
+          testId="calibration-stat-ece"
           value={`${cohortECE.toFixed(1)}pp`}
           detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
           valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
+          testId="calibration-stat-brier"
           detail="0 = oracle, lower = better" />
         <StatCard label="Sources" value={String(sources.length)}
+          testId="calibration-stat-sources"
           detail={sources.map(sourceLabel).join(", ")} />
         <StatCard label="Categories" value={String(categories.length)}
+          testId="calibration-stat-categories"
           detail={topCats} />
       </div>
 
       {/* Well-traded / thin toggle (L2-74 §C, #940) — governs every table + curve below */}
-      <div className="flex flex-wrap items-center gap-3 bg-surface-card rounded-xl px-4 py-3 border border-surface-border">
+      <div
+        className="flex flex-wrap items-center gap-3 bg-surface-card rounded-xl px-4 py-3 border border-surface-border"
+        data-testid="calibration-cohort-toggle"
+        data-include-thin={includeThin ? "true" : "false"}
+      >
         <div className="text-sm text-text-secondary">
           {includeThin ? (
             <>Showing <strong className="text-text-primary">all markets</strong> ({fullN.toLocaleString()}), including thin/untraded.</>
@@ -558,7 +586,11 @@ export default function CalibrationPage() {
           single cohort curve when the moved/unchanged split isn't available, so the
           page always shows a headline curve.) */}
       {movedN > 0 && unchangedN > 0 ? (
-        <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+        <section
+          className="bg-surface-card rounded-xl p-5 border border-surface-border"
+          data-testid="calibration-activity-section"
+          data-activity-direction={activity.direction}
+        >
           <h2 className="text-title-3 text-text-primary mb-1">Does Trading Activity Matter?</h2>
           <p className="text-xs text-text-muted mb-4">
             The calibration curve, split by whether real trading moved the price. Points on the
@@ -582,6 +614,7 @@ export default function CalibrationPage() {
               so it follows the same direction the sentence below does. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
             <StatCard label="Active Trading"
+              testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
               valueClass={
@@ -590,6 +623,7 @@ export default function CalibrationPage() {
                     : "text-text-primary"
               } />
             <StatCard label="Opening Price Only"
+              testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
               valueClass={
@@ -599,7 +633,12 @@ export default function CalibrationPage() {
               } />
           </div>
           {activity.sentence && (
-            <p className="text-sm text-text-secondary mt-3 text-center">{activity.sentence}</p>
+            <p
+              className="text-sm text-text-secondary mt-3 text-center"
+              data-testid="calibration-activity-sentence"
+            >
+              {activity.sentence}
+            </p>
           )}
         </section>
       ) : (
@@ -716,7 +755,11 @@ export default function CalibrationPage() {
           Category Breakdown table below is the scannable summary. One section per job. */}
 
       {/* Category Breakdown Table */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+      <section
+        className="bg-surface-card rounded-xl p-5 border border-surface-border"
+        data-testid="calibration-category-breakdown"
+        data-published-categories={categoryMetrics.length}
+      >
         <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown</h2>
         <p className="text-xs text-text-muted mb-4">
           Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
@@ -734,7 +777,8 @@ export default function CalibrationPage() {
             </thead>
             <tbody>
               {[...categoryMetrics].sort((a, b) => a.ece - b.ece).map(cm => (
-                <tr key={cm.category} className="border-t border-surface-border">
+                <tr key={cm.category} className="border-t border-surface-border"
+                  data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}>
                   <td className="py-2 pr-4 font-medium text-text-primary">
                     {DISPLAY_NAMES[cm.category] || cm.category}
                   </td>
@@ -764,8 +808,14 @@ export default function CalibrationPage() {
         const thinTotal = thin.reduce((s, c) => s + c.outcomes, 0);
         const examples = thin.slice(0, 8);
         const catLabel = nicheCatLabel;
+        // Queue 299 made the held-out disposition machine-readable
+        // (`parked_below_publish_bar` + the bar + the cohort's own ECE). It is
+        // published here as data so the rail — and the native surface — can
+        // prove a parked category is accounted for rather than silently gone.
+        // The visible copy is unchanged.
         return (
-          <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+          <section className="bg-surface-card rounded-xl p-5 border border-surface-border"
+            data-testid="calibration-niche-section" data-parked-count={thin.length}>
             <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?</h2>
             <p className="text-sm text-text-secondary mb-3">
               Fair question &mdash; what about the offbeat ones (one-off culture bets, novelty props,
@@ -783,6 +833,10 @@ export default function CalibrationPage() {
               {examples.map(c => (
                 <span
                   key={c.category}
+                  data-testid="calibration-parked-category"
+                  data-category={c.category}
+                  data-disposition={c.disposition ?? ""}
+                  data-outcomes={c.outcomes}
                   className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border capitalize"
                 >
                   {catLabel(c.category)}{" "}
@@ -942,13 +996,23 @@ export default function CalibrationPage() {
   );
 }
 
-function StatCard({ label, value, detail, valueClass }: {
-  label: string; value: string; detail: string; valueClass?: string;
+// L2-231 Item 1: `testId` is the browser rail's anchor. The audit used to find a
+// card by its LABEL TEXT and then read child `> div` index 1 positionally, so an
+// editorial reword ("Resolved Outcomes" -> "Graded Outcomes") broke the evidence
+// and a markup reshuffle silently moved the read onto a different number. The
+// hook names the card; `-value` names the number inside it. Neither is prose.
+function StatCard({ label, value, detail, valueClass, testId }: {
+  label: string; value: string; detail: string; valueClass?: string; testId?: string;
 }) {
   return (
-    <div className="bg-surface-card rounded-xl p-3 border border-surface-border">
+    <div className="bg-surface-card rounded-xl p-3 border border-surface-border" data-testid={testId}>
       <div className="text-[10px] text-text-muted uppercase tracking-wide">{label}</div>
-      <div className={`text-xl font-bold ${valueClass || "text-text-primary"}`}>{value}</div>
+      <div
+        className={`text-xl font-bold ${valueClass || "text-text-primary"}`}
+        data-testid={testId ? `${testId}-value` : undefined}
+      >
+        {value}
+      </div>
       <div className="text-[11px] text-text-muted mt-0.5 leading-tight">{detail}</div>
     </div>
   );
