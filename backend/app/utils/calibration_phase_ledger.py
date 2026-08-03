@@ -124,6 +124,11 @@ FAILED = "failed"
 #: Statuses that mean "this phase's output exists and is trustworthy".
 DONE_STATUSES = frozenset({COMPLETE, RESUMED})
 
+#: Statuses whose elapsed time is a measured LOWER BOUND on the phase's cost:
+#: the phase ran for that long and still had not finished. Not a duration, so
+#: never a budget — but the only thing a never-completing phase can teach.
+FLOOR_STATUSES = frozenset({TIMEOUT, CANCELLED, FAILED})
+
 # Run terminal states, matching the corpus's ``run.terminal`` vocabulary.
 TERMINAL_COMPLETE = "complete"
 TERMINAL_PARTIAL = "partial"
@@ -196,6 +201,11 @@ class PhaseBudget:
     statement_timeout_ms: Optional[int]
     measured_input: bool
     observations: int = 0
+    #: Worst observed "ran this long and did NOT finish" duration. A lower
+    #: bound, deliberately kept apart from ``budget_ms``: a floor can say a
+    #: phase does not fit, but it can never say how long the phase takes.
+    floor_ms: Optional[int] = None
+    floor_observations: int = 0
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -205,6 +215,8 @@ class PhaseBudget:
             "statement_timeout_ms": self.statement_timeout_ms,
             "measured_input": self.measured_input,
             "observations": self.observations,
+            "floor_ms": self.floor_ms,
+            "floor_observations": self.floor_observations,
         }
 
 
@@ -228,6 +240,41 @@ class PhasePlan:
         """
         return any(not b.measured_input for b in self.budgets)
 
+    @property
+    def available_ms(self) -> int:
+        """The one absolute window every phase is planned against."""
+        return max(1, self.soft_limit_ms - self.cleanup_margin_ms)
+
+    @property
+    def max_phase_ms(self) -> int:
+        """The longest a phase can ever run: the statement timeout it gets when
+        it is handed the entire window.
+
+        NOT ``available_ms``. The inner backstop deliberately fires
+        :data:`STATEMENT_INNER_MARGIN_MS` early so Postgres cancels the
+        statement and releases its xmin before Celery SIGKILLs the worker, so a
+        floor can never actually reach the raw window — comparing against it
+        would make infeasibility unreachable by construction.
+        """
+        return _statement_timeout_for(self.available_ms)
+
+    @property
+    def infeasible_phases(self) -> tuple[str, ...]:
+        """Required phases MEASURED to not fit the window.
+
+        A floor at the maximum a phase can ever run is not a slow phase, it is
+        a phase that has never once finished inside a whole beat — so no
+        budget, no checkpoint and no resume can rescue it, and the plan says so
+        instead of reporting a bland ``provisional`` for the sixteenth beat
+        running.
+        """
+        ceiling = self.max_phase_ms
+        return tuple(
+            b.name
+            for b in self.budgets
+            if b.required and b.floor_ms is not None and b.floor_ms >= ceiling
+        )
+
     def by_name(self, name: str) -> Optional[PhaseBudget]:
         for budget in self.budgets:
             if budget.name == name:
@@ -239,13 +286,20 @@ class PhasePlan:
         return sum(b.budget_ms or 0 for b in self.budgets)
 
     def as_payload(self) -> dict[str, Any]:
+        infeasible = self.infeasible_phases
         return {
-            "status": "provisional" if self.provisional else "measured",
+            # ``infeasible`` outranks the other two: a plan with a phase that
+            # cannot fit is not merely unmeasured, it is known to be unbuildable
+            # as cut, and that is the fact worth surfacing first.
+            "status": (
+                "infeasible" if infeasible else ("provisional" if self.provisional else "measured")
+            ),
             "soft_limit_ms": self.soft_limit_ms,
             "hard_limit_ms": self.hard_limit_ms,
             "cleanup_margin_ms": self.cleanup_margin_ms,
             "deadline_ms": self.soft_limit_ms - self.cleanup_margin_ms,
             "declared_ms": self.declared_ms,
+            "infeasible_phases": list(infeasible),
             "phases": [b.as_payload() for b in self.budgets],
         }
 
@@ -259,6 +313,7 @@ def _statement_timeout_for(budget_ms: int) -> int:
 def derive_plan(
     history: Optional[dict[str, Any]] = None,
     *,
+    floors: Optional[dict[str, Any]] = None,
     phases: Iterable[str] = REQUIRED_PHASES,
     soft_limit_ms: int = SOFT_LIMIT_MS,
     hard_limit_ms: int = HARD_LIMIT_MS,
@@ -278,31 +333,51 @@ def derive_plan(
     so publication headroom survives. Scaling a measured budget down is honest
     (the build genuinely does not have that much time); scaling it up would not
     be.
+
+    ``floors`` carries the same shape for phases that ran out of time instead of
+    finishing. It NEVER produces a budget — a phase cancelled at 1,355s took
+    longer than 1,355s by an unknown amount, so treating that as its duration
+    would under-budget it by construction. It only lets the plan report a
+    required phase as infeasible once its floor has swallowed the whole window.
     """
     history = history or {}
-    raw: list[tuple[str, Optional[int], bool, int]] = []
+    floors = floors or {}
+    raw: list[tuple[str, Optional[int], bool, int, Optional[int], int]] = []
     for name in phases:
         observations = [
             int(v)
             for v in (history.get(name) or [])
             if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
         ]
+        floor_seen = [
+            int(v)
+            for v in (floors.get(name) or [])
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+        ]
+        floor_ms = max(floor_seen) if floor_seen else None
         if len(observations) >= MIN_OBSERVATIONS:
             raw.append(
-                (name, max(1, math.ceil(max(observations) * BUDGET_SAFETY)), True, len(observations))
+                (
+                    name,
+                    max(1, math.ceil(max(observations) * BUDGET_SAFETY)),
+                    True,
+                    len(observations),
+                    floor_ms,
+                    len(floor_seen),
+                )
             )
         else:
-            raw.append((name, None, False, len(observations)))
+            raw.append((name, None, False, len(observations), floor_ms, len(floor_seen)))
 
-    measured = all(flag for _, _, flag, _ in raw)
+    measured = all(flag for _, _, flag, _, _, _ in raw)
     available = max(1, soft_limit_ms - cleanup_margin_ms)
-    total = sum(ms or 0 for _, ms, _, _ in raw)
+    total = sum(ms or 0 for _, ms, _, _, _, _ in raw)
     scale = 1.0
     if measured and total > available:
         scale = available / total
 
     budgets = []
-    for name, ms, flag, count in raw:
+    for name, ms, flag, count, floor_ms, floor_count in raw:
         budget_ms = max(1, int(ms * scale)) if ms is not None else None
         budgets.append(
             PhaseBudget(
@@ -314,6 +389,8 @@ def derive_plan(
                 ),
                 measured_input=flag,
                 observations=count,
+                floor_ms=floor_ms,
+                floor_observations=floor_count,
             )
         )
     return PhasePlan(
@@ -534,6 +611,22 @@ class PhaseLedger:
             n: r.duration_ms
             for n, r in self.records.items()
             if r.status == COMPLETE and r.duration_ms >= 0
+        }
+
+    def floors(self) -> dict[str, int]:
+        """Lower bounds worth feeding back: phases that ran and did not finish.
+
+        The counterpart to :meth:`observations`. Sixteen consecutive beats that
+        all died in the same phase used to teach the next plan exactly nothing,
+        because a timeout is not a duration and was therefore dropped. It is
+        still not a duration — but "ran 1,355s and was cancelled" is a real
+        measurement of the one thing that matters here, which is whether the
+        phase can fit at all.
+        """
+        return {
+            n: r.duration_ms
+            for n, r in self.records.items()
+            if r.status in FLOOR_STATUSES and r.duration_ms >= 0
         }
 
     def remaining_ms(self, *, elapsed_ms: int) -> int:

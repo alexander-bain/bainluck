@@ -136,6 +136,177 @@ def test_measured_budgets_are_scaled_down_to_preserve_publication_headroom():
     assert plan.declared_ms + plan.cleanup_margin_ms <= plan.soft_limit_ms
 
 
+# =============================================================================
+# Queue 300N Item 1 — what the beats that never finish a phase are allowed to say
+# =============================================================================
+#
+# The first organic ledger (production, generation 1785719700083) recorded
+# ``futures`` cancelled at 1,355,276ms against a 1,380,000ms window, with every
+# later phase pending and nothing banked. Sixteen consecutive beats did that and
+# taught the next plan nothing, because a timeout is not a duration and was
+# dropped on the floor. It is still not a duration — these tests pin the narrow
+# thing it IS allowed to become.
+
+
+def test_a_floor_never_becomes_a_budget():
+    """The whole point: a cancelled phase took LONGER than it ran, by an
+    unknown amount. Budgeting off that number under-budgets by construction."""
+    plan = derive_plan({}, floors={PHASE_FUTURES: [1_355_276]})
+    futures = plan.by_name(PHASE_FUTURES)
+    assert futures.budget_ms is None
+    assert futures.statement_timeout_ms is None
+    assert futures.measured_input is False
+    assert plan.provisional is True
+    assert futures.floor_ms == 1_355_276
+    assert futures.floor_observations == 1
+
+
+def test_the_worst_floor_wins_and_junk_is_ignored():
+    plan = derive_plan({}, floors={PHASE_FUTURES: [900_000, "x", -5, True, 1_100_000, None]})
+    assert plan.by_name(PHASE_FUTURES).floor_ms == 1_100_000
+    assert plan.by_name(PHASE_FUTURES).floor_observations == 2
+
+
+def test_a_floor_past_the_window_makes_the_plan_infeasible_not_provisional():
+    """Production's actual state: no budget can rescue a phase this size."""
+    plan = derive_plan({}, floors={PHASE_FUTURES: [1_355_276]})
+    assert plan.available_ms == 1_380_000
+    assert plan.infeasible_phases == (PHASE_FUTURES,)
+    payload = plan.as_payload()
+    assert payload["status"] == "infeasible"
+    assert payload["infeasible_phases"] == [PHASE_FUTURES]
+
+
+def test_infeasibility_is_measured_against_the_reachable_ceiling_not_the_window():
+    """The bound a phase is actually cancelled at is the window MINUS the inner
+    statement margin, so comparing a floor to the raw window would make
+    infeasibility unreachable — the exact number production emits (1,355,276)
+    sits below 1,380,000 and would have scored feasible forever."""
+    plan = derive_plan({}, floors={PHASE_FUTURES: [1_355_276]})
+    assert plan.max_phase_ms == 1_350_000
+    assert plan.max_phase_ms < plan.available_ms
+    assert 1_355_276 < plan.available_ms  # would NOT have tripped the naive test
+    assert plan.infeasible_phases == (PHASE_FUTURES,)
+
+    # One millisecond under the ceiling is still just a slow phase.
+    assert derive_plan({}, floors={PHASE_FUTURES: [1_349_999]}).infeasible_phases == ()
+
+
+def test_a_floor_inside_the_window_is_recorded_but_not_infeasible():
+    """A phase that merely ran long once is not condemned — it just has a floor."""
+    plan = derive_plan({}, floors={PHASE_SPORTS: [120_000]})
+    assert plan.by_name(PHASE_SPORTS).floor_ms == 120_000
+    assert plan.infeasible_phases == ()
+    assert plan.as_payload()["status"] == "provisional"
+
+
+def test_a_measured_phase_keeps_its_budget_even_with_an_older_floor():
+    """A phase that has since completed is measured; the floor stays as history."""
+    plan = derive_plan(
+        {name: [10_000] for name in REQUIRED_PHASES},
+        floors={PHASE_FUTURES: [200_000]},
+    )
+    assert plan.provisional is False
+    assert plan.by_name(PHASE_FUTURES).budget_ms == int(10_000 * BUDGET_SAFETY)
+    assert plan.by_name(PHASE_FUTURES).floor_ms == 200_000
+    assert plan.infeasible_phases == ()
+
+
+def test_no_floors_leaves_every_plan_field_exactly_as_before():
+    """Item 1's constraint: absent evidence, nothing about the plan moves."""
+    plan = derive_plan({})
+    assert plan.infeasible_phases == ()
+    assert plan.as_payload()["status"] == "provisional"
+    assert all(b.floor_ms is None and b.floor_observations == 0 for b in plan.budgets)
+
+
+def test_ledger_reports_a_floor_for_a_timed_out_phase_and_no_observation():
+    runner = _runner()
+    runner.begin(PHASE_FUTURES)
+    runner.abort(Exception("canceling statement due to statement timeout"))
+    assert runner.ledger.observations() == {}
+    assert PHASE_FUTURES in runner.ledger.floors()
+    assert runner.ledger.floors()[PHASE_FUTURES] >= 0
+
+
+def test_a_completed_phase_is_an_observation_and_never_a_floor():
+    runner = _runner()
+    runner.begin(PHASE_SPORTS)
+    runner.complete(PHASE_SPORTS)
+    assert PHASE_SPORTS in runner.ledger.observations()
+    assert PHASE_SPORTS not in runner.ledger.floors()
+
+
+def test_pending_phases_contribute_neither_observation_nor_floor():
+    """The four phases downstream of the timeout never ran — they say nothing."""
+    runner = _runner()
+    runner.begin(PHASE_FUTURES)
+    runner.abort(Exception("canceling statement due to statement timeout"))
+    for name in (PHASE_SPORTS, PHASE_DIAGNOSTICS, PHASE_AGGREGATE, PHASE_PUBLISH):
+        assert name not in runner.ledger.floors()
+        assert name not in runner.ledger.observations()
+
+
+async def test_floors_survive_the_durable_round_trip_and_reach_the_next_plan():
+    """End-to-end on the real production path: a beat that only ever times out
+    must leave a floor behind, and the NEXT beat's plan must read it.
+
+    Without this the change is inert — the floor is computed, dropped on the
+    durable write, and the sixteenth beat plans exactly like the first.
+    """
+    from app.services import durable_snapshots
+    from app.tasks import calibration_main_build as build
+    from app.utils.durable_state import DurableEnvelope, EnvelopeRead
+
+    written: dict = {}
+
+    async def fake_publish(envelope):
+        written["payload"] = envelope.payload
+        return {"status": "ok"}
+
+    async def fake_read(identity, *, expected_version=None, max_age_s=None):
+        if "payload" not in written:
+            return EnvelopeRead(status="missing", tier="durable")
+        return EnvelopeRead(
+            status="ok",
+            tier="durable",
+            envelope=DurableEnvelope.build(
+                identity=identity,
+                schema_version=expected_version or "v1",
+                payload=written["payload"],
+                complete=True,
+                source=MAIN_BUILD_TASK,
+            ),
+        )
+
+    original_publish = durable_snapshots.publish_snapshot_standalone
+    original_read = durable_snapshots.read_snapshot_standalone
+    durable_snapshots.publish_snapshot_standalone = fake_publish
+    durable_snapshots.read_snapshot_standalone = fake_read
+    try:
+        runner = _runner()
+        runner.begin(PHASE_FUTURES)
+        runner.ledger.records[PHASE_FUTURES].status = TIMEOUT
+        runner.ledger.records[PHASE_FUTURES].duration_ms = 1_355_276
+        assert await build.save_phase_ledger(runner) == "ok"
+
+        assert written["payload"]["floors"] == {PHASE_FUTURES: [1_355_276]}
+        assert written["payload"]["history"] == {}
+
+        history, floors = await build.load_phase_history()
+        assert history == {}
+        assert floors == {PHASE_FUTURES: [1_355_276]}
+
+        # The next beat plans with the floor: still no budget, but no longer
+        # blandly "provisional".
+        plan = derive_plan(history, floors=floors)
+        assert plan.by_name(PHASE_FUTURES).budget_ms is None
+        assert plan.infeasible_phases == (PHASE_FUTURES,)
+    finally:
+        durable_snapshots.publish_snapshot_standalone = original_publish
+        durable_snapshots.read_snapshot_standalone = original_read
+
+
 def test_history_ignores_junk_and_keeps_a_bounded_window():
     merged = merge_history(
         {PHASE_FUTURES: [1, 2, "x", -5, True, None]}, {PHASE_FUTURES: 9}

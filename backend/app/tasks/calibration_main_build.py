@@ -492,11 +492,14 @@ NULL_RUNNER = NullPhaseRunner()
 # =============================================================================
 
 
-async def load_phase_history() -> dict[str, list[int]]:
-    """Prior runs' measured per-phase durations, or ``{}``.
+async def load_phase_history() -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+    """Prior runs' per-phase durations and floors, or ``({}, {})``.
 
     ``{}`` is the honest answer to every read problem: with no history the plan
     is provisional and nothing pretends to a measured budget it does not have.
+    The two are read together off the one durable row — floors are what the
+    beats that never completed a phase have to say, and they are worth exactly
+    one extra key rather than a second read.
     """
     from app.services.durable_snapshots import read_snapshot_standalone
 
@@ -504,11 +507,13 @@ async def load_phase_history() -> dict[str, list[int]]:
         LEDGER_IDENTITY, expected_version=PHASE_LEDGER_SCHEMA, max_age_s=STATE_MAX_AGE_S
     )
     if not read.ok or read.envelope is None or not isinstance(read.envelope.payload, dict):
-        return {}
+        return {}, {}
     history = read.envelope.payload.get("history")
-    if not isinstance(history, dict):
-        return {}
-    return merge_history(history, {})
+    floors = read.envelope.payload.get("floors")
+    return (
+        merge_history(history, {}) if isinstance(history, dict) else {},
+        merge_history(floors, {}) if isinstance(floors, dict) else {},
+    )
 
 
 async def load_main_checkpoint(
@@ -611,11 +616,12 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     if extra:
         payload.update(extra)
     try:
-        history = merge_history(await load_phase_history(), runner.ledger.observations())
+        prior_history, prior_floors = await load_phase_history()
     except Exception as exc:  # noqa: BLE001 — a lost history is not a lost ledger
-        logger.warning("calibration phase ledger: history merge failed: %s", exc)
-        history = merge_history({}, runner.ledger.observations())
-    payload["history"] = history
+        logger.warning("calibration phase ledger: history read failed: %s", exc)
+        prior_history, prior_floors = {}, {}
+    payload["history"] = merge_history(prior_history, runner.ledger.observations())
+    payload["floors"] = merge_history(prior_floors, runner.ledger.floors())
 
     result = await publish_snapshot_standalone(
         DurableEnvelope.build(
@@ -645,11 +651,21 @@ async def build_runner(
     owner = run_owner()
     generation = generation_for(datetime.now(timezone.utc))
     try:
-        history = await load_phase_history()
+        history, floors = await load_phase_history()
     except Exception as exc:  # noqa: BLE001 — no history just means provisional
         logger.warning("calibration phase ledger: history read failed: %s", exc)
-        history = {}
-    plan = derive_plan(history)
+        history, floors = {}, {}
+    plan = derive_plan(history, floors=floors)
+    if plan.infeasible_phases:
+        # Loud, because no amount of checkpointing or resuming fixes it: the
+        # phase as cut is bigger than the whole beat.
+        logger.error(
+            "calibration phase plan is INFEASIBLE — required phase(s) %s have a "
+            "measured floor at or beyond the %dms window; the build cannot "
+            "complete as currently cut",
+            ", ".join(plan.infeasible_phases),
+            plan.available_ms,
+        )
 
     try:
         checkpoint, action = await load_main_checkpoint(

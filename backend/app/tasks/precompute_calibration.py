@@ -3962,6 +3962,7 @@ async def _precompute_calibration_main():
         "terminal": terminal,
         "health": health,
         "plan": runner.ledger.plan.as_payload()["status"],
+        "infeasible_phases": list(runner.ledger.plan.infeasible_phases),
         "checkpoint_action": action,
         "checkpoint_write": checkpoint_write,
         "ledger_write": ledger_write,
