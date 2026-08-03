@@ -280,14 +280,59 @@ function evaluateJourney(observation) {
   );
 
   // --- Console / page errors. ---
+  //
+  // L2-235. `allowedConsoleErrors` is the console-channel twin of
+  // `allowedFailures`, and it exists because without it the rail cannot grade
+  // an error state AT ALL. Chromium emits its own "Failed to load resource: the
+  // server responded with a status of 404" for any 4xx subresource, so a
+  // journey whose entire subject is "a stale challenge link must render a named
+  // not-found state" fails on the console channel even after declaring the 404
+  // on the network channel. The choice was a permanently-red journey or no
+  // coverage of error states; this is the third option.
+  //
+  // Two things keep it from becoming a mute button:
+  //
+  //   - Substring match against a DECLARED string, per journey. There is no
+  //     wildcard and no journey-wide suppression; anything undeclared still
+  //     fails, which the contract fixtures pin.
+  //   - A declared allowance that does NOT fire is itself a failure. Same rule
+  //     L2-233 put on the lockfile version check: an allowance nobody can see
+  //     expire is one that outlives its reason and quietly covers the next
+  //     error that happens to match.
   const consoleErrors = Array.isArray(o.consoleErrors) ? o.consoleErrors : [];
+  const allowedConsole = Array.isArray(o.allowedConsoleErrors) ? o.allowedConsoleErrors : [];
+  const matchesAllowance = (text, allowance) => String(text).includes(allowance);
+  const unexpectedConsole = consoleErrors.filter(
+    (text) => !allowedConsole.some((allowance) => matchesAllowance(text, allowance))
+  );
   assertions.push(
     assertion(
       "console.no_errors",
-      consoleErrors.length === 0,
-      consoleErrors.length === 0 ? null : `${consoleErrors.length} console error(s)`
+      unexpectedConsole.length === 0,
+      unexpectedConsole.length === 0
+        ? null
+        : `${unexpectedConsole.length} console error(s): ${unexpectedConsole
+            .slice(0, 3)
+            .map((text) => redactText(text, { maxLength: 200 }))
+            .join("; ")}`
     )
   );
+  if (allowedConsole.length > 0) {
+    const stale = allowedConsole.filter(
+      (allowance) => !consoleErrors.some((text) => matchesAllowance(text, allowance))
+    );
+    assertions.push(
+      assertion(
+        "console.declared_allowances_fired",
+        stale.length === 0,
+        stale.length === 0
+          ? null
+          : `${stale.length} declared console allowance(s) matched nothing: ${stale.join("; ")}`
+      )
+    );
+  } else {
+    checkedClean.push("console.declared_allowances_fired (journey declares no console allowances)");
+  }
 
   const pageErrors = Array.isArray(o.pageErrors) ? o.pageErrors : [];
   assertions.push(

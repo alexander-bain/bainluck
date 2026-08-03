@@ -55,6 +55,12 @@ export interface FinishInput {
   mainRegionNonBlank: boolean;
   selectedFixtureIds?: string[];
   allowedFailures?: string[];
+  /**
+   * Console-error substrings this journey EXPECTS, declared one by one.
+   * Anything undeclared still fails, and a declared allowance that matches
+   * nothing fails too — see `helpers/journey.js` for why both halves matter.
+   */
+  allowedConsoleErrors?: string[];
   /** `"none"` for journeys whose subject is not the feed (the consent pack). */
   contentMode?: "card" | "none";
   /**
@@ -276,6 +282,7 @@ export class JourneyRecorder {
       pageErrors: this.pageErrors,
       failedRequests: this.failedRequests,
       allowedFailures: input.allowedFailures ?? [],
+      allowedConsoleErrors: input.allowedConsoleErrors ?? [],
       artifacts,
       contentMode: input.contentMode ?? "card",
       telemetry: this.telemetrySeen(),

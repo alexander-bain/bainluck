@@ -194,6 +194,12 @@ test("an unknown shared challenge renders a named not-found state", async ({ pag
     emptyState: errorVisible ? { name: errorName ?? "unnamed", visible: true } : null,
     mainRegionNonBlank: mainText.trim().length > 80,
     allowedFailures: [expected404],
+    // Chromium logs its OWN message for any 4xx subresource, so the 404 this
+    // journey exists to provoke arrives on the console channel as well as the
+    // network one. Declared here rather than waived: anything else in the
+    // console still fails, and if this stops firing the journey fails too —
+    // because then the 404 it is built on stopped happening.
+    allowedConsoleErrors: ["Failed to load resource: the server responded with a status of 404"],
   });
 
   expect(errorVisible, "an unknown code must render the named error state").toBe(true);

@@ -176,3 +176,71 @@ describe("legitimate outcomes", () => {
     assert.equal(verdict.result, "pass");
   });
 });
+
+/**
+ * L2-235 — declared console allowances.
+ *
+ * A journey whose subject IS an error state (a stale challenge link must render
+ * a named not-found page) provokes a 4xx on purpose. Chromium then logs its own
+ * "Failed to load resource" message, so declaring the request on the network
+ * channel is not enough and the journey is permanently red on the console one.
+ *
+ * The allowance is narrow in both directions, and these fixtures are what keep
+ * it that way.
+ */
+describe("declared console allowances", () => {
+  const CHROMIUM_404 = "Failed to load resource: the server responded with a status of 404 ()";
+  const DECLARED = "Failed to load resource: the server responded with a status of 404";
+
+  it("a declared console error does not fail the journey", () => {
+    const verdict = evaluateJourney(
+      healthy({ consoleErrors: [CHROMIUM_404], allowedConsoleErrors: [DECLARED] })
+    );
+    assert.equal(verdict.result, "pass");
+  });
+
+  it("an UNDECLARED error still fails, even alongside a declared one", () => {
+    // The hazard being closed: one legitimate allowance turning into a blanket
+    // mute for whatever else the page happened to log.
+    const ids = failedIds(
+      healthy({
+        consoleErrors: [CHROMIUM_404, "TypeError: x is not a function"],
+        allowedConsoleErrors: [DECLARED],
+      })
+    );
+    assert.ok(ids.includes("console.no_errors"));
+  });
+
+  it("a declared allowance that matches NOTHING fails", () => {
+    // Same rule L2-233 put on the lockfile version check. An allowance nobody
+    // can see expire outlives its reason and silently covers the next error
+    // that happens to match it.
+    const ids = failedIds(healthy({ consoleErrors: [], allowedConsoleErrors: [DECLARED] }));
+    assert.ok(ids.includes("console.declared_allowances_fired"));
+  });
+
+  it("declaring nothing leaves the original behaviour exactly as it was", () => {
+    const ids = failedIds(healthy({ consoleErrors: ["TypeError: x is not a function"] }));
+    assert.ok(ids.includes("console.no_errors"));
+    assert.ok(!ids.includes("console.declared_allowances_fired"));
+
+    // And a clean journey does not acquire a new assertion it must satisfy.
+    const clean = evaluateJourney(healthy());
+    assert.equal(clean.result, "pass");
+    assert.ok(
+      clean.checked_clean.some((c) => c.startsWith("console.declared_allowances_fired")),
+      "an undeclared journey must record the allowance check as checked-clean"
+    );
+  });
+
+  it("the allowance is a substring of the observed error, not the reverse", () => {
+    // A short declaration must not be satisfiable by an unrelated long error,
+    // and a long declaration must not match a short error that merely prefixes
+    // it — the direction matters, so it is pinned.
+    const ids = failedIds(
+      healthy({ consoleErrors: ["404"], allowedConsoleErrors: [DECLARED] })
+    );
+    assert.ok(ids.includes("console.no_errors"));
+    assert.ok(ids.includes("console.declared_allowances_fired"));
+  });
+});

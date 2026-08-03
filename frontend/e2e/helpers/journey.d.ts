@@ -69,6 +69,9 @@ export interface JourneyObservation {
   pageErrors?: string[];
   failedRequests?: FailedRequestSummary[];
   allowedFailures?: string[];
+  /** Declared console-error substrings. Undeclared errors still fail, and a
+   *  declared allowance that matches nothing fails too. */
+  allowedConsoleErrors?: string[];
   artifacts?: JourneyArtifact[];
   /** `"none"` opts a non-feed journey out of the card/empty-state assertion. */
   contentMode?: "card" | "none";
