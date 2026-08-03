@@ -66,6 +66,45 @@ In CI: **Actions → Browser audit (manual) → Run workflow**, with
 | `calibration` | `calibration` | `calibration.spec.ts` | `/calibration` renders finite, non-degraded numbers (L2-228) |
 | `daily-challenge` | `daily-challenge` | `daily-challenge.spec.ts` | Daily answers through to a Share that reports only a share that happened, and an unknown challenge code renders a NAMED not-found state (L2-235). Fulfils `/api/predictions` locally so the rail never writes prediction rows; the challenge Share button needs seeded state and is out of phase 1 |
 
+### The one pack that is NOT in the dropdown: `cohort-copy` (L2-236)
+
+`specs/cohort-copy.spec.ts` intercepts `GET /api/calibration` and drives four
+states — `fresh`, `dated-degraded`, `reversed-direction`, `unavailable` — from
+the frozen 2026-08-02 production payload in
+`fixtures/calibration-prod-2026-08-02.json` (the bytes L2-231 graded native on).
+It exists because the production `calibration` pack deliberately asserts no
+count and no ordering, while the cohort labels this queue shipped are claims
+about specific counts and a specific direction — and production serves one
+payload at a time, so a reversed ordering cannot be observed on demand.
+
+It is **not** in the workflow dropdown and does **not** use the `journey`
+fixture, because it grades a BUILD rather than a deployment: borrowing the
+SHA-bound fixture would either claim a deployment the run never touched, or be
+permanently red. It writes its own per-claim ledger (`*.claims.json`) plus
+element shots of the surfaces it grades, into the results directory.
+
+```bash
+cd frontend && npm run build && npx next start -p 3113 &
+cd frontend/e2e
+TRACE_BASE_URL=http://localhost:3113 \
+AUDIT_CHECKOUT_SHA=$(git rev-parse HEAD) \
+AUDIT_RESULTS_DIR=/tmp/cohort-results \
+npm run cohort-copy
+```
+
+Two environment notes, both real and both discovered the hard way:
+
+* `AUDIT_CHROMIUM_ARGS="--no-sandbox --single-process"` is required on a
+  sandboxed agent machine — Chromium cannot complete its Mach port rendezvous
+  to spawn a child process there and dies before the first navigation. The
+  resulting browser survives about one context, which is why the script runs
+  `--fully-parallel --workers=8`: one test per worker, one context per browser.
+  CI sets none of this and runs a normal browser.
+* `AUDIT_SANDBOXED_NETWORK=1` declares the one `ERR_ACCESS_DENIED` such a
+  machine's outbound allowlist produces (the nav search bar's trending
+  prefetch). Undeclared console errors still fail, and a declared allowance
+  that matches nothing fails too.
+
 A pack must be declared in **four** places to actually run: the workflow's
 `options:` dropdown, the input-validation allowlist, the dispatch `case`, and an
 npm script. L2-227 added `grid` to three of them and missed the allowlist, so

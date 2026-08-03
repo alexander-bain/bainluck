@@ -84,6 +84,23 @@ export default defineConfig({
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",
+    // L2-236 — an opt-in escape hatch for running a pack on a sandboxed
+    // developer machine, and inert everywhere else.
+    //
+    // Chromium launches its renderer through a Mach port rendezvous, which an
+    // agent sandbox on macOS refuses: the browser dies during
+    // `base::LaunchProcess` before the first navigation, with a stack trace
+    // instead of a test result (the same family as gotcha #50's
+    // `xcodebuild` macro-expansion failure). `--no-sandbox --single-process`
+    // gets a browser; hard-coding those flags would silently degrade the
+    // PRODUCTION rail's fidelity, which is the opposite of the point.
+    //
+    // So it is an env var: CI sets nothing and runs exactly as before, and a
+    // local run says out loud, in its own command line, that it relaxed the
+    // browser's isolation.
+    launchOptions: process.env.AUDIT_CHROMIUM_ARGS
+      ? { args: process.env.AUDIT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean) }
+      : undefined,
   },
   projects: [
     {

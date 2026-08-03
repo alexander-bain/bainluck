@@ -10,6 +10,7 @@
     "consent": "playwright test --project=desktop --project=mobile consent",
     "grid": "playwright test --project=desktop --project=mobile championship-grid",
     "calibration": "playwright test --project=desktop --project=mobile calibration",
+    "cohort-copy": "playwright test --project=desktop --project=mobile cohort-copy --reporter=list --fully-parallel --workers=8",
     "daily-challenge": "playwright test --project=desktop --project=mobile daily-challenge",
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",

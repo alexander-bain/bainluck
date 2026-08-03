@@ -10,6 +10,7 @@ import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 import { describeActivityComparison, ece, mce, monthYear } from "@/lib/calibrationMath";
+import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
   decideCalibrationContract,
   CONTRACT_REFUSAL_MESSAGE,
@@ -195,9 +196,13 @@ export default function CalibrationPage() {
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const priceCohort: "all" | "closing" | "opening" = "all";
-  // L2-74 §C (#940): default to the WELL-TRADED view; a visible toggle layers in
-  // thin/untraded markets. The toggle never hides — counts are shown in both states.
-  const [includeThin, setIncludeThin] = useState(false);
+  // L2-74 §C (#940) as re-named by L2-236: the page defaults to EXCLUDING the
+  // outcomes whose price never moved off its opening line, and a visible toggle
+  // layers them back in. The toggle never hides — counts are shown in both
+  // states. (It used to be called the "thin/untraded" toggle, which described
+  // neither side: those rows traded, they just never moved, and zero-bid
+  // outcomes are already excluded upstream. See lib/calibrationCohort.ts.)
+  const [includeNeverMoved, setIncludeNeverMoved] = useState(false);
 
   // L2-103 Item 2: per-bucket drill-in — click a point on the By Source chart to
   // sample the real outcomes inside it (reader-trust: verify any bucket yourself).
@@ -205,7 +210,10 @@ export default function CalibrationPage() {
   const openDrillIn = async (source: string, bucketLabel: string, bucketIdx: number) => {
     setDrillIn({ source, bucketLabel, bucketIdx, loading: true, error: false, examples: [] });
     try {
-      const res = await fetchCalibrationExamples(source, bucketIdx, !includeThin);
+      // The API's `well_traded` flag is a wire contract with the backend and is
+      // not renamed here; what it selects is the same `price_moved !== false`
+      // cohort this page shows.
+      const res = await fetchCalibrationExamples(source, bucketIdx, !includeNeverMoved);
       setDrillIn({
         source, bucketLabel, bucketIdx,
         loading: false, error: false,
@@ -241,18 +249,17 @@ export default function CalibrationPage() {
     [movedECE, movedN, unchangedECE, unchangedN]
   );
 
-  // L2-74 §C: the main chart/table default to WELL-TRADED — exclude never-moved
-  // outcomes (price_moved===false); keep real trades (true) + sportsbook consensus
-  // (null, always a live line). The "include thin/untraded" toggle shows all.
+  // L2-74 §C: the main chart/table exclude never-moved outcomes
+  // (price_moved===false) by default; they keep real trades (true) AND sportsbook
+  // consensus (null, always a live line, where "did trading move the price" is
+  // not a question the source can answer). The toggle layers the excluded side
+  // back in. The predicate is unchanged by L2-236 — only what we CALL it is.
   const cohortFilter = useMemo<((b: CalibrationBucket) => boolean) | undefined>(() => {
-    if (includeThin) return undefined;
+    if (includeNeverMoved) return undefined;
     return (b: CalibrationBucket) => b.price_moved !== false;
-  }, [includeThin]);
+  }, [includeNeverMoved]);
   const fullN = useMemo(() =>
     normalized ? normalized.reduce((s, b) => s + b.n, 0) : 0, [normalized]);
-  const wellTradedN = useMemo(() =>
-    normalized ? normalized.filter(b => b.price_moved !== false).reduce((s, b) => s + b.n, 0) : 0,
-    [normalized]);
   const cohortBuckets = useMemo(() =>
     normalized ? aggregateBuckets(normalized, cohortFilter) : [], [normalized, cohortFilter]);
   const cohortMCE = useMemo(() => mce(cohortBuckets), [cohortBuckets]);
@@ -262,6 +269,22 @@ export default function CalibrationPage() {
   const cohortN = useMemo(() =>
     normalized ? normalized.filter(b => !cohortFilter || cohortFilter(b)).reduce((s, b) => s + b.n, 0) : 0,
     [normalized, cohortFilter]);
+
+  // L2-236: `price_moved` is a TRI-state and this page modelled it as a boolean.
+  // The default cohort is `true` PLUS `null` — 349,310 + 40,075 on the 2026-08-02
+  // payload — and every rendered string called all 389,385 of them "well-traded
+  // markets, where real trading moved the price". That was false for the 40,075
+  // sportsbook rows, which were named nowhere: the activity section's two cards
+  // summed to 612,332 against a stated population of 652,407.
+  //
+  // One pure module now derives every cohort-facing string from the partition,
+  // so a label cannot drift from the predicate it describes. Same grammar native
+  // shipped in L2-231; `lib/calibrationCohort.ts` carries the reasoning.
+  const partition = useMemo(() =>
+    partitionByActivity(normalized ?? []), [normalized]);
+  const cohort = useMemo(() =>
+    describeCohort(partition, fullN, includeNeverMoved),
+    [partition, fullN, includeNeverMoved]);
 
   const sources = useMemo(() => {
     if (!normalized) return [];
@@ -447,8 +470,7 @@ export default function CalibrationPage() {
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
         <p className="text-text-secondary max-w-2xl mx-auto">
-          We analyzed {cohortN.toLocaleString()}{includeThin ? "" : " well-traded"} resolved
-          predictions{includeThin ? "" : ` (${fullN.toLocaleString()} including thinly-traded)`} across
+          We analyzed {cohort.heroClause} across
           Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
@@ -473,9 +495,7 @@ export default function CalibrationPage() {
         <div data-testid="calibration-population-count" data-cohort-n={cohortN} data-full-n={fullN}>
           <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
             testId="calibration-stat-outcomes"
-            detail={includeThin
-              ? `all incl. thinly-traded · ${fullN.toLocaleString()} total`
-              : `well-traded (default) · ${fullN.toLocaleString()} total incl. thin`} />
+            detail={cohort.statDetail} />
         </div>
         <StatCard label="Calibration Error (ECE)"
           testId="calibration-stat-ece"
@@ -493,26 +513,29 @@ export default function CalibrationPage() {
           detail={topCats} />
       </div>
 
-      {/* Well-traded / thin toggle (L2-74 §C, #940) — governs every table + curve below */}
+      {/* Cohort toggle (L2-74 §C, #940; renamed L2-236) — governs every table +
+          curve below. Both the headline and the sentence under it come from
+          `describeCohort`, so the words are derived from the cohort's predicate
+          rather than written beside it. The partition is published as data too:
+          a rail can then check the arithmetic without parsing prose. */}
       <div
         className="flex flex-wrap items-center gap-3 bg-surface-card rounded-xl px-4 py-3 border border-surface-border"
         data-testid="calibration-cohort-toggle"
-        data-include-thin={includeThin ? "true" : "false"}
+        data-cohort-key={cohort.key}
+        data-moved-n={partition.movedN}
+        data-unchanged-n={partition.unchangedN}
+        data-not-applicable-n={partition.notApplicableN}
+        data-partition-reconciles={cohort.reconciles ? "true" : "false"}
       >
         <div className="text-sm text-text-secondary">
-          {includeThin ? (
-            <>Showing <strong className="text-text-primary">all markets</strong> ({fullN.toLocaleString()}), including thin/untraded.</>
-          ) : (
-            <>Showing <strong className="text-text-primary">well-traded markets</strong> ({wellTradedN.toLocaleString()}) &mdash; where real trading moved the price. Thin/untraded markets can be noisy.</>
-          )}
+          <strong className="text-text-primary">{cohort.headline}</strong>{" "}
+          {cohort.detail}
         </div>
         <button
-          onClick={() => setIncludeThin(v => !v)}
+          onClick={() => setIncludeNeverMoved(v => !v)}
           className="ml-auto text-xs font-medium px-3 py-1.5 rounded-full border border-surface-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors whitespace-nowrap"
         >
-          {includeThin
-            ? "Well-traded only"
-            : `Include thin/untraded (+${(fullN - wellTradedN).toLocaleString()})`}
+          {cohort.toggleLabel}
         </button>
       </div>
 
@@ -624,11 +647,11 @@ export default function CalibrationPage() {
       </section>
 
       {/* Calibration curve + trading-activity story (L2-80 Item 2: merged into ONE
-          section. The standalone well-traded curve was redundant — the page-level
-          toggle banner above already carries the well-traded default, and the split
-          curve's green "price moved" series IS the well-traded set. Falls back to a
-          single cohort curve when the moved/unchanged split isn't available, so the
-          page always shows a headline curve.) */}
+          section. The standalone default-cohort curve was redundant — the
+          page-level toggle banner above already carries the default cohort, and
+          the split curve's green "price moved" series is most of it. Falls back to
+          a single cohort curve when the moved/unchanged split isn't available, so
+          the page always shows a headline curve.) */}
       {movedN > 0 && unchangedN > 0 ? (
         <section
           className="bg-surface-card rounded-xl p-5 border border-surface-border"
@@ -684,21 +707,32 @@ export default function CalibrationPage() {
               {activity.sentence}
             </p>
           )}
+          {/* L2-236: the two cards above are `price_moved === true` and
+              `=== false`. The `null` rows — sportsbook lines, where the test
+              does not apply — were named nowhere, so the two counts silently
+              fell 40,075 short of the population this page claims. */}
+          {cohort.partitionNote && (
+            <p
+              className="text-xs text-text-muted mt-2 text-center"
+              data-testid="calibration-activity-partition"
+            >
+              {cohort.partitionNote}
+            </p>
+          )}
         </section>
       ) : (
         <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <h2 className="text-title-3 text-text-primary mb-1">
-            {includeThin ? "All-Markets" : "Well-Traded"} Calibration Curve
-          </h2>
+          <h2 className="text-title-3 text-text-primary mb-1">Calibration Curve</h2>
           <p className="text-xs text-text-muted mb-4">
-            Points on the diagonal = perfect calibration. Above = outcomes happened <em>more</em> than
+            {cohort.shortLabel} ({cohortN.toLocaleString()} outcomes). Points on the diagonal =
+            perfect calibration. Above = outcomes happened <em>more</em> than
             predicted. Below = <em>less</em>. Shaded band = &plusmn;5pp. Point size reflects sample count.
           </p>
           <CalibrationChart
             series={[{
               data: cohortBuckets,
-              color: includeThin ? "#2563eb" : "#16a34a",
-              label: `${includeThin ? "All markets" : "Well-traded"} (${cohortN.toLocaleString()})`,
+              color: includeNeverMoved ? "#2563eb" : "#16a34a",
+              label: `${cohort.shortLabel} (${cohortN.toLocaleString()})`,
             }]}
             width={700}
             height={400}
