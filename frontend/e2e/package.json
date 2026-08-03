@@ -8,6 +8,7 @@
     "smoke": "playwright test --project=desktop --project=mobile discover-smoke",
     "latency": "playwright test --project=desktop --project=mobile discover-latency",
     "sports-latency": "playwright test --project=desktop --project=mobile sports-latency",
+  "tournament-inventory": "playwright test --project=desktop --project=mobile tournament-inventory",
     "consent": "playwright test --project=desktop --project=mobile consent",
     "grid": "playwright test --project=desktop --project=mobile championship-grid",
     "calibration": "playwright test --project=desktop --project=mobile calibration",

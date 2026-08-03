@@ -411,6 +411,57 @@ describe("the pack scripts exist for every workflow choice", () => {
       "the sports-latency pack is missing its sports.latency journey id"
     );
   });
+
+  /**
+   * L2-245. The tournament-inventory pack (C139/C140). Same L2-228 hole guarded
+   * for every other pack: a `playwright test <filter>` whose filter matches
+   * NOTHING exits 0 having run no tests, and only `deriveRunResult([])` downstream
+   * stops that reading as green. Pin the spec the filter selects AND the route
+   * registry it is driven from — a spec whose journeys are all deleted, or a
+   * registry emptied to zero domains, must be a red contract test, not a run that
+   * proved nothing.
+   */
+  it("the tournament-inventory spec exists and is selected by its filter", () => {
+    const spec = path.join(e2eRoot, "specs", "tournament-inventory.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/tournament-inventory.spec.ts must exist");
+    const filter = pkg.scripts["tournament-inventory"].split(" ").pop();
+    assert.ok(
+      path.basename(spec).includes(filter),
+      `"${filter}" does not select ${path.basename(spec)}`
+    );
+    const raw = fs.readFileSync(spec, "utf8");
+    // The spec is data-driven from the registry and the hub journey.
+    assert.ok(
+      raw.includes("TOURNAMENT_ROUTES"),
+      "the tournament-inventory spec no longer iterates the route registry"
+    );
+    assert.ok(
+      raw.includes("journeyId: HUB_ROUTE.journeyId"),
+      "the tournament-inventory spec is missing its hub/adjacent-regression journey"
+    );
+  });
+
+  it("the tournament route registry names at least the domains C139 requires", () => {
+    // A registry emptied to zero domains would make the pack select a spec whose
+    // `for (const route of TOURNAMENT_ROUTES)` loop generates no journeys — the
+    // exact zero-journey false green. Pin the C139 domains the map must carry.
+    const registry = path.join(e2eRoot, "fixtures", "tournamentRoutes.ts");
+    assert.ok(fs.existsSync(registry), "fixtures/tournamentRoutes.ts must exist");
+    const raw = fs.readFileSync(registry, "utf8");
+    for (const id of [
+      "tournament.awards",
+      "tournament.election",
+      "tournament.soccer",
+      "tournament.cycling",
+      "tournament.golf",
+      "tournament.combat",
+      "tournament.tennis",
+      "tournament.f1",
+      "tournament.hub",
+    ]) {
+      assert.ok(raw.includes(`"${id}"`), `the route registry no longer defines ${id}`);
+    }
+  });
 });
 
 /**
