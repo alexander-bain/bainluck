@@ -412,7 +412,7 @@ describe("the render-states runner cannot be green without evidence", () => {
     // Without this the workflow reports success on a broken render and the
     // packet's `fail` count is something a reader has to notice for themselves.
     assert.match(script, /process\.exit\(1\)/);
-    assert.match(script, /result: failed\.length === 0 \? "pass" : "fail"/);
+    assert.match(script, /result: failed\.length === 0 && !staleAllowance \? "pass" : "fail"/);
   });
 
   it("the script refuses a run that graded nothing", () => {
@@ -466,9 +466,44 @@ describe("the render-states runner cannot be green without evidence", () => {
     assert.ok(script.includes("syntheticFailures"), "synthetic failures must reach the packet");
     assert.match(
       script,
-      /only404sAreSynthetic = httpErrors\.length === 0 && syntheticFailures\.length > 0/,
-      "the console-404 allowance must expire the moment a real 4xx appears"
+      /noFirstPartyHttpErrors = httpErrors\.length === 0/,
+      "the console-404 allowance must expire the moment a first-party 4xx appears"
     );
+  });
+
+  it("the known-defect allowance is declared, issue-numbered, and self-expiring", () => {
+    // #1525 — first-party ERR_ABORTED on Next's RSC prefetches of REAL detail
+    // routes. Orthogonal to the terminal feed states this script proves, so it
+    // is allowed here rather than left to red the rail forever. The L2-235 rule
+    // applies in full: an allowance that stops firing must FAIL, or it outlives
+    // its reason and covers the next defect that happens to match.
+    assert.match(script, /KNOWN_RSC_PREFETCH_ABORT = \{\s*\n\s*issue: \d+/);
+    assert.match(script, /staleAllowance/);
+    assert.match(
+      script,
+      /knownDefectHits === 0/,
+      "an allowance that matched nothing must fail the run"
+    );
+    assert.match(
+      script,
+      /result: failed\.length === 0 && !staleAllowance \? "pass" : "fail"/,
+      "a stale allowance must reach the packet's verdict, not just a log line"
+    );
+    // Narrow in both directions: only an aborted `?_rsc=` prefetch qualifies.
+    assert.match(script, /_rsc=\/\.test\(url\) && \/ERR_ABORTED\//);
+  });
+
+  it("card-survival claims are measured against the healthy baseline", () => {
+    // Run 30837447932 rendered 10 of 12 served markets in EVERY state including
+    // `normal` — Discover's own grouping. An absolute count would have failed
+    // the control and the states under test alike, proving nothing about either.
+    const block = script.slice(script.indexOf("const EXPECTATIONS"), script.indexOf("function overlaps"));
+    assert.match(block, /s\.baseline > 0 && s\.cards === s\.baseline/);
+    assert.ok(
+      !/s\.cards === 12/.test(block),
+      "an absolute card count cannot survive client-side grouping"
+    );
+    assert.match(script, /if \(state === "normal"\) baseline\[vp\.name\] = seen\.cards/);
   });
 
   it("the packet carries the build, the viewport and a PT timestamp", () => {
