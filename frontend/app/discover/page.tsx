@@ -5,6 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
+import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
@@ -489,8 +490,18 @@ export default function DiscoverPage() {
   useScrollDepth({ pageType: "discover" });
   useEngagementTime({ pageType: "discover" });
 
+  // Auth state only feeds the L2-242 shared-anon decision below (feed reads still
+  // attach the bearer via apiFetch's module-level getter). Signed-in users are
+  // never served the shared feed — the backend keys authenticated requests to
+  // `u:<id>` regardless of x-session-id — but passing `authenticated` here keeps
+  // the client decision honest.
+  const { user } = useAuthContext();
 
-
+  // L2-242 / C133 — only the PROVEN first request of a fresh, signed-out,
+  // zero-interaction visitor may reuse the shared `anon` warm feed. Flips false
+  // on the first seen/dismiss THIS mount; the resolver also fails closed on any
+  // durable session / prior interaction / unreadable storage.
+  const sharedAnonEligibleRef = useRef(true);
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -551,7 +562,10 @@ export default function DiscoverPage() {
       // One bounded initial (offset-zero) request. SWR owns this single fetch;
       // background revalidation reuses the same key/shape (no duplicate initial).
       const { limit, offset } = initialFeedRequest();
-      return fetchFeed({ limit, offset, event_pct: 0.15 });
+      return fetchFeed(
+        { limit, offset, event_pct: 0.15 },
+        { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
+      );
     },
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
@@ -678,6 +692,10 @@ export default function DiscoverPage() {
   }, [feedUnavailable]);
 
   const handleDismiss = useCallback((itemId: string) => {
+    // L2-242 — a dismiss is seen/dismiss evidence: never share the warm feed on
+    // a later request this mount (the durable dismiss set also proves this on
+    // reload).
+    sharedAnonEligibleRef.current = false;
     // Persist local dismissals so anonymous users do not see the same card
     // again after refresh while the server downrank catches up.
     setDismissed((prev) => {

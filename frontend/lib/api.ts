@@ -45,6 +45,7 @@ import type {
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
 import { reportFeedTelemetry } from "./feedTelemetry";
+import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const AUTH_TOKEN_TIMEOUT_MS = 2500;
@@ -1044,17 +1045,29 @@ export interface LineMovement {
 /**
  * Fetch the unified feed of interesting events and futures
  */
-export async function fetchFeed(params?: {
-  limit?: number;
-  offset?: number;
-  sport?: string;
-  my_teams_only?: boolean;
-  include_futures?: boolean;
-  include_events?: boolean;
-  event_pct?: number;
-  tags?: string[];
-  mode?: string;
-}): Promise<FeedResponse> {
+export async function fetchFeed(
+  params?: {
+    limit?: number;
+    offset?: number;
+    sport?: string;
+    my_teams_only?: boolean;
+    include_futures?: boolean;
+    include_events?: boolean;
+    event_pct?: number;
+    tags?: string[];
+    mode?: string;
+  },
+  // L2-242 / C133 — for the PROVEN first request of a fresh, signed-out,
+  // zero-interaction visitor, omit `x-session-id` so the backend serves the
+  // shared `anon` warm feed instead of minting a guaranteed-cold `s:<uuid>` key.
+  // Omitting these opts (every existing caller, and all pagination) keeps the
+  // exact prior behavior: mint + attach the session id.
+  opts?: {
+    sharedAnonEligible?: boolean;
+    authenticated?: boolean;
+    hasInMemoryInteraction?: boolean;
+  }
+): Promise<FeedResponse> {
   const searchParams = new URLSearchParams();
 
   if (params?.limit) searchParams.set("limit", params.limit.toString());
@@ -1068,7 +1081,14 @@ export async function fetchFeed(params?: {
   if (params?.mode) searchParams.set("mode", params.mode);
 
   const query = searchParams.toString();
-  const sessionId = getDiscoverSessionId();
+  // A suppressed request must NOT read-through-mint a session id; only the
+  // session-scoped path calls the minting getter.
+  const suppressSessionId = resolveSharedAnonSuppression({
+    eligible: !!opts?.sharedAnonEligible,
+    authenticated: !!opts?.authenticated,
+    hasInMemoryInteraction: !!opts?.hasInMemoryInteraction,
+  });
+  const sessionId = suppressSessionId ? undefined : getDiscoverSessionId();
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
   // L2-189: measure client time-to-response and emit bounded, non-PII latency

@@ -71,6 +71,14 @@ export default function SportsPage() {
   // identity re-keys onto the personalized path without a stale response ever
   // overwriting a newer one. `keepPreviousData` keeps visible cards up across
   // the anon → user transition instead of blanking. See lib/sports/feedKey.ts.
+  // L2-242 / C133 — the initial request of a fresh, signed-out, zero-interaction
+  // visitor may reuse the shared `anon` warm feed (omit x-session-id). This ref
+  // flips false on the first interaction/seen THIS mount so every request after
+  // it (and every returning/interacted visitor) stays on the per-session path.
+  // The resolver additionally fails closed on any durable session / prior
+  // interaction / unreadable storage; authenticated identity always wins.
+  const sharedAnonEligibleRef = useRef(true);
+
   const {
     data: feedData,
     error: feedError,
@@ -82,7 +90,10 @@ export default function SportsPage() {
     // 200-item pull. The rest streams in on scroll via loadNextPage below.
     () => {
       const { limit, offset } = initialFeedRequest();
-      return fetchFeed({ limit, offset, mode: "sports" });
+      return fetchFeed(
+        { limit, offset, mode: "sports" },
+        { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
+      );
     },
     { refreshInterval: 30000, keepPreviousData: true }
   );
@@ -281,6 +292,9 @@ export default function SportsPage() {
   }, []);
 
   const handleThumbsUp = useCallback((category: string) => {
+    // L2-242 — an explicit affinity signal is interaction evidence: leave the
+    // shared warm feed for the per-session path on any subsequent request.
+    sharedAnonEligibleRef.current = false;
     const current = interests[category] ?? 0;
     const next = stepUp(current);
     if (next !== current) {
@@ -290,6 +304,7 @@ export default function SportsPage() {
   }, [interests, setInterest, showToast]);
 
   const handleThumbsDown = useCallback((category: string) => {
+    sharedAnonEligibleRef.current = false;
     const current = interests[category] ?? 0;
     const next = stepDown(current);
     if (next !== current) {
