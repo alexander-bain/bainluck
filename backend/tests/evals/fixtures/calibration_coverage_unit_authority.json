@@ -1,0 +1,143 @@
+{
+  "schema_version": "calibration-coverage-unit-authority/v1",
+  "ruling": "terminal_price_supporting_census",
+  "measured_counts": {
+    "outcomes_with_terminal_calibration_price": 1284551,
+    "outcomes_with_usable_curve_price": 1466736,
+    "published_curve_observations": 652407
+  },
+  "lineage_matrix": [
+    {
+      "key": "outcomes_with_terminal_calibration_price",
+      "unit": "futures_outcome",
+      "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL",
+      "generation": "same canonical build",
+      "consumer": "Alex-approved supporting census",
+      "fact_kind": "Queue 300C measured count plus committed field predicate"
+    },
+    {
+      "key": "outcomes_with_usable_curve_price",
+      "unit": "futures_outcome",
+      "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1; curve price = COALESCE(calibration_probability, opening_probability)",
+      "generation": "same canonical build",
+      "consumer": "additive bridge detail only",
+      "fact_kind": "Queue 300C measured count plus committed bridge predicate"
+    },
+    {
+      "key": "published_curve_observations",
+      "unit": "curve_observation",
+      "predicate": "rows emitted by the complete published futures and sportsbook curve legs",
+      "generation": "same canonical build",
+      "consumer": "web and native chart headline",
+      "fact_kind": "Queue 300C measured count; committed published payload unit"
+    }
+  ],
+  "cases": [
+    {
+      "id": "ruled-terminal-census-web",
+      "payload_generation": "g100",
+      "payload_population_version": "q267",
+      "selected_option": "terminal_price_supporting_census",
+      "supporting_key": "outcomes_with_terminal_calibration_price",
+      "fields": [
+        {"key": "published_curve_observations", "value": 652407, "unit": "curve_observation", "predicate": "rows emitted by the complete published futures and sportsbook curve legs", "label": "published curve observations", "headline": true, "generation": "g100", "population_version": "q267"},
+        {"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q267"}
+      ],
+      "expected_refusals": []
+    },
+    {
+      "id": "ruled-terminal-census-native-parity",
+      "payload_generation": "g100", "payload_population_version": "q267", "selected_option": "terminal_price_supporting_census", "supporting_key": "outcomes_with_terminal_calibration_price",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": []
+    },
+    {
+      "id": "usable-fallback-stays-bridge-detail",
+      "payload_generation": "g100", "payload_population_version": "q267", "selected_option": "terminal_price_supporting_census", "supporting_key": "outcomes_with_terminal_calibration_price",
+      "fields": [
+        {"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q267"},
+        {"key": "outcomes_with_usable_curve_price", "value": 1466736, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1; curve price = COALESCE(calibration_probability, opening_probability)", "label": "outcomes with a usable curve price (including opening fallback)", "generation": "g100", "population_version": "q267"}
+      ],
+      "expected_refusals": []
+    },
+    {
+      "id": "terminal-cannot-claim-all-usable",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a usable curve price (including opening fallback)", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["LABEL_DOES_NOT_MATCH_UNIT"]
+    },
+    {
+      "id": "usable-cannot-claim-terminal",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_usable_curve_price", "value": 1466736, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1; curve price = COALESCE(calibration_probability, opening_probability)", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["LABEL_DOES_NOT_MATCH_UNIT"]
+    },
+    {
+      "id": "generic-coverage-refuses",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "calibration coverage", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["AMBIGUOUS_COVERAGE_LABEL", "LABEL_DOES_NOT_MATCH_UNIT"]
+    },
+    {
+      "id": "coverage-cannot-replace-headline",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "headline": true, "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["HEADLINE_MUST_BE_PUBLISHED_OBSERVATIONS"]
+    },
+    {
+      "id": "old-payload-unavailable-not-zero",
+      "payload_generation": "g90", "payload_population_version": "q267", "selected_option": "terminal_price_supporting_census", "supporting_key": "outcomes_with_terminal_calibration_price",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": null, "availability": "unavailable", "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g90", "population_version": "q267"}],
+      "expected_refusals": []
+    },
+    {
+      "id": "missing-masquerades-as-zero",
+      "payload_generation": "g90", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": null, "availability": "zero", "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g90", "population_version": "q267"}],
+      "expected_refusals": ["MISSING_MUST_RENDER_UNAVAILABLE"]
+    },
+    {
+      "id": "mixed-generation",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g99", "population_version": "q267"}],
+      "expected_refusals": ["MIXED_GENERATION"]
+    },
+    {
+      "id": "mixed-population-version",
+      "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q266"}],
+      "expected_refusals": ["MIXED_POPULATION_VERSION"]
+    },
+    {
+      "id": "label-only-no-methodology-change", "payload_generation": "g100", "payload_population_version": "q267", "changes_population_methodology": true, "fields": [],
+      "expected_refusals": ["LABEL_CHANGE_MAY_NOT_CHANGE_POPULATION"]
+    },
+    {
+      "id": "label-only-no-version-bump", "payload_generation": "g100", "payload_population_version": "q267", "bumps_population_version": true, "fields": [],
+      "expected_refusals": ["LABEL_CHANGE_MAY_NOT_BUMP_VERSION"]
+    },
+    {
+      "id": "unselected-option-usable", "payload_generation": "g100", "payload_population_version": "q267", "selected_option": "usable_price_supporting_census", "fields": [],
+      "expected_refusals": ["OPTION_NOT_SELECTED_BY_ALEX"]
+    },
+    {
+      "id": "unselected-option-both", "payload_generation": "g100", "payload_population_version": "q267", "selected_option": "both_explicitly_labelled", "fields": [],
+      "expected_refusals": ["OPTION_NOT_SELECTED_BY_ALEX"]
+    },
+    {
+      "id": "poison-first", "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "poison", "value": 1, "unit": "unknown", "predicate": "none", "label": "poison", "generation": "g100", "population_version": "q267"}, {"key": "published_curve_observations", "value": 652407, "unit": "curve_observation", "predicate": "rows emitted by the complete published futures and sportsbook curve legs", "label": "published curve observations", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["UNKNOWN_MACHINE_UNIT"]
+    },
+    {
+      "id": "poison-middle", "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "published_curve_observations", "value": 652407, "unit": "curve_observation", "predicate": "rows emitted by the complete published futures and sportsbook curve legs", "label": "published curve observations", "generation": "g100", "population_version": "q267"}, {"key": "poison", "value": 1, "unit": "unknown", "predicate": "none", "label": "poison", "generation": "g100", "population_version": "q267"}, {"key": "outcomes_with_terminal_calibration_price", "value": 1284551, "unit": "futures_outcome", "predicate": "resolved outcome AND opening_probability > 0 AND opening_probability < 1 AND calibration_probability IS NOT NULL", "label": "outcomes with a terminal calibration price", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["UNKNOWN_MACHINE_UNIT"]
+    },
+    {
+      "id": "poison-last", "payload_generation": "g100", "payload_population_version": "q267",
+      "fields": [{"key": "published_curve_observations", "value": 652407, "unit": "curve_observation", "predicate": "rows emitted by the complete published futures and sportsbook curve legs", "label": "published curve observations", "generation": "g100", "population_version": "q267"}, {"key": "poison", "value": 1, "unit": "unknown", "predicate": "none", "label": "poison", "generation": "g100", "population_version": "q267"}],
+      "expected_refusals": ["UNKNOWN_MACHINE_UNIT"]
+    }
+  ]
+}
