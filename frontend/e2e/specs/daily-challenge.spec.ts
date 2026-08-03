@@ -1,4 +1,7 @@
+import type { Page } from "@playwright/test";
+
 import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { redactUrl } from "../helpers/redaction";
 
 /**
  * L2-235 — the Daily and shared-challenge journeys.
@@ -56,6 +59,33 @@ const UNKNOWN_CHALLENGE_CODE = "l2235-audit-no-such-challenge";
  */
 const GUESS_HOOKS = ["daily-guess-higher", "daily-guess-lower"] as const;
 
+/**
+ * Collect cancelled Next.js RSC prefetches so the journey can DECLARE them.
+ *
+ * Next prefetches the server-component payload for every `<Link>` it renders
+ * and cancels those prefetches routinely — a link scrolls out of view, or the
+ * card unmounts as the daily set advances. That is by design, but it surfaces
+ * as a first-party aborted request, and the mobile daily journey in dispatch
+ * 30780218534 failed on exactly one: `/futures/109435?_rsc=…  net::ERR_ABORTED`.
+ *
+ * The URL carries a market id that changes every day, so it cannot be written
+ * down ahead of time — hence collecting the ones that actually happened rather
+ * than pattern-matching in the shared evaluator. Narrow on both axes: only
+ * `_rsc` requests, and only the ABORTED failure mode. A prefetch that 404s or
+ * 500s arrives with a status through the response listener and is still graded.
+ */
+function collectPrefetchAborts(page: Page): string[] {
+  const aborted: string[] = [];
+  page.on("requestfailed", (request) => {
+    const url = request.url();
+    const failure = request.failure()?.errorText ?? "";
+    if (url.includes("_rsc=") && failure.includes("ERR_ABORTED")) {
+      aborted.push(redactUrl(url));
+    }
+  });
+  return aborted;
+}
+
 test("daily reports only a share that actually happened", async ({ page, journey }) => {
   const path = "/daily";
 
@@ -71,6 +101,8 @@ test("daily reports only a share that actually happened", async ({ page, journey
     .context()
     .grantPermissions(["clipboard-read", "clipboard-write"])
     .catch(() => {});
+
+  const prefetchAborts = collectPrefetchAborts(page);
 
   await page.goto(path, { waitUntil: "domcontentloaded" });
 
@@ -130,6 +162,7 @@ test("daily reports only a share that actually happened", async ({ page, journey
     realCardFound: false,
     emptyState: emptyVisible ? { name: emptyName ?? "unnamed", visible: true } : null,
     mainRegionNonBlank: mainText.trim().length > 120,
+    allowedFailures: prefetchAborts,
   });
 
   // An empty daily set is a terminal, honest outcome — but it must be NAMED.
@@ -162,6 +195,8 @@ test("an unknown shared challenge renders a named not-found state", async ({ pag
   const apiBase = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").replace(/\/$/, "");
   const expected404 = `${apiBase}/api/challenges/${UNKNOWN_CHALLENGE_CODE}`;
 
+  const prefetchAborts = collectPrefetchAborts(page);
+
   await page.goto(path, { waitUntil: "domcontentloaded" });
 
   const errorState = page.locator('[data-testid="challenge-error"]').first();
@@ -193,7 +228,7 @@ test("an unknown shared challenge renders a named not-found state", async ({ pag
     realCardFound: false,
     emptyState: errorVisible ? { name: errorName ?? "unnamed", visible: true } : null,
     mainRegionNonBlank: mainText.trim().length > 80,
-    allowedFailures: [expected404],
+    allowedFailures: [expected404, ...prefetchAborts],
     // Chromium logs its OWN message for any 4xx subresource, so the 404 this
     // journey exists to provoke arrives on the console channel as well as the
     // network one. Declared here rather than waived: anything else in the
