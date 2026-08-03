@@ -1,0 +1,50 @@
+{
+  "schema_version": "tournament-browser-evidence-contract/v1",
+  "dispatch_order": ["confirm no active browser-audit run for requested SHA", "dispatch tournament-inventory once", "wait for terminal workflow state", "validate manifest and artifact upload", "only then allow another same-SHA pack"],
+  "packaging_fields": ["workflow dropdown", "input allowlist", "case dispatch", "package script"],
+  "privacy_ruling_needed": "C140 refuses raw Playwright traces. Current config, validator and workflow intentionally exclude them because they contain bodies, storage and cookies. A trace requirement needs reviewed containment, not an L2-245 shortcut.",
+  "route_matrix": {
+    "generic_shell": "committed",
+    "hubs": "committed",
+    "golf_live_or_settled": "dynamic_unknown",
+    "soccer": "dynamic_unknown",
+    "cycling": "dynamic_unknown",
+    "combat": "dynamic_unknown",
+    "tennis_or_f1": "dynamic_unknown",
+    "awards": "dynamic_unknown",
+    "unsupported": "fixture_only",
+    "native_destination": "not_web_observable"
+  },
+  "cases": [
+    {"id":"serialized-complete-pass","expected_status":"SHIPPED_GOOD","expected_refusals":[]},
+    {"id":"generic-shell-static-only","route_authority":"committed","terminal":"skeleton","expected_status":"NOT_OBSERVABLE","expected_refusals":["TERMINAL_NOT_REAL_CONTENT"]},
+    {"id":"dynamic-golf-route-unknown","route_authority":"unknown","expected_status":"NOT_OBSERVABLE","expected_refusals":["ROUTE_NOT_OBSERVABLE"]},
+    {"id":"soccer-wrong-domain","domain_matches":false,"expected_status":"NOT_OBSERVABLE","expected_refusals":["WRONG_DOMAIN"]},
+    {"id":"cycling-error-terminal","terminal":"error","expected_status":"NOT_OBSERVABLE","expected_refusals":["TERMINAL_NOT_REAL_CONTENT"]},
+    {"id":"combat-empty-terminal","terminal":"empty","expected_status":"NOT_OBSERVABLE","expected_refusals":["TERMINAL_NOT_REAL_CONTENT"]},
+    {"id":"tennis-f1-redirect","domain_matches":false,"expected_status":"NOT_OBSERVABLE","expected_refusals":["WRONG_DOMAIN"]},
+    {"id":"awards-stale-sha","observed_sha":"old","expected_status":"NOT_OBSERVABLE","expected_refusals":["SHA_MISMATCH"]},
+    {"id":"hub-mobile-missing","viewports":["desktop"],"expected_status":"NOT_OBSERVABLE","expected_refusals":["VIEWPORT_COVERAGE_INCOMPLETE"]},
+    {"id":"unsupported-route","route_authority":"fixture_only","expected_status":"NOT_OBSERVABLE","expected_refusals":["ROUTE_NOT_OBSERVABLE"]},
+    {"id":"native-not-web-observable","route_authority":"native","expected_status":"NOT_OBSERVABLE","expected_refusals":["ROUTE_NOT_OBSERVABLE"]},
+    {"id":"skeleton-terminal","terminal":"skeleton","expected_status":"NOT_OBSERVABLE","expected_refusals":["TERMINAL_NOT_REAL_CONTENT"]},
+    {"id":"mixed-sha-run","observed_sha":"different","expected_status":"NOT_OBSERVABLE","expected_refusals":["SHA_MISMATCH"]},
+    {"id":"zero-selected-tests","selected_journeys":0,"expected_status":"NOT_OBSERVABLE","expected_refusals":["ZERO_JOURNEYS"]},
+    {"id":"cancelled-by-same-sha-pack","run_state":"cancelled","expected_status":"NOT_OBSERVABLE","expected_refusals":["RUN_NOT_COMPLETE"]},
+    {"id":"superseded-run","run_state":"superseded","expected_status":"NOT_OBSERVABLE","expected_refusals":["RUN_NOT_COMPLETE"]},
+    {"id":"partial-artifact-upload","artifact_upload_complete":false,"expected_status":"NOT_OBSERVABLE","expected_refusals":["ARTIFACT_UPLOAD_INCOMPLETE"]},
+    {"id":"missing-screenshot","artifacts":[],"screenshot_hash":false,"expected_status":"NOT_OBSERVABLE","expected_refusals":["SCREENSHOT_EVIDENCE_MISSING"]},
+    {"id":"uncontained-trace-upload","artifacts":["screenshot","trace"],"expected_status":"NOT_OBSERVABLE","expected_refusals":["UNCONTAINED_TRACE_ARTIFACT"]},
+    {"id":"console-failure","console_errors":true,"expected_status":"NOT_OBSERVABLE","expected_refusals":["CONSOLE_FAILURE"]},
+    {"id":"network-failure","network_errors":true,"expected_status":"NOT_OBSERVABLE","expected_refusals":["NETWORK_FAILURE"]},
+    {"id":"mobile-overflow","mobile_overflow":true,"expected_status":"NOT_OBSERVABLE","expected_refusals":["MOBILE_OVERFLOW"]},
+    {"id":"missing-adjacent-regression","adjacent_regression":false,"expected_status":"NOT_OBSERVABLE","expected_refusals":["ADJACENT_REGRESSION_MISSING"]},
+    {"id":"duplicate-generation-owner","owner_count":2,"expected_status":"NOT_OBSERVABLE","expected_refusals":["EVIDENCE_OWNER_INVALID"]}
+  ],
+  "defaults": {
+    "route_authority":"observed", "domain_matches":true, "requested_sha":"abc", "observed_sha":"abc", "selected_journeys":2,
+    "run_state":"complete", "owner_count":1, "terminal":"real_content", "viewports":["desktop","mobile"],
+    "artifacts":["screenshot"], "screenshot_hash":true, "console_network_checked":true, "console_errors":false,
+    "network_errors":false, "mobile_overflow":false, "adjacent_regression":true, "artifact_upload_complete":true
+  }
+}
