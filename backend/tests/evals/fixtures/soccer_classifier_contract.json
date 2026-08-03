@@ -1,0 +1,41 @@
+{
+  "schema_version": "soccer-classifier-contract/v1",
+  "cases": [
+    {"id":"epl-bare-vs-three-way","name":"Arsenal vs. Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"epl-bare-at","name":"Arsenal at Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"epl-tagged","name":"EPL: Arsenal vs Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"ucl-tagged","name":"UCL: Real Madrid vs. Arsenal","external_id":null,"sport":"soccer_uefa_champs_league","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"laliga-bare","name":"Barcelona vs Real Madrid","external_id":null,"sport":"soccer_spain_la_liga","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"bundesliga-explicit","name":"Bayern Munich vs Dortmund Match Winner","external_id":null,"sport":"soccer_germany_bundesliga","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"serie-a-question","name":"Who will win Inter Milan vs Juventus?","external_id":null,"sport":"soccer_italy_serie_a","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"ligue-one-bare","name":"PSG v. Marseille","external_id":null,"sport":"soccer_france_ligue_one","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"mls-kalshi-ticker","name":"Inter Miami - Atlanta United","external_id":"KXMLSGAME-26AUG03MIAATL","sport":"soccer_usa_mls","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"soccer-total","name":"Arsenal vs Chelsea: Total Goals 2.5","external_id":null,"sport":"soccer_epl","semantic_kind":"total","expected_class":"total","outcome_shape":"over_under","expected_refusals":[]},
+    {"id":"soccer-spread","name":"Arsenal vs Chelsea: Handicap -1.5","external_id":null,"sport":"soccer_epl","semantic_kind":"spread","expected_class":"spread","outcome_shape":"two_way","expected_refusals":[]},
+    {"id":"soccer-btts","name":"Arsenal vs Chelsea: Both Teams to Score","external_id":null,"sport":"soccer_epl","semantic_kind":"team_prop","expected_class":"team_prop","outcome_shape":"yes_no","expected_refusals":[]},
+    {"id":"soccer-first-half-winner","name":"Arsenal vs Chelsea: First Half Winner","external_id":null,"sport":"soccer_epl","semantic_kind":"period_winner","expected_class":"team_prop","outcome_shape":"three_way_home_draw_away","period":"1H","draw_preserved":true,"expected_refusals":[]},
+    {"id":"soccer-player-container","name":"Arsenal vs Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"player_prop","expected_class":"player_prop","outcome_shape":"player_contracts","expected_refusals":[]},
+    {"id":"soccer-postponed-whole-game","name":"Arsenal vs Chelsea","external_id":"KXEPLGAME-POSTPONED","sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"expected_refusals":[]},
+    {"id":"esports-whole-match","name":"Astralis vs GamerLegion","external_id":null,"sport":"esports","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"two_way","expected_refusals":[]},
+    {"id":"esports-map-two-winner","name":"Astralis vs GamerLegion: Map 2 Winner","external_id":null,"sport":"esports","semantic_kind":"period_winner","expected_class":"team_prop","outcome_shape":"two_way","period":"map_2","expected_refusals":[]},
+    {"id":"esports-map-two-total","name":"Map 2: Odd/Even Total Kills?","external_id":null,"sport":"esports","semantic_kind":"total","expected_class":"total","outcome_shape":"over_under","period":"map_2","expected_refusals":[]},
+    {"id":"esports-player-kills","name":"Astralis vs GamerLegion - Player Kills","external_id":null,"sport":"esports","semantic_kind":"player_prop","expected_class":"player_prop","outcome_shape":"player_contracts","expected_refusals":[]},
+    {"id":"mlb-whole-game","name":"Yankees vs Red Sox","external_id":null,"sport":"baseball_mlb","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"two_way","expected_refusals":[]},
+    {"id":"mlb-first-five-winner","name":"Yankees vs Red Sox: First 5 Innings Winner","external_id":null,"sport":"baseball_mlb","semantic_kind":"period_winner","expected_class":"team_prop","outcome_shape":"two_way","period":"F5","expected_refusals":[]},
+    {"id":"mlb-first-five-total","name":"Yankees vs Red Sox: First 5 Innings Total Runs","external_id":null,"sport":"baseball_mlb","semantic_kind":"total","expected_class":"total","outcome_shape":"over_under","period":"F5","expected_refusals":[]},
+    {"id":"mlb-doubleheader-game-one","name":"Yankees vs Red Sox: Game 1 Winner","external_id":null,"sport":"baseball_mlb","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"two_way","expected_refusals":[]},
+    {"id":"mlb-player-container","name":"Yankees vs Red Sox","external_id":null,"sport":"baseball_mlb","semantic_kind":"player_prop","expected_class":"player_prop","outcome_shape":"player_contracts","expected_refusals":[]},
+    {"id":"poison-cross-event","name":"Arsenal vs Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":true,"cross_event_identity":true,"expected_refusals":["CROSS_EVENT_IDENTITY_ALLOWED"]},
+    {"id":"poison-draw-dropped","name":"Arsenal vs Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":false,"expected_refusals":["SOCCER_DRAW_CONTRACT_LOST"]}
+  ],
+  "expected_current_mismatch_ids": [
+    "soccer-btts",
+    "soccer-first-half-winner",
+    "soccer-player-container",
+    "esports-map-two-winner",
+    "esports-map-two-total",
+    "esports-player-kills",
+    "mlb-first-five-winner",
+    "mlb-player-container"
+  ]
+}
