@@ -68,16 +68,77 @@ nonisolated struct CalibrationDateRange: Decodable, Sendable {
     let end: String?
 }
 
+/// Decodes an array element by element, keeping the good ones and counting the
+/// bad ones instead of throwing the whole array away.
+///
+/// L2-231 Item 1 — ALL-OR-NOTHING BUCKET LOSS. `/api/calibration` ships ~1,600
+/// buckets. Every one of them was decoded into a struct whose fields are all
+/// non-optional, inside a non-optional `[CalibrationBucket]`, so a single row
+/// with a null `n` — one row in sixteen hundred — threw, and the entire
+/// calibration screen became a generic error. That is gotcha #42's rule ("one
+/// bad item must never wipe a whole pass") on the client side.
+///
+/// The drop is COUNTED, never silent: quietly rendering a curve built from 1,200
+/// of 1,606 buckets, with no way for the reader to know, is the same class of
+/// dishonesty as rendering a stale snapshot as current. `CalibrationViewModel`
+/// surfaces a non-zero count.
+///
+/// The element is decoded through a never-failing wrapper rather than with
+/// `try? container.decode(Element.self)` deliberately: a throwing element decode
+/// is not guaranteed to advance the unkeyed container's cursor, which turns a
+/// malformed row into an infinite loop. A wrapper that always succeeds always
+/// advances.
+nonisolated struct LossyArray<Element: Decodable & Sendable>: Decodable, Sendable {
+    let elements: [Element]
+    /// How many array entries failed to decode and were skipped.
+    let dropped: Int
+
+    private struct Skippable: Decodable {
+        let value: Element?
+        init(from decoder: Decoder) throws { value = try? Element(from: decoder) }
+    }
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var kept: [Element] = []
+        kept.reserveCapacity(container.count ?? 0)
+        var dropped = 0
+        while !container.isAtEnd {
+            if let value = try container.decode(Skippable.self).value {
+                kept.append(value)
+            } else {
+                dropped += 1
+            }
+        }
+        self.elements = kept
+        self.dropped = dropped
+    }
+
+    init(elements: [Element], dropped: Int = 0) {
+        self.elements = elements
+        self.dropped = dropped
+    }
+}
+
 /// Top-level calibration response with bucket data and summary error metrics.
 ///
 /// Payload v2 (#999 §F) carries the sample gate, the held-out categories, and the
 /// corrections log so web + native render the same story from the same numbers.
 /// All added fields are optional: the in-request route fallback ships a leaner
 /// payload than the precompute cache, so native must not hard-require them.
+///
+/// L2-231 Item 1 decodes this BY HAND rather than by synthesis. The synthesized
+/// initializer is all-or-nothing in both directions — one unparseable field kills
+/// the payload, and one absent required field kills it too — and this response is
+/// assembled from many independent server-side stages, any one of which can ship
+/// a malformed slice while the rest is perfectly good. Each field is now
+/// independent, and a field that cannot be read stays `nil` (unknown) rather than
+/// collapsing to `0`, which would be a NUMBER the reader cannot distinguish from
+/// a measured one.
 nonisolated struct CalibrationData: Decodable, Sendable {
     let buckets: [CalibrationBucket]
-    let totalMarkets: Int
-    let totalOutcomes: Int
+    let totalMarkets: Int?
+    let totalOutcomes: Int?
     let totalWinners: Int?
     let mceCiLower: Double?
     let mceCiUpper: Double?
@@ -95,4 +156,49 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     // UNVERIFIED rather than assumed compatible (see `CalibrationViewModel`).
     let cache: CalibrationCacheState?
     let populationVersion: String?
+
+    // MARK: - Partial-decode provenance (L2-231 Item 1)
+
+    /// Whether the payload carried a readable `buckets` ARRAY at all.
+    ///
+    /// `false` covers both "the key is missing" and "the key is there but is not
+    /// an array". Either way there is no curve, and that is a different fact from
+    /// a served-but-empty `[]`. Neither may render as a 0.0pp result.
+    let bucketsPresent: Bool
+    /// Buckets the server sent that this build could not read. Non-zero means the
+    /// rendered curve is built from less than the payload offered.
+    let droppedBuckets: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case buckets, totalMarkets, totalOutcomes, totalWinners
+        case mceCiLower, mceCiUpper, mceClosingLine, mceOpeningPrice
+        case generatedAt, minCategoryOutcomes, smallSampleCategories
+        case corrections, dateRange, cache, populationVersion
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        let lossy = try? c.decode(LossyArray<CalibrationBucket>.self, forKey: .buckets)
+        buckets = lossy?.elements ?? []
+        droppedBuckets = lossy?.dropped ?? 0
+        bucketsPresent = lossy != nil
+
+        totalMarkets = try? c.decodeIfPresent(Int.self, forKey: .totalMarkets)
+        totalOutcomes = try? c.decodeIfPresent(Int.self, forKey: .totalOutcomes)
+        totalWinners = try? c.decodeIfPresent(Int.self, forKey: .totalWinners)
+        mceCiLower = try? c.decodeIfPresent(Double.self, forKey: .mceCiLower)
+        mceCiUpper = try? c.decodeIfPresent(Double.self, forKey: .mceCiUpper)
+        mceClosingLine = try? c.decodeIfPresent(Double.self, forKey: .mceClosingLine)
+        mceOpeningPrice = try? c.decodeIfPresent(Double.self, forKey: .mceOpeningPrice)
+        generatedAt = try? c.decodeIfPresent(String.self, forKey: .generatedAt)
+        minCategoryOutcomes = try? c.decodeIfPresent(Int.self, forKey: .minCategoryOutcomes)
+        smallSampleCategories = (try? c.decode(LossyArray<SmallSampleCategory>.self,
+                                               forKey: .smallSampleCategories))?.elements
+        corrections = (try? c.decode(LossyArray<CalibrationCorrection>.self,
+                                     forKey: .corrections))?.elements
+        dateRange = try? c.decodeIfPresent(CalibrationDateRange.self, forKey: .dateRange)
+        cache = try? c.decodeIfPresent(CalibrationCacheState.self, forKey: .cache)
+        populationVersion = try? c.decodeIfPresent(String.self, forKey: .populationVersion)
+    }
 }

@@ -32,7 +32,25 @@ compiled directly into the bundle (e.g. `WatchGuessPool`, `WatchGuessViewModel`,
   cross-computed from `frontend/lib/calibrationMath.ts` on the same fixture.
 - `CalibrationPayloadV2.sample.json` — a trimmed **real** `/api/calibration`
   payload-v2 capture (structure-preserving), for reference and future bundle-based
-  decode tests.
+  decode tests. Nothing loads it yet; the bundle-resource path was never wired, so
+  new fixtures go in Swift (see `CalibrationProdFixture.swift`).
+- `CalibrationSurfaceTests.swift` — L2-231: the surface tells the truth about WHICH
+  payload it is rendering — dated last-good vs current, population-version
+  mismatch, parked category, and the direction-aware activity copy that replaced
+  the retired "more accurately calibrated" claim.
+- `CalibrationAvailabilityTests.swift` — L2-231 (re-staged): AVAILABILITY and COUNT
+  truth. Per-item bucket containment (one poison row must not blank the screen),
+  missing/unreadable/empty `buckets` told apart, cancellation vs failure, a failed
+  refresh preserving the rendered curve, and the complete `price_moved` tri-state
+  partition (`moved + unchanged + not-applicable == total`).
+- `CalibrationProdFixture.swift` — the 2026-08-02 production `/api/calibration`
+  response, losslessly compacted to 68 buckets by pre-summing the category
+  dimension. Every non-category metric is bit-identical to the full 340 KB payload.
+  Frozen on purpose; do not "refresh" it.
+- `CalibrationRenderSmokeTests.swift` — L2-231: deterministic `ImageRenderer`
+  evidence for each server-produced state (healthy, dated last-good, version
+  mismatch, empty, unreadable, partially-read, failed refresh) plus the
+  320/390/1024pt and accessibility-text layout envelopes.
 - `FeedConfidenceTests.swift` — #490/L2-172: confidence signal decode + native math parity.
 - `FeedConceptDecodeTests.swift` — L2-179: concept card survives the full feed decode.
 - `WatchGuessPoolTests.swift` — L2-180: the Watch Higher/Lower deck is futures-only

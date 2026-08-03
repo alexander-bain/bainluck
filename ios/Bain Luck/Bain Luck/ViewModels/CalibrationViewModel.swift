@@ -14,6 +14,12 @@ final class CalibrationViewModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var error: String?
 
+    /// L2-231 Item 1: a refresh that failed while a good payload is already on
+    /// screen. The numbers stay — throwing away a readable curve because a later
+    /// poll timed out is a worse answer than keeping it — but they stop being
+    /// presented as current. `error` is reserved for having NOTHING to show.
+    @Published private(set) var refreshFailed = false
+
     /// L2-74 §C default: the WELL-TRADED view (real trading moved the price). The
     /// toggle layers thin/untraded markets back in — it never hides, both counts
     /// are always visible. View-bound, so it stays mutable.
@@ -25,7 +31,17 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init() {}
+    /// How the model reaches the network. Injectable so the load STATES —
+    /// transient refresh failure, cancellation, recovery — can be driven
+    /// deterministically; `APIClient.shared` is a singleton and a live fetch
+    /// cannot be asked to fail on demand.
+    typealias Fetcher = () async throws -> CalibrationData
+
+    private let fetcher: Fetcher
+
+    init(fetcher: @escaping Fetcher = { try await APIClient.shared.fetchCalibration() }) {
+        self.fetcher = fetcher
+    }
 
     /// Preloaded-payload initializer.
     ///
@@ -34,16 +50,41 @@ final class CalibrationViewModel: ObservableObject {
     /// be exercised directly. Those are states the server produces and a
     /// happy-path network stub never reaches, and they are precisely where
     /// native was silently diverging from web (L2-231 Item 0).
-    init(preloaded: CalibrationData) {
+    init(preloaded: CalibrationData, fetcher: @escaping Fetcher = { try await APIClient.shared.fetchCalibration() }) {
+        self.fetcher = fetcher
         self.data = preloaded
         self.loading = false
     }
 
     // MARK: - Loading
 
+    /// Fetch, and be honest about which of the four outcomes happened.
+    ///
+    /// L2-231 Item 1 rewrote this. The previous three lines had three distinct
+    /// ways to misreport:
+    ///
+    ///   1. `loading = true` unconditionally, so an explicit Retry on a screen
+    ///      that already had numbers replaced them with a spinner.
+    ///   2. Any thrown error became a full-screen error state, discarding a
+    ///      perfectly readable curve because one later poll failed.
+    ///   3. A CANCELLED request — the user leaving the tab mid-fetch, which
+    ///      SwiftUI does routinely by cancelling the `.task` — took path 2 and
+    ///      showed "cancelled" as though the server had broken.
     func load() async {
-        loading = true; error = nil
-        do { data = try await APIClient.shared.fetchCalibration() } catch { self.error = error.localizedDescription }
+        let hadData = data != nil
+        if hadData { refreshFailed = false } else { loading = true }
+        error = nil
+        do {
+            let fresh = try await fetcher()
+            data = fresh
+            refreshFailed = false
+        } catch {
+            // A cancellation is not a failure and must never be reported as one.
+            // Nothing changes: whatever was on screen stays exactly as it was.
+            if !Self.isCancellation(error) {
+                if hadData { refreshFailed = true } else { self.error = error.localizedDescription }
+            }
+        }
         loading = false
     }
 
@@ -58,12 +99,85 @@ final class CalibrationViewModel: ObservableObject {
         await load()
     }
 
+    /// Both shapes a cancelled `URLSession` request arrives in.
+    nonisolated static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    // MARK: - Availability (L2-231 Item 1)
+
+    /// Whether there is a curve to draw at all.
+    ///
+    /// A payload that decoded but carries no buckets is NOT a 0.0pp result. Every
+    /// metric on this screen divides by a bucket count, so an empty payload
+    /// renders "0.0pp — Excellent", which is a confident claim manufactured out
+    /// of no data. It has to be an honest unavailable state instead.
+    var hasRenderableCurve: Bool { data != nil && !buckets.isEmpty }
+
+    /// Set whenever the surface has settled with no curve to draw, and no other
+    /// state already explains why.
+    ///
+    /// Covers three distinct endings that all used to fall through to the loaded
+    /// layout and render "0.0pp \u{2014} Excellent" over nothing:
+    ///   - a payload that decoded but carries an EMPTY `buckets` array;
+    ///   - a payload whose `buckets` key was missing or unreadable;
+    ///   - a load that ended without data and without an error, which is what a
+    ///     CANCELLED first fetch leaves behind (the user opening the tab and
+    ///     immediately leaving cancels the `.task`).
+    ///
+    /// Deliberately nil while `loading`, while `error` is set, and when the
+    /// payload is version-incompatible — each of those has its own, more specific
+    /// state, and stacking a second explanation on top would bury it.
+    var unavailableMessage: String? {
+        guard !loading, error == nil, !isIncompatible, !hasRenderableCurve else { return nil }
+        guard let data else {
+            return "We couldn't load the calibration numbers just now. Please try again."
+        }
+        return data.bucketsPresent
+            ? "The calibration data came back empty this time. Nothing is wrong with "
+                + "your app \u{2014} there is just nothing to plot yet. Please check back shortly."
+            : "We couldn't read the calibration numbers the server sent. Rather than "
+                + "show you something we can't stand behind, we're not showing anything. "
+                + "Please check back shortly."
+    }
+
+    /// Buckets the server sent that this build could not read (L2-231 Item 1).
+    var droppedBuckets: Int { data?.droppedBuckets ?? 0 }
+
+    /// Shown whenever the curve is built from less than the payload offered. A
+    /// silently-thinned curve reads exactly like a complete one.
+    var partialDataNote: String? {
+        let dropped = droppedBuckets
+        guard dropped > 0 else { return nil }
+        let total = dropped + buckets.count
+        return "\(Self.fmt(dropped)) of \(Self.fmt(total)) data groups couldn't be read and "
+            + "are not included below."
+    }
+
+    /// Shown when the last refresh failed but earlier numbers are still on screen.
+    /// Names when they were built so they are never mistaken for current ones.
+    var refreshFailureNote: String? {
+        guard refreshFailed, data != nil else { return nil }
+        let built = data?.generatedAt.flatMap(Self.parseISO)
+        let whenText = built.map { date -> String in
+            let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
+            return f.string(from: date)
+        }
+        return whenText.map { "Couldn't refresh just now \u{2014} still showing the numbers built \($0)." }
+            ?? "Couldn't refresh just now \u{2014} these are the numbers from the last successful load."
+    }
+
     // MARK: - Formatting helpers
 
     private static func fmt(_ n: Int) -> String { nf.string(from: NSNumber(value: n)) ?? "\(n)" }
 
-    var formattedTotalOutcomes: String { data.map { Self.fmt($0.totalOutcomes) } ?? "\u{2014}" }
-    var formattedMarkets: String { data.map { Self.fmt($0.totalMarkets) } ?? "\u{2014}" }
+    /// An em-dash for BOTH "no payload" and "the payload did not carry a readable
+    /// count". A field the server omitted is unknown, and printing `0` for it is
+    /// a number the reader cannot tell from a measured one (L2-231 Item 1).
+    var formattedTotalOutcomes: String { data?.totalOutcomes.map(Self.fmt) ?? "\u{2014}" }
+    var formattedMarkets: String { data?.totalMarkets.map(Self.fmt) ?? "\u{2014}" }
     var formattedCohortOutcomes: String { data == nil ? "\u{2014}" : Self.fmt(cohortN) }
 
     /// The population the hero claims to have analyzed.
@@ -76,6 +190,43 @@ final class CalibrationViewModel: ObservableObject {
         guard data != nil else { return "\u{2014}" }
         if includeThin { return formattedCohortOutcomes }
         return "\(formattedCohortOutcomes) well-traded (\(Self.fmt(fullN)) including thinly-traded)"
+    }
+
+    // MARK: - Cohort banner (L2-231 Item 2 — the label must match its predicate)
+
+    var cohortHeadline: String {
+        includeThin
+            ? "Showing all markets (\(formattedCohortOutcomes))"
+            : "Showing well-traded markets (\(formattedCohortOutcomes))"
+    }
+
+    /// The sentence under the cohort toggle, written to match what the cohort
+    /// filter ACTUALLY selects.
+    ///
+    /// The default cohort is `price_moved != false`, which the surface described
+    /// as "where real trading moved the price". That is true of the `true` rows
+    /// and false of the `nil` ones — sportsbook lines, where the price-moved test
+    /// does not apply — and on the 2026-08-02 payload those were 40,075 of the
+    /// 389,385 rows the sentence was describing, 10.3% of the default cohort.
+    ///
+    /// The cohort's NAME is unchanged (it is web's, and renaming it here would
+    /// manufacture the divergence this queue exists to remove). The CLAIM under
+    /// it now names both halves. Web's copy carries the identical defect and is
+    /// out of this queue's gate — reported, not edited.
+    var cohortDetail: String {
+        let na = notApplicableN
+        if includeThin {
+            let partition = na > 0
+                ? " \(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged "
+                    + "\u{00B7} \(Self.fmt(na)) not applicable."
+                : " \(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged."
+            return "Including thin / untraded." + partition
+        }
+        guard na > 0 else {
+            return "Where real trading moved the price. Thin markets can be noisy."
+        }
+        return "Outcomes whose price real trading moved (\(Self.fmt(movedN))), plus \(Self.fmt(na)) "
+            + "sportsbook lines where that test doesn't apply. Thin markets can be noisy."
     }
 
     // MARK: - Sample gate
@@ -180,6 +331,31 @@ final class CalibrationViewModel: ObservableObject {
     var unchangedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved == false } }
     var movedECE: Double { CalibrationMath.ece(movedBuckets) }
     var unchangedECE: Double { CalibrationMath.ece(unchangedBuckets) }
+
+    /// The THIRD activity state, which this surface had no name for.
+    ///
+    /// `price_moved` is a tri-state, not a boolean: `true` (the price moved),
+    /// `false` (it never did), and `null` — sportsbook moneylines, spreads and
+    /// totals, where "did trading move the price" is not a question the source
+    /// can answer, so it is NOT APPLICABLE rather than false.
+    ///
+    /// Native modelled it as two states. `movedN + unchangedN` therefore fell
+    /// short of the page's own population — on the 2026-08-02 payload, 349,310 +
+    /// 263,022 = 612,332 against a stated 652,407 — with the 40,075 missing rows
+    /// named nowhere. The partition is now complete and asserted:
+    /// `movedN + unchangedN + notApplicableN == fullN`.
+    var notApplicableN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved == nil } }
+
+    /// Reconciles the two trading-activity cards with the page's population. Nil
+    /// when there are no not-applicable rows, so the note never appears as
+    /// boilerplate on a payload it does not describe.
+    var activityPartitionNote: String? {
+        let na = notApplicableN
+        guard na > 0 else { return nil }
+        return "Sportsbook lines (\(Self.fmt(na)) outcomes) carry no price-moved flag, so they "
+            + "sit in neither cohort: \(Self.fmt(movedN)) + \(Self.fmt(unchangedN)) + \(Self.fmt(na)) "
+            + "= \(Self.fmt(fullN)) resolved outcomes."
+    }
 
     /// L2-231 Item 2: the direction-aware, causation-free comparison the web page
     /// has rendered since L2-230. Native printed the superseded superiority claim

@@ -56,6 +56,20 @@ struct CalibrationSurfaceView: View {
                     Text(error).font(.subheadline).foregroundStyle(.secondary)
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
+            } else if let unavailable = viewModel.unavailableMessage {
+                // L2-231 Item 1: a payload that decoded but carries no curve. Every
+                // metric here divides by a bucket count, so rendering it anyway
+                // produces "0.0pp \u{2014} Excellent" — a confident claim assembled out
+                // of no data. Say what happened instead.
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.largeTitle).foregroundStyle(.secondary)
+                    Text(unavailable)
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
+                }
+                .padding(.horizontal, 24)
             } else if viewModel.isIncompatible {
                 // L2-231 Item 2: a payload built under a population contract this
                 // build does not know cannot be rendered under this build's labels
@@ -90,7 +104,7 @@ struct CalibrationSurfaceView: View {
 
     private var loadedStack: some View {
         VStack(spacing: 24) {
-            staleBanner
+            staleBanner; refreshFailureBanner; partialDataBanner
             heroSection; statCardsSection; cohortToggleBanner
             sourceComparisonSection; benchmarkSection
             calibrationChartSection; tradingActivitySection; categoryBreakdownSection
@@ -116,6 +130,44 @@ struct CalibrationSurfaceView: View {
                     .font(.caption.weight(.semibold)).foregroundStyle(.primary)
                 Text(detail).font(.caption2).foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    // L2-231 Item 1. A refresh that failed while good numbers are already on
+    // screen used to replace the whole surface with an error page — discarding a
+    // readable curve because one later poll timed out. The curve stays; this
+    // says it is not current, and names when it was built.
+    @ViewBuilder
+    private var refreshFailureBanner: some View {
+        if let note = viewModel.refreshFailureNote {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle").font(.caption)
+                Text(note).font(.caption2)
+                Spacer(minLength: 8)
+                Button("Retry") { Task { await viewModel.load() } }
+                    .font(.caption2.weight(.medium)).buttonStyle(.plain)
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    // L2-231 Item 1. Buckets the server sent that this build could not read. A
+    // curve quietly built from fewer groups than the payload offered reads
+    // exactly like a complete one, so the shortfall is stated.
+    @ViewBuilder
+    private var partialDataBanner: some View {
+        if let note = viewModel.partialDataNote {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.circle").font(.caption)
+                Text(note).font(.caption2)
+            }
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 12))
@@ -195,17 +247,15 @@ struct CalibrationSurfaceView: View {
     // thin/untraded markets. It never hides — both counts are always shown.
     private var cohortToggleBanner: some View {
         HStack(alignment: .center, spacing: 10) {
+            // L2-231 Item 2: both strings come from the view model so the claim
+            // under the cohort name can be asserted against the cohort's actual
+            // predicate. The default cohort is `price_moved != false`, which is
+            // NOT the same set as "where real trading moved the price".
             VStack(alignment: .leading, spacing: 2) {
-                if viewModel.includeThin {
-                    Text("Showing all markets (\(viewModel.formattedCohortOutcomes))")
-                        .font(.caption.weight(.medium)).foregroundStyle(.primary)
-                    Text("Including thin / untraded.").font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text("Showing well-traded markets (\(viewModel.formattedCohortOutcomes))")
-                        .font(.caption.weight(.medium)).foregroundStyle(.primary)
-                    Text("Where real trading moved the price. Thin markets can be noisy.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+                Text(viewModel.cohortHeadline)
+                    .font(.caption.weight(.medium)).foregroundStyle(.primary)
+                Text(viewModel.cohortDetail)
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             Button {
@@ -351,6 +401,15 @@ struct CalibrationSurfaceView: View {
                 if let sentence = activity.sentence {
                     Text(sentence)
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                }
+                // L2-231 Item 2: `price_moved` is a tri-state. The two cards above
+                // cover `true` and `false`; the `null` rows (sportsbook lines,
+                // where the test does not apply) were named nowhere, so the two
+                // counts silently fell short of the population the page claims.
+                if let partition = viewModel.activityPartitionNote {
+                    Text(partition)
+                        .font(.caption2).foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity)
                 }
             }
         }

@@ -159,6 +159,161 @@ final class CalibrationRenderSmokeTests: XCTestCase {
         XCTAssertNotEqual(empty, try render(Self.payload(), name: "healthy-vs-empty"))
     }
 
+    // MARK: - L2-231 (re-staged) — the availability states
+
+    /// Rasterises the REAL frozen production response, not a hand-built one.
+    ///
+    /// Item 3 asks for rendered evidence "against the exact Queue 297 payload
+    /// fixture". Everything else in this file is a hand-authored state; this is
+    /// the one case where the numbers on the image are the numbers the server
+    /// actually served on 2026-08-02 — including the `stale` envelope it was
+    /// serving at the time, so the dated banner is rendered from real provenance
+    /// rather than from a fixture written to produce it.
+    func testTheFrozenProductionPayloadRendersItsRealNumbers() throws {
+        let vm = CalibrationViewModel(preloaded: try decode(CalibrationProdFixture.json))
+        XCTAssertTrue(vm.isStale, "the frozen response was served stale")
+        XCTAssertTrue(vm.hasRenderableCurve)
+        XCTAssertEqual(vm.cohortN, 389_385)
+        XCTAssertEqual(vm.movedN + vm.unchangedN + vm.notApplicableN, vm.fullN)
+        print("L2-231 prod render: cohortN=\(vm.cohortN) fullN=\(vm.fullN) "
+            + "ECE=\(String(format: "%.1f", vm.cohortECE))pp "
+            + "moved=\(vm.movedN) unchanged=\(vm.unchangedN) na=\(vm.notApplicableN)")
+        print("L2-231 prod cohort detail: \(vm.cohortDetail)")
+        print("L2-231 prod partition note: \(vm.activityPartitionNote ?? "nil")")
+        let png = try render(CalibrationProdFixture.json, name: "production-2026-08-02")
+        XCTAssertGreaterThan(png.count, 1_000)
+    }
+
+    /// Drives a model through a real `load()` so the RESULT of a failure is what
+    /// gets rasterised, not a hand-set flag.
+    @discardableResult
+    private func renderAfterFailedRefresh(name: String) throws -> Data {
+        struct Boom: Error, LocalizedError { var errorDescription: String? { "offline" } }
+        let vm = CalibrationViewModel(preloaded: try decode(Self.payload()),
+                                      fetcher: { throw Boom() })
+        let expectation = expectation(description: "refresh")
+        Task { @MainActor in await vm.load(); expectation.fulfill() }
+        wait(for: [expectation], timeout: 5)
+        XCTAssertTrue(vm.refreshFailed, "\(name): the fixture did not reach the failed state")
+        XCTAssertNotNil(vm.data, "\(name): the curve was discarded")
+
+        let view = CalibrationSurfaceView(viewModel: vm, scrolls: false).frame(width: 390)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
+        let png = try XCTUnwrap(image.pngData())
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("l2231-calibration-\(name).png")
+        try? png.write(to: url)
+        print("L2-231 render artifact [\(name)]: \(url.path) (\(png.count) bytes)")
+        return png
+    }
+
+    func testAFailedRefreshKeepsTheCurveOnScreenAndLooksDifferentFromACurrentOne() throws {
+        let healthy = try render(Self.payload(), name: "healthy-vs-refresh-failed")
+        let failed = try renderAfterFailedRefresh(name: "refresh-failed")
+        // The curve survived — a failure page would be a fraction of this size.
+        XCTAssertGreaterThan(failed.count, 1_000)
+        // ...and it is visibly not being presented as current.
+        XCTAssertNotEqual(healthy, failed,
+                          "a stale-after-failed-refresh screen rendered identically to a fresh one")
+    }
+
+    func testAPartiallyReadablePayloadSaysSoOnScreen() throws {
+        // One poison bucket among three. The curve is drawn from what survived,
+        // and the banner states the shortfall — a silently thinned curve looks
+        // exactly like a complete one.
+        let poisoned = """
+        {
+          "population_version": "\(Self.renderableVersion)",
+          "buckets": [
+            \(Self.buckets),
+            {"bucket_idx": 7, "source": "kalshi", "category": "politics", "price_moved": true, "n": null}
+          ],
+          "total_markets": 12, "total_outcomes": 700, "total_winners": 215,
+          "generated_at": "2026-08-02T04:00:00+00:00"
+        }
+        """
+        let vm = CalibrationViewModel(preloaded: try decode(poisoned))
+        XCTAssertEqual(vm.droppedBuckets, 1)
+        XCTAssertNotNil(vm.partialDataNote)
+        let partial = try render(poisoned, name: "partial-decode")
+        XCTAssertGreaterThan(partial.count, 1_000)
+        XCTAssertNotEqual(partial, try render(Self.payload(), name: "healthy-vs-partial"),
+                          "a partially-read payload rendered identically to a whole one")
+    }
+
+    func testAnUnreadablePayloadRendersTheUnavailableStateNotAZeroCurve() throws {
+        // `buckets` absent entirely. Every metric on this screen divides by a
+        // bucket count, so the pre-fix path drew "0.0pp — Excellent" over nothing.
+        let unreadable = #"{"population_version": "\#(Self.renderableVersion)", "total_outcomes": 700}"#
+        let vm = CalibrationViewModel(preloaded: try decode(unreadable))
+        XCTAssertFalse(vm.hasRenderableCurve)
+        XCTAssertNotNil(vm.unavailableMessage)
+        let png = try render(unreadable, name: "unreadable")
+        XCTAssertGreaterThan(png.count, 500)
+        XCTAssertNotEqual(png, try render(Self.payload(), name: "healthy-vs-unreadable"))
+    }
+
+    // MARK: - Layout envelopes (Item 3)
+
+    /// Rasterises one payload across the width and text-size envelopes the app
+    /// actually ships into, and asserts each one produced a real, differently
+    /// laid-out image.
+    ///
+    /// This is a CLIPPING and LAYOUT check, not a pixel check. The states this
+    /// queue added are text — a dated banner, a two-clause cohort description, a
+    /// three-term partition sentence — and text is exactly what a 900pt regular
+    /// width or an accessibility text size breaks differently from a 390pt
+    /// compact one.
+    func testTheSurfaceRendersAcrossWidthAndTextSizeEnvelopes() throws {
+        let payload = CalibrationProdFixture.json
+        let vm = CalibrationViewModel(preloaded: try decode(payload))
+
+        struct Envelope { let name: String; let width: CGFloat; let regular: Bool; let size: DynamicTypeSize }
+        let envelopes = [
+            Envelope(name: "iphone-390", width: 390, regular: false, size: .large),
+            Envelope(name: "iphone-320-se", width: 320, regular: false, size: .large),
+            Envelope(name: "ipad-mac-1024-regular", width: 1024, regular: true, size: .large),
+            Envelope(name: "iphone-390-accessibility3", width: 390, regular: false, size: .accessibility3),
+        ]
+
+        var sizes: [String: CGSize] = [:]
+        for envelope in envelopes {
+            let view = CalibrationSurfaceView(viewModel: vm, scrolls: false)
+                .environment(\.horizontalSizeClass, envelope.regular ? .regular : .compact)
+                .environment(\.dynamicTypeSize, envelope.size)
+                .frame(width: envelope.width)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.uiImage, "\(envelope.name) produced no raster")
+            XCTAssertGreaterThan(image.size.height, 100, "\(envelope.name) collapsed")
+            // The content is width-capped at 900pt in the regular class, so a
+            // 1024pt canvas must still render the full stack rather than a
+            // clipped or zero-height one.
+            XCTAssertEqual(image.size.width, envelope.width, accuracy: 1,
+                           "\(envelope.name) did not fill its canvas")
+            // The raster IS the assertion; the file is only for eyeballing. At
+            // accessibility sizes the surface grows past the point where
+            // `pngData()` will encode it, and failing the layout check on the
+            // encoder's limit would report the wrong thing entirely.
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("l2231-calibration-env-\(envelope.name).png")
+            let png = image.pngData()
+            if let png { try? png.write(to: url) }
+            print("L2-231 envelope [\(envelope.name)]: \(Int(image.size.width))x\(Int(image.size.height))"
+                + " -> \(png == nil ? "(too large to encode)" : url.path)")
+            sizes[envelope.name] = image.size
+        }
+
+        // Accessibility text must actually reflow — an identical height would
+        // mean the environment was ignored and the check proved nothing.
+        let base = try XCTUnwrap(sizes["iphone-390"])
+        let large = try XCTUnwrap(sizes["iphone-390-accessibility3"])
+        XCTAssertGreaterThan(large.height, base.height,
+                             "accessibility text size did not reflow the surface")
+    }
+
     func testActivityDirectionDrivesTheRenderedComparison() throws {
         // Same page, two orderings. The pre-fix native code hard-coded the moved
         // cohort green and printed a superiority claim regardless of the numbers,
