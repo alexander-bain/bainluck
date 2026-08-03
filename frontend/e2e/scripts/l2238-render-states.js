@@ -453,15 +453,22 @@ async function run() {
           if (feedCalls > 1) break;
         }
         await page.waitForTimeout(2_000);
-        // Screenshot the retry where it renders, not the top of the page.
-        await page
-          .locator('[data-testid="discover-feed-unavailable"]')
-          .first()
-          .scrollIntoViewIfNeeded()
-          .catch(() => null);
       }
 
       await page.waitForTimeout(1200);
+
+      // Frame the evidence on the claim. The retry state renders BELOW the
+      // last-good cards, so a top-of-page shot of `unavailable-with-last-good`
+      // showed ten healthy cards and no retry — a screenshot that cannot
+      // corroborate the assertion beside it is the source-level-proof problem
+      // wearing a picture. Scrolled only when the notice is actually visible, so
+      // this can never manufacture one.
+      await page
+        .locator('[data-testid="discover-feed-unavailable"]')
+        .first()
+        .scrollIntoViewIfNeeded({ timeout: 3_000 })
+        .catch(() => null);
+      await page.waitForTimeout(400);
 
       const seen = {
         cards: await page.locator('[data-testid="discover-card"]').count(),
