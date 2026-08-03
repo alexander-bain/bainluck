@@ -289,10 +289,37 @@ class TestCalibrationPublicEndpoint:
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
             "heuristic_filter",  # #754 heuristic-exclusion transparency
             "truth_evidence",  # Queue #261 Item 3: calibration-truth census + contract
+            # Queue 300C (Alex 2026-08-02): the supporting coverage census + the
+            # additive bridge from coverage down to the plotted rows. The ONLY
+            # key this queue adds — the ruling authorizes a labelled supporting
+            # census, not a population change, so nothing above it moved.
+            "calibration_coverage_census",
             "corrections",  # L2-73 §E
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
         }
+
+    async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):
+        """Queue 300C: both numbers ship, in their own units, both named."""
+        _set_public_calibration_results(mock_db)
+
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        census = body["calibration_coverage_census"]
+
+        assert census["schema_version"] == "calibration-coverage-bridge/v1"
+        assert census["population_version"] == body["population_version"]
+        units = census["units"]
+        assert units["published_curve_observations"]["unit"] == "curve_observation"
+        assert units["outcomes_with_calibration_coverage"]["unit"] == "futures_outcome"
+        # total_outcomes remains THE headline; the census restates it rather than
+        # replacing it with the (much larger) coverage count.
+        assert units["published_curve_observations"]["value"] == body["total_outcomes"]
+        # Every rung is present and self-describing, even on a cold serve where
+        # the counts themselves may be unmeasured.
+        rungs = census["coverage_bridge"]["rungs"]
+        assert [c["key"] for c in rungs][0] == "plotted_on_curve"
+        assert all(c["unit"] == "futures_outcome" and c["rule"] for c in rungs)
 
     async def test_date_range_present(self, client, mock_db):
         # L2-78 Item 0: date_range ships in the payload (None on cold-cache

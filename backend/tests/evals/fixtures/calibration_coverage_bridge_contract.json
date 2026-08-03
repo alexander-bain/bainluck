@@ -1,0 +1,597 @@
+{
+  "schema_version": "calibration-coverage-bridge-contract/v1",
+  "authority": "Alex ruling 2026-08-02 (calibration population label); Queue 300C; consumes C111 (serve-honest population contract), C112/C126 (population subdivision), C117 (durable survivor), C122 (version rollover); related #1517",
+  "unit_note": "published_curve_observations is counted in curve observations; outcomes_with_calibration_coverage is counted in futures outcomes. One subtraction can never bridge two units, so there are two reconciliations joined at the plotted hinge.",
+  "reference_totals": {
+    "published_curve_observations": 652407,
+    "futures_outcomes_plotted": 612332,
+    "sportsbook_curve_legs": 40075,
+    "outcomes_with_calibration_coverage": 1466736
+  },
+  "cases": [
+    {
+      "id": "production-shape-reconciles",
+      "why": "The headline case: both numbers published, rungs partition coverage exactly, and the plotted hinge agrees with the population chain's own count.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "headline_unit": "curve_observation",
+        "payload_generation": 100,
+        "payload_population_version": "q267",
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "truth-ineligible-is-its-own-rung",
+      "why": "Price-derived and guess-family truth is the single largest reason a covered outcome is not plotted; it must be named, not absorbed into a catch-all.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 700000,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "virtual-representative-selection-rung",
+      "why": "A published question contributes ONE representative row; its other members are covered but not plotted. That is a representative decision, not an exclusion, and it gets its own rung.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 250000
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "field-normalization-completeness-rung",
+      "why": "A normalization field that lost a member is dropped whole rather than normalized over survivors; those members are covered, not plotted.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 30000,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "phantom-liquidity-rung",
+      "why": "Never-bid Kalshi placeholders and Polymarket no-bid band members are covered prices that are not forecasts.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 120000,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "malformed-and-unknown-truth-rung",
+      "why": "Markets that graded nobody, impossible binaries, missing draw members and orphan partitions are UNKNOWN truth \u2014 never confident losses.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 90000,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "sportsbook-treatment-is-a-separate-leg",
+      "why": "Sportsbook curve observations are plotted but are not futures outcomes, so they belong to the observation bridge and never to coverage.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "headline_unit": "curve_observation",
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "sportsbook-legs-omitted-breaks-observations",
+      "why": "Dropping the sportsbook leg makes the published headline unexplainable; the residual must surface instead of the two numbers being quietly reconciled.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 0,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "incomplete"
+      },
+      "expected_refusals": [
+        "OBSERVATION_BRIDGE_BROKEN"
+      ]
+    },
+    {
+      "id": "checked-zero-is-not-unknown",
+      "why": "Every rung measured, several genuinely empty. A checked zero is a real finding and the census stays complete.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 0,
+          "field_incomplete": 0,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "unknown-rung-never-becomes-zero",
+      "why": "One rung could not be measured (a carried-forward pre-census checkpoint). It reads unknown, the census is incomplete, and nothing claims zero.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "incomplete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": [
+        "INCOMPLETE_PUBLISHED_AS_COMPLETE"
+      ]
+    },
+    {
+      "id": "plotted-hinge-must-agree",
+      "why": "The plotted count is produced twice \u2014 as the bridge's terminal rung and by the population chain's own published_outcomes. Divergence is a defect.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612315,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "incomplete"
+      },
+      "expected_refusals": [
+        "PLOTTED_HINGE_DIVERGES"
+      ]
+    },
+    {
+      "id": "plotted-hinge-unchecked-is-refused",
+      "why": "A census with no independent count of the hinge proves nothing about the population it claims to explain.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": null,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "incomplete"
+      },
+      "expected_refusals": [
+        "PLOTTED_HINGE_UNCHECKED"
+      ]
+    },
+    {
+      "id": "coverage-may-not-be-called-plotted",
+      "why": "Alex's ruling, stated as a refusal: the coverage number may never be presented as the plotted observation count.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "coverage_presented_as_plotted": true
+      },
+      "expected_refusals": [
+        "COVERAGE_LABELLED_AS_PLOTTED"
+      ]
+    },
+    {
+      "id": "headline-unit-must-stay-observations",
+      "why": "Promoting coverage to the headline unit is the exact substitution the ruling forbids.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "headline_unit": "futures_outcome"
+      },
+      "expected_refusals": [
+        "HEADLINE_UNIT_NOT_OBSERVATIONS"
+      ]
+    },
+    {
+      "id": "generation-may-not-be-mixed",
+      "why": "A census generated by one build stapled onto another build's payload is two halves of two different bridges.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 99,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "payload_generation": 100
+      },
+      "expected_refusals": [
+        "MIXED_GENERATION"
+      ]
+    },
+    {
+      "id": "population-version-may-not-be-mixed",
+      "why": "Same failure across a population change: the census names its own version and must match the payload it ships inside.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q266",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "payload_population_version": "q267"
+      },
+      "expected_refusals": [
+        "MIXED_POPULATION_VERSION"
+      ]
+    },
+    {
+      "id": "degraded-tier-marks-census-unavailable",
+      "why": "A last-good payload written before the census shipped serves an explicitly unavailable census \u2014 absent would read as 'nothing excluded'.",
+      "measured": {
+        "unavailable_reason": "payload_predates_census",
+        "population_version": "q267"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "tier_has_no_census": true,
+      "expected_refusals": [
+        "INCOMPLETE_PUBLISHED_AS_COMPLETE"
+      ]
+    },
+    {
+      "id": "degraded-tier-honest-is-accepted",
+      "why": "The same unavailable census, not claimed complete, is a legitimate degraded answer.",
+      "measured": {
+        "unavailable_reason": "payload_predates_census",
+        "population_version": "q267"
+      },
+      "tier_has_no_census": true,
+      "expected_refusals": []
+    },
+    {
+      "id": "census-may-not-change-the-curve",
+      "why": "Publishing the census is additive. Touching the plotted population under cover of a transparency change is refused.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "changed_plotted_population": true
+      },
+      "expected_refusals": [
+        "PLOTTED_POPULATION_CHANGED"
+      ]
+    },
+    {
+      "id": "census-may-not-bump-the-version",
+      "why": "The ruling explicitly does not authorize a population/version change.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551
+      },
+      "declares": {
+        "bumped_population_version": true
+      },
+      "expected_refusals": [
+        "UNAUTHORIZED_VERSION_BUMP"
+      ]
+    },
+    {
+      "id": "empty-population-is-still-a-partition",
+      "why": "A build with nothing resolved yet: every rung checked, all zero, both bridges reconcile at zero. Vacuous but honest.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 0,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 0,
+          "truth_ineligible_source": 0,
+          "question_ungraded": 0,
+          "malformed_or_unknown_truth": 0,
+          "phantom_liquidity": 0,
+          "structural_artifact": 0,
+          "field_incomplete": 0,
+          "representative_not_selected": 0
+        },
+        "sportsbook_curve_legs": 0,
+        "published_curve_observations": 0,
+        "published_outcomes_crosscheck": 0,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 0,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    }
+  ]
+}

@@ -266,8 +266,16 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
 
     out = await calibration.public_calibration(db=object(), bust=0)
     assert out["buckets"] == [9, 9]
-    # A warm hit primes the process-local last-good for the next Redis blip.
-    assert rc.recall_last_good("calibration:main") == payload
+    # A warm hit primes the process-local last-good for the next Redis blip —
+    # with exactly what was served, so the blip cannot replay a different shape.
+    assert rc.recall_last_good("calibration:main") == out
+    # Queue 300C: this cached copy predates the coverage census, so the served
+    # payload says so explicitly instead of leaving the key absent (which a
+    # consumer would read as "nothing was excluded"). Nothing else is touched.
+    census = out.pop("calibration_coverage_census")
+    assert census["status"] == "unavailable"
+    assert census["reason"] == "payload_predates_census"
+    assert out == payload
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,10 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.utils.calibration_coverage_bridge import RUNG_KEYS as _COVERAGE_RUNG_KEYS
+from app.utils.calibration_coverage_bridge import (
+    build_coverage_census as _build_coverage_census,
+)
 from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
@@ -2108,6 +2112,153 @@ def _calibration_population_ctes(
             )"""
 
 
+# =============================================================================
+# Queue 300C — the coverage census + additive bridge (Alex's 2026-08-02 ruling).
+#
+# The public headline unit is PUBLISHED CURVE OBSERVATIONS (~653K). The much
+# larger "outcomes with calibration-price coverage" (~1.28M) may only appear as
+# a separately labelled census joined to the plotted rows by an additive bridge.
+# The contract — units, rung order, unknown-vs-checked-zero — lives in
+# ``app.utils.calibration_coverage_bridge``; this block is the one place that
+# MEASURES it, and it measures it from the canonical population CTEs rather than
+# from a second copy of the population (the C14 drift lesson).
+#
+# Precedence, not labels. An excluded outcome routinely trips several filters at
+# once, so the per-filter counters the payload already publishes cannot be
+# summed — they double-count. Each coverage outcome is assigned to the FIRST
+# rung it matches, which makes the rungs a partition and the bridge exact.
+# =============================================================================
+
+#: rung key -> the SQL predicate that claims it, evaluated in
+#: ``_COVERAGE_RUNG_KEYS`` order. Every flag is COALESCE-guarded to false
+#: so a NULL flag routes exactly the way ``deduped``'s WHERE would treat it
+#: (NULL is not true, so the row is not published) instead of falling through to
+#: the catch-all and being mislabelled a representative loss.
+_COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
+    ("plotted_on_curve", "d.outcome_id IS NOT NULL"),
+    ("market_result_unavailable", "mi.market_id IS NULL"),
+    ("truth_source_missing", "cu.resolution_source IS NULL"),
+    (
+        "truth_ineligible_source",
+        f"cu.resolution_source NOT IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}",
+    ),
+    ("question_ungraded", "n.outcome_id IS NULL"),
+    (
+        "malformed_or_unknown_truth",
+        "COALESCE(n.is_no_winner_market, false) "
+        "OR COALESCE(n.is_malformed_binary, false) "
+        "OR COALESCE(n.is_draw_authority_missing, false) "
+        "OR COALESCE(n.is_orphan_partition, false)",
+    ),
+    (
+        "phantom_liquidity",
+        "NOT COALESCE(n.is_liquid, false) OR COALESCE(n.is_poly_placeholder, false)",
+    ),
+    (
+        "structural_artifact",
+        "COALESCE(n.is_esports_bundle, false) "
+        "OR COALESCE(n.is_golf_placeholder, false) "
+        "OR COALESCE(n.is_kalshi_prop_threshold, false) "
+        "OR COALESCE(n.is_weather_wide_spread, false)",
+    ),
+    ("field_incomplete", "COALESCE(n.is_field_incomplete, false)"),
+    # No predicate: the terminal ELSE. A row that reached ``normalized``, was
+    # refused by none of the rungs above, and still did not reach ``deduped``
+    # was dropped by the representative rules (rn != 1, modal placeholder price,
+    # extreme tail in a non-partition multi pool). NOTE: this catch-all is also
+    # where a NEWLY ADDED ``deduped`` filter would silently land — the eval
+    # corpus pins the rung set so adding one without a rung fails the contract.
+    ("representative_not_selected", ""),
+)
+
+
+def _coverage_bridge_column(rung: str) -> str:
+    """The one-row summary column name carrying ``rung``'s count."""
+    return f"cb_{rung}"
+
+
+def _coverage_bridge_ctes() -> str:
+    """The census CTEs, appended to the canonical population chain.
+
+    Deliberately built ON TOP of ``market_info`` / ``normalized`` / ``deduped``
+    inside the SAME statement rather than as a second read: the population is
+    already materialized, so this costs one scan of the coverage universe plus
+    hash joins, it cannot drift from the curve it explains, and both ends of the
+    bridge are guaranteed to come from ONE generation of one transaction.
+    """
+    predicate_keys = tuple(key for key, _sql in _COVERAGE_RUNG_PREDICATES)
+    if predicate_keys != _COVERAGE_RUNG_KEYS:
+        # A rung added to the contract with no predicate here (or vice versa)
+        # would quietly land its outcomes in the catch-all. Refuse to build SQL
+        # that cannot reconcile rather than publish a census that lies.
+        raise ValueError(
+            "coverage bridge rung drift: "
+            f"contract={_COVERAGE_RUNG_KEYS} sql={predicate_keys}"
+        )
+
+    branches = "\n                        ".join(
+        f"WHEN {sql} THEN '{key}'"
+        for key, sql in _COVERAGE_RUNG_PREDICATES
+        if sql
+    )
+    terminal = _COVERAGE_RUNG_PREDICATES[-1][0]
+    filters = ",\n                    ".join(
+        f"COUNT(*) FILTER (WHERE rung = '{key}') AS {_coverage_bridge_column(key)}"
+        for key in _COVERAGE_RUNG_KEYS
+    )
+    return f"""
+            -- Queue 300C: the COVERAGE population — every resolved futures
+            -- outcome carrying a usable calibration price. Joined to
+            -- futures_markets directly (not market_info) so the symmetric
+            -- DataGolf-residual withholding is a visible rung rather than an
+            -- invisible pre-filter.
+            coverage_universe AS (
+                SELECT fo.id AS outcome_id,
+                    fo.market_id AS market_id,
+                    fo.resolution_source AS resolution_source,
+                    (fo.calibration_probability IS NOT NULL) AS has_terminal_cal_price
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            ),
+            -- FIRST MATCH WINS. The order is the contract's rung order; changing
+            -- it moves outcomes between rungs and is a contract change.
+            coverage_bridge AS (
+                SELECT cu.has_terminal_cal_price,
+                    CASE
+                        {branches}
+                        ELSE '{terminal}'
+                    END AS rung
+                FROM coverage_universe cu
+                LEFT JOIN market_info mi ON mi.market_id = cu.market_id
+                LEFT JOIN normalized n ON n.outcome_id = cu.outcome_id
+                LEFT JOIN deduped d ON d.outcome_id = cu.outcome_id
+            ),
+            coverage_bridge_summary AS (
+                SELECT
+                    {filters},
+                    COUNT(*) AS cb_coverage_total,
+                    COUNT(*) FILTER (WHERE has_terminal_cal_price)
+                        AS cb_with_terminal_cal_price
+                FROM coverage_bridge
+            )"""
+
+
+def _coverage_bridge_select_columns() -> str:
+    """``MAX(...)`` passthrough columns for the 1-row census, CROSS JOINed in.
+
+    Same shape as ``liq_summary`` / ``published_summary``: constant across every
+    returned bucket row, so the served ``buckets`` list is unchanged.
+    """
+    names = [_coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS] + [
+        "cb_coverage_total",
+        "cb_with_terminal_cal_price",
+    ]
+    return "".join(f",\n                MAX(cbs.{name}) AS {name}" for name in names)
+
+
 def _ece_from_buckets(buckets: dict[int, dict]) -> float | None:
     """Equal-weight-per-bucket |actual − predicted|, in percentage points.
 
@@ -2308,7 +2459,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                     COUNT(*) AS published_outcomes,
                     COUNT(DISTINCT vm_id) AS published_questions
                 FROM deduped
-            ),
+            ),"""
+            + _coverage_bridge_ctes()
+            + """,
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
                 FROM deduped
@@ -2354,10 +2507,16 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 MAX(ps.mex_published_markets) AS mex_published_markets,
                 MAX(ps.mex_published_outcomes) AS mex_published_outcomes,
                 MAX(ps.published_outcomes) AS published_outcomes,
-                MAX(ps.published_questions) AS published_questions
+                MAX(ps.published_questions) AS published_questions"""
+            # Queue 300C: the coverage census rides along as constant 1-row
+            # columns, exactly like liq_summary / published_summary above. The
+            # GROUP BY is untouched, so every published bucket keeps its shape.
+            + _coverage_bridge_select_columns()
+            + """
             FROM bucketed
             CROSS JOIN liq_summary ls
             CROSS JOIN published_summary ps
+            CROSS JOIN coverage_bridge_summary cbs
             GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
             ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
         """)
@@ -2465,6 +2624,26 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         mex_published_outcomes = _int0("mex_published_outcomes")
         published_outcomes = _int0("published_outcomes")
         published_questions = _int0("published_questions")
+
+        # Queue 300C: the coverage-bridge rungs. Deliberately NOT ``_int0`` —
+        # a missing column must read UNKNOWN, never zero. It can genuinely be
+        # missing: ``rows`` may be carried forward from a checkpoint written by
+        # a beat that ran before this census shipped (the population version is
+        # unchanged, by design, so that checkpoint stays valid for the curve).
+        # Zero there would claim "no outcomes were excluded for this reason",
+        # which is the one lie this census exists to prevent.
+        def _int_or_none(attr):
+            if not rows:
+                return None
+            value = getattr(rows[0], attr, None)
+            return int(value) if value is not None else None
+
+        coverage_rung_counts = {
+            key: _int_or_none(_coverage_bridge_column(key))
+            for key in _COVERAGE_RUNG_KEYS
+        }
+        coverage_total_measured = _int_or_none("cb_coverage_total")
+        coverage_with_terminal_price = _int_or_none("cb_with_terminal_cal_price")
 
         # Queue #159 (#1010): esports match-bundle exclusion transparency count.
         esports_bundle_excluded = (
@@ -2899,6 +3078,45 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
     all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
     total_outcomes = sum(r.n for r in all_rows)
     total_winners = sum(r.winners for r in all_rows)
+
+    # Queue 300C: the OBSERVATION side of the bridge. ``total_outcomes`` is the
+    # published-curve unit (curve observations, ~653K); the futures outcomes are
+    # only part of it, and the sportsbook curves — Odds API moneyline, spreads,
+    # totals and the per-bookmaker moneyline — supply the rest. Counted directly
+    # from the same rows the curve is built from, not derived by subtraction, so
+    # a miscount surfaces as a residual instead of reconciling by construction.
+    sportsbook_curve_legs = sum(
+        r.n
+        for r in list(events_rows)
+        + list(spreads_rows)
+        + list(totals_rows)
+        + list(bookmaker_rows)
+    )
+    coverage_census = _build_coverage_census(
+        rung_counts=coverage_rung_counts,
+        sportsbook_curve_legs=sportsbook_curve_legs,
+        published_curve_observations=total_outcomes,
+        # The hinge, counted independently by the population chain itself.
+        published_outcomes_crosscheck=published_outcomes,
+        population_version=CALIBRATION_POPULATION_VERSION,
+        generation=getattr(runner, "generation", None),
+        with_terminal_calibration_price=coverage_with_terminal_price,
+    )
+    # The measured universe total and the summed partition are two reads of the
+    # same CTE, so they must agree exactly; if they ever do not, the CASE stopped
+    # being a partition and the census must say so rather than publish a number.
+    _measured_coverage = (coverage_census.get("units") or {}).get(
+        "outcomes_with_calibration_coverage"
+    ) or {}
+    if (
+        coverage_total_measured is not None
+        and _measured_coverage.get("value") is not None
+        and coverage_total_measured != _measured_coverage["value"]
+    ):
+        coverage_census["status"] = "incomplete"
+        coverage_census["invariants"]["ok"] = False
+        coverage_census["invariants"]["violations"].append("COVERAGE_PARTITION_RESIDUAL")
+        coverage_census["invariants"]["coverage_total_measured"] = coverage_total_measured
 
     # Queue 299 rung 4b: the futures query now groups by is_nonexclusive_bundle as
     # well, purely so the bundle cohort can be measured. Build the census from the
@@ -3346,6 +3564,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             published_outcomes=published_outcomes,
             published_questions=published_questions,
         ),
+        # Queue 300C (Alex 2026-08-02): the supporting census. ADDITIVE — nothing
+        # above this line changed, the plotted population is untouched, and the
+        # population version is unchanged. ``total_outcomes`` remains THE headline
+        # unit (published curve observations); the far larger coverage number
+        # lives in here, labelled as coverage, with the rung-by-rung account of
+        # why the two differ.
+        "calibration_coverage_census": coverage_census,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -1,0 +1,114 @@
+{
+  "_note": "Queue 300C hand-off fixture for Lane 2's native coverage card. This is the exact shape /api/calibration emits under the new `calibration_coverage_census` key. The COUNTS are illustrative (production-shaped, not a live reading); the SHAPE, keys, units and null-vs-zero semantics are the contract. Render units.published_curve_observations as the headline and units.outcomes_with_calibration_coverage as the labelled supporting census \u2014 never the other way round (Alex ruling 2026-08-02). A rung with outcomes=null / checked=false was NOT measured: show it as unknown, never as zero.",
+  "calibration_coverage_census": {
+    "schema_version": "calibration-coverage-bridge/v1",
+    "status": "complete",
+    "population_version": "q267",
+    "generation": 100,
+    "units": {
+      "published_curve_observations": {
+        "unit": "curve_observation",
+        "value": 652407,
+        "rule": "One row plotted on the published calibration curve. Futures outcomes are one contributing population; the sportsbook curves (moneyline, spreads, totals, per-bookmaker moneyline) contribute observations that are not futures outcomes."
+      },
+      "outcomes_with_calibration_coverage": {
+        "unit": "futures_outcome",
+        "value": 1466736,
+        "rule": "One resolved futures outcome carrying a usable calibration price (opening probability strictly between 0 and 1, terminal calibration price preferred). This is the population calibration COVERS; it is not the population the curve PLOTS.",
+        "with_terminal_calibration_price": 1284551
+      }
+    },
+    "coverage_bridge": {
+      "from": "outcomes_with_calibration_coverage",
+      "to": "plotted_on_curve",
+      "unit": "futures_outcome",
+      "rungs": [
+        {
+          "key": "plotted_on_curve",
+          "unit": "futures_outcome",
+          "outcomes": 612332,
+          "checked": true,
+          "rule": "Plotted on the published curve \u2014 survived every eligibility, truth, liquidity, shape and representative rule."
+        },
+        {
+          "key": "market_result_unavailable",
+          "unit": "futures_outcome",
+          "outcomes": 0,
+          "checked": true,
+          "rule": "The whole market is withheld symmetrically because its result cannot be established (DataGolf recovery residual): winners AND losers are dropped together so participation is never one-sidedly assumed."
+        },
+        {
+          "key": "truth_source_missing",
+          "unit": "futures_outcome",
+          "outcomes": 165863,
+          "checked": true,
+          "rule": "The outcome carries no resolution source at all, so nothing independent grades it."
+        },
+        {
+          "key": "truth_ineligible_source",
+          "unit": "futures_outcome",
+          "outcomes": 513288,
+          "checked": true,
+          "rule": "The outcome's winner was established by a source that is not independent of the market's own price (price-derived or guess-family), so it cannot grade its own forecast."
+        },
+        {
+          "key": "question_ungraded",
+          "unit": "futures_outcome",
+          "outcomes": 41207,
+          "checked": true,
+          "rule": "The virtual question this outcome belongs to graded no winner at all, so its members are unknown truth rather than confident losses."
+        },
+        {
+          "key": "malformed_or_unknown_truth",
+          "unit": "futures_outcome",
+          "outcomes": 62114,
+          "checked": true,
+          "rule": "The market's captured result is not a scoreable prediction: nobody graded a winner, a two-outcome partition graded zero or two, a draw-capable duel captured no draw member, or a declared field captured one member or fewer."
+        },
+        {
+          "key": "phantom_liquidity",
+          "unit": "futures_outcome",
+          "outcomes": 39901,
+          "checked": true,
+          "rule": "The price is a phantom, not a forecast: a Kalshi outcome that was never bid and never traded, or a Polymarket no-bid placeholder sitting in the near-0.50 band."
+        },
+        {
+          "key": "structural_artifact",
+          "unit": "futures_outcome",
+          "outcomes": 18740,
+          "checked": true,
+          "rule": "A measured pricing artifact rather than a genuine probability: esports match bundles, golf one-sided-ask placeholders, Kalshi player-prop threshold captures in the settlement-collapse band, and wide-spread weather midpoints."
+        },
+        {
+          "key": "field_incomplete",
+          "unit": "futures_outcome",
+          "outcomes": 2216,
+          "checked": true,
+          "rule": "The outcome belongs to a normalization field that lost a member to an exclusion above, so the partition no longer sums to one and is dropped whole rather than normalized over its survivors."
+        },
+        {
+          "key": "representative_not_selected",
+          "unit": "futures_outcome",
+          "outcomes": 11075,
+          "checked": true,
+          "rule": "The question is published, but this outcome is not the row that represents it: a non-representative binary side, a placeholder modal price, or an extreme tail in a non-partition multi pool."
+        }
+      ],
+      "reconciles": true,
+      "residual": 0
+    },
+    "observation_bridge": {
+      "unit": "curve_observation",
+      "futures_outcomes_plotted": 612332,
+      "sportsbook_curve_legs": 40075,
+      "published_curve_observations": 652407,
+      "reconciles": true,
+      "residual": 0
+    },
+    "invariants": {
+      "ok": true,
+      "violations": [],
+      "published_outcomes_crosscheck": 612332
+    }
+  }
+}

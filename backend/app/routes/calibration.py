@@ -790,6 +790,7 @@ async def public_calibration(
     import json as _json
 
     from app.utils import request_cache as _rc
+    from app.utils.calibration_coverage_bridge import ensure_census as _ensure_census
     from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S, snapshot_verdict
 
     _lg_key = "calibration:main"
@@ -818,7 +819,10 @@ async def public_calibration(
         explicit, so the banner can render "as of <time>" rather than implying the
         numbers are live.
         """
-        out = dict(payload)
+        # Queue 300C: a last-good/durable copy can predate the coverage census.
+        # Absent is not zero — mark it explicitly unavailable so the page cannot
+        # read "no census" as "nothing was excluded".
+        out = dict(_ensure_census(payload, reason="payload_predates_census"))
         cache = {"status": "stale", "reason": reason}
         if verdict is not None:
             if verdict.age_s is not None:
@@ -886,6 +890,10 @@ async def public_calibration(
                 data, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
             )
             if isinstance(data, dict) and main_verdict.status != "wrong_version":
+                # Queue 300C: same guard as the stale tiers. A ``main`` key
+                # written by the last pre-census build is fresh and correct for
+                # the curve, but carries no census — say so explicitly.
+                data = _ensure_census(data, reason="payload_predates_census")
                 _cache["data"] = data
                 _cache["timestamp"] = now
                 _rc.remember_last_good(_lg_key, data)
