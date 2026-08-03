@@ -1,7 +1,7 @@
 # PRODUCT BRAIN — the load-bearing judgment for staging Bain Luck lanes
 # Purpose: everything an agent (Codex / Fable / Opus) needs to stage work WELL — the rulings AND the WHY behind them.
 # This externalizes Fable's private memory into the repo so the sharpest available reasoner can stage. Read this + CLAUDE.md + docs/PRD.md.
-# Owner: whoever stages. Update when Alex issues a new ruling (append + date it). Last consolidated 2026-07-28.
+# Owner: whoever stages. APPEND-ONLY: add each new ruling as a NEW dated `## RULINGS — <date>` section at the bottom. NEVER regenerate, "consolidate", rewrite, or trim this file wholesale — doing so silently dropped ratified rulings TWICE (see the RE-RESTORED markers below). If you are staging a "docs task", it does not authorize touching this file's existing sections. CI-guarded: backend/tests/test_product_brain_integrity.py turns master red if any ruling section disappears or the doc shrinks below its banked section count.
 
 ## HOW TO USE THIS
 The queue-file mechanics live in `.claude/handoff/README.md` + `FABLE-STANDIN.md`. THIS doc is the judgment layer: the standing rulings, the reasoning behind them, and the failure modes to avoid. The ordered backlog is `plan_next_10_queues.md`; pre-written specs are in `READY-FIXES.md`; deep strategy in `.claude/handoff/strategy_*.md`.
