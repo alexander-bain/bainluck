@@ -1,0 +1,43 @@
+{
+  "schema_version": "scoreboard-contamination-contract/v1",
+  "ops_r358_requests": {
+    "settlement": ["market_id", "event_id", "group_id", "source_external_id", "status", "resolution_date", "grade_state", "eligibility_reason"],
+    "ownership": ["market_id", "event_id", "group_id", "member_market_ids", "outcome_ids", "domain", "competition", "gender"],
+    "ladder": ["raw outcome label", "canonical operator", "parsed threshold", "serialized label", "probability"]
+  },
+  "defaults": {
+    "market": {"id":"m1","group_id":"g1","event_id":"e1","domain":"tennis","competition":"us-open-women","gender":"women","expected_winners":1,"mutually_exclusive":false,"complete":true},
+    "members": [{"group_id":"g1","event_id":"e1","domain":"tennis","competition":"us-open-women","gender":"women"}],
+    "outcomes": [], "poison": false, "clean_sibling_preserved": true, "expected_status":"NOT_OBSERVABLE", "expected_refusals":[]
+  },
+  "cases": [
+    {"id":"valid-same-event-group"},
+    {"id":"women-draw-men-poison","members":[{"group_id":"g1","event_id":"e1","domain":"tennis","competition":"us-open-women","gender":"men"}],"expected_refusals":["CROSS_GENDER_MEMBER"]},
+    {"id":"nfl-halftime-poison","market":{"id":"half","group_id":"g2","event_id":"show","domain":"entertainment","competition":"halftime","gender":null,"expected_winners":1,"mutually_exclusive":false,"complete":true},"members":[{"group_id":"g2","event_id":"game","domain":"football","competition":"halftime","gender":null}],"expected_refusals":["CROSS_DOMAIN_MEMBER","CROSS_EVENT_MEMBER"]},
+    {"id":"mlb-manager-npb-poison","market":{"id":"npb","group_id":"g3","event_id":"npb-season","domain":"baseball","competition":"NPB","gender":null,"expected_winners":1,"mutually_exclusive":false,"complete":true},"members":[{"group_id":"g3","event_id":"mlb-season","domain":"baseball","competition":"MLB","gender":null}],"expected_refusals":["CROSS_COMPETITION_MEMBER","CROSS_EVENT_MEMBER"]},
+    {"id":"incompatible-group-id-collision","members":[{"group_id":"g1","event_id":"e2","domain":"tennis","competition":"australian-open-women","gender":"women"}],"expected_refusals":["CROSS_COMPETITION_MEMBER","CROSS_EVENT_MEMBER"]},
+    {"id":"wrong-group-id","members":[{"group_id":"g9","event_id":"e1","domain":"tennis","competition":"us-open-women","gender":"women"}],"expected_refusals":["GROUP_ID_MISMATCH"]},
+    {"id":"cross-market-outcome","outcomes":[{"id":"a","market_id":"other","probability":0.6}],"visible_leader_id":"a","expected_refusals":["CROSS_MARKET_OUTCOME"]},
+    {"id":"duplicate-outcome-id","outcomes":[{"id":"a","market_id":"m1","probability":0.6},{"id":"a","market_id":"m1","probability":0.4}],"visible_leader_id":"a","expected_refusals":["DUPLICATE_OUTCOME_ID"]},
+    {"id":"duplicate-single-winner","outcomes":[{"id":"a","market_id":"m1","probability":0.5,"winner":true},{"id":"b","market_id":"m1","probability":0.5,"winner":true}],"visible_leader_id":"a","expected_refusals":["DUPLICATE_SINGLE_WINNER"]},
+    {"id":"clean-single-winner","outcomes":[{"id":"a","market_id":"m1","probability":0.6,"winner":true},{"id":"b","market_id":"m1","probability":0.4}],"visible_leader_id":"a"},
+    {"id":"visible-leader-clean","outcomes":[{"id":"a","market_id":"m1","probability":0.7},{"id":"b","market_id":"m1","probability":0.3}],"raw_leader_id":"a","visible_leader_id":"a"},
+    {"id":"mixed-binary-parent-leader-clean","outcomes":[{"id":"no","market_id":"m1","probability":0.64,"visible":false},{"id":"alice","market_id":"m1","probability":0.22},{"id":"bob","market_id":"m1","probability":0.14}],"raw_leader_id":"no","visible_leader_id":"alice"},
+    {"id":"mixed-binary-parent-leader-poison","outcomes":[{"id":"no","market_id":"m1","probability":0.64,"visible":false},{"id":"alice","market_id":"m1","probability":0.22},{"id":"bob","market_id":"m1","probability":0.14}],"raw_leader_id":"no","visible_leader_id":"no","expected_refusals":["VISIBLE_LEADER_WRONG"]},
+    {"id":"authoritative-leader-omitted","outcomes":[{"id":"a","market_id":"m1","probability":0.01},{"id":"b","market_id":"m1","probability":0.01}],"raw_leader_id":"missing","visible_leader_id":"a","expected_refusals":["AUTHORITATIVE_LEADER_MISSING"]},
+    {"id":"complete-exclusive-clean","market":{"id":"m1","group_id":"g1","event_id":"e1","domain":"mma","competition":"title","gender":null,"expected_winners":1,"mutually_exclusive":true,"complete":true},"members":[{"group_id":"g1","event_id":"e1","domain":"mma","competition":"title","gender":null}],"outcomes":[{"id":"a","market_id":"m1","probability":0.62},{"id":"b","market_id":"m1","probability":0.38}],"visible_leader_id":"a"},
+    {"id":"complete-exclusive-over-100","market":{"id":"m1","group_id":"g1","event_id":"e1","domain":"mma","competition":"title","gender":null,"expected_winners":1,"mutually_exclusive":true,"complete":true},"members":[{"group_id":"g1","event_id":"e1","domain":"mma","competition":"title","gender":null}],"outcomes":[{"id":"a","market_id":"m1","probability":0.62},{"id":"b","market_id":"m1","probability":0.47},{"id":"c","market_id":"m1","probability":0.38}],"visible_leader_id":"a","expected_refusals":["COMPLETE_EXCLUSIVE_SUM_INVALID"]},
+    {"id":"incomplete-exclusive-raw","market":{"id":"m1","group_id":"g1","event_id":"e1","domain":"awards","competition":"grammy","gender":null,"expected_winners":1,"mutually_exclusive":true,"complete":false},"members":[{"group_id":"g1","event_id":"e1","domain":"awards","competition":"grammy","gender":null}],"outcomes":[{"id":"a","market_id":"m1","probability":0.01},{"id":"b","market_id":"m1","probability":0.01}],"visible_leader_id":"a","normalized":false},
+    {"id":"incomplete-exclusive-invented-normalization","market":{"id":"m1","group_id":"g1","event_id":"e1","domain":"awards","competition":"grammy","gender":null,"expected_winners":1,"mutually_exclusive":true,"complete":false},"members":[{"group_id":"g1","event_id":"e1","domain":"awards","competition":"grammy","gender":null}],"outcomes":[{"id":"a","market_id":"m1","probability":0.5},{"id":"b","market_id":"m1","probability":0.5}],"visible_leader_id":"a","normalized":true,"expected_refusals":["INCOMPLETE_SET_NORMALIZED"]},
+    {"id":"valid-at-least-ladder","ladder":{"rungs":[{"parsed":true,"value":0,"operator":"at_least","label":"at least 0","probability":0.9},{"parsed":true,"value":1,"operator":"at_least","label":"at least 1","probability":0.7}]}},
+    {"id":"valid-exact-ladder","ladder":{"rungs":[{"parsed":true,"value":0,"operator":"exact","label":"Exactly 0","probability":0.2},{"parsed":true,"value":1,"operator":"exact","label":"Exactly 1","probability":0.4}]}},
+    {"id":"exact-score-default-zero-poison","ladder":{"rungs":[{"parsed":false,"value":0,"operator":"unknown","label":"≥ 0","probability":0.3},{"parsed":false,"value":0,"operator":"unknown","label":"≥ 0","probability":0.2}]},"expected_refusals":["COLLAPSED_THRESHOLD_LABEL","DUPLICATE_THRESHOLD_VALUE","THRESHOLD_OPERATOR_INVALID","UNPARSED_THRESHOLD"]},
+    {"id":"scrambled-at-least-ladder","ladder":{"rungs":[{"parsed":true,"value":1,"operator":"at_least","label":"at least 1","probability":0.7},{"parsed":true,"value":0,"operator":"at_least","label":"at least 0","probability":0.9}]},"expected_refusals":["LADDER_MONOTONICITY_BROKEN","LADDER_ORDER_WRONG"]},
+    {"id":"contradictory-at-least-ladder","ladder":{"rungs":[{"parsed":true,"value":0,"operator":"at_least","label":"at least 0","probability":0.5},{"parsed":true,"value":1,"operator":"at_least","label":"at least 1","probability":0.9}]},"expected_refusals":["LADDER_MONOTONICITY_BROKEN"]},
+    {"id":"poison-first","poison":true,"clean_sibling_preserved":true},
+    {"id":"poison-middle","poison":true,"clean_sibling_preserved":true},
+    {"id":"poison-last","poison":true,"clean_sibling_preserved":true},
+    {"id":"api-only-premature-closure","closure":{"claimed_shipped_good":true,"deployed_sha":null,"pinned_identity_checked":false,"rendered_terminal":null,"adjacent_clean":false,"replacement_scan_clean":false},"expected_refusals":["RENDERED_CLOSURE_EVIDENCE_MISSING"]},
+    {"id":"rendered-corrected-pass","closure":{"claimed_shipped_good":true,"deployed_sha":"abc123","pinned_identity_checked":true,"rendered_terminal":"corrected","adjacent_clean":true,"replacement_scan_clean":true},"expected_status":"SHIPPED_GOOD"}
+  ]
+}
