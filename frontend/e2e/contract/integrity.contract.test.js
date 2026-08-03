@@ -678,10 +678,40 @@ describe("Discover audit hooks are state-based", () => {
     }
   });
 
-  it("the smoke journey fails a still-mounted skeleton", () => {
-    const raw = read("frontend", "e2e", "specs", "discover-smoke.spec.ts");
+  it("the smoke journey measures the skeleton rather than deciding for itself", () => {
+    // L2-239. This used to pin `skeletonVisible` — the inline
+    // `!skeletonVisible` clause that made `content.main_region_nonblank`
+    // permanently red on `/discover`, because the route segment's `loading.tsx`
+    // adds a second skeleton marker `/` has no equivalent for. What must be
+    // pinned is not that particular expression but the property behind it: the
+    // spec HANDS OVER measurements and the shared classifier decides. A spec
+    // that computes its own boolean can grade itself more leniently than the
+    // contract fixtures do, which is the false green this whole rail exists to
+    // prevent — in either direction.
+    const raw = code(read("frontend", "e2e", "specs", "discover-smoke.spec.ts"));
     assert.ok(raw.includes('[data-testid="discover-skeleton"]'));
-    assert.match(raw, /skeletonVisible/);
+    assert.match(raw, /measureMainRegion\(page, SKELETON\)/, "the skeleton must be measured");
+    assert.match(raw, /mainRegion,/, "the measurements must reach the evaluator");
+    assert.ok(
+      !/mainRegionNonBlank:/.test(raw),
+      "the smoke spec must not hand the evaluator a pre-computed verdict"
+    );
+  });
+
+  it("the two content checks read different signals", () => {
+    // The independence requirement. `content.main_region_nonblank` grades text
+    // volume; `content.real_card_or_named_empty` grades the card/empty-state
+    // hooks. If the region classifier ever learned about `realCardFound`, two
+    // checks would agree by construction and neither could catch the other's
+    // false positive — and the card selector has produced one before (L2-223's
+    // `break-inside-avoid`).
+    const classifier = code(read("frontend", "e2e", "helpers", "contentState.js"));
+    for (const forbidden of ["realCardFound", "emptyState", "discover-card"]) {
+      assert.ok(
+        !classifier.includes(forbidden),
+        `contentState.js must not consult ${forbidden} — that is the other check's signal`
+      );
+    }
   });
 
   it("the components actually render the hooks the specs look for", () => {

@@ -15,9 +15,22 @@
 //                                    the end-of-feed card.
 //   normal                         — the adjacent regression journey.
 //
+// L2-239 Item 1 — this script is now SELF-GRADING.
+//
+// L2-238 left it printing observations for a human to read, and then no human
+// could run it: Chromium cannot spawn a renderer in the authoring sandbox
+// (`bootstrap_check_in ... Permission denied (1100)`), so the three states were
+// closed on source-level proof. An unrunnable script that reports numbers is
+// one `looks right to me` away from certifying a broken render, which is the
+// same false green the rest of this rail exists to prevent. So every state now
+// carries EXPECTATIONS, each viewport produces an explicit pass/fail, and the
+// process exits non-zero if any of them misses. A failed render routes the
+// defect; it does not get converted into a source-level pass.
+//
 // Usage: node scripts/l2238-render-states.js <baseURL> <outDir>
 
 const { chromium, devices } = require("@playwright/test");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -103,6 +116,106 @@ const STATES = {
   "unavailable-without-last-good": [UNAVAILABLE],
   "unavailable-with-last-good": [POPULATED(12), UNAVAILABLE],
 };
+
+/**
+ * What each state MUST look like on screen. `seen` is the observation record
+ * built below; a predicate returning a string is a failure with its reason.
+ *
+ * These are the queue's acceptance criteria, restated as executable claims:
+ * last-good cards stay visible, a cold unavailable offers a retry, genuine
+ * exhaustion alone says caught up, and no state silently borrows another's UI.
+ */
+const EXPECTATIONS = {
+  normal: [
+    ["cards render", (s) => (s.cards > 0 ? null : `expected cards, saw ${s.cards}`)],
+    ["no unavailable notice", (s) => (s.unavailable ? "the retry state appeared on a healthy feed" : null)],
+    ["no end-of-feed card", (s) => (s.endOfFeed ? "a populated feed claimed to be exhausted" : null)],
+    ["no error state", (s) => (s.error ? "the error state appeared on a healthy feed" : null)],
+    ["skeleton resolved", (s) => (s.skeleton ? "the loading skeleton never resolved" : null)],
+  ],
+  "genuine-exhaustion": [
+    ["no cards", (s) => (s.cards === 0 ? null : `expected an empty build, saw ${s.cards} cards`)],
+    ["says caught up", (s) => (s.endOfFeed ? null : "genuine exhaustion did not render the end-of-feed card")],
+    [
+      "does NOT claim unavailable",
+      (s) => (s.unavailable ? "an exhausted feed rendered the retry state — the two are not the same screen" : null),
+    ],
+    ["no error state", (s) => (s.error ? "an exhausted feed rendered the error state" : null)],
+  ],
+  "unavailable-without-last-good": [
+    ["no cards", (s) => (s.cards === 0 ? null : `nothing should have rendered, saw ${s.cards} cards`)],
+    ["offers the retry state", (s) => (s.unavailable ? null : "a cold unavailable feed did not render the retry state")],
+    [
+      "does NOT say caught up",
+      (s) => (s.endOfFeed ? 'an unavailable feed told the reader "all caught up" — the L2-238 defect' : null),
+    ],
+    [
+      "the retry control is reachable and named",
+      (s) => (s.retryAccessibleNameVisible ? null : 'no visible control named "Try again to load the feed"'),
+    ],
+    ["announced as an alert", (s) => (s.alertText ? null : "the unavailable state carries no role=alert text")],
+    ["no overlapping text or controls", (s) => s.overlapFailure],
+  ],
+  "unavailable-with-last-good": [
+    ["last-good cards stay visible", (s) => (s.cards > 0 ? null : "an unavailable revalidation blanked the rendered feed")],
+    [
+      "does NOT say caught up",
+      (s) => (s.endOfFeed ? 'last-good cards were followed by "all caught up" on an unavailable feed' : null),
+    ],
+    ["no overlapping text or controls", (s) => s.overlapFailure],
+  ],
+};
+
+/** Two boxes overlap by more than a hairline of both their areas. */
+function overlaps(a, b) {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  if (w <= 1 || h <= 1) return false;
+  const area = w * h;
+  return area > 0.1 * Math.min(a.width * a.height, b.width * b.height);
+}
+
+/**
+ * "No text/control overlaps", measured rather than eyeballed.
+ *
+ * Only the unavailable notice's own leaves are compared: a page-wide scan would
+ * flag every legitimately-nested element. Off-viewport is failed too — a retry
+ * button pushed past the right edge at 390px is unreachable, not merely ugly.
+ */
+async function findOverlap(page, viewportWidth) {
+  const boxes = await page
+    .locator('[data-testid="discover-feed-unavailable"] p, [data-testid="discover-feed-unavailable"] button')
+    .evaluateAll((nodes) =>
+      nodes.map((n) => {
+        const r = n.getBoundingClientRect();
+        return { tag: n.tagName.toLowerCase(), x: r.x, y: r.y, width: r.width, height: r.height };
+      })
+    )
+    .catch(() => []);
+
+  for (const box of boxes) {
+    if (box.width <= 0 || box.height <= 0) return `<${box.tag}> rendered with zero size`;
+    if (box.x < -1 || box.x + box.width > viewportWidth + 1) {
+      return `<${box.tag}> extends outside the ${viewportWidth}px viewport (x=${Math.round(box.x)}, w=${Math.round(box.width)})`;
+    }
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      if (overlaps(boxes[i], boxes[j])) {
+        return `<${boxes[i].tag}> overlaps <${boxes[j].tag}>`;
+      }
+    }
+  }
+  return null;
+}
+
+/** Pacific time, because that is the clock the evidence is read against. */
+function pacificStamp() {
+  return new Date().toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour12: false,
+  });
+}
 
 async function run() {
   fs.mkdirSync(OUT, { recursive: true });
@@ -215,29 +328,104 @@ async function run() {
         ? await page.locator('[role="alert"]').first().innerText().catch(() => null)
         : null;
 
+      const overlapFailure = seen.unavailable ? await findOverlap(page, vp.viewport.width) : null;
+
       const file = path.join(OUT, `${state}-${vp.name}.png`);
       await page.screenshot({ path: file, fullPage: false });
 
-      results.push({
+      const observation = {
         state,
+        url: `${BASE}/discover`,
         viewport: vp.name,
         size: vp.viewport,
         feedCalls,
         ...seen,
         retryAccessibleNameVisible: retryVisible,
         alertText,
+        overlapFailure,
         consoleErrors,
         requestFailures,
         screenshot: file,
+        screenshot_sha256: sha256File(file),
+        observed_at_pt: pacificStamp(),
+        observed_at_utc: new Date().toISOString(),
+      };
+
+      // --- The grade. Every claim named, every failure kept.
+      const checks = (EXPECTATIONS[state] || []).map(([name, predicate]) => {
+        const reason = predicate(observation) || null;
+        return { check: name, ok: reason === null, reason };
       });
+      // Console errors and first-party request failures are graded for every
+      // state, not just the ones with expectations of their own.
+      checks.push({
+        check: "no console errors",
+        ok: consoleErrors.length === 0,
+        reason: consoleErrors.length === 0 ? null : consoleErrors.slice(0, 3).join("; "),
+      });
+      checks.push({
+        check: "no first-party request failures",
+        ok: requestFailures.length === 0,
+        reason: requestFailures.length === 0 ? null : requestFailures.slice(0, 3).join("; "),
+      });
+
+      observation.checks = checks;
+      observation.result = checks.every((c) => c.ok) ? "pass" : "fail";
+
+      console.log(
+        `${observation.result === "pass" ? "PASS" : "FAIL"}  ${state} @ ${vp.name} ` +
+          `(${vp.viewport.width}x${vp.viewport.height})` +
+          checks
+            .filter((c) => !c.ok)
+            .map((c) => `\n        ✗ ${c.check}: ${c.reason}`)
+            .join("")
+      );
+
+      results.push(observation);
       await context.close();
     }
   }
 
   await browser.close();
+
+  const failed = results.filter((r) => r.result !== "pass");
+  const packet = {
+    base: BASE,
+    commit: process.env.RENDER_STATES_SHA || null,
+    build: process.env.RENDER_STATES_BUILD || null,
+    browser_version: process.env.RENDER_STATES_BROWSER || null,
+    generated_at_pt: pacificStamp(),
+    generated_at_utc: new Date().toISOString(),
+    result: failed.length === 0 ? "pass" : "fail",
+    total: results.length,
+    failed: failed.length,
+    results,
+  };
   const manifest = path.join(OUT, "manifest.json");
-  fs.writeFileSync(manifest, JSON.stringify({ base: BASE, results }, null, 2));
-  console.log(JSON.stringify(results, null, 2));
+  fs.writeFileSync(manifest, JSON.stringify(packet, null, 2));
+
+  // A run that graded NOTHING must never read as green — the retired
+  // provider's `success` with 0 of 3 modules collected is the shape being
+  // refused here.
+  if (results.length !== Object.keys(STATES).length * VIEWPORTS.length) {
+    console.error(
+      `::error::expected ${Object.keys(STATES).length * VIEWPORTS.length} observations, produced ${results.length}`
+    );
+    process.exit(1);
+  }
+  if (failed.length > 0) {
+    console.error(`::error::${failed.length}/${results.length} rendered states failed`);
+    process.exit(1);
+  }
+  console.log(`\nAll ${results.length} rendered states passed. Packet: ${manifest}`);
+}
+
+function sha256File(file) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function route_json(route, body) {

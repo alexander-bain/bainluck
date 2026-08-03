@@ -12,6 +12,7 @@
     "calibration": "playwright test --project=desktop --project=mobile calibration",
     "cohort-copy": "playwright test --project=desktop --project=mobile cohort-copy --reporter=list --fully-parallel --workers=8",
     "daily-challenge": "playwright test --project=desktop --project=mobile daily-challenge",
+    "render-states": "node scripts/l2238-render-states.js",
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js"

@@ -5,6 +5,7 @@ import { test as base, type Page, type TestInfo } from "@playwright/test";
 import {
   evaluateJourney,
   type JourneyObservation,
+  type MainRegionObservation,
   type TelemetryExpectation,
 } from "../helpers/journey";
 import { sha256, CANONICAL_ORIGINS } from "../helpers/manifest";
@@ -52,7 +53,15 @@ export interface FinishInput {
   /** Only meaningful when `realCardFound` is true; ignored otherwise. */
   firstCardMs?: number | null;
   emptyState?: { name: string; visible: boolean } | null;
-  mainRegionNonBlank: boolean;
+  /**
+   * L2-239 — the preferred form. Raw measurements the shared evaluator grades,
+   * so a spec cannot decide for itself whether the page was blank. Supply this
+   * OR `mainRegionNonBlank`; supplying neither is a failed assertion, not a
+   * skipped one.
+   */
+  mainRegion?: MainRegionObservation | null;
+  /** Legacy pre-computed verdict, for surfaces not yet converted. */
+  mainRegionNonBlank?: boolean;
   selectedFixtureIds?: string[];
   allowedFailures?: string[];
   /**
@@ -277,6 +286,7 @@ export class JourneyRecorder {
       realCardFound: input.realCardFound,
       firstCardMs,
       emptyState: input.emptyState ?? null,
+      mainRegion: input.mainRegion ?? null,
       mainRegionNonBlank: input.mainRegionNonBlank,
       consoleErrors: this.consoleErrors,
       pageErrors: this.pageErrors,
@@ -358,6 +368,55 @@ export async function readContentRegionText(page: Page, timeoutMs = 5_000): Prom
       ? page.locator("main").first()
       : page.locator("body").first();
   return (await region.innerText({ timeout: timeoutMs }).catch(() => "")) || "";
+}
+
+/**
+ * Measure the main region for `classifyMainRegion` (L2-239).
+ *
+ * The point of measuring the skeleton's OWN text rather than merely noting that
+ * a skeleton exists: `textLength - skeletonTextLength` is the rendered substance
+ * that is not a loading placeholder, and it is the same number whether the route
+ * segment contributed one shell or two. `/discover` and `/` therefore grade
+ * identically for identical rendered content, which they did not before —
+ * `app/discover/loading.tsx` gave `/discover` a second `discover-skeleton`
+ * marker and the old `!skeletonVisible` clause turned that into a permanent red.
+ *
+ * Only VISIBLE skeletons are counted and measured. An inert marker Next left in
+ * the document but is not painting is not a loading state, and Playwright's
+ * `innerText` is visibility-aware for both reads, so the subtraction stays
+ * coherent. Incoherent numbers are handled — as `malformed` — by the classifier,
+ * not smoothed over here.
+ *
+ * Every read is bounded explicitly. This function is called at the END of a
+ * journey, and an unbounded locator call there has already destroyed a run's
+ * evidence once (see `readContentRegionText`).
+ */
+export async function measureMainRegion(
+  page: Page,
+  skeletonSelector: string,
+  timeoutMs = 5_000
+): Promise<MainRegionObservation> {
+  const text = await readContentRegionText(page, timeoutMs);
+
+  const skeletons = page.locator(skeletonSelector);
+  const total = await skeletons.count().catch(() => 0);
+
+  let visibleSkeletonCount = 0;
+  let skeletonTextLength = 0;
+  for (let i = 0; i < total; i += 1) {
+    const node = skeletons.nth(i);
+    const visible = await node.isVisible().catch(() => false);
+    if (!visible) continue;
+    visibleSkeletonCount += 1;
+    const skeletonText = await node.innerText({ timeout: timeoutMs }).catch(() => "");
+    skeletonTextLength += skeletonText.trim().length;
+  }
+
+  return {
+    textLength: text.trim().length,
+    skeletonTextLength,
+    visibleSkeletonCount,
+  };
 }
 
 export const test = base.extend<{ journey: JourneyRecorder }>({

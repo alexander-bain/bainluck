@@ -374,3 +374,104 @@ describe("the pack scripts exist for every workflow choice", () => {
     );
   });
 });
+
+/**
+ * L2-239 Item 1 — the render-states runner.
+ *
+ * `scripts/l2238-render-states.js` shipped in L2-238 and could not be run:
+ * Chromium cannot spawn a renderer in the authoring sandbox, so the three new
+ * Discover terminal states were closed on source-level proof. A script that
+ * nothing executes is documentation, and documentation is not evidence.
+ *
+ * These pin the two halves that keep the new workflow from becoming the same
+ * thing in a different place: the runner must not be able to go green without
+ * grading, and the script must not be able to grade without failing.
+ */
+describe("the render-states runner cannot be green without evidence", () => {
+  const renderWorkflowPath = path.join(repoRoot, ".github", "workflows", "render-states.yml");
+  const renderRaw = fs.readFileSync(renderWorkflowPath, "utf8");
+  const renderConfig = renderRaw
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+  const scriptPath = path.join(e2eRoot, "scripts", "l2238-render-states.js");
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  it("the stripped config is not vacuous", () => {
+    assert.ok(renderConfig.includes("jobs:"));
+    assert.ok(renderConfig.length > 500, `suspiciously short (${renderConfig.length})`);
+  });
+
+  it("runs the committed script, not an inline reimplementation", () => {
+    assert.ok(fs.existsSync(scriptPath), "scripts/l2238-render-states.js must exist");
+    assert.ok(renderConfig.includes("scripts/l2238-render-states.js"));
+  });
+
+  it("the script exits non-zero when a state fails to render", () => {
+    // Without this the workflow reports success on a broken render and the
+    // packet's `fail` count is something a reader has to notice for themselves.
+    assert.match(script, /process\.exit\(1\)/);
+    assert.match(script, /result: failed\.length === 0 \? "pass" : "fail"/);
+  });
+
+  it("the script refuses a run that graded nothing", () => {
+    // The retired provider concluded `success` having collected 0 of 3 modules.
+    assert.match(script, /expected \$\{Object\.keys\(STATES\)\.length \* VIEWPORTS\.length\}/);
+  });
+
+  it("every state carries expectations, and both viewports are rendered", () => {
+    const states = [...script.matchAll(/^\s{2}"?([a-z-]+)"?:\s*\[/gm)].map((m) => m[1]);
+    for (const state of [
+      "normal",
+      "genuine-exhaustion",
+      "unavailable-without-last-good",
+      "unavailable-with-last-good",
+    ]) {
+      assert.ok(
+        script.includes(`"${state}"`) || states.includes(state),
+        `the script no longer renders the ${state} state`
+      );
+      assert.match(
+        script.slice(script.indexOf("const EXPECTATIONS")),
+        new RegExp(`["']?${state}["']?:`),
+        `${state} has no expectations — it would pass by rendering nothing`
+      );
+    }
+    assert.match(script, /width:\s*390/);
+    assert.match(script, /width:\s*1440/);
+  });
+
+  it("the packet carries the build, the viewport and a PT timestamp", () => {
+    for (const field of ["commit", "generated_at_pt", "screenshot_sha256", "observed_at_pt"]) {
+      assert.ok(script.includes(field), `the evidence packet is missing ${field}`);
+    }
+  });
+
+  it("holds least privilege and never swallows a failure", () => {
+    assert.ok(renderConfig.includes("contents: read"));
+    assert.ok(!renderConfig.includes("issues: write"));
+    assert.ok(!renderConfig.includes("contents: write"));
+    assert.ok(
+      !renderConfig.includes("continue-on-error"),
+      "a swallowed render failure would turn a broken screen green"
+    );
+    assert.ok(renderConfig.includes("if-no-files-found: error"));
+    assert.ok(!/secrets\./.test(renderConfig), "this rail runs anonymously");
+  });
+
+  it("is dispatch-only and binds the evidence to a named deployment", () => {
+    assert.ok(renderConfig.includes("workflow_dispatch:"));
+    assert.ok(!/^\s{2}schedule:/m.test(renderConfig));
+    assert.ok(renderConfig.includes("wait-for-frontend-sha.js"), "unbound evidence names no build");
+  });
+
+  it("installs with npm ci against a cache path that exists", () => {
+    assert.ok(renderConfig.includes("npm ci"));
+    assert.ok(!/\bnpm install\b/.test(renderConfig));
+    for (const m of renderConfig.matchAll(/cache-dependency-path:\s*(\S+)/g)) {
+      const target = path.join(repoRoot, m[1].replace(/^["']|["']$/g, ""));
+      assert.ok(fs.existsSync(target), `cache-dependency-path "${m[1]}" does not exist`);
+    }
+  });
+});

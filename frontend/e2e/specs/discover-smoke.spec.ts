@@ -1,4 +1,5 @@
-import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { test, expect, measureMainRegion } from "../fixtures/audit";
+import { classifyMainRegion } from "../helpers/contentState";
 
 /**
  * L2-221 Item 1/2 — the anonymous Discover deploy smoke.
@@ -51,7 +52,11 @@ const NAMED_EMPTY = '[data-testid="discover-empty-state"]';
  */
 const ERROR_STATE =
   '[data-testid="discover-feed-error"], [data-testid="discover-feed-unavailable"]';
-/** The loading placeholder. Never content, and explicitly asserted against. */
+/**
+ * The loading placeholder. Never content — measured, and ranked below real
+ * rendered text by `helpers/contentState.js`. A page that is only skeleton
+ * still fails; a skeleton left standing beside a rendered feed does not.
+ */
 const SKELETON = '[data-testid="discover-skeleton"]';
 
 const PATHS = [
@@ -98,13 +103,22 @@ for (const target of PATHS) {
       ? { name: emptyStateName || "discover-empty-state", visible: true }
       : null;
 
-    // A still-mounted skeleton means the feed never resolved. It is neither
-    // content nor a legitimate empty state, and asserting on it directly keeps
-    // "we timed out waiting" distinguishable from "the deploy is genuinely
-    // empty" in the manifest rather than only in a screenshot.
-    const skeletonVisible = await page.locator(SKELETON).first().isVisible().catch(() => false);
-
-    const mainText = await readContentRegionText(page);
+    // What the main region actually rendered, as MEASUREMENTS — the verdict is
+    // the shared classifier's (L2-239).
+    //
+    // The clause this replaces was `mainText.trim().length > 40 &&
+    // !skeletonVisible`, and the second half made this check unfalsifiable on
+    // `/discover`. That route has a segment-level `loading.tsx`, so its document
+    // carries a SECOND `discover-skeleton` marker that `/` — the same component,
+    // via a bare re-export — has no equivalent for. `.first().isVisible()`
+    // answered for whichever marker came first, so the assertion was red on
+    // every run regardless of the feed (30830689689, 30830999441: `/discover`
+    // RED at both viewports, `/` green, terminal screenshot a populated
+    // 30,165px feed). A permanently-red assertion is an unread one.
+    //
+    // Skeletons are still graded, just ranked: real text outside every skeleton
+    // outranks a leftover shell, and a page that is ONLY skeleton stays red.
+    const mainRegion = await measureMainRegion(page, SKELETON);
 
     await journey.finish({
       journeyId: `${target.journeyId}`,
@@ -112,12 +126,17 @@ for (const target of PATHS) {
       realCardFound,
       firstCardMs,
       emptyState,
-      mainRegionNonBlank: mainText.trim().length > 40 && !skeletonVisible,
+      mainRegion,
     });
 
     // Redundant with the evaluator, but keeps the failure legible in the
-    // Playwright report without having to open the manifest.
-    expect(skeletonVisible, "the loading skeleton must not still be mounted").toBe(false);
+    // Playwright report without having to open the manifest. Same classifier,
+    // so this cannot grade more leniently than the manifest does.
+    const region = classifyMainRegion(mainRegion);
+    expect(
+      region.nonBlank,
+      `the main region must render content, not just a loading shell — ${region.state}: ${region.detail}`
+    ).toBe(true);
     expect(realCardFound || namedEmptyVisible, "a real card or a named empty state must render").toBe(true);
   });
 }

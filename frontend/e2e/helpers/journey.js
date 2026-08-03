@@ -17,6 +17,7 @@
  */
 
 const { redactText, redactUrl } = require("./redaction");
+const { classifyMainRegion } = require("./contentState");
 
 /** Terminal results. Anything else is a bug in the caller. */
 const RESULTS = Object.freeze({
@@ -253,13 +254,48 @@ function evaluateJourney(observation) {
     );
   }
 
-  assertions.push(
-    assertion(
-      "content.main_region_nonblank",
-      o.mainRegionNonBlank === true,
-      o.mainRegionNonBlank === true ? null : "main region rendered blank"
-    )
-  );
+  // --- Is the main region showing anything, independently of the card hook?
+  //
+  //     L2-239. A journey may hand this over as measurements (`mainRegion`) or,
+  //     for the surfaces that have not been converted, as a pre-computed
+  //     boolean. Measurements are strictly better and are preferred when both
+  //     are present: the spec then cannot decide its own verdict, and the
+  //     ranking of rendered substance over a leftover loading marker lives in
+  //     one place the contract fixtures drive. See `helpers/contentState.js`
+  //     for the /discover double-skeleton false red this closes.
+  //
+  //     Note what is NOT consulted here: `realCardFound` and `emptyState`. This
+  //     check and `content.real_card_or_named_empty` above must be able to
+  //     catch each other's false positive, which they cannot do if they read
+  //     the same signal.
+  if (o.mainRegion) {
+    const region = classifyMainRegion(o.mainRegion);
+    assertions.push(
+      assertion(
+        "content.main_region_nonblank",
+        region.nonBlank,
+        `${region.state}: ${region.detail}`
+      )
+    );
+  } else if (typeof o.mainRegionNonBlank === "boolean") {
+    assertions.push(
+      assertion(
+        "content.main_region_nonblank",
+        o.mainRegionNonBlank === true,
+        o.mainRegionNonBlank === true ? null : "main region rendered blank"
+      )
+    );
+  } else {
+    // Neither form supplied. That is a caller defect, and it must not read as
+    // an absent check — an unobserved region is not a proven one.
+    assertions.push(
+      assertion(
+        "content.main_region_nonblank",
+        false,
+        "no main-region observation was recorded"
+      )
+    );
+  }
 
   // --- The exact false-green guard: a duration may only exist for a card that
   //     was actually found. Recording elapsed time for an absent card is the
@@ -380,6 +416,7 @@ function evaluateJourney(observation) {
 module.exports = {
   RESULTS,
   TERMINAL_RESULTS,
+  classifyMainRegion,
   evaluateJourney,
   evaluateTelemetryLedger,
   telemetryRuleMatches,

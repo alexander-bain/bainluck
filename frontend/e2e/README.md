@@ -208,9 +208,67 @@ blank page.
 Both now bind to semantic hooks the components render deliberately:
 `data-testid="discover-card"`, `data-testid="discover-empty-state"` with a
 machine-readable `data-empty-state-name`, `data-testid="discover-feed-error"`,
-and `data-testid="discover-skeleton"` — which the smoke journey now asserts is
-**gone**. `frontend/__tests__/components/discoverAuditHooks.test.tsx` fails CI
-if a hook is dropped, renamed, or leaks onto the skeleton.
+and `data-testid="discover-skeleton"`.
+`frontend/__tests__/components/discoverAuditHooks.test.tsx` fails CI if a hook
+is dropped, renamed, or leaks onto the skeleton.
+
+### The main-region verdict (`helpers/contentState.js`)
+
+The smoke journey used to require the skeleton to be **gone**:
+`mainText.trim().length > 40 && !skeletonVisible`. That made
+`content.main_region_nonblank` permanently red on one of the two surfaces it
+grades.
+
+`/` and `/discover` render the same component — `app/page.tsx` is a bare
+re-export of `app/discover/page`. But `/discover` is a route *segment*, so Next
+also emits `app/discover/loading.tsx` as its Suspense fallback and the deployed
+document carries **two** `discover-skeleton` markers where `/` carries one.
+`.first().isVisible()` answered for whichever came first, so the assertion was
+red regardless of the feed. Runs `30830689689` and `30830999441` both reported
+`/discover` RED at both viewports while their terminal screenshots showed a
+fully populated 30,165px feed, and `/` passed. A permanently-red assertion is an
+unread one.
+
+The verdict now comes from `classifyMainRegion`, which is fed **measurements**
+rather than a boolean the spec computed for itself:
+
+| input | meaning |
+|---|---|
+| `textLength` | trimmed `innerText` of `main` (or `body`) |
+| `skeletonTextLength` | combined trimmed text of every **visible** skeleton |
+| `visibleSkeletonCount` | how many skeleton markers are painting |
+
+`textLength - skeletonTextLength` is the rendered substance that is not a
+loading placeholder, and it is the same number whether the framework emitted one
+shell or two. Skeletons are **ranked, not ignored**: real text outside them wins,
+a page that is only skeleton stays `loading` (red), an empty region is `blank`
+(red), and incoherent numbers are `malformed` (red, and say so) rather than a
+quiet pass. `contract/contentState.contract.test.js` pins every one of those,
+plus a mutation in each direction.
+
+The classifier never reads `realCardFound` or the card hook — an integrity
+fixture enforces that. `content.main_region_nonblank` grades text volume,
+`content.real_card_or_named_empty` grades the card/empty-state hooks, and two
+checks that consult the same signal cannot catch each other's false positive.
+The unavailable/retry state is the case that shows the split working: its copy
+is real, so the region check passes, and the journey still fails because an
+error state is not a legitimate outcome.
+
+### `scripts/l2238-render-states.js` — the three terminal feed states
+
+States of the *server*, so no screenshot of production shows them on demand. The
+feed response is intercepted with the exact bodies `routes/feed.py` returns while
+everything else stays the real deployment. The script grades itself against
+per-state expectations (last-good cards survive an unavailable revalidation; a
+cold unavailable offers a named retry; genuine exhaustion still says caught up;
+no zero-size, off-viewport or overlapping controls) and exits non-zero on any
+miss.
+
+Run it with the **`Discover render states (manual)`** workflow
+(`.github/workflows/render-states.yml`), which is the one place a browser is
+known to start — Chromium cannot spawn a renderer in the agent sandbox
+(`bootstrap_check_in ... Permission denied (1100)`; gotcha #50 one layer up).
+Locally, where a browser does start: `npm run render-states -- <baseURL> <outDir>`.
 
 ### `helpers/redaction.js` — what may leave the browser
 

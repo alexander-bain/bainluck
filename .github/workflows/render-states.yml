@@ -1,0 +1,174 @@
+name: Discover render states (manual)
+
+# L2-239 Item 1 — the runner for `frontend/e2e/scripts/l2238-render-states.js`.
+#
+# L2-238 shipped that script and could not run it: Chromium cannot spawn a
+# renderer in the authoring sandbox (`bootstrap_check_in
+# org.chromium.Chromium.MachPortRendezvousServer: Permission denied (1100)`,
+# bundled build and system Chrome alike, sandboxed and not, `--no-sandbox` and
+# `--single-process`). The three new terminal Discover states were therefore
+# closed on source-level proof, which is exactly the standard this rail exists
+# to refuse. This workflow is the one place a browser is known to start.
+#
+# What it proves, at 390px and 1440px, against the DEPLOYED build:
+#
+#   unavailable-with-last-good     — a typed-unavailable revalidation must not
+#                                    blank the cards already on screen
+#   unavailable-without-last-good  — a cold unavailable feed must offer a named
+#                                    retry, never "you're all caught up"
+#   genuine-exhaustion             — a complete, empty build must still say
+#                                    caught up
+#   normal                         — the adjacent regression journey
+#
+# These are states of the SERVER, so no screenshot of production can show them
+# on demand. The feed response is intercepted and answered with the exact bodies
+# `backend/app/routes/feed.py` returns; everything else — the build, the bundle,
+# the CSS, the layout at each width — is the real deployment.
+#
+# The script grades itself and exits non-zero on any missed expectation, so
+# there is no path where this job is green without four passing states per
+# viewport. Rollback: disable or delete this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_sha:
+        description: "Full 40-hex commit the deployed frontend must report before the run"
+        required: true
+        type: string
+      base_url:
+        description: "Site origin to render against"
+        required: false
+        default: "https://www.bainluck.com"
+        type: string
+      sha_timeout_seconds:
+        description: "Bounded wait for the frontend deployment to report the requested SHA"
+        required: false
+        default: "600"
+        type: string
+
+# Least privilege, same as the browser-audit rail: read the repo, nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: render-states-${{ inputs.frontend_sha }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Discover terminal states — mobile and desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    env:
+      AUDIT_REQUESTED_SHA: ${{ inputs.frontend_sha }}
+      TRACE_BASE_URL: ${{ inputs.base_url }}
+      AUDIT_API_BASE_URL: https://api.bainluck.com
+      RENDER_STATES_OUT: ${{ github.workspace }}/frontend/e2e/render-states-out
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate every dispatch input
+        # Gotcha #9: secret/input checks live inside the shell block, and no
+        # dispatch value is ever interpolated into shell syntax.
+        env:
+          RAW_TIMEOUT: ${{ inputs.sha_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${AUDIT_REQUESTED_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::frontend_sha must be a full lowercase 40-hex commit sha"
+            exit 1
+          fi
+          if ! printf '%s' "${RAW_TIMEOUT}" | grep -Eq '^[0-9]{1,4}$'; then
+            echo "::error::sha_timeout_seconds must be 1-4 digits"
+            exit 1
+          fi
+          if [ "${RAW_TIMEOUT}" -lt 30 ] || [ "${RAW_TIMEOUT}" -gt 1800 ]; then
+            echo "::error::sha_timeout_seconds must be between 30 and 1800"
+            exit 1
+          fi
+          echo "AUDIT_SHA_TIMEOUT_MS=$(( RAW_TIMEOUT * 1000 ))" >> "$GITHUB_ENV"
+          case "${TRACE_BASE_URL}" in
+            https://www.bainluck.com|https://bainluck.com) ;;
+            *) echo "::error::base_url must be a canonical production origin"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install the Playwright-matched Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for the requested frontend deployment
+        # Exports AUDIT_OBSERVED_FRONTEND_SHA. Exits non-zero if the deployment
+        # is not the commit this evidence will be filed against — the whole
+        # point of naming a SHA.
+        run: node scripts/wait-for-frontend-sha.js --timeout-ms "${AUDIT_SHA_TIMEOUT_MS}"
+
+      - name: Record the runtime version
+        run: echo "RENDER_STATES_BROWSER=$(npx playwright --version)" >> "$GITHUB_ENV"
+
+      - name: Render the four terminal states at both widths
+        # The script exits non-zero on any missed expectation. It is NOT
+        # wrapped in continue-on-error: a failed render must route the defect,
+        # not become a note in a green summary.
+        env:
+          RENDER_STATES_SHA: ${{ env.AUDIT_OBSERVED_FRONTEND_SHA }}
+          RENDER_STATES_BUILD: ${{ inputs.frontend_sha }}
+        run: node scripts/l2238-render-states.js "$TRACE_BASE_URL" "$RENDER_STATES_OUT"
+
+      - name: Upload the render packet
+        # `if: always()` so a failed render keeps its screenshots — those are
+        # the evidence that routes the defect.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-states-${{ inputs.frontend_sha }}-${{ github.run_id }}
+          path: frontend/e2e/render-states-out/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Summary
+        if: always()
+        run: |
+          MANIFEST="$RENDER_STATES_OUT/manifest.json"
+          {
+            echo "## Discover render states"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| requested frontend sha | \`${AUDIT_REQUESTED_SHA}\` |"
+            echo "| observed frontend sha | \`${AUDIT_OBSERVED_FRONTEND_SHA:-unresolved}\` |"
+            echo "| base url | ${TRACE_BASE_URL} |"
+            echo "| browser | ${RENDER_STATES_BROWSER:-unrecorded} |"
+            if [ -f "$MANIFEST" ]; then
+              node -e '
+                const m = require(process.argv[1]);
+                console.log(`| result | **${m.result}** |`);
+                console.log(`| passed / total | ${m.total - m.failed} / ${m.total} |`);
+                console.log(`| generated (PT) | ${m.generated_at_pt} |`);
+                console.log("");
+                console.log("| state | viewport | result | detail |");
+                console.log("|---|---|---|---|");
+                for (const r of m.results) {
+                  const bad = (r.checks || []).filter((c) => !c.ok).map((c) => `${c.check}: ${c.reason}`).join("; ");
+                  console.log(`| ${r.state} | ${r.viewport} ${r.size.width}x${r.size.height} | ${r.result} | ${bad || "—"} |`);
+                }
+              ' "$MANIFEST"
+            else
+              echo "| result | **no packet written — infrastructure failure** |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

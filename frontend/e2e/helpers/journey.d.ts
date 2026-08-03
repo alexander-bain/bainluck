@@ -1,3 +1,7 @@
+import type { MainRegionObservation } from "./contentState";
+
+export type { MainRegionObservation };
+
 export interface JourneyAssertion {
   assertion_id: string;
   ok: boolean;
@@ -64,6 +68,12 @@ export interface JourneyObservation {
   /** `null` unless a real card was observed — see timing.duration_only_when_observed. */
   firstCardMs?: number | null;
   emptyState?: { name: string; visible: boolean } | null;
+  /**
+   * Preferred (L2-239): raw measurements, graded by `classifyMainRegion`.
+   * Takes precedence over `mainRegionNonBlank` when both are present.
+   */
+  mainRegion?: MainRegionObservation | null;
+  /** Legacy pre-computed verdict, for surfaces not yet converted. */
   mainRegionNonBlank?: boolean;
   consoleErrors?: string[];
   pageErrors?: string[];
@@ -93,6 +103,12 @@ export declare const RESULTS: {
 };
 
 export declare const TERMINAL_RESULTS: readonly JourneyResult[];
+
+export declare function classifyMainRegion(input: MainRegionObservation): {
+  state: "content" | "loading" | "blank" | "malformed";
+  nonBlank: boolean;
+  detail: string;
+};
 
 export declare function evaluateJourney(observation: JourneyObservation): {
   result: JourneyResult;
