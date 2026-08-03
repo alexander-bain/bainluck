@@ -12,6 +12,7 @@ import { sha256, CANONICAL_ORIGINS } from "../helpers/manifest";
 import type { JourneyRecord } from "../helpers/manifest";
 import { redactText, redactUrl } from "../helpers/redaction";
 import { compareSha } from "../helpers/buildAuthority";
+import { describeAbort, type AbortPacket } from "../helpers/abortRecord";
 
 /**
  * L2-221 Item 1 — one evidence collector, installed before navigation.
@@ -83,7 +84,7 @@ export interface FinishInput {
 export class JourneyRecorder {
   readonly consoleErrors: string[] = [];
   readonly pageErrors: string[] = [];
-  readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null }> = [];
+  readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket }> = [];
   readonly redirectChain: string[] = [];
   readonly telemetry = new Map<string, { host: string; path: string; count: number }>();
 
@@ -114,12 +115,32 @@ export class JourneyRecorder {
       this.crashed = { crashed: true, reason: "page crashed" };
     });
     this.page.on("requestfailed", (req) => {
-      this.failedRequests.push({
-        url: redactUrl(req.url()),
+      const failureText = req.failure()?.errorText ?? "request failed";
+      const url = req.url();
+      const record: { url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket } = {
+        url: redactUrl(url),
         method: req.method(),
         status: null,
-        failure: redactText(req.failure()?.errorText ?? "request failed", { maxLength: 200 }),
+        failure: redactText(failureText, { maxLength: 200 }),
+      };
+      // #1525 Shape A — carry BOUNDED abort timing so a navigation teardown is
+      // distinguishable from a client timeout, and so an aborted first-party
+      // feed request (invisible to the backend's own metrics) is legible here.
+      let frameUrl: string | null = null;
+      try {
+        frameUrl = req.frame()?.url() ?? null;
+      } catch {
+        frameUrl = null;
+      }
+      const abort = describeAbort({
+        failureText,
+        resourceType: req.resourceType(),
+        timing: req.timing(),
+        frameUrl,
+        isFeed: url.includes("/api/feed"),
       });
+      if (abort) record.abort = abort;
+      this.failedRequests.push(record);
     });
     this.page.on("response", (res) => {
       const url = res.url();

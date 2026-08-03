@@ -373,6 +373,44 @@ describe("the pack scripts exist for every workflow choice", () => {
       `"${filter}" does not select ${path.basename(spec)}`
     );
   });
+
+  /**
+   * L2-241. The two latency packs — `latency` (Discover) and `sports-latency` —
+   * became dispatchable in this queue so a real mobile/desktop first-card trace
+   * can be run on demand. Same L2-228 hole as grid/calibration: a `playwright
+   * test <filter>` whose filter matches NOTHING exits 0 having run no tests, and
+   * only `deriveRunResult([])` downstream stops that reading as green. Pin the
+   * file each filter is meant to select AND the journey id its verdict rides on.
+   */
+  it("the discover-latency spec exists and is selected by the latency filter", () => {
+    const spec = path.join(e2eRoot, "specs", "discover-latency.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/discover-latency.spec.ts must exist");
+    const filter = pkg.scripts.latency.split(" ").pop();
+    assert.ok(
+      path.basename(spec).includes(filter),
+      `"${filter}" does not select ${path.basename(spec)}`
+    );
+    const raw = fs.readFileSync(spec, "utf8");
+    assert.ok(
+      raw.includes("journeyId: `discover.latency"),
+      "the latency pack is missing its discover.latency journey id"
+    );
+  });
+
+  it("the sports-latency spec exists and is selected by the sports-latency filter", () => {
+    const spec = path.join(e2eRoot, "specs", "sports-latency.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/sports-latency.spec.ts must exist");
+    const filter = pkg.scripts["sports-latency"].split(" ").pop();
+    assert.ok(
+      path.basename(spec).includes(filter),
+      `"${filter}" does not select ${path.basename(spec)}`
+    );
+    const raw = fs.readFileSync(spec, "utf8");
+    assert.ok(
+      raw.includes('journeyId: "sports.latency"'),
+      "the sports-latency pack is missing its sports.latency journey id"
+    );
+  });
 });
 
 /**

@@ -21,6 +21,7 @@ import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/f
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
+import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
@@ -216,6 +217,54 @@ export default function SportsPage() {
     () => dedupeById([...page1Items, ...pagedItems], getSportsItemId),
     [page1Items, pagedItems]
   );
+
+  // =========================================================================
+  // L2-241 Item 2 — honest foreground terminal for the INITIAL request
+  // =========================================================================
+  // The other feed terminals already exist below: an errored request shows the
+  // ErrorMessage retry, an unavailable page shows FeedUnavailableNotice,
+  // exhaustion shows EndOfFeedCard, and keepPreviousData preserves last-good.
+  // The one missing state is a SLOW request that has neither errored nor
+  // resolved — today that is skeletons until it finally does one or the other.
+  //
+  // Reaching an honest terminal for a slow request needs a budget (how long is
+  // too long), and that number is Alex's product call, not this code's to
+  // invent — C132 refuses a foreground terminal without an approved budget
+  // (FOREGROUND_BUDGET_NEEDS_APPROVAL). So the rail is wired and INERT:
+  // FOREGROUND_FEED_BUDGET_MS is null, which keeps a slow request on the
+  // skeleton exactly as before; setting it to an approved value activates the
+  // terminal with no other code change. The decision logic + its C132
+  // conformance live in lib/discover/foregroundTerminal.ts.
+  const initialPending = feedLoading && !feedData && mergedItems.length === 0;
+  const [foregroundBudgetExpired, setForegroundBudgetExpired] = useState(false);
+
+  // Reset the budget clock whenever a new request begins (identity change).
+  useEffect(() => {
+    setForegroundBudgetExpired(false);
+  }, [feedIdentity]);
+
+  // Arm the budget only when one is approved AND the initial request is still
+  // pending. With no approved budget this effect is a pure no-op.
+  useEffect(() => {
+    if (FOREGROUND_FEED_BUDGET_MS == null) return;
+    if (!initialPending || foregroundBudgetExpired) return;
+    const timer = setTimeout(() => setForegroundBudgetExpired(true), FOREGROUND_FEED_BUDGET_MS);
+    return () => clearTimeout(timer);
+  }, [initialPending, foregroundBudgetExpired]);
+
+  const foregroundDecision = decideForegroundTerminal({
+    elapsedMs:
+      foregroundBudgetExpired && FOREGROUND_FEED_BUDGET_MS != null ? FOREGROUND_FEED_BUDGET_MS : 0,
+    budgetMs: FOREGROUND_FEED_BUDGET_MS,
+    aborted: false,
+    failed: !!feedError,
+    hasLastGood: mergedItems.length > 0,
+  });
+
+  const handleForegroundRetry = useCallback(() => {
+    setForegroundBudgetExpired(false);
+    refreshFeed();
+  }, [refreshFeed]);
 
   // =========================================================================
   // Interest signals — thumbs up/down step through affinity levels
@@ -454,8 +503,18 @@ export default function SportsPage() {
       {/* League Navigation */}
       <LeagueChips />
 
-      {/* Loading State */}
-      {feedLoading && !feedData && mergedItems.length === 0 && <SkeletonGrid count={6} />}
+      {/* Loading State. L2-241: the skeleton is owned by the foreground-terminal
+          decision, so a slow initial request past an approved budget flips to an
+          honest retry instead of skeletons-forever. Inert (identical to before)
+          while FOREGROUND_FEED_BUDGET_MS is null. */}
+      {initialPending && foregroundDecision.showSkeleton && <SkeletonGrid count={6} />}
+
+      {/* L2-241 Item 2: a slow initial request that outran the approved
+          foreground budget — an honest retry terminal, never a perpetual
+          skeleton. Only renders once a budget is approved. */}
+      {initialPending && !foregroundDecision.showSkeleton && !feedError && (
+        <FeedUnavailableNotice onRetry={handleForegroundRetry} variant="empty" />
+      )}
 
       {/* L2-238/L2-240: a typed-UNAVAILABLE first page with nothing on screen is
           a retryable no-data terminal, NOT an empty feed. */}

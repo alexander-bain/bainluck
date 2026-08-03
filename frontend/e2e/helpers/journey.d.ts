@@ -1,4 +1,5 @@
 import type { MainRegionObservation } from "./contentState";
+import type { AbortPacket } from "./abortRecord";
 
 export type { MainRegionObservation };
 
@@ -13,6 +14,8 @@ export interface FailedRequestSummary {
   status?: number | null;
   failure?: string | null;
   method?: string;
+  /** L2-241 (#1525 Shape A): present only on an aborted request. */
+  abort?: AbortPacket;
 }
 
 export interface JourneyArtifact {
