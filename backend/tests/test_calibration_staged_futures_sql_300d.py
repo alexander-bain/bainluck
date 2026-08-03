@@ -203,18 +203,23 @@ class TestRepresentativeTieAuthority:
 class TestShippedState:
     """What is actually switched on, pinned so it cannot drift silently."""
 
-    def test_staged_path_ships_off(self):
-        """Queue 300D shipped the machinery, not the cutover.
+    def test_staged_path_is_switched_on(self):
+        """Queue 300E made the flip 300D staged and deliberately left undone.
 
-        The staged statement has never executed against PostgreSQL and the
-        queue's gates forbid triggering a build to find out, so turning an
-        unexercised path into the ONLY path for the scheduled build is left as a
-        deliberate, watched flip. This test is the record of that decision — if
-        someone flips the constant, this fails and they have to say so.
+        300D's version of this test pinned the constant OFF, so that turning an
+        unexercised path into the ONLY path for the scheduled build could not
+        happen silently. It did not happen silently: it happened against a
+        measured monolith failure — ten consecutive ~22.5-minute futures
+        timeouts banking nothing, and a 37.8-hour-old public curve.
+
+        The test keeps its job, only inverted. The switch is now pinned ON, so
+        an accidental revert to the statement that could not finish is a red
+        test rather than a silent return to a dark page. A DELIBERATE rollback
+        (see the constant's docstring) flips this line with it, and says why.
         """
         from app.tasks.calibration_main_build import STAGED_FUTURES_ENABLED
 
-        assert STAGED_FUTURES_ENABLED is False
+        assert STAGED_FUTURES_ENABLED is True
 
     def test_the_serve_path_can_never_stage(self):
         """Not a switch — a structural guarantee.
@@ -236,6 +241,95 @@ class TestShippedState:
         """
         assert "frozen_vm_roster" not in _main_futures_sql()
         assert "LEFT JOIN bucketed ON true" not in _main_futures_sql()
+
+
+def _scheduled_runner():
+    """A runner shaped like the scheduled build's — the only kind that stages.
+
+    ``NULL_RUNNER`` cannot stand in here: it is the serve path's no-op runner and
+    has no ``classify_failure`` at all, which is itself the point (a request has
+    no terminal to classify).
+    """
+    from app.tasks.calibration_main_build import PhaseRunner
+    from app.utils.calibration_phase_ledger import (
+        FRESH,
+        derive_plan,
+        new_main_checkpoint,
+    )
+
+    version, fingerprint, owner = "q267", "fp-300e", "test:1"
+    return PhaseRunner(
+        plan=derive_plan({}),
+        checkpoint=new_main_checkpoint(
+            version=version, fingerprint=fingerprint, owner=owner, generation=1
+        ),
+        checkpoint_action=FRESH,
+        population_version=version,
+        owner=owner,
+        generation=1,
+        fingerprint=fingerprint,
+    )
+
+
+class TestAPartialBeatIsCancelledNotFailed:
+    """Queue 300E. The one classification the flip makes load-bearing.
+
+    Banking part of a generation and stopping is the staged path's DESIGNED
+    outcome for a beat that runs out of window — the whole point of 300D. But
+    it reaches the orchestrator as a raised exception, and every other raised
+    exception in this build is a failure. If :class:`StagedFuturesIncomplete`
+    landed in the ``failed`` bucket, a build working exactly as specified would
+    post a RED terminal every hour and Ops would roll back a fix for behaving
+    correctly.
+
+    300D shipped this mapping untested because the path was switched off and
+    could not produce the exception. 300E switches it on, so it is pinned here.
+    """
+
+    def test_incomplete_is_cancelled_so_a_working_beat_never_pages_red(self):
+        from app.tasks.calibration_main_build import StagedFuturesIncomplete
+        from app.utils.calibration_phase_ledger import CANCELLED
+
+        assert (
+            _scheduled_runner().classify_failure(
+                StagedFuturesIncomplete("units banked, nothing published")
+            )
+            == CANCELLED
+        )
+
+    def test_a_real_error_is_still_a_failure(self):
+        """The mapping must be narrow. Cancelled is not a synonym for quiet."""
+        from app.utils.calibration_phase_ledger import FAILED
+
+        assert (
+            _scheduled_runner().classify_failure(RuntimeError("the population is wrong"))
+            == FAILED
+        )
+
+    def test_a_statement_timeout_is_still_a_timeout(self):
+        """A unit that blew its own budget is a resource problem, not progress."""
+        from app.utils.calibration_phase_ledger import TIMEOUT
+
+        assert (
+            _scheduled_runner().classify_failure(
+                RuntimeError("canceling statement due to statement timeout")
+            )
+            == TIMEOUT
+        )
+
+    def test_incomplete_is_not_a_subclass_of_anything_that_would_be_swallowed(self):
+        """It must reach ``classify_failure`` as an error, not as control flow.
+
+        A partial beat MUST still abort the build — the phase did not complete,
+        so it stays out of ``completed_required``, the publish gate never sees a
+        payload, and the complete last-good keeps serving. Deriving from
+        ``RuntimeError`` is what guarantees a bare ``except Exception`` in any
+        caller cannot quietly let a partial generation continue to publish.
+        """
+        from app.tasks.calibration_main_build import StagedFuturesIncomplete
+
+        assert issubclass(StagedFuturesIncomplete, RuntimeError)
+        assert not issubclass(StagedFuturesIncomplete, (KeyboardInterrupt, SystemExit))
 
 
 class TestCoverageCensusIsRefusedUnderStaging:

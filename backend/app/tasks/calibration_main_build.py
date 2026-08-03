@@ -86,32 +86,49 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #:
 #: False: one statement, as before.
 #:
-#: SHIPPED OFF (2026-08-03), on the same reasoning Queue 300C shipped its
-#: census off. Everything is here and tested — the frozen-roster scope, the
-#: generation read, the unit cursor, the merge, 84 focused tests, both statement
-#: scopes parsed — but the staged statement has never executed against
-#: PostgreSQL, and Queue 300D's own gates forbid triggering a build to find out.
-#: Turning an unexercised path into the ONLY path for the scheduled build, on
-#: the strength of a parse gate, is not a thing to do unattended.
+#: SWITCHED ON (Queue 300E, 2026-08-03) — the watched flip Queue 300D left
+#: deliberately undone. 300D shipped the machinery off because the staged
+#: statement had never executed against PostgreSQL and that queue's gates forbade
+#: triggering a build to find out. What changed is not the code — it is that OFF
+#: stopped being free.
 #:
-#: The asymmetry is what settles it. OFF is a proven no-op: the monolith text is
-#: byte-identical to the pre-300D statement (pinned by
-#: ``test_calibration_staged_futures_sql_300d.TestMonolithIsUnmoved``), so the
-#: off state costs the build exactly nothing. ON is a coin flip whose losing
-#: side leaves the page just as dark as it is now, minus the ability to say why.
+#: The evidence for the flip, measured before it: the last monolith beat
+#: (generation 1785773700264, release v3683, ledger 2026-08-03T16:37:32Z) ended
+#: terminal ``failed`` with the futures phase ``timeout`` at 1,352,046 ms, the
+#: tenth consecutive floor within 8s of ~22.5 minutes, ``banked: {}`` and
+#: ``completed_required: []``. The public curve was serving a 37.8-hour-old
+#: last-good (``cache.status=stale``, ``reason=main_key_absent``). OFF is a
+#: proven no-op, and a proven no-op is exactly what the build could no longer
+#: afford: it banks nothing, hourly, forever.
 #:
-#: FLIPPING IT is one constant and one deploy, and it wants an operator watching
-#: the next beat: the ledger will show ``read:futures_generation`` and
+#: ROLLBACK is this constant back to ``False`` and one deploy. That path stays
+#: exact: the monolith text is byte-identical to the pre-300D statement (pinned
+#: by ``test_calibration_staged_futures_sql_300d.TestMonolithIsUnmoved``), so
+#: rolling back costs the build nothing beyond returning it to the failure it
+#: started from.
+#:
+#: WATCHING IT: the ledger shows ``read:futures_generation`` and
 #: ``read:futures_unit`` stage timings and a ``staged:cursor_*`` action, and a
 #: partial beat reports terminal ``cancelled`` with units banked (by design —
-#: see :class:`StagedFuturesIncomplete`), not ``failed``.
+#: see :class:`StagedFuturesIncomplete`), not ``failed``. A partial first beat is
+#: a PASS, not a regression: it means the build banked work for the first time.
+#:
+#: The one residual this flip does NOT fix, written down so it is not
+#: rediscovered as a surprise: stage 1 (the generation read) is itself a single
+#: unchunked statement — the pre-``virtual_market`` prefix of the same pipeline,
+#: and it carries 3 of the statement's 7 correlated scans of the 179M-row
+#: ``futures_odds_snapshots``. If that prefix alone exceeds the window, the beat
+#: times out having banked nothing, which is no worse than today but is also no
+#: better. Only the post-``virtual_market`` half is resumable here.
 #:
 #: This ONLY ever applies to a run that owns a :class:`PhaseRunner` — i.e. the
 #: scheduled build. The route's in-request cold-cache serve keeps the single
 #: statement unconditionally: it has no checkpoint to resume from, no second
 #: beat to finish the job, and a request session whose transaction must not be
-#: committed underneath the caller.
-STAGED_FUTURES_ENABLED = False
+#: committed underneath the caller. That is a class attribute on
+#: :class:`NullPhaseRunner`, not a read of this constant, so it holds whatever
+#: an operator sets here.
+STAGED_FUTURES_ENABLED = True
 
 #: Markets per chunk. A budget, not a row count: the unit is a whole virtual
 #: question, so a chunk overshoots rather than split one (see

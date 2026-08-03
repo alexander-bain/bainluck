@@ -194,6 +194,18 @@ def _futures_row(**kw):
     return SimpleNamespace(**base)
 
 
+def _roster_row(**kw):
+    """One row of the Queue 300E generation read: a market and its frozen vm.
+
+    The generation read selects exactly ``market_id, source, vm_id, is_grouped``,
+    so a roster row always carries all four; ``plan_units`` refuses one that does
+    not, which is what caught this fake being monolith-shaped.
+    """
+    base = dict(market_id=1, source="kalshi", vm_id="e:1", is_grouped=False)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
 class _Result:
     def __init__(self, *, rows=(), scalar=None, one=None):
         self._rows, self._scalar, self._one = list(rows), scalar, one
@@ -248,6 +260,24 @@ class _FakeDB:
                 scalar=True,
                 one=SimpleNamespace(name="bl1/test/test/test/test", pid=4080483),
             )
+        # Queue 300E switched the staged futures path ON for the scheduled build,
+        # which puts ONE extra statement in front of the futures read: the
+        # generation read, which resolves the whole population's virtual-question
+        # assignment before any bucket is computed. It is answered here rather
+        # than from the queue, for the same reason as the exemptions above —
+        # consuming a queued result would shift every later assertion onto the
+        # wrong one.
+        #
+        # A single-market roster means ``plan_units`` plans exactly ONE unit, so
+        # the unit read that follows pops the same main-futures result the
+        # monolith would have read, and the merge folds one chunk. That is
+        # deliberate: this test's subject is payload IDENTITY between the two
+        # serve paths, and identity is only meaningful if the task's real path
+        # produced the payload. Multi-chunk merge equivalence is not asserted
+        # here — it has its own suite
+        # (``test_calibration_staged_futures.test_a_three_chunk_split_merges_back_to_the_monolith``).
+        if "select market_id, source, vm_id, is_grouped" in text_form:
+            return _Result(rows=[_roster_row()])
         if not self._results:
             return _Result()
         return self._results.pop(0)
