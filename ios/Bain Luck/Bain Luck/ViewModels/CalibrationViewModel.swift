@@ -20,9 +20,15 @@ final class CalibrationViewModel: ObservableObject {
     /// presented as current. `error` is reserved for having NOTHING to show.
     @Published private(set) var refreshFailed = false
 
-    /// L2-74 §C default: the WELL-TRADED view (real trading moved the price). The
-    /// toggle layers thin/untraded markets back in — it never hides, both counts
+    /// L2-74 §C default: the cohort is `price_moved != false` — outcomes whose
+    /// price moved, PLUS the sportsbook lines where that test does not apply. The
+    /// toggle layers the never-moved outcomes back in; it never hides, both counts
     /// are always visible. View-bound, so it stays mutable.
+    ///
+    /// The name is historical (L2-237 renamed the copy, not the property). It has
+    /// never meant "thin" in the liquidity sense: zero-bid, zero-volume outcomes
+    /// are excluded upstream, so nothing this flag adds is untraded — those rows
+    /// traded and never moved off their opening line.
     @Published var includeThin = false
 
     private static let nf: NumberFormatter = { let f = NumberFormatter(); f.numberStyle = .decimal; return f }()
@@ -180,27 +186,68 @@ final class CalibrationViewModel: ObservableObject {
     var formattedMarkets: String { data?.totalMarkets.map(Self.fmt) ?? "\u{2014}" }
     var formattedCohortOutcomes: String { data == nil ? "\u{2014}" : Self.fmt(cohortN) }
 
-    /// The population the hero claims to have analyzed.
+    /// The population the hero claims to have analyzed, as the whole clause —
+    /// the native equivalent of web's `describeCohort().heroClause`.
     ///
-    /// Web's hero says "{cohortN} well-traded resolved predictions ({fullN}
-    /// including thinly-traded)". Native said "{totalOutcomes} resolved
-    /// predictions" — the FULL total, a different number under the well-traded
-    /// default, presented as the same claim. Same population, same qualifier.
+    /// Native used to lead with `total_outcomes` — the FULL total, a different
+    /// number from the cohort the page below it measures, presented as the same
+    /// claim (L2-231 Item 0). It now names the same population web does, in the
+    /// same words, and says which outcomes are missing from it rather than
+    /// labelling the remainder with a property nobody measured.
     var heroPopulationText: String {
-        guard data != nil else { return "\u{2014}" }
-        if includeThin { return formattedCohortOutcomes }
-        return "\(formattedCohortOutcomes) well-traded (\(Self.fmt(fullN)) including thinly-traded)"
+        guard data != nil else { return "\u{2014} resolved predictions" }
+        if includeThin { return "\(formattedCohortOutcomes) resolved predictions" }
+        return "\(formattedCohortOutcomes) resolved predictions \u{2014} every outcome except the "
+            + "\(Self.fmt(unchangedN)) whose price never moved off its opening line "
+            + "(\(Self.fmt(fullN)) in total)"
     }
 
-    // MARK: - Cohort banner (L2-231 Item 2 — the label must match its predicate)
+    // MARK: - Cohort banner (L2-231 Item 2 / L2-237 — every label names its predicate)
 
+    /// The cohort's name, in the words of the predicate that selects it.
+    ///
+    /// L2-231 fixed the CLAIM under the cohort and deliberately kept the NAME
+    /// "well-traded", because the name was web's and renaming it on one surface
+    /// would have manufactured a second divergence. L2-236 made that call on web
+    /// and the name did not survive it:
+    ///
+    ///   - "well-traded" is a LIQUIDITY claim; the predicate measures MOVEMENT. A
+    ///     market can trade heavily and close where it opened.
+    ///   - "thin / untraded" for the excluded side is false twice over. Those
+    ///     rows are `price_moved == false` — they traded, they just never moved —
+    ///     and zero-bid, zero-volume outcomes are already excluded upstream.
+    ///
+    /// So each string below names what it selects and nothing else. This is the
+    /// native half of L2-236, wording-for-wording.
     var cohortHeadline: String {
-        includeThin
-            ? "Showing all markets (\(formattedCohortOutcomes))"
-            : "Showing well-traded markets (\(formattedCohortOutcomes))"
+        if includeThin { return "Showing all markets (\(formattedCohortOutcomes))" }
+        return notApplicableN > 0
+            ? "Showing markets whose price moved, plus sportsbook lines (\(formattedCohortOutcomes))"
+            : "Showing markets whose price moved (\(formattedCohortOutcomes))"
     }
 
-    /// The sentence under the cohort toggle, written to match what the cohort
+    /// Short noun phrase for the active cohort — chart headings and legends.
+    var cohortShortLabel: String {
+        if includeThin { return "All markets" }
+        return notApplicableN > 0 ? "Price moved + sportsbook lines" : "Price moved"
+    }
+
+    /// The toggle button's label: the cohort it switches TO, and what that costs.
+    var cohortToggleLabel: String {
+        includeThin
+            ? "Exclude never-moved"
+            : "Include never-moved (+\(Self.fmt(unchangedN)))"
+    }
+
+    /// What VoiceOver reads for that button. The visible label is a two-word verb
+    /// phrase sized for a capsule; read on its own it never says what it acts on.
+    var cohortToggleAccessibilityLabel: String {
+        includeThin
+            ? "Exclude the \(Self.fmt(unchangedN)) outcomes whose price never moved off its opening line"
+            : "Include the \(Self.fmt(unchangedN)) outcomes whose price never moved off its opening line"
+    }
+
+    /// The sentence under the cohort name, written to match what the cohort
     /// filter ACTUALLY selects.
     ///
     /// The default cohort is `price_moved != false`, which the surface described
@@ -208,25 +255,23 @@ final class CalibrationViewModel: ObservableObject {
     /// and false of the `nil` ones — sportsbook lines, where the price-moved test
     /// does not apply — and on the 2026-08-02 payload those were 40,075 of the
     /// 389,385 rows the sentence was describing, 10.3% of the default cohort.
-    ///
-    /// The cohort's NAME is unchanged (it is web's, and renaming it here would
-    /// manufacture the divergence this queue exists to remove). The CLAIM under
-    /// it now names both halves. Web's copy carries the identical defect and is
-    /// out of this queue's gate — reported, not edited.
     var cohortDetail: String {
         let na = notApplicableN
         if includeThin {
-            let partition = na > 0
-                ? " \(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged "
-                    + "\u{00B7} \(Self.fmt(na)) not applicable."
-                : " \(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged."
-            return "Including thin / untraded." + partition
+            return na > 0
+                ? "\(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged "
+                    + "\u{00B7} \(Self.fmt(na)) not applicable (sportsbook lines)."
+                : "\(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged."
         }
+        let excluded = "Excluded: \(Self.fmt(unchangedN)) outcomes whose price never moved "
+            + "off its opening line."
         guard na > 0 else {
-            return "Where real trading moved the price. Thin markets can be noisy."
+            // No not-applicable rows: the cohort really is "where real trading
+            // moved the price", so the plain claim is measured and may stand.
+            return "Every outcome whose price real trading moved. \(excluded)"
         }
-        return "Outcomes whose price real trading moved (\(Self.fmt(movedN))), plus \(Self.fmt(na)) "
-            + "sportsbook lines where that test doesn't apply. Thin markets can be noisy."
+        return "\(Self.fmt(movedN)) outcomes whose price real trading moved, plus \(Self.fmt(na)) "
+            + "sportsbook lines where that test doesn't apply. \(excluded)"
     }
 
     // MARK: - Sample gate
@@ -238,7 +283,7 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Cohort metrics (ECE-first)
 
-    /// Aggregated curve for the active cohort (well-traded by default).
+    /// Aggregated curve for the active cohort (`price_moved != false` by default).
     var cohortBuckets: [CalibrationMath.AggBucket] {
         let thin = includeThin
         return CalibrationMath.aggregate(buckets) { thin || $0.priceMoved != false }
@@ -257,7 +302,10 @@ final class CalibrationViewModel: ObservableObject {
         return CalibrationMath.totalN(buckets) { thin || $0.priceMoved != false }
     }
     var fullN: Int { CalibrationMath.totalN(buckets) }
+    /// The default cohort's size, independent of the toggle. Historical name;
+    /// the predicate is `price_moved != false`, not a liquidity measure (L2-237).
     var wellTradedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved != false } }
+    /// What the toggle adds: the never-moved outcomes. Historical name (L2-237).
     var thinAddN: Int { max(0, fullN - wellTradedN) }
 
     var eceQualityLabel: String {

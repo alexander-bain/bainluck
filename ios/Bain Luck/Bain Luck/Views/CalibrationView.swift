@@ -181,10 +181,11 @@ struct CalibrationSurfaceView: View {
             Text("Do Prediction Markets Predict Anything?").font(.title2.weight(.bold))
             // L2-231 Item 0 found this leading with total_outcomes while the web
             // hero leads with the COHORT count — two different numbers whenever
-            // the well-traded default is on, presented as the same claim on two
+            // the default cohort is on, presented as the same claim on two
             // surfaces. It now names the same population the web page does, and
-            // the same one the OUTCOMES card below it already showed.
-            Text("We compare \(viewModel.heroPopulationText) resolved predictions with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
+            // the same one the OUTCOMES card below it already showed. L2-237: the
+            // clause is web's `heroClause`, so the qualifier is the predicate.
+            Text("We compare \(viewModel.heroPopulationText) with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Text("\(viewModel.dateRangeLabel.map { "Data \($0)" } ?? "\(viewModel.formattedTotalOutcomes) resolved outcomes") \u{00B7} Updated \(viewModel.updatedLabel)")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -241,16 +242,16 @@ struct CalibrationSurfaceView: View {
         .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Cohort toggle (well-traded default + include-thin)
+    // MARK: - Cohort toggle (price-moved + sportsbook default; never-moved opt-in)
 
-    // L2-74 §C (#940): default to WELL-TRADED; a visible toggle layers in
-    // thin/untraded markets. It never hides — both counts are always shown.
+    // L2-74 §C (#940): default to `price_moved != false`; a visible toggle layers
+    // the never-moved outcomes back in. It never hides — both counts are shown.
     private var cohortToggleBanner: some View {
         HStack(alignment: .center, spacing: 10) {
-            // L2-231 Item 2: both strings come from the view model so the claim
-            // under the cohort name can be asserted against the cohort's actual
-            // predicate. The default cohort is `price_moved != false`, which is
-            // NOT the same set as "where real trading moved the price".
+            // L2-231 Item 2 / L2-237: EVERY string here comes from the view model
+            // so a label cannot drift from what it describes. The default cohort
+            // is `price_moved != false`, which is NOT the same set as "where real
+            // trading moved the price" and is not a liquidity cohort at all.
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.cohortHeadline)
                     .font(.caption.weight(.medium)).foregroundStyle(.primary)
@@ -261,14 +262,13 @@ struct CalibrationSurfaceView: View {
             Button {
                 viewModel.includeThin.toggle()
             } label: {
-                Text(viewModel.includeThin
-                     ? "Well-traded only"
-                     : "Include thin (+\(fmtN(viewModel.thinAddN)))")
+                Text(viewModel.cohortToggleLabel)
                     .font(.caption2.weight(.medium))
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(Color.systemGray5, in: Capsule())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(viewModel.cohortToggleAccessibilityLabel)
         }
         .padding(12)
         .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 12))
@@ -277,8 +277,21 @@ struct CalibrationSurfaceView: View {
     // MARK: - Calibration Chart
 
     private var calibrationChartSection: some View {
-        cardSection(viewModel.includeThin ? "All-Markets Calibration Curve" : "Well-Traded Calibration Curve",
-                    sub: "The diagonal line is perfect calibration. Points above it happened more often than predicted; points below it happened less often. Point size reflects sample count and thin buckets fade.") {
+        // L2-237: the curve is named by the cohort it draws, from the same
+        // property the banner above it uses — web's `shortLabel`, in the subtitle
+        // where web puts it, so the two surfaces cannot drift apart.
+        //
+        // The name leads the SUBTITLE rather than the title on purpose. This
+        // section's `Text`s truncate to one line at 390pt (the `Chart` sibling
+        // carries no width constraint, so the stack sizes to the chart's ideal
+        // width and the text is clipped rather than wrapped — pre-existing, and
+        // why the old explainer was already cut at "perfect calibrati…"). A title
+        // reading "Calibration Curve: Price moved + sport…" would be a truncated
+        // claim; leading the subtitle puts the whole cohort name and its count
+        // inside the visible width. The clip itself is a layout defect and is
+        // out of this queue's gate — reported, not fixed.
+        cardSection("Calibration Curve",
+                    sub: "\(viewModel.cohortShortLabel) (\(viewModel.formattedCohortOutcomes) outcomes). The diagonal line is perfect calibration. Points above it happened more often than predicted; points below it happened less often. Point size reflects sample count, and small-sample buckets fade.") {
             calibrationChart(points: viewModel.points(from: viewModel.cohortBuckets), color: .blue, height: 300)
         }
     }

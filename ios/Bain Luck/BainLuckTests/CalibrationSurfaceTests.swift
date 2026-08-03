@@ -19,7 +19,7 @@ import XCTest
 ///      build's labels with nothing able to tell. Q299 bumped q267 -> q299 while
 ///      this suite was being written, which is exactly the live case.
 ///   3. The hero led with `total_outcomes` where web leads with the COHORT
-///      count — two different numbers under the well-traded default, presented
+///      count — two different numbers under the default cohort, presented
 ///      as the same claim on two surfaces.
 ///   4. The trading-activity section still printed
 ///      `"Markets with active trading are 0.6x more accurately calibrated."`,
@@ -115,18 +115,22 @@ final class CalibrationSurfaceTests: XCTestCase {
     @MainActor
     func testHealthyPayloadHeroNamesTheSamePopulationTheWebHeroDoes() throws {
         let vm = try model(Self.healthy())
-        // Web's hero: "{cohortN} well-traded ... ({fullN} including thinly-traded)".
-        // cohortN (price_moved != false) = 200 + 400 = 600; fullN = 700.
+        // Web's hero clause, word for word (L2-236's `describeCohort`, adopted
+        // natively by L2-237). cohortN (price_moved != false) = 200 + 400 = 600;
+        // fullN = 700; the 100 excluded are the never-moved rows.
         XCTAssertEqual(vm.cohortN, 600)
         XCTAssertEqual(vm.fullN, 700)
-        XCTAssertEqual(vm.heroPopulationText, "600 well-traded (700 including thinly-traded)")
-        // The pre-fix bug: leading with total_outcomes (700) under the
-        // well-traded default, i.e. a number the cohort below it contradicts.
+        XCTAssertEqual(
+            vm.heroPopulationText,
+            "600 resolved predictions \u{2014} every outcome except the 100 whose price never "
+                + "moved off its opening line (700 in total)")
+        // The pre-fix bug: leading with total_outcomes (700) under the default
+        // cohort, i.e. a number the cohort below it contradicts.
         XCTAssertNotEqual(vm.heroPopulationText, vm.formattedTotalOutcomes)
 
         vm.includeThin = true
         XCTAssertEqual(vm.cohortN, 700)
-        XCTAssertEqual(vm.heroPopulationText, "700")
+        XCTAssertEqual(vm.heroPopulationText, "700 resolved predictions")
     }
 
     @MainActor
@@ -456,7 +460,10 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertNil(vm.data)
         XCTAssertEqual(vm.formattedCohortOutcomes, "\u{2014}")
         XCTAssertEqual(vm.formattedTotalOutcomes, "\u{2014}")
-        XCTAssertEqual(vm.heroPopulationText, "\u{2014}")
+        // The hero clause keeps its noun (L2-237) so the sentence around it still
+        // parses, but the count it names is the em-dash, never a fabricated 0.
+        XCTAssertEqual(vm.heroPopulationText, "\u{2014} resolved predictions")
+        XCTAssertFalse(vm.heroPopulationText.contains("0"), vm.heroPopulationText)
         XCTAssertFalse(vm.isStale)
         // Nothing decoded is UNVERIFIED, never a claimed match — and never an
         // "incompatible" banner either, which would blame the server for a

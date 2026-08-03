@@ -178,7 +178,15 @@ final class CalibrationRenderSmokeTests: XCTestCase {
         print("L2-231 prod render: cohortN=\(vm.cohortN) fullN=\(vm.fullN) "
             + "ECE=\(String(format: "%.1f", vm.cohortECE))pp "
             + "moved=\(vm.movedN) unchanged=\(vm.unchangedN) na=\(vm.notApplicableN)")
+        // L2-237: the exact strings on the raster, logged so the rendered proof
+        // carries the copy it is proof of — including what VoiceOver reads for
+        // the toggle, which no screenshot can show.
+        print("L2-237 prod hero: \(vm.heroPopulationText)")
+        print("L2-237 prod cohort headline: \(vm.cohortHeadline)")
         print("L2-231 prod cohort detail: \(vm.cohortDetail)")
+        print("L2-237 prod cohort short label: \(vm.cohortShortLabel)")
+        print("L2-237 prod toggle label: \(vm.cohortToggleLabel)")
+        print("L2-237 prod toggle a11y: \(vm.cohortToggleAccessibilityLabel)")
         print("L2-231 prod partition note: \(vm.activityPartitionNote ?? "nil")")
         let png = try render(CalibrationProdFixture.json, name: "production-2026-08-02")
         XCTAssertGreaterThan(png.count, 1_000)

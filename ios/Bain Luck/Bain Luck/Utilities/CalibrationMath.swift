@@ -6,8 +6,10 @@ import Foundation
 /// This exists to fix #894 (native vs web calibration mismatch): the native tab
 /// used to re-derive headline numbers with its OWN formulas, so it disagreed with
 /// the web page. The API's precomputed `by_category`/`by_source` rows cover the
-/// *all-markets* cohort, but the web page's DEFAULT view is the *well-traded*
-/// cohort (`price_moved != false`) computed client-side — so simply reading the
+/// *all-markets* cohort, but the web page's DEFAULT view is the price-moved
+/// cohort (`price_moved != false` — outcomes whose price moved, plus the
+/// sportsbook lines where that test does not apply) computed client-side, so
+/// simply reading the
 /// precomputed rows would REINTRODUCE the mismatch. Instead native mirrors the
 /// web's exact client-side aggregation here (same rounding, same ECE/MCE/Brier),
 /// guaranteeing the two surfaces print the same digits.

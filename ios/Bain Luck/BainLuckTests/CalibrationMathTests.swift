@@ -9,7 +9,7 @@ import XCTest
 final class CalibrationMathTests: XCTestCase {
 
     // A deterministic payload-v2-shaped fixture with hand-verifiable math:
-    // well-traded cohort = price_moved != false (buckets 1, 2, 4); the unchanged
+    // default cohort = price_moved != false (buckets 1, 2, 4); the unchanged
     // cohort is bucket 3. snake_case keys + .convertFromSnakeCase, exactly like
     // the app's APIClient.
     private let sampleJSON = """
