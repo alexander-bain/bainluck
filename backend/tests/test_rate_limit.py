@@ -99,6 +99,126 @@ class TestExtractUid:
         assert _extract_uid_from_token("") is None
 
 
+class TestTrustedUidResolver:
+    """Queue 303: the bucket key must come from a VERIFIED identity only.
+
+    Covers Item 0's required cases at the resolver layer: malformed, unsigned/
+    forged, expired, wrong-issuer, valid session token, and the narrow revert
+    path. No network — session tokens are signed/verified locally via HS256.
+    """
+
+    def _make_jwt(self, payload: dict) -> str:
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).rstrip(b"=").decode()
+        body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+        sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
+        return f"{header}.{body}.{sig}"
+
+    def _with_signing_key(self, monkeypatch):
+        # ADMIN_SECRET derives the session-token signing key (no network).
+        monkeypatch.setenv("ADMIN_SECRET", "queue303-test-secret")
+
+    def test_valid_session_token_resolves_uid(self, monkeypatch):
+        """A properly-signed backend session token is trusted → its uid keys the
+        authenticated bucket."""
+        from app.services.firebase_auth import create_session_token
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        token = create_session_token("real-user-1", email="a@b.com")
+        assert token is not None
+        assert _resolve_trusted_uid(token) == "real-user-1"
+
+    def test_forged_unsigned_token_is_not_trusted(self, monkeypatch):
+        """A three-part token with a valid-looking payload but a bogus signature
+        resolves to None (falls to the anonymous IP bucket)."""
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        forged = self._make_jwt({"uid": "attacker", "iss": "bainluck-backend"})
+        assert _resolve_trusted_uid(forged) is None
+
+    def test_malformed_token_is_not_trusted(self, monkeypatch):
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        assert _resolve_trusted_uid("not-a-jwt") is None
+        assert _resolve_trusted_uid("") is None
+
+    def test_expired_session_token_is_not_trusted(self, monkeypatch):
+        """An expired but correctly-signed session token is rejected."""
+        from app.services.firebase_auth import create_session_token
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        expired = create_session_token("real-user-2", ttl_seconds=-10)
+        assert expired is not None
+        assert _resolve_trusted_uid(expired) is None
+
+    def test_wrong_issuer_token_is_not_trusted(self, monkeypatch):
+        """A token signed with the right key but the wrong issuer (≈ wrong
+        audience) is rejected."""
+        import time as _time
+        import jwt as pyjwt
+        from app.services.firebase_auth import _get_session_signing_key
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        key = _get_session_signing_key()
+        now = int(_time.time())
+        bad = pyjwt.encode(
+            {"uid": "u", "iss": "evil-issuer", "iat": now, "exp": now + 600},
+            key,
+            algorithm="HS256",
+        )
+        assert _resolve_trusted_uid(bad) is None
+
+    def test_wrong_signing_key_is_not_trusted(self, monkeypatch):
+        """A token signed with a different key than the server's is rejected."""
+        import time as _time
+        import jwt as pyjwt
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        self._with_signing_key(monkeypatch)
+        now = int(_time.time())
+        bad = pyjwt.encode(
+            {"uid": "u", "iss": "bainluck-backend", "iat": now, "exp": now + 600},
+            "some-other-key",
+            algorithm="HS256",
+        )
+        assert _resolve_trusted_uid(bad) is None
+
+    def test_revert_path_restores_unverified_decode(self, monkeypatch):
+        """The narrow revert env var re-enables the legacy unverified decode."""
+        from app.utils.rate_limit import _resolve_trusted_uid
+
+        forged = self._make_jwt({"uid": "attacker"})
+        assert _resolve_trusted_uid(forged) is None  # default: not trusted
+        monkeypatch.setenv("RATE_LIMIT_TRUST_UNVERIFIED_TOKENS", "1")
+        assert _resolve_trusted_uid(forged) == "attacker"  # revert path
+
+    def test_resolver_hot_path_cost_is_cheap(self, monkeypatch):
+        """Item 2: measure the added hot-path cost with a LOCAL fake authority
+        (no network). The plumbing must add negligible per-request overhead."""
+        import time as _time
+        import app.utils.rate_limit as rl_mod
+
+        calls = {"n": 0}
+
+        def _fake_authority(token):
+            calls["n"] += 1
+            return "u" if token else None
+
+        monkeypatch.setattr(rl_mod, "_trusted_uid_resolver", _fake_authority)
+        start = _time.perf_counter()
+        for _ in range(10000):
+            rl_mod._resolve_trusted_uid("tok")
+        elapsed = _time.perf_counter() - start
+        assert calls["n"] == 10000
+        # Generous bound (CI jitter): 10k resolutions well under a second means
+        # per-request overhead is microseconds.
+        assert elapsed < 1.0, f"resolver overhead too high: {elapsed:.3f}s / 10k"
+
+
 class TestIsExempt:
     """Tests for _is_exempt."""
 
@@ -132,6 +252,7 @@ def _reset_rate_limiter_state():
     old_limiter = rl_mod._rate_limiter
     old_anon = rl_mod._anon_limit
     old_auth = rl_mod._auth_limit
+    old_resolver = rl_mod._trusted_uid_resolver
     # Force fresh singletons each test
     rl_mod._rate_limiter = None
     rl_mod._anon_limit = None
@@ -140,6 +261,19 @@ def _reset_rate_limiter_state():
     rl_mod._rate_limiter = old_limiter
     rl_mod._anon_limit = old_anon
     rl_mod._auth_limit = old_auth
+    rl_mod._trusted_uid_resolver = old_resolver
+
+
+def _trust_test_tokens(monkeypatch):
+    """Install a LOCAL fake trusted authority: treat the test's forged JWTs as
+    verified by decoding their uid. Stands in for a real local verifier
+    (session-token HS256) without network. Used by tests that exercise the
+    authenticated-bucket behavior; the middleware no longer trusts unverified
+    tokens by default (Queue 303)."""
+    import app.utils.rate_limit as rl_mod
+    monkeypatch.setattr(
+        rl_mod, "_trusted_uid_resolver", rl_mod._extract_uid_from_token
+    )
 
 
 def _make_test_app(anon_limit: str = "5/minute", auth_limit: str = "10/minute"):
@@ -297,9 +431,10 @@ class TestRateLimitMiddleware:
 
         assert limiter.called is False
 
-    def test_authenticated_gets_higher_limit(self):
+    def test_authenticated_gets_higher_limit(self, monkeypatch):
         """Authenticated users get a higher rate limit than anonymous."""
         from starlette.testclient import TestClient
+        _trust_test_tokens(monkeypatch)
         app = _make_test_app(anon_limit="3/minute", auth_limit="6/minute")
         client = TestClient(app)
 
@@ -315,9 +450,10 @@ class TestRateLimitMiddleware:
         resp = client.get("/api/feed", headers=headers)
         assert resp.status_code == 429
 
-    def test_different_users_independent_buckets(self):
+    def test_different_users_independent_buckets(self, monkeypatch):
         """Different authenticated users have independent rate limits."""
         from starlette.testclient import TestClient
+        _trust_test_tokens(monkeypatch)
         app = _make_test_app(anon_limit="2/minute", auth_limit="3/minute")
         client = TestClient(app)
 
@@ -337,10 +473,11 @@ class TestRateLimitMiddleware:
             resp = client.get("/api/feed", headers={"Authorization": f"Bearer {token_b}"})
             assert resp.status_code == 200
 
-    def test_authenticated_user_bucket_independent_from_same_ip_anonymous_bucket(self):
+    def test_authenticated_user_bucket_independent_from_same_ip_anonymous_bucket(self, monkeypatch):
         """Authenticated and anonymous traffic from one IP do not share quota."""
         from starlette.testclient import TestClient
 
+        _trust_test_tokens(monkeypatch)
         app = _make_test_app(anon_limit="2/minute", auth_limit="2/minute")
         client = TestClient(app)
         ip_headers = {"X-Forwarded-For": "10.0.0.50"}
@@ -397,6 +534,43 @@ class TestRateLimitMiddleware:
 
         resp = client.get("/api/feed", headers=headers)
         assert resp.status_code == 429
+
+    def test_forged_token_rotating_uid_cannot_rotate_buckets(self):
+        """Queue 303 core fix: an attacker forging tokens with a fresh uid per
+        request must NOT mint a new authenticated bucket each time. With the
+        default (verifying) resolver, every forged token falls to the single
+        anonymous IP bucket, so rotation cannot escape the anon limit."""
+        from starlette.testclient import TestClient
+
+        # No _trust_test_tokens here — default resolver rejects unsigned tokens.
+        app = _make_test_app(anon_limit="3/minute", auth_limit="120/minute")
+        client = TestClient(app)
+        ip = {"X-Forwarded-For": "10.0.0.111"}
+
+        # 3 requests, each with a DIFFERENT forged uid — all key by IP.
+        for i in range(3):
+            headers = {**ip, "Authorization": f"Bearer {_make_jwt({'uid': f'forged-{i}'})}"}
+            assert client.get("/api/feed", headers=headers).status_code == 200, f"req {i+1}"
+
+        # 4th rotated-uid forged token is throttled by the anon IP bucket, NOT
+        # granted a fresh 120/min authenticated bucket.
+        headers = {**ip, "Authorization": f"Bearer {_make_jwt({'uid': 'forged-3'})}"}
+        assert client.get("/api/feed", headers=headers).status_code == 429
+
+    def test_verified_token_gets_user_bucket_with_local_authority(self, monkeypatch):
+        """A token accepted by a local trusted authority keys its own user bucket,
+        independent of the shared anonymous IP bucket."""
+        from starlette.testclient import TestClient
+
+        _trust_test_tokens(monkeypatch)
+        app = _make_test_app(anon_limit="1/minute", auth_limit="4/minute")
+        client = TestClient(app)
+        auth = {"Authorization": f"Bearer {_make_jwt({'uid': 'trusted-user'})}"}
+
+        # Trusted user gets the larger bucket even though anon is 1/minute.
+        for i in range(4):
+            assert client.get("/api/feed", headers=auth).status_code == 200, f"req {i+1}"
+        assert client.get("/api/feed", headers=auth).status_code == 429
 
     def test_429_response_format(self):
         """429 response has correct JSON body and Retry-After header."""

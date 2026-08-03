@@ -215,11 +215,14 @@ def _get_client_ip(request: Request) -> str:
 
 def _extract_uid_from_token(token: str) -> Optional[str]:
     """
-    Decode JWT payload to extract 'uid' or 'sub' without verification.
+    Decode JWT payload to extract 'uid' or 'sub' WITHOUT verifying the signature.
 
-    Safe for rate-limit keying: we only use this as a bucket key, not for
-    authorization.  Full token verification still happens in the auth
-    dependency layer.
+    LEGACY / UNSAFE for bucketing. Retained only as the target of the narrow
+    revert path (RATE_LIMIT_TRUST_UNVERIFIED_TOKENS=1). Do NOT use this to select
+    a rate-limit bucket key: an unverified payload lets a forged token with a
+    rotating uid mint unlimited authenticated buckets (Queue 303 / C134
+    UNVERIFIED_IDENTITY_RATE_BYPASS). Route bucketing through
+    ``_resolve_trusted_uid`` instead.
     """
     try:
         parts = token.split(".")
@@ -234,6 +237,70 @@ def _extract_uid_from_token(token: str) -> Optional[str]:
         return payload.get("uid") or payload.get("sub")
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Trusted identity resolution (Queue 303 — stop forged-token bucket bypass)
+# ---------------------------------------------------------------------------
+# SECURITY: the authenticated (larger) rate-limit bucket must key ONLY on a uid
+# whose token we have actually verified. The old path decoded the JWT payload
+# WITHOUT checking the signature, so any forged three-part token supplying a
+# rotating `uid`/`sub` minted an unlimited supply of 120/min authenticated
+# buckets and escaped the anonymous per-IP fixed window entirely.
+#
+# Constraints (why this is deliberately minimal):
+#   * The resolver runs on EVERY non-exempt request. It MUST be cheap and do NO
+#     network I/O — the #1197 scar is that a blocking op in this middleware
+#     stalls the whole event loop. So the default authority verifies only what
+#     can be checked locally: backend-issued session tokens (HS256, no network).
+#   * At middleware admission there is no already-verified request authority
+#     (route auth dependencies run later). Tokens we cannot cheaply prove —
+#     Firebase ID tokens and any forged/expired/wrong-issuer token — resolve to
+#     None and fall to the anonymous IP bucket. The route's own auth dependency
+#     still verifies and authorizes them normally; only the bucket choice changes.
+#   * Injectable so tests supply a local fake authority (no network) and a future
+#     cheap-local verifier can drop in without touching the hot path.
+_trusted_uid_resolver = None
+
+
+def _default_trusted_uid(token: str) -> Optional[str]:
+    """Return a VERIFIED uid for a bearer token using only local (no-network)
+    verification, or None when the token cannot be cheaply trusted.
+
+    Verifies backend-issued session tokens (HS256 signature + iss + exp) via
+    ``verify_session_token``. Firebase ID tokens and forged/invalid tokens are
+    not trusted here (they are still authorized normally by the route's auth
+    dependency) and return None so the request keys by IP.
+    """
+    try:
+        from app.services.firebase_auth import verify_session_token
+
+        claims = verify_session_token(token)
+        if claims:
+            return claims.get("uid") or claims.get("sub")
+    except Exception:
+        return None
+    return None
+
+
+def set_trusted_uid_resolver(resolver) -> None:
+    """Override the trusted-uid resolver. For tests (local fake authority) and
+    future local verifiers. Pass None to restore the default."""
+    global _trusted_uid_resolver
+    _trusted_uid_resolver = resolver
+
+
+def _resolve_trusted_uid(token: str) -> Optional[str]:
+    """Resolve a bearer token to a trusted uid for bucket keying, or None.
+
+    Narrow revert path: RATE_LIMIT_TRUST_UNVERIFIED_TOKENS=1 restores the legacy
+    unverified-decode behavior without a redeploy. Emergency use only — it
+    re-opens the forgeable-bucket bypass this fix closes.
+    """
+    if os.getenv("RATE_LIMIT_TRUST_UNVERIFIED_TOKENS") == "1":
+        return _extract_uid_from_token(token)
+    resolver = _trusted_uid_resolver or _default_trusted_uid
+    return resolver(token)
 
 
 def _is_exempt(path: str) -> bool:
@@ -275,7 +342,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("authorization", "")
         uid = None
         if auth_header.lower().startswith("bearer "):
-            uid = _extract_uid_from_token(auth_header[7:].strip())
+            # SECURITY (Queue 303): key the authenticated bucket ONLY on a uid we
+            # have actually verified. A forged/unverified token resolves to None
+            # and keys by IP, so it cannot select a user bucket or the larger
+            # limit — nor rotate uids to mint unlimited buckets.
+            uid = _resolve_trusted_uid(auth_header[7:].strip())
 
         if uid:
             key = f"user:{uid}"
