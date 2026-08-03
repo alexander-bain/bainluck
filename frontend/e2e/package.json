@@ -7,6 +7,7 @@
     "contract": "node --test contract/*.test.js",
     "smoke": "playwright test --project=desktop --project=mobile discover-smoke",
     "latency": "playwright test --project=desktop --project=mobile discover-latency",
+    "sports-latency": "playwright test --project=desktop --project=mobile sports-latency",
     "consent": "playwright test --project=desktop --project=mobile consent",
     "grid": "playwright test --project=desktop --project=mobile championship-grid",
     "calibration": "playwright test --project=desktop --project=mobile calibration",

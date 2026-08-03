@@ -40,7 +40,16 @@ export default function SportsEmptySlate({
       : "It's a light day for games. Here's what else is worth a look.";
 
   return (
-    <div className="w-full rounded-2xl bg-surface-card border border-surface-border px-6 py-8 text-center">
+    // `data-testid` + `data-empty-state-name` are the browser-audit rail's
+    // stable hook for a legitimate Sports empty/no-games state (mirrors
+    // EndOfFeedCard, L2-223/L2-240) — so a blank page can never be mistaken for
+    // a proven empty state, and a copy edit can never silently un-prove it.
+    <div
+      className="w-full rounded-2xl bg-surface-card border border-surface-border px-6 py-8 text-center"
+      data-testid="sports-empty-state"
+      data-empty-state-name={mode === "empty" ? "sports-slate-quiet" : "sports-no-games"}
+      role="status"
+    >
       <p className="text-lg font-medium text-text-primary">{headline}</p>
       <p className="text-sm text-text-secondary mt-1 max-w-md mx-auto">{subline}</p>
 

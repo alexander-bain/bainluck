@@ -731,3 +731,46 @@ describe("Discover audit hooks are state-based", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// L2-240 — the Sports latency rail carries the same false-green guards as the
+// Discover one: stable state-based hooks, no layout-class card selector, no
+// copy-matched empty state, and the render actually emits the hooks it looks for.
+// ---------------------------------------------------------------------------
+
+describe("Sports latency audit hooks are state-based", () => {
+  const repoRoot = path.join(__dirname, "..", "..", "..");
+  const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
+  const code = (raw) => raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const specRaw = () => read("frontend", "e2e", "specs", "sports-latency.spec.ts");
+
+  it("selects the card by a stable hook, never a Tailwind layout class", () => {
+    const raw = specRaw();
+    assert.ok(!code(raw).includes("break-inside-avoid"), "sports-latency selects by layout class");
+    assert.ok(raw.includes('[data-testid="sports-card"]'), "sports-latency must use the stable card hook");
+  });
+
+  it("does not smooth a missing card into a first-card time (the C96 [P1] shape)", () => {
+    // `firstCardMs` must be null when no card was found — never an unconditional
+    // `Date.now() - t0`. This is the exact false green discover-latency once had.
+    const raw = code(specRaw());
+    assert.match(raw, /realCardFound \? Date\.now\(\) - t0 : null/, "no-card must yield null, not a number");
+  });
+
+  it("identifies the empty state by a data hook, never by its copy", () => {
+    const raw = specRaw();
+    assert.ok(
+      raw.includes('[data-testid="sports-empty-state"]'),
+      "sports-latency must use the stable empty-state hook"
+    );
+  });
+
+  it("the components actually render the hooks the sports spec looks for", () => {
+    const page = read("frontend", "app", "sports", "page.tsx");
+    assert.ok(page.includes('data-testid="sports-card"'), "the sports feed item wrapper needs the card hook");
+
+    const empty = read("frontend", "components", "SportsEmptySlate.tsx");
+    assert.ok(empty.includes('data-testid="sports-empty-state"'));
+    assert.ok(empty.includes("data-empty-state-name"), "the state name must be data, not scraped prose");
+  });
+});
