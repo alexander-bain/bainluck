@@ -73,6 +73,14 @@ SENTINEL_MAX_EVIDENCE_COHORTS = 40
 # cards. The rest are visible in the cached findings for the next run.
 SENTINEL_MAX_ISSUES_PER_RUN = 6  # calibration:sentinel_max_issues_per_run
 
+# Capture-mass / pass-rate cohort axis (2026-08-03 addendum): the cross-sport
+# capture census runs every sweep so a MISSING or STARVED market class is
+# flagged the same day, exactly like a miscalibrated cohort. Window is the
+# resolved-games lookback; the cap bounds how many capture issues a run files.
+SENTINEL_CAPTURE_WINDOW_DAYS = 30   # calibration:sentinel_capture_window_days
+SENTINEL_CAPTURE_MAX_ISSUES = 4     # calibration:sentinel_capture_max_issues
+_CAPTURE_BASELINE_REDIS_KEY = "bainluck:calibration_sentinel:capture_baseline"
+
 # Guess/terminal/void resolution sources folded into the "heuristic" overlap
 # signal — mirrors the inline NOT IN (...) list the main calibration scan uses.
 _HEURISTIC_SOURCES = (
@@ -714,11 +722,173 @@ def file_cohort_issue(cohort: dict, explained_by: str | None, coverage: float) -
 
 
 # ---------------------------------------------------------------------------
+# Capture-mass / pass-rate cohort axis (2026-08-03 addendum)
+# ---------------------------------------------------------------------------
+_CAPTURE_KIND_LABELS = {
+    "starved_class": "starved / missing market class",
+    "classifier_leak": "classifier leak (over-large 'other')",
+    "passrate_outlier": "well-traded pass-rate outlier",
+    "drift": "capture drift vs last sweep",
+}
+
+
+def _capture_fingerprint(finding) -> str:
+    """Stable dedup key reusing the sentinel-fingerprint marker path."""
+    raw = f"capture|{finding.kind}|{finding.cohort}"
+    return "cap-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def build_capture_issue_title(finding) -> str:
+    label = _CAPTURE_KIND_LABELS.get(finding.kind, finding.kind)
+    return f"[Calibration Sentinel] capture: {label} — {finding.cohort}"[:256]
+
+
+def build_capture_issue_body(finding, fp: str) -> str:
+    return "\n".join([
+        "## Calibration Sentinel — capture-mass finding",
+        "",
+        f"`sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
+        "",
+        f"**Cohort:** `{finding.cohort}`  ",
+        f"**Kind:** `{finding.kind}`  ",
+        f"**Severity:** {finding.severity}",
+        "",
+        finding.detail,
+        "",
+        "### Why this is a capture finding, not a calibration one",
+        "The capture axis measures whether we INGEST the markets a sport should "
+        "have (moneyline/spread/total per game) and whether a source's outcomes "
+        "were genuinely well-traded (source-reported `FuturesOutcome.volume`), "
+        "not whether prices were well-calibrated. A missing or starved class is a "
+        "matching/ingestion/classification bug (assume-our-bug first), surfaced "
+        "the same day as a miscalibrated cohort.",
+        "",
+        "Market class is computed by the shared classifier "
+        "`app/utils/game_market_class.py`; the census by `app/utils/capture_census.py`. "
+        "Reproduce with `scripts/capture_census.py --window "
+        f"{SENTINEL_CAPTURE_WINDOW_DAYS}`.",
+        "",
+        "---",
+        "*Auto-filed by the Calibration Sentinel capture axis (#1054). Read-only "
+        "detection — the sentinel never writes market data (gotcha #21).*",
+    ])
+
+
+def file_capture_finding(finding) -> dict:
+    """File OR update one capture finding, reusing the sentinel dedup path."""
+    from app.tasks.bug_report_github import (
+        GITHUB_TOKEN,
+        add_to_project_board,
+        comment_on_issue,
+        create_github_issue,
+    )
+
+    fp = _capture_fingerprint(finding)
+    if not GITHUB_TOKEN:
+        return {"fingerprint": fp, "action": "skipped_no_token"}
+    existing = _find_open_issue_by_fingerprint(fp)
+    if existing:
+        try:
+            comment_on_issue(
+                existing,
+                f"Sentinel re-observed this capture cohort (`{finding.cohort}`, "
+                f"{finding.kind}). {finding.detail} Still open.",
+            )
+        except Exception as exc:
+            logger.warning("Capture sentinel comment failed on #%d: %s", existing, exc)
+        return {"fingerprint": fp, "action": "commented", "issue": existing}
+
+    labels = ["alert-intake", "area:calibration", "needs-agent", "priority:p2"]
+    try:
+        number, node_id = create_github_issue(
+            build_capture_issue_title(finding),
+            build_capture_issue_body(finding, fp),
+            labels,
+        )
+    except Exception as exc:
+        logger.error("Capture sentinel issue creation failed (%s): %s", fp, exc)
+        return {"fingerprint": fp, "action": "error", "error": str(exc)[:200]}
+    try:
+        add_to_project_board(node_id)
+    except Exception:
+        logger.warning("Capture sentinel: add #%d to board failed", number, exc_info=True)
+    return {"fingerprint": fp, "action": "filed", "issue": number}
+
+
+def _read_capture_baseline() -> dict | None:
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(_CAPTURE_BASELINE_REDIS_KEY)
+        if raw:
+            return json.loads(raw)
+    except Exception as exc:
+        logger.info("Capture baseline read failed (no drift this run): %s", exc)
+    return None
+
+
+def _write_capture_baseline(snapshot: dict) -> None:
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().set(
+            _CAPTURE_BASELINE_REDIS_KEY, json.dumps(snapshot), ex=45 * 86400
+        )
+    except Exception as exc:
+        logger.info("Capture baseline write failed (drift resets next run): %s", exc)
+
+
+async def _mine_capture_cohorts(session, prev_baseline: dict | None) -> dict:
+    """Run the cross-sport capture census this sweep and return findings + a
+    fresh baseline snapshot. Pure aggregation/alarms live in capture_census."""
+    from app.utils import capture_census as cc
+
+    window = SENTINEL_CAPTURE_WINDOW_DAYS
+    games_rows = (await session.execute(text(cc.games_sql(window)))).all()
+    games = {r[0]: r[1] for r in games_rows}
+    market_rows = (await session.execute(text(cc.market_rows_sql(window)))).all()
+    source_rows = (await session.execute(text(cc.source_split_sql(window)))).all()
+
+    by_sc, other_names = cc.tally_market_rows(market_rows)
+    by_src = cc.tally_source_split(source_rows)
+    snapshot = cc.snapshot_for_baseline(window, games, by_sc, by_src)
+
+    findings = cc.capture_findings(games, by_sc, by_src)
+    findings += cc.drift_findings(prev_baseline, snapshot)
+
+    # A compact per-cohort mass table for the run payload (expected-vs-actual).
+    mass = {}
+    for sport, classes in by_sc.items():
+        g = max(games.get(sport, 0), 1)
+        mass[sport] = {
+            "games": games.get(sport, 0),
+            "per_game": {cls: round(mc.markets / g, 2) for cls, mc in classes.items()},
+        }
+    return {
+        "window_days": window,
+        "games_by_sport": games,
+        "mass_per_game": mass,
+        "findings": [
+            {"kind": f.kind, "cohort": f.cohort, "severity": f.severity,
+             "detail": f.detail, "fingerprint": _capture_fingerprint(f)}
+            for f in findings
+        ],
+        "snapshot": snapshot,
+        "_findings_objs": findings,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Runtime threshold overrides (Redis, no-deploy tuning)
 # ---------------------------------------------------------------------------
 def _load_overrides() -> None:
     global SENTINEL_N_FLOOR, SENTINEL_MCE_THRESHOLD, SENTINEL_NEW_N_FLOOR
     global SENTINEL_NEW_MCE_THRESHOLD, SENTINEL_COVERAGE_THRESHOLD, SENTINEL_MAX_ISSUES_PER_RUN
+    global SENTINEL_CAPTURE_WINDOW_DAYS, SENTINEL_CAPTURE_MAX_ISSUES
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -730,6 +900,8 @@ def _load_overrides() -> None:
             ("calibration:sentinel_new_mce_threshold", "SENTINEL_NEW_MCE_THRESHOLD", float),
             ("calibration:sentinel_coverage_threshold", "SENTINEL_COVERAGE_THRESHOLD", float),
             ("calibration:sentinel_max_issues_per_run", "SENTINEL_MAX_ISSUES_PER_RUN", int),
+            ("calibration:sentinel_capture_window_days", "SENTINEL_CAPTURE_WINDOW_DAYS", int),
+            ("calibration:sentinel_capture_max_issues", "SENTINEL_CAPTURE_MAX_ISSUES", int),
         ):
             v = r.get(key)
             if v is not None:
@@ -777,6 +949,7 @@ async def _run_calibration_sentinel(
     }
 
     cohorts: dict[tuple, dict] = {}
+    capture_findings_objs: list = []
 
     async with get_task_session() as session:
         # --- Mining scan: fold both populations into every cohort view ---
@@ -856,6 +1029,24 @@ async def _run_calibration_sentinel(
             }
             stats["findings"].append(finding)
 
+        # --- Capture-mass / pass-rate cohort axis (2026-08-03 addendum) ---
+        # Runs the cross-sport census every sweep so a missing/starved market
+        # class or a pass-rate outlier is flagged the same day as a miscalibrated
+        # cohort. Best-effort: a capture-axis failure must never break the MCE run.
+        capture: dict[str, Any] = {"findings": []}
+        try:
+            prev_baseline = _read_capture_baseline()
+            capture = await _mine_capture_cohorts(session, prev_baseline)
+        except Exception as exc:
+            logger.error("Capture cohort mining failed: %s", exc)
+            stats["errors"].append({"scan": "capture", "error": str(exc)[:200]})
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+        capture_findings_objs = capture.pop("_findings_objs", [])
+        stats["capture"] = capture
+
     # --- Filing (outside the session; httpx calls) ---
     # Suppress cohorts explained by a shipped exclusion in a live run so the
     # sentinel doesn't re-file known work; still surface them in the findings.
@@ -870,6 +1061,21 @@ async def _run_calibration_sentinel(
         for c in candidates[:SENTINEL_MAX_ISSUES_PER_RUN]:
             action = file_cohort_issue(c, c.get("explained_by"), c.get("coverage", 0.0))
             stats["filed"].append(action)
+
+    # --- Capture-axis filing: REAL findings file; WATCH only surfaces ---
+    capture_stats = stats.get("capture", {})
+    capture_real = [f for f in capture_findings_objs if f.severity == "REAL"]
+    capture_watch = [f for f in capture_findings_objs if f.severity != "REAL"]
+    capture_stats["real_count"] = len(capture_real)
+    capture_stats["watch_count"] = len(capture_watch)
+    capture_stats["filed"] = []
+    if file_issues:
+        for f in capture_real[:SENTINEL_CAPTURE_MAX_ISSUES]:
+            capture_stats["filed"].append(file_capture_finding(f))
+    capture_stats["filing_capped"] = len(capture_real) > SENTINEL_CAPTURE_MAX_ISSUES
+    # Persist this sweep's snapshot as the next sweep's expected baseline (drift).
+    if capture_stats.get("snapshot"):
+        _write_capture_baseline(capture_stats["snapshot"])
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     # #1202: stamp a run-level wall clock so /calibration-sentinel/last and the

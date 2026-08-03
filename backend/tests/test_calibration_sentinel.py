@@ -231,3 +231,53 @@ class _DummyDT:
 
     def timestamp(self):
         return self._ts
+
+
+# ---------------------------------------------------------------------------
+# Capture-mass / pass-rate cohort axis (2026-08-03 addendum) — pure helpers.
+# ---------------------------------------------------------------------------
+from app.tasks.calibration_sentinel import (  # noqa: E402
+    _capture_fingerprint,
+    build_capture_issue_body,
+    build_capture_issue_title,
+)
+from app.utils.capture_census import CaptureFinding  # noqa: E402
+
+
+class TestCaptureAxis:
+    def _finding(self):
+        return CaptureFinding(
+            kind="starved_class",
+            cohort="baseball_mlb/moneyline",
+            detail="147 moneyline markets across 231 games = 0.64/game.",
+        )
+
+    def test_capture_fingerprint_is_stable_and_prefixed(self):
+        f = self._finding()
+        fp1 = _capture_fingerprint(f)
+        fp2 = _capture_fingerprint(self._finding())
+        assert fp1 == fp2  # deterministic
+        assert fp1.startswith("cap-") and len(fp1) == 16
+
+    def test_capture_fingerprint_distinguishes_cohorts(self):
+        a = _capture_fingerprint(self._finding())
+        b = _capture_fingerprint(
+            CaptureFinding(kind="starved_class", cohort="basketball_nba/moneyline",
+                           detail="x")
+        )
+        assert a != b
+
+    def test_capture_body_carries_dedup_marker(self):
+        f = self._finding()
+        fp = _capture_fingerprint(f)
+        body = build_capture_issue_body(f, fp)
+        # Reuses the SAME marker as MCE cohorts so the shared dedup search finds it.
+        assert f"sentinel-fingerprint:{fp}" in body
+        assert "capture-mass finding" in body
+        assert f.detail in body
+
+    def test_capture_title_names_kind_and_cohort(self):
+        title = build_capture_issue_title(self._finding())
+        assert "capture:" in title
+        assert "baseball_mlb/moneyline" in title
+        assert len(title) <= 256
