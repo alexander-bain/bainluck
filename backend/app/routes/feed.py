@@ -1894,6 +1894,10 @@ async def get_feed(
                         timeout=_futures_budget_s(),
                     )
                 else:
+                    # Queue 305 (#1475): capture the primary pass's loaded, ordered
+                    # candidate base so the #1090 broaden re-score can reuse it
+                    # instead of re-paying the ~494ms market_load SELECT.
+                    _primary_base_capture: dict = {}
                     futures_items = await asyncio.wait_for(
                         _score_futures(
                             db,
@@ -1908,6 +1912,7 @@ async def get_feed(
                             timing_records=_timings,
                             timing_started_at=_started_at,
                             config=discover_config,
+                            capture_base=_primary_base_capture,
                         ),
                         timeout=_futures_budget_s(),
                     )
@@ -1947,6 +1952,11 @@ async def get_feed(
                                     tag_filter=dynamic_tag_filter or None,
                                     static_tag_filter=static_tag_filter or None,
                                     config=relaxed,
+                                    # Queue 305 (#1475): reuse the primary pass's
+                                    # already-hydrated base (skips the redundant
+                                    # market_load SELECT); falls back to a fresh
+                                    # load if the primary somehow captured nothing.
+                                    preloaded_base=_primary_base_capture or None,
                                 ),
                                 timeout=_futures_budget_s(),
                             )
@@ -5784,6 +5794,8 @@ async def _score_futures(
     timing_records: Optional[list[dict[str, float | str]]] = None,
     timing_started_at: float | None = None,
     config: dict[str, float | bool] | None = None,
+    capture_base: dict | None = None,
+    preloaded_base: dict | None = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -5887,76 +5899,100 @@ async def _score_futures(
     # personalization, diversity, and page op run unchanged below.
     from app.utils import candidate_base as _candidate_base
 
-    _cb_base_ids, _cb_provenance, _cb_curator_ids = (
-        await _candidate_base.get_candidate_base(
-            now, sport_filter, static_tag_filter, stages=None
-        )
-    )
-    if _cb_base_ids is not None:
-        market_ids = list(_cb_base_ids)
-        external_curator_recall_ids = set(_cb_curator_ids or [])
-        # Provenance-only timing stage — records fresh|last_good and that ZERO
-        # candidate-pool SQL ran on this build (no IDs / content recorded).
-        mark_timing(f"candidate_base_{_cb_provenance}")
+    # Queue 305 (#1475): the #1090 thin-pool broaden pass re-scores the SAME
+    # config-independent candidate base with relaxed staleness windows. When the
+    # primary pass hands its already-ordered, already-hydrated markets down via
+    # ``preloaded_base``, reuse them instead of re-reading the base and re-issuing
+    # the ~494ms three-round-trip ``market_load`` SELECT for rows we already hold.
+    # The external-curator recall IDs travel with the markets so the recall scoring
+    # bonus is identical. Only the redundant serial DB load is removed — the
+    # relaxed scoring loop below still runs (that IS the point of #1090), and
+    # membership/order are unchanged (the base is config-independent, so a fresh
+    # reload would return the identical rows in the identical order).
+    if preloaded_base is not None and preloaded_base.get("markets") is not None:
+        markets = list(preloaded_base["markets"])
+        market_ids = [m.id for m in markets]
+        external_curator_recall_ids = set(preloaded_base.get("curator_ids") or ())
+        # Provenance-only stage: records that ZERO candidate-pool AND market-load
+        # SQL ran on this reused build.
+        mark_timing("market_load_reused")
     else:
-        candidate_queries_started_at = timing_previous_at
-        (
-            market_ids,
-            _cb_pool_counts,
-            _cb_curator_ids,
-        ) = await _compute_ordered_candidate_ids(
-            db,
-            now,
-            sport_filter,
-            static_tag_filter,
-            mark_timing=mark_timing,
+        _cb_base_ids, _cb_provenance, _cb_curator_ids = (
+            await _candidate_base.get_candidate_base(
+                now, sport_filter, static_tag_filter, stages=None
+            )
         )
-        external_curator_recall_ids = set(_cb_curator_ids)
-        mark_timing(
-            "candidate_queries",
-            since_at=candidate_queries_started_at,
-            update_previous=False,
-        )
-        mark_timing("candidate_dedupe")
-        # Publish the freshly-computed base (best-effort, non-blocking) so the next
-        # cold page / native shape reuses it — unless the kill switch is set.
-        if _cb_provenance != _candidate_base.PROV_DISABLED and market_ids:
-            from app.utils.request_cache import schedule_background as _cb_schedule
+        if _cb_base_ids is not None:
+            market_ids = list(_cb_base_ids)
+            external_curator_recall_ids = set(_cb_curator_ids or [])
+            # Provenance-only timing stage — records fresh|last_good and that ZERO
+            # candidate-pool SQL ran on this build (no IDs / content recorded).
+            mark_timing(f"candidate_base_{_cb_provenance}")
+        else:
+            candidate_queries_started_at = timing_previous_at
+            (
+                market_ids,
+                _cb_pool_counts,
+                _cb_curator_ids,
+            ) = await _compute_ordered_candidate_ids(
+                db,
+                now,
+                sport_filter,
+                static_tag_filter,
+                mark_timing=mark_timing,
+            )
+            external_curator_recall_ids = set(_cb_curator_ids)
+            mark_timing(
+                "candidate_queries",
+                since_at=candidate_queries_started_at,
+                update_previous=False,
+            )
+            mark_timing("candidate_dedupe")
+            # Publish the freshly-computed base (best-effort, non-blocking) so the
+            # next cold page / native shape reuses it — unless the kill switch is set.
+            if _cb_provenance != _candidate_base.PROV_DISABLED and market_ids:
+                from app.utils.request_cache import schedule_background as _cb_schedule
 
-            # A rejected identity means this filter is not shareable — serve the
-            # direct-query result (already computed above) and publish nothing.
-            try:
-                _cb_identity = _candidate_base.base_identity(
-                    sport_filter, static_tag_filter
-                )
-            except _candidate_base.CandidateBaseTagError:
-                _cb_identity = None
-            if _cb_identity is not None:
-                _cb_schedule(
-                    _candidate_base.publish_candidate_base(
-                        _candidate_base.build_envelope(
-                            now,
-                            _cb_identity,
-                            market_ids,
-                            pool_counts=_cb_pool_counts,
-                            external_curator_recall_ids=_cb_curator_ids,
+                # A rejected identity means this filter is not shareable — serve the
+                # direct-query result (already computed above) and publish nothing.
+                try:
+                    _cb_identity = _candidate_base.base_identity(
+                        sport_filter, static_tag_filter
+                    )
+                except _candidate_base.CandidateBaseTagError:
+                    _cb_identity = None
+                if _cb_identity is not None:
+                    _cb_schedule(
+                        _candidate_base.publish_candidate_base(
+                            _candidate_base.build_envelope(
+                                now,
+                                _cb_identity,
+                                market_ids,
+                                pool_counts=_cb_pool_counts,
+                                external_curator_recall_ids=_cb_curator_ids,
+                            )
                         )
                     )
-                )
 
-    if not market_ids:
-        return []
+        if not market_ids:
+            return []
 
-    markets_result = await db.execute(
-        select(FuturesMarket)
-        .options(*base_options)
-        .where(FuturesMarket.id.in_(market_ids))
-    )
-    markets_by_id = {
-        market.id: market for market in markets_result.scalars().unique().all()
-    }
-    markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
-    mark_timing("market_load")
+        markets_result = await db.execute(
+            select(FuturesMarket)
+            .options(*base_options)
+            .where(FuturesMarket.id.in_(market_ids))
+        )
+        markets_by_id = {
+            market.id: market for market in markets_result.scalars().unique().all()
+        }
+        markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+        mark_timing("market_load")
+
+        # Queue 305 (#1475): hand this freshly-loaded, ordered base down to the
+        # #1090 broaden re-score so it need not re-issue the market_load SELECT.
+        if capture_base is not None:
+            capture_base["markets"] = markets
+            capture_base["curator_ids"] = set(external_curator_recall_ids)
 
     if not markets:
         return []
