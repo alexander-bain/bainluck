@@ -104,12 +104,18 @@ class _FakeDB:
 
 
 @pytest.mark.asyncio
-async def test_route_fallback_includes_void_filter_key():
-    # Queue #257 Item 1: the cold-cache fallback now delegates to the ONE shared
-    # compute_calibration_payload, so it serves the FULL void-filter transparency
-    # dict (not the old degraded None) — the cold serve matches the Redis serve.
-    calibration._cache = {"data": None, "timestamp": 0}
-    resp = await calibration.public_calibration(db=_FakeDB(), bust=1)
+async def test_route_serve_includes_void_filter_key():
+    # Queue #257 Item 1: there is ONE shared compute_calibration_payload, so what
+    # the route serves carries the FULL void-filter transparency dict (not the old
+    # degraded None). Queue 300B: the route no longer BUILDS that payload — it
+    # serves the published one — so the published payload is what we feed it.
+    import time as _time
+
+    from app.tasks.precompute_calibration import compute_calibration_payload
+
+    payload = await compute_calibration_payload(_FakeDB())
+    calibration._cache = {"data": payload, "timestamp": _time.time()}
+    resp = await calibration.public_calibration(db=_FakeDB())
     assert "void_filter" in resp
     assert resp["void_filter"] is not None
     assert resp["void_filter"]["applies_to"] == "datagolf"

@@ -390,7 +390,7 @@ async def test_route_serves_durable_last_good_on_main_miss(monkeypatch):
         "app.tasks.precompute_calibration.compute_calibration_payload", _boom
     )
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
 
     assert out["total_outcomes"] == 635464
     assert out["generated_at"] == payload["generated_at"]
@@ -407,8 +407,14 @@ async def test_route_serves_durable_last_good_on_main_miss(monkeypatch):
     rc._reset_last_good_for_tests()
 
 
-async def test_route_bust_skips_durable_last_good(monkeypatch):
-    """bust=1 must force a fresh recompute, not serve the durable last-good."""
+async def test_route_never_skips_last_good_into_a_recompute(monkeypatch):
+    """Queue 300B: the durable last-good wins over any recompute request.
+
+    Formerly ``test_route_bust_skips_durable_last_good`` — ``?bust=1`` forced a
+    fresh in-request build. A dated-but-real curve is strictly better for the
+    reader than a 22-minute query an anonymous GET should never have been able
+    to start, so the last-good is served and marked stale.
+    """
     from app.routes import calibration
     from app.utils import request_cache as rc
 
@@ -416,22 +422,21 @@ async def test_route_bust_skips_durable_last_good(monkeypatch):
     calibration._cache["timestamp"] = 0
     rc._reset_last_good_for_tests()
 
-    fresh = _payload(buckets=3)
     client = _RouteRedis(main=None, last_good=json.dumps(_payload(buckets=1572)))
     monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
 
-    async def _compute(db, **_kwargs):
-        return fresh
+    async def _boom(db, **_kwargs):
+        raise AssertionError("a request started the canonical build")
 
     monkeypatch.setattr(
-        "app.tasks.precompute_calibration.compute_calibration_payload", _compute
+        "app.tasks.precompute_calibration.compute_calibration_payload", _boom
     )
 
-    out = await calibration.public_calibration(db=object(), bust=1)
+    out = await calibration.public_calibration(db=object())
 
-    # served the fresh recompute, not the durable last-good
-    assert out["buckets"] == fresh["buckets"]
-    assert "cache" not in out or out.get("cache", {}).get("status") != "stale"
+    # served the durable last-good, honestly dated
+    assert len(out["buckets"]) == 1572
+    assert out["cache"]["status"] == "stale"
 
     calibration._cache["data"] = None
     calibration._cache["timestamp"] = 0
@@ -463,7 +468,7 @@ async def test_stale_last_good_memoized_copy_stays_marked_across_requests(monkey
         "app.tasks.precompute_calibration.compute_calibration_payload", _boom
     )
 
-    first = await calibration.public_calibration(db=object(), bust=0)
+    first = await calibration.public_calibration(db=object())
     assert first["cache"]["status"] == "stale"
     assert first["cache"]["reason"] == "main_key_absent"
     # THE contract: the memoized copy itself carries the stale marker.
@@ -471,7 +476,7 @@ async def test_stale_last_good_memoized_copy_stays_marked_across_requests(monkey
 
     # A second same-dyno request (main still absent) is ALSO stale — never a
     # falsely-fresh memoized copy.
-    second = await calibration.public_calibration(db=object(), bust=0)
+    second = await calibration.public_calibration(db=object())
     assert second["cache"]["status"] == "stale"
     assert second["cache"]["reason"] == "main_key_absent"
 
@@ -501,14 +506,14 @@ async def test_recovered_fresh_main_replaces_stale_memoized_copy(monkeypatch):
         "app.tasks.precompute_calibration.compute_calibration_payload", _boom
     )
 
-    stale = await calibration.public_calibration(db=object(), bust=0)
+    stale = await calibration.public_calibration(db=object())
     assert stale["cache"]["status"] == "stale"
 
     # Main recovers: the fresh key is now present.
     fresh_payload = _payload(buckets=3)
     client._store["bainluck:calibration:main"] = json.dumps(fresh_payload)
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
     assert out["buckets"] == fresh_payload["buckets"]
     assert "cache" not in out
     assert calibration._cache["data"].get("cache") is None

@@ -3871,6 +3871,15 @@ async def _run_calibration_main_build(runner=None):
         await db.execute(
             text(f"SET LOCAL statement_timeout = {_MAIN_COMPUTE_STMT_TIMEOUT_MS}")
         )
+
+        # Queue 300B Item 1: name the backend BEFORE the first heavy read, not
+        # after. The window this covers is the one that matters — a build that
+        # wedges inside phase 1 never reaches a later re-tag, and a wedged phase-1
+        # backend with no ``application_name`` is precisely the pair of orphans
+        # #1479 is still stuck on. With a runner, each phase re-arms this after
+        # its commit clears the transaction-local setting.
+        await runner.tag_session(db)
+
         try:
             response = await compute_calibration_payload(db, runner=runner)
         finally:
@@ -4207,6 +4216,11 @@ async def _precompute_calibration_main():
             "banked": banked,
             "carried": list(runner.carried_phases),
             "outcome": runner.outcome,
+            # Queue 300B Item 1: the server-side identity of the backend that ran
+            # this build. Written on EVERY terminal, including the timeouts and
+            # cancellations — those are the runs whose backend might still be
+            # sitting there, and this row is what names it afterwards.
+            "session_identity": runner.session_identity,
         },
     )
     health = health_for(
@@ -4492,7 +4506,12 @@ async def _compute_time_horizon_calibration():
     # recomputed rather than resumed or republished under the current version.
     horizons_result: dict = _load_time_horizon_wip(rc)
 
+    from app.tasks.calibration_main_build import tag_scheduled_session
+
     async with get_task_session() as db:
+        # Queue 300B Item 1: name this backend before its first LATERAL probe.
+        await tag_scheduled_session(db, task="compute_time_horizon_calibration")
+
         for label, days in _HORIZONS:
             if label in horizons_result:
                 continue  # already computed in an earlier run — resumable cursor
@@ -5057,10 +5076,16 @@ async def _compute_fair_fight_comparison():
     # + 240s statement_timeout bounds each scan well under the soft limit and
     # isolates failures so a slow half degrades to [] instead of failing the
     # whole task (advisory Redis surface — partial > red).
+    from app.tasks.calibration_main_build import tag_scheduled_session
+
     async def _run_bounded(impl, label):
         try:
             async with get_task_session() as db:
                 await db.execute(text("SET LOCAL statement_timeout = '240s'"))
+                # Queue 300B Item 1: paired with the timeout, same lifetime.
+                await tag_scheduled_session(
+                    db, task=f"fair_fight_comparison.{label}"
+                )
                 return await impl(db)
         except Exception:
             logger.exception("fair-fight precompute: %s query failed", label)
@@ -5319,7 +5344,13 @@ async def _snapshot_coverage_metrics():
     rows_this_run = 0
 
     try:
+        from app.tasks.calibration_main_build import tag_scheduled_session
+
         async with get_task_session() as session:
+            # Queue 300B Item 1: before the lock, so even a session stuck WAITING
+            # on the advisory lock identifies itself.
+            await tag_scheduled_session(session, task=_COVERAGE_TASK)
+
             if not await try_acquire_overlap_lock(session, _COVERAGE_TASK):
                 # Another beat owns the sweep. Doing nothing is the correct
                 # behaviour; running a second sweep against the same cursor is

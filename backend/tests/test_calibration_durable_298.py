@@ -166,7 +166,7 @@ async def test_fresh_process_with_redis_dead_serves_the_durable_snapshot(monkeyp
     _use(monkeypatch, _DeadRedis())
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=_durable_db(payload, generated_at=stamp), bust=0)
+    out = await calibration.public_calibration(db=_durable_db(payload, generated_at=stamp))
 
     assert out["total_outcomes"] == 1_000_000
     # Dated and marked — served, but never dressed up as current.
@@ -185,20 +185,20 @@ async def test_evicted_keys_serve_the_durable_snapshot(monkeypatch):
     _use(monkeypatch, _EmptyRedis())
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=_durable_db(payload), bust=0)
+    out = await calibration.public_calibration(db=_durable_db(payload))
 
     assert out["cache"]["reason"] == "main_key_absent_durable"
     assert out["provenance"]["source"] == "durable"
 
 
-async def test_durable_tier_is_consulted_before_the_cold_compute(monkeypatch):
-    """The 9s compute is the last resort, not the fallback."""
+async def test_durable_tier_is_consulted_and_nothing_computes(monkeypatch):
+    """Queue 300B: the durable tier is the last resort — there is no compute below it."""
     from app.routes import calibration
 
     _use(monkeypatch, _EmptyRedis())
     _no_compute(monkeypatch)  # raises if reached
 
-    out = await calibration.public_calibration(db=_durable_db(_payload()), bust=0)
+    out = await calibration.public_calibration(db=_durable_db(_payload()))
     assert out["total_outcomes"] == 1_000_000
 
 
@@ -219,8 +219,7 @@ async def test_an_ancient_durable_copy_is_refused(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         await calibration.public_calibration(
-            db=_durable_db(payload, generated_at=ancient), bust=0
-        )
+            db=_durable_db(payload, generated_at=ancient))
     assert exc.value.status_code == 503
 
 
@@ -234,8 +233,7 @@ async def test_a_wrong_version_durable_copy_is_refused(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         await calibration.public_calibration(
-            db=_durable_db(payload, schema_version="q000-ancient"), bust=0
-        )
+            db=_durable_db(payload, schema_version="q000-ancient"))
     assert exc.value.status_code == 503
 
 
@@ -263,7 +261,7 @@ async def test_a_corrupted_durable_payload_is_refused(monkeypatch):
     _compute_fails(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=db, bust=0)
+        await calibration.public_calibration(db=db)
     assert exc.value.status_code == 503
 
 
@@ -275,7 +273,7 @@ async def test_nothing_anywhere_is_still_a_typed_unavailable(monkeypatch):
     _compute_fails(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=_empty_db(), bust=0)
+        await calibration.public_calibration(db=_empty_db())
     assert exc.value.status_code == 503
     assert exc.value.detail["status"] == "unavailable"
 
@@ -290,26 +288,31 @@ async def test_a_broken_durable_tier_cannot_break_the_route(monkeypatch):
     _compute_fails(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=db, bust=0)
+        await calibration.public_calibration(db=db)
     assert exc.value.status_code == 503
 
 
-async def test_bust_skips_the_durable_tier_and_forces_a_recompute(monkeypatch):
-    """``?bust=1`` means "recompute", and that must stay true."""
+async def test_no_caller_can_skip_the_durable_tier_into_a_recompute(monkeypatch):
+    """Queue 300B inverted this test's premise, deliberately.
+
+    It used to assert that ``?bust=1`` skipped the durable tier and forced a
+    fresh in-request build. That was the bug: an anonymous query string could
+    launch the ~22-minute population CTE, and the request abandoning it did not
+    stop the backend. The durable tier is now unskippable and the build tier is
+    gone, so the durable copy is what a caller gets — served, dated, and marked.
+    """
     from app.routes import calibration
     from app.tasks import precompute_calibration
 
-    fresh = _payload()
+    async def _boom(db, **_kwargs):
+        raise AssertionError("a request started the canonical build")
 
-    async def _compute(db, **_kwargs):
-        return fresh
-
-    monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _compute)
+    monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
     _use(monkeypatch, _EmptyRedis())
 
-    out = await calibration.public_calibration(db=_durable_db(_payload()), bust=1)
-    assert out is fresh
-    assert "provenance" not in out
+    out = await calibration.public_calibration(db=_durable_db(_payload()))
+    assert out["provenance"]["source"] == "durable"
+    assert out["cache"]["status"] == "stale"
 
 
 # ---------------------------------------------------------------------------

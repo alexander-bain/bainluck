@@ -111,7 +111,7 @@ async def test_calibration_redis_down_serves_last_good_no_compute(monkeypatch):
 
     loop = asyncio.get_running_loop()
     start = loop.time()
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
     elapsed_ms = (loop.time() - start) * 1000
 
     assert out["buckets"] == [1, 2, 3]
@@ -161,7 +161,7 @@ async def test_calibration_slow_redis_terminates_under_deadline(monkeypatch):
 
     loop = asyncio.get_running_loop()
     start = loop.time()
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
     elapsed = loop.time() - start
 
     # Bounded by REDIS_OP_DEADLINE_MS (0.6s), nowhere near the 30s router cutoff.
@@ -169,34 +169,44 @@ async def test_calibration_slow_redis_terminates_under_deadline(monkeypatch):
     assert out["cache"]["status"] == "stale"
 
 
-async def test_calibration_slow_compute_is_deadline_bounded(monkeypatch):
-    """A hung cold compute is cancelled at its deadline → fast 503, never a 30s H12."""
+async def test_calibration_cold_miss_starts_zero_builds(monkeypatch):
+    """Queue 300B: a clean cold miss answers 503 fast — it does not build.
+
+    This replaces the two tests that encoded the opposite contract
+    (``..._slow_compute_is_deadline_bounded``, which asserted
+    ``builds_started: 1`` was acceptable so long as the request gave up on it,
+    and ``..._cold_miss_computes_and_serves``). A deadline bounded how long the
+    REQUEST waited; it never bounded the backend, which kept running the
+    population CTE with its xmin pinned long after the client was gone — the
+    orphan shape #1479 records. The only bound that holds is not starting it.
+    """
     from app.routes import calibration
     from app.tasks import precompute_calibration
 
     _reset_calibration_cache()
     client = _FakeRedis("miss", value=None)  # clean miss (Redis healthy but empty)
     monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
-    # Tighten the compute deadline so the test is fast; the handler reads it live.
-    monkeypatch.setattr(rc, "CALIBRATION_COMPUTE_DEADLINE_MS", 200)
 
-    async def _hang(db):
-        await asyncio.sleep(30)
+    async def _boom(db, **_kwargs):
+        raise AssertionError("a request started the canonical build")
 
-    monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
+    monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
 
     loop = asyncio.get_running_loop()
     start = loop.time()
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
     elapsed_ms = (loop.time() - start) * 1000
 
     assert exc.value.status_code == 503
-    assert elapsed_ms < 2000  # bounded by the compute deadline, nowhere near 30s
+    assert exc.value.detail["status"] == "unavailable"
+    assert elapsed_ms < 2000  # nowhere near the 30s router cutoff
+    # A miss must not have primed last-good with anything.
+    assert rc.recall_last_good("calibration:main") is None
 
     _assert_contract_clean(
         {
-            "id": "calibration-compute-deadline",
+            "id": "calibration-cold-miss-no-build",
             "endpoint": "calibration",
             "cache_state": "miss",
             "last_good": {"available": False, "usable": False},
@@ -211,16 +221,8 @@ async def test_calibration_slow_compute_is_deadline_bounded(monkeypatch):
                 }
             ],
             "concurrent_requests": 1,
-            "builds_started": 1,
-            # Compute STARTED but was hard-cancelled AT the deadline — it never ran
-            # to the router cutoff (the whole point of the fix). Its bounded run
-            # time is the deadline itself.
-            "compute": {
-                "started": True,
-                "duration_ms": rc.CALIBRATION_COMPUTE_DEADLINE_MS,
-                "deadline_ms": rc.CALIBRATION_COMPUTE_DEADLINE_MS,
-                "passes": 1,
-            },
+            "builds_started": 0,
+            "compute": {"started": False, "duration_ms": 0, "passes": 0},
             "db": {"checkout_result": "ok", "wait_ms": 10},
             "cache_write": {
                 "result": "unused",
@@ -233,29 +235,6 @@ async def test_calibration_slow_compute_is_deadline_bounded(monkeypatch):
     )
 
 
-async def test_calibration_cold_miss_computes_and_serves(monkeypatch):
-    """A clean cold miss computes via the canonical path and serves the shape."""
-    from app.routes import calibration
-    from app.tasks import precompute_calibration
-
-    _reset_calibration_cache()
-    client = _FakeRedis("miss", value=None)
-    monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
-
-    async def _compute(db):
-        return {"buckets": [0, 1], "by_source": {}}
-
-    monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _compute)
-
-    out = await calibration.public_calibration(db=object(), bust=0)
-    assert out["buckets"] == [0, 1]
-    # Computed payload primes last-good for the next Redis blip.
-    assert rc.recall_last_good("calibration:main") == {
-        "buckets": [0, 1],
-        "by_source": {},
-    }
-
-
 async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     from app.routes import calibration
 
@@ -264,7 +243,7 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     client = _FakeRedis("hit", value=json.dumps(payload))
     monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
     assert out["buckets"] == [9, 9]
     # A warm hit primes the process-local last-good for the next Redis blip —
     # with exactly what was served, so the blip cannot replay a different shape.

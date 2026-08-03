@@ -123,7 +123,7 @@ async def test_fresh_main_serves_current_data_unmarked(monkeypatch):
     _use(monkeypatch, _FakeRedis(main=json.dumps(fresh)))
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
 
     assert out["total_outcomes"] == 1_000_000
     # A current payload carries no stale marker — honesty runs both ways.
@@ -142,7 +142,7 @@ async def test_main_miss_serves_dated_last_good(monkeypatch):
     _use(monkeypatch, _FakeRedis(main=None, last_good=json.dumps(lg)))
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
 
     assert out["cache"]["status"] == "stale"
     assert out["cache"]["reason"] == "main_key_absent"
@@ -167,7 +167,7 @@ async def test_an_untrustworthy_main_falls_back_to_the_durable_last_good(monkeyp
     )
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
 
     assert out["total_outcomes"] == 1_000_000
     assert out["cache"]["status"] == "stale"
@@ -209,7 +209,7 @@ async def test_too_old_last_good_is_refused(monkeypatch):
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
 
     assert exc.value.status_code == 503
     assert exc.value.detail["status"] == "unavailable"
@@ -230,7 +230,7 @@ async def test_wrong_version_last_good_is_refused(monkeypatch):
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
 
     assert exc.value.status_code == 503
 
@@ -258,7 +258,7 @@ async def test_malformed_last_good_is_refused(monkeypatch, bad):
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
 
     assert exc.value.status_code == 503
     assert exc.value.detail["status"] == "unavailable"
@@ -274,7 +274,7 @@ async def test_one_bad_field_cannot_poison_a_complete_snapshot(monkeypatch):
     _use(monkeypatch, _FakeRedis(main=None, last_good=json.dumps(lg)))
     _no_compute(monkeypatch)
 
-    out = await calibration.public_calibration(db=object(), bust=0)
+    out = await calibration.public_calibration(db=object())
 
     assert out["cache"]["status"] == "stale"
     assert out["total_outcomes"] == 1_000_000
@@ -298,7 +298,7 @@ async def test_nothing_trustworthy_returns_a_typed_unavailable_response(monkeypa
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
 
     detail = exc.value.detail
     assert isinstance(detail, dict), "the body must be typed, not a bare string"
@@ -333,7 +333,7 @@ async def test_whole_request_is_bounded_by_the_absolute_budget(monkeypatch):
     loop = asyncio.get_running_loop()
     start = loop.time()
     with pytest.raises(HTTPException):
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
     elapsed_ms = (loop.time() - start) * 1000
 
     assert elapsed_ms < 2_000, f"handler ran {elapsed_ms:.0f}ms, budget was 400ms"
@@ -352,7 +352,7 @@ async def test_an_exhausted_budget_answers_immediately_instead_of_computing(monk
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
 
     with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object(), bust=0)
+        await calibration.public_calibration(db=object())
 
     assert exc.value.detail["reason"] == "route_budget_exhausted"
 
@@ -372,13 +372,13 @@ async def test_recovery_is_immediate_once_main_is_republished(monkeypatch):
     )
     _no_compute(monkeypatch)
 
-    degraded = await calibration.public_calibration(db=object(), bust=0)
+    degraded = await calibration.public_calibration(db=object())
     assert degraded["cache"]["status"] == "stale"
 
     # The beat republishes.
     client.set_main(json.dumps(_payload(outcomes=1_050_000)))
 
-    recovered = await calibration.public_calibration(db=object(), bust=0)
+    recovered = await calibration.public_calibration(db=object())
     assert recovered["total_outcomes"] == 1_050_000
     assert recovered.get("cache", {}).get("status") != "stale"
 
@@ -393,8 +393,8 @@ async def test_a_stale_copy_is_never_cached_as_though_it_were_fresh(monkeypatch)
     )
     _no_compute(monkeypatch)
 
-    await calibration.public_calibration(db=object(), bust=0)
+    await calibration.public_calibration(db=object())
     reads_after_first = client.gets.count("bainluck:calibration:main")
-    await calibration.public_calibration(db=object(), bust=0)
+    await calibration.public_calibration(db=object())
 
     assert client.gets.count("bainluck:calibration:main") > reads_after_first

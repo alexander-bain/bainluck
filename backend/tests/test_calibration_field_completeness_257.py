@@ -133,12 +133,20 @@ class TestSharedQueryEmbedsCompleteness:
 # ONE population: the route delegates to the shared compute; the task caches it.
 # ---------------------------------------------------------------------------
 class TestSingleCanonicalPopulation:
-    def test_route_fallback_delegates_and_carries_no_main_cte(self):
+    def test_route_carries_no_population_query_of_any_kind(self):
+        """Queue #257 forbade a SECOND copy of the population CTE in the route.
+
+        Queue 300B went further and forbade the route running the population
+        query at ALL — a shared implementation was still a ~22-minute statement
+        an anonymous GET could start. So the old half of this assertion (the
+        route must CALL the shared compute) is inverted; the rest stands.
+        """
         src = inspect.getsource(calibration.public_calibration)
-        # The fallback delegates to the shared compute...
-        assert "compute_calibration_payload" in src
-        # ...and no longer carries its own copy of the resolved-outcome CTE chain
-        # (the ~650-line duplicate that had drifted). One population, one divisor.
+        # The prose explains why the build is absent; the code must not call it.
+        body = src.replace("``compute_calibration_payload``", "")
+        assert "compute_calibration_payload" not in body
+        # And it still carries no copy of the resolved-outcome CTE chain (the
+        # ~650-line duplicate that had drifted). One population, one divisor.
         assert "ranked_outcomes" not in src
         assert "mex_norm_markets" not in src
         assert "virtual_market" not in src
@@ -199,6 +207,9 @@ class _Result:
     def one(self):
         return self._one
 
+    def first(self):
+        return self._one
+
 
 class _FakeDB:
     """A fake session returning the exact 10-query sequence the shared payload runs."""
@@ -224,9 +235,19 @@ class _FakeDB:
         # queued query results (it would shift the whole sequence by one).
         # Queue 300M adds the same exemption for the overlap advisory lock (which
         # is the one statement here that carries bind params).
+        # Queue 300B adds the session-identity tag, which is the same shape of
+        # problem: a non-query statement that would otherwise eat the futures row
+        # and shift every subsequent assertion onto the wrong result.
         text_form = str(statement).lower()
-        if "statement_timeout" in text_form or "advisory" in text_form:
-            return _Result(scalar=True)
+        if (
+            "statement_timeout" in text_form
+            or "advisory" in text_form
+            or "set_config" in text_form
+        ):
+            return _Result(
+                scalar=True,
+                one=SimpleNamespace(name="bl1/test/test/test/test", pid=4080483),
+            )
         if not self._results:
             return _Result()
         return self._results.pop(0)
@@ -245,14 +266,21 @@ def _disable_sample_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_and_shared_compute_return_identical_payload():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_route_serves_the_shared_compute_payload_unaltered():
+    """One payload, one shape — the route is a serving tier, not a second builder.
+
+    Queue 300B removed the route's in-request build, so the seam this guards
+    moved: the shared compute publishes, and the route must hand back exactly
+    what was published. (Before 300B this called the route and let it compute
+    the payload itself, which is precisely the ability that queue removed.)
+    """
+    import time as _time
 
     shared = await compute_calibration_payload(_FakeDB())
-    routed = await calibration.public_calibration(db=_FakeDB(), bust=1)
+    calibration._cache = {"data": shared, "timestamp": _time.time()}
 
-    shared.pop("generated_at", None)
-    routed.pop("generated_at", None)
+    routed = await calibration.public_calibration(db=_FakeDB())
+
     assert routed == shared
 
 

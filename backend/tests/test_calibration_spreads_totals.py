@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.routes import calibration
 from app.tasks import precompute_calibration
 
 
@@ -47,7 +46,7 @@ class _FakeResult:
 class _FakeDB:
     """Fake async DB that returns pre-configured results in order.
 
-    Call order in public_calibration:
+    Call order in compute_calibration_payload:
     0: futures_markets CTE (bucket rows)
     1: events moneyline (bucket rows)
     2: spreads (bucket rows)
@@ -124,14 +123,10 @@ def _bucket_row(
 class TestSpreadsSummary:
     """Verify the spreads_summary section in the calibration response."""
 
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        calibration._cache = {"data": None, "timestamp": 0}
-
     @pytest.mark.asyncio
     async def test_spreads_summary_present_when_no_data(self):
         db = _FakeDB()
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         summary = response["spreads_summary"]
         assert summary["mce"] is None
         assert summary["outcomes"] == 0
@@ -154,7 +149,7 @@ class TestSpreadsSummary:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         summary = response["spreads_summary"]
         assert summary["outcomes"] == 100
         assert summary["winners"] == 52
@@ -190,7 +185,7 @@ class TestSpreadsSummary:
                 ),
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         summary = response["spreads_summary"]
         assert summary["outcomes"] == 180
         assert len(summary["by_sport"]) == 2
@@ -239,7 +234,7 @@ class TestSpreadsSummary:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         assert response["spreads_summary"]["outcomes"] == 50
         assert response["totals_summary"]["outcomes"] == 90
 
@@ -252,14 +247,10 @@ class TestSpreadsSummary:
 class TestTotalsSummary:
     """Verify the totals_summary section in the calibration response."""
 
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        calibration._cache = {"data": None, "timestamp": 0}
-
     @pytest.mark.asyncio
     async def test_totals_summary_present_when_no_data(self):
         db = _FakeDB()
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         summary = response["totals_summary"]
         assert summary["mce"] is None
         assert summary["outcomes"] == 0
@@ -292,7 +283,7 @@ class TestTotalsSummary:
                 ),
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         summary = response["totals_summary"]
         assert summary["outcomes"] == 180
         assert summary["winners"] == 90
@@ -310,14 +301,10 @@ class TestTotalsSummary:
 class TestSpreadSqlLogic:
     """Verify the spread calibration SQL text contains the right logic."""
 
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        calibration._cache = {"data": None, "timestamp": 0}
-
     @pytest.mark.asyncio
     async def test_spread_sql_uses_closing_spread_columns(self):
         db = _FakeDB()
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         # We can't inspect the SQL directly from the response, but we
         # verify the source name appears in the buckets when data flows.
         # The SQL verifies columns closing_home_spread,
@@ -344,7 +331,7 @@ class TestSpreadSqlLogic:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         spread_buckets = [
             b for b in response["buckets"]
             if b["source"] == "odds_api_spreads"
@@ -377,7 +364,7 @@ class TestSpreadSqlLogic:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         spread_buckets = [
             b for b in response["buckets"]
             if b["source"] == "odds_api_spreads"
@@ -393,10 +380,6 @@ class TestSpreadSqlLogic:
 
 class TestTotalSqlLogic:
     """Verify the total calibration SQL text contains the right logic."""
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        calibration._cache = {"data": None, "timestamp": 0}
 
     @pytest.mark.asyncio
     async def test_total_push_excluded_from_count(self):
@@ -416,7 +399,7 @@ class TestTotalSqlLogic:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         total_buckets = [
             b for b in response["buckets"]
             if b["source"] == "odds_api_totals"
@@ -443,7 +426,7 @@ class TestTotalSqlLogic:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         total_buckets = [
             b for b in response["buckets"]
             if b["source"] == "odds_api_totals"
@@ -459,10 +442,6 @@ class TestTotalSqlLogic:
 
 class TestSpreadTotalInBySource:
     """Verify that spread/total MCE appears in the by_source breakdown."""
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        calibration._cache = {"data": None, "timestamp": 0}
 
     @pytest.mark.asyncio
     async def test_spread_mce_in_by_source(self):
@@ -480,7 +459,7 @@ class TestSpreadTotalInBySource:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         sources = {s["source"]: s for s in response["by_source"]}
         assert "odds_api_spreads" in sources
         assert sources["odds_api_spreads"]["outcomes"] == 100
@@ -502,7 +481,7 @@ class TestSpreadTotalInBySource:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         sources = {s["source"]: s for s in response["by_source"]}
         assert "odds_api_totals" in sources
         assert sources["odds_api_totals"]["outcomes"] == 80
@@ -548,7 +527,7 @@ class TestSpreadTotalInBySource:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         source_names = {s["source"] for s in response["by_source"]}
         assert "odds_api" in source_names
         assert "odds_api_spreads" in source_names
@@ -585,7 +564,7 @@ class TestSpreadTotalInBySource:
                 )
             ],
         )
-        response = await calibration.public_calibration(db=db, bust=1)
+        response = await precompute_calibration.compute_calibration_payload(db)
         ml_buckets = [b for b in response["buckets"] if b["source"] == "odds_api"]
         sp_buckets = [b for b in response["buckets"] if b["source"] == "odds_api_spreads"]
         assert len(ml_buckets) == 1

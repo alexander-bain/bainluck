@@ -99,6 +99,32 @@ def run_owner() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+async def tag_scheduled_session(db, *, task: str) -> dict:
+    """Session identity for a scheduled calibration task with no PhaseRunner.
+
+    The main build gets its tag through :meth:`PhaseRunner.tag_session`, which
+    can name the exact run generation it is checkpointing under. The horizon,
+    fair-fight and coverage sweeps have no ledger, so they derive a generation
+    from their own start instant — enough to tell two beats apart and to place a
+    backend against the deploy it started under, which is the whole ask.
+
+    Their queries are individually bounded and none of them is the ~22-minute
+    population CTE, so they are not the likely orphan. Tagging them anyway is
+    what makes the ABSENCE of a tag meaningful: once every scheduled calibration
+    session is named, an untagged calibration-shaped backend is by itself
+    evidence that it predates this change.
+    """
+    from app.tasks.base import tag_task_session
+    from app.utils.durable_state import generation_for
+
+    return await tag_task_session(
+        db,
+        task=task,
+        run_generation=generation_for(datetime.now(timezone.utc)),
+        owner=run_owner(),
+    )
+
+
 # =============================================================================
 # Lossless (de)serialization of read output
 # =============================================================================
@@ -228,6 +254,15 @@ class PhaseRunner:
         self._carried: dict[str, dict[str, Any]] = {}
         self.carried_phases: list[str] = []
         self.checkpoint_writes: dict[str, str] = {}
+        #: Queue 300B Item 1. The SERVER's view of this run — the tag it wrote
+        #: into ``application_name`` and the backend PID that wrote it. Recorded
+        #: in the ledger so a ``pg_stat_activity`` row seen weeks later can be
+        #: joined back to a named run instead of inferred from age.
+        self.session_identity: dict[str, Any] = {
+            "application_name": None,
+            "backend_pid": None,
+            "applied": False,
+        }
         #: Filled in progressively by the build so the orchestrator's ``finally``
         #: can tell a gate refusal from a durable failure from a clean publish
         #: WITHOUT re-deriving it from an exception message.
@@ -323,6 +358,32 @@ class PhaseRunner:
         """Capture a freshly-read value so the next beat can carry it."""
         self._captured.setdefault(phase, {})[key] = (kind, value)
 
+    async def tag_session(self, db) -> dict:
+        """Announce this run's identity on the live backend (Queue 300B Item 1).
+
+        Both this and :meth:`apply_statement_timeout` are ``SET LOCAL``-scoped,
+        which is what makes them safe — and also what makes them perishable.
+        :meth:`commit` ends the transaction between phases, so both have to be
+        re-armed on the far side of every commit or the next phase runs bare.
+        """
+        from app.tasks.base import tag_task_session
+
+        identity = await tag_task_session(
+            db,
+            task=MAIN_BUILD_TASK,
+            run_generation=self.generation,
+            owner=self.owner,
+        )
+        # The PID is captured once and kept: it is the run's server-side identity
+        # for the whole run, and a later re-tag on the same session returns the
+        # same backend. Keeping the first non-null value means a transient
+        # failure to re-tag cannot erase what we already proved.
+        if identity.get("backend_pid") is not None or not self.session_identity.get(
+            "applied"
+        ):
+            self.session_identity = identity
+        return identity
+
     async def apply_statement_timeout(self, db, phase: str) -> int:
         """Set this phase's inner DB backstop on the live session.
 
@@ -330,9 +391,15 @@ class PhaseRunner:
         (and therefore did no reading) does not silently hand its unused time to
         the next one, and so the bound always reflects the time actually left
         before the absolute deadline.
+
+        The session tag rides along here rather than in its own call because the
+        two have identical lifetimes — transaction-local, wiped by the inter-phase
+        commit — and separating them is how one of them ends up silently missing
+        from the phase that eventually wedges.
         """
         timeout_ms = self.ledger.statement_timeout_for(phase, elapsed_ms=self.elapsed_ms())
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        await self.tag_session(db)
         return timeout_ms
 
     async def commit(self, db) -> None:
@@ -457,6 +524,11 @@ class NullPhaseRunner:
             "published": False,
             "artifact_generation": None,
         }
+        self.session_identity: dict[str, Any] = {
+            "application_name": None,
+            "backend_pid": None,
+            "applied": False,
+        }
 
     def begin(self, phase: str) -> None:  # noqa: D102 - no-op by design
         return None
@@ -472,6 +544,9 @@ class NullPhaseRunner:
 
     def record(self, phase: str, key: str, value: Any, *, kind: str = "value") -> None:  # noqa: D102
         return None
+
+    async def tag_session(self, db) -> dict:  # noqa: D102
+        return dict(self.session_identity)
 
     async def apply_statement_timeout(self, db, phase: str) -> int:  # noqa: D102
         return 0

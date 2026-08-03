@@ -5,6 +5,7 @@ top-level keys, nested structure, and field types — even when the DB is empty.
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -40,6 +41,40 @@ def _disable_sample_gate(monkeypatch):
     monkeypatch.setattr(
         precompute_calibration, "_get_min_category_outcomes", lambda *_a, **_k: 0
     )
+
+
+@pytest.fixture
+async def client(client, mock_db):
+    """Publish, then serve — the only order the route supports since Queue 300B.
+
+    These are contract tests for the SHAPE of ``GET /api/calibration``, and they
+    used to obtain that shape by letting the route build the payload in-request
+    off ``mock_db``. Queue 300B removed the request path's ability to build
+    anything: an anonymous GET could otherwise start the ~22-minute population
+    CTE, and the Postgres backend outlives the request that abandoned it (#1479).
+
+    So the seam moves rather than the contract. Each request first publishes the
+    payload the seeded ``mock_db`` produces — exactly what the hourly beat does —
+    and then asks the route for it. Every assertion below is unchanged, and it is
+    now additionally proving the route serves the published payload verbatim.
+
+    Pass ``publish=False`` to ask the route for whatever is already cached, which
+    is how the caching behaviour itself gets tested.
+    """
+    from app.routes import calibration
+    from app.tasks.precompute_calibration import compute_calibration_payload
+
+    class _PublishThenServe:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def get(self, url, *, publish=True, **kwargs):
+            if publish and url.split("?")[0] == "/api/calibration":
+                calibration._cache["data"] = await compute_calibration_payload(mock_db)
+                calibration._cache["timestamp"] = time.time()
+            return await self._inner.get(url, **kwargs)
+
+    return _PublishThenServe(client)
 
 
 def _mock_result(*, rows=(), scalar=None, one=None):
@@ -223,8 +258,14 @@ class TestCalibrationPublicEndpoint:
         assert isinstance(body["generated_at"], str)
         assert "T" in body["generated_at"]
 
-    async def test_bust_parameter_accepted(self, client):
-        """bust=1 bypasses cache — should still return 200."""
+    async def test_a_stray_bust_parameter_is_simply_ignored(self, client):
+        """``?bust=1`` used to force an in-request rebuild. Now it means nothing.
+
+        It was an unauthenticated recompute trigger hidden behind
+        ``include_in_schema=False``, and hidden is not authenticated. Any client
+        still sending it — a bookmark, a monitor, a scraper — gets the normal
+        served payload rather than an error, so nothing outside breaks.
+        """
         resp = await client.get("/api/calibration?bust=1")
         assert resp.status_code == 200
         body = resp.json()
@@ -241,7 +282,7 @@ class TestCalibrationPublicEndpoint:
     async def test_full_top_level_contract(self, client, mock_db):
         _set_public_calibration_results(mock_db)
 
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         assert resp.status_code == 200
         body = resp.json()
 
@@ -303,7 +344,7 @@ class TestCalibrationPublicEndpoint:
         """Queue 300C: both numbers ship, in their own units, both named."""
         _set_public_calibration_results(mock_db)
 
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         census = body["calibration_coverage_census"]
 
@@ -346,56 +387,76 @@ class TestCalibrationPublicEndpoint:
         for c in body["corrections"]:
             assert {"date", "title", "rows", "description"} <= set(c)
 
-    async def test_invalid_bust_parameter_returns_422(self, client, mock_db):
+    async def test_a_malformed_bust_value_is_ignored_rather_than_rejected(
+        self, client, mock_db
+    ):
+        """``?bust=abc`` was a 422 because ``bust`` was typed ``int``.
+
+        With the parameter removed there is nothing to coerce and nothing to
+        reject: an unknown query key is ignored, which is both the FastAPI
+        default and the right answer for a public read endpoint.
+        """
         resp = await client.get("/api/calibration?bust=abc")
 
-        assert resp.status_code == 422
-        mock_db.execute.assert_not_called()
+        assert resp.status_code == 200
+        assert "buckets" in resp.json()
 
-    async def test_bust_zero_uses_cached_response(self, client, mock_db):
+    async def test_a_second_request_is_served_from_cache_without_touching_the_db(
+        self, client, mock_db
+    ):
         _set_public_calibration_results(
             mock_db,
             futures_rows=[_bucket_row(n=2, winners=1, avg_prob=0.55, sum_prob=1.1)],
             total_markets=3,
         )
-        first_resp = await client.get("/api/calibration?bust=1")
+        first_resp = await client.get("/api/calibration")
         assert first_resp.status_code == 200
         first_body = first_resp.json()
 
         mock_db.execute.reset_mock()
-        second_resp = await client.get("/api/calibration")
+        second_resp = await client.get("/api/calibration", publish=False)
 
         assert second_resp.status_code == 200
         assert second_resp.json() == first_body
         mock_db.execute.assert_not_called()
 
-    async def test_bust_one_bypasses_cached_response(self, client, mock_db):
+    async def test_no_request_can_refresh_the_cache_only_a_publish_can(
+        self, client, mock_db
+    ):
+        """Formerly ``test_bust_one_bypasses_cached_response`` — now inverted.
+
+        New data reaches the page when the BEAT publishes it, never because a
+        reader asked loudly enough.
+        """
         _set_public_calibration_results(
             mock_db,
             futures_rows=[_bucket_row(n=2, winners=1, avg_prob=0.55, sum_prob=1.1)],
             total_markets=3,
         )
-        first_resp = await client.get("/api/calibration?bust=1")
+        first_resp = await client.get("/api/calibration")
         assert first_resp.status_code == 200
+        assert first_resp.json()["total_markets"] == 3
 
+        # Fresher data exists in the database. A request cannot go and get it...
         _set_public_calibration_results(
             mock_db,
             futures_rows=[_bucket_row(n=5, winners=4, avg_prob=0.7, sum_prob=3.5)],
             total_markets=9,
         )
-        second_resp = await client.get("/api/calibration?bust=1")
-        body = second_resp.json()
+        stale = await client.get("/api/calibration?bust=1", publish=False)
+        assert stale.json()["total_markets"] == 3
 
-        assert second_resp.status_code == 200
-        assert body["total_markets"] == 9
-        assert body["total_outcomes"] == 5
+        # ...it arrives when the beat publishes it.
+        fresh = await client.get("/api/calibration")
+        assert fresh.json()["total_markets"] == 9
+        assert fresh.json()["total_outcomes"] == 5
 
 
 class TestCalibrationBucketShape:
     """Each bucket object should have the required fields."""
 
     async def test_bucket_fields_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         required_fields = {"bucket_idx", "source", "category", "n", "winners", "avg_prob"}
         for bucket in body["buckets"]:
@@ -403,40 +464,40 @@ class TestCalibrationBucketShape:
             assert not missing, f"Bucket missing fields: {missing}"
 
     async def test_bucket_idx_is_int_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["bucket_idx"], int)
             assert 0 <= bucket["bucket_idx"] <= 9
 
     async def test_bucket_source_is_string_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["source"], str)
 
     async def test_bucket_category_is_string_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["category"], str)
 
     async def test_bucket_n_is_positive_int_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["n"], int)
             assert bucket["n"] >= 0
 
     async def test_bucket_winners_is_int_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["winners"], int)
             assert bucket["winners"] >= 0
 
     async def test_bucket_avg_prob_is_float_if_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body["buckets"]:
             assert isinstance(bucket["avg_prob"], (int, float))
@@ -444,7 +505,7 @@ class TestCalibrationBucketShape:
 
     async def test_empty_db_returns_empty_buckets(self, client):
         """With no resolved markets, buckets list should be empty."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         # Mock DB returns empty results, so buckets should be empty
         assert body["buckets"] == []
@@ -458,7 +519,7 @@ class TestCalibrationBucketShape:
             closing_row=_closing_row(has_closing=0, needs_closing=0, total=0),
         )
 
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
 
         assert body["buckets"] == []
@@ -535,7 +596,7 @@ class TestCalibrationBucketShape:
             closing_row=_closing_row(has_closing=3, needs_closing=2, total=5),
         )
 
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
 
         assert resp.status_code == 200
@@ -574,14 +635,14 @@ class TestCalibrationByCategory:
     """GET /api/calibration — by_category breakdown."""
 
     async def test_by_category_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert "by_category" in body
         assert isinstance(body["by_category"], list)
 
     async def test_by_category_empty_when_no_data(self, client, mock_db):
         _set_public_calibration_results(mock_db)
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert body["by_category"] == []
 
@@ -598,7 +659,7 @@ class TestCalibrationByCategory:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         cats = body["by_category"]
         assert len(cats) == 2
@@ -622,7 +683,7 @@ class TestCalibrationByCategory:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         cats = body["by_category"]
         assert len(cats) == 2
@@ -643,7 +704,7 @@ class TestCalibrationByCategory:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         cats = body["by_category"]
         assert len(cats) == 1
@@ -655,14 +716,14 @@ class TestCalibrationBySource:
     """GET /api/calibration — by_source breakdown."""
 
     async def test_by_source_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert "by_source" in body
         assert isinstance(body["by_source"], list)
 
     async def test_by_source_empty_when_no_data(self, client, mock_db):
         _set_public_calibration_results(mock_db)
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert body["by_source"] == []
 
@@ -679,7 +740,7 @@ class TestCalibrationBySource:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         sources = body["by_source"]
         assert len(sources) == 2
@@ -703,7 +764,7 @@ class TestCalibrationBySource:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         sources = body["by_source"]
         assert len(sources) == 2
@@ -724,7 +785,7 @@ class TestCalibrationBySource:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         sources = body["by_source"]
         assert len(sources) == 1
@@ -741,7 +802,7 @@ class TestCalibrationBySource:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         sources = body["by_source"]
         assert len(sources) == 1
@@ -753,19 +814,19 @@ class TestCalibrationSpreadsTotalsSummary:
     """GET /api/calibration — spreads_summary and totals_summary."""
 
     async def test_spreads_summary_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert "spreads_summary" in body
         assert isinstance(body["spreads_summary"], dict)
 
     async def test_totals_summary_present(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert "totals_summary" in body
         assert isinstance(body["totals_summary"], dict)
 
     async def test_summary_shape_keys(self, client):
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         expected_keys = {"mce", "outcomes", "winners", "by_sport"}
         for key in ["spreads_summary", "totals_summary"]:
@@ -798,7 +859,7 @@ class TestCalibrationSpreadsTotalsSummary:
             ],
             total_markets=5,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         summary = body["spreads_summary"]
         assert summary["outcomes"] == 180
@@ -828,7 +889,7 @@ class TestCalibrationSpreadsTotalsSummary:
             ],
             total_markets=3,
         )
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         summary = body["totals_summary"]
         assert summary["outcomes"] == 120
@@ -839,7 +900,7 @@ class TestCalibrationSpreadsTotalsSummary:
 
     async def test_spreads_empty_when_no_data(self, client, mock_db):
         _set_public_calibration_results(mock_db)
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert body["spreads_summary"]["outcomes"] == 0
         assert body["spreads_summary"]["mce"] is None
@@ -847,7 +908,7 @@ class TestCalibrationSpreadsTotalsSummary:
 
     async def test_totals_empty_when_no_data(self, client, mock_db):
         _set_public_calibration_results(mock_db)
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         assert body["totals_summary"]["outcomes"] == 0
         assert body["totals_summary"]["mce"] is None
@@ -857,13 +918,13 @@ class TestCalibrationSpreadsTotalsSummary:
 class TestCalibrationBucketValueRanges:
     """Validate bucket value ranges follow mathematical constraints.
 
-    All tests use bust=1 to bypass the in-process cache and ensure
+    All tests publish a freshly-computed payload first and ensure
     fresh responses from the mock DB.
     """
 
     async def test_bucket_idx_range_0_to_9(self, client):
         """Bucket indices should be 0-9 (deciles of probability space)."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert 0 <= bucket["bucket_idx"] <= 9, (
@@ -872,7 +933,7 @@ class TestCalibrationBucketValueRanges:
 
     async def test_avg_prob_in_0_to_1(self, client):
         """Average probability must be between 0 and 1."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert 0.0 <= bucket["avg_prob"] <= 1.0, (
@@ -881,7 +942,7 @@ class TestCalibrationBucketValueRanges:
 
     async def test_winners_lte_count(self, client):
         """Winners cannot exceed total count in a bucket."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert bucket["winners"] <= bucket["n"], (
@@ -890,7 +951,7 @@ class TestCalibrationBucketValueRanges:
 
     async def test_sum_sq_err_is_non_negative(self, client):
         """Sum of squared errors must be non-negative."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert "sum_sq_err" in bucket
@@ -900,7 +961,7 @@ class TestCalibrationBucketValueRanges:
 
     async def test_sum_prob_is_non_negative(self, client):
         """Sum of probabilities must be non-negative."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert "sum_prob" in bucket
@@ -910,21 +971,21 @@ class TestCalibrationBucketValueRanges:
 
     async def test_price_moved_field_present(self, client):
         """Each bucket should have a price_moved field (nullable bool)."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         for bucket in body.get("buckets", []):
             assert "price_moved" in bucket
 
     async def test_total_outcomes_equals_bucket_sum(self, client):
         """Total outcomes should equal sum of all bucket counts."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         bucket_sum = sum(b["n"] for b in body.get("buckets", []))
         assert body.get("total_outcomes", 0) == bucket_sum
 
     async def test_total_winners_equals_bucket_winner_sum(self, client):
         """Total winners should equal sum of all bucket winners."""
-        resp = await client.get("/api/calibration?bust=1")
+        resp = await client.get("/api/calibration")
         body = resp.json()
         winner_sum = sum(b["winners"] for b in body.get("buckets", []))
         assert body.get("total_winners", 0) == winner_sum

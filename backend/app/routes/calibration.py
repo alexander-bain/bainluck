@@ -767,26 +767,35 @@ async def calibration_rescue(
 @router.get("/calibration")
 async def public_calibration(
     db: AsyncSession = Depends(get_db),
-    bust: int = Query(0, include_in_schema=False),
 ):
     """Public calibration data for the /calibration page.
 
     Served from Redis (precomputed by precompute_calibration_main task every 1h).
-    Falls back to in-process cache, then a truthful last-good/stale payload, and
-    only as a last resort a deadline-guarded compute.
+    Falls back to in-process cache, the durable snapshot, and then a truthful
+    dated last-good. There is no fifth tier: this handler NEVER builds.
 
     Queue 271 (#1459/#1197) hardening:
-    * The Redis read is now a *shared async* client + a hard-bounded op — no more
+    * The Redis read is a *shared async* client + a hard-bounded op — no more
       SYNCHRONOUS ``get_redis_client().get()`` on the async event loop (gotcha
       #39), which blocked the loop for the whole read.
     * On a Redis *failure* (stall/error) a usable in-process/last-good payload is
       served instead of recomputing during flakiness.
-    * The in-request ``compute_calibration_payload`` CTE (the 12-27s cold path
-      that H12'd at the router) is now wrapped in a hard compute deadline: it
-      either finishes fast or fails fast + explicit (503 + Retry-After). It is
-      never allowed to run toward the router cutoff and never synthesizes a curve.
+
+    Queue 300B Item 0 — the request path is no longer a build authority:
+    * ``compute_calibration_payload`` is the ~22-minute canonical futures CTE.
+      A deadline around it bounded how long ONE request waited; it did not bound
+      what the request STARTED. The abandoned backend kept running past the
+      client, holding its xmin — which is the orphan/bloat shape #1479 records.
+      An anonymous GET must never be able to launch that.
+    * ``?bust=1`` is gone with it. It was an unauthenticated recompute trigger
+      hiding behind ``include_in_schema=False``, and hidden is not authenticated.
+      The recompute rail that survives is the admin-authenticated one
+      (``/api/admin/calibration/mce?bust=true``), which QUEUES the heavy task and
+      returns — it never runs the query inline.
+    * So this endpoint has exactly three honest answers: fresh, dated-degraded,
+      or the typed 503 + Retry-After. Concurrent requests start zero builds
+      because there is no build to start.
     """
-    import asyncio
     import json as _json
 
     from app.utils import request_cache as _rc
@@ -862,8 +871,7 @@ async def public_calibration(
     #    (Queue #284 Item 3). TTL and compute behavior are unchanged.
     now = time.time()
     if (
-        not bust
-        and isinstance(_cache["data"], dict)
+        isinstance(_cache["data"], dict)
         and (now - _cache["timestamp"]) < CACHE_TTL
         and _cache["data"].get("cache", {}).get("status") != "stale"
     ):
@@ -876,7 +884,25 @@ async def public_calibration(
         rc = await _rc.get_shared_async_redis()
         res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
         if res.is_ok:
-            data = _json.loads(res.value)
+            # Queue 300B: a MALFORMED value is a miss, not a Redis failure.
+            # Previously this decode ran bare inside the tier's outer try, so a
+            # truncated/corrupt ``main`` (an eviction mid-write, a partial read)
+            # set ``_redis_failed`` and skipped tier 2b — meaning one poisoned
+            # key took the perfectly healthy ``last_good`` sibling down with it.
+            # Nothing surfaced it before, because the request then fell through
+            # to the cold compute and served a curve anyway.
+            try:
+                data = _json.loads(res.value)
+            except Exception:
+                logger.warning(
+                    "calibration: main key is not decodable JSON — treating as a "
+                    "miss so the last-good tier still runs",
+                )
+                data = None
+        else:
+            data = None
+
+        if isinstance(data, dict):
             # C111 P2: check the population contract at THIS tier too, not just on
             # last-good. Scope is deliberately narrow — only a version mismatch is
             # rejected here. ``main`` is written by our own publisher, which now
@@ -889,7 +915,7 @@ async def public_calibration(
             main_verdict = snapshot_verdict(
                 data, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
             )
-            if isinstance(data, dict) and main_verdict.status != "wrong_version":
+            if main_verdict.status != "wrong_version":
                 # Queue 300C: same guard as the stale tiers. A ``main`` key
                 # written by the last pre-census build is fresh and correct for
                 # the curve, but carries no census — say so explicitly.
@@ -898,11 +924,10 @@ async def public_calibration(
                 _cache["timestamp"] = now
                 _rc.remember_last_good(_lg_key, data)
                 return data
-            elif isinstance(data, dict):
-                logger.warning(
-                    "calibration: main key rejected (%s: %s) — falling back to last-good",
-                    main_verdict.status, main_verdict.reason,
-                )
+            logger.warning(
+                "calibration: main key rejected (%s: %s) — falling back to last-good",
+                main_verdict.status, main_verdict.reason,
+            )
         _redis_failed = res.is_failure
     except Exception:
         _redis_failed = True
@@ -912,9 +937,10 @@ async def public_calibration(
     #     TTL expired). Before paying a cold compute, serve the DURABLE last-good
     #     key the precompute writes on every successful publish (Queue 272 #1459).
     #     It is served ``stale`` with its own generated_at so freshness is honest,
-    #     and cached in-process so subsequent same-dyno reads are instant. ``bust``
-    #     skips this to force a genuine recompute.
-    if not _redis_failed and not bust:
+    #     and cached in-process so subsequent same-dyno reads are instant. Queue
+    #     300B: no caller can skip this tier any more — there is nothing below it
+    #     to skip TO except the durable read and an honest 503.
+    if not _redis_failed:
         try:
             rc = await _rc.get_shared_async_redis()
             lg = await _rc.bounded_redis_call(
@@ -963,8 +989,13 @@ async def public_calibration(
     #
     #    It is cheap (one indexed primary-key read of a bounded payload, bounded
     #    by its own statement_timeout) and it is only paid when the fast tiers
-    #    have already failed. ``bust`` skips it to force a genuine recompute.
-    if not bust:
+    #    have already failed.
+    #
+    #    Queue 300B: this is now the ONLY database work the request path does,
+    #    and it is a single primary-key read — not a population scan. The route
+    #    budget still gates it, so a request that already burned its budget in
+    #    Redis answers honestly instead of opening a connection it cannot use.
+    if _remaining_ms() > 0:
         try:
             from app.services.durable_snapshots import read_snapshot
 
@@ -1013,54 +1044,29 @@ async def public_calibration(
             # but never swallow it silently either (the Q297 lesson).
             logger.warning("calibration: durable snapshot read failed", exc_info=True)
 
-    # 4. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
-    #    payload over recomputing during Redis flakiness (Queue 271 Item 2).
-    #    ``bust`` explicitly asks for a fresh recompute, so it skips this.
-    if _redis_failed and not bust:
-        stale = (
-            _cache["data"]
-            if isinstance(_cache["data"], dict)
-            # Queue 297: age-bound the process-local copy too. Its SHAPE is not the
-            # risk (this process served it earlier), but a long-lived dyno could
-            # otherwise keep serving a week-old curve as though Redis were merely
-            # blipping.
-            else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
-        )
-        if isinstance(stale, dict):
-            return _degraded(stale, "redis_unavailable")
+    # 4. LAST tier: a truthful stale/last-good copy from this process.
+    #    Before Queue 300B this only ran when Redis had *failed*, because a clean
+    #    miss fell through to a cold compute that had its own last-good rescue in
+    #    its except branch. With the compute gone, that rescue has to live here or
+    #    a clean miss would 503 past a perfectly serviceable dated copy.
+    stale = (
+        _cache["data"]
+        if isinstance(_cache["data"], dict)
+        # Queue 297: age-bound the process-local copy too. Its SHAPE is not the
+        # risk (this process served it earlier), but a long-lived dyno could
+        # otherwise keep serving a week-old curve as though Redis were merely
+        # blipping.
+        else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
+    )
+    if isinstance(stale, dict):
+        return _degraded(stale, "redis_unavailable" if _redis_failed else "cache_miss")
 
-    # 5. Clean cache miss (Redis empty, nothing durable) — compute via the ONE
-    #    shared canonical path, but under a HARD deadline so it can never run to
-    #    the router cutoff. On breach: serve last-good if any, else fail fast.
-    from app.tasks.precompute_calibration import compute_calibration_payload
-
-    # The compute gets whatever is left of the absolute budget, never more than its
-    # own deadline. If the earlier tiers already burned the budget, we do not start
-    # a compute we cannot finish — we answer honestly now (Item 1: never spin).
-    compute_deadline_ms = min(_rc.CALIBRATION_COMPUTE_DEADLINE_MS, _remaining_ms())
-    if compute_deadline_ms <= 0:
+    # 5. Nothing trustworthy anywhere. There is deliberately no build tier below
+    #    this line: the honest 503 IS the answer, and the hourly beat is what
+    #    fixes it. See the docstring for why a request may not start the CTE.
+    if _remaining_ms() <= 0:
         raise _unavailable("route_budget_exhausted")
-
-    try:
-        data = await _rc.run_with_deadline(
-            compute_calibration_payload(db),
-            deadline_ms=int(compute_deadline_ms),
-        )
-        _cache["data"] = data
-        _cache["timestamp"] = now
-        _rc.remember_last_good(_lg_key, data)
-        return data
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        stale = (
-            _cache["data"]
-            if isinstance(_cache["data"], dict)
-            else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
-        )
-        if isinstance(stale, dict):
-            return _degraded(stale, "compute_deadline")
-        raise _unavailable("no_trustworthy_snapshot")
+    raise _unavailable("no_trustworthy_snapshot")
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.routes import calibration
 from app.tasks import precompute_calibration
 
 
@@ -107,11 +106,10 @@ def _bucket_row(
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_uses_is_winner_for_market_resolution():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_calibration_payload_uses_is_winner_for_market_resolution():
     db = _FakeDB()
 
-    await calibration.public_calibration(db=db, bust=1)
+    await precompute_calibration.compute_calibration_payload(db)
 
     futures_sql = str(db.statements[0])
     assert "has_winner >= 1" in futures_sql
@@ -119,11 +117,10 @@ async def test_public_calibration_uses_is_winner_for_market_resolution():
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_uses_is_winner_for_resolution():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_calibration_payload_uses_is_winner_for_resolution():
     db = _FakeDB()
 
-    await calibration.public_calibration(db=db, bust=1)
+    await precompute_calibration.compute_calibration_payload(db)
 
     futures_sql = str(db.statements[0])
     assert "fo.is_winner AS is_winner" in futures_sql
@@ -131,16 +128,15 @@ async def test_public_calibration_uses_is_winner_for_resolution():
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_excludes_guessed_and_price_derived_resolutions():
+async def test_calibration_payload_excludes_guessed_and_price_derived_resolutions():
     # Queue #261 Item 1: the population moved from a scattered NOT-IN denylist to
     # the resolution-authority calibration-truth ELIGIBILITY allowlist. Guessed
     # resolutions are excluded because they are not eligible (never named in the
     # allowlist), and price-derived truth (clean_resolution / settlement_sync) is
     # now excluded too — a terminal price cannot grade its own forecast.
-    calibration._cache = {"data": None, "timestamp": 0}
     db = _FakeDB()
 
-    await calibration.public_calibration(db=db, bust=1)
+    await precompute_calibration.compute_calibration_payload(db)
 
     futures_sql = str(db.statements[0])
     # The eligibility allowlist is present, keyed on independent authority.
@@ -155,11 +151,10 @@ async def test_public_calibration_excludes_guessed_and_price_derived_resolutions
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_classifies_only_non_null_changed_prices_as_closing_line():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_calibration_payload_classifies_only_non_null_changed_prices_as_closing_line():
     db = _FakeDB()
 
-    await calibration.public_calibration(db=db, bust=1)
+    await precompute_calibration.compute_calibration_payload(db)
 
     futures_sql = str(db.statements[0])
     # adj_opening_probability derives from cal_prob with an opening fallback.
@@ -180,11 +175,10 @@ async def test_public_calibration_classifies_only_non_null_changed_prices_as_clo
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_keeps_grouped_markets_multi_outcome_only_when_eligible():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_calibration_payload_keeps_grouped_markets_multi_outcome_only_when_eligible():
     db = _FakeDB()
 
-    await calibration.public_calibration(db=db, bust=1)
+    await precompute_calibration.compute_calibration_payload(db)
 
     futures_sql = str(db.statements[0])
     assert "(cv.is_grouped OR cv.eligible >= 3) AS is_multi" in futures_sql
@@ -195,8 +189,7 @@ async def test_public_calibration_keeps_grouped_markets_multi_outcome_only_when_
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_builds_bucket_output_shape_from_futures_and_events():
-    calibration._cache = {"data": None, "timestamp": 0}
+async def test_calibration_payload_builds_bucket_output_shape_from_futures_and_events():
     db = _FakeDB(
         futures_rows=[
             _bucket_row(
@@ -266,7 +259,7 @@ async def test_public_calibration_builds_bucket_output_shape_from_futures_and_ev
         ),
     )
 
-    response = await calibration.public_calibration(db=db, bust=1)
+    response = await precompute_calibration.compute_calibration_payload(db)
 
     assert response["total_markets"] == 9
     assert response["total_outcomes"] == 29  # 4+5 futures + 2 events + 10 spreads + 8 totals
