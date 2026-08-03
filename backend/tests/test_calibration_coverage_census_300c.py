@@ -29,6 +29,8 @@ from app.utils.calibration_coverage_bridge import (
 # 1. The SQL and the contract cannot drift apart.
 # ---------------------------------------------------------------------------
 class TestRungDriftIsRefused:
+    pytestmark = pytest.mark.usefixtures("census_on")
+
     def test_every_contract_rung_has_a_sql_predicate(self):
         keys = tuple(key for key, _sql in pc._COVERAGE_RUNG_PREDICATES)
         assert keys == RUNG_KEYS
@@ -174,7 +176,19 @@ def _no_sample_gate(monkeypatch):
     monkeypatch.setattr(pc, "_get_min_category_outcomes", lambda *_a, **_k: 0)
 
 
+@pytest.fixture
+def census_on(monkeypatch):
+    """Turn the census on for tests about what it measures.
+
+    It ships OFF (the futures phase is over budget without it — see the module
+    comment), so every test that exercises real counts has to say so.
+    """
+    monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", True)
+
+
 class TestCensusEmission:
+    pytestmark = pytest.mark.usefixtures("census_on")
+
     @pytest.mark.asyncio
     async def test_the_bridge_reconciles_in_both_units(self):
         payload = await pc.compute_calibration_payload(
@@ -277,6 +291,8 @@ class TestCensusEmission:
 # 3. Additivity: the curve payload keeps its exact prior shape.
 # ---------------------------------------------------------------------------
 class TestAdditiveOnly:
+    pytestmark = pytest.mark.usefixtures("census_on")
+
     @pytest.mark.asyncio
     async def test_only_one_key_is_added_to_the_payload(self):
         rows = [_futures_row()]
@@ -306,6 +322,8 @@ class TestAdditiveOnly:
 
 
 class TestEveryBuildStatementParses:
+    pytestmark = pytest.mark.usefixtures("census_on")
+
     """CI has no Postgres, so the census SQL gets a parser instead of a server.
 
     The census rides inside the single heaviest statement in the product. A
@@ -337,6 +355,100 @@ class TestEveryBuildStatementParses:
         )
         for sql in captured:
             parse_one(sql, dialect="postgres")
+
+
+class TestShipsOffUntilTheFuturesPhaseHasRoom:
+    """The census measures inside a phase that is already over budget.
+
+    Deploy-day phase ledger: plan ``infeasible``, ``infeasible_phases:
+    ["futures"]``, futures floors 1351697/1351955/1299533 ms against a 1380000 ms
+    deadline, last run CANCELLED at 1299533 ms with nothing published. So the
+    switch ships OFF, and OFF has to cost the build literally nothing — not
+    "about the same", nothing.
+    """
+
+    def test_it_ships_off(self):
+        assert pc.COVERAGE_CENSUS_ENABLED is False
+
+    def test_off_emits_no_sql_at_all(self):
+        assert pc._coverage_bridge_ctes() == ""
+        assert pc._coverage_bridge_select_columns() == ""
+        assert pc._coverage_bridge_join() == ""
+
+    @pytest.mark.asyncio
+    async def test_off_leaves_the_build_statement_free_of_the_census(self):
+        captured: list[str] = []
+
+        class _Recorder(_StubDB):
+            def __init__(self):
+                super().__init__([_futures_row()])
+
+            async def execute(self, statement, params=None):
+                captured.append(str(statement))
+                return await super().execute(statement, params)
+
+        await pc.compute_calibration_payload(_Recorder())
+        joined = "\n".join(captured)
+        for artifact in (
+            "coverage_universe",
+            "coverage_bridge",
+            "coverage_bridge_summary",
+            "cb_plotted_on_curve",
+        ):
+            assert artifact not in joined
+
+    @pytest.mark.asyncio
+    async def test_turning_it_on_adds_only_the_census_to_the_statement(self, monkeypatch):
+        """On/off must differ by the census and nothing else.
+
+        The guarantee that makes the off state safe is not "roughly the same
+        query" — it is that the ONLY textual difference is the census block. If
+        anything else moved, the off state is no longer the pre-census build.
+        """
+
+        async def _statements():
+            captured: list[str] = []
+
+            class _Recorder(_StubDB):
+                def __init__(self):
+                    super().__init__([_futures_row()])
+
+                async def execute(self, statement, params=None):
+                    captured.append(str(statement))
+                    return await super().execute(statement, params)
+
+            await pc.compute_calibration_payload(_Recorder())
+            return captured
+
+        monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", False)
+        off = await _statements()
+        monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", True)
+        on = await _statements()
+
+        assert len(off) == len(on)
+        # Every statement except the futures one is untouched by the switch.
+        assert off[1:] == on[1:]
+        # And removing the census text from the ON statement restores the OFF one.
+        restored = on[0].replace(pc._coverage_bridge_ctes(), "").replace(
+            pc._coverage_bridge_select_columns(), ""
+        ).replace(pc._coverage_bridge_join(), "")
+        assert restored == off[0]
+
+    @pytest.mark.asyncio
+    async def test_off_reports_disabled_rather_than_zero_or_broken(self):
+        payload = await pc.compute_calibration_payload(_StubDB([_futures_row()]))
+        census = payload["calibration_coverage_census"]
+        assert census["status"] == "unavailable"
+        assert census["reason"] == pc.COVERAGE_CENSUS_DISABLED_REASON
+        assert census["population_version"] == pc.CALIBRATION_POPULATION_VERSION
+        # Disabled is not zero. Every rung stays null.
+        assert all(c["outcomes"] is None for c in census["coverage_bridge"]["rungs"])
+        assert (
+            census["units"]["outcomes_with_calibration_coverage"]["value"] is None
+        )
+        # ...and the curve is exactly as it was.
+        assert payload["total_outcomes"] == 90
+        assert payload["buckets"]
 
 
 # ---------------------------------------------------------------------------

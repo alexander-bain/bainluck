@@ -312,9 +312,17 @@ class TestCalibrationPublicEndpoint:
         units = census["units"]
         assert units["published_curve_observations"]["unit"] == "curve_observation"
         assert units["outcomes_with_calibration_coverage"]["unit"] == "futures_outcome"
-        # total_outcomes remains THE headline; the census restates it rather than
-        # replacing it with the (much larger) coverage count.
-        assert units["published_curve_observations"]["value"] == body["total_outcomes"]
+        # The units and rung vocabulary ship in every state. The COUNTS only
+        # arrive once the measurement is switched on — it is off while the
+        # futures phase is over its budget — and an unmeasured census reports
+        # null with a reason, never a zero that reads as "nothing excluded".
+        if census["status"] == "unavailable":
+            assert census["reason"]
+            assert units["published_curve_observations"]["value"] is None
+        else:
+            # total_outcomes remains THE headline; the census restates it rather
+            # than replacing it with the (much larger) coverage count.
+            assert units["published_curve_observations"]["value"] == body["total_outcomes"]
         # Every rung is present and self-describing, even on a cold serve where
         # the counts themselves may be unmeasured.
         rungs = census["coverage_bridge"]["rungs"]

@@ -2127,7 +2127,37 @@ def _calibration_population_ctes(
 # once, so the per-filter counters the payload already publishes cannot be
 # summed — they double-count. Each coverage outcome is assigned to the FIRST
 # rung it matches, which makes the rungs a partition and the bridge exact.
+#
+# WHY THIS SHIPS OFF (2026-08-03).
+# The census is measured inside the ``futures`` phase because that is the only
+# place the population is already materialized — recomputing it costs the whole
+# build. But the phase ledger read on deploy day says that phase is already
+# past its budget WITHOUT the census:
+#
+#     plan status "infeasible", infeasible_phases ["futures"]
+#     futures floors  1351697 / 1351955 / 1299533 ms   deadline 1380000 ms
+#     last run: futures CANCELLED at 1299533 ms, nothing committed, nothing
+#     published — which is why /api/calibration was serving a 26h-stale
+#     last-good copy.
+#
+# The futures read alone wants ~22 minutes of a 23-minute deadline, so the four
+# phases after it never start. Adding a scan of the coverage universe to that
+# statement makes a build that already cannot finish finish less. So the switch
+# below defaults OFF: the contract, the payload key, the serving-tier honesty
+# and the Lane 2 fixture all ship now, and the census reports itself
+# ``unavailable`` (never zero) until the phase has room.
+#
+# FLIP IT when the futures phase is feasible again — one constant, one deploy.
+# With it False the emitted SQL is byte-identical to the pre-census statement,
+# so the off state costs the build exactly nothing.
 # =============================================================================
+
+#: See the block comment above. Default OFF pending futures-phase budget.
+COVERAGE_CENSUS_ENABLED = False
+
+#: The reason string a disabled census reports, so the page and any operator can
+#: tell "we chose not to measure this yet" from "we measured nothing".
+COVERAGE_CENSUS_DISABLED_REASON = "census_disabled_pending_futures_phase_budget"
 
 #: rung key -> the SQL predicate that claims it, evaluated in
 #: ``_COVERAGE_RUNG_KEYS`` order. Every flag is COALESCE-guarded to false
@@ -2186,6 +2216,12 @@ def _coverage_bridge_ctes() -> str:
     hash joins, it cannot drift from the curve it explains, and both ends of the
     bridge are guaranteed to come from ONE generation of one transaction.
     """
+    if not COVERAGE_CENSUS_ENABLED:
+        # Emit nothing at all — including the separating comma, which this block
+        # owns — so the statement is byte-identical to the pre-census one rather
+        # than merely equivalent to it.
+        return ""
+
     predicate_keys = tuple(key for key, _sql in _COVERAGE_RUNG_PREDICATES)
     if predicate_keys != _COVERAGE_RUNG_KEYS:
         # A rung added to the contract with no predicate here (or vice versa)
@@ -2206,7 +2242,7 @@ def _coverage_bridge_ctes() -> str:
         f"COUNT(*) FILTER (WHERE rung = '{key}') AS {_coverage_bridge_column(key)}"
         for key in _COVERAGE_RUNG_KEYS
     )
-    return f"""
+    return f""",
             -- Queue 300C: the COVERAGE population — every resolved futures
             -- outcome carrying a usable calibration price. Joined to
             -- futures_markets directly (not market_info) so the symmetric
@@ -2246,12 +2282,39 @@ def _coverage_bridge_ctes() -> str:
             )"""
 
 
+def _coverage_census_or_disabled(**kwargs):
+    """The census, or an honest ``unavailable`` one while the switch is off.
+
+    Disabled is a THIRD state, distinct from both "measured zero" and "the build
+    broke": the counts were never asked for, on purpose, and the reason says so.
+    """
+    if not COVERAGE_CENSUS_ENABLED:
+        from app.utils.calibration_coverage_bridge import unavailable_census
+
+        return unavailable_census(
+            COVERAGE_CENSUS_DISABLED_REASON,
+            population_version=kwargs.get("population_version"),
+            generation=kwargs.get("generation"),
+        )
+    return _build_coverage_census(**kwargs)
+
+
+def _coverage_bridge_join() -> str:
+    """The CROSS JOIN onto the 1-row census, or nothing when it is disabled."""
+    if not COVERAGE_CENSUS_ENABLED:
+        return ""
+    return "\n            CROSS JOIN coverage_bridge_summary cbs"
+
+
 def _coverage_bridge_select_columns() -> str:
     """``MAX(...)`` passthrough columns for the 1-row census, CROSS JOINed in.
 
     Same shape as ``liq_summary`` / ``published_summary``: constant across every
     returned bucket row, so the served ``buckets`` list is unchanged.
     """
+    if not COVERAGE_CENSUS_ENABLED:
+        return ""
+
     names = [_coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS] + [
         "cb_coverage_total",
         "cb_with_terminal_cal_price",
@@ -2459,7 +2522,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                     COUNT(*) AS published_outcomes,
                     COUNT(DISTINCT vm_id) AS published_questions
                 FROM deduped
-            ),"""
+            )"""
             + _coverage_bridge_ctes()
             + """,
             bucketed AS (
@@ -2515,8 +2578,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             + """
             FROM bucketed
             CROSS JOIN liq_summary ls
-            CROSS JOIN published_summary ps
-            CROSS JOIN coverage_bridge_summary cbs
+            CROSS JOIN published_summary ps"""
+            + _coverage_bridge_join()
+            + """
             GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
             ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
         """)
@@ -3092,7 +3156,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         + list(totals_rows)
         + list(bookmaker_rows)
     )
-    coverage_census = _build_coverage_census(
+    coverage_census = _coverage_census_or_disabled(
         rung_counts=coverage_rung_counts,
         sportsbook_curve_legs=sportsbook_curve_legs,
         published_curve_observations=total_outcomes,
