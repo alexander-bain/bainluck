@@ -427,6 +427,7 @@ describe("the render-states runner cannot be green without evidence", () => {
       "genuine-exhaustion",
       "unavailable-without-last-good",
       "unavailable-with-last-good",
+      "unavailable-next-page",
     ]) {
       assert.ok(
         script.includes(`"${state}"`) || states.includes(state),
@@ -440,6 +441,34 @@ describe("the render-states runner cannot be green without evidence", () => {
     }
     assert.match(script, /width:\s*390/);
     assert.match(script, /width:\s*1440/);
+  });
+
+  it("the last-good state is reached by revalidation, not by a reload", () => {
+    // The methodology defect run 30836513085 exposed. A reload is a COLD load,
+    // and the web client has no on-disk last-good, so `page.reload()` rendered
+    // the cold unavailable state — the assertion that cards survive could never
+    // have passed, and closing it on source-level proof would have shipped a
+    // fixture that proves the opposite of its own name.
+    const block = script.slice(script.indexOf("const STATES"), script.indexOf("const EXPECTATIONS"));
+    assert.match(block, /trigger: "swr-refresh"/);
+    assert.ok(
+      !/page\.reload\(/.test(script),
+      "a reload cannot prove last-good survival on a surface with no persisted last-good"
+    );
+  });
+
+  it("the fixture's own synthetic failures are recorded, not silently dropped", () => {
+    // Next prefetches every card's detail route, and a card id that exists only
+    // in a stubbed body has no page behind it. That is the fixture's shadow —
+    // but the deploy-smoke rail saw the same ERR_ABORTED shape on a REAL id, so
+    // the allowance must be narrow and the evidence must survive it.
+    assert.match(script, /SYNTHETIC_DETAIL_ROUTE\s*=\s*\/\\\/futures\\\/4242/);
+    assert.ok(script.includes("syntheticFailures"), "synthetic failures must reach the packet");
+    assert.match(
+      script,
+      /only404sAreSynthetic = httpErrors\.length === 0 && syntheticFailures\.length > 0/,
+      "the console-404 allowance must expire the moment a real 4xx appears"
+    );
   });
 
   it("the packet carries the build, the viewport and a PT timestamp", () => {

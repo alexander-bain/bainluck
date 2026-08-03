@@ -60,25 +60,64 @@ const CARD = {
   },
 };
 
+/**
+ * Distinct questions, deliberately.
+ *
+ * The first run of this script (30836513085) served twelve variants of "Will the
+ * Fed cut rates in September? (n)" and Discover rendered ONE card reading
+ * "WILL THE FED — 12 markets / Show 11 more". That is the story-grouping working
+ * exactly as designed, but it meant a fixture claiming to prove "twelve cards
+ * survived" was really proving one did. Cards must differ in subject or the
+ * count being asserted is not the count being rendered.
+ */
+const SUBJECTS = [
+  "Will the Fed cut rates in September?",
+  "Who wins the Best Picture Oscar?",
+  "Will there be a government shutdown this year?",
+  "Will SpaceX launch Starship again this quarter?",
+  "Will the UK hold a general election before July?",
+  "Who wins the Premier League?",
+  "Will inflation come in under 3% this month?",
+  "Will a hurricane make landfall in Florida this season?",
+  "Will OpenAI release a new frontier model this quarter?",
+  "Who wins the Nobel Peace Prize?",
+  "Will Bitcoin close above its January high?",
+  "Will the Supreme Court hear the tariff case?",
+];
+
 function cards(n) {
   return Array.from({ length: n }, (_, i) => ({
     ...CARD,
     data: {
       ...CARD.data,
       id: 424242 + i,
-      name: `Will the Fed cut rates in September? (${i + 1})`,
+      name: SUBJECTS[i % SUBJECTS.length] + (i >= SUBJECTS.length ? ` (${i + 1})` : ""),
     },
   }));
 }
 
-const POPULATED = (n) => ({
+const POPULATED = (n, hasMore = false) => ({
   items: cards(n),
   total: n,
   limit: 20,
   offset: 0,
-  has_more: false,
+  has_more: hasMore,
   cache: { status: "hit", ttl_seconds: 60, stale_ttl_seconds: 900 },
 });
+
+/**
+ * Routes this fixture invented. Next prefetches every card's detail route, and
+ * a card id that exists only in a stubbed feed body has no page behind it — so
+ * `/futures/424242?_rsc=…` aborts or 404s. That is the fixture's own shadow, not
+ * a product defect, and it is recorded in the packet rather than dropped.
+ *
+ * Deliberately narrow: the deploy-smoke rail saw the same ERR_ABORTED shape on a
+ * REAL id (`/futures/171`), and nothing here may hide that.
+ */
+const SYNTHETIC_DETAIL_ROUTE = /\/futures\/4242\d+(\?|$)/;
+
+/** Chromium's own line for any 4xx subresource. Says nothing the network channel does not. */
+const CHROMIUM_RESOURCE_404 = "Failed to load resource: the server responded with a status of 404";
 
 /** Byte-for-byte the waiter-unavailable body from routes/feed.py. */
 const UNAVAILABLE = {
@@ -109,13 +148,37 @@ const VIEWPORTS = [
   { name: "desktop", viewport: { width: 1440, height: 900 } },
 ];
 
-/** Feed bodies served in order; the last repeats. */
+/**
+ * Feed bodies served in order; the last repeats.
+ *
+ * `trigger` is how the SECOND body is reached, and getting it right is the whole
+ * difference between proving the fix and proving nothing. L2-238's script
+ * reloaded the page — but a reload is a COLD load, and the web client has no
+ * on-disk last-good the way native does, so the "with-last-good" state rendered
+ * as the cold unavailable state and the assertion that cards survive could never
+ * have passed. Run 30836513085 is that mistake, measured.
+ *
+ * The two real in-session paths, both of which `page.tsx` handles separately:
+ *
+ *   `swr-refresh`  — the 120s `refreshInterval` revalidation of page 1. This is
+ *                    the path L2-238 fixed: an unavailable body used to walk the
+ *                    success path and replace the rendered cards with `[]`.
+ *                    `revalidateOnFocus` is false, so waiting out the interval
+ *                    is the honest trigger; a synthetic focus event does nothing.
+ *   `paginate`     — infinite scroll reaching an unavailable next page
+ *                    (`loadNextPage`, page.tsx:612). Cards stay, `hasMore` is
+ *                    untouched, and the retry appears inline below them.
+ */
 const STATES = {
-  normal: [POPULATED(12)],
-  "genuine-exhaustion": [EXHAUSTED],
-  "unavailable-without-last-good": [UNAVAILABLE],
-  "unavailable-with-last-good": [POPULATED(12), UNAVAILABLE],
+  normal: { bodies: [POPULATED(12)] },
+  "genuine-exhaustion": { bodies: [EXHAUSTED] },
+  "unavailable-without-last-good": { bodies: [UNAVAILABLE] },
+  "unavailable-with-last-good": { bodies: [POPULATED(12), UNAVAILABLE], trigger: "swr-refresh" },
+  "unavailable-next-page": { bodies: [POPULATED(12, true), UNAVAILABLE], trigger: "paginate" },
 };
+
+/** The page's own `refreshInterval`, plus room for the request to land. */
+const SWR_REFRESH_MS = 120_000;
 
 /**
  * What each state MUST look like on screen. `seen` is the observation record
@@ -126,10 +189,18 @@ const STATES = {
  * exhaustion alone says caught up, and no state silently borrows another's UI.
  */
 const EXPECTATIONS = {
+  // A complete build of 12 markets legitimately ENDS with the caught-up card —
+  // `has_more: false` means there is genuinely no more. Asserting its absence
+  // here was wrong, and run 30836513085 said so at both viewports. What the
+  // adjacent journey actually regression-guards is that a healthy feed renders
+  // cards and reaches for neither error surface.
   normal: [
     ["cards render", (s) => (s.cards > 0 ? null : `expected cards, saw ${s.cards}`)],
+    [
+      "every card rendered, none lost",
+      (s) => (s.cards === 12 ? null : `served 12 distinct markets, rendered ${s.cards}`),
+    ],
     ["no unavailable notice", (s) => (s.unavailable ? "the retry state appeared on a healthy feed" : null)],
-    ["no end-of-feed card", (s) => (s.endOfFeed ? "a populated feed claimed to be exhausted" : null)],
     ["no error state", (s) => (s.error ? "the error state appeared on a healthy feed" : null)],
     ["skeleton resolved", (s) => (s.skeleton ? "the loading skeleton never resolved" : null)],
   ],
@@ -157,10 +228,32 @@ const EXPECTATIONS = {
     ["no overlapping text or controls", (s) => s.overlapFailure],
   ],
   "unavailable-with-last-good": [
-    ["last-good cards stay visible", (s) => (s.cards > 0 ? null : "an unavailable revalidation blanked the rendered feed")],
+    [
+      "last-good cards stay visible",
+      (s) => (s.cards === 12 ? null : `an unavailable revalidation left ${s.cards} of 12 cards`),
+    ],
+    [
+      "raises the retry state beside them",
+      (s) => (s.unavailable ? null : "an unavailable revalidation was rendered as success"),
+    ],
     [
       "does NOT say caught up",
       (s) => (s.endOfFeed ? 'last-good cards were followed by "all caught up" on an unavailable feed' : null),
+    ],
+    ["no overlapping text or controls", (s) => s.overlapFailure],
+  ],
+  "unavailable-next-page": [
+    [
+      "loaded cards stay visible",
+      (s) => (s.cards === 12 ? null : `an unavailable next page left ${s.cards} of 12 cards`),
+    ],
+    [
+      "offers the retry inline",
+      (s) => (s.unavailable ? null : "an unavailable next page did not raise the retry state"),
+    ],
+    [
+      "does NOT end the feed",
+      (s) => (s.endOfFeed ? "an unavailable next page was rendered as the end of the feed" : null),
     ],
     ["no overlapping text or controls", (s) => s.overlapFailure],
   ],
@@ -235,7 +328,7 @@ async function run() {
   }
   const results = [];
 
-  for (const [state, bodies] of Object.entries(STATES)) {
+  for (const [state, { bodies, trigger }] of Object.entries(STATES)) {
     for (const vp of VIEWPORTS) {
       const context = await browser.newContext({
         viewport: vp.viewport,
@@ -247,14 +340,26 @@ async function run() {
       const page = await context.newPage();
       const consoleErrors = [];
       const requestFailures = [];
+      const httpErrors = [];
+      /** Failures whose only cause is a card id this fixture invented. */
+      const syntheticFailures = [];
       page.on("console", (m) => {
         if (m.type() === "error") consoleErrors.push(m.text());
       });
       page.on("requestfailed", (r) => {
         // Third-party analytics/pixel blocks are not this page's failures.
-        if (/bainluck|localhost/.test(r.url())) {
-          requestFailures.push(`${r.url()} ${r.failure()?.errorText}`);
-        }
+        if (!/bainluck|localhost/.test(r.url())) return;
+        const entry = `${r.url()} ${r.failure()?.errorText}`;
+        if (SYNTHETIC_DETAIL_ROUTE.test(r.url())) syntheticFailures.push(entry);
+        else requestFailures.push(entry);
+      });
+      page.on("response", (res) => {
+        // Named, so the next reader does not have to guess what a bare
+        // "Failed to load resource: … 404" in the console channel referred to.
+        if (res.status() < 400 || !/bainluck|localhost/.test(res.url())) return;
+        const entry = `${res.url()} ${res.status()}`;
+        if (SYNTHETIC_DETAIL_ROUTE.test(res.url())) syntheticFailures.push(entry);
+        else httpErrors.push(entry);
       });
 
       let feedCalls = 0;
@@ -280,19 +385,40 @@ async function run() {
         .waitFor({ state: "visible", timeout: 30_000 })
         .catch(() => null);
 
-      if (state === "unavailable-with-last-good") {
-        // Force the background revalidation that returns unavailable, exactly
-        // as SWR's refreshInterval would, and prove the cards survive it.
-        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-        await page.evaluate(() =>
-          fetch("/api/feed?limit=20&offset=0&event_pct=0.15").catch(() => {}),
-        );
-        // SWR's own 120s interval is too slow for a render pass; re-mounting the
-        // route re-runs the SWR fetcher against the now-unavailable stub while
-        // the client keeps the generation it already rendered.
-        await page.waitForTimeout(500);
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await page.waitForTimeout(2500);
+      if (trigger === "swr-refresh") {
+        // Wait out the page's own `refreshInterval`. Slow, and the only honest
+        // trigger available: `revalidateOnFocus` is false on this SWR key, so a
+        // synthetic focus event revalidates nothing, and a reload is a COLD load
+        // — the web client has no on-disk last-good, so reloading renders the
+        // cold unavailable state and could never prove the cards survived.
+        // Run 30836513085 is that mistake, measured at both viewports.
+        const feedCallsBefore = feedCalls;
+        const deadline = Date.now() + SWR_REFRESH_MS + 20_000;
+        while (feedCalls === feedCallsBefore && Date.now() < deadline) {
+          await page.waitForTimeout(2_000);
+        }
+        if (feedCalls === feedCallsBefore) {
+          console.error(`::warning::${state}: no background revalidation fired within the bound`);
+        }
+        await page.waitForTimeout(2_000);
+      }
+
+      if (trigger === "paginate") {
+        // Drive the infinite-scroll sentinel into view so `loadNextPage` runs
+        // against the unavailable body (page.tsx:612) — the other half of the
+        // "keep the cards" contract, and the fast one.
+        for (let i = 0; i < 12; i += 1) {
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await page.waitForTimeout(600);
+          if (feedCalls > 1) break;
+        }
+        await page.waitForTimeout(2_000);
+        // Screenshot the retry where it renders, not the top of the page.
+        await page
+          .locator('[data-testid="discover-feed-unavailable"]')
+          .first()
+          .scrollIntoViewIfNeeded()
+          .catch(() => null);
       }
 
       await page.waitForTimeout(1200);
@@ -333,18 +459,32 @@ async function run() {
       const file = path.join(OUT, `${state}-${vp.name}.png`);
       await page.screenshot({ path: file, fullPage: false });
 
+      // Chromium logs its own line for every 4xx subresource, and it names
+      // nothing. Suppressed ONLY when the sole 4xx observed was a route this
+      // fixture invented (`/futures/424242`), and never when a real one failed —
+      // otherwise the allowance would outlive its reason and mute the next
+      // genuine 404. Same rule L2-235 put on the journey evaluator's allowances.
+      const only404sAreSynthetic = httpErrors.length === 0 && syntheticFailures.length > 0;
+      const gradedConsole = only404sAreSynthetic
+        ? consoleErrors.filter((text) => !text.includes(CHROMIUM_RESOURCE_404))
+        : consoleErrors;
+
       const observation = {
         state,
         url: `${BASE}/discover`,
         viewport: vp.name,
         size: vp.viewport,
         feedCalls,
+        trigger: trigger || "none",
         ...seen,
         retryAccessibleNameVisible: retryVisible,
         alertText,
         overlapFailure,
         consoleErrors,
         requestFailures,
+        httpErrors,
+        // Recorded, never graded, never dropped: the fixture's own shadow.
+        syntheticFailures,
         screenshot: file,
         screenshot_sha256: sha256File(file),
         observed_at_pt: pacificStamp(),
@@ -360,13 +500,18 @@ async function run() {
       // state, not just the ones with expectations of their own.
       checks.push({
         check: "no console errors",
-        ok: consoleErrors.length === 0,
-        reason: consoleErrors.length === 0 ? null : consoleErrors.slice(0, 3).join("; "),
+        ok: gradedConsole.length === 0,
+        reason: gradedConsole.length === 0 ? null : gradedConsole.slice(0, 3).join("; "),
       });
       checks.push({
         check: "no first-party request failures",
         ok: requestFailures.length === 0,
         reason: requestFailures.length === 0 ? null : requestFailures.slice(0, 3).join("; "),
+      });
+      checks.push({
+        check: "no first-party 4xx/5xx",
+        ok: httpErrors.length === 0,
+        reason: httpErrors.length === 0 ? null : httpErrors.slice(0, 3).join("; "),
       });
 
       observation.checks = checks;

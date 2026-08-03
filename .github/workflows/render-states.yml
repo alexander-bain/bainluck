@@ -12,8 +12,11 @@ name: Discover render states (manual)
 #
 # What it proves, at 390px and 1440px, against the DEPLOYED build:
 #
-#   unavailable-with-last-good     — a typed-unavailable revalidation must not
-#                                    blank the cards already on screen
+#   unavailable-with-last-good     — a typed-unavailable page-1 revalidation
+#                                    must not blank the cards already on screen
+#   unavailable-next-page          — an unavailable NEXT page must keep the
+#                                    loaded cards and retry inline, not end the
+#                                    feed
 #   unavailable-without-last-good  — a cold unavailable feed must offer a named
 #                                    retry, never "you're all caught up"
 #   genuine-exhaustion             — a complete, empty build must still say
@@ -121,7 +124,7 @@ jobs:
       - name: Record the runtime version
         run: echo "RENDER_STATES_BROWSER=$(npx playwright --version)" >> "$GITHUB_ENV"
 
-      - name: Render the four terminal states at both widths
+      - name: Render every terminal state at both widths
         # The script exits non-zero on any missed expectation. It is NOT
         # wrapped in continue-on-error: a failed render must route the defect,
         # not become a note in a green summary.
