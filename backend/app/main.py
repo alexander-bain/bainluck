@@ -92,6 +92,25 @@ app = FastAPI(
 )
 
 # CORS configuration
+#
+# Queue 302 (#1525 Shape C): CORSMiddleware MUST be the OUTERMOST middleware so
+# that EVERY response — including short-circuit responses produced by inner
+# middleware that never reach the route (a RateLimitMiddleware 429, an auth 401,
+# an unhandled 500) — passes back out through the CORS send-wrapper and receives
+# the `Access-Control-Allow-Origin` / `Access-Control-Expose-Headers` a browser
+# needs. When CORS was added FIRST (innermost) a rate-limit 429 emitted OUTSIDE
+# it carried no CORS headers, so the browser reported an opaque `ERR_FAILED`
+# ("Failed to load feed") and JavaScript could not read the status or
+# `Retry-After` (#1525 Shape C — distinct from Shape A client abort / Shape B
+# RSC prefetch abort, which are client-owned). Outermost placement also means
+# preflight OPTIONS are answered by CORS before RateLimitMiddleware runs, so a
+# preflight no longer consumes the request's rate budget.
+#
+# Starlette applies middleware from LAST-added (outermost) to first-added
+# (innermost), so the actual `add_middleware(CORSMiddleware, ...)` call lives
+# below, AFTER every other middleware registration — see the CORS block near the
+# end of this middleware section. The origin allowlist / regex / expose-headers
+# used there are defined here.
 allowed_origins = [
     "http://localhost:3000",  # Next.js dev
     "http://127.0.0.1:3000",
@@ -108,39 +127,6 @@ if frontend_url:
 
 # Allow all Vercel preview deployments
 allowed_origin_regex = r"https://bainluck.*\.vercel\.app"
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=allowed_origin_regex,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # L2-189: expose feed timing/cache headers so the browser can read them
-    # cross-origin (bainluck.com → api.bainluck.com). CORS hides any
-    # non-safelisted response header unless it is listed here; these are set
-    # per-request by routes/feed.py (_set_feed_timing_header /
-    # _set_feed_cache_status / _finalize_feed_response) and power browser-visible
-    # latency telemetry.
-    # Queue 275/277 (#1475): X-Feed-Stages / X-Feed-Counts / X-Feed-Count-Scope /
-    # X-Feed-Singleflight are the identity-free stage/coverage/scope/singleflight
-    # diagnostics emitted on EVERY feed return path; expose them so a browser
-    # field debugger can read all feed/request headers cross-origin.
-    # Queue 281 (#1475): X-Feed-Golf-Provenance is the one bounded, allowlisted
-    # golf-base publisher signal (fresh/last_good/inline/unavailable) — identity-
-    # free, so Ops can positively verify the shared golf base cross-origin.
-    expose_headers=[
-        "X-Response-Time",
-        "X-Request-ID",
-        "X-Feed-Elapsed-Ms",
-        "X-Feed-Cache",
-        "X-Feed-Stages",
-        "X-Feed-Counts",
-        "X-Feed-Count-Scope",
-        "X-Feed-Singleflight",
-        "X-Feed-Golf-Provenance",
-    ],
-)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +165,49 @@ async def request_timing(request: Request, call_next):
     # directives are preserved; anonymous public routes keep their TTLs.
     apply_cache_policy(request, response)
     return response
+
+
+# ---------------------------------------------------------------------------
+# CORS (registered LAST so it is the OUTERMOST middleware) — see the CORS
+# configuration comment near the top of this section for why. This wraps
+# RateLimitMiddleware, LatencyMiddleware, and request_timing so that every
+# response, including an inner-middleware short-circuit like a 429, is CORS-valid
+# for allowed origins (#1525 Shape C / Queue 302). Disallowed / missing /
+# malformed origins are still NOT reflected — CORSMiddleware's own allowlist +
+# regex are unchanged; credentials/origin-reflection rules are unchanged.
+# ---------------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    # L2-189: expose feed timing/cache headers so the browser can read them
+    # cross-origin (bainluck.com → api.bainluck.com). CORS hides any
+    # non-safelisted response header unless it is listed here; these are set
+    # per-request by routes/feed.py (_set_feed_timing_header /
+    # _set_feed_cache_status / _finalize_feed_response) and power browser-visible
+    # latency telemetry.
+    # Queue 275/277 (#1475): X-Feed-Stages / X-Feed-Counts / X-Feed-Count-Scope /
+    # X-Feed-Singleflight are the identity-free stage/coverage/scope/singleflight
+    # diagnostics emitted on EVERY feed return path; expose them so a browser
+    # field debugger can read all feed/request headers cross-origin.
+    # Queue 281 (#1475): X-Feed-Golf-Provenance is the one bounded, allowlisted
+    # golf-base publisher signal (fresh/last_good/inline/unavailable) — identity-
+    # free, so Ops can positively verify the shared golf base cross-origin.
+    expose_headers=[
+        "X-Response-Time",
+        "X-Request-ID",
+        "X-Feed-Elapsed-Ms",
+        "X-Feed-Cache",
+        "X-Feed-Stages",
+        "X-Feed-Counts",
+        "X-Feed-Count-Scope",
+        "X-Feed-Singleflight",
+        "X-Feed-Golf-Provenance",
+    ],
+)
 
 
 # Include routers

@@ -470,3 +470,137 @@ class TestRateLimitMiddleware:
         time.sleep(1.1)
 
         assert client.get("/api/feed", headers=headers).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Queue 302 (#1525 Shape C): CORS-visible throttling
+# ---------------------------------------------------------------------------
+# A rate-limit 429 is emitted by RateLimitMiddleware WITHOUT calling the inner
+# app, so it never reaches the route. CORSMiddleware must therefore be OUTERMOST
+# (wrap RateLimitMiddleware) or the 429 carries no Access-Control-Allow-Origin
+# and the browser sees an opaque ERR_FAILED ("Failed to load feed") instead of a
+# readable 429 with Retry-After. These tests pin both the real main.py ordering
+# and the observable cross-origin contract of the throttle response.
+
+def _make_cors_app(anon_limit: str = "2/minute"):
+    """Mirror main.py's middleware order: RateLimitMiddleware inner, CORSMiddleware
+    OUTERMOST (added last). Only https://bainluck.com and the vercel regex are
+    allowed origins."""
+    import app.utils.rate_limit as rl_mod
+    rl_mod.ANON_RATE_LIMIT = anon_limit
+
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app = FastAPI()
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://bainluck.com"],
+        allow_origin_regex=r"https://bainluck.*\.vercel\.app",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/api/feed")
+    async def feed():
+        return {"ok": True}
+
+    return app
+
+
+class TestThrottleCorsContract:
+    """Queue 302 / #1525 Shape C: throttle responses are CORS-valid for allowed
+    origins and never reflect disallowed ones."""
+
+    def test_main_app_registers_cors_as_outermost_middleware(self):
+        """The deployed app must keep CORS outside RateLimitMiddleware, else a 429
+        loses its CORS headers. Guards against a future reorder in main.py."""
+        from app.main import app as main_app
+        from fastapi.middleware.cors import CORSMiddleware
+
+        order = [m.cls for m in main_app.user_middleware]  # index 0 == outermost
+        assert order[0] is CORSMiddleware, (
+            f"CORSMiddleware must be the OUTERMOST middleware; got order "
+            f"{[c.__name__ for c in order]}"
+        )
+        cors_i = order.index(CORSMiddleware)
+        rl_i = order.index(RateLimitMiddleware)
+        assert cors_i < rl_i, "CORSMiddleware must wrap RateLimitMiddleware"
+
+    def test_allowed_origin_429_is_cors_readable(self, monkeypatch):
+        """An allowed-origin 429 carries Access-Control-Allow-Origin == the origin,
+        so the browser can read the status and Retry-After (not ERR_FAILED)."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: None)
+        client = TestClient(_make_cors_app(anon_limit="1/minute"))
+        headers = {"Origin": "https://bainluck.com", "X-Forwarded-For": "203.0.113.1"}
+
+        assert client.get("/api/feed", headers=headers).status_code == 200
+        resp = client.get("/api/feed", headers=headers)
+        assert resp.status_code == 429
+        assert resp.headers.get("access-control-allow-origin") == "https://bainluck.com"
+        assert "Retry-After" in resp.headers
+        assert int(resp.headers["Retry-After"]) >= 1
+
+    def test_disallowed_origin_429_is_not_reflected(self, monkeypatch):
+        """A disallowed origin must NOT be reflected on the 429 — the allowlist is
+        unchanged by the ordering fix."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: None)
+        client = TestClient(_make_cors_app(anon_limit="1/minute"))
+        headers = {"Origin": "https://evil.example", "X-Forwarded-For": "203.0.113.2"}
+
+        assert client.get("/api/feed", headers=headers).status_code == 200
+        resp = client.get("/api/feed", headers=headers)
+        assert resp.status_code == 429
+        # No allow-origin, and certainly not the attacker's origin.
+        assert resp.headers.get("access-control-allow-origin") != "https://evil.example"
+
+    def test_preflight_options_does_not_consume_rate_budget(self, monkeypatch):
+        """With CORS outermost, an OPTIONS preflight is answered by CORS before the
+        limiter runs, so it does not count against the request budget."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: None)
+        client = TestClient(_make_cors_app(anon_limit="2/minute"))
+        pf_headers = {
+            "Origin": "https://bainluck.com",
+            "Access-Control-Request-Method": "GET",
+            "X-Forwarded-For": "203.0.113.3",
+        }
+        get_headers = {"Origin": "https://bainluck.com", "X-Forwarded-For": "203.0.113.3"}
+
+        # Two preflights that would exhaust a 2/minute budget if counted.
+        assert client.options("/api/feed", headers=pf_headers).status_code == 200
+        assert client.options("/api/feed", headers=pf_headers).status_code == 200
+        # Both real GETs still succeed — preflights consumed nothing.
+        assert client.get("/api/feed", headers=get_headers).status_code == 200
+        assert client.get("/api/feed", headers=get_headers).status_code == 200
+
+    def test_429_body_exposes_typed_retry_after_without_leaking_identity(self, monkeypatch):
+        """The throttle body gives L2-241 a typed retry_after matching the header and
+        leaks no internal limiter identity (bucket key / IP / user id / token)."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: None)
+        client = TestClient(_make_cors_app(anon_limit="1/minute"))
+        headers = {"Origin": "https://bainluck.com", "X-Forwarded-For": "203.0.113.44"}
+
+        client.get("/api/feed", headers=headers)
+        resp = client.get("/api/feed", headers=headers)
+        assert resp.status_code == 429
+        body = resp.json()
+        assert isinstance(body["retry_after"], int) and body["retry_after"] >= 1
+        assert str(body["retry_after"]) == resp.headers["Retry-After"]
+        for leaked in ("bucket_key", "client_ip", "user_id", "token"):
+            assert leaked not in body, f"429 body leaked internal identity: {leaked}"
+        # The keying IP must not appear anywhere in the serialized body.
+        assert "203.0.113.44" not in json.dumps(body)
