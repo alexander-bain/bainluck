@@ -699,8 +699,14 @@ function FuturesFeedCard({
           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
             {data.top_outcomes.slice(0, 3).map((outcome, i) => (
               <div key={outcome.id} className="flex items-center gap-2">
-                <span className={`text-[11px] w-20 truncate shrink-0 ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
-                  {outcome.name.split(" ").pop()}
+                <span
+                  title={outcome.name}
+                  className={`text-[11px] w-20 truncate shrink-0 ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
+                >
+                  {/* L2-243 Item 1 — show the real outcome name (CSS-truncated),
+                      not the trailing word only, which turned "Costa Rica" into
+                      "Rica" and "…World Cup?" into "Cup?". */}
+                  {outcome.name}
                 </span>
                 <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((outcome.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
                   <div

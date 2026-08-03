@@ -25,6 +25,7 @@ import {
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
@@ -335,7 +336,15 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
 
     const group = futuresGroups.get(prefix)!;
     if (group.length >= 2) {
-      result.push({ type: "group", items: group, groupTitle: prefix });
+      // L2-243 Item 1 — the grouping KEY stays `prefix`, but the DISPLAYED title
+      // uses the real colon subject or the category, never a truncated question
+      // fragment ("Will the U.S.") in the category pill.
+      const groupCategory = (group[0].data as FeedFuturesData).llm_sport_category;
+      result.push({
+        type: "group",
+        items: group,
+        groupTitle: deriveGroupDisplayTitle(name, groupCategory),
+      });
     } else {
       result.push({ type: "single", item: group[0] });
     }
@@ -647,7 +656,14 @@ export default function DiscoverPage() {
       if (!decision.hasMore) {
         setHasMore(false);
       }
-    } catch { }
+    } catch {
+      // L2-243 Item 2 — a thrown/hung pagination fetch must not silently spin
+      // forever. Surface the established unavailable/retry terminal (which also
+      // freezes the auto-pager) instead of swallowing the error and leaving the
+      // bottom spinner running. Already-rendered cards are preserved; the reader
+      // gets an actionable retry via FeedUnavailableNotice.
+      setFeedUnavailable(true);
+    }
     setLoadingMore(false);
   }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable]);
 
