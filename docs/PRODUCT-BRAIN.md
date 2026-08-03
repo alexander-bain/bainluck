@@ -4,9 +4,7 @@
 # Owner: whoever stages. Update when Alex issues a new ruling (append + date it). Last consolidated 2026-07-28.
 
 ## HOW TO USE THIS
-**GitHub Issues is the only priority source; this doc holds judgment, never status.**
-
-The queue-file mechanics live in `.claude/handoff/README.md` + `FABLE-STANDIN.md`. THIS doc is the judgment layer: the standing rulings, the reasoning behind them, and the failure modes to avoid. Priority and ordering come from the [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) — not from this doc and not from any planning file. Pre-written specs are in `READY-FIXES.md`; deep strategy in `.claude/handoff/strategy_*.md`.
+The queue-file mechanics live in `.claude/handoff/README.md` + `FABLE-STANDIN.md`. THIS doc is the judgment layer: the standing rulings, the reasoning behind them, and the failure modes to avoid. The ordered backlog is `plan_next_10_queues.md`; pre-written specs are in `READY-FIXES.md`; deep strategy in `.claude/handoff/strategy_*.md`.
 
 ## THE ONE RULE ABOVE ALL
 **Product / taste / ranking / design / calibration-interpretation calls are ALEX'S.** Elicit them via multiple-choice; NEVER guess. If the next step needs a judgment, stage the mechanical/unblocked work and leave a "⚠️ NEEDS ALEX RULING: <question + options>" note. A guessed taste call that shipped had to be reverted (the quantile-bins incident) — Alex would rather a lane idle than ship a guess. Recommendation ≠ ruling; presenting options does NOT authorize acting on your favorite.
@@ -41,6 +39,9 @@ search miss · unmerged duplicates · missing/illegible event props · stale res
 - Size queues: 1 substantial + ≤3 small; overflow to the chain.
 - Held files are held deliberately (e.g. the TdF Sunday exam) — don't promote early.
 - Repairs run through the admin-POST rail (dry-run→apply, census in response), NEVER detached one-offs (gotcha #48 graveyard).
+
+## CURRENT ARC (as of 2026-07-28, update as it moves)
+Just shipped: #252 security P0 (auth-bypass closed), L2-179 native concept-card rescue, #251 calibration audit (headline: normalization artifact, not source bias). In flight: #253 running; #254 chained (field normalization + golf-by-shape re-cut + Alex's pre-R4 high-prob calibration cohort); r271 ops (kid-taste extraction + #252 re-verify + the TdF exam scorecard we still owe). Backlog order: plan_next_10_queues.md. Open needs-user: kids'-session notes, iOS #490 glance, watchOS runtime.
 
 ## RULINGS — 2026-07-27
 - **Play feedback:** Fix old/stale cards at Discover and eval eligibility rather than asking children to classify staleness. Do not change the binary vote design merely to accommodate a defect we control. Reassess “interesting but I need to know more” only after the stale-card fix is live and observed; any later kid-facing wording must be age-appropriate, not internal language such as “need context.”
@@ -92,24 +93,29 @@ search miss · unmerged duplicates · missing/illegible event props · stale res
 - **Taint Kit Item 0 mandatory + Rulings Runway clearing before deep chains (Process v3 hardening).** Every prod-heavy queue's Item 0 must be ops-snapshot endpoint + fresh-context subagents capturing ALL evidence later items need (no flagged db-query/admin curls after Item 0). Before staging chain >2 deep, clear RULINGS-NEEDED.md via one batched MC round with Alex. Guardrail taint after ~4-8 admin calls requires fresh terminal and ops-snapshot Taint Kit.
 - **Included in calibration population vs excluded — re-ratified:** Include everything except phantoms (never-traded illiquid placeholders + un-normalized field sums that we normalize not drop). MLB total bases and NCAAB 1H are documented no-authority exclusions, not ranking gaps to fill with guesswork.
 
-## RULINGS — 2026-07-30 afternoon (via Fable; THE PRODUCT-FIRST RESET)
-Context: Alex's concern, validated by a live sweep — three of four staged
-queues were plumbing while the live site showed a 10s cold load, a 17-day-old
-settled event under "Upcoming," 0% heroes, a broken make-the-cut sort, and
-mangled titles. Process was begetting process. Two new STAGING LAWS:
+## RULINGS — 2026-07-30 morning MC round (via Fable) — RE-RESTORED 2026-08-03; ratified 07-30; DO NOT REMOVE (CI-guarded)
+- **Source experiments: ESPN predictor + futures endpoints FIRST** (zero-weight shadow; low-context pick — re-present before spend beyond ESPN; NOAA/MoneyPuck/Wikidata unruled, not rejected).
+- **Conditional / nested markets: SUPPRESS from all surfaces** until a parent-condition contract ships.
+- **Entity-image ambiguity (TMDB): strict score margin**; ambiguous stays gradient-only; no human queue.
+- **Event-history completeness (C52/#1467): label-first**, derive minima from a labeled set, ratify later.
+- **Meaningful-trade prop bar (C51/#1468): trades OR candles, cutoff from measured census**; `threshold_pending` until ratified.
+- **Rendered-good-enough closure: BOTH** deterministic checks AND a saved rendered artifact.
+- **Live-concept cards: stage the backend concept-enrichment queue** (inline top outcomes; #1486 positive half).
 
-- **THE VISIBLE-PAYOFF RULE.** Every staged queue must state, in one
-  plain-English sentence at the top, what ALEX WILL SEE CHANGE on the site or
-  app after it ships ("After this: cold loads show cards in under 3 seconds").
-  If the sentence cannot be written, the queue is PLUMBING and plumbing is
-  capped at ONE lane-session per day across all lanes. Verification-of-
-  verification counts as plumbing. WHY: queues had drifted to being staged
-  from reports about process debt instead of from the product.
-- **THE WEEKLY PRODUCT SCOREBOARD.** A standing weekly sweep (Fable, Chrome,
-  Mondays) measures what Alex feels: cold-load seconds, time to first card,
-  jank count from a standard sweep (stale-under-Upcoming, 0%/mismatched
-  heroes, sort/label/title errors), and design ships that week. Lanes are
-  judged on moving these numbers, not on tests passed or cards closed.
-  Scoreboard lands at repo root as _SCOREBOARD-<date>.md, short and plain.
-- Considered and NOT ratified today (revisit only if Alex raises them):
-  a security done-bar ruling and a Review/Verify backlog bankruptcy.
+## RULINGS — 2026-07-30 second MC round (via Fable) — RE-RESTORED 2026-08-03; ratified 07-30; DO NOT REMOVE (CI-guarded)
+- **Price alone never decides surfacing** (99% ≠ done; suppress only on authoritative lifecycle signals; price-only `effectively_resolved`/`soft_settled_binary` must not masquerade as settlement; no content-policy suppression of near-certain cards is approved).
+- **Past-date titles: hide only when title AND linked-event calendar agree**; title alone = review flag.
+- **Native stays challenge-first**; no /play browse or new game surfaces until Daily/Friend Challenges are executed well; check /play discoverability on web.
+- **No native competition-hub top-level journey**; existing league/sport/tournament routes are the equivalent.
+
+## RULINGS — 2026-07-30 afternoon: THE PRODUCT-FIRST RESET — RE-RESTORED 2026-08-03; DO NOT REMOVE (CI-guarded)
+- **VISIBLE-PAYOFF RULE**: every queue states in one plain sentence what Alex will SEE change; no sentence = plumbing, capped at ONE lane-session/day total; verification-of-verification is plumbing.
+- **WEEKLY PRODUCT SCOREBOARD**: Monday Chrome sweep (cold-load seconds, time to first card, jank count, visible ships) → _SCOREBOARD-<date>.md; lanes judged on these numbers.
+- Priority order (08-01): finish calibration fast (web + native + publish gate), then latency, accuracy, usability.
+- Considered, NOT ratified: security done-bar; R/V bankruptcy.
+
+## RULING — 2026-08-03: THE PROGRAM LAYER (via Fable MC; lanes stay as-is)
+Lanes remain FILE-COLLISION boundaries (backend / frontend+iOS / ops / eval) — never reorganize lanes by domain. The roadmap layer on top is programs:
+- Every queue's frontmatter carries `program:` — `calibration` | `latency` | `native` | `ux` | `plumbing` (extend only by Alex ruling).
+- Staging enforces a weekly mix; plumbing keeps its one-session/day cap; **UX floor: ≥1 Lane 2 session per day carries `program: ux`**.
+- Monday scoreboard reports cycles-by-program so portfolio drift is a weekly number, not a feeling.
