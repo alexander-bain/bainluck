@@ -130,7 +130,13 @@ class TestShippedSQLCarriesTheFix:
         assert "ELSE ro.rn = 1" in src
 
     def test_payload_reports_candidate_vs_published_split(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        # Queue 300D hoisted the bucket SELECT out of ``compute_calibration_payload``
+        # into ``_main_futures_sql`` so both of its scopes could be parsed and
+        # tested. Assert against the RENDERED statement rather than the enclosing
+        # function's source text: it is the same guarantee, checked one step
+        # closer to what the database actually receives, and it no longer breaks
+        # the next time this SQL moves between functions.
+        src = precompute_calibration._main_futures_sql()
         # published_summary computes post-dedup counts distinct from candidates.
         assert "published_summary" in src
         assert "mex_published_markets" in src

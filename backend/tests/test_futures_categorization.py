@@ -389,30 +389,41 @@ class TestRacquetGameStats:
     def test_real_baseball_total_runs_unaffected(self):
         """The #1230 racquet guard must not swallow a real baseball total.
 
-        The clock is FROZEN here (gotcha #44). "runs" is not in
-        ``_STAT_TO_SPORT``, so "Total Runs O/U" is an AMBIGUOUS stat that
-        resolves via ``_seasonal_sport_for_college_matchup()`` — baseball only in
-        May–Jul. Asserting "baseball" against the wall clock therefore made this
-        test flip to "football" the moment UTC rolled into August, turning master
-        red with no code change (it broke between 23:31 UTC Jul 31 and 00:08 UTC
-        Aug 1, blocking every lane's deploy). Freezing the month keeps the
-        assertion about the racquet guard, which is what this class tests.
+        Queue 300D closed the latent gap this docstring used to describe. "runs"
+        is now a first-class key in ``_STAT_TO_SPORT``, so "Total Runs O/U" is
+        recognised as baseball *outright* — it no longer reaches
+        ``_AMBIGUOUS_STATS`` / ``_seasonal_sport_for_college_matchup()``, whose
+        Aug–Oct branch returns "football". That season dependency is exactly why
+        this assertion used to need a frozen July clock (gotcha #44): the same
+        market flipped baseball→football between 23:31 UTC Jul 31 and 00:08 UTC
+        Aug 1 with no code change, turning master red and blocking every lane's
+        deploy. Baseball totals are RUNS, in every month.
 
-        NB: that "Total Runs" needs a season to be read as baseball at all is a
-        separate latent gap in the categoriser, not something this test asserts.
+        The clock stays frozen here — but now to two *different* months, to prove
+        the answer is season-independent rather than to pin it to the one month
+        that happened to give the right answer.
         """
         import app.utils.futures_categorization as fc
 
-        class _FrozenJuly(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return datetime(2026, 7, 15, 12, 0, tzinfo=tz or timezone.utc)
+        for frozen_month in (7, 8):  # Jul (old "good" month) and Aug (old bug)
+            class _Frozen(datetime):
+                _month = frozen_month
 
-        with patch.object(fc, "datetime", _FrozenJuly):
-            assert (
-                detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
-                == "baseball"
-            )
+                @classmethod
+                def now(cls, tz=None):
+                    return datetime(2026, cls._month, 15, 12, 0, tzinfo=tz or timezone.utc)
+
+            with patch.object(fc, "datetime", _Frozen):
+                assert (
+                    detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
+                    == "baseball"
+                ), f"month={frozen_month}"
+
+        # And against the real wall clock, which is now safe to assert on.
+        assert (
+            detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
+            == "baseball"
+        )
 
 
 # =============================================================================
@@ -1416,6 +1427,147 @@ class TestGamePropDetection:
         assert categorize_by_rules("Boston at Golden State: Rebounds") == "basketball"
         assert categorize_by_rules("Detroit at New York: Points") == "basketball"
         assert categorize_by_rules("Kansas City at Buffalo: Passing Yards") == "football"
+
+
+# =============================================================================
+# Stat → sport taxonomy fixtures (Queue 300D)
+# =============================================================================
+def _frozen_fc_datetime(month: int):
+    """Context manager freezing ``futures_categorization``'s clock to a month.
+
+    Gotcha #44: never seed a taxonomy assertion off the wall clock. The seasonal
+    fallback (``_seasonal_sport_for_college_matchup``) is month-dependent, so any
+    test that can reach it must pin the month or it will flip colour on a date
+    boundary with no code change.
+    """
+    import app.utils.futures_categorization as fc
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, month, 15, 12, 0, tzinfo=tz or timezone.utc)
+
+    return patch.object(fc, "datetime", _Frozen)
+
+
+class TestStatToSportTaxonomy:
+    """Queue 300D: ``runs`` is a baseball stat, in every month.
+
+    Before this, ``_STAT_TO_SPORT`` had "home runs" and "earned runs" but no bare
+    "runs", so an MLB game total ("Total Runs O/U 8.5", Kalshi KXMLBTOTAL /
+    KXMLBTEAMTOTAL) matched no sport-specific stat, fell through to the
+    ``_AMBIGUOUS_STATS`` "total" fragment, and was resolved by the seasonal
+    heuristic — which returns **football** in Aug–Oct. August MLB total-runs
+    props were therefore filed under football.
+
+    These fixtures pin all three sides of the acceptance bar: MLB runs land on
+    baseball; football rushing/passing are unmoved; and the poison/ambiguous
+    names (the #1230 racquet trap, the seasonal fallback, singular "run") behave
+    exactly as they did before.
+    """
+
+    # -- MLB runs: baseball regardless of month --------------------------------
+    @pytest.mark.parametrize(
+        "market_name",
+        [
+            # Shapes evidenced in-repo: tests/test_game_markets.py:760, the
+            # #1230 fixtures, and sport_keys.py's KXMLBTOTAL ("Game total runs")
+            # / KXMLBTEAMTOTAL ("Team total runs") ticker comments.
+            "Yankees at Red Sox: Total Runs",
+            "Yankees vs Red Sox: Total Runs O/U 8.5",
+            "Dodgers at Giants: Team Total Runs O/U 4.5",
+            "Cubs at Cardinals: Runs",
+            "Astros at Mariners: First 5 Innings Total Runs",
+        ],
+    )
+    @pytest.mark.parametrize("month", [7, 8, 9, 12])
+    def test_mlb_total_runs_is_baseball_in_every_month(self, market_name, month):
+        with _frozen_fc_datetime(month):
+            assert detect_game_prop_sport(market_name) == "baseball"
+            assert categorize_by_rules(market_name) == "baseball"
+
+    @pytest.mark.parametrize(
+        ("market_name", "expected"),
+        [
+            # The more specific "runs" keys must still be reachable — the new
+            # bare "runs" entry is last in the baseball block, so it cannot
+            # shadow them (all three map to baseball either way).
+            ("Dodgers at Giants: Home Runs", "baseball"),
+            ("Yankees at Red Sox: Earned Runs", "baseball"),
+            ("Yankees at Red Sox: Strikeouts", "baseball"),
+        ],
+    )
+    def test_specific_baseball_stats_unchanged(self, market_name, expected):
+        assert detect_game_prop_sport(market_name) == expected
+
+    # -- Football rushing / passing: unmoved -----------------------------------
+    @pytest.mark.parametrize(
+        "market_name",
+        [
+            "Dallas at Philadelphia: Rushing Yards",
+            "Kansas City at Buffalo: Passing Yards",
+            "Green Bay at Chicago: Rushing Touchdowns",
+            "Green Bay at Chicago: Passing Touchdowns",
+            "Pittsburgh at Baltimore: Receiving Yards",
+            "Pittsburgh at Baltimore: Sacks",
+        ],
+    )
+    @pytest.mark.parametrize("month", [7, 8])
+    def test_football_stats_still_football(self, market_name, month):
+        # "runs" is not a substring of "rushing"/"passing", so the new key cannot
+        # steal these — asserted across the Jul/Aug boundary that broke #1230.
+        with _frozen_fc_datetime(month):
+            assert detect_game_prop_sport(market_name) == "football"
+
+    # -- Poison / ambiguous names: behaviour preserved -------------------------
+    def test_racquet_games_trap_still_wins_over_runs(self):
+        # #1230: the racquet guard runs BEFORE _STAT_TO_SPORT, and "games" has no
+        # "runs" substring, so adding "runs" cannot pull table tennis to baseball.
+        assert (
+            detect_game_prop_sport("Player A vs. Player B: Total Games O/U 3.5")
+            == "table_tennis"
+        )
+        assert (
+            detect_game_prop_sport("Carlos Alcaraz vs. Jannik Sinner: Total Games O/U 21.5")
+            == "tennis"
+        )
+
+    def test_genuinely_ambiguous_stat_still_uses_seasonal_heuristic(self):
+        # "Spread" contains no sport-specific stat, so it must still reach the
+        # seasonal fallback — Aug → football, Jul → baseball. The 300D change
+        # narrows what reaches this branch; it does not remove the branch.
+        with _frozen_fc_datetime(8):
+            assert detect_game_prop_sport("Orlando at Sacramento: Spread") == "football"
+        with _frozen_fc_datetime(7):
+            assert detect_game_prop_sport("Orlando at Sacramento: Spread") == "baseball"
+
+    def test_soccer_teams_still_short_circuit_ambiguous_stats(self):
+        with _frozen_fc_datetime(8):
+            assert detect_game_prop_sport("Arsenal at Chelsea: Total") == "soccer"
+
+    def test_singular_run_does_not_match(self):
+        # "runs" must not over-match: a singular "Run" stat has no "runs"
+        # substring and stays unclassified rather than becoming baseball.
+        assert detect_game_prop_sport("Dallas at Philadelphia: Longest Run") != "baseball"
+
+    def test_non_game_prop_runs_name_unaffected(self):
+        # Not a "Team at Team: Stat" shape at all — the game-prop path declines,
+        # and the ordinary SPORT_PATTERNS path still answers.
+        assert detect_game_prop_sport("Home Run Derby Winner") is None
+        assert categorize_by_rules("Home Run Derby Winner") == "baseball"
+
+    def test_mlb_runs_group_still_protected_from_table_tennis(self):
+        # The group-level #1230 predicate must be unmoved by the new stat key.
+        assert (
+            detect_table_tennis_group(
+                [
+                    "Yankees vs Red Sox",
+                    "Yankees vs Red Sox: Total Runs O/U 8.5",
+                    "Aaron Judge: Home Runs O/U 1.5",
+                ]
+            )
+            is False
+        )
 
 
 # =============================================================================

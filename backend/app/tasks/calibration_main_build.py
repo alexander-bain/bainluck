@@ -71,6 +71,54 @@ logger = logging.getLogger(__name__)
 
 LEDGER_IDENTITY = "calibration:main:phase_ledger"
 CHECKPOINT_IDENTITY = "calibration:main:checkpoint"
+#: Queue 300D Item 0. Kept apart from ``CHECKPOINT_IDENTITY`` on purpose: the
+#: phase checkpoint carries WHOLE finished phases, this one carries progress
+#: INSIDE the futures phase. Sharing a row would mean a partial futures phase
+#: could not be recorded without also rewriting (and risking) the committed
+#: sports/diagnostics output sitting next to it.
+STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
+
+#: Queue 300D Item 0 — the staged futures switch.
+#:
+#: True: the scheduled build reads the futures population one chunk of whole
+#: virtual questions at a time, committing each chunk before advancing its
+#: cursor, so an interrupted beat banks what it proved.
+#:
+#: False: one statement, as before.
+#:
+#: SHIPPED OFF (2026-08-03), on the same reasoning Queue 300C shipped its
+#: census off. Everything is here and tested — the frozen-roster scope, the
+#: generation read, the unit cursor, the merge, 84 focused tests, both statement
+#: scopes parsed — but the staged statement has never executed against
+#: PostgreSQL, and Queue 300D's own gates forbid triggering a build to find out.
+#: Turning an unexercised path into the ONLY path for the scheduled build, on
+#: the strength of a parse gate, is not a thing to do unattended.
+#:
+#: The asymmetry is what settles it. OFF is a proven no-op: the monolith text is
+#: byte-identical to the pre-300D statement (pinned by
+#: ``test_calibration_staged_futures_sql_300d.TestMonolithIsUnmoved``), so the
+#: off state costs the build exactly nothing. ON is a coin flip whose losing
+#: side leaves the page just as dark as it is now, minus the ability to say why.
+#:
+#: FLIPPING IT is one constant and one deploy, and it wants an operator watching
+#: the next beat: the ledger will show ``read:futures_generation`` and
+#: ``read:futures_unit`` stage timings and a ``staged:cursor_*`` action, and a
+#: partial beat reports terminal ``cancelled`` with units banked (by design —
+#: see :class:`StagedFuturesIncomplete`), not ``failed``.
+#:
+#: This ONLY ever applies to a run that owns a :class:`PhaseRunner` — i.e. the
+#: scheduled build. The route's in-request cold-cache serve keeps the single
+#: statement unconditionally: it has no checkpoint to resume from, no second
+#: beat to finish the job, and a request session whose transaction must not be
+#: committed underneath the caller.
+STAGED_FUTURES_ENABLED = False
+
+#: Markets per chunk. A budget, not a row count: the unit is a whole virtual
+#: question, so a chunk overshoots rather than split one (see
+#: ``plan_units``). Sized so a chunk is small enough that losing one to a
+#: timeout costs little, and large enough that per-chunk planning overhead
+#: stays a rounding error against the population read it replaces.
+STAGED_FUTURES_CHUNK_MARKETS = 2_500
 
 #: A ledger or checkpoint older than this is a fossil, not state in progress.
 STATE_MAX_AGE_S = 14 * 86400
@@ -92,6 +140,19 @@ _STATEMENT_TIMEOUT_MARKERS = (
     "canceling statement due to statement timeout",
     "querycanceled",
 )
+
+
+class StagedFuturesIncomplete(RuntimeError):
+    """The staged futures generation made progress but is not finished.
+
+    Deliberately its own type rather than a bare ``RuntimeError``: this is the
+    ONE way the build stops that is neither a bug nor a resource problem. Units
+    committed, the cursor advanced, the next beat will resume — the only correct
+    response is to publish nothing and say so. :meth:`PhaseRunner.classify_failure`
+    maps it to ``cancelled`` (ran out of window without finishing) rather than
+    ``failed``, so a working build does not page anybody RED for doing exactly
+    what it was designed to do.
+    """
 
 
 def run_owner() -> str:
@@ -274,6 +335,19 @@ class PhaseRunner:
             "artifact_generation": None,
         }
 
+    # -- staging --------------------------------------------------------------
+
+    @property
+    def staged_futures(self) -> bool:
+        """Whether this run may read the futures population in chunks.
+
+        A property rather than a constructor argument so there is exactly one
+        answer to "is this the scheduled build?" — owning a real runner IS the
+        condition, and :data:`STAGED_FUTURES_ENABLED` is the operator's switch
+        on top of it.
+        """
+        return STAGED_FUTURES_ENABLED
+
     # -- clock ----------------------------------------------------------------
 
     def elapsed_ms(self) -> int:
@@ -317,7 +391,7 @@ class PhaseRunner:
         """timeout | cancelled | failed — the three ways a phase can end badly."""
         import asyncio
 
-        if isinstance(exc, asyncio.CancelledError):
+        if isinstance(exc, (asyncio.CancelledError, StagedFuturesIncomplete)):
             return CANCELLED
         text_form = f"{exc.__class__.__name__} {exc}".lower()
         if any(marker in text_form for marker in _STATEMENT_TIMEOUT_MARKERS):
@@ -515,6 +589,9 @@ class NullPhaseRunner:
 
     checkpoint_action = FRESH
     carried_phases: tuple[str, ...] = ()
+    #: Never. A one-off serve has nothing to resume into and must not have its
+    #: request transaction committed out from under the caller.
+    staged_futures = False
 
     def __init__(self) -> None:
         self.outcome: dict[str, Any] = {
@@ -674,6 +751,100 @@ async def clear_main_checkpoint(*, population_version: str, fingerprint: str, ow
         generation=generation_for(datetime.now(timezone.utc)),
     )
     return await save_main_checkpoint(blank, terminal="complete")
+
+
+# =============================================================================
+# Staged futures cursor (Queue 300D Item 0)
+# =============================================================================
+
+
+def staged_lease() -> float:
+    """When this run's claim on the staged cursor expires.
+
+    Same geometry as :data:`LEASE_S` and for the same reason: comfortably past
+    the Celery hard limit, so a SIGKILLed run still holds its claim until after
+    it could possibly still be alive, and not one second longer.
+    """
+    return time.time() + LEASE_S
+
+
+async def load_staged_cursor(
+    *,
+    population_version: str,
+    input_fingerprint: str,
+    generation_fingerprint: str,
+    owner: str,
+    generation: int,
+    max_age_s: float = STATE_MAX_AGE_S,
+):
+    """Read + classify the staged futures cursor (fresh/resume/invalidate/refuse)."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.calibration_staged_futures import (
+        STAGED_FUTURES_SCHEMA,
+        decode_staged_cursor,
+        new_staged_cursor,
+    )
+
+    blank = new_staged_cursor(
+        population_version=population_version,
+        input_fingerprint=input_fingerprint,
+        generation_fingerprint=generation_fingerprint,
+        owner=owner,
+        generation=generation,
+    )
+    try:
+        read = await read_snapshot_standalone(
+            STAGED_FUTURES_IDENTITY,
+            expected_version=STAGED_FUTURES_SCHEMA,
+            max_age_s=max_age_s,
+        )
+    except Exception as exc:  # noqa: BLE001 — an unreadable cursor is a fresh one
+        logger.warning("calibration staged cursor read failed: %s", exc)
+        return blank, INVALIDATE
+    if not read.ok or read.envelope is None:
+        return blank, (FRESH if read.status == "missing" else INVALIDATE)
+
+    return decode_staged_cursor(
+        read.envelope.payload,
+        expected_population_version=population_version,
+        expected_input_fingerprint=input_fingerprint,
+        expected_generation_fingerprint=generation_fingerprint,
+        owner=owner,
+        generation=generation,
+        now=time.time(),
+    )
+
+
+async def save_staged_cursor(cursor, *, terminal: str) -> bool:
+    """Persist the staged cursor. ``True`` only when the write is durable.
+
+    The caller must treat a unit as banked ONLY on ``True``. Everything the
+    resume story rests on — that a unit recorded as done really did commit — is
+    this boolean being honest.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
+    from app.utils.durable_state import DurableEnvelope
+
+    payload = cursor.as_payload()
+    payload["terminal"] = terminal
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=STAGED_FUTURES_IDENTITY,
+                schema_version=STAGED_FUTURES_SCHEMA,
+                payload=payload,
+                complete=True,
+                source=MAIN_BUILD_TASK,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        logger.warning("calibration staged cursor persist failed: %s", exc)
+        return False
+    ok = result.get("status") in ("ok", "superseded")
+    if not ok:
+        logger.warning("calibration staged cursor persist rejected: %s", result)
+    return ok
 
 
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:

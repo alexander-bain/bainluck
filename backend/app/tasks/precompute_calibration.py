@@ -143,6 +143,26 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # without risking the page.
 CALIBRATION_POPULATION_VERSION = "q267"
 
+#: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
+#: from the population.
+#:
+#: C126 proved the representative window had no deterministic tie-break: two
+#: complementary binary sides equidistant from 50% could each be chosen across
+#: plans or rebuilds, so a published observation's identity, winner and bucket
+#: were free to move with no data change. Alex's 2026-08-03 ruling settles it —
+#: after distance from 50%, the immutable canonical outcome ID breaks the tie,
+#: with no Yes/No preference.
+#:
+#: This is NOT a population-version bump, and the distinction is the point. The
+#: population's METHODOLOGY (eligibility, truth, liquidity, normalization,
+#: metrics) is untouched; the same questions with the same count publish. What
+#: moves is WHICH side of an exactly-tied book represents a handful of them —
+#: a one-time identity delta, reported on its own census rung rather than
+#: hidden inside a population change. It rides in the INPUT FINGERPRINT so any
+#: future change to the authority invalidates every carried read, exactly as a
+#: query edit does.
+REPRESENTATIVE_TIE_AUTHORITY = "canonical-outcome-id/v1"
+
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
 # record; each entry is a real, dated data-quality fix. When a new class is fixed,
@@ -1482,6 +1502,148 @@ def _compute_horizon_mce(buckets: list[dict], weighted: bool = True) -> float | 
     return round(total_abs_err / total_w * 100, 2)
 
 
+#: Queue 300D Item 0 — the bind-parameter names the frozen generation roster
+#: travels under. One array per column, ``unnest``-ed into a CTE, so a chunk of
+#: several thousand markets costs three bind params instead of a megabyte of
+#: inlined VALUES text.
+#:
+#: Every one is read through ``CAST(:p AS t[])`` rather than ``:p::t[]``:
+#: SQLAlchemy's ``text()`` silently drops a bind parameter immediately followed
+#: by a ``::`` cast, which produces a query that raises on every run (the
+#: asyncpg bind gotcha that killed ``_fix_golf_commence_times`` for months —
+#: gotcha #45's cousin).
+VM_ROSTER_MARKET_IDS_PARAM = "vm_roster_market_ids"
+VM_ROSTER_VM_IDS_PARAM = "vm_roster_vm_ids"
+VM_ROSTER_IS_GROUPED_PARAM = "vm_roster_is_grouped"
+
+#: The extra ``market_info`` predicate that scopes the base scan to one chunk.
+VM_ROSTER_MARKET_INFO_EXTRA = (
+    f"AND fm.id = ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+)
+
+
+def _virtual_market_ctes(frozen_vm_roster: bool) -> str:
+    """``group_sizes`` / ``event_sizes`` / ``virtual_market``, in one of two forms.
+
+    **Global (default).** Virtual-question identity is DERIVED here: a market
+    belongs to ``g:<group_id>`` when its group has >=3 eligible markets in the
+    same source, else ``e:<event_id>`` when its event does, else it is its own
+    ``m:<market_id>``. The two cardinality CTEs count over the WHOLE population,
+    which is what makes the >=3 gate meaningful.
+
+    **Frozen (Queue 300D Item 0).** The staged build has already computed that
+    same assignment once, for the whole population, and is now replaying it over
+    one chunk. So the roster is INJECTED and the cardinality CTEs disappear.
+
+    That substitution is not an optimization, it is the only correct way to
+    chunk this chain, and the reason is worth stating precisely: group and event
+    sizes are counted over ``market_info``, so re-deriving them from a FILTERED
+    ``market_info`` silently changes them. Concretely — an event with 4 eligible
+    markets where one sits in a >=3 group has three markets in ``e:<event_id>``
+    and one in ``g:<group_id>``. Chunk by virtual question and re-derive, and
+    the ``e:`` chunk now sees only 3 of the event's 4 markets... and a chunk
+    holding fewer than 3 would see the event collapse below the gate entirely,
+    silently re-assigning every one of its markets to ``m:`` — a different
+    question identity, a different representative, a different bucket. Freezing
+    the assignment makes the chunk a REPLAY of the global derivation rather than
+    a re-derivation over a subset, so every chunk's rows are exactly the global
+    rows restricted to that chunk.
+    """
+    if not frozen_vm_roster:
+        return """            group_sizes AS (
+                SELECT group_id, source, COUNT(*) AS group_size
+                FROM market_info
+                WHERE group_id IS NOT NULL
+                GROUP BY group_id, source
+            ),
+            event_sizes AS (
+                SELECT event_id, source, COUNT(*) AS event_size
+                FROM market_info
+                WHERE event_id IS NOT NULL
+                GROUP BY event_id, source
+            ),
+            virtual_market AS (
+                SELECT
+                    mi.market_id, mi.source, mi.category, mi.event_id,
+                    CASE WHEN gs.group_size >= 3
+                         THEN 'g:' || mi.group_id
+                         WHEN es.event_size >= 3
+                         THEN 'e:' || mi.event_id::text
+                         ELSE 'm:' || mi.market_id::text
+                    END AS vm_id,
+                    COALESCE(gs.group_size >= 3, false)
+                      OR COALESCE(es.event_size >= 3, false) AS is_grouped,
+                    mi.mutually_exclusive,
+                    mi.market_type,
+                    mi.llm_league
+                FROM market_info mi
+                LEFT JOIN group_sizes gs
+                  ON gs.group_id = mi.group_id AND gs.source = mi.source
+                LEFT JOIN event_sizes es
+                  ON es.event_id = mi.event_id AND es.source = mi.source
+            ),"""
+
+    return f"""            frozen_vm_roster AS (
+                SELECT * FROM unnest(
+                    CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]),
+                    CAST(:{VM_ROSTER_VM_IDS_PARAM} AS text[]),
+                    CAST(:{VM_ROSTER_IS_GROUPED_PARAM} AS boolean[])
+                ) AS t(market_id, vm_id, is_grouped)
+            ),
+            virtual_market AS (
+                SELECT
+                    mi.market_id, mi.source, mi.category, mi.event_id,
+                    vr.vm_id,
+                    vr.is_grouped,
+                    mi.mutually_exclusive,
+                    mi.market_type,
+                    mi.llm_league
+                FROM market_info mi
+                -- INNER, not LEFT: a market inside the chunk's scan that the
+                -- frozen generation does not name is a market that arrived
+                -- after the generation was taken. Dropping it here is what
+                -- makes the chunk a replay of one coherent generation; the
+                -- roster-digest check at finalization is what NOTICES that it
+                -- happened and invalidates the whole build rather than
+                -- publishing a population assembled from two generations.
+                JOIN frozen_vm_roster vr ON vr.market_id = mi.market_id
+            ),"""
+
+
+def _futures_generation_sql() -> str:
+    """The Stage A roster read: one row per eligible market, and nothing else.
+
+    This is the "immutable input generation" Queue 300D Item 0 names — market
+    metadata plus source-scoped group/event cardinality, resolved into the
+    virtual-question assignment. It runs ONCE per beat and is the only part of
+    the chain that has to see the whole population.
+
+    It reuses :func:`_calibration_population_ctes` VERBATIM rather than carrying
+    its own copy of ``market_info``, and that is the load-bearing detail. A
+    second, hand-written copy of the eligibility predicate is exactly the drift
+    C14 found (the cohort sweep measuring rows the curve drops), and here it
+    would be worse than drift: the roster IS the chunk boundary, so a generation
+    that disagreed with the population about which markets are eligible would
+    hand every chunk a subtly different universe than the monolith had.
+
+    Selecting only from ``virtual_market`` is what makes it cheap. PostgreSQL
+    does not execute an unreferenced ``WITH`` subquery, so naming the full chain
+    costs nothing: everything downstream of ``virtual_market`` —
+    ``ranked_outcomes`` and its representative sort, the price joins, the whole
+    per-outcome universe — is planned away. What actually runs is one pass over
+    the eligible futures markets, which the monolith pays anyway.
+    """
+    return (
+        "WITH "
+        + _calibration_population_ctes()
+        + """
+            SELECT market_id, source, vm_id, is_grouped
+            FROM virtual_market
+            ORDER BY market_id
+        """
+    )
+
+
 def _calibration_population_ctes(
     *,
     curve_price: str = "COALESCE(fo.calibration_probability, fo.opening_probability)",
@@ -1489,6 +1651,7 @@ def _calibration_population_ctes(
     rn_order: str = "ABS(fo.opening_probability - 0.5)",
     market_info_extra: str = "",
     leading_ctes: str = "",
+    frozen_vm_roster: bool = False,
 ) -> str:
     """The ONE canonical eligible -> final-published-row CTE chain (Queue #259 Item 1/2).
 
@@ -1800,38 +1963,7 @@ def _calibration_population_ctes(
                   AND {kalshi_liquidity_exists_sql(source='mi.source')}
                 GROUP BY fo.market_id
             ),
-            group_sizes AS (
-                SELECT group_id, source, COUNT(*) AS group_size
-                FROM market_info
-                WHERE group_id IS NOT NULL
-                GROUP BY group_id, source
-            ),
-            event_sizes AS (
-                SELECT event_id, source, COUNT(*) AS event_size
-                FROM market_info
-                WHERE event_id IS NOT NULL
-                GROUP BY event_id, source
-            ),
-            virtual_market AS (
-                SELECT
-                    mi.market_id, mi.source, mi.category, mi.event_id,
-                    CASE WHEN gs.group_size >= 3
-                         THEN 'g:' || mi.group_id
-                         WHEN es.event_size >= 3
-                         THEN 'e:' || mi.event_id::text
-                         ELSE 'm:' || mi.market_id::text
-                    END AS vm_id,
-                    COALESCE(gs.group_size >= 3, false)
-                      OR COALESCE(es.event_size >= 3, false) AS is_grouped,
-                    mi.mutually_exclusive,
-                    mi.market_type,
-                    mi.llm_league
-                FROM market_info mi
-                LEFT JOIN group_sizes gs
-                  ON gs.group_id = mi.group_id AND gs.source = mi.source
-                LEFT JOIN event_sizes es
-                  ON es.event_id = mi.event_id AND es.source = mi.source
-            ),
+{_virtual_market_ctes(frozen_vm_roster)}
             vm_stats AS (
                 SELECT
                     vm.vm_id, vm.source, vm.category, vm.is_grouped,
@@ -1939,10 +2071,37 @@ def _calibration_population_ctes(
                     -- trade has no real price discovery at its midpoint. Weather-gated
                     -- (tech miscalibration is genuine per #182 census — kept).
                     {WEATHER_WIDE_SPREAD_EXCLUDE} AS is_weather_wide_spread,
+                    -- Queue 300D Item 1 (C126 P1). Distance from 50% ALONE is not
+                    -- a total order: complementary binary sides are routinely
+                    -- equidistant (0.40 / 0.60), and with no secondary key
+                    -- PostgreSQL may return either tied row across plans or
+                    -- rebuilds. ``deduped`` publishes only ``rn = 1``, so the
+                    -- observation identity, its winner label and its bucket could
+                    -- all move with no source-data or methodology change — and a
+                    -- staged execution can never be proved equivalent to an
+                    -- oracle that is itself unstable.
+                    --
+                    -- Alex's 2026-08-03 ruling is the tie AUTHORITY: after
+                    -- distance from 50%, break exact ties by the immutable
+                    -- canonical outcome ID. Deliberately NOT a Yes/No or
+                    -- favourite/underdog preference — any side preference would be
+                    -- a product decision about which half of a book we believe,
+                    -- and this is only a determinism rule.
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
+                        ORDER BY {rn_order}, fo.id
+                    ) AS rn,
+                    -- The one-time delta instrument. RANK over the DISTANCE ONLY
+                    -- is 1 for every row tied at the minimum, so ``rn = 2 AND
+                    -- rn_distance_rank = 1`` marks exactly those questions whose
+                    -- representative the new authority had to choose. Its ORDER BY
+                    -- is a prefix of ``rn``'s, so PostgreSQL satisfies both windows
+                    -- from one sort and this costs no extra pass over the heaviest
+                    -- CTE in the product.
+                    RANK() OVER (
+                        PARTITION BY cv.vm_id
                         ORDER BY {rn_order}
-                    ) AS rn
+                    ) AS rn_distance_rank
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
@@ -2147,12 +2306,35 @@ def _calibration_population_ctes(
 # and the Lane 2 fixture all ship now, and the census reports itself
 # ``unavailable`` (never zero) until the phase has room.
 #
-# FLIP IT when the futures phase is feasible again — one constant, one deploy.
-# With it False the emitted SQL is byte-identical to the pre-census statement,
-# so the off state costs the build exactly nothing.
+# QUEUE 300D UPDATE (2026-08-03) — IT IS NO LONGER ONE CONSTANT.
+#
+# Queue 300D gave the futures phase a way to fit (staged, resumable chunks of
+# whole virtual questions), which was the budget half of the blocker above. But
+# staging exposed a SECOND blocker that a flag flip cannot clear:
+#
+#   ``coverage_universe`` scans every resolved futures outcome with a usable
+#   price. That universe is not vm-scoped, so under chunking each chunk rescans
+#   ALL of it and classifies every out-of-chunk outcome as
+#   ``market_result_unavailable`` / ``question_ungraded``. Summed across N
+#   chunks the total is ~N times the truth with the rungs skewed — a census
+#   that is wrong in the CONFIDENT direction, which is precisely what this
+#   bridge exists to prevent.
+#
+# So flipping this constant now requires splitting the census in two: the part
+# attributable to a chunk (its own markets' outcomes) and ONE global pass for
+# the rungs that belong to no chunk at all (``market_result_unavailable`` and
+# the truth rungs — their outcomes are not in ``market_info``, so they are in no
+# virtual market). ``_main_futures_sql`` REFUSES to build the staged statement
+# with the census on rather than let that ship silently.
+#
+# Until then the census stays ``unavailable`` — never zero, never inferred,
+# which is what Queue 300D Item 2's own acceptance asks for. With it False the
+# emitted SQL is byte-identical to the pre-census statement, so the off state
+# costs the build exactly nothing.
 # =============================================================================
 
-#: See the block comment above. Default OFF pending futures-phase budget.
+#: See the block comment above. OFF pending the chunk-scoped coverage universe;
+#: ``_main_futures_sql`` refuses the staged scope while this is True.
 COVERAGE_CENSUS_ENABLED = False
 
 #: The reason string a disabled census reports, so the page and any operator can
@@ -2280,6 +2462,396 @@ def _coverage_bridge_ctes() -> str:
                         AS cb_with_terminal_cal_price
                 FROM coverage_bridge
             )"""
+
+
+# Queue 300D Item 0: ONE statement text, built in one of two scopes.
+#
+# ``frozen=False`` is the monolith and is byte-identical to what this
+# build has always issued. ``frozen=True`` is the same statement over
+# one chunk of whole virtual questions, with the vm assignment injected
+# from the generation roster instead of re-derived (see
+# ``_virtual_market_ctes`` for why re-deriving over a subset is wrong).
+#
+# Deliberately ONE builder rather than two: a second copy of this
+# 150-line SELECT is how the staged path and the monolith would drift
+# apart on the first exclusion rung anybody added to only one of them.
+def _main_futures_sql(*, frozen: bool = False) -> str:
+    # Queue 300D Item 2 — the census and the staged scope are NOT yet compatible,
+    # and this refuses rather than lets them produce a confident wrong number.
+    #
+    # ``coverage_universe`` scans EVERY resolved futures outcome carrying a
+    # usable price. That universe is not vm-scoped, so under chunking each chunk
+    # would rescan all of it and LEFT JOIN it against only its own ``normalized``
+    # / ``deduped`` — classifying every out-of-chunk outcome as
+    # ``market_result_unavailable`` or ``question_ungraded``. Summed across N
+    # chunks, ``cb_coverage_total`` would come out ~N times the real figure with
+    # the rungs badly skewed: a census that is wrong in the confident direction,
+    # which is the one thing the 300C bridge exists to prevent.
+    #
+    # Turning it on therefore needs its own work, not a flag flip: the coverage
+    # universe has to be split into the part attributable to a chunk (its
+    # markets' outcomes) and a single global pass for the rungs that belong to
+    # no chunk at all (``market_result_unavailable`` and the truth rungs, whose
+    # outcomes are not in ``market_info`` and so are in no vm). Until that
+    # lands, the census stays ``unavailable`` — which is exactly what Item 2's
+    # acceptance asks for: never zero, never inferred.
+    if frozen and COVERAGE_CENSUS_ENABLED:
+        raise ValueError(
+            "coverage census is not chunk-scoped: enabling it under the staged "
+            "futures path would multiply the census by the chunk count. Scope "
+            "coverage_universe per chunk (plus one global pass for the "
+            "out-of-population rungs) before flipping COVERAGE_CENSUS_ENABLED."
+        )
+    return (
+            "WITH "
+            + _calibration_population_ctes(
+                frozen_vm_roster=frozen,
+                market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA if frozen else "",
+            )
+            # deduped is the LAST shared population CTE; liq_summary /
+            # published_summary / bucketed + the bucket aggregation are
+            # payload-only (the sweep selects deduped rows verbatim).
+            + """,
+            -- #940 phase-1 transparency: how many Kalshi outcomes the liquidity
+            -- filter keeps vs drops (computed once from the materialized CTE).
+            liq_summary AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
+                    -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
+                    -- never-traded across ALL bands, and the asymmetry cohort
+                    -- (never traded but outside the placeholder band, so still
+                    -- IN the curve — the thing Kalshi excludes but poly does not).
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded) AS poly_never_traded_total,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded AND NOT is_poly_placeholder) AS poly_never_traded_in_curve,
+                    -- L2-79 Item 1: malformed-binary exclusion counts (eligible
+                    -- outcomes flagged in ranked_outcomes, split by winner count).
+                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 0) AS both_false_excluded,
+                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 2) AS both_winner_excluded,
+                    -- L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
+                    COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded,
+                    -- Queue #157: multi-candidate normalization transparency —
+                    -- how many curve outcomes had their probability normalized.
+                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
+                    -- Queue #257 Item 1: field-completeness transparency. A
+                    -- normalization CANDIDATE is a mex/field market that hit the
+                    -- >=3 / one-winner / sum>threshold gate; it is PUBLISHED
+                    -- (normalized) only if its field is complete, else EXCLUDED as
+                    -- a partial field. Report the candidate vs published split so
+                    -- the population change is honest, never silent.
+                    COUNT(DISTINCT market_id) FILTER (
+                        WHERE is_mex_normalized OR is_field_incomplete
+                    ) AS mex_candidate_markets,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_normalized_markets,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_field_incomplete) AS field_incomplete_markets,
+                    COUNT(*) FILTER (WHERE is_field_incomplete) AS field_incomplete_outcomes,
+                    -- Queue #159: esports match-bundle exclusion count (eligible
+                    -- outcomes flagged in ranked_outcomes that the filter drops).
+                    COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
+                    -- Queue 299 (#1012): result-authority + shape rung counts.
+                    -- Candidate-side (pre-dedup) counts, matching every other
+                    -- exclusion block, so each rung's size is transparent.
+                    COUNT(*) FILTER (WHERE is_no_winner_market) AS no_winner_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_no_winner_market) AS no_winner_markets,
+                    COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
+                    COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_orphan_partition) AS orphan_partition_markets,
+                    -- Census only (never gates the curve outside esports).
+                    COUNT(*) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_candidates,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_markets,
+                    -- Queue #167 (#941/#1054): Kalshi player-prop threshold count.
+                    COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded,
+                    -- Queue #183 Item 4: weather wide-spread exclusion count.
+                    COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded,
+                    -- Queue 300D Item 1: the one-time representative tie delta.
+                    -- ``rn_distance_rank = 1`` is every row tied at the minimum
+                    -- distance from 50%; a SECOND such row (``rn = 2``) proves the
+                    -- rn=1 representative was picked out of an exact tie rather
+                    -- than won outright. Scoped to the branch that actually
+                    -- consumes ``rn`` — ``deduped`` uses it only for the non-multi,
+                    -- non-normalized-field case — so this counts questions whose
+                    -- published side the new authority decides, and nothing else.
+                    -- Reported on its own rung: an identity delta must never be
+                    -- readable as a population change.
+                    COUNT(*) FILTER (
+                        WHERE rn = 2 AND rn_distance_rank = 1
+                          AND NOT is_multi AND NOT is_mex_normalized
+                    ) AS representative_tie_broken
+                FROM normalized
+            ),
+            -- Queue #259 Item 1 (C14 P2): PUBLISHED counts from ``deduped`` (the
+            -- rows that actually reach the curve), distinct from ``liq_summary``'s
+            -- CANDIDATE counts over ``normalized`` (pre-dedup). Before the invariant
+            -- fix a normalized field could be counted as published in liq_summary
+            -- yet lose a member in deduped; reporting both makes the population
+            -- change honest. With the fix these two normalized-market counts are
+            -- equal (every complete field publishes intact) — a regression guard.
+            published_summary AS (
+                SELECT
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_published_markets,
+                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_published_outcomes,
+                    COUNT(*) AS published_outcomes,
+                    COUNT(DISTINCT vm_id) AS published_questions
+                FROM deduped
+            )"""
+            + _coverage_bridge_ctes()
+            + """,
+            bucketed AS (
+                SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
+                FROM deduped
+            )
+            SELECT bucket_idx, source, category, price_moved,
+                -- Queue 299 rung 4b: carried as a GROUPING dimension (not a
+                -- filter) so the published bundle census can report the cohort's
+                -- own n/ECE against the remainder, per category. The Python
+                -- side merges these rows back on the original four keys, so the
+                -- served ``buckets`` list keeps its exact prior shape and size.
+                is_nonexclusive_bundle,
+                """
+            # Queue 300D Item 0: COUNT(*) counts the null-extended row that the
+            # staged path's LEFT JOIN produces for an EMPTY chunk, which would
+            # publish a phantom bucket of size 1. Counting a column that is
+            # never NULL on a real row (``bucket_idx`` is a FLOOR expression)
+            # gives 0 there and is otherwise identical to COUNT(*).
+            + ("COUNT(bucketed.bucket_idx)" if frozen else "COUNT(*)")
+            + """ AS n,
+                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
+                AVG(adj_opening_probability) AS avg_prob,
+                SUM(adj_opening_probability::float) AS sum_prob,
+                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
+                MAX(ls.kalshi_included) AS kalshi_included,
+                MAX(ls.kalshi_excluded) AS kalshi_excluded,
+                MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
+                MAX(ls.poly_included) AS poly_included,
+                MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
+                MAX(ls.poly_never_traded_in_curve) AS poly_never_traded_in_curve,
+                MAX(ls.both_false_excluded) AS both_false_excluded,
+                MAX(ls.both_winner_excluded) AS both_winner_excluded,
+                MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
+                MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
+                MAX(ls.mex_candidate_markets) AS mex_candidate_markets,
+                MAX(ls.mex_normalized_markets) AS mex_normalized_markets,
+                MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
+                MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
+                MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
+                MAX(ls.no_winner_excluded) AS no_winner_excluded,
+                MAX(ls.no_winner_markets) AS no_winner_markets,
+                MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
+                MAX(ls.draw_authority_markets) AS draw_authority_markets,
+                MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
+                MAX(ls.orphan_partition_markets) AS orphan_partition_markets,
+                MAX(ls.nonexclusive_bundle_candidates) AS nonexclusive_bundle_candidates,
+                MAX(ls.nonexclusive_bundle_markets) AS nonexclusive_bundle_markets,
+                MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
+                MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded,
+                MAX(ls.representative_tie_broken) AS representative_tie_broken,
+                -- Queue #259 Item 1 (C14 P2): published (post-dedup) counts.
+                MAX(ps.mex_published_markets) AS mex_published_markets,
+                MAX(ps.mex_published_outcomes) AS mex_published_outcomes,
+                MAX(ps.published_outcomes) AS published_outcomes,
+                MAX(ps.published_questions) AS published_questions"""
+            # Queue 300C: the coverage census rides along as constant 1-row
+            # columns, exactly like liq_summary / published_summary above. The
+            # GROUP BY is untouched, so every published bucket keeps its shape.
+            + _coverage_bridge_select_columns()
+            # Queue 300D Item 0: the staged path drives from the 1-row censuses
+            # and LEFT JOINs the buckets, so a chunk whose every question is
+            # excluded still returns its candidate-side counts (``liq_summary``
+            # is computed over ``normalized``, PRE-dedup) on a single
+            # null-keyed row instead of returning nothing and silently dropping
+            # them from the total. The merge routes that row to the census and
+            # never to a bucket. With buckets present the two forms produce the
+            # same rows, so the monolith keeps the original CROSS JOIN and stays
+            # byte-identical.
+            + ("""
+            FROM liq_summary ls
+            CROSS JOIN published_summary ps
+            LEFT JOIN bucketed ON true""" if frozen else """
+            FROM bucketed
+            CROSS JOIN liq_summary ls
+            CROSS JOIN published_summary ps""")
+            + _coverage_bridge_join()
+            + """
+            GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
+            ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
+        """)
+
+
+async def _run_staged_futures(db, runner, sql_builder):
+    """Read the futures population one chunk of whole virtual questions at a time.
+
+    Queue 300D Item 0. Three stages, in the order C126's consumption note fixed:
+
+    1. **Freeze one generation.** :func:`_futures_generation_sql` resolves the
+       whole population's virtual-question assignment once. Its digest is the
+       generation identity — if the roster changes under us (a late arrival, a
+       deploy, a settled market entering the population) the digest moves and
+       every banked unit from the old roster is refused rather than mixed in.
+    2. **Process whole units.** Each chunk replays the frozen assignment over
+       its own markets, commits, and only THEN advances the cursor. A beat that
+       runs out of window stops between chunks with everything it proved banked.
+    3. **Finalize globally, or not at all.** Distinct-question counts, exclusion
+       censuses and canonical buckets are folded from ALL units of ONE
+       generation. Until every planned unit is in, this returns ``None`` and the
+       caller publishes nothing — partial is not done.
+
+    Returns the merged row list on completion, or ``None`` when the generation
+    is still incomplete. ``None`` is not an error: it is a beat's honest report
+    that it made progress and the next one will finish.
+    """
+    from app.tasks.calibration_main_build import (
+        STAGED_FUTURES_CHUNK_MARKETS,
+        load_staged_cursor,
+        save_staged_cursor,
+        staged_lease,
+    )
+    from app.utils.calibration_staged_futures import (
+        DEFAULT_CENSUS_COLUMNS,
+        advance,
+        collect_unit_results,
+        generation_fingerprint,
+        is_complete,
+        merge_futures_rows,
+        plan_units,
+    )
+
+    # The merge refuses a column it was not told the KIND of, on purpose — a
+    # passthrough summed is double-counted, an additive broadcast is frozen at
+    # one chunk's mass, and a dropped one silently disappears from the payload.
+    # So the statement's census set is declared HERE, next to the statement that
+    # emits it, rather than left to a default in the pure module that cannot see
+    # a column this build added. Both extras are conditional:
+    #   * ``representative_tie_broken`` — Queue 300D Item 1, always emitted.
+    #   * ``cb_*`` — Queue 300C's coverage census, only when it is switched on.
+    census_columns = tuple(DEFAULT_CENSUS_COLUMNS) + ("representative_tie_broken",)
+    if COVERAGE_CENSUS_ENABLED:
+        census_columns += tuple(
+            _coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS
+        ) + ("cb_coverage_total", "cb_with_terminal_cal_price")
+    from app.utils.calibration_phase_ledger import (
+        PHASE_FUTURES,
+        REFUSE,
+        TERMINAL_PARTIAL,
+    )
+
+    # -- Stage 1: freeze the generation ---------------------------------------
+    with runner.stage("read:futures_generation"):
+        roster = (await db.execute(text(_futures_generation_sql()))).all()
+    await runner.commit(db)
+
+    gen_digest = generation_fingerprint(roster)
+    chunks = plan_units(roster, max_markets_per_chunk=STAGED_FUTURES_CHUNK_MARKETS)
+    # market_id -> its FROZEN assignment. The chunk knows which markets it owns;
+    # this is what each one was assigned to when the generation was taken, and
+    # it is what gets replayed into the chunk statement instead of re-derived.
+    assignment = {
+        int(row.market_id): (str(row.vm_id), bool(row.is_grouped)) for row in roster
+    }
+    logger.info(
+        "calibration staged futures: generation %s — %d markets in %d units",
+        gen_digest, len(roster), len(chunks),
+    )
+    if not chunks:
+        # An empty population is a real answer, not a failure, and it is
+        # complete by definition. Returning [] lets the build publish the
+        # honest empty curve rather than stalling forever on zero units.
+        return []
+
+    cursor, action = await load_staged_cursor(
+        population_version=runner.population_version,
+        input_fingerprint=runner.fingerprint,
+        generation_fingerprint=gen_digest,
+        owner=runner.owner,
+        generation=runner.generation,
+    )
+    if action == REFUSE:
+        # Another beat holds an unexpired lease on this generation. Two workers
+        # each advancing half a cursor is the one way this design corrupts, so
+        # standing down is the correct behaviour, not a degraded one.
+        logger.info("calibration staged futures: cursor held by another run — standing down")
+        return None
+    runner.ledger.record_stage(f"staged:cursor_{action}", 0)
+
+    # -- Stage 2: process whole units -----------------------------------------
+    chunk_sql = text(sql_builder(frozen=True))
+    done = 0
+    for chunk in chunks:
+        if cursor.has(chunk.key):
+            done += 1
+            continue
+        if runner.deadline_exceeded():
+            logger.info(
+                "calibration staged futures: out of window with %d/%d units banked",
+                done, len(chunks),
+            )
+            break
+        # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
+        # previous unit's commit ended, so without this the next unit would run
+        # with no statement timeout and no session identity (Queue 300B).
+        await runner.apply_statement_timeout(db, PHASE_FUTURES)
+        # Three PARALLEL arrays, one entry per market, unnest-ed back into the
+        # (market_id, vm_id, is_grouped) roster the chunk statement joins to.
+        market_ids = list(chunk.market_ids)
+        with runner.stage("read:futures_unit"):
+            result = await db.execute(
+                chunk_sql,
+                {
+                    VM_ROSTER_MARKET_IDS_PARAM: market_ids,
+                    VM_ROSTER_VM_IDS_PARAM: [assignment[m][0] for m in market_ids],
+                    VM_ROSTER_IS_GROUPED_PARAM: [assignment[m][1] for m in market_ids],
+                },
+            )
+            unit_rows = result.all()
+        # COMMIT, then advance. The other order records a cursor for work the
+        # database may still roll back (``CHECKPOINT_BEFORE_COMMIT``).
+        await runner.commit(db)
+        cursor = advance(
+            cursor, chunk.key, unit_rows, owner=runner.owner, lease_expires_at=staged_lease()
+        )
+        if not await save_staged_cursor(cursor, terminal=TERMINAL_PARTIAL):
+            # The unit's read committed but its cursor did not persist. The work
+            # is not banked, so stop rather than press on: continuing would let
+            # this beat finish a generation whose earlier units the NEXT beat
+            # cannot see, and re-doing one unit is cheap next to that.
+            logger.warning("calibration staged futures: cursor write failed — stopping")
+            return None
+        done += 1
+
+    # -- Stage 3: finalize globally, or not at all ----------------------------
+    if not is_complete(cursor, chunks):
+        logger.info(
+            "calibration staged futures: generation %s incomplete (%d/%d units) — "
+            "banked, publishing nothing", gen_digest, done, len(chunks),
+        )
+        return None
+
+    with runner.stage("staged:finalize"):
+        banked = collect_unit_results(cursor, chunks)
+        # A null-keyed row is an empty chunk's census carrier, not a bucket (see
+        # the LEFT JOIN note in the statement builder). Route it to the census
+        # so its candidate-side counts survive, and keep it out of the buckets.
+        census_only: list[dict] = []
+        bucket_rows: list[list] = []
+        for unit in banked:
+            keep = []
+            for row in unit:
+                mapping = dict(row._mapping) if hasattr(row, "_mapping") else dict(vars(row))
+                if mapping.get("bucket_idx") is None:
+                    census_only.append(mapping)
+                else:
+                    keep.append(row)
+            bucket_rows.append(keep)
+        merged = merge_futures_rows(
+            bucket_rows, census_columns=census_columns, extra_censuses=census_only
+        )
+    logger.info(
+        "calibration staged futures: generation %s COMPLETE — %d units, %d merged buckets",
+        gen_digest, len(chunks), len(merged),
+    )
+    return merged
 
 
 def _coverage_census_or_disabled(**kwargs):
@@ -2427,7 +2999,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
     from sqlalchemy import func, select
 
     from app.models import FuturesMarket
-    from app.tasks.calibration_main_build import NULL_RUNNER
+    from app.tasks.calibration_main_build import NULL_RUNNER, StagedFuturesIncomplete
     from app.tasks.redis_state import get_redis_client
     from app.utils.calibration_phase_ledger import (
         PHASE_AGGREGATE,
@@ -2445,152 +3017,34 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # -----------------------------------------------------------
         # PHASE 1 (futures) — Query 1: Main futures calibration buckets
         # -----------------------------------------------------------
-        main_sql = text(
-            "WITH "
-            + _calibration_population_ctes()
-            # deduped is the LAST shared population CTE; liq_summary /
-            # published_summary / bucketed + the bucket aggregation are
-            # payload-only (the sweep selects deduped rows verbatim).
-            + """,
-            -- #940 phase-1 transparency: how many Kalshi outcomes the liquidity
-            -- filter keeps vs drops (computed once from the materialized CTE).
-            liq_summary AS (
-                SELECT
-                    COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
-                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
-                    -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
-                    -- never-traded across ALL bands, and the asymmetry cohort
-                    -- (never traded but outside the placeholder band, so still
-                    -- IN the curve — the thing Kalshi excludes but poly does not).
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded) AS poly_never_traded_total,
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded AND NOT is_poly_placeholder) AS poly_never_traded_in_curve,
-                    -- L2-79 Item 1: malformed-binary exclusion counts (eligible
-                    -- outcomes flagged in ranked_outcomes, split by winner count).
-                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 0) AS both_false_excluded,
-                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 2) AS both_winner_excluded,
-                    -- L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
-                    COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded,
-                    -- Queue #157: multi-candidate normalization transparency —
-                    -- how many curve outcomes had their probability normalized.
-                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
-                    -- Queue #257 Item 1: field-completeness transparency. A
-                    -- normalization CANDIDATE is a mex/field market that hit the
-                    -- >=3 / one-winner / sum>threshold gate; it is PUBLISHED
-                    -- (normalized) only if its field is complete, else EXCLUDED as
-                    -- a partial field. Report the candidate vs published split so
-                    -- the population change is honest, never silent.
-                    COUNT(DISTINCT market_id) FILTER (
-                        WHERE is_mex_normalized OR is_field_incomplete
-                    ) AS mex_candidate_markets,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_normalized_markets,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_field_incomplete) AS field_incomplete_markets,
-                    COUNT(*) FILTER (WHERE is_field_incomplete) AS field_incomplete_outcomes,
-                    -- Queue #159: esports match-bundle exclusion count (eligible
-                    -- outcomes flagged in ranked_outcomes that the filter drops).
-                    COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
-                    -- Queue 299 (#1012): result-authority + shape rung counts.
-                    -- Candidate-side (pre-dedup) counts, matching every other
-                    -- exclusion block, so each rung's size is transparent.
-                    COUNT(*) FILTER (WHERE is_no_winner_market) AS no_winner_excluded,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_no_winner_market) AS no_winner_markets,
-                    COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
-                    COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_orphan_partition) AS orphan_partition_markets,
-                    -- Census only (never gates the curve outside esports).
-                    COUNT(*) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_candidates,
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_nonexclusive_bundle) AS nonexclusive_bundle_markets,
-                    -- Queue #167 (#941/#1054): Kalshi player-prop threshold count.
-                    COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded,
-                    -- Queue #183 Item 4: weather wide-spread exclusion count.
-                    COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded
-                FROM normalized
-            ),
-            -- Queue #259 Item 1 (C14 P2): PUBLISHED counts from ``deduped`` (the
-            -- rows that actually reach the curve), distinct from ``liq_summary``'s
-            -- CANDIDATE counts over ``normalized`` (pre-dedup). Before the invariant
-            -- fix a normalized field could be counted as published in liq_summary
-            -- yet lose a member in deduped; reporting both makes the population
-            -- change honest. With the fix these two normalized-market counts are
-            -- equal (every complete field publishes intact) — a regression guard.
-            published_summary AS (
-                SELECT
-                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_published_markets,
-                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_published_outcomes,
-                    COUNT(*) AS published_outcomes,
-                    COUNT(DISTINCT vm_id) AS published_questions
-                FROM deduped
-            )"""
-            + _coverage_bridge_ctes()
-            + """,
-            bucketed AS (
-                SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
-                FROM deduped
-            )
-            SELECT bucket_idx, source, category, price_moved,
-                -- Queue 299 rung 4b: carried as a GROUPING dimension (not a
-                -- filter) so the published bundle census can report the cohort's
-                -- own n/ECE against the remainder, per category. The Python
-                -- side merges these rows back on the original four keys, so the
-                -- served ``buckets`` list keeps its exact prior shape and size.
-                is_nonexclusive_bundle,
-                COUNT(*) AS n,
-                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
-                AVG(adj_opening_probability) AS avg_prob,
-                SUM(adj_opening_probability::float) AS sum_prob,
-                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
-                MAX(ls.kalshi_included) AS kalshi_included,
-                MAX(ls.kalshi_excluded) AS kalshi_excluded,
-                MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
-                MAX(ls.poly_included) AS poly_included,
-                MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
-                MAX(ls.poly_never_traded_in_curve) AS poly_never_traded_in_curve,
-                MAX(ls.both_false_excluded) AS both_false_excluded,
-                MAX(ls.both_winner_excluded) AS both_winner_excluded,
-                MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
-                MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
-                MAX(ls.mex_candidate_markets) AS mex_candidate_markets,
-                MAX(ls.mex_normalized_markets) AS mex_normalized_markets,
-                MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
-                MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
-                MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
-                MAX(ls.no_winner_excluded) AS no_winner_excluded,
-                MAX(ls.no_winner_markets) AS no_winner_markets,
-                MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
-                MAX(ls.draw_authority_markets) AS draw_authority_markets,
-                MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
-                MAX(ls.orphan_partition_markets) AS orphan_partition_markets,
-                MAX(ls.nonexclusive_bundle_candidates) AS nonexclusive_bundle_candidates,
-                MAX(ls.nonexclusive_bundle_markets) AS nonexclusive_bundle_markets,
-                MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
-                MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded,
-                -- Queue #259 Item 1 (C14 P2): published (post-dedup) counts.
-                MAX(ps.mex_published_markets) AS mex_published_markets,
-                MAX(ps.mex_published_outcomes) AS mex_published_outcomes,
-                MAX(ps.published_outcomes) AS published_outcomes,
-                MAX(ps.published_questions) AS published_questions"""
-            # Queue 300C: the coverage census rides along as constant 1-row
-            # columns, exactly like liq_summary / published_summary above. The
-            # GROUP BY is untouched, so every published bucket keeps its shape.
-            + _coverage_bridge_select_columns()
-            + """
-            FROM bucketed
-            CROSS JOIN liq_summary ls
-            CROSS JOIN published_summary ps"""
-            + _coverage_bridge_join()
-            + """
-            GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
-            ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
-        """)
+
         rows = runner.reuse(PHASE_FUTURES, "rows")
         if rows is None:
             runner.begin(PHASE_FUTURES)
             await runner.apply_statement_timeout(db, PHASE_FUTURES)
-            with runner.stage("read:futures_population"):
-                result = await db.execute(main_sql)
-                rows = result.all()
+            if runner.staged_futures:
+                # Queue 300D Item 0. The monolith cannot bank partial credit: it
+                # is one statement, so a beat that dies at minute 22 of a 23
+                # minute window loses 100% of its work and the next beat starts
+                # from zero. That is why /calibration served a day-old curve
+                # while the task "ran" every hour. The staged path commits whole
+                # virtual questions as it goes, so an interrupted beat keeps
+                # what it proved and the next one finishes the remainder.
+                rows = await _run_staged_futures(db, runner, _main_futures_sql)
+                if rows is None:
+                    # The generation is banked but not finished. Deliberately
+                    # NOT ``runner.complete()``: the phase did not complete, so
+                    # it stays out of ``completed_required``, the run's terminal
+                    # is ``partial``, health is not GREEN and the publish gate
+                    # never sees a payload. The old complete last-good keeps
+                    # serving and the next beat resumes from the cursor.
+                    raise StagedFuturesIncomplete(
+                        "futures generation incomplete — units banked, nothing published"
+                    )
+            else:
+                with runner.stage("read:futures_population"):
+                    result = await db.execute(text(_main_futures_sql()))
+                    rows = result.all()
             await runner.commit(db)
             runner.record(PHASE_FUTURES, "rows", rows, kind="rows")
             runner.complete(PHASE_FUTURES)
@@ -2727,6 +3181,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].weather_wide_spread_excluded is not None
             else 0
         )
+        # Queue 300D Item 1: the representative tie delta. ``_int_or_none``, not
+        # ``_int0`` — like the coverage rungs, this column is genuinely absent
+        # from a checkpoint written by a beat that predates it, and reporting
+        # zero there would claim "no question's representative was tie-broken"
+        # when the honest answer is that nobody looked.
+        representative_tie_broken = _int_or_none("representative_tie_broken")
 
         # -----------------------------------------------------------
         # PHASE 2 (sports) — Queries 2-4: ground-truth events calibration.
@@ -3596,6 +4056,21 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": WEATHER_WIDE_SPREAD_RULE_TEXT,
             "excluded": weather_wide_spread_excluded,
         },
+        # Queue 300D Item 1: NOT a filter and deliberately not filed with them —
+        # nothing here is excluded. This is the one-time representative IDENTITY
+        # delta from adopting a deterministic tie authority, reported on its own
+        # so it can never be read as a population change. ``questions`` is null
+        # when the census predates the instrument (unknown), never 0.
+        "representative_tie_authority": {
+            "authority": REPRESENTATIVE_TIE_AUTHORITY,
+            "rule": (
+                "Representative side is the outcome closest to 50%; exact ties "
+                "break by immutable canonical outcome ID. No Yes/No or "
+                "favourite/underdog preference."
+            ),
+            "questions": representative_tie_broken,
+            "changes_population_count": False,
+        },
         "void_filter": {
             "applies_to": "datagolf",
             "rule": VOID_FILTER_RULE_TEXT,
@@ -3796,16 +4271,38 @@ def _main_input_fingerprint() -> str:
     of the compute function itself. Any edit to any query invalidates every
     carried read, which is the only safe default — a payload half-built by the
     old code and half by the new is worse than one that took an extra beat.
+
+    Queue 300D Item 1 adds the two inputs that were NOT covered by hashing
+    ``compute_calibration_payload`` alone, and both omissions were real holes:
+
+    * ``_calibration_population_ctes`` — the CTE chain is built by a *different*
+      function, so until now an edit to the population itself (the heaviest and
+      most consequential SQL in the build) did not invalidate a carried read.
+    * ``_main_futures_sql`` — Queue 300D hoisted the bucket SELECT out of
+      ``compute_calibration_payload`` so both of its scopes could be parsed and
+      tested. That move would otherwise have QUIETLY REMOVED the main futures
+      statement from this digest, which is the sort of hole a refactor opens and
+      nobody notices until a resumed beat publishes a half-old payload.
+    * :data:`REPRESENTATIVE_TIE_AUTHORITY` — hashed explicitly rather than left
+      implicit in the SQL text, so the authority is a named, greppable input to
+      the fingerprint instead of an incidental substring of it.
     """
     from app.utils.calibration_phase_ledger import input_fingerprint
 
     try:
         import inspect
 
-        source = inspect.getsource(compute_calibration_payload)
+        source = (
+            inspect.getsource(compute_calibration_payload)
+            + inspect.getsource(_calibration_population_ctes)
+            + inspect.getsource(_virtual_market_ctes)
+            + inspect.getsource(_main_futures_sql)
+        )
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"
-    return input_fingerprint(CALIBRATION_POPULATION_VERSION, source)
+    return input_fingerprint(
+        CALIBRATION_POPULATION_VERSION, REPRESENTATIVE_TIE_AUTHORITY, source
+    )
 
 
 #: A carried read older than the FRESH key's own TTL cannot make the page any

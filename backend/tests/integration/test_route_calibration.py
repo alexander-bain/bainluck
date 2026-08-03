@@ -316,6 +316,13 @@ class TestCalibrationPublicEndpoint:
             "malformed_binary_filter",  # L2-79 Item 1 (#997/#1010)
             "golf_placeholder_filter",  # L2-79 Item 2 (#940/#762)
             "mex_normalization",  # Queue #157 (#1012)
+            # Queue 300D Item 1: NOT a filter — nothing here is excluded. It is
+            # the one-time representative IDENTITY delta from adopting a
+            # deterministic tie authority (distance from 50%, then immutable
+            # canonical outcome ID), reported on its own top-level key so it can
+            # never be read as a population change. Additive, so web/native
+            # payload compatibility holds.
+            "representative_tie_authority",
             "esports_multi_bundle_filter",  # Queue #159 (#1010)
             # Queue 299 (#1012): result authority before shape, then evidence-
             # based exclusivity. Each rung ships its own rule + live count.

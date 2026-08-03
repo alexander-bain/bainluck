@@ -309,6 +309,18 @@ _STAT_TO_SPORT: dict[str, str] = {
     "walks": "baseball",
     "at-bats": "baseball",
     "innings": "baseball",
+    # Queue 300D: a bare "runs" total is baseball. Kalshi's KXMLBTOTAL /
+    # KXMLBTEAMTOTAL and Polymarket's "Team at Team: Total Runs O/U 8.5" carry
+    # no other sport tell, so without this key the "total" fragment fell through
+    # to _AMBIGUOUS_STATS → _seasonal_sport_for_college_matchup(), which returns
+    # "football" in Aug–Oct. Every August MLB total-runs prop was therefore
+    # mis-tagged football (and the same market flipped baseball→football at the
+    # Jul 31→Aug 1 UTC boundary with no code change). Baseball totals are RUNS.
+    # Keep this LAST in the baseball block so the more specific "home runs" /
+    # "earned runs" keys are still reached first (they also map to baseball, so
+    # this is defensive, not load-bearing — no other key in this dict contains
+    # the substring "runs").
+    "runs": "baseball",
     # Soccer
     "corners": "soccer",
     "shots on target": "soccer",
