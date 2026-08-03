@@ -1,0 +1,198 @@
+{
+  "schema_version": "first-card-client-contract/v1",
+  "budget_authority": {
+    "first_real_card_target_ms": 3000,
+    "foreground_failure_terminal_ms": "APPROVED_PRODUCT_INPUT_REQUIRED",
+    "note": "The scoreboard supplies the first-card target. This corpus deliberately does not choose the foreground failure timeout."
+  },
+  "phase_authority": [
+    "navigation_start",
+    "auth_terminal",
+    "primary_request_start",
+    "primary_response",
+    "data_ready",
+    "first_real_card",
+    "terminal_failure"
+  ],
+  "forbidden_fields": ["user_id", "session_id", "token", "market_text", "query_text"],
+  "cases": [
+    {
+      "id": "signed-out-slow-auth-starts-public",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "primary_request_start", "at_ms": 20}, {"name": "auth_terminal", "at_ms": 2400}, {"name": "first_real_card", "at_ms": 2500}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 20, "auth_terminal_at_ms": 2400},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-a", "mounted": true},
+      "semantics": {"ranking_unchanged": true, "probability_unchanged": true, "eligibility_unchanged": true, "freshness_unchanged": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "current-auth-gated-sports",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "auth_terminal", "at_ms": 2400}, {"name": "primary_request_start", "at_ms": 2400}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 2400, "auth_terminal_at_ms": 2400},
+      "render": {"verdict": "skeleton", "counted_as_first_card": false},
+      "expected_refusals": ["AUTH_BLOCKS_PUBLIC_REQUEST"]
+    },
+    {
+      "id": "wedged-auth-never-blocks-public",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "primary_request_start", "at_ms": 15}, {"name": "data_ready", "at_ms": 900}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 15, "auth_terminal_at_ms": null},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-b", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "auth-error-public-feed-survives",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "primary_request_start", "at_ms": 10}, {"name": "auth_terminal_error", "at_ms": 500}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": 500},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-c", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "signed-in-late-revalidates-safely",
+      "phases": [{"name": "anonymous_request", "at_ms": 10}, {"name": "anonymous_card", "at_ms": 800}, {"name": "auth_terminal", "at_ms": 1200}, {"name": "authenticated_card", "at_ms": 1800}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": 1200},
+      "principal": {"current_generation": "auth-2", "current_principal": "authenticated", "late_response_applied": false, "late_response_generation": "anon-1", "late_response_principal": "anonymous"},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-auth", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "late-anonymous-overwrites-authenticated",
+      "phases": [{"name": "anonymous_request", "at_ms": 10}, {"name": "auth_terminal", "at_ms": 200}, {"name": "authenticated_card", "at_ms": 700}, {"name": "anonymous_response", "at_ms": 900}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": 200},
+      "principal": {"current_generation": "auth-2", "current_principal": "authenticated", "late_response_applied": true, "late_response_generation": "anon-1", "late_response_principal": "anonymous"},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-anon", "mounted": true},
+      "expected_refusals": ["STALE_PRINCIPAL_OVERWRITE"]
+    },
+    {
+      "id": "logout-anonymous-generation-wins",
+      "phases": [{"name": "authenticated_request", "at_ms": 10}, {"name": "logout", "at_ms": 100}, {"name": "anonymous_response", "at_ms": 400}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "principal": {"current_generation": "anon-3", "current_principal": "anonymous", "late_response_applied": false, "late_response_generation": "auth-2", "late_response_principal": "authenticated"},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-public", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "skeleton-is-not-card",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "loading", "at_ms": 3000}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "skeleton", "counted_as_first_card": true},
+      "expected_refusals": ["NON_CARD_COUNTED_AS_FIRST_CARD"]
+    },
+    {
+      "id": "error-is-not-card",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "terminal_failure", "at_ms": 1000}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "error", "counted_as_first_card": true},
+      "expected_refusals": ["NON_CARD_COUNTED_AS_FIRST_CARD"]
+    },
+    {
+      "id": "named-empty-is-not-card",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "named_empty", "at_ms": 700}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "named_empty", "counted_as_first_card": false},
+      "expected_refusals": []
+    },
+    {
+      "id": "first-page-equivalence-and-complete-pagination",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "first_real_card", "at_ms": 900}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "c01", "mounted": true},
+      "paging": {"legacy_ids": ["c01","c02","c03","c04","c05","c06"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c01","c02"]}, {"offset": 2, "ids": ["c03","c04"]}, {"offset": 4, "ids": ["c05","c06"]}], "complete": true, "declared_exhausted": true},
+      "semantics": {"ranking_unchanged": true, "probability_unchanged": true, "eligibility_unchanged": true, "freshness_unchanged": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "first-page-order-drift",
+      "phases": [{"name": "navigation_start", "at_ms": 0}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "paging": {"legacy_ids": ["c01","c02","c03"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c02","c01"]}, {"offset": 2, "ids": ["c03"]}], "complete": true, "declared_exhausted": true},
+      "expected_refusals": ["FIRST_PAGE_IDENTITY_OR_ORDER_DRIFT", "PAGINATION_TRUNCATED_OR_REORDERED"]
+    },
+    {
+      "id": "duplicate-page-boundary",
+      "phases": [{"name": "navigation_start", "at_ms": 0}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "paging": {"legacy_ids": ["c01","c02","c03"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c01","c02"]}, {"offset": 2, "ids": ["c02","c03"]}], "complete": true, "declared_exhausted": true},
+      "expected_refusals": ["PAGINATION_DUPLICATE_ID", "PAGINATION_TRUNCATED_OR_REORDERED"]
+    },
+    {
+      "id": "nonmonotonic-offset",
+      "phases": [{"name": "navigation_start", "at_ms": 0}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "paging": {"legacy_ids": ["c01","c02","c03"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c01","c02"]}, {"offset": 0, "ids": ["c03"]}], "complete": true, "declared_exhausted": true},
+      "expected_refusals": ["PAGINATION_OFFSET_NON_MONOTONIC"]
+    },
+    {
+      "id": "premature-exhaustion-truncates",
+      "phases": [{"name": "navigation_start", "at_ms": 0}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "paging": {"legacy_ids": ["c01","c02","c03","c04"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c01","c02"]}], "complete": false, "declared_exhausted": true},
+      "expected_refusals": ["PREMATURE_EXHAUSTION"]
+    },
+    {
+      "id": "late-page-failure-preserves-cards",
+      "phases": [{"name": "first_page", "at_ms": 500}, {"name": "late_page_failure", "at_ms": 900}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "paging": {"legacy_ids": ["c01","c02","c03"], "first_page_size": 2, "pages": [{"offset": 0, "ids": ["c01","c02"]}], "complete": false, "declared_exhausted": false, "late_page_failed": true, "cleared_prior_cards": false},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "terminal": "retry", "last_good_present": true, "last_good_preserved": true, "foreground_terminal": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "current-three-attempt-skeleton-retention",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "attempt_one", "at_ms": 20000}, {"name": "attempt_two", "at_ms": 41000}, {"name": "attempt_three", "at_ms": 63000}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "skeleton", "counted_as_first_card": false},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "retries_block_foreground": true, "terminal": "retry", "foreground_terminal": false},
+      "expected_refusals": ["RETRIES_HOLD_SKELETON"]
+    },
+    {
+      "id": "missing-approved-foreground-budget",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "terminal_failure", "at_ms": 1000}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": null, "terminal": "retry", "foreground_terminal": true},
+      "expected_refusals": ["FOREGROUND_BUDGET_NEEDS_APPROVAL"]
+    },
+    {
+      "id": "short-terminal-background-retry",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "terminal_failure", "at_ms": 1000}, {"name": "background_retry", "at_ms": 1200}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "terminal": "retry", "foreground_terminal": true, "background_retry": true, "last_good_present": false},
+      "expected_refusals": []
+    },
+    {
+      "id": "unavailable-preserves-last-good",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "unavailable", "at_ms": 600}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "terminal": "last_good_with_retry", "foreground_terminal": true, "last_good_present": true, "last_good_preserved": true},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "last-good-card", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "failure-clears-last-good",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "unavailable", "at_ms": 600}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "terminal": "retry", "foreground_terminal": true, "last_good_present": true, "last_good_preserved": false},
+      "expected_refusals": ["FAILURE_CLEARED_LAST_GOOD"]
+    },
+    {
+      "id": "retry-recovery-replaces-terminal",
+      "phases": [{"name": "navigation_start", "at_ms": 0}, {"name": "terminal_failure", "at_ms": 900}, {"name": "retry", "at_ms": 1200}, {"name": "first_real_card", "at_ms": 2200}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "failure": {"requires_foreground_terminal": true, "budget_ref": "approved_product_input", "terminal": "retry", "foreground_terminal": true},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "recovered-card", "mounted": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "product-semantics-drift-refused",
+      "phases": [{"name": "navigation_start", "at_ms": 0}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "semantics": {"ranking_unchanged": false, "probability_unchanged": true, "eligibility_unchanged": true, "freshness_unchanged": true},
+      "expected_refusals": ["PRODUCT_SEMANTICS_DRIFT"]
+    },
+    {
+      "id": "poison-phase-order",
+      "phases": [{"name": "first_real_card", "at_ms": 900}, {"name": "data_ready", "at_ms": 700}],
+      "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
+      "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-z", "mounted": true},
+      "expected_refusals": ["PHASE_ORDER_INVALID"]
+    }
+  ]
+}
