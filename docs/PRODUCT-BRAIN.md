@@ -119,3 +119,9 @@ Lanes remain FILE-COLLISION boundaries (backend / frontend+iOS / ops / eval) —
 - Every queue's frontmatter carries `program:` — `calibration` | `latency` | `native` | `ux` | `plumbing` (extend only by Alex ruling).
 - Staging enforces a weekly mix; plumbing keeps its one-session/day cap; **UX floor: ≥1 Lane 2 session per day carries `program: ux`**.
 - Monday scoreboard reports cycles-by-program so portfolio drift is a weekly number, not a feeling.
+
+## RULINGS — 2026-08-03 (needs-user queue clear, via MC round)
+- **External curation = a bounded auto-applied SOURCE, not a human-gated queue** (#1533/#1534). Polymarket email (and next Kalshi trending, Wikipedia pageviews) feed Discover as bounded, kill-switched, shadow-first signals through one shared "curation intake" (freshness + on-brand + match-confidence gates; cap ±20 / 14-day TTL / `eval_promote:enabled`). The human becomes a weekly filter spot-audit, not a per-pick gate. This is a source under "the blend is the product," NOT a guessed taste call — the distinction the old human-gate conflated.
+- **"Well-traded" must be labeled honestly and graded from source volume where present** (#1463/#1530). The `price_moved` bar is a price-inequality, not proof of a trade; Kalshi's ~88% "fail" is ~65% capture artifact. Relabel now; add a **versioned** volume-based bar (`FuturesOutcome.volume>0`, backup open_interest; **NULL=unknown, never untraded**; exclude odds_api/DataGolf; dual-report snapshot+volume). Never let NULL masquerade as untraded.
+- **Calibration headline keeps 2:1:1 family weighting** (#1464) — moneyline home+away = 2 rows, spread/total = 1 each. Ruled keep-as-is; revisit only if the combined headline ECE is shown to mislead.
+- **Confidence shows as signal bars (1-3)** (#490) — compact cell-signal glyph next to the probability on Discover cards + event detail; thresholds stay data-driven.
