@@ -1014,6 +1014,19 @@ export interface FeedResponse {
   limit: number;
   offset: number;
   has_more: boolean;
+  // L2-238: bounded cache / build-quality metadata. Optional — an older backend
+  // omits them entirely, and `build_quality`/`degraded_reason` are only present
+  // when the build was NOT complete. Decode via `lib/discover/feedAvailability`,
+  // never by reading `cache.status` inline: `unavailable` is a retryable no-data
+  // terminal, not an exhausted feed.
+  cache?: {
+    status: string;
+    ttl_seconds?: number;
+    stale_ttl_seconds?: number;
+    reason?: string;
+  };
+  build_quality?: string;
+  degraded_reason?: string | null;
   // Present when my_teams_only=true
   my_teams_only?: boolean;
   requires_auth?: boolean;

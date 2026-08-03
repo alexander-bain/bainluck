@@ -276,23 +276,30 @@ struct CalibrationSurfaceView: View {
 
     // MARK: - Calibration Chart
 
-    private var calibrationChartSection: some View {
+    /// Internal, not private, purely as a render seam: `CalibrationCurveWidthTests`
+    /// rasterises THIS section at 390pt rather than a replica of it, because a
+    /// replica is exactly the thing that would keep passing after the real one
+    /// regressed (L2-237: verify a label by rendering it, not by reading it).
+    var calibrationChartSection: some View {
         // L2-237: the curve is named by the cohort it draws, from the same
         // property the banner above it uses — web's `shortLabel`, in the subtitle
         // where web puts it, so the two surfaces cannot drift apart.
         //
-        // The name leads the SUBTITLE rather than the title on purpose. This
-        // section's `Text`s truncate to one line at 390pt (the `Chart` sibling
-        // carries no width constraint, so the stack sizes to the chart's ideal
-        // width and the text is clipped rather than wrapped — pre-existing, and
-        // why the old explainer was already cut at "perfect calibrati…"). A title
-        // reading "Calibration Curve: Price moved + sport…" would be a truncated
-        // claim; leading the subtitle puts the whole cohort name and its count
-        // inside the visible width. The clip itself is a layout defect and is
-        // out of this queue's gate — reported, not fixed.
+        // L2-238 Item 2: and it now fits. The `Chart` below used to carry no
+        // width constraint, so it reported its own ideal width to the enclosing
+        // VStack, the stack sized to that instead of to the 390pt card, and both
+        // `Text`s laid out on a single over-wide line that the card then clipped
+        // — the explainer was cut at "…perfect calibrati…" long before this
+        // queue, and putting the cohort name in the title surfaced it as
+        // "Calibration Curve: Price moved + sport…". `chartFlexibleWidth` makes
+        // the chart accept the proposed width instead of asking for its own, so
+        // the text wraps inside the card. Height, axes, scales, marks and every
+        // number are untouched — this changes what the WIDTH proposal is, nothing
+        // about what is drawn.
         cardSection("Calibration Curve",
                     sub: "\(viewModel.cohortShortLabel) (\(viewModel.formattedCohortOutcomes) outcomes). The diagonal line is perfect calibration. Points above it happened more often than predicted; points below it happened less often. Point size reflects sample count, and small-sample buckets fade.") {
             calibrationChart(points: viewModel.points(from: viewModel.cohortBuckets), color: .blue, height: 300)
+                .chartFlexibleWidth()
         }
     }
 
@@ -627,7 +634,23 @@ struct CalibrationSurfaceView: View {
     private func cardSection<C: View>(_ title: String, sub: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
             Text(sub).font(.caption).foregroundStyle(.secondary)
+                // L2-238 Item 2: take the ideal HEIGHT at whatever width the card
+                // is given, i.e. wrap. Without this the enclosing stack is free to
+                // hand a card less height than its text needs and `Text` complies
+                // by collapsing to one truncated line — which is what the
+                // Calibration Curve explainer had been doing ("…perfect
+                // calibrati…", and then "Price moved + sportsbook lines (389,385
+                // outcomes). T…" once the cohort name led the sentence). The
+                // sibling "Does Trading Activity Matter?" card was never squeezed
+                // and always wrapped, which is why the defect read as one card's
+                // problem rather than the shared helper's.
+                //
+                // No-op for every subtitle that already fitted; it only forbids
+                // the compression. Width, height, chart geometry and copy are
+                // untouched.
+                .fixedSize(horizontal: false, vertical: true)
             content()
         }
         .padding(16)
@@ -682,4 +705,22 @@ struct CalibrationChartPoint: Identifiable {
     let predicted: Double, actual: Double, size: CGFloat
     let n: Int
     let opacity: Double
+}
+
+// MARK: - L2-238 Item 2: chart width containment
+
+extension View {
+    /// Stop a `Chart` from proposing its own ideal width to the stack around it.
+    ///
+    /// Swift Charts sizes to its content when nothing constrains it, and a
+    /// `VStack` sized by that chart proposes the same over-wide value to its
+    /// sibling `Text`s — which then lay out on one line and get clipped by the
+    /// card they are supposed to live inside. Clamping the chart to the width it
+    /// is offered (`minWidth: 0` so it can also shrink below its content ideal)
+    /// makes the stack the card's width again, and the text wraps.
+    ///
+    /// Layout only: no axis, scale, domain, height, mark or datum is affected.
+    func chartFlexibleWidth() -> some View {
+        frame(minWidth: 0, maxWidth: .infinity)
+    }
 }

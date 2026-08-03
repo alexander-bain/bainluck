@@ -8,6 +8,7 @@ import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
+import FeedUnavailableNotice from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -23,6 +24,7 @@ import {
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 
@@ -497,6 +499,15 @@ export default function DiscoverPage() {
   const [allItems, setAllItems] = useState<FeedItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  // L2-238: the last page-1 payload the availability decision ACCEPTED. SWR's
+  // `data` is whatever came back last, including a typed-unavailable empty body;
+  // rendering off `data.items` directly is what let an unavailable revalidation
+  // blank a populated feed and then show "all caught up".
+  const [page1Items, setPage1Items] = useState<FeedItem[]>([]);
+  // L2-238: the backend typed the last response `cache.status = "unavailable"`.
+  // A transient no-data terminal, not an empty feed — surfaces this page's own
+  // retry state and freezes auto-pagination until the reader retries.
+  const [feedUnavailable, setFeedUnavailable] = useState(false);
   const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [challengeIndex, setChallengeIndex] = useState(0);
@@ -551,39 +562,87 @@ export default function DiscoverPage() {
     { revalidateOnFocus: false }
   );
 
+  // L2-238: what the availability decision needs to know about the state that
+  // existed BEFORE the payload landed. Declared ahead of the decision effect so
+  // React runs these syncs first on any commit that changes both.
+  const hasMoreRef = useRef(hasMore);
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+  const renderedCountRef = useRef(0);
   useEffect(() => {
-    if (data) setHasMore(data.has_more);
+    renderedCountRef.current = page1Items.length + allItems.length;
+  }, [page1Items, allItems]);
+
+  // L2-238: run every page-1 payload (initial load AND background revalidation)
+  // through the availability decision before it touches rendered state. An
+  // unavailable payload contributes no items, does not close pagination, and
+  // raises the retry state; a genuinely empty, genuinely exhausted feed still
+  // applies exactly as before.
+  useEffect(() => {
+    if (!data) return;
+    const decision = decideFeedPage({
+      payload: data,
+      previousHasMore: hasMoreRef.current,
+      hasRenderedItems: renderedCountRef.current > 0,
+    });
+    setFeedUnavailable(decision.showUnavailable);
+    if (decision.acceptItems) setPage1Items(data.items ?? []);
+    setHasMore(decision.hasMore);
   }, [data]);
 
   // Load the next page from the API when client-side items run out. Exactly one
   // request, advancing monotonically from the returned page boundary — it never
   // re-requests offset zero (that is the SWR-owned initial fetch's job).
   const loadNextPage = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    // L2-238: an unavailable page freezes the auto-pager. Without this the
+    // sentinel would re-fire against a backend that just said it has nothing,
+    // spinning forever instead of terminating on an actionable retry.
+    if (loadingMore || !hasMore || feedUnavailable) return;
     setLoadingMore(true);
     try {
-      const loadedItems = [...(data?.items ?? []), ...allItems];
+      const loadedItems = [...page1Items, ...allItems];
       const loadedIds = new Set(loadedItems.map(getItemId));
       const { limit, offset } = nextFeedRequest(loadedItems.length);
       const resp = await fetchFeed({ limit, offset, event_pct: 0.15 });
-      const freshItems = resp.items.filter((item) => !loadedIds.has(getItemId(item)));
+      const decision = decideFeedPage({
+        payload: resp,
+        previousHasMore: true,
+        hasRenderedItems: loadedItems.length > 0,
+      });
 
-      if (freshItems.length > 0) {
-        setAllItems((prev) => {
-          const prevIds = new Set([...(data?.items ?? []), ...prev].map(getItemId));
-          return [
-            ...prev,
-            ...freshItems.filter((item) => !prevIds.has(getItemId(item))),
-          ];
-        });
+      if (decision.showUnavailable) {
+        // Keep every loaded card, keep `hasMore` exactly where it was, and let
+        // the reader retry. An unavailable page never ends the feed.
+        setFeedUnavailable(true);
+        setLoadingMore(false);
+        return;
       }
 
-      if (!resp.has_more) {
+      if (decision.acceptItems) {
+        const freshItems = resp.items.filter((item) => !loadedIds.has(getItemId(item)));
+        if (freshItems.length > 0) {
+          setAllItems((prev) => {
+            const prevIds = new Set([...page1Items, ...prev].map(getItemId));
+            return [
+              ...prev,
+              ...freshItems.filter((item) => !prevIds.has(getItemId(item))),
+            ];
+          });
+        }
+      }
+
+      if (!decision.hasMore) {
         setHasMore(false);
       }
     } catch { }
     setLoadingMore(false);
-  }, [allItems, data, loadingMore, hasMore]);
+  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable]);
+
+  // L2-238: the reader's way out of an unavailable feed. Clears the state and
+  // revalidates page 1 — already-rendered cards stay exactly where they are.
+  const handleRetryUnavailable = useCallback(() => {
+    setFeedUnavailable(false);
+    mutateFeed();
+  }, [mutateFeed]);
 
   // Graceful end-of-feed refresh: reset paging state, scroll to top, revalidate
   // page 1. This is the web reload affordance (web has no pull-to-refresh).
@@ -592,13 +651,17 @@ export default function DiscoverPage() {
     setAllItems([]);
     setVisibleCount(PAGE_SIZE);
     setHasMore(true);
+    setFeedUnavailable(false);
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
     mutateFeed();
   }, [mutateFeed]);
 
-  // Infinite scroll observer
+  // Infinite scroll observer. Re-armed whenever the sentinel unmounts and
+  // remounts (L2-238: an unavailable page swaps the spinner for a retry, so the
+  // node this observes is destroyed and rebuilt — an observer left watching the
+  // detached node would silently kill infinite scroll after a successful retry).
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -612,7 +675,7 @@ export default function DiscoverPage() {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, []);
+  }, [feedUnavailable]);
 
   const handleDismiss = useCallback((itemId: string) => {
     // Persist local dismissals so anonymous users do not see the same card
@@ -646,8 +709,9 @@ export default function DiscoverPage() {
   }, []);
 
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
-    const firstPage = data?.items ?? [];
-    const raw = [...firstPage, ...allItems];
+    // L2-238: the last ACCEPTED page-1 items, not `data.items` — an unavailable
+    // revalidation must never blank the generation already on screen.
+    const raw = [...page1Items, ...allItems];
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
     const unique = dedupeById(raw, getItemId);
@@ -670,15 +734,15 @@ export default function DiscoverPage() {
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const grouped = groupRelatedMarkets(interleave(cooldownSafe));
     return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
-  }, [data, allItems, dismissed, interactionProfile]);
+  }, [page1Items, allItems, dismissed, interactionProfile]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO
   // identity data (no ids, names, sessions, or market text). Fired once per distinct
   // suppression signature so a stable feed does not re-emit on every render.
   const suppressedEnvelopes = useMemo(
-    () => collectSuppressedEnvelopes(dedupeById([...(data?.items ?? []), ...allItems], getItemId)),
-    [data, allItems],
+    () => collectSuppressedEnvelopes(dedupeById([...page1Items, ...allItems], getItemId)),
+    [page1Items, allItems],
   );
   const suppressedSigRef = useRef("");
   useEffect(() => {
@@ -827,7 +891,17 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {!isLoading && !feedError && visibleItems.length === 0 && (
+        {/* L2-238: the backend typed this response `unavailable`. It knows
+            nothing about the feed, so this page must not claim the feed ended.
+            With nothing on screen it takes the same retry state a transport
+            failure does — this surface's existing words, no new copy — and with
+            last-good cards on screen it keeps them and hangs the same retry
+            below them (rendered after the grid). */}
+        {!isLoading && !feedError && feedUnavailable && processedItems.length === 0 && (
+          <FeedUnavailableNotice onRetry={handleRetryUnavailable} variant="empty" />
+        )}
+
+        {!isLoading && !feedError && !feedUnavailable && visibleItems.length === 0 && (
           <div className="py-16 flex justify-center">
             <EndOfFeedCard count={0} onRefresh={handleRefreshFeed} />
           </div>
@@ -911,13 +985,21 @@ export default function DiscoverPage() {
           })}
         </div>
 
-        {(visibleCount < processedItems.length || hasMore) && (
+        {/* L2-238: unavailable-with-last-good. The cards above stay usable; the
+            spinner is replaced by a terminating, actionable retry so the reader
+            is never left watching an indefinite loader after a backend that has
+            already said it has nothing. */}
+        {!isLoading && feedUnavailable && processedItems.length > 0 && (
+          <FeedUnavailableNotice onRetry={handleRetryUnavailable} variant="inline" />
+        )}
+
+        {!feedUnavailable && (visibleCount < processedItems.length || hasMore) && (
           <div ref={sentinelRef} className="h-10 flex items-center justify-center mt-4">
             <div className="w-5 h-5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
           </div>
         )}
 
-        {visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
+        {!feedUnavailable && visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
           <div className="mt-6 mb-2 flex justify-center">
             <EndOfFeedCard count={processedItems.length} onRefresh={handleRefreshFeed} />
           </div>

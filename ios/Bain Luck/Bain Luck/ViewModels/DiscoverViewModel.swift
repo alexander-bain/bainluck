@@ -394,6 +394,48 @@ final class DiscoverViewModel: ObservableObject {
                 }
 
                 let response = fetch.response
+
+                // L2-238: a typed-UNAVAILABLE response is not an empty feed. The
+                // backend returns `items: []` / `has_more: false` with
+                // `cache.status = "unavailable"` when a singleflight waiter runs
+                // out of budget with no last-good to serve — it knows nothing.
+                // Publishing it here blanked whatever the cache seed had already
+                // painted, closed pagination, cleared the staleness flags and
+                // reported `.revalidateSuccess`, so the reader saw a confident
+                // "all caught up" built out of no data at all (C129's
+                // UNAVAILABLE_MASQUERADES_AS_EMPTY + CLIENT_DROPS_UNAVAILABLE_STATE).
+                //
+                // Route it to the SAME honest terminals a failed revalidation
+                // already uses — last-good kept behind the "couldn't refresh"
+                // banner, or the retryable error screen when there is nothing to
+                // keep. No new copy, no new state. `hasMore` and `nextOffset` are
+                // deliberately left untouched: an unavailable page cannot speak
+                // to pagination in either direction.
+                //
+                // The same guard covers a DEGRADED build that decoded to nothing
+                // (C129's DEGRADED_REPLACED_LAST_GOOD): the backend already
+                // refuses to publish those as shared truth, so an empty one must
+                // not blank the generation on screen either. A genuinely empty,
+                // genuinely COMPLETE page still applies — that is real exhaustion.
+                if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty) {
+                    loading = false
+                    if items.isEmpty {
+                        error = "Couldn't load feed"
+                        telemetry?(DiscoverFeedTelemetry(
+                            outcome: .revalidateFailedNoCache,
+                            networkMs: Self.elapsedMs(since: netStart), itemCount: 0))
+                    } else {
+                        refreshFailedShowingCache = true
+                        error = "Showing recent markets — couldn't refresh"
+                        telemetry?(DiscoverFeedTelemetry(
+                            outcome: .revalidateFailedKeptCache,
+                            networkMs: Self.elapsedMs(since: netStart),
+                            itemCount: items.count,
+                            cacheAgeSeconds: lastGoodStoredAt.map { Date().timeIntervalSince($0) }))
+                    }
+                    return
+                }
+
                 let renderable = Self.renderable(response.items)
                 // L2-215 Item 1 (#1486): count the empty predictive envelopes this
                 // page dropped, identity-free, on the network path only.
@@ -802,6 +844,20 @@ final class DiscoverViewModel: ObservableObject {
             guard Self.shouldApplyPaginationResult(
                 capturedGeneration: generation, currentGeneration: loadGeneration
             ) else { return }
+
+            // L2-238: an UNAVAILABLE page cannot end the feed. Before this, its
+            // `has_more: false` fell through to the exhaustion branch below and
+            // permanently closed pagination on a transient no-data terminal —
+            // the reader hit "you're all caught up" and could not get past it
+            // without relaunching. Surface the SAME retryable error pagination
+            // already uses for a failed page, keep every loaded card, and leave
+            // `hasMore` / `nextOffset` exactly where they were so a retry
+            // resumes at the same boundary. The view's existing Retry control
+            // calls straight back into this method.
+            if response.isUnavailable {
+                self.error = "Couldn't load more markets"
+                return
+            }
 
             // Advance by the SERVER page boundary FIRST, not the decoded item
             // count. The tolerant FeedResponse decoder silently drops malformed

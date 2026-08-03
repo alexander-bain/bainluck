@@ -39,8 +39,18 @@ const CARD_LINK =
   'main a[href^="/event"], main a[href^="/futures"], main a[href^="/hub"], main a[href^="/topic"], main a[href^="/market"]';
 /** The named, legitimate empty state Discover ships (EndOfFeedCard). */
 const NAMED_EMPTY = '[data-testid="discover-empty-state"]';
-/** An error state. Never a legitimate empty state. */
-const ERROR_STATE = '[data-testid="discover-feed-error"]';
+/**
+ * Error states. Never legitimate empty states.
+ *
+ * L2-238 added the second one: the backend types a no-data feed response
+ * `cache.status = "unavailable"`, and Discover now renders its retry state
+ * instead of the end-of-feed card. Racing it here is what keeps that outcome a
+ * FAST, named red instead of a 45s timeout that reports only "nothing appeared"
+ * — the rail must be able to tell "the deploy served an unavailable feed" from
+ * "the page was blank".
+ */
+const ERROR_STATE =
+  '[data-testid="discover-feed-error"], [data-testid="discover-feed-unavailable"]';
 /** The loading placeholder. Never content, and explicitly asserted against. */
 const SKELETON = '[data-testid="discover-skeleton"]';
 

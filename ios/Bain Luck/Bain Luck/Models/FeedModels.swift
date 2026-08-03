@@ -5,6 +5,30 @@ import Foundation
 /// Empty decode target used to skip malformed feed items without failing the whole response.
 private nonisolated struct SkipOne: Decodable, Sendable {}
 
+/// The backend's bounded, identity-free feed cache metadata (L2-238).
+///
+/// Every `/api/feed` return path emits this via `build_feed_cache_metadata`.
+/// Only `status` is guaranteed; the rest are conditional, so all of it decodes
+/// tolerantly — a malformed object must never fail the whole feed.
+nonisolated struct FeedCacheMetadata: Decodable, Sendable {
+    let status: String?
+    let ttlSeconds: Int?
+    let staleTtlSeconds: Int?
+    let reason: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+        ttlSeconds = try? c.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+        staleTtlSeconds = try? c.decodeIfPresent(Int.self, forKey: .staleTtlSeconds)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status, ttlSeconds, staleTtlSeconds, reason
+    }
+}
+
 /// Paginated Discover feed response containing event and futures cards.
 nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
@@ -12,6 +36,47 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     let limit: Int
     let offset: Int
     let hasMore: Bool
+    /// L2-238: bounded cache metadata. Nil on a pre-metadata payload.
+    let cache: FeedCacheMetadata?
+    /// L2-238: present ONLY when the build was not complete.
+    let buildQuality: String?
+    let degradedReason: String?
+
+    /// The cache status the backend uses for the truthful no-data terminal.
+    static let unavailableCacheStatus = "unavailable"
+    /// The build quality the backend reports for a whole, publishable build.
+    static let completeBuildQuality = "complete"
+
+    /// L2-238: the backend explicitly typed this response UNAVAILABLE — a
+    /// singleflight waiter ran out of budget with no last-good to serve, so the
+    /// body carries `items: []` / `has_more: false` while knowing NOTHING about
+    /// the feed. It is a transient, retryable terminal, not an exhausted feed.
+    ///
+    /// Deliberately keyed on the exact status and nothing else. A `last_good`
+    /// payload can carry `reason: "redis_unavailable"` while serving real cards;
+    /// matching on the reason would blank a working feed. An absent or malformed
+    /// `cache` reads as available, so an older backend stays compatible and no
+    /// missing metadata can fabricate this state.
+    var isUnavailable: Bool {
+        cache?.status == Self.unavailableCacheStatus
+    }
+
+    /// L2-238: the backend flagged this as a degraded/partial build. It refuses
+    /// to publish such a build as shared truth server-side; an EMPTY one must not
+    /// be allowed to blank an already-rendered generation client-side either.
+    var isDegradedBuild: Bool {
+        guard let quality = buildQuality, !quality.isEmpty else { return false }
+        return quality != Self.completeBuildQuality
+    }
+
+    /// L2-238: whether this payload may replace/extend what is already rendered.
+    /// Genuine exhaustion (a COMPLETE build with no items) still applies — that
+    /// is the one empty response that honestly means "all caught up".
+    func mayReplaceRendered(hasRenderedItems: Bool) -> Bool {
+        if isUnavailable { return false }
+        if isDegradedBuild, items.isEmpty, hasRenderedItems { return false }
+        return true
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -19,6 +84,11 @@ nonisolated struct FeedResponse: Decodable, Sendable {
         limit = try c.decodeIfPresent(Int.self, forKey: .limit) ?? 50
         offset = try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0
         hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        // Tolerant: malformed metadata degrades to "no metadata", never to a
+        // decode failure that would take the whole feed down with it.
+        cache = try? c.decodeIfPresent(FeedCacheMetadata.self, forKey: .cache)
+        buildQuality = try? c.decodeIfPresent(String.self, forKey: .buildQuality)
+        degradedReason = try? c.decodeIfPresent(String.self, forKey: .degradedReason)
 
         var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
         var decoded: [FeedItem] = []
@@ -33,7 +103,7 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case items, total, limit, offset, hasMore
+        case items, total, limit, offset, hasMore, cache, buildQuality, degradedReason
     }
 }
 

@@ -118,6 +118,22 @@ actor APIClient {
         return signedInNamespace ? wasAuthenticated : !wasAuthenticated
     }
 
+    /// Whether a decoded feed response's bytes are fit to become LAST-GOOD
+    /// (L2-238). Orthogonal to `shouldPersistFeed`, which answers *whose* cache
+    /// the bytes belong in; this answers whether they are worth caching at all.
+    ///
+    /// A typed-UNAVAILABLE response, or a degraded build that decoded to nothing,
+    /// carries no knowledge of the feed. Writing either over the stored last-good
+    /// would destroy the payload the next cold launch paints its first card from
+    /// and replace it with a blank screen — the transient outage would outlive
+    /// itself by persisting to disk. A genuinely empty COMPLETE build is real
+    /// truth and is still stored.
+    static func shouldStoreFeedAsLastGood(_ response: FeedResponse) -> Bool {
+        if response.isUnavailable { return false }
+        if response.isDegradedBuild, response.items.isEmpty { return false }
+        return true
+    }
+
     /// Build the in-memory `responseCache` key for a cached GET, partitioned by the
     /// EXACT resolved request principal (C78 Item 2). Binding the principal into the
     /// key makes a cross-identity cache hit impossible BY CONSTRUCTION: user B can
@@ -684,7 +700,7 @@ actor APIClient {
                 userIdAtFetch: userIdAtFetch,
                 wasAuthenticated: net.wasAuthenticated,
                 currentIdentity: currentFeedIdentity()
-            ) {
+            ), Self.shouldStoreFeedAsLastGood(net.value) {
                 let t0 = Date()
                 feedCache.store(rawBody: raw, identity: identityAtFetch, storedAt: Date())
                 storeMs = Date().timeIntervalSince(t0) * 1000
