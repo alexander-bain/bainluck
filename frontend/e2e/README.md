@@ -64,6 +64,7 @@ In CI: **Actions → Browser audit (manual) → Run workflow**, with
 | `deploy-smoke+consent` | `smoke-consent` | both of the above | The default |
 | `grid` | `grid` | `championship-grid.spec.ts` | The five championship grids render honest cell states (L2-227) |
 | `calibration` | `calibration` | `calibration.spec.ts` | `/calibration` renders finite, non-degraded numbers (L2-228) |
+| `daily-challenge` | `daily-challenge` | `daily-challenge.spec.ts` | Daily answers through to a Share that reports only a share that happened, and an unknown challenge code renders a NAMED not-found state (L2-235). Fulfils `/api/predictions` locally so the rail never writes prediction rows; the challenge Share button needs seeded state and is out of phase 1 |
 
 A pack must be declared in **four** places to actually run: the workflow's
 `options:` dropdown, the input-validation allowlist, the dispatch `case`, and an

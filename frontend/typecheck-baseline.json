@@ -3,13 +3,13 @@
     "what": "Pre-existing `tsc --noEmit` errors, frozen. `npm run typecheck` fails on anything not counted here.",
     "why": "next.config.mjs sets typescript.ignoreBuildErrors:true (gotcha #10), so type errors have deployed green for the life of the project. A clean gate today would red every push until all of these are cleared, and a step that reds every push gets `|| true`-d. Freezing the known count makes the gate holdable now instead of aspirational later.",
     "owner": "https://github.com/alexander-bain/bainluck/issues/1521",
-    "recorded_by": "L2-234",
+    "recorded_by": "L2-234; lowered 89 -> 87 by L2-235",
     "recorded": "2026-08-02",
     "regenerate": "cd frontend && npm run typecheck:baseline",
     "ratchet": "Both directions. Fixing errors without lowering this file also fails — a baseline above the real count is headroom new debt can be added into unnoticed.",
     "note": "4,491 of the 4,612 errors that existed before L2-234 were missing jest globals; declaring @types/jest@30.0.0 removed them. What remains is real."
   },
-  "total": 89,
+  "total": 87,
   "byFile": {
     "__tests__/components/discoverCardTapNav.test.tsx": 1,
     "__tests__/components/feedEmptyEnvelope.test.tsx": 2,
@@ -27,8 +27,8 @@
     "app/admin/source-intelligence/page.tsx": 3,
     "app/admin/team-clusters/page.tsx": 3,
     "app/calibration/page.tsx": 2,
-    "app/challenge/[id]/page.tsx": 5,
-    "app/daily/page.tsx": 5,
+    "app/challenge/[id]/page.tsx": 4,
+    "app/daily/page.tsx": 4,
     "app/kernels-preview/page.tsx": 3,
     "app/play/page.tsx": 3,
     "components/BottomNav.tsx": 1,
@@ -49,7 +49,6 @@
     "TS2352": 3,
     "TS2353": 4,
     "TS2367": 2,
-    "TS2774": 2,
     "TS7006": 3
   }
 }

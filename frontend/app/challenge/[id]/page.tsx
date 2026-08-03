@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { shareContent } from "@/lib/share";
 import { Button } from "@/components/ui/button";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -100,6 +101,10 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   const [challenge, setChallenge] = useState<ChallengeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The machine-readable twin of `error`. The browser rail grades WHICH failure
+  // rendered; a copy edit must not be able to change that answer, and a blank
+  // page must not be able to pass as a named one.
+  const [errorName, setErrorName] = useState<string | null>(null);
   const [selectedGuess, setSelectedGuess] = useState<Guess | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -118,6 +123,7 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   const loadChallenge = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorName(null);
 
     try {
       const res = await fetch(`${API_URL}/api/challenges/${encodeURIComponent(challengeCode)}`, {
@@ -127,12 +133,14 @@ export default function ChallengePage({ params }: ChallengePageProps) {
       if (res.status === 404) {
         setChallenge(null);
         setError("Challenge not found");
+        setErrorName("challenge-not-found");
         return;
       }
 
       if (!res.ok) {
         setChallenge(null);
         setError("Challenge unavailable");
+        setErrorName("challenge-unavailable");
         return;
       }
 
@@ -142,6 +150,7 @@ export default function ChallengePage({ params }: ChallengePageProps) {
     } catch {
       setChallenge(null);
       setError("Could not load challenge");
+      setErrorName("challenge-load-failed");
     } finally {
       setLoading(false);
     }
@@ -227,16 +236,21 @@ export default function ChallengePage({ params }: ChallengePageProps) {
       : "Take this Bain Luck challenge.";
 
     try {
-      if (navigator.share) {
-        await navigator.share({ title, text, url: shareUrl });
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
+      // The method that actually carried the share, not a re-read of
+      // `navigator` after the fact. `null` means the browser had neither a
+      // share sheet nor a writable clipboard, so nothing was shared and
+      // nothing gets reported.
+      const method = await shareContent({ title, text, url: shareUrl }, navigator);
+      if (!method) return;
+
+      if (method === "clipboard") {
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1600);
       }
+
       track("friend_challenge_share", {
         challenge_code: challengeCode,
-        method: navigator.share ? "native" : "clipboard",
+        method,
       });
     } catch {}
   }
@@ -251,7 +265,11 @@ export default function ChallengePage({ params }: ChallengePageProps) {
 
   if (error || !challenge) {
     return (
-      <div className="min-h-[70vh] bg-surface-deep">
+      <div
+        data-testid="challenge-error"
+        data-error-state-name={errorName ?? "challenge-missing"}
+        className="min-h-[70vh] bg-surface-deep"
+      >
         <div className="mx-auto max-w-2xl px-4 py-12">
           <Link href="/discover" className="inline-flex items-center gap-2 text-sm font-semibold text-text-secondary hover:text-text-primary">
             <ArrowLeft className="h-4 w-4" />
@@ -278,7 +296,7 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   }
 
   return (
-    <div className="min-h-[70vh] bg-surface-deep">
+    <div data-testid="challenge-page" className="min-h-[70vh] bg-surface-deep">
       <div className="mx-auto max-w-3xl px-4 py-5 md:py-8">
         <div className="mb-5 flex items-center justify-between gap-3">
           <Link href="/discover" className="inline-flex items-center gap-2 text-sm font-semibold text-text-secondary hover:text-text-primary">

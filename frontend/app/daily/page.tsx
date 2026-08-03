@@ -23,6 +23,7 @@ import type {
   FeedResponse,
 } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
+import { shareContent } from "@/lib/share";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { Button } from "@/components/ui/button";
 
@@ -417,18 +418,24 @@ export default function DailyPage() {
   }, [persistState, questions, state]);
 
   const shareSummary = useCallback(async () => {
-    const text = `${resultText(score, questions.length, meta.streak)} Try it: ${window.location.origin}/daily`;
+    const url = `${window.location.origin}/daily`;
+    const text = `${resultText(score, questions.length, meta.streak)} Try it: ${url}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: "Bain Luck Daily", text, url: `${window.location.origin}/daily` });
-      } else {
-        await navigator.clipboard.writeText(text);
+      // The method that actually carried the share, not a re-read of
+      // `navigator` after the fact. `null` means the browser had neither a
+      // share sheet nor a writable clipboard, so nothing was shared and
+      // nothing gets reported.
+      const method = await shareContent({ title: "Bain Luck Daily", text, url, clipboardText: text }, navigator);
+      if (!method) return;
+
+      if (method === "clipboard") {
         setShareCopied(true);
         window.setTimeout(() => setShareCopied(false), 1800);
       }
+
       trackEvent("share", {
         content_type: "daily_challenge",
-        method: navigator.share ? "native" : "clipboard",
+        method,
         score,
         total: questions.length,
         source_section: "daily_summary",
@@ -451,7 +458,11 @@ export default function DailyPage() {
       <main className="min-h-screen bg-surface-deep text-text-primary">
         <DailyHeader streak={meta.streak} countdown={nextMidnightLabel(now)} />
         <section className="mx-auto max-w-3xl px-4 py-16 text-center">
-          <div className="mx-auto max-w-md rounded-lg border border-surface-border bg-surface-card p-6 shadow-sm">
+          <div
+            data-testid="daily-empty-state"
+            data-empty-state-name={loadError ? "daily-load-failed" : "no-daily-set"}
+            className="mx-auto max-w-md rounded-lg border border-surface-border bg-surface-card p-6 shadow-sm"
+          >
             <h1 className="text-title-2">No daily set yet</h1>
             <p className="mt-2 text-sm text-text-secondary">
               {loadError || "There are not enough guessable markets in the feed right now."}
@@ -469,7 +480,11 @@ export default function DailyPage() {
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
-    <main className="min-h-screen bg-surface-deep text-text-primary">
+    <main
+      data-testid="daily-page"
+      data-daily-complete={completed ? "true" : "false"}
+      className="min-h-screen bg-surface-deep text-text-primary"
+    >
       <DailyHeader streak={meta.streak} countdown={nextMidnightLabel(now)} />
 
       <section className="mx-auto grid max-w-5xl gap-6 px-4 py-6 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -655,6 +670,7 @@ function QuestionCard({
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <button
             type="button"
+            data-testid="daily-guess-higher"
             onClick={() => onAnswer(question, "higher")}
             className="inline-flex min-h-14 items-center justify-center gap-2 rounded-md border border-accent-live/30 bg-accent-live/10 px-4 py-3 text-sm font-bold text-accent-live transition-colors hover:bg-accent-live/15"
           >
@@ -663,6 +679,7 @@ function QuestionCard({
           </button>
           <button
             type="button"
+            data-testid="daily-guess-lower"
             onClick={() => onAnswer(question, "lower")}
             className="inline-flex min-h-14 items-center justify-center gap-2 rounded-md border border-accent-danger/30 bg-accent-danger/10 px-4 py-3 text-sm font-bold text-accent-danger transition-colors hover:bg-accent-danger/15"
           >
@@ -726,7 +743,12 @@ function SummaryCard({
           {resultText(score, total, streak)}
         </p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <Button type="button" onClick={onShare}>
+          <Button
+            type="button"
+            data-testid="daily-share"
+            data-share-copied={copied ? "true" : "false"}
+            onClick={onShare}
+          >
             {copied ? <Copy className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
             {copied ? "Copied" : "Share Score"}
           </Button>
