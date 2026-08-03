@@ -50,6 +50,20 @@ def test_starved_class_flags_when_moneyline_below_one_per_game():
     assert "basketball_nba/moneyline" == starved.cohort
 
 
+def test_noncore_sport_starved_is_watch_not_real():
+    # A long-tail / individual / combat sport must SURFACE (WATCH) but not
+    # auto-file (REAL) — the sentinel must not cry wolf where the ~1 ml/game
+    # expectation does not hold or the classifier naming differs.
+    games = {"tennis_atp": 2700}
+    by_sc = {"tennis_atp": {
+        "moneyline": MassCounts(markets=100, outcomes=200),  # 0.04/game
+        "other": MassCounts(markets=50, outcomes=50),
+    }}
+    findings = capture_findings(games, by_sc)
+    starved = [f for f in findings if f.kind == "starved_class"]
+    assert starved and all(f.severity == "WATCH" for f in starved)
+
+
 def test_classifier_leak_flags_when_other_exceeds_ceiling():
     games = {"soccer_epl": 50}
     by_sc = {"soccer_epl": {

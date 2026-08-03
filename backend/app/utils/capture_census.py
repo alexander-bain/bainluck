@@ -39,6 +39,25 @@ MIN_VOLUME_COVERAGE = 0.5   # fraction of outcomes with non-NULL volume
 # Sources with no volume/trade concept — excluded from the volume-based bar.
 NO_VOLUME_SOURCES = frozenset({"odds_api", "odds_api_bookmaker", "datagolf"})
 
+# Team-ball sports where "~1 game-winner (moneyline) market per game" is a
+# genuine expectation AND the classifier's "Team at/vs Team" recognizer applies.
+# ONLY these get a REAL (files an issue) starved_class / classifier_leak alarm —
+# so the sentinel does not cry wolf on the long tail where the expectation is
+# wrong or the naming is different:
+#   * individual sports (tennis) are dominated by set/game totals, not a ML;
+#   * combat (mma/boxing) winners are FIGHTER matchups the team recognizer misses
+#     (a real classifier gap, tracked separately — not a capture regression);
+#   * aggregate catch-all buckets (baseball_other, soccer_other) mix many leagues.
+# Everything else still SURFACES as WATCH (the permanent axis measures it), but
+# does not auto-file until Alex ratifies its per-sport expected menu (NEEDS-RULING).
+CORE_TEAM_SPORTS = frozenset({
+    "baseball_mlb", "basketball_nba", "basketball_wnba", "basketball_ncaab",
+    "icehockey_nhl", "americanfootball_nfl", "americanfootball_ncaaf",
+    "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
+    "soccer_italy_serie_a", "soccer_france_ligue_one", "soccer_usa_mls",
+    "soccer_uefa_champs_league",
+})
+
 
 # ---------------------------------------------------------------------------
 # SQL — single source of truth. %(window)s is an int (validated by callers).
@@ -210,10 +229,13 @@ def capture_findings(
         total_markets = sum(mc.markets for mc in classes.values()) or 1
         ml = classes.get("moneyline", MassCounts()).markets
         other = classes.get("other", MassCounts()).markets
+        # REAL (files) only where the expectation genuinely holds; else WATCH.
+        sev = "REAL" if sport in CORE_TEAM_SPORTS else "WATCH"
         if ml / games < MONEYLINE_PER_GAME_FLOOR:
             findings.append(CaptureFinding(
                 kind="starved_class",
                 cohort=f"{sport}/moneyline",
+                severity=sev,
                 detail=(f"{ml} moneyline markets across {games} games "
                         f"= {ml/games:.2f}/game (< {MONEYLINE_PER_GAME_FLOOR}). "
                         f"A game without a winner market is impossible — a "
@@ -223,6 +245,7 @@ def capture_findings(
             findings.append(CaptureFinding(
                 kind="classifier_leak",
                 cohort=f"{sport}/other",
+                severity=sev,
                 detail=(f"'other' is {other/total_markets:.0%} of {total_markets} "
                         f"markets (> {OTHER_SHARE_CEILING:.0%}). The classifier "
                         f"is failing to recognize known classes for {sport}."),
@@ -334,6 +357,7 @@ def drift_findings(prev: Optional[dict], curr: dict) -> list[CaptureFinding]:
                 findings.append(CaptureFinding(
                     kind="drift",
                     cohort=f"{sport}/{cls}",
+                    severity="REAL" if sport in CORE_TEAM_SPORTS else "WATCH",
                     detail=(f"{sport} {cls} mass fell from {prev_mpg:.2f} to "
                             f"{curr_mpg:.2f} markets/game "
                             f"({(1 - curr_mpg/prev_mpg):.0%} drop) since the last "
