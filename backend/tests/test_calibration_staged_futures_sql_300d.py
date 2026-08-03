@@ -203,23 +203,26 @@ class TestRepresentativeTieAuthority:
 class TestShippedState:
     """What is actually switched on, pinned so it cannot drift silently."""
 
-    def test_staged_path_is_switched_on(self):
-        """Queue 300E made the flip 300D staged and deliberately left undone.
+    def test_staged_path_ships_off(self):
+        """Queue 300E turned it on, measured it in production, and turned it back.
 
-        300D's version of this test pinned the constant OFF, so that turning an
-        unexercised path into the ONLY path for the scheduled build could not
-        happen silently. It did not happen silently: it happened against a
-        measured monolith failure — ten consecutive ~22.5-minute futures
-        timeouts banking nothing, and a 37.8-hour-old public curve.
+        The switch is OFF again, but the question it is pinned against has
+        changed. 300D's reason was ignorance — the staged statement had never
+        executed. 300E's reason is a measurement: it executed twice, and the
+        second beat invalidated the first beat's banked unit, because the
+        generation fingerprint covers the whole roster and the roster moves
+        between hourly beats. Units are resumable within a beat and worthless
+        across beats, which is the opposite of the point.
 
-        The test keeps its job, only inverted. The switch is now pinned ON, so
-        an accidental revert to the statement that could not finish is a red
-        test rather than a silent return to a dark page. A DELIBERATE rollback
-        (see the constant's docstring) flips this line with it, and says why.
+        So this test is not "we never tried it." It is "we tried it, here is
+        what it cost, and the fix is a per-unit cursor identity rather than a
+        whole-roster one" — see the constant's docstring for the two ledger
+        records. Flipping it on again without that change would reproduce the
+        same two beats.
         """
         from app.tasks.calibration_main_build import STAGED_FUTURES_ENABLED
 
-        assert STAGED_FUTURES_ENABLED is True
+        assert STAGED_FUTURES_ENABLED is False
 
     def test_the_serve_path_can_never_stage(self):
         """Not a switch — a structural guarantee.

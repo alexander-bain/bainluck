@@ -86,40 +86,58 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #:
 #: False: one statement, as before.
 #:
-#: SWITCHED ON (Queue 300E, 2026-08-03) — the watched flip Queue 300D left
-#: deliberately undone. 300D shipped the machinery off because the staged
-#: statement had never executed against PostgreSQL and that queue's gates forbade
-#: triggering a build to find out. What changed is not the code — it is that OFF
-#: stopped being free.
+#: SWITCHED ON AND ROLLED BACK IN ONE SESSION (Queue 300E, 2026-08-03). Back to
+#: ``False`` — but for a completely different reason than 300D's, and the new
+#: reason is the useful one.
 #:
-#: The evidence for the flip, measured before it: the last monolith beat
-#: (generation 1785773700264, release v3683, ledger 2026-08-03T16:37:32Z) ended
-#: terminal ``failed`` with the futures phase ``timeout`` at 1,352,046 ms, the
-#: tenth consecutive floor within 8s of ~22.5 minutes, ``banked: {}`` and
-#: ``completed_required: []``. The public curve was serving a 37.8-hour-old
-#: last-good (``cache.status=stale``, ``reason=main_key_absent``). OFF is a
-#: proven no-op, and a proven no-op is exactly what the build could no longer
-#: afford: it banks nothing, hourly, forever.
+#: 300D shipped this off because the staged statement had never executed against
+#: PostgreSQL. That is no longer the unknown: it HAS now run, twice, against
+#: production, and both runs are recorded below. What the flip proved is that the
+#: machinery works exactly as designed and still cannot deliver a fresh curve,
+#: because of something no unit test could have shown.
 #:
-#: ROLLBACK is this constant back to ``False`` and one deploy. That path stays
-#: exact: the monolith text is byte-identical to the pre-300D statement (pinned
-#: by ``test_calibration_staged_futures_sql_300d.TestMonolithIsUnmoved``), so
-#: rolling back costs the build nothing beyond returning it to the failure it
-#: started from.
+#: WHAT THE TWO WATCHED BEATS MEASURED (release v3687):
 #:
-#: WATCHING IT: the ledger shows ``read:futures_generation`` and
-#: ``read:futures_unit`` stage timings and a ``staged:cursor_*`` action, and a
-#: partial beat reports terminal ``cancelled`` with units banked (by design —
-#: see :class:`StagedFuturesIncomplete`), not ``failed``. A partial first beat is
-#: a PASS, not a regression: it means the build banked work for the first time.
+#: * 19:15Z, generation 1785784500088, terminal ``cancelled`` after 627,446 ms.
+#:   ``read:futures_generation`` = **18,784 ms**, ``read:futures_unit`` =
+#:   594,318 ms, ``staged:cursor_fresh``. ONE unit committed, cursor durably
+#:   written (``terminal: partial``), nothing published, last-good preserved.
+#:   That is the designed partial outcome, and it is the first time this build
+#:   ever banked a minute of work.
+#: * 20:15Z, generation 1785788100146, terminal ``cancelled`` after 83,210 ms.
+#:   ``read:futures_generation`` = 25,919 ms, ``read:futures_unit`` = 51,478 ms,
+#:   and — the finding — ``staged:cursor_invalidate``. The unit banked at 19:15
+#:   was DISCARDED.
 #:
-#: The one residual this flip does NOT fix, written down so it is not
-#: rediscovered as a surprise: stage 1 (the generation read) is itself a single
-#: unchunked statement — the pre-``virtual_market`` prefix of the same pipeline,
-#: and it carries 3 of the statement's 7 correlated scans of the 179M-row
-#: ``futures_odds_snapshots``. If that prefix alone exceeds the window, the beat
-#: times out having banked nothing, which is no worse than today but is also no
-#: better. Only the post-``virtual_market`` half is resumable here.
+#: WHY IT CANNOT CONVERGE. The generation fingerprint is a digest over the WHOLE
+#: roster — every ``(market_id, source, vm_id, is_grouped)`` in the population.
+#: The population is ``futures_markets WHERE status = 'resolved'``, and markets
+#: resolve continuously, so the roster is different at 20:15 than it was at
+#: 19:15. The cursor then does precisely what
+#: ``test_a_moved_roster_invalidates_every_banked_unit`` says it must: it refuses
+#: to mix two rosters and throws the banked unit away. Correct, and fatal —
+#: units can only accumulate ACROSS beats if the roster holds still between them,
+#: and it never will. A beat that banks ~1-2 units of ~44+ can therefore never
+#: reach the end of a generation, no matter how many beats run.
+#:
+#: So the resumability is real per-beat and worthless across beats, which is the
+#: opposite of what it was built for. Off, until the cursor's identity is
+#: per-unit rather than whole-roster: a unit's banked rows are still valid if the
+#: markets IN THAT UNIT are unchanged, regardless of what arrived elsewhere in
+#: the population. That is a design change to
+#: ``app/utils/calibration_staged_futures.py`` (fingerprint per chunk, not per
+#: generation), not a switch, and it is the actual fix.
+#:
+#: WHAT THE FLIP ALSO SETTLED, and what makes the next attempt cheaper: the
+#: generation read — the unchunked pre-``virtual_market`` prefix that was the
+#: feared blocker, carrying 3 of the statement's 7 correlated scans of the
+#: 179M-row ``futures_odds_snapshots`` — costs only **19-26 seconds**. The whole
+#: ~22-minute cost is in the post-``virtual_market`` half, which is the half that
+#: chunks. The premise of staging is sound; only the cursor's identity is wrong.
+#:
+#: OFF remains a proven no-op: the monolith text is byte-identical to the
+#: pre-300D statement (pinned by
+#: ``test_calibration_staged_futures_sql_300d.TestMonolithIsUnmoved``).
 #:
 #: This ONLY ever applies to a run that owns a :class:`PhaseRunner` — i.e. the
 #: scheduled build. The route's in-request cold-cache serve keeps the single
@@ -128,7 +146,7 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #: committed underneath the caller. That is a class attribute on
 #: :class:`NullPhaseRunner`, not a read of this constant, so it holds whatever
 #: an operator sets here.
-STAGED_FUTURES_ENABLED = True
+STAGED_FUTURES_ENABLED = False
 
 #: Markets per chunk. A budget, not a row count: the unit is a whole virtual
 #: question, so a chunk overshoots rather than split one (see
