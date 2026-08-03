@@ -133,7 +133,9 @@ class _FakeMetricsRedis:
         # hashes: {task_name: {b"consecutive_failures": b"3", ...}}
         self.hashes = hashes
         self.counters = counters or {}
+        self.calls = []
 
+    # --- read side ---------------------------------------------------------
     def hgetall(self, key):
         # key = "bainluck:task_metrics:<task_name>"
         task = key.rsplit(":", 1)[-1]
@@ -142,11 +144,43 @@ class _FakeMetricsRedis:
     def get(self, key):
         return self.counters.get(key)
 
+    def hget(self, key, field):
+        task = key.rsplit(":", 1)[-1]
+        return self.hashes.get(task, {}).get(field.encode())
+
     def keys(self, _pattern):
         out = []
         for task in self.hashes:
             out.append(f"{TASK_METRICS_PREFIX}:{task}".encode())
         return out
+
+    # --- write side (pipeline is a no-op recorder) -------------------------
+    def pipeline(self):
+        return self
+
+    def hset(self, key, mapping=None):
+        self.calls.append(("hset", key, dict(mapping or {})))
+        task = key.rsplit(":", 1)[-1]
+        target = self.hashes.setdefault(task, {})
+        for field, value in (mapping or {}).items():
+            target[field.encode()] = str(value).encode()
+
+    def expire(self, key, ttl):
+        self.calls.append(("expire", key, ttl))
+
+    def set(self, key, value, ex=None, nx=False):
+        self.calls.append(("set", key, value, ex, nx))
+        if nx and key in self.counters:
+            return None
+        self.counters[key] = str(value).encode()
+        return True
+
+    def incr(self, key):
+        self.calls.append(("incr", key))
+        self.counters[key] = str(int(self.counters.get(key, b"0")) + 1).encode()
+
+    def execute(self):
+        return []
 
 
 class TestRetiredTaskHealth:
@@ -515,3 +549,207 @@ class TestWorkerBootLiveness:
 
         # Must be swallowed — a liveness refresh can never break a task.
         redis_state.touch_worker_liveness(_Boom())
+
+
+class TestVerdictAwareRecording:
+    """Queue 300H (#1515): a run that returned without completing its work must
+    not increment the completion-success counter, and must not read healthy."""
+
+    def _client(self, monkeypatch, hashes=None, counters=None):
+        fake = _FakeMetricsRedis(hashes if hashes is not None else {}, counters)
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        return fake
+
+    def test_incomplete_does_not_touch_the_success_counter(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        redis_state.record_task_incomplete(
+            "compute_time_horizon_calibration", 1200.0,
+            verdict="partial", verdict_reason="units:horizons_done=0/4",
+        )
+        assert f"{TASK_METRICS_PREFIX}:compute_time_horizon_calibration:successes" \
+            not in fake.counters
+        assert fake.counters[
+            f"{TASK_METRICS_PREFIX}:compute_time_horizon_calibration:incompletes"
+        ] == b"1"
+
+    def test_incomplete_preserves_consecutive_failures(self, monkeypatch):
+        # Partial progress is neither an escalation nor a reset. It must not
+        # clear a real failure streak, and must not add to it.
+        fake = self._client(
+            monkeypatch, hashes={"coverage_metrics": {b"consecutive_failures": b"3"}}
+        )
+        redis_state.record_task_incomplete(
+            "coverage_metrics", 500.0, verdict="partial", verdict_reason="terminal:partial",
+        )
+        assert fake.hashes["coverage_metrics"][b"consecutive_failures"] == b"3"
+
+    def test_incomplete_stamps_the_verdict_and_reason(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        redis_state.record_task_incomplete(
+            "calibration_prices", 540000.0,
+            verdict="partial", verdict_reason="terminal:partial",
+        )
+        hash_ = fake.hashes["calibration_prices"]
+        assert hash_[b"last_verdict"] == b"partial"
+        assert hash_[b"last_verdict_reason"] == b"terminal:partial"
+
+    def test_success_stamps_complete(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        redis_state.record_task_success(
+            "coverage_metrics", 100.0, {"published": True},
+            verdict="complete", verdict_reason="terminal:complete",
+        )
+        assert fake.hashes["coverage_metrics"][b"last_verdict"] == b"complete"
+        assert fake.counters[f"{TASK_METRICS_PREFIX}:coverage_metrics:successes"] == b"1"
+
+    def test_returned_failure_increments_consecutive(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        redis_state.record_task_failure(
+            "coverage_metrics", 100.0, "task returned a failed terminal",
+            verdict="failed", verdict_reason="terminal:failed",
+        )
+        assert fake.hashes["coverage_metrics"][b"consecutive_failures"] == b"1"
+        assert fake.hashes["coverage_metrics"][b"last_verdict"] == b"failed"
+
+    def test_thrown_failure_keeps_its_own_verdict_label(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        redis_state.record_task_failure("poll_odds", 100.0, "boom")
+        assert fake.hashes["poll_odds"][b"last_verdict"] == b"thrown"
+
+    def test_recording_never_raises_on_a_broken_client(self, monkeypatch):
+        class _Boom:
+            def pipeline(self):
+                raise RuntimeError("redis down")
+
+            def hget(self, *a, **k):
+                raise RuntimeError("redis down")
+
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: _Boom())
+        redis_state.record_task_incomplete("x", 1.0, verdict="partial", verdict_reason="r")
+        redis_state.record_task_success("x", 1.0, {})
+        redis_state.record_task_failure("x", 1.0, "e")
+
+
+class TestWindowCounterDoesNotSlide:
+    """r346 read `successes_24h: 1015` on an HOURLY task and called it frozen.
+    It was never a 24h window: EXPIRE on every increment pushed the TTL out
+    forever, so the counter accumulated for as long as the task kept
+    succeeding. SET NX EX stamps the window once (gotcha #49, task form)."""
+
+    def test_first_increment_stamps_a_24h_window(self, monkeypatch):
+        fake = _FakeMetricsRedis({})
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        redis_state.record_task_success("poll_odds", 1.0, {})
+        sets = [c for c in fake.calls if c[0] == "set"]
+        assert sets == [(
+            "set", f"{TASK_METRICS_PREFIX}:poll_odds:successes", 0, 86400, True,
+        )]
+
+    def test_later_increments_never_re_expire_the_counter(self, monkeypatch):
+        fake = _FakeMetricsRedis({})
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        for _ in range(4):
+            redis_state.record_task_success("poll_odds", 1.0, {})
+        counter_key = f"{TASK_METRICS_PREFIX}:poll_odds:successes"
+        # The metrics HASH is still refreshed every run (48h TTL, by design);
+        # the 24h counter's expiry is stamped once and never slid.
+        assert [c for c in fake.calls if c[0] == "expire" and c[1] == counter_key] == []
+        assert fake.counters[counter_key] == b"4"
+
+
+class TestIncompleteHealthIsNotGreen:
+    """The false GREEN, at the read side."""
+
+    def _metrics(self, monkeypatch, hash_, counters):
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"t": hash_}, counters=counters),
+        )
+        return redis_state.get_task_metrics("t")
+
+    def test_partial_last_run_is_degraded_not_healthy(self, monkeypatch):
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"0", b"last_verdict": b"partial",
+             b"last_verdict_reason": b"units:horizons_done=0/4"},
+            {f"{TASK_METRICS_PREFIX}:t:incompletes": b"4"},
+        )
+        assert result["health"] == "degraded"
+        assert result["incompletes_24h"] == 4
+        assert result["last_verdict_reason"] == "units:horizons_done=0/4"
+
+    def test_authoritative_unknown_is_degraded(self, monkeypatch):
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"0", b"last_verdict": b"unknown"},
+            {f"{TASK_METRICS_PREFIX}:t:incompletes": b"1"},
+        )
+        assert result["health"] == "degraded"
+
+    def test_returned_failure_is_degraded_immediately(self, monkeypatch):
+        # One RETURNED failed terminal is the task's own verdict on itself.
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"1", b"last_verdict": b"failed"},
+            {f"{TASK_METRICS_PREFIX}:t:failures": b"1"},
+        )
+        assert result["health"] == "degraded"
+
+    def test_one_thrown_failure_keeps_the_existing_bands(self, monkeypatch):
+        # Unchanged policy: a single transient exception does not degrade a
+        # task. Changing that across ~100 tasks is not Queue 300H's business.
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"1", b"last_verdict": b"thrown"},
+            {f"{TASK_METRICS_PREFIX}:t:failures": b"1",
+             f"{TASK_METRICS_PREFIX}:t:successes": b"20"},
+        )
+        assert result["health"] == "healthy"
+
+    def test_legacy_unverified_run_still_reads_healthy(self, monkeypatch):
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"0", b"last_verdict": b"unverified"},
+            {f"{TASK_METRICS_PREFIX}:t:successes": b"12"},
+        )
+        assert result["health"] == "healthy"
+
+    def test_a_later_complete_run_clears_the_degradation(self, monkeypatch):
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"0", b"last_verdict": b"complete"},
+            {f"{TASK_METRICS_PREFIX}:t:successes": b"1",
+             f"{TASK_METRICS_PREFIX}:t:incompletes": b"6"},
+        )
+        assert result["health"] == "healthy"
+
+    def test_incompletes_alone_are_not_idle(self, monkeypatch):
+        # A task recording ONLY incompletes has run — it must not fall into the
+        # idle-first `no_data` branch and disappear from the health rollups.
+        result = self._metrics(
+            monkeypatch,
+            {b"consecutive_failures": b"0", b"last_verdict": b"partial"},
+            {f"{TASK_METRICS_PREFIX}:t:incompletes": b"3"},
+        )
+        assert result["health"] == "degraded"
+
+    def test_truly_idle_task_still_reads_no_data(self, monkeypatch):
+        result = self._metrics(
+            monkeypatch, {b"consecutive_failures": b"9", b"last_verdict": b"partial"}, {},
+        )
+        assert result["health"] == "no_data"
+
+    def test_partial_verdict_surfaces_in_the_degraded_rollup(self, monkeypatch):
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis(
+                {"compute_time_horizon_calibration": {
+                    b"consecutive_failures": b"0", b"last_verdict": b"partial"}},
+                counters={
+                    f"{TASK_METRICS_PREFIX}:compute_time_horizon_calibration:incompletes": b"4"
+                },
+            ),
+        )
+        tasks = redis_state.get_all_task_metrics()
+        degraded = [t["task"] for t in tasks if t.get("health") == "degraded"]
+        assert degraded == ["compute_time_horizon_calibration"]

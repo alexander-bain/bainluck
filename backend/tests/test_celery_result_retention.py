@@ -242,11 +242,11 @@ def test_failure_observability_does_not_depend_on_the_result_backend(monkeypatch
     recorded: dict[str, tuple] = {}
     monkeypatch.setattr(
         redis_state, "record_task_success",
-        lambda n, d, s: recorded.__setitem__("success", (n, s)),
+        lambda n, d, s, **kw: recorded.__setitem__("success", (n, s)),
     )
     monkeypatch.setattr(
         redis_state, "record_task_failure",
-        lambda n, d, e: recorded.__setitem__("failure", (n, e)),
+        lambda n, d, e, **kw: recorded.__setitem__("failure", (n, e)),
     )
     monkeypatch.setattr(redis_state, "touch_worker_liveness", lambda: None)
 

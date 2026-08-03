@@ -359,16 +359,57 @@ RETIRED_TASK_LABELS = frozenset({
     "resolve_winners",  # retired 2026-07-06 (#991); dormant, folded into backfill_winners
 })
 
+# Queue 300H: verdicts (written by _tracked_run via the task_verdict contract)
+# that forbid a "healthy" reading of the most recent run.
+#   partial   — returned real progress, but not a finished run
+#   unknown   — spoke the vocabulary and proved nothing (skipped / overlap
+#               refused / complete-but-unpublished)
+#   failed    — the task returned a failed terminal without raising
+# NOT included: "thrown" (a raised exception keeps the consecutive-failure
+# bands) and "unverified" (a legacy summary with no terminal truth to read —
+# recorded as before, but stamped so nothing mistakes it for proof).
+_NOT_GREEN_VERDICTS = frozenset({"partial", "unknown", "failed"})
 
-def record_task_success(task_name: str, duration_ms: float, result_summary: dict | None = None):
+
+def _bump_window_counter(pipe, key: str):
+    """Increment a 24h counter WITHOUT sliding its expiry forward.
+
+    ``EXPIRE`` on every increment is what made ``successes_24h`` a lifetime
+    counter: a task succeeding hourly pushed the TTL out every hour, so the
+    number never rolled over (r346 read `precompute_calibration_main` at 1015 —
+    not 24 hours of an hourly task — and it only *looked* frozen because the
+    successes had stopped while the TTL kept the stale total alive). SET NX EX
+    stamps the window once, at the first increment; the key then dies on
+    schedule and the next increment opens a fresh 24h window. Gotcha #49 in
+    task-counter form: a lifetime total must never be read as a recent rate.
     """
-    Record a successful task execution with key output metrics.
+    pipe.set(key, 0, ex=86400, nx=True)
+    pipe.incr(key)
+
+
+def record_task_success(
+    task_name: str,
+    duration_ms: float,
+    result_summary: dict | None = None,
+    verdict: str = "complete",
+    verdict_reason: str = "",
+):
+    """
+    Record a COMPLETED task execution with key output metrics.
+
+    Only a run whose returned summary earned ``complete`` — or a legacy task
+    with no terminal truth to read, recorded as ``unverified`` — reaches here.
+    Partial/failed/unknown runs go to :func:`record_task_incomplete` or
+    :func:`record_task_failure` (Queue 300H Item 1).
 
     Args:
         task_name: Short task identifier (e.g., "poll_odds", "espn_sync")
         duration_ms: How long the task took
         result_summary: Key-value pairs from the task's return dict
                        (e.g., {"events_synced": 12, "errors": 0})
+        verdict: "complete" (proved it) or "unverified" (legacy shape — the
+                 invocation returned, which is not proof of completed work)
+        verdict_reason: Short machine-readable why, stored for operators
     """
     try:
         r = get_redis_client()
@@ -383,18 +424,80 @@ def record_task_success(task_name: str, duration_ms: float, result_summary: dict
             "last_duration_ms": str(round(duration_ms)),
             "last_result_summary": json.dumps(result_summary or {}),
             "consecutive_failures": "0",
+            "last_verdict": verdict,
+            "last_verdict_reason": verdict_reason,
         })
         pipe.expire(key, TASK_METRICS_TTL)
-        pipe.incr(success_key)
-        pipe.expire(success_key, 86400)  # 24h rolling window
+        _bump_window_counter(pipe, success_key)
         pipe.execute()
     except Exception as e:
         # Never let metrics recording break a task
         pass
 
 
-def record_task_failure(task_name: str, duration_ms: float, error: str):
-    """Record a failed task execution."""
+def record_task_incomplete(
+    task_name: str,
+    duration_ms: float,
+    verdict: str,
+    verdict_reason: str,
+    result_summary: dict | None = None,
+):
+    """Record a run that returned without completing its work (Queue 300H).
+
+    This is the shape ``_tracked_run`` had no word for. A resumable sweep that
+    stops at its deadline, a build that computed every phase but could not
+    publish, a beat that refused an overlap lease — none of these threw, and
+    none of them finished. Recording them as successes is how a calibration
+    rail stayed dark for weeks while its task read ``healthy`` (#1515).
+
+    Deliberately NOT a failure: ``consecutive_failures`` is left exactly as it
+    was, so partial progress never escalates a task to critical and never
+    relabels itself as a thrown error. It simply cannot be counted as
+    completion, and ``last_verdict`` keeps the task out of GREEN until a run
+    actually completes.
+    """
+    try:
+        r = get_redis_client()
+        key = f"{TASK_METRICS_PREFIX}:{task_name}"
+        now_iso = _utc_now_iso()
+
+        incomplete_key = f"{TASK_METRICS_PREFIX}:{task_name}:incompletes"
+        pipe = r.pipeline()
+        pipe.hset(key, mapping={
+            "last_incomplete_at": now_iso,
+            "last_duration_ms": str(round(duration_ms)),
+            "last_result_summary": json.dumps(result_summary or {}),
+            "last_verdict": verdict,
+            "last_verdict_reason": verdict_reason,
+        })
+        pipe.expire(key, TASK_METRICS_TTL)
+        _bump_window_counter(pipe, incomplete_key)
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def record_task_failure(
+    task_name: str,
+    duration_ms: float,
+    error: str,
+    verdict: str = "thrown",
+    verdict_reason: str = "",
+):
+    """Record a failed task execution.
+
+    Reached two ways now: a thrown exception (``verdict="thrown"``, as always),
+    and a run that returned a ``failed`` terminal without raising
+    (``verdict="failed"``) — ``coverage_metrics`` swallows its own exception and
+    returns ``terminal: "failed"``, which used to be recorded as a success.
+
+    The two are distinguished because their escalation policies differ. A
+    thrown exception keeps the long-standing consecutive-failure bands (one
+    transient error does not degrade a task, and changing that across ~100
+    tasks is not this queue's business). A *returned* failed terminal is the
+    task's own verdict on itself, and reading GREEN off it is the defect
+    (#1515) — so it degrades immediately.
+    """
     try:
         r = get_redis_client()
         key = f"{TASK_METRICS_PREFIX}:{task_name}"
@@ -410,10 +513,11 @@ def record_task_failure(task_name: str, duration_ms: float, error: str):
             "last_duration_ms": str(round(duration_ms)),
             "last_error": error[:500],  # Truncate long errors
             "consecutive_failures": str(current + 1),
+            "last_verdict": verdict,
+            "last_verdict_reason": verdict_reason,
         })
         pipe.expire(key, TASK_METRICS_TTL)
-        pipe.incr(failure_key)
-        pipe.expire(failure_key, 86400)
+        _bump_window_counter(pipe, failure_key)
         pipe.execute()
     except Exception:
         pass
@@ -430,10 +534,17 @@ def get_task_metrics(task_name: str) -> dict:
 
         success_key = f"{TASK_METRICS_PREFIX}:{task_name}:successes"
         failure_key = f"{TASK_METRICS_PREFIX}:{task_name}:failures"
+        incomplete_key = f"{TASK_METRICS_PREFIX}:{task_name}:incompletes"
         successes_24h = int(r.get(success_key) or 0)
         failures_24h = int(r.get(failure_key) or 0)
+        incompletes_24h = int(r.get(incomplete_key) or 0)
 
-        result = {"task": task_name, "successes_24h": successes_24h, "failures_24h": failures_24h}
+        result = {
+            "task": task_name,
+            "successes_24h": successes_24h,
+            "failures_24h": failures_24h,
+            "incompletes_24h": incompletes_24h,
+        }
 
         for k, v in data.items():
             k_str = k.decode() if isinstance(k, bytes) else k
@@ -466,11 +577,21 @@ def get_task_metrics(task_name: str) -> dict:
         # which is caught separately by the phase-heartbeat watchdog + surfaced on
         # the cockpit). Real, current failures still surface: any failure in the
         # last 24h keeps failures_24h > 0, so the consecutive bands below stay live.
-        if successes_24h == 0 and failures_24h == 0:
+        if successes_24h == 0 and failures_24h == 0 and incompletes_24h == 0:
             result["health"] = "no_data"
         elif consecutive >= 5:
             result["health"] = "critical"
         elif consecutive >= 2:
+            result["health"] = "degraded"
+        elif result.get("last_verdict") in _NOT_GREEN_VERDICTS:
+            # Queue 300H: the most recent run returned without completing its
+            # work (partial sweep, unpublished build, refused overlap lease).
+            # It threw nothing, so the consecutive-failure bands above are all
+            # zero — and reporting "healthy" here is precisely the false GREEN
+            # that let three calibration tasks vouch for a dark rail (#1515).
+            # "degraded" is used rather than a new word so every existing
+            # rollup (cockpit, celery dashboard, source health) surfaces it;
+            # `last_verdict_reason` carries the why.
             result["health"] = "degraded"
         else:
             result["health"] = "healthy"

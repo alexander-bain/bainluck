@@ -49,12 +49,46 @@ logger = logging.getLogger(__name__)
 
 
 def _tracked_run(task_name: str, async_fn):
-    """Run an async task and record success/failure metrics in Redis."""
+    """Run an async task and record its HONEST outcome in Redis.
+
+    Queue 300H (#1515). This used to record a success for any invocation that
+    returned without raising, which is how three calibration tasks reported
+    ``health: healthy`` while producing nothing: a time-horizon build that
+    returned ``horizons_done: 0/4`` every 6h, a price sweep that returned
+    ``terminal: partial`` on every deadline-truncated run, and a coverage
+    snapshot that swallowed its own exception and returned ``terminal:
+    "failed"``. The returned summary was right there in every case; nothing
+    read it.
+
+    Now the summary is classified by the pure contract in
+    ``app.utils.task_verdict`` and the verdict decides which counter moves:
+
+    * ``complete``   → success, as before
+    * ``partial``    → incomplete: no success, no escalation, never GREEN
+    * ``failed``     → failure (returned, not thrown) → degraded immediately
+    * ``unknown``    → authoritative: incomplete. Legacy (no terminal truth in
+      the summary at all): recorded as a success exactly as before, but stamped
+      ``unverified`` — the invocation returned, which is not proof of work.
+
+    Enforcement is scoped to ``task_verdict.ENFORCED_TASKS`` — the four
+    calibration adapters. Every other task classifies to a non-authoritative
+    ``unknown`` and records exactly as it did before, because a ``status`` key
+    means "no live games" or "nothing to backfill" in most of this codebase and
+    reading it as a terminal would swap one false GREEN for thirty false REDs.
+
+    Thrown exceptions keep their existing behaviour. ``BaseException`` is now
+    caught rather than ``Exception`` so a cancellation or a warm-shutdown kill
+    records a terminal before propagating — an in-flight beat killed by a
+    deploy used to vanish from both the ledger and the counters (r346).
+    """
     from app.tasks.redis_state import (
+        record_task_incomplete,
         record_task_success,
         record_task_failure,
         touch_worker_liveness,
     )
+    from app.utils.task_verdict import COMPLETE, FAILED, UNKNOWN, verdict_for
+
     # #1280 Item 3: every task run refreshes this worker generation's liveness so
     # the phase-heartbeat watchdog can tell a frozen marker owned by a live
     # generation (real wedge → RED) from one left by a dead/restarted generation
@@ -66,11 +100,41 @@ def _tracked_run(task_name: str, async_fn):
         duration_ms = (_time.monotonic() - start) * 1000
         # Extract summary from task result (most tasks return dicts)
         summary = result if isinstance(result, dict) else {"result": str(result)[:200]}
-        record_task_success(task_name, duration_ms, summary)
+        verdict = verdict_for(task_name, result)
+
+        if verdict.verdict == COMPLETE:
+            record_task_success(
+                task_name, duration_ms, summary,
+                verdict=COMPLETE, verdict_reason=verdict.reason,
+            )
+        elif verdict.verdict == FAILED:
+            record_task_failure(
+                task_name, duration_ms,
+                f"task returned a failed terminal ({verdict.reason})",
+                verdict=FAILED, verdict_reason=verdict.reason,
+            )
+        elif verdict.verdict == UNKNOWN and not verdict.authoritative:
+            # Legacy shape: preserve the pre-300H recording so ~100 tasks that
+            # predate the contract keep a usable health surface, but say plainly
+            # that nothing was verified.
+            record_task_success(
+                task_name, duration_ms, summary,
+                verdict="unverified", verdict_reason=verdict.reason,
+            )
+        else:
+            record_task_incomplete(
+                task_name, duration_ms,
+                verdict=verdict.verdict, verdict_reason=verdict.reason,
+                result_summary=summary,
+            )
         return result
-    except Exception as exc:
+    except BaseException as exc:  # noqa: BLE001 — cancellation must leave a terminal
         duration_ms = (_time.monotonic() - start) * 1000
-        record_task_failure(task_name, duration_ms, str(exc))
+        record_task_failure(
+            task_name, duration_ms,
+            str(exc) or type(exc).__name__,
+            verdict="thrown", verdict_reason=type(exc).__name__,
+        )
         raise
 
 # Redis URL from environment
