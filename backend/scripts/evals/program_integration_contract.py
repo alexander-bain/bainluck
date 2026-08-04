@@ -20,6 +20,8 @@ def integration_decision(case: dict) -> dict:
         "verdict": "ALLOW" if allowed else "REFUSE",
         "reason_codes": failures,
         "mutate_master": allowed,
+        "phase": case.get("phase", "pre_merge"),
+        "master_already_mutated": case.get("master_already_mutated", False),
         "recovery_owner": case.get("recovery_owner", "none" if allowed else "integrator"),
         "recovery": case.get("recovery", "proceed" if allowed else "collect valid evidence and retry"),
     }
@@ -47,6 +49,7 @@ def evaluate_corpus(corpus: dict) -> dict:
             actual["verdict"] == case["expected_verdict"]
             and actual["reason_codes"] == case["expected_reason_codes"]
             and actual["mutate_master"] == case["expected_mutate_master"]
+            and actual["master_already_mutated"] == case.get("expected_master_already_mutated", False)
             and actual["recovery_owner"] == case["expected_recovery_owner"]
         )
         results.append({"id": case["id"], "passed": passed, "actual": actual})

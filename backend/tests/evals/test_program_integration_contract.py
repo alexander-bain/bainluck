@@ -45,6 +45,13 @@ def test_program_owner_never_acquires_push_authority() -> None:
     assert decision["mutate_master"] is False
 
 
+def test_post_push_failures_do_not_claim_master_was_untouched() -> None:
+    for case_id in ("ci-red", "deploy-sha-mismatch", "prod-window-reused", "rollback-required"):
+        decision = integration_decision(_integration(case_id))
+        assert decision["phase"] == "post_push"
+        assert decision["master_already_mutated"] is True
+
+
 def test_partial_or_ambiguous_cycle_does_not_count() -> None:
     assert pilot_decision(_pilot("pilot-third-partial"))["valid_cycles"] == 2
     assert pilot_decision(_pilot("pilot-third-ambiguous"))["valid_cycles"] == 2
