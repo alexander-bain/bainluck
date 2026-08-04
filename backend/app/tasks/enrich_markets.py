@@ -1447,9 +1447,14 @@ async def evaluate_discover_with_llm(limit: int = 50):
                     f"reason={str(review.get('reason') or '')[:400]}"
                 )
                 if row:
+                    # #1542: re-seeing an existing candidate refreshes the
+                    # reasoning note but NOT its age. Bumping created_at made an
+                    # old proposal look freshly generated, so it never aged out
+                    # of the label queue and its stale steer stayed labelable.
+                    # Generation is tracked in `features`, stamped once at birth.
                     row.admin_notes = notes
-                    row.created_at = now
                 else:
+                    gen = now.isoformat()
                     session.add(DiscoverReviewDecision(
                         item_type="futures",
                         item_id=str(market_id),
@@ -1459,6 +1464,7 @@ async def evaluate_discover_with_llm(limit: int = 50):
                         auth_segment="anonymous",
                         decision=decision,
                         admin_notes=notes,
+                        features={"generation": gen, "evidence_generation": gen},
                     ))
                 stats["proposals"] += 1
             stats["graded"] = len(reviews)
@@ -1483,9 +1489,13 @@ async def evaluate_discover_with_llm(limit: int = 50):
                 )
                 row = existing.scalars().first()
                 if row:
+                    # #1542: refresh the note, not the age (see the futures
+                    # branch above). Email proposals are slug-keyed with no
+                    # authoritative market id, so the label queue retires them
+                    # until a canonical market link exists.
                     row.admin_notes = notes
-                    row.created_at = now
                 else:
+                    gen = now.isoformat()
                     session.add(DiscoverReviewDecision(
                         item_type="email",
                         item_id=key,
@@ -1497,6 +1507,7 @@ async def evaluate_discover_with_llm(limit: int = 50):
                         archetype=miss.get("archetype"),
                         decision="llm_proposed_promote",
                         admin_notes=notes,
+                        features={"generation": gen, "evidence_generation": gen},
                     ))
                 stats["proposals"] += 1
 

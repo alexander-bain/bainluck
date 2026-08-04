@@ -38,6 +38,23 @@ export default function LabelPassPage() {
 
   const items = (data as Record<string, unknown[]>)?.items || [];
   const total = items.length;
+
+  // #1542: lifecycle-safety summary — how many stale proposals were retired /
+  // quarantined before Alex ever saw them, and any already-applied verdict now
+  // on a stale market (review only, never auto-deleted).
+  const lifecycle = data as {
+    retired?: { count?: number; reasons?: Record<string, number> };
+    quarantined?: { count?: number; reasons?: Record<string, number> };
+    stale_applied_review?: { count?: number; reasons?: Record<string, number> };
+  } | undefined;
+  const retiredCount = lifecycle?.retired?.count || 0;
+  const quarantinedCount = lifecycle?.quarantined?.count || 0;
+  const staleAppliedCount = lifecycle?.stale_applied_review?.count || 0;
+  const reasonSummary = (reasons?: Record<string, number>) =>
+    Object.entries(reasons || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(" · ");
   const current = (items[session.index] as Record<string, unknown> | null) || null;
   const totals = sessionTotals(session);
 
@@ -128,10 +145,33 @@ export default function LabelPassPage() {
   if (error) return <div className="p-8 text-red-500">Error loading proposals.</div>;
   if (!data) return <div className="p-8 text-text-muted">Loading...</div>;
 
+  const lifecycleBanner = (retiredCount > 0 || quarantinedCount > 0 || staleAppliedCount > 0) ? (
+    <div
+      data-testid="lifecycle-summary"
+      className="mb-4 rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-xs text-text-secondary leading-relaxed"
+    >
+      <span className="font-semibold text-text-primary">Lifecycle filter:</span>{" "}
+      {retiredCount} retired
+      {retiredCount > 0 && lifecycle?.retired?.reasons && (
+        <span className="text-text-muted"> ({reasonSummary(lifecycle.retired.reasons)})</span>
+      )}
+      {" · "}{quarantinedCount} quarantined
+      {quarantinedCount > 0 && lifecycle?.quarantined?.reasons && (
+        <span className="text-text-muted"> ({reasonSummary(lifecycle.quarantined.reasons)})</span>
+      )}
+      {staleAppliedCount > 0 && (
+        <span className="text-accent-danger">
+          {" · "}{staleAppliedCount} applied verdict{staleAppliedCount === 1 ? "" : "s"} now stale — review
+        </span>
+      )}
+    </div>
+  ) : null;
+
   if (!current) {
     return (
       <div className="max-w-2xl mx-auto p-8">
         <h1 className="text-2xl font-bold mb-4">Label Pass Complete</h1>
+        {lifecycleBanner}
         <p className="text-text-secondary">{progressLabel(session, total)}.</p>
         {session.history.length > 0 && (
           <button
@@ -166,6 +206,8 @@ export default function LabelPassPage() {
         <h1 className="text-xl font-bold">Label Speed Pass</h1>
         <span className="text-sm text-text-muted font-mono">{session.index + 1} / {total}</span>
       </div>
+
+      {lifecycleBanner}
 
       {/* L2-168 session progress strip — live counts reflect accepts in real time */}
       <div className="text-sm text-text-secondary font-mono mb-2" data-testid="progress-strip">
