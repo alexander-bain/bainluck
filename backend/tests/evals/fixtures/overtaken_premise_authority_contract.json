@@ -1,0 +1,33 @@
+{
+  "schema_version":"overtaken-premise-authority-contract/v1",
+  "r359_evidence_requests":["exact durable premise ID for the Taylor wedding","approved authority type and provenance proving completion","explicit dependency links for market 12194657 and siblings","contradictory live/source-open facts","unrelated and still-live negative-control market IDs"],
+  "defaults":{"premise_id":"wedding-ts-tk-2026","market_premise_id":"wedding-ts-tk-2026","entity_id":"taylor-swift","market_entity_id":"taylor-swift","explicit_dependency":true,"ambiguous_family":false,"multi_stage":false,"required_stage_complete":true,"generation_complete":true,"authority_outage":false,"evidence":[],"propagated_surfaces":[],"negative_controls_preserved":true,"poison_sibling":false,"clean_sibling_preserved":true,"expected_action":"include","expected_refusals":[],"expected_status":"NOT_OBSERVABLE"},
+  "cases":[
+    {"id":"completed-premise-source-still-open","evidence":[{"type":"deterministic_public_result","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken"},
+    {"id":"venue-source-resolved","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken"},
+    {"id":"reviewed-result-manifest","evidence":[{"type":"reviewed_result_manifest","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken"},
+    {"id":"linked-canonical-event-completed","evidence":[{"type":"linked_canonical_event","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken"},
+    {"id":"authoritative-live-premise","evidence":[{"type":"linked_canonical_event","premise_state":"live","valid":true}]},
+    {"id":"authoritative-contradiction","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true},{"type":"linked_canonical_event","premise_state":"live","valid":true}],"expected_action":"review","expected_refusals":["AUTHORITATIVE_CONTRADICTION"]},
+    {"id":"title-only-poison","evidence":[{"type":"title_inference","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"keyword-only-poison","evidence":[{"type":"keyword_match","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"llm-only-poison","evidence":[{"type":"llm_assertion","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"news-only-poison","evidence":[{"type":"news_snippet","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"user-report-only-poison","evidence":[{"type":"user_report","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"curator-row-only-poison","evidence":[{"type":"curator_discovery_row","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["NO_AUTHORITATIVE_PREMISE_EVIDENCE"]},
+    {"id":"stale-authority","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true,"stale":true}],"expected_action":"review","expected_refusals":["STALE_AUTHORITY_EVIDENCE"]},
+    {"id":"wrong-wedding-premise","market_premise_id":"different-wedding","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["WRONG_PREMISE_IDENTITY"]},
+    {"id":"wrong-entity","market_entity_id":"different-person","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["WRONG_ENTITY_IDENTITY"]},
+    {"id":"implicit-keyword-family","explicit_dependency":false,"evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["DEPENDENCY_NOT_EXPLICIT"]},
+    {"id":"ambiguous-family","ambiguous_family":true,"evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["AMBIGUOUS_FAMILY"]},
+    {"id":"partially-complete-multistage","multi_stage":true,"required_stage_complete":false,"evidence":[{"type":"linked_canonical_event","premise_state":"completed","valid":true}],"expected_action":"review","expected_refusals":["PREMISE_ONLY_PARTIALLY_COMPLETE"]},
+    {"id":"unrelated-taylor-negative-control","premise_id":"future-album-release","market_premise_id":"future-album-release"},
+    {"id":"still-live-conditional-control","evidence":[{"type":"linked_canonical_event","premise_state":"live","valid":true}]},
+    {"id":"partial-surface-propagation","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","search"],"expected_action":"review","expected_refusals":["SURFACE_PROPAGATION_INCOMPLETE"]},
+    {"id":"negative-control-suppressed","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"negative_controls_preserved":false,"expected_action":"review","expected_refusals":["NEGATIVE_CONTROL_SUPPRESSED"]},
+    {"id":"poison-middle-isolated","poison_sibling":true,"clean_sibling_preserved":true},
+    {"id":"authority-outage","authority_outage":true,"expected_action":"review","expected_refusals":["AUTHORITY_UNAVAILABLE"]},
+    {"id":"api-only-premature-closure","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken","closure":{"claimed_closed":true,"deployed_sha":null,"surfaces_checked":[],"pinned_card_absent":false,"negative_controls_present":false,"adjacent_clean":false}},
+    {"id":"rendered-closure-pass","evidence":[{"type":"venue_settlement","premise_state":"completed","valid":true}],"propagated_surfaces":["discover","category","search"],"expected_action":"overtaken","expected_status":"SHIPPED_GOOD","closure":{"claimed_closed":true,"deployed_sha":"abc","surfaces_checked":["discover","category","search"],"pinned_card_absent":true,"negative_controls_present":true,"adjacent_clean":true}}
+  ]
+}
