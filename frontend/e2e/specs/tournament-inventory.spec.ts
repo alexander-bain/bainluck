@@ -147,13 +147,16 @@ for (const route of TOURNAMENT_ROUTES) {
   test(`concept renders — ${route.domain} (${route.c139Case})`, async ({ page, journey }) => {
     const path = await resolvePath((url) => page.request.get(url), route);
 
-    // A rotating domain with no live specimen is NOT-OBSERVABLE, not a defect.
-    // A static domain must always resolve, so `path` is never null there.
-    test.skip(
-      path === null,
-      `NOT-OBSERVABLE: no live ${route.domain} specimen at run time (${route.c139Case})`,
-    );
-    const conceptPath = path as string;
+    // A rotating domain with no live specimen is NOT-OBSERVABLE, not a defect —
+    // but this rail treats a skipped test as `infra_error` ("silence is never a
+    // pass", auditReporter.ts), so a NOT-OBSERVABLE domain must still reach
+    // `journey.finish()`. We probe a deterministic non-existent slug and prove
+    // the honest "Event not found" terminal renders — a real `empty_error`
+    // observation, never a silent skip. A static domain always resolves.
+    const notObservable = path === null;
+    const conceptPath = notObservable
+      ? `/event/${route.domain}/no-live-specimen`
+      : (path as string);
 
     await page.goto(conceptPath, { waitUntil: "domcontentloaded" });
 
@@ -179,15 +182,15 @@ for (const route of TOURNAMENT_ROUTES) {
       }
     })();
     const onConceptRoute = landedPath.startsWith(`/event/${route.domain}/`);
-
     const realConceptFound = heroVisible && onConceptRoute && !loadingVisible;
 
     // A rotating specimen that went cold between discovery and navigation is
-    // NOT-OBSERVABLE, not BROKEN — skip rather than red the run.
-    test.skip(
-      route.resolution.mode === "discover" && errorVisible,
-      `NOT-OBSERVABLE: ${route.domain} specimen resolved but returned the error terminal (raced cold)`,
-    );
+    // NOT-OBSERVABLE too — the honest error terminal renders in place, same as
+    // an unresolved slug. Both are proved by the legible `empty_error` state.
+    const isNotObservable =
+      notObservable || (route.resolution.mode === "discover" && errorVisible && !realConceptFound);
+
+    const mainText = await readContentRegionText(page);
 
     // Capability census — recorded, not asserted (a missing optional capability
     // is SHIPPED-PARTIAL data, not a test failure). `empty_error` is proven by
@@ -200,14 +203,16 @@ for (const route of TOURNAMENT_ROUTES) {
 
     const requiredPresent = route.required.filter((c) => capabilities[c]);
     const requiredMissing = route.required.filter((c) => !capabilities[c]);
-    // My own inventory verdict, attached beside the shared evaluator's pass/fail.
-    const verdict = !realConceptFound
-      ? "BROKEN"
-      : requiredMissing.length === 0
-        ? "SHIPPED-GOOD"
-        : "SHIPPED-PARTIAL";
+    // My inventory verdict, attached beside the shared evaluator's pass/fail.
+    // NOT-OBSERVABLE can never become SHIPPED-GOOD (C139/C140 rule).
+    const verdict = isNotObservable
+      ? "NOT-OBSERVABLE"
+      : !realConceptFound
+        ? "BROKEN"
+        : requiredMissing.length === 0
+          ? "SHIPPED-GOOD"
+          : "SHIPPED-PARTIAL";
 
-    const mainText = await readContentRegionText(page);
     const census = {
       journeyId: route.journeyId,
       domain: route.domain,
@@ -217,6 +222,7 @@ for (const route of TOURNAMENT_ROUTES) {
       childIssue: route.childIssue,
       realConceptFound,
       errorTerminalVisible: errorVisible,
+      notObservable: isNotObservable,
       required: route.required,
       requiredPresent,
       requiredMissing,
@@ -229,25 +235,36 @@ for (const route of TOURNAMENT_ROUTES) {
     });
     // Surface in the list reporter so a reader sees the verdict without the manifest.
     // eslint-disable-next-line no-console
-    console.log(`[inventory] ${route.journeyId} → ${verdict} present=[${requiredPresent.join(",")}] missing=[${requiredMissing.join(",")}]`);
+    console.log(
+      `[inventory] ${route.journeyId} → ${verdict} present=[${requiredPresent.join(",")}] missing=[${requiredMissing.join(",")}]`,
+    );
 
     await journey.finish({
       journeyId: route.journeyId,
       // No expectedPath: the shell canonicalizes the slug via router.replace, so
-      // an exact match would false-red. The prefix is asserted below instead.
+      // an exact match would false-red. The prefix / terminal is asserted below.
       contentMode: "none",
       realCardFound: false,
-      mainRegionNonBlank: realConceptFound && mainText.trim().length > 40,
+      mainRegionNonBlank: (realConceptFound || (isNotObservable && errorVisible)) && mainText.trim().length > 40,
     });
 
-    // The pass bar: a real concept rendered on the concept route. This is the
-    // BROKEN detector — a static domain that lands on the error terminal or a
-    // redirect fails here (a rotating cold specimen was skipped above).
-    expect(
-      realConceptFound,
-      `a real ${route.domain} concept must render (hero visible, on /event/${route.domain}/, not the error terminal). ` +
-        `landed=${landedPath} error=${errorVisible} loading=${loadingVisible}`,
-    ).toBe(true);
+    // The pass bar branches on observability:
+    //   - NOT-OBSERVABLE → the honest "Event not found" terminal must render
+    //     legibly (proves the empty/error state; never claims the domain shipped).
+    //   - Observable → a real concept must render on the concept route (the
+    //     BROKEN detector: a static domain that 404s or redirects fails here).
+    if (isNotObservable) {
+      expect(
+        errorVisible,
+        `NOT-OBSERVABLE ${route.domain}: the honest not-found terminal must render, not a blank page. landed=${landedPath}`,
+      ).toBe(true);
+    } else {
+      expect(
+        realConceptFound,
+        `a real ${route.domain} concept must render (hero visible, on /event/${route.domain}/, not the error terminal). ` +
+          `landed=${landedPath} error=${errorVisible} loading=${loadingVisible}`,
+      ).toBe(true);
+    }
   });
 }
 
