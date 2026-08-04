@@ -1104,3 +1104,38 @@ def test_card_snapshot_preserves_stratum_and_selection_reason(monkeypatch):
     snapshot = db.added.label_metadata["card_snapshot"]
     assert snapshot["stratum"] == "weather"
     assert snapshot["selection_reason"] == "labeling:weather"
+
+
+def test_labeling_candidates_firebase_admin_not_shortcircuited(monkeypatch):
+    """Regression: the workbench sends a Firebase user token in the Bearer header
+    (for reviewer identity), so `_check_admin_secret` RAISES (token != ADMIN_TOKEN).
+    The endpoint must fall back to the Firebase-admin check via `_authorize_admin`
+    and NOT 403. Before the fix, the raising secret check short-circuited the
+    `and`, 403-ing legit admins and breaking the Labeling Workbench.
+    """
+    from fastapi import HTTPException
+
+    market = SimpleNamespace(
+        id=789, name="Will the Fed cut in September?", description=None,
+        llm_sport_category="economics", sport=None, source="kalshi",
+        hook_description=None, image_url=None, group_id=None, resolution_date=None,
+        created_at=datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+        outcomes=[SimpleNamespace(id=1, name="Yes", current_probability=0.5,
+                                  probability_change_24h=0.01, rank=1)],
+    )
+    db = _ReadDB([_ExecuteResult(rows=[]), _ExecuteResult(scalar_rows=[market])])
+
+    def _raise_secret(secret=None, **kw):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    async def _admin_ok(secret, request, db):
+        return True
+
+    monkeypatch.setattr(admin_judgments, "_check_admin_secret", _raise_secret)
+    monkeypatch.setattr(admin_judgments, "_check_admin_auth", _admin_ok)
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/candidates?strata=low_confidence&limit=10"
+    )
+    assert response.status_code == 200, response.text

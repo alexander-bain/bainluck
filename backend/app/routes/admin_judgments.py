@@ -811,9 +811,7 @@ async def list_labeling_candidates(
     limit: int = Query(40, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
-        secret, request, db
-    ):
+    if not await _authorize_admin(secret, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     # Resolve reviewer: when "native" and authenticated via Bearer token,
@@ -939,9 +937,7 @@ async def labeling_coverage(
     reviewer (hashed), plus queue health showing unreviewed candidates
     per stratum.
     """
-    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
-        secret, request, db
-    ):
+    if not await _authorize_admin(secret, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     now = datetime.now(timezone.utc)
@@ -1171,9 +1167,7 @@ async def repair_clusters(
     Returns clusters sorted by count (most common first), each with sample
     market IDs and reviewer count.
     """
-    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
-        secret, request, db
-    ):
+    if not await _authorize_admin(secret, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     rows = (
@@ -1412,9 +1406,7 @@ async def export_eval_dataset(
     Returns JSON by default. Set fmt=csv for CSV download.
     No PII is included — reviewer emails are hashed.
     """
-    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
-        secret, request, db
-    ):
+    if not await _authorize_admin(secret, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
