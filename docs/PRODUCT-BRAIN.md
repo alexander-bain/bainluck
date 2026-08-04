@@ -125,3 +125,23 @@ Lanes remain FILE-COLLISION boundaries (backend / frontend+iOS / ops / eval) —
 - **"Well-traded" must be labeled honestly and graded from source volume where present** (#1463/#1530). The `price_moved` bar is a price-inequality, not proof of a trade; Kalshi's ~88% "fail" is ~65% capture artifact. Relabel now; add a **versioned** volume-based bar (`FuturesOutcome.volume>0`, backup open_interest; **NULL=unknown, never untraded**; exclude odds_api/DataGolf; dual-report snapshot+volume). Never let NULL masquerade as untraded.
 - **Calibration headline keeps 2:1:1 family weighting** (#1464) — moneyline home+away = 2 rows, spread/total = 1 each. Ruled keep-as-is; revisit only if the combined headline ECE is shown to mislead.
 - **Confidence shows as signal bars (1-3)** (#490) — compact cell-signal glyph next to the probability on Discover cards + event detail; thresholds stay data-driven.
+
+## RULINGS — 2026-08-04: OPERATING MODEL v4 (ratified by Alex; supersedes process MECHANICS only — the standing product rulings above are untouched)
+
+**META-RULE that governs this whole model — no new process without a NAMED FAILURE it fixes.** Every element below cites the specific incident/failure class it prevents; an element that cannot name one does not get added, and an existing rule that no longer maps to a live failure is a candidate for removal. WHY: process accretes for its own sake (the v3 hardening churn) until each rule must earn its keep against a real incident.
+
+**FOUR HOMES — one job each, no overlap. A fact lives in exactly one home.**
+1. **Board (GitHub Issues/Project) = the SOLE record of priorities, ideas, and completion.** Program parent issues with sub-issues underneath; status via the ruled columns (Inbox / In Progress / Blocked / Parked / Review-Verify / Done). Named failure: docs↔board drift — priority/status/completion lived at once in docs, backlog snapshots, `SEQUENCE.md` and queue files and drifted (the retired `backlog.md`; the repeated "board and SEQUENCE must not drift" incidents). One record ⇒ no drift.
+2. **PRODUCT-BRAIN = rulings ONLY** (append-only, CI-guarded). No ordering, no status, no priorities. Named failure: rulings got mixed with ordering and were twice clobbered by "consolidation" rewrites (the RE-RESTORED markers above). Rulings-only + the integrity guard prevents both.
+3. **Monday scoreboard = the progress TRUTH.** Cold-load seconds, time-to-first-card, jank count, visible ships, cycles-by-program → `_SCOREBOARD-<date>.md`. Named failure: lanes judged on feeling; portfolio drift was "a feeling, not a number" (the PRODUCT-FIRST RESET). A measured weekly number replaces vibes.
+4. **Execution = program worktrees** (defined next).
+
+**EXECUTION CONTAINER:**
+- **At most THREE live program worktrees**, all inside a single `~/bainluck-dev/` container (one directory per live program). UX is the pilot; **latency and calibration stand up next**. Named failure: scattered/ad-hoc worktrees collide and break tooling — a worktree outside the writable container was unusable this session (writes hard-denied), and the 2026-06-11 lane collision stashed WIP and skipped priorities. One container + a hard cap fixes discoverability, sandbox-rooting, and collision.
+- **Integrator = the SOLE master-pusher**, merging the live programs into master DAILY. Named failure: multiple pushers produce non-linear history and a sibling lane's fresh commit rides your push (gotcha #47). One pusher ⇒ one linear master.
+- **Codex = the cross-cutting ADVERSARIAL reviewer of EVERY merge** (never a program owner, never a pusher). Named failure: unverified "shipped" claims reached master (2026-06-11); Codex is elite at adversarial audits. A review gate on every merge catches false-green before it lands.
+- **Programs remain the roadmap layer OVER the unchanged file-collision lanes** (backend / frontend+iOS / ops / eval). v4 does NOT reorganize lanes by domain — this re-affirms the 2026-08-03 PROGRAM LAYER ruling.
+
+**ANTI-IDLE — caps order, never stop.** The caps above are a WIP CEILING, not a reason to sit idle: within the caps a lane always pulls the next capped item. Named failure: idle lanes and agents that stop mid-run (the standing "never stop" rule). Caps bound work-in-progress; they never license idling.
+
+**Migration actions this ruling authorizes:** migrate the UX pilot worktree into `~/bainluck-dev/`; stand up latency and calibration worktree slots next; file one parent issue per program on the board and re-parent existing open issues under them.
