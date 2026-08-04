@@ -1,0 +1,42 @@
+name: gitleaks
+
+# Secret scanning (OPERATING MODEL v4 addendum, Alex ruling 2026-08-04).
+# CodeQL (codeql.yml) covers static analysis; this closes the secret-scan gap.
+#
+# Standalone workflow ON PURPOSE: it is NOT part of ci.yml's deploy chain, so a
+# finding surfaces on the commit/PR without blocking the serialized Heroku
+# deploy job. Make it a required status check in branch protection only after the
+# first full-history scan is clean (an old committed secret would otherwise wedge
+# every merge — the same crying-wolf failure class the grid health score was
+# retired for).
+#
+# fetch-depth: 0 scans ALL tracked paths across FULL git history (the "covers all
+# tracked paths" ask). Add a .gitleaks.toml / .gitleaksignore to allowlist
+# confirmed false positives rather than deleting findings.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 8 * * 1"   # weekly full-history sweep, Monday 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # GITHUB_TOKEN lets the action annotate PRs. No GITLEAKS_LICENSE is
+          # required for a personal (non-Organization) account repo.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
