@@ -402,6 +402,18 @@ Run `/health` at the start of every session. It covers all production checks: Se
 - Grid health <100% → investigate missing columns/teams
 
 **Available tools:** Heroku CLI (`heroku`), Sentry API (`$SENTRY_AUTH_TOKEN`), GitHub CLI (`gh`). All authenticated and working.
+<!-- Credentials live ONLY in the untracked `~/.claude/.env` (and Heroku/GH config), NEVER inlined here.
+     The Sentry token was hardcoded in this file 2026-04-21 (commit 0c86d6c1), purged from the tree
+     2026-05-05 (commit 28c86677), and revoked; it still exists in git history, so it stays rotated. -->
+
+### Credential handling — STANDING RULE (Alex ruling 2026-08-04)
+
+Credentials NEVER go in tracked files — not CLAUDE.md, not docs, not code, not tests, not committed build
+artifacts (`.next.bak/*` leaked Next.js keys once — keep `.next*` gitignored). Secrets live only in the
+untracked `~/.claude/.env`, Heroku config, or GitHub Actions secrets. **If a session ends up holding a
+real secret it must NOT write it down anywhere tracked — file a `needs-user` issue asking Alex to place/rotate
+it, and reference the env-var name only.** The gitleaks workflow (`.github/workflows/gitleaks.yml`) is the
+backstop; a finding means rotate the credential (history retains it forever) — never just delete the line.
 
 **Production API access from Claude Code:** The sandbox may block direct `curl` to `api.bainluck.com` or `heroku logs`. The workaround: `source ~/.claude/.env` first — this loads `BAINLUCK_API` and `ADMIN_TOKEN` as environment variables. Then use `$BAINLUCK_API` instead of the literal URL:
 ```bash
