@@ -8,7 +8,6 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import PageHeader from "@/components/admin/PageHeader";
-import MetricSection from "@/components/admin/MetricSection";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
 
@@ -22,8 +21,34 @@ interface SportCount {
   count: number;
 }
 
+interface ActionableDefect {
+  kind: string;
+  id: number;
+  reasons: string[];
+}
+
+interface ClassificationHealth {
+  version: number;
+  verdict: "green" | "yellow" | "red" | "unknown";
+  reason: string;
+  generated_at: string;
+  census_complete: boolean;
+  eligible: {
+    numerator: number;
+    denominator: number;
+    events: number;
+    futures: number;
+  };
+  actionable: {
+    count: number;
+    reasons: Record<string, number>;
+    representative_ids: ActionableDefect[];
+  };
+}
+
 interface DashboardData {
   generated_at: string;
+  classification_health?: ClassificationHealth;
   event_coverage: { tagged: number; untagged: number };
   futures_coverage: { tagged: number; untagged: number };
   event_tag_distribution: TagCount[];
@@ -32,8 +57,47 @@ interface DashboardData {
   signal_distribution: TagCount[];
 }
 
+// The page reads the server verdict directly — no client-side thresholds.
+const VERDICT_TO_STATUS: Record<
+  ClassificationHealth["verdict"],
+  "good" | "warning" | "critical"
+> = {
+  green: "good",
+  yellow: "warning",
+  red: "critical",
+  unknown: "warning",
+};
+
+// Human labels for the reason-coded actionable defects.
+const REASON_LABELS: Record<string, string> = {
+  missing: "No sport identity — can't classify",
+  invalid: "Invalid stored tag (out of vocabulary)",
+  authority_disagree: "Stored tag disagrees with the source",
+};
+
+function reasonLabel(reason: string): string {
+  return REASON_LABELS[reason] ?? reason;
+}
+
 async function fetchDashboard(secret: string): Promise<DashboardData> {
   return adminFetchJSON<DashboardData>("/api/admin/taxonomy/dashboard", secret);
+}
+
+function healthSummary(h: ClassificationHealth): string {
+  const { denominator, numerator } = h.eligible;
+  switch (h.verdict) {
+    case "green":
+      return `No — every one of ${denominator.toLocaleString()} eligible items is correctly classified.`;
+    case "red":
+      return `Yes — ${h.actionable.count.toLocaleString()} eligible item${
+        h.actionable.count === 1 ? "" : "s"
+      } ${h.actionable.count === 1 ? "has" : "have"} a classification defect.`;
+    case "yellow":
+      return `Unverified — no defects in ${numerator.toLocaleString()}/${denominator.toLocaleString()} checked, but the census could not be completed.`;
+    case "unknown":
+    default:
+      return "Could not verify — the classification census failed to run.";
+  }
 }
 
 function CoverageBar({
@@ -62,6 +126,92 @@ function CoverageBar({
           style={{ width: `${pct}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+function ActionableDefects({ health }: { health: ClassificationHealth }) {
+  const { actionable } = health;
+
+  if (health.verdict === "unknown") {
+    return (
+      <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+        <h2 className="text-sm font-semibold text-text-primary mb-1">
+          Actionable defects
+        </h2>
+        <p className="text-xs text-text-muted">
+          The census could not run ({health.reason}); the verdict is unknown
+          rather than assumed healthy.
+        </p>
+      </div>
+    );
+  }
+
+  if (actionable.count === 0) {
+    return (
+      <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+        <h2 className="text-sm font-semibold text-text-primary mb-1">
+          Actionable defects
+        </h2>
+        <p className="text-xs text-text-secondary">
+          None. Every eligible (product-visible) item classifies correctly.
+          {!health.census_complete &&
+            " Census incomplete, so this is not yet a clean bill of health."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Actionable defects
+        </h2>
+        <span className="text-xs text-text-muted">
+          {actionable.count.toLocaleString()} eligible item
+          {actionable.count === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {/* Reason breakdown */}
+      <div className="space-y-1">
+        {Object.entries(actionable.reasons).map(([reason, count]) => (
+          <div
+            key={reason}
+            className="flex items-center justify-between text-xs"
+          >
+            <span className="text-text-secondary">{reasonLabel(reason)}</span>
+            <span className="text-text-muted">{count.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Representative IDs (bounded sample, not the headline) */}
+      {actionable.representative_ids.length > 0 && (
+        <div className="pt-2 border-t border-surface-border">
+          <p className="text-micro text-text-muted mb-1.5">
+            Sample ({actionable.representative_ids.length} of{" "}
+            {actionable.count.toLocaleString()}):
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {actionable.representative_ids.map((d) => (
+              <span
+                key={`${d.kind}-${d.id}`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-border text-micro text-text-secondary"
+                title={d.reasons.map(reasonLabel).join("; ")}
+              >
+                <code>
+                  {d.kind}:{d.id}
+                </code>
+                <span className="text-text-muted">
+                  {d.reasons.map(reasonLabel).join(", ")}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -163,14 +313,26 @@ export default function TaxonomyDashboard() {
     { refreshInterval: 60000 }
   );
 
+  const health = data?.classification_health;
+  const headerStatus = isLoading
+    ? "loading"
+    : health
+    ? VERDICT_TO_STATUS[health.verdict]
+    : "warning";
+  const headerSummary = isLoading
+    ? "Loading..."
+    : health
+    ? healthSummary(health)
+    : "Verdict unavailable — showing coverage only.";
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
-<PageHeader
-          question="How well is our content classified?"
-          status={isLoading ? "loading" : data ? (data.event_coverage.untagged > 0 || data.futures_coverage.untagged > 0 ? "warning" : "good") : "good"}
-          summary={isLoading ? "Loading..." : data ? `Events: ${data.event_coverage.tagged}/${data.event_coverage.tagged + data.event_coverage.untagged} tagged` : "No data"}
-          ideal="100% of events and futures markets classified."
+        <PageHeader
+          question="Is classification hurting the product?"
+          status={headerStatus}
+          summary={headerSummary}
+          ideal="Zero eligible (product-visible) items with a classification defect."
         />
         {data && (
           <span className="text-micro text-text-muted">
@@ -192,22 +354,8 @@ export default function TaxonomyDashboard() {
 
       {data && (
         <>
-          {/* Coverage */}
-          <div className="bg-surface-card rounded-xl border border-surface-border p-4 space-y-3">
-            <h2 className="text-sm font-semibold text-text-primary">
-              Tag Coverage
-            </h2>
-            <CoverageBar
-              label="Events (active)"
-              tagged={data.event_coverage.tagged}
-              untagged={data.event_coverage.untagged}
-            />
-            <CoverageBar
-              label="Futures (open)"
-              tagged={data.futures_coverage.tagged}
-              untagged={data.futures_coverage.untagged}
-            />
-          </div>
+          {/* The real question: actionable, product-visible defects */}
+          {health && <ActionableDefects health={health} />}
 
           {/* Signal Distribution */}
           {data.signal_distribution.length > 0 && (
@@ -241,6 +389,30 @@ export default function TaxonomyDashboard() {
             }))}
             keyField="tag"
           />
+
+          {/* Backfill Coverage — maintenance debt, NOT product health */}
+          <div className="bg-surface-card rounded-xl border border-surface-border p-4 space-y-3">
+            <h2 className="text-sm font-semibold text-text-primary">
+              Backfill Coverage
+            </h2>
+            <p className="text-xs text-text-muted">
+              How many items have <em>persisted</em> tags. This is maintenance
+              debt, not product health: classification is computed inline from
+              the source columns, so an item with empty persisted tags still
+              renders correctly. Low coverage here does not mean users are
+              affected — the verdict above answers that.
+            </p>
+            <CoverageBar
+              label="Events (active) — persisted"
+              tagged={data.event_coverage.tagged}
+              untagged={data.event_coverage.untagged}
+            />
+            <CoverageBar
+              label="Futures (open) — persisted"
+              tagged={data.futures_coverage.tagged}
+              untagged={data.futures_coverage.untagged}
+            />
+          </div>
         </>
       )}
     </div>

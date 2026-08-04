@@ -386,6 +386,27 @@ class TestTaxonomyDashboard:
         assert isinstance(body["futures_tag_distribution"], list)
         assert isinstance(body["sport_distribution"], list)
 
+    async def test_classification_health_envelope_present_and_green_on_empty_db(
+        self, client, mock_db, monkeypatch
+    ):
+        """UX-P001: the versioned verdict rides alongside raw coverage, and an
+        empty population (nothing to be wrong) reads GREEN, not 'attention'."""
+        monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+
+        resp = await client.get(
+            "/api/admin/taxonomy/dashboard",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+
+        assert resp.status_code == 200
+        health = resp.json()["classification_health"]
+        assert health["version"] >= 1
+        assert health["verdict"] == "green"
+        assert health["census_complete"] is True
+        assert health["actionable"]["count"] == 0
+        for key in ("numerator", "denominator", "events", "futures"):
+            assert key in health["eligible"]
+
 
 class TestTaxonomyEnrich:
     """POST /api/admin/taxonomy/enrich — LLM enrichment."""
