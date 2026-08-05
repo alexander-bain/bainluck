@@ -176,3 +176,187 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     expect(s.scrub).toBe(98);
   });
 });
+
+// ---------------------------------------------------------------------------
+// UX-P003 — the THIRD surface: the Discover card.
+//
+// Standing ruling #1 applied across pages: "the card is bound to the same
+// aggregate/blend probability the hero renders — no separate card-only
+// probability path may diverge from it" (Alex, 2026-08-05).
+//
+// The card (components/discover/EventCard.tsx:28) renders
+// `data.current_odds.home_probability`, which the feed fills with
+// `compute_aggregate_probability(event)` (routes/feed.py:4592). The event hero
+// renders `hero_probability`, which is the SAME backend call. So for one event
+// the backend hands both surfaces one number, and the frontend's job is simply
+// not to re-derive a different one.
+//
+// It used to. The live hero read `latestBlendPoint(aggregate_line)` — the
+// TIME-SERIES blend, built from different inputs, with per-bucket staleness
+// decay and an α=0.3 EMA on top. Measured on production 2026-08-05 (live MLB):
+//
+//     Giants @ Rangers    card 60%   hero/chart 78%   (18.8 pts apart)
+//     Dodgers @ Cubs      card 89%   hero/chart 99%   (10.6 pts apart)
+//     Blue Jays @ Astros  card 99%   hero/chart 100%
+//
+// A user tapping the card saw the number change under them. These tests fail if
+// that path is ever restored.
+// ---------------------------------------------------------------------------
+
+/** What the Discover card displays (EventCard.tsx:28 → formatProbability). */
+function cardPercent(feedCurrentOdds: { home_probability: number | null }) {
+  return pct(feedCurrentOdds.home_probability);
+}
+
+describe("UX-P003: card == hero == chart on a live game", () => {
+  // The backend blend for this event. ONE number, handed to every surface.
+  const BLEND = 0.5956;
+  // What the un-pinned time-series blend used to end on for the same game.
+  const STALE_SERIES_EDGE = 0.7837;
+
+  test("card and hero show the same % even when the series edge disagrees", () => {
+    const s = surfaces(
+      evt({
+        status: "live",
+        hero_probability: BLEND,
+        hero_probability_away: 1 - BLEND,
+        hero_probability_source: "blend",
+        current_odds: { home_probability: BLEND, away_probability: 1 - BLEND } as never,
+      }),
+      // A payload whose series edge still lags (an older cached history response,
+      // or a bucket the pin has not reached yet). The hero must not follow it.
+      hist({
+        aggregate_line: [
+          { timestamp: "2026-07-23T00:10:00Z", home_probability: 0.81 },
+          { timestamp: "2026-07-23T00:17:00Z", home_probability: STALE_SERIES_EDGE },
+        ],
+      }),
+      true,
+      false,
+    );
+
+    expect(cardPercent({ home_probability: BLEND })).toBe(60);
+    expect(s.hero).toBe(60);
+    expect(s.hero).toBe(cardPercent({ home_probability: BLEND }));
+    // The regression it guards: following the series edge would read 78%.
+    expect(s.hero).not.toBe(78);
+  });
+
+  test("with the backend pin applied, all three surfaces are one number", () => {
+    // This is the shipped shape: `_pin_live_blend_edge` sets the last point of
+    // aggregate_line to the same blend, so chart == hero == card by construction.
+    const s = surfaces(
+      evt({
+        status: "live",
+        hero_probability: BLEND,
+        hero_probability_away: 1 - BLEND,
+        hero_probability_source: "blend",
+        current_odds: { home_probability: BLEND, away_probability: 1 - BLEND } as never,
+      }),
+      hist({
+        aggregate_line: [
+          { timestamp: "2026-07-23T00:10:00Z", home_probability: 0.81 },
+          { timestamp: "2026-07-23T00:17:00Z", home_probability: BLEND },
+        ],
+      }),
+      true,
+      false,
+    );
+
+    expect(cardPercent({ home_probability: BLEND })).toBe(60);
+    expect(s.hero).toBe(60);
+    expect(s.chartPlot).toBe(60);
+    expect(s.tooltip).toBe(60);
+    expect(s.scrub).toBe(60);
+    expect(s.heroAway).toBe(40);
+  });
+
+  test("the Dodgers @ Cubs shape — a 10-point card/chart gap collapses to zero", () => {
+    const blend = 0.887;
+    const s = surfaces(
+      evt({
+        status: "live",
+        hero_probability: blend,
+        hero_probability_away: 1 - blend,
+        hero_probability_source: "blend",
+        current_odds: { home_probability: blend, away_probability: 1 - blend } as never,
+      }),
+      hist({ aggregate_line: [{ timestamp: "t", home_probability: blend }] }),
+      true,
+      false,
+    );
+    expect(cardPercent({ home_probability: blend })).toBe(89);
+    expect(s.hero).toBe(89);
+    expect(s.chartPlot).toBe(89);
+  });
+
+  test("an OPENING-sourced hero_probability is not mistaken for the blend", () => {
+    // hero_probability degrades to the opening line when no blend exists. That
+    // is not a live blend: the live branch must fall through to its sportsbook
+    // cross-check instead of labelling an opening number "Bain Luck blend".
+    const lastChartPoint = computeLastChartPoint(hist({}), null, null);
+    const r = resolveProbability(
+      evt({
+        status: "live",
+        hero_probability: 0.35,
+        hero_probability_source: "opening",
+        current_odds: {
+          home_probability: 0.62,
+          away_probability: 0.38,
+          bookmaker_count: 9,
+        } as never,
+      }),
+      hist({}),
+      lastChartPoint,
+      true,
+      false,
+    );
+    expect(pct(r.homeProb)).toBe(62); // the live consensus, not the opening 35
+    expect(r.probSourceLabel).not.toBe("Live · Bain Luck blend");
+  });
+
+  test("payloads predating hero_probability still fall back to the blend line", () => {
+    // Backward compatibility: a cached detail response with no hero_probability
+    // must keep working off aggregate_line rather than dropping to null.
+    const s = surfaces(
+      evt({ status: "live" }),
+      hist({ aggregate_line: [{ timestamp: "t", home_probability: 0.2 }] }),
+      true,
+      false,
+    );
+    expect(s.hero).toBe(20);
+  });
+
+  test("scheduled and finished surfaces are unchanged by the live binding", () => {
+    const scheduled = surfaces(
+      evt({
+        status: "scheduled",
+        hero_probability: 0.44,
+        hero_probability_source: "blend",
+        current_odds: {
+          home_probability: 0.44,
+          away_probability: 0.56,
+          bookmaker_count: 12,
+        } as never,
+      }),
+      hist({}),
+      false,
+      false,
+    );
+    expect(scheduled.hero).toBe(44);
+
+    const finished = surfaces(
+      evt({
+        status: "completed",
+        hero_probability: 0.98,
+        hero_probability_source: "blend",
+        opening_odds: { home_probability: 0.35, away_probability: 0.65 } as never,
+      }),
+      hist({ aggregate_line: [{ timestamp: "t", home_probability: 1 }] }),
+      false,
+      true,
+    );
+    // Finished still answers "what was expected pregame" (ruling #2 language).
+    expect(finished.hero).toBe(35);
+  });
+});

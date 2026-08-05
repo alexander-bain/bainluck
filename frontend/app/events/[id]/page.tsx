@@ -641,7 +641,15 @@ export default function EventPage({ params }: EventPageProps) {
                   )}
                 </div>
               ) : (
-              <div className="flex items-baseline">
+              // UX-P003: the hero's half of "card == hero == chart". The rail
+              // reads `data-probability` here and on the Discover card that
+              // links to this page, and fails if they disagree.
+              <div
+                className="flex items-baseline"
+                data-testid="event-hero-probability"
+                data-probability={homeProb ?? ""}
+                data-probability-source={probSourceLabel ?? ""}
+              >
                 <span
                   className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
                   style={{ color: event.home_team_data?.primary_color || "#111827" }}
