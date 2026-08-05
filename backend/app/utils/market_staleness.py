@@ -40,14 +40,38 @@ _MONTH_YEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# (pattern, (end_month, end_day), grace_days, sport_guard). ``sport_guard`` of
+# None means the rule applies to any category; otherwise the market's
+# ``sport_category`` must be in the set. The guard replaces the old hardcoded
+# "us open is tennis-only" special case, so the SAME title can carry a different
+# calendar per sport — golf's US Open ends in June, tennis's in September.
 _RECURRING_MARKET_EVENT_END_RULES: tuple[
-    tuple[re.Pattern, tuple[int, int], int], ...
+    tuple[re.Pattern, tuple[int, int], int, frozenset[str] | None], ...
 ] = (
-    (re.compile(r"\beurovision\b", re.IGNORECASE), (5, 31), 0),
-    (re.compile(r"\b(australian open)\b", re.IGNORECASE), (2, 2), 2),
-    (re.compile(r"\b(french open|roland garros)\b", re.IGNORECASE), (6, 8), 0),
-    (re.compile(r"\bwimbledon\b", re.IGNORECASE), (7, 15), 2),
-    (re.compile(r"\bus open\b", re.IGNORECASE), (9, 15), 2),
+    (re.compile(r"\beurovision\b", re.IGNORECASE), (5, 31), 0, None),
+    (re.compile(r"\b(australian open)\b", re.IGNORECASE), (2, 2), 2, None),
+    (re.compile(r"\b(french open|roland garros)\b", re.IGNORECASE), (6, 8), 0, None),
+    (re.compile(r"\bwimbledon\b", re.IGNORECASE), (7, 15), 2, None),
+    (re.compile(r"\bus open\b", re.IGNORECASE), (9, 15), 2, frozenset({"tennis"})),
+    # Golf majors (UX-P004 class a). A concluded major keeps a NULL
+    # resolution_date and keeps being polled, so neither the date gate nor the
+    # updated_at staleness gate ever fires — the field sits at live-looking
+    # probabilities for months. End dates are the final round, generously
+    # rounded late so a running major is never hidden.
+    (re.compile(r"\bmasters\b", re.IGNORECASE), (4, 16), 2, frozenset({"golf"})),
+    (re.compile(r"\bpga champ", re.IGNORECASE), (5, 23), 2, frozenset({"golf"})),
+    (re.compile(r"\bus open\b", re.IGNORECASE), (6, 23), 2, frozenset({"golf"})),
+    (
+        re.compile(r"\b(the open championship|british open)\b", re.IGNORECASE),
+        (7, 23),
+        2,
+        frozenset({"golf"}),
+    ),
+    # FIFA World Cup (UX-P004 class a). Soccer-guarded so cricket/rugby world
+    # cups are untouched. Markets naming a FUTURE tournament ("2030 FIFA World
+    # Cup Champion") are already protected upstream by the implied-year check,
+    # which returns before these rules are consulted.
+    (re.compile(r"\bworld cup\b", re.IGNORECASE), (7, 31), 3, frozenset({"soccer"})),
 )
 
 PROBABILITY_EXTREME_LOW = 0.02
@@ -103,10 +127,10 @@ def infer_market_real_world_end(
         return None
 
     sport_lower = (sport_category or "").lower()
-    for pattern, (month, day), grace_days in _RECURRING_MARKET_EVENT_END_RULES:
+    for pattern, (month, day), grace_days, sport_guard in _RECURRING_MARKET_EVENT_END_RULES:
         if not pattern.search(name):
             continue
-        if pattern.pattern == r"\bus open\b" and sport_lower != "tennis":
+        if sport_guard is not None and sport_lower not in sport_guard:
             continue
         implied_end = datetime(event_year, month, day, 23, 59, 59, tzinfo=timezone.utc)
         return implied_end, "recurring_event_calendar", grace_days
@@ -127,6 +151,65 @@ def is_title_implied_stale(
     if now > implied_end + timedelta(days=grace_days):
         return f"stale_{reason}"
     return None
+
+
+# A bare "July 31" rung parsed in January would look ~7 months stale under a
+# current-year assumption when it almost certainly means the COMING July. Only
+# treat a year-less rung as expired if it landed within this look-back window.
+_BARE_DATE_LOOKBACK_DAYS = 180
+
+
+def outcome_deadline_expired(
+    outcome_name: str | None,
+    now: datetime,
+    *,
+    grace_days: int = 1,
+) -> bool:
+    """True if a ladder rung's OWN name names a deadline that has already passed.
+
+    Ladder markets ("When will X happen?") carry dated rungs — "Before Jul 25,
+    2026", "July 31". Once a rung's date passes it can no longer happen, but the
+    rung keeps its last traded price and renders as a live 1-3% option. Nothing
+    else in the pipeline looks at outcome names: the market-level title check
+    sees an undated question, and the market keeps being polled so it never goes
+    stale. UX-P004 classes b + e.
+    """
+    name = outcome_name or ""
+    if not name:
+        return False
+    match = None
+    for match in _EXPLICIT_MONTH_DAY_RE.finditer(name):
+        pass  # last match wins, mirroring infer_market_real_world_end
+    if match is None:
+        return False
+    month = _MONTH_NAME_TO_NUMBER[match.group(1).lower().rstrip(".")]
+    day = int(match.group(2))
+    explicit_year = match.group(3)
+    year = int(explicit_year) if explicit_year else now.year
+    try:
+        deadline = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    if now <= deadline + timedelta(days=grace_days):
+        return False
+    if explicit_year is None and now - deadline > timedelta(days=_BARE_DATE_LOOKBACK_DAYS):
+        # Year-less and far in the past — almost certainly next year's rung.
+        return False
+    return True
+
+
+def expired_ladder_rungs(
+    outcome_names: list[str | None],
+    now: datetime,
+    *,
+    grace_days: int = 1,
+) -> set[str]:
+    """Names of rungs whose own deadline has passed. Empty set for undated ladders."""
+    return {
+        name
+        for name in outcome_names
+        if name and outcome_deadline_expired(name, now, grace_days=grace_days)
+    }
 
 
 def is_probability_extreme(probability: float | None) -> bool:

@@ -497,3 +497,77 @@ class TestPastResolutionDateFiltering:
             market, outcomes, "Yes", 0.65, NOW,
         )
         assert "past_resolution_date" not in trace["blockers"]
+
+
+# ---------------------------------------------------------------------------
+# UX-P004 — settled means settled
+# ---------------------------------------------------------------------------
+
+
+class TestConcludedContentLeavesTheLiveFeed:
+    """The staleness helpers existed before UX-P004 but were wired ONLY into the
+    debug trace (`build_discover_market_trace`), never into `_score_futures` —
+    so a concluded tournament scored and ranked normally on the real feed while
+    the "why is this here?" endpoint correctly called it stale.
+
+    These are wiring guards: they assert the LIVE scoring path consults the
+    helpers. Losing the call re-opens the exact gap without failing any of the
+    pure-function tests in test_market_staleness.py.
+    """
+
+    def _score_futures_source(self) -> str:
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        return inspect.getsource(feed_module._score_futures)
+
+    def test_live_path_applies_title_implied_staleness(self):
+        src = self._score_futures_source()
+        assert "_market_title_implied_stale_blocker(" in src, (
+            "_score_futures must drop concluded-by-title markets; without this "
+            "the concluded US Open / World Cup fields rank normally on Discover"
+        )
+
+    def test_live_path_drops_expired_ladder_rungs(self):
+        src = self._score_futures_source()
+        assert "_expired_ladder_rungs(" in src, (
+            "_score_futures must strip rungs whose own deadline has passed"
+        )
+
+    def test_helpers_are_imported_at_module_scope(self):
+        # Gotcha #7: a local re-import would shadow the module-level name and
+        # raise UnboundLocalError at request time, not import time.
+        from app.routes import feed as feed_module
+
+        assert callable(feed_module._expired_ladder_rungs)
+        assert callable(feed_module._market_title_implied_stale_blocker)
+
+
+class TestHealthySiblingsSurvive:
+    """Gotcha #43: a suppression's guard tests must assert BOTH directions —
+    the dead content goes AND the adjacent live content stays. The Sports-tab
+    emptying (#1091) came from a cap that only ever tested the first half."""
+
+    def test_future_tournament_markets_are_not_suppressed(self):
+        from app.utils.market_staleness import is_title_implied_stale
+
+        august = datetime(2026, 8, 5, 23, 25, tzinfo=timezone.utc)
+        survivors = [
+            ("2030 FIFA World Cup Champion", "soccer"),
+            ("2027 FIFA Women's World Cup Champion", "soccer"),
+            ("Golfers To Win A Pga Tour Major In 2027", "golf"),
+            ("Who wins Best Picture?", "entertainment"),
+            ("NBA Champion 2027", "basketball"),
+        ]
+        for name, category in survivors:
+            assert is_title_implied_stale(name, category, august) is None, (
+                f"{name!r} is a live future market and must stay on the feed"
+            )
+
+    def test_undated_ladders_keep_every_rung(self):
+        from app.utils.market_staleness import expired_ladder_rungs
+
+        august = datetime(2026, 8, 5, 23, 25, tzinfo=timezone.utc)
+        assert expired_ladder_rungs(["Yes", "No"], august) == set()
+        assert expired_ladder_rungs(["Spain", "France", "England"], august) == set()
