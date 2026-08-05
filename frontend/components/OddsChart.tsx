@@ -15,6 +15,8 @@ import {
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, toMinuteKey, fillMinuteGaps } from "@/lib/chartTimeline";
+// #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
+import { homeProbToChartAxis, chartAxisToHomeProb } from "@/lib/eventKeyStats";
 import { sourceHex } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -472,7 +474,9 @@ export default function OddsChart({
     // home win probability on a 0–100 axis (single-axis, not ±50 delta).
     for (const point of filteredHistory) {
       const delta =
-        point.home_probability !== null ? point.home_probability * 100 : null;
+        point.home_probability !== null
+          ? homeProbToChartAxis(point.home_probability)
+          : null;
 
       const dp = ensurePoint(point.timestamp);
       dp.homeDelta = delta;
@@ -495,7 +499,7 @@ export default function OddsChart({
       for (const point of points) {
         const delta =
           point.home_probability !== null
-            ? point.home_probability * 100
+            ? homeProbToChartAxis(point.home_probability)
             : null;
 
         const dp = ensurePoint(point.timestamp);
@@ -532,7 +536,9 @@ export default function OddsChart({
         const dataKey = `wp_${sourceKey}_delta`;
         for (const point of points) {
           const delta =
-            point.home_probability !== null ? point.home_probability * 100 : null;
+            point.home_probability !== null
+              ? homeProbToChartAxis(point.home_probability)
+              : null;
 
           const dp = ensurePoint(point.timestamp);
           dp[dataKey] = delta;
@@ -552,7 +558,9 @@ export default function OddsChart({
       // Legacy ESPN data
       for (const point of filteredEspnHistory) {
         const delta =
-          point.home_probability !== null ? point.home_probability * 100 : null;
+          point.home_probability !== null
+            ? homeProbToChartAxis(point.home_probability)
+            : null;
 
         const dp = ensurePoint(point.timestamp);
         dp.espnDelta = delta;
@@ -566,7 +574,7 @@ export default function OddsChart({
       if (filteredAggregateLine && filteredAggregateLine.length > 0) {
         // Use backend-computed aggregate line
         for (const point of filteredAggregateLine) {
-          const delta = point.home_probability * 100;
+          const delta = homeProbToChartAxis(point.home_probability);
           const dp = ensurePoint(point.timestamp);
           dp.bainLuckDelta = delta;
         }
@@ -1209,7 +1217,7 @@ export default function OddsChart({
               const pt = chartData[idx];
               const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
               const delta = pt[primaryDeltaKey] as number | null;
-              const homeProb = delta != null ? delta / 100 : 0.5; // 0–100 axis → 0–1
+              const homeProb = delta != null ? chartAxisToHomeProb(delta) : 0.5; // 0–100 axis → 0–1
               onActivePointChange({
                 timestamp: pt.timestamp,
                 homeProb,
