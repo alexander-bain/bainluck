@@ -300,6 +300,30 @@ export function latestBlendPoint(
 }
 
 /**
+ * The ONE conversion between a 0–1 home win-probability — the scale of every
+ * payload field (current_odds, opening_odds, history[], win_prob_history,
+ * aggregate_line) and every non-chart surface (hero, discover card, readout) —
+ * and the chart's internal 0–100 axis.
+ *
+ * #1003 was a stray `/100` at exactly this boundary: OddsChart multiplies
+ * `home_probability` by 100 to plot and to feed its tooltip, then divides the
+ * axis value by 100 when it hands a scrubbed point back to the hero/readout.
+ * When those two conversions drift (an added/removed `*100` or `/100`) the
+ * tooltip and the headline show different numbers for the same game. Routing
+ * BOTH directions through these named helpers makes the boundary one tested
+ * contract (probabilityInvariant.test.ts) — a regression fails a unit test
+ * instead of only surfacing as a live visual mismatch. The arithmetic is
+ * unchanged; this is a guard, not a behavior change.
+ */
+export function homeProbToChartAxis(homeProb: number): number {
+  return homeProb * 100;
+}
+
+export function chartAxisToHomeProb(axisValue: number): number {
+  return axisValue / 100;
+}
+
+/**
  * Determine the probability to display based on game status.
  *
  *   - Scheduled: current betting consensus
