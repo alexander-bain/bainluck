@@ -18,7 +18,7 @@ def _pilot(case_id: str) -> dict:
 
 def test_committed_corpus_matches_oracles() -> None:
     report = evaluate_corpus(load_corpus())
-    assert report["total"] == 38
+    assert report["total"] == 40
     assert report["passed"] == report["total"], report["cases"]
 
 
@@ -43,6 +43,15 @@ def test_program_owner_never_acquires_push_authority() -> None:
     decision = integration_decision(_integration("direct-program-push"))
     assert decision["reason_codes"] == ["PUSH_AUTHORITY_VIOLATION"]
     assert decision["mutate_master"] is False
+
+
+def test_cycle_one_handoff_drift_refuses_integration() -> None:
+    assert integration_decision(_integration("report-head-mismatch"))["reason_codes"] == [
+        "report_head_mismatch"
+    ]
+    assert integration_decision(_integration("handoff-incomplete"))["reason_codes"] == [
+        "handoff_incomplete"
+    ]
 
 
 def test_post_push_failures_do_not_claim_master_was_untouched() -> None:

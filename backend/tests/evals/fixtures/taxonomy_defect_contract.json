@@ -1,0 +1,24 @@
+{
+  "schema_version": "taxonomy-defect-contract/v1",
+  "reason_codes": ["missing", "invalid", "authority_disagree"],
+  "cases": [
+    {"id":"missing-sport","census_state":"complete","rows":[{"eligible":true,"inline_tags":[],"stored_tags":[]}],"expected":{"verdict":"red","reason_codes":["missing"],"actionable_count":1}},
+    {"id":"unmapped-event-sport","census_state":"complete","rows":[{"eligible":true,"inline_tags":["status:scheduled"],"stored_tags":["status:scheduled"]}],"expected":{"verdict":"red","reason_codes":["missing"],"actionable_count":1}},
+    {"id":"invalid-out-of-vocab","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:basketball"],"stored_tags":["sport:basketball","league:made_up"],"stored_tag_validity":{"league:made_up":false}}],"expected":{"verdict":"red","reason_codes":["invalid"],"actionable_count":1}},
+    {"id":"sport-authority-disagree","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:hockey"],"stored_tags":["sport:basketball"]}],"expected":{"verdict":"red","reason_codes":["authority_disagree"],"actionable_count":1}},
+    {"id":"league-disagree-with-matching-sport","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:hockey","league:nhl"],"stored_tags":["sport:hockey","league:khl"]}],"expected":{"verdict":"red","reason_codes":["authority_disagree"],"actionable_count":1}},
+    {"id":"category-disagree-with-matching-sport","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:golf","category:championship"],"stored_tags":["sport:golf","category:prop"]}],"expected":{"verdict":"red","reason_codes":["authority_disagree"],"actionable_count":1}},
+    {"id":"multiple-reasons-one-row","census_state":"complete","rows":[{"eligible":true,"inline_tags":[],"stored_tags":["sport:quidditch"],"stored_tag_validity":{"sport:quidditch":false}}],"expected":{"verdict":"red","reason_codes":["invalid","missing"],"actionable_count":1}},
+    {"id":"pure-backfill-debt","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:basketball","league:nba"],"stored_tags":[]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"probability-extreme-ineligible","census_state":"complete","rows":[{"eligible":false,"ineligible_reason":"probability_extreme","inline_tags":[],"stored_tags":[]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"title-stale-ineligible","census_state":"complete","rows":[{"eligible":false,"ineligible_reason":"title_stale","inline_tags":[],"stored_tags":["sport:made_up"],"stored_tag_validity":{"sport:made_up":false}}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"resolved-ineligible","census_state":"complete","rows":[{"eligible":false,"ineligible_reason":"resolved","inline_tags":[],"stored_tags":[]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"expired-resolution-ineligible","census_state":"complete","rows":[{"eligible":false,"ineligible_reason":"resolution_date_past","inline_tags":[],"stored_tags":[]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"stored-richer-no-contradiction","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:basketball"],"stored_tags":["sport:basketball","league:nba"]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"ordering-difference","census_state":"complete","rows":[{"eligible":true,"inline_tags":["league:nba","sport:basketball"],"stored_tags":["sport:basketball","league:nba"]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"dynamic-tag-staleness-only","census_state":"complete","rows":[{"eligible":true,"inline_tags":["sport:basketball","status:live","timing:today"],"stored_tags":["sport:basketball","status:scheduled","timing:tomorrow"]}],"expected":{"verdict":"green","reason_codes":[],"actionable_count":0}},
+    {"id":"incomplete-no-defects","census_state":"incomplete","rows":[{"eligible":true,"inline_tags":["sport:golf"],"stored_tags":[]}],"expected":{"verdict":"yellow","reason_codes":[],"actionable_count":0}},
+    {"id":"incomplete-with-proved-defect","census_state":"incomplete","rows":[{"eligible":true,"inline_tags":[],"stored_tags":[]}],"expected":{"verdict":"red","reason_codes":["missing"],"actionable_count":1}},
+    {"id":"failed-census","census_state":"failed","rows":[],"expected":{"verdict":"unknown","reason_codes":[],"actionable_count":0}}
+  ]
+}
