@@ -1,0 +1,81 @@
+# .gitleaksignore — allowlisted findings from the 2026-08-04 full-history sweep.
+# Fingerprint format: <commit>:<file>:<rule>:<startline>. Each line = one CONFIRMED
+# non-actionable finding. See CLAUDE.md 'Credential handling' + .github/workflows/gitleaks.yml.
+# NOT ignored on purpose: the revoked Sentry token in CLAUDE.md history (a real, handled
+#   secret) — left visible as a standing rotation reminder; Alex's call whether to add it.
+
+# --- dead Next.js build artifact key (per-build ephemeral, superseded, no longer tracked) ---
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781041398/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781042918/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:42
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:86
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:130
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043112/server/server-reference-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043339/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781043867/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781046847/server/middleware-manifest.json:generic-api-key:133
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/prerender-manifest.json:generic-api-key:1
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:44
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:45
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:88
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:89
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:132
+c52aa7e131f5aa41b7df6f97b1c016ac00cf7113:frontend/.next.bak.1781047323/server/middleware-manifest.json:generic-api-key:133
+
+# --- false-positive (SQLAlchemy alias attribute, not a secret) ---
+a1a416bbcd11c166a511d3ed13f1f0cd197a414f:backend/app/routes/source_intelligence.py:generic-api-key:1346
+a1a416bbcd11c166a511d3ed13f1f0cd197a414f:backend/app/routes/source_intelligence.py:generic-api-key:1355
+0adce8f1bcbf3c3f0493d79a9c389303046bf06e:backend/app/tasks/precompute_calibration.py:generic-api-key:361
+0adce8f1bcbf3c3f0493d79a9c389303046bf06e:backend/app/tasks/precompute_calibration.py:generic-api-key:369
+
+# --- test fixture (fake token/JWT/Stripe/device-token/probe-key) ---
+cd9ee57c3ecdc6f4a33a6dae26e44412852c6c33:backend/scripts/evals/probe_registry.json:generic-api-key:64
+cd9ee57c3ecdc6f4a33a6dae26e44412852c6c33:backend/scripts/evals/probe_registry.json:generic-api-key:73
+1c5ca9b0ced99f82053588f45c90a79f3bbc8b84:backend/tests/integration/test_route_notifications.py:generic-api-key:48
+1c5ca9b0ced99f82053588f45c90a79f3bbc8b84:backend/tests/integration/test_route_notifications.py:generic-api-key:59
+1c5ca9b0ced99f82053588f45c90a79f3bbc8b84:backend/tests/integration/test_route_notifications.py:generic-api-key:100
+1c5ca9b0ced99f82053588f45c90a79f3bbc8b84:backend/tests/integration/test_route_notifications.py:generic-api-key:113
+e766d4ea1c23efc53aa4e833e51fe45ebf08255d:backend/tests/test_notifications.py:generic-api-key:44
+e766d4ea1c23efc53aa4e833e51fe45ebf08255d:backend/tests/test_notifications.py:generic-api-key:131
+202b2dbb3ef979b630b194a091c8c77ed1ad4be9:backend/tests/test_push_notifications.py:generic-api-key:22
+d38a7e2a61e42f2a4747ca1ddd832b837ea30b00:frontend/__tests__/lib/analyticsSanitize.test.ts:generic-api-key:115
+cad97a4d4476a0b95d771cd3ed755cd370f3d2b6:frontend/__tests__/lib/analyticsSanitizeShapes.test.ts:generic-api-key:34
+7ef2ce7fbca7687f8080f0406738bac66d8ed5bb:frontend/e2e/contract/redaction.contract.test.js:stripe-access-token:61
+
