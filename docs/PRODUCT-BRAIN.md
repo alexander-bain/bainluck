@@ -145,3 +145,11 @@ Lanes remain FILE-COLLISION boundaries (backend / frontend+iOS / ops / eval) —
 **ANTI-IDLE — caps order, never stop.** The caps above are a WIP CEILING, not a reason to sit idle: within the caps a lane always pulls the next capped item. Named failure: idle lanes and agents that stop mid-run (the standing "never stop" rule). Caps bound work-in-progress; they never license idling.
 
 **Migration actions this ruling authorizes:** migrate the UX pilot worktree into `~/bainluck-dev/`; stand up latency and calibration worktree slots next; file one parent issue per program on the board and re-parent existing open issues under them.
+
+## RULING — 2026-08-05: Bind the Discover game card to the blend (approved as UX pilot cycle 3)
+
+**Ruling.** The Discover game card and the event-detail hero must ALWAYS show the same number, and that number is the blend. The card is bound to the same aggregate/blend probability the hero renders — no separate card-only probability path may diverge from it.
+
+WHY: this is standing ruling #1 ("THE BLEND IS THE PRODUCT … the hero and the chart must show the SAME number — the 57-vs-20 bug violated this") applied to the third surface. A card that shows a different number than the hero it links to is the same "the app isn't doing what it's supposed to" trust break. One blend, every surface: card == hero == chart. Divergence is a DATA/PLUMBING bug to fix at the source, never a per-surface display choice.
+
+Approved by Alex as **UX pilot cycle 3**.
