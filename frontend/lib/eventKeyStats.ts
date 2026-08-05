@@ -360,12 +360,45 @@ export function resolveProbability(
     // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
     // the aggregated Bain Luck line (historyData.aggregate_line); the hero must
     // read the SAME number so a lagged sportsbook consensus never contradicts the
-    // chart on screen (the 57%-hero vs 20%-chart bug). Prefer the latest blend
-    // point; fall back to the sportsbook consensus only when no blend exists yet.
-    const blendPoint = latestBlendPoint(historyData?.aggregate_line);
+    // chart on screen (the 57%-hero vs 20%-chart bug).
+    //
+    // UX-P003 — read `hero_probability` FIRST. This branch used to lead with
+    // `latestBlendPoint(aggregate_line)`, which bound the hero to a DIFFERENT
+    // blend than the Discover card: the card renders
+    // `compute_aggregate_probability(event)` (the point-in-time weighted median
+    // over win_probability_sources), while `aggregate_line` is the time-series
+    // blend — different inputs, per-bucket staleness decay, and formerly an
+    // α=0.3 EMA on top. So the card and the hero it links to disagreed on the
+    // same live game. Measured on production 2026-08-05:
+    //
+    //     Giants @ Rangers    card 60%  hero/chart 78%
+    //     Dodgers @ Cubs      card 89%  hero/chart 99%
+    //     Blue Jays @ Astros  card 99%  hero/chart 100%
+    //
+    // `hero_probability` IS `compute_aggregate_probability(event)` — literally
+    // the same backend call the card uses — so binding here makes card == hero
+    // by construction rather than by two paths happening to agree. The backend
+    // now also pins the live edge of `aggregate_line` to that same value
+    // (`_pin_live_blend_edge`), which brings the chart to the same number; the
+    // aggregate_line read stays as the fallback for a cached/older payload that
+    // predates the `hero_probability` field.
+    // Gate on the source: `hero_probability` degrades to the OPENING line when
+    // no blend exists, and an opening line is not a live blend — labelling it
+    // "Bain Luck blend" would be a lie and would pre-empt the sportsbook
+    // cross-check below. Only "blend" is the one number.
+    const heroBlend =
+      event.hero_probability_source === "blend" &&
+      typeof event.hero_probability === "number"
+        ? event.hero_probability
+        : null;
+    const blendPoint =
+      heroBlend ?? latestBlendPoint(historyData?.aggregate_line);
     if (blendPoint !== null) {
       homeProb = blendPoint;
-      awayProb = 1 - blendPoint;
+      awayProb =
+        heroBlend !== null && typeof event.hero_probability_away === "number"
+          ? event.hero_probability_away
+          : 1 - blendPoint;
       probSourceLabel = "Live · Bain Luck blend";
       return {
         homeProb,

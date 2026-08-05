@@ -6286,6 +6286,73 @@ def _extend_win_prob_history_to_live_edge(
     return extended
 
 
+def _pin_live_blend_edge(
+    aggregate_line: list,
+    event,
+    *,
+    is_live: bool,
+    now: datetime,
+) -> bool:
+    """Pin a live game's blend-line right edge to the point-in-time blend (UX-P003).
+
+    Standing ruling #1 is card == hero == chart: one number per question. The
+    Discover card and the backend ``hero_probability`` both render
+    ``compute_aggregate_probability(event)`` — the point-in-time weighted median
+    over ``win_probability_sources``. The chart, and (via
+    ``latestBlendPoint(aggregate_line)``) the web live hero, rendered the last
+    bucket of the TIME-SERIES blend instead. The two consume different inputs: the
+    series reads the odds-snapshot consensus history and applies staleness decay
+    per bucket, while the point-in-time blend reads the current per-source values.
+    So one live game showed two different numbers on two screens.
+
+    Dropping the α=0.3 EMA (``aggregation.py``, ruling #4) closes part of that gap
+    but NOT all of it. Measured on production 2026-08-05 against live MLB:
+
+        Giants @ Rangers   card 60% vs chart 78%  → EMA +14.5 pts, residual +4.3
+        Dodgers @ Cubs     card 89% vs chart 99%  → EMA  +0.6 pts, residual +10.0
+
+    So the live edge is pinned explicitly: the newest point of the line a live
+    game draws IS the blend every other surface shows. Historical buckets are
+    untouched (honest movement stays honest), and no weight and no blend math
+    changes — this only selects which already-computed blend the right edge
+    reports. Mutates ``aggregate_line`` in place; returns whether it pinned.
+    """
+    if not is_live or not aggregate_line:
+        return False
+    try:
+        from app.utils.aggregation import compute_aggregate_probability
+
+        live_edge = compute_aggregate_probability(
+            event, event_status=getattr(event, "status", None)
+        )
+        if live_edge is None:
+            return False
+
+        edge_ts = now.replace(second=0, microsecond=0)
+        # Compare parsed datetimes, not ISO strings: bucket timestamps carry
+        # whatever tzinfo their source points had, so a "+00:00" vs "Z" style
+        # difference must not silently create a duplicate-minute point.
+        try:
+            last_ts = datetime.fromisoformat(aggregate_line[-1]["timestamp"])
+        except (TypeError, ValueError, KeyError, IndexError):
+            last_ts = None
+        if last_ts is not None and last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=timezone.utc)
+
+        if last_ts is not None and last_ts >= edge_ts:
+            aggregate_line[-1]["home_probability"] = live_edge
+        else:
+            aggregate_line.append({
+                "timestamp": edge_ts.isoformat(),
+                "home_probability": live_edge,
+            })
+        return True
+    except Exception:
+        # Never let the pin break the chart — fall back to the unpinned line.
+        logger.warning("UX-P003: failed to pin live blend edge", exc_info=True)
+        return False
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,
@@ -6929,6 +6996,14 @@ async def get_event_odds_history(
     except Exception:
         # Graceful degradation — frontend falls back to naive averaging
         pass
+
+    # ── UX-P003: pin the LIVE edge of the blend line to the point-in-time blend ──
+    _pin_live_blend_edge(
+        aggregate_line,
+        event,
+        is_live=(not is_finished and (event.status or "").lower() == "live"),
+        now=now,
+    )
 
     # ── Inject terminal "final result" data point for completed events ──
     # Without this, the chart's last data point is whatever the last

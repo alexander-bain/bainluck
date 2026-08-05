@@ -89,12 +89,30 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         {!isDone && homeProb != null && awayProb != null && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm mb-1">
-              <span className="font-bold" style={{ color: awayColor }}>{formatProbability(awayProb)}</span>
+              {/* UX-P003: the card's half of "card == hero == chart". These
+                  data attributes let the browser rail read the number this card
+                  actually PAINTED and compare it against the hero on the page it
+                  links to, without scraping styled prose. */}
+              <span
+                className="font-bold"
+                style={{ color: awayColor }}
+                data-testid="event-card-away-probability"
+                data-probability={awayProb}
+              >
+                {formatProbability(awayProb)}
+              </span>
               <span className="flex items-center gap-1.5 text-text-muted text-[10px]">
                 Win Probability
                 <SignalBars tier={data.confidence_tier} />
               </span>
-              <span className="font-bold" style={{ color: homeColor }}>{formatProbability(homeProb)}</span>
+              <span
+                className="font-bold"
+                style={{ color: homeColor }}
+                data-testid="event-card-home-probability"
+                data-probability={homeProb}
+              >
+                {formatProbability(homeProb)}
+              </span>
             </div>
             <div className="h-2.5 rounded-full overflow-hidden flex">
               <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: awayColor }} />

@@ -8,7 +8,7 @@
     "smoke": "playwright test --project=desktop --project=mobile discover-smoke",
     "latency": "playwright test --project=desktop --project=mobile discover-latency",
     "sports-latency": "playwright test --project=desktop --project=mobile sports-latency",
-  "tournament-inventory": "playwright test --project=desktop --project=mobile tournament-inventory",
+    "tournament-inventory": "playwright test --project=desktop --project=mobile tournament-inventory",
     "consent": "playwright test --project=desktop --project=mobile consent",
     "grid": "playwright test --project=desktop --project=mobile championship-grid",
     "calibration": "playwright test --project=desktop --project=mobile calibration",
@@ -17,7 +17,8 @@
     "render-states": "node scripts/l2238-render-states.js",
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",
-    "wait-for-sha": "node scripts/wait-for-frontend-sha.js"
+    "wait-for-sha": "node scripts/wait-for-frontend-sha.js",
+    "blend-parity": "playwright test --project=desktop --project=mobile blend-surface-parity"
   },
   "devDependencies": {
     "@playwright/test": "1.48.2"

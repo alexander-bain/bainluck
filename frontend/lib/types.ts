@@ -192,6 +192,19 @@ export interface LeagueContextData {
 
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
+  /**
+   * THE ONE BLEND (standing ruling #1) — the single probability every surface
+   * shows for this event. The backend computes it with
+   * `compute_aggregate_probability(event)`, the exact same call that produces
+   * the Discover card's `current_odds.home_probability` (routes/feed.py:4592)
+   * and, on a live game, the pinned right edge of `aggregate_line`. Bind the
+   * hero to THIS rather than re-deriving a number per surface: that is what
+   * card == hero == chart means in practice (UX-P003).
+   */
+  hero_probability?: number;
+  hero_probability_away?: number;
+  /** "blend" when the aggregate exists, "opening" when only the opening line does. */
+  hero_probability_source?: "blend" | "opening";
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */

@@ -110,8 +110,8 @@ class TestComputeAggregatedProbability:
         }
         result = compute_aggregated_probability(sources, bucket_seconds=30)
         assert len(result) >= 3
-        # First value should be close to 0.50 (smoothing may shift slightly)
-        assert abs(result[0].home_probability - 0.50) < 0.01
+        # First value is exactly the source's reading — no smoothing (ruling #4).
+        assert result[0].home_probability == pytest.approx(0.50)
 
     def test_two_sources_weighted(self):
         """Betting (weight 3.0) should dominate over Kalshi (weight 0.8)."""
@@ -143,28 +143,48 @@ class TestComputeAggregatedProbability:
             "kalshi": [_tp(0, 0.90)],  # Only has t=0 data, will be stale at t=10
         }
         result = compute_aggregated_probability(sources, bucket_seconds=30)
-        # At t=10, Kalshi is 10 min stale → fully dropped
-        # The last data point should be moving toward betting's 0.60
-        # (smoothing may still carry some of the earlier blended value)
+        # At t=10, Kalshi is 10 min stale → fully dropped, leaving only betting.
+        # With no smoothing (ruling #4) the last point IS betting's current 0.60.
         last = result[-1]
-        assert last.home_probability > 0.50
+        assert last.home_probability == pytest.approx(0.60)
 
     def test_empty_sources(self):
         result = compute_aggregated_probability({})
         assert result == []
 
-    def test_smoothing_prevents_jumps(self):
-        """Exponential smoothing should prevent sudden jumps."""
+    def test_real_jumps_are_never_smoothed(self):
+        """UX-P003 / standing ruling #4: NO SMOOTHING, EVER, on charts.
+
+        This test previously asserted the OPPOSITE — that an α=0.3 EMA damped a
+        0.50 → 0.80 move down to ~0.59. That is exactly what ruling #4 forbids:
+        movement IS the product, and smoothing hides a real move (and, worse,
+        de-synced the chart's live edge from the card/hero — the UX-P003 bug).
+        A genuine jump must survive to the chart intact.
+        """
         sources = {
             "betting": [_tp(0, 0.50), _tp(1, 0.50), _tp(2, 0.80)],
         }
         result = compute_aggregated_probability(sources, bucket_seconds=30)
-        # The jump from 0.50 to 0.80 should be smoothed
-        # With α=0.3: new = 0.3*0.80 + 0.7*0.50 = 0.59 (not 0.80)
         probs = [r.home_probability for r in result]
-        # Check there's no single jump > 0.25 in the sequence
-        for i in range(1, len(probs)):
-            assert abs(probs[i] - probs[i - 1]) < 0.25
+        # The real move lands in full — no damping toward the previous value.
+        assert probs[-1] == pytest.approx(0.80)
+        assert max(probs) == pytest.approx(0.80)
+        # And the jump is reported at full size, not blurred across buckets.
+        assert max(abs(probs[i] - probs[i - 1]) for i in range(1, len(probs))) == pytest.approx(0.30)
+
+    def test_no_ema_lag_at_the_live_edge(self):
+        """The last point equals the current weighted median, not an EMA of it.
+
+        The production symptom (2026-08-05, Giants @ Rangers): the card and
+        `hero_probability` read 60% while the chart's last blend point read 78%,
+        +14.5 pts of which was pure EMA lag. With the EMA gone, a settled run of
+        readings resolves to those readings exactly.
+        """
+        sources = {
+            "betting": [_tp(0, 0.20), _tp(1, 0.20), _tp(2, 0.90), _tp(3, 0.90)],
+        }
+        result = compute_aggregated_probability(sources, bucket_seconds=30)
+        assert result[-1].home_probability == pytest.approx(0.90)
 
 
 class TestComputeCurrentAggregate:

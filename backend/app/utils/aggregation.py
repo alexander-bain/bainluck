@@ -5,7 +5,7 @@ Combines sportsbook consensus, prediction markets (Kalshi, Polymarket),
 and statistical models (ESPN, Bain Luck Model) into a single "Bain Luck"
 aggregate probability.
 
-Algorithm: Weighted median with staleness decay and exponential smoothing.
+Algorithm: Weighted median with staleness decay. NO smoothing — see below.
 
 The weighted median is inherently outlier-resistant — a single stale or
 erratic source cannot drag the aggregate because it's just one data point
@@ -41,8 +41,18 @@ STALENESS_GRACE_PERIOD = 120   # 2 min: no penalty
 STALENESS_DECAY_WINDOW = 180   # Next 3 min: linear decay to 0
 MAX_STALENESS = STALENESS_GRACE_PERIOD + STALENESS_DECAY_WINDOW  # 5 min: fully stale
 
-# Exponential smoothing factor (0-1, higher = more weight on new value)
-SMOOTHING_ALPHA = 0.3
+# NO SMOOTHING (standing ruling #4, UX-P003). The blend line the chart draws used
+# to run an α=0.3 exponential moving average over the per-bucket weighted median.
+# That is smoothing, and smoothing HIDES real movement — the thing the chart exists
+# to show. It also silently de-synced the surfaces: because the EMA lags, the last
+# point of `aggregate_line` (the chart's live edge, and the web hero's live source)
+# drifted away from `compute_aggregate_probability()` (the Discover card and the
+# backend `hero_probability`), so one game showed two different numbers on two
+# screens. Measured on production 2026-08-05 (live MLB): Giants @ Rangers card 60%
+# vs chart 78%, of which +14.5 pts was attributable to the EMA alone.
+#
+# Staleness decay below is deliberately KEPT: that is source *weighting* (how much
+# a reading counts), not smoothing (blurring the output over time).
 
 
 @dataclass
@@ -122,7 +132,9 @@ def compute_aggregated_probability(
     1. Find the latest reading from each source (carry-forward up to 5 min)
     2. Apply staleness-based weight decay
     3. Compute weighted median across all active sources
-    4. Apply exponential smoothing to prevent jumps
+
+    No smoothing is applied (standing ruling #4) — each bucket is the honest
+    weighted median of what the sources actually said in that bucket.
 
     Args:
         sources: Dict mapping source key → list of timestamped probabilities
@@ -157,7 +169,6 @@ def compute_aggregated_probability(
 
     # For each bucket, find latest reading per source
     aggregated: list[TimestampedProb] = []
-    prev_value: Optional[float] = None
 
     for bucket_ts in sorted_buckets:
         bucket_time = datetime.fromtimestamp(bucket_ts, tz=None)
@@ -210,17 +221,10 @@ def compute_aggregated_probability(
         wts = [r.weight for r in readings]
         raw_aggregate = _weighted_median(values, wts)
 
-        # Apply exponential smoothing
-        if prev_value is not None:
-            smoothed = SMOOTHING_ALPHA * raw_aggregate + (1 - SMOOTHING_ALPHA) * prev_value
-        else:
-            smoothed = raw_aggregate
-
-        prev_value = smoothed
-
+        # No smoothing (ruling #4): emit the bucket's honest weighted median.
         aggregated.append(TimestampedProb(
             timestamp=bucket_time,
-            home_probability=round(smoothed, 6),
+            home_probability=round(raw_aggregate, 6),
         ))
 
     return aggregated
