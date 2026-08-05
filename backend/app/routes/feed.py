@@ -2735,6 +2735,7 @@ def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float,
 
 
 from app.utils.market_staleness import (
+    expired_ladder_rungs as _expired_ladder_rungs,
     infer_market_real_world_end as _infer_market_real_world_end,
     is_title_implied_stale as _market_title_implied_stale_blocker,
 )
@@ -6088,6 +6089,19 @@ async def _score_futures(
                 if res_dt and res_dt < now:
                     continue
 
+            # UX-P004 class (a): a CONCLUDED tournament whose market carries a
+            # NULL resolution_date escapes every gate above — base_filters
+            # explicitly admit `resolution_date IS NULL`, and the market keeps
+            # being polled so updated_at staleness never fires either. Result:
+            # the concluded US Open golf field and the finished World Cup sat on
+            # Discover at live-looking probabilities for weeks. The title-implied
+            # calendar already existed in market_staleness but was wired only
+            # into the debug trace, never into this live path.
+            if _market_title_implied_stale_blocker(
+                market.name, market.llm_sport_category, now
+            ):
+                continue
+
             # Prepare outcome data for scoring
             outcomes_data = []
             leader_name = None
@@ -6098,6 +6112,22 @@ async def _score_futures(
                 key=lambda o: float(o.current_probability) if o.current_probability else 0,
                 reverse=True,
             )
+
+            # UX-P004 classes (b) + (e): drop ladder rungs whose OWN deadline has
+            # passed. A "Before Jul 25, 2026" rung can no longer happen, but it
+            # keeps its last traded price and renders as a live 1-3% option. If
+            # every rung has expired the whole ladder is dead — leave the surface
+            # rather than show a card made entirely of impossible options.
+            expired_rungs = _expired_ladder_rungs(
+                [o.name for o in sorted_outcomes], now
+            )
+            if expired_rungs:
+                live_outcomes = [
+                    o for o in sorted_outcomes if o.name not in expired_rungs
+                ]
+                if not live_outcomes:
+                    continue
+                sorted_outcomes = live_outcomes
 
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
                 prob = float(o.current_probability) if o.current_probability else None

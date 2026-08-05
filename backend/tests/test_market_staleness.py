@@ -16,9 +16,11 @@ from datetime import datetime, timezone
 from app.utils.market_staleness import (
     PROBABILITY_EXTREME_HIGH,
     PROBABILITY_EXTREME_LOW,
+    expired_ladder_rungs,
     infer_market_real_world_end,
     is_probability_extreme,
     is_title_implied_stale,
+    outcome_deadline_expired,
     should_exclude_from_featured,
 )
 
@@ -71,15 +73,34 @@ class TestTitleImpliedStale:
             is None
         )
 
-    def test_us_open_only_stale_for_tennis(self):
-        # "US Open" recurring rule is gated to the tennis category to avoid
-        # matching golf / unrelated markets.
+    def test_us_open_calendar_is_per_sport(self):
+        # "US Open" is two different tournaments. Golf's ends in June, tennis's
+        # in September, so the SAME title must resolve to a different end date
+        # per category — and never borrow the other sport's calendar.
+        # (UX-P004 class a: golf previously got NO calendar at all, so the
+        # concluded major sat on Discover at live-looking probabilities.)
+        golf = infer_market_real_world_end("US Open Winner 2026", "golf", NOW)
+        tennis = infer_market_real_world_end("US Open Winner 2026", "tennis", NOW)
+        assert golf is not None and tennis is not None
+        assert golf[0].month == 6, "golf US Open must use the June calendar"
+        assert tennis[0].month == 9, "tennis US Open must use the September calendar"
+
+        # Neither is stale DURING its own tournament...
+        assert is_title_implied_stale("US Open Winner 2026", "golf", NOW) is None
+        assert is_title_implied_stale("US Open Winner 2026", "tennis", NOW) is None
+        # ...but the concluded golf major is stale in August, while the tennis
+        # one (still ahead) is not. This is the exact pair that shipped broken.
+        august = datetime(2026, 8, 5, 17, 0, tzinfo=timezone.utc)
         assert (
-            infer_market_real_world_end("US Open Winner 2026", "golf", NOW) is None
+            is_title_implied_stale("US Open Winner 2026", "golf", august)
+            == "stale_recurring_event_calendar"
         )
+        assert is_title_implied_stale("US Open Winner 2026", "tennis", august) is None
+
+    def test_unrelated_category_us_open_gets_no_calendar(self):
+        # The guard must still refuse categories that own neither tournament.
         assert (
-            infer_market_real_world_end("US Open Winner 2026", "tennis", NOW)
-            is not None
+            infer_market_real_world_end("US Open Winner 2026", "politics", NOW) is None
         )
 
     def test_month_year_past_is_stale(self):
@@ -186,3 +207,89 @@ class TestShouldExcludeFromFeatured:
             should_exclude_from_featured("X", "entertainment", "resolved", 0.99, NOW)
             == "resolved"
         )
+
+
+# UX-P004 — settled means settled. Each test below pins one production example
+# captured in the Item 0 census on 2026-08-05.
+AUGUST = datetime(2026, 8, 5, 23, 25, 0, tzinfo=timezone.utc)
+
+
+class TestConcludedTournamentCalendar:
+    """Class (a): a concluded tournament keeps a NULL resolution_date and keeps
+    being polled, so neither the date gate nor updated_at staleness ever fires."""
+
+    def test_concluded_world_cup_market_is_stale(self):
+        # Production: "World Cup: Nation To Reach Quarterfinals", soccer,
+        # resolution_date=None, Argentina still showing 59% on 2026-08-05.
+        assert (
+            is_title_implied_stale(
+                "World Cup: Nation To Reach Quarterfinals", "soccer", AUGUST
+            )
+            == "stale_recurring_event_calendar"
+        )
+
+    def test_future_world_cup_is_protected_by_implied_year(self):
+        # Both were on the live feed and MUST survive — the implied-year check
+        # returns before the recurring rules are consulted.
+        assert (
+            is_title_implied_stale("2030 FIFA World Cup Champion", "soccer", AUGUST)
+            is None
+        )
+        assert (
+            is_title_implied_stale(
+                "2027 FIFA Women's World Cup Champion", "soccer", AUGUST
+            )
+            is None
+        )
+
+    def test_world_cup_rule_is_soccer_only(self):
+        # Cricket/rugby world cups run on entirely different calendars.
+        assert is_title_implied_stale("Cricket World Cup Winner", "cricket", AUGUST) is None
+
+    def test_concluded_golf_major_is_stale(self):
+        assert (
+            is_title_implied_stale("US Open Winner", "golf", AUGUST)
+            == "stale_recurring_event_calendar"
+        )
+
+    def test_golf_major_not_stale_during_its_week(self):
+        june = datetime(2026, 6, 19, 12, 0, tzinfo=timezone.utc)
+        assert is_title_implied_stale("US Open Winner", "golf", june) is None
+
+
+class TestExpiredLadderRungs:
+    """Classes (b) + (e): a dated rung that can no longer happen keeps its last
+    traded price and renders as a live 1-3% option."""
+
+    def test_past_rung_with_explicit_year_expired(self):
+        # Production: "Before Jul 25, 2026" still showing 3% on 2026-08-05.
+        assert outcome_deadline_expired("Before Jul 25, 2026", AUGUST) is True
+
+    def test_bare_date_rung_expired(self):
+        # Production: Netanyahu card, rung "July 31" still showing 0.67%.
+        assert outcome_deadline_expired("July 31", AUGUST) is True
+
+    def test_future_rung_survives(self):
+        assert outcome_deadline_expired("Before Jan 1, 2027", AUGUST) is False
+        assert outcome_deadline_expired("Before Jan 20, 2029", AUGUST) is False
+
+    def test_undated_rung_survives(self):
+        assert outcome_deadline_expired("Yes", AUGUST) is False
+        assert outcome_deadline_expired(None, AUGUST) is False
+
+    def test_bare_date_far_in_past_assumed_next_year(self):
+        # A bare "December 31" read in January means the COMING December, not a
+        # rung that expired 11 months ago.
+        january = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert outcome_deadline_expired("December 31", january) is False
+
+    def test_rung_not_expired_within_grace(self):
+        just_after = datetime(2026, 7, 31, 23, 0, tzinfo=timezone.utc)
+        assert outcome_deadline_expired("July 31", just_after) is False
+
+    def test_expired_ladder_rungs_partitions_the_ladder(self):
+        rungs = ["Before Jul 25, 2026", "Before Jan 1, 2027", "Yes", None]
+        assert expired_ladder_rungs(rungs, AUGUST) == {"Before Jul 25, 2026"}
+
+    def test_ladder_with_no_expired_rungs_is_empty(self):
+        assert expired_ladder_rungs(["Before Jan 1, 2027", "Yes"], AUGUST) == set()
