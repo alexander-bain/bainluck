@@ -79,11 +79,166 @@ async def _update_event_tags_impl(limit: int = 500) -> dict:
         # --- Futures market tags ---
         futures_tagged = await _update_market_tags(session, limit=limit)
 
+        # --- Old-tail drain (UX-P001, gotcha #109) ---
+        # The refresh queries above order NEWEST-first, so the tens of thousands
+        # of old rows that were ingested before tagging existed never get
+        # reached — a newest-first bulk backfill can never drain the tail. This
+        # bounded, oldest-first, keyset-cursor slice guarantees the tail drains,
+        # feeding the classification-health census toward a complete GREEN.
+        drain = await _drain_missing_tags_oldest_first(session, slice_limit=limit)
+
         return {
             "events_tagged": tagged,
             "events_errors": errors,
             "futures_tagged": futures_tagged,
+            "drain": drain,
         }
+
+
+# ── Old-tail drain (oldest-first keyset cursor) ──────────────────────────
+
+# Distinct Redis cursors so events and futures drain independently; both wrap
+# to 0 on a completed pass so freshly-arrived tail rows (and previously-errored
+# poison rows) are re-scanned on the next sweep. Bounded by default (#49).
+_EVENT_DRAIN_CURSOR_KEY = "bainluck:taxonomy_event_drain_cursor"
+_MARKET_DRAIN_CURSOR_KEY = "bainluck:taxonomy_market_drain_cursor"
+_DRAIN_CURSOR_TTL = 86400 * 14
+
+
+def _read_cursor(rc, key: int) -> int:
+    raw = rc.get(key)
+    try:
+        return int(raw.decode() if isinstance(raw, bytes) else raw)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+async def _drain_missing_event_tags(session, rc, slice_limit: int) -> dict:
+    """Tag one oldest-first keyset slice of events with missing tags."""
+    cursor = _read_cursor(rc, _EVENT_DRAIN_CURSOR_KEY)
+    rows = (
+        await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.id > cursor,
+                or_(Event.event_tags == None, Event.event_tags == []),  # noqa: E711
+            )
+            .order_by(Event.id.asc())
+            .limit(slice_limit)
+        )
+    ).scalars().all()
+
+    remaining = (
+        await session.execute(
+            select(func.count())
+            .select_from(Event)
+            .where(or_(Event.event_tags == None, Event.event_tags == []))  # noqa: E711
+        )
+    ).scalar() or 0
+
+    if not rows:
+        # Full pass complete — wrap so the next run re-scans from the start.
+        wrapped = cursor != 0
+        if wrapped:
+            rc.delete(_EVENT_DRAIN_CURSOR_KEY)
+        return {"checked": 0, "tagged": 0, "remaining": int(remaining), "wrapped": wrapped}
+
+    checked = 0
+    tagged = 0
+    for event in rows:
+        checked += 1
+        try:  # per-row isolation (#42) — one poison row can't wipe the slice
+            event.event_tags = _tag_event(event)
+            tagged += 1
+        except Exception:
+            logger.exception("drain: failed to tag event %s", event.id)
+
+    # Commit tag writes BEFORE advancing the cursor (#47): a crash after commit
+    # only re-does a small idempotent slice; the cursor never skips untagged work.
+    await session.commit()
+    rc.setex(_EVENT_DRAIN_CURSOR_KEY, _DRAIN_CURSOR_TTL, rows[-1].id)
+
+    return {"checked": checked, "tagged": tagged, "remaining": int(remaining), "cursor": rows[-1].id}
+
+
+async def _drain_missing_market_tags(session, rc, slice_limit: int) -> dict:
+    """Tag one oldest-first keyset slice of OPEN futures with missing tags."""
+    cursor = _read_cursor(rc, _MARKET_DRAIN_CURSOR_KEY)
+    rows = (
+        await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.id > cursor,
+                FuturesMarket.status == "open",
+                or_(
+                    FuturesMarket.market_tags == None,  # noqa: E711
+                    FuturesMarket.market_tags == [],
+                ),
+            )
+            .order_by(FuturesMarket.id.asc())
+            .limit(slice_limit)
+        )
+    ).scalars().all()
+
+    remaining = (
+        await session.execute(
+            select(func.count())
+            .select_from(FuturesMarket)
+            .where(
+                FuturesMarket.status == "open",
+                or_(
+                    FuturesMarket.market_tags == None,  # noqa: E711
+                    FuturesMarket.market_tags == [],
+                ),
+            )
+        )
+    ).scalar() or 0
+
+    if not rows:
+        wrapped = cursor != 0
+        if wrapped:
+            rc.delete(_MARKET_DRAIN_CURSOR_KEY)
+        return {"checked": 0, "tagged": 0, "remaining": int(remaining), "wrapped": wrapped}
+
+    checked = 0
+    tagged = 0
+    for market in rows:
+        checked += 1
+        try:
+            market.market_tags = compute_market_tags(
+                llm_sport_category=market.llm_sport_category,
+                llm_league=market.llm_league,
+                llm_gender=market.llm_gender,
+                llm_level=market.llm_level,
+                market_tier=market.market_tier,
+                category=market.category,
+                status=market.status,
+                resolution_date=market.resolution_date,
+                source=market.source,
+            )
+            tagged += 1
+        except Exception:
+            logger.exception("drain: failed to tag market %s", market.id)
+
+    await session.commit()
+    rc.setex(_MARKET_DRAIN_CURSOR_KEY, _DRAIN_CURSOR_TTL, rows[-1].id)
+
+    return {"checked": checked, "tagged": tagged, "remaining": int(remaining), "cursor": rows[-1].id}
+
+
+async def _drain_missing_tags_oldest_first(session, slice_limit: int = 500) -> dict:
+    """Drain one bounded oldest-first slice each for events and open futures.
+
+    Idempotent, poison-isolated, commit-before-cursor. Returns per-kind
+    checked/tagged/remaining so an operator can watch the tail converge.
+    """
+    from app.tasks.redis_state import get_redis_client
+
+    rc = get_redis_client()
+    events = await _drain_missing_event_tags(session, rc, slice_limit)
+    markets = await _drain_missing_market_tags(session, rc, slice_limit)
+    return {"events": events, "markets": markets}
 
 
 def _tag_event(event: Event) -> list[str]:

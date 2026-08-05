@@ -740,6 +740,167 @@ async def taxonomy_vocabulary(
     }
 
 
+# Candidate cap for the futures classification census. Real defect candidates
+# (sportless / stored-sport-tag disagreeing) number in the low single digits in
+# production; this generous bound only exists so a pathological population can
+# never load unbounded into the web process. Hitting it marks the census
+# incomplete (YELLOW), never a silent truncation.
+_FUTURES_CANDIDATE_CAP = 20000
+
+
+async def _compute_classification_health(db: AsyncSession, now: datetime) -> dict:
+    """Build the versioned ``classification_health`` envelope (UX-P001).
+
+    Separates product-visible classification defects from backfill debt:
+
+    * Events (the active scheduled/live population, ~1.7k) get a FULL census —
+      every eligible event's inline authority (``compute_event_tags``) is
+      compared against its persisted ``event_tags``.
+    * Futures (open, ~120k) get a bounded, complete census: SQL narrows to the
+      only runtime defect candidates — sportless rows (``llm_sport_category IS
+      NULL`` → inline yields no sport → MISSING) and rows whose stored ``sport:``
+      tag disagrees with ``llm_sport_category`` (AUTHORITY_DISAGREE). Because
+      ``compute_market_tags`` only ever persists validated tags derived from the
+      same source columns the inline authority reads, a non-candidate open row
+      cannot carry an identity defect or an invalid tag under normal operation —
+      it is clean by construction. Candidates are refined for eligibility with
+      ``should_exclude_from_featured`` and fully re-run through the pure
+      ``classify_record`` (which also catches INVALID / league / category
+      disagreement within the candidate set).
+
+    Fail-closed: any query error yields the UNKNOWN envelope, never GREEN.
+    """
+    from sqlalchemy import text
+    from app.utils.classification_health import (
+        KindCensus,
+        RecordInput,
+        evaluate,
+        unknown_envelope,
+    )
+    from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+    from app.utils.market_staleness import should_exclude_from_featured
+
+    try:
+        # ── Events: full census of the active population ──
+        ev_stmt = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.status.in_(["scheduled", "live"]))
+        )
+        ev_result = await db.execute(ev_stmt)
+        events = ev_result.scalars().all()
+
+        event_records: list[RecordInput] = []
+        for e in events:
+            sport_key = e.sport.key if e.sport else ""
+            inline = compute_event_tags(
+                sport_key=sport_key,
+                status=e.status,
+                commence_time=e.commence_time,
+                llm_importance=e.llm_importance,
+                llm_gender=e.llm_gender,
+                llm_level=e.llm_level,
+                llm_league=e.llm_league,
+                raw_ei=None,
+                broadcast_info=getattr(e, "broadcast_info", None),
+                highlight_result=None,
+            )
+            event_records.append(
+                RecordInput(
+                    kind="event",
+                    id=e.id,
+                    inline_tags=inline,
+                    stored_tags=list(e.event_tags or []),
+                )
+            )
+        events_census = KindCensus(
+            eligible_total=len(event_records),
+            verified=len(event_records),
+            census_complete=True,
+            records=event_records,
+        )
+
+        # ── Futures: bounded complete census over defect candidates ──
+        fut_denom_row = (
+            await db.execute(
+                text("SELECT COUNT(*) AS n FROM futures_markets WHERE status = 'open'")
+            )
+        ).first()
+        futures_eligible_total = int(fut_denom_row.n) if fut_denom_row else 0
+
+        candidate_rows = (
+            await db.execute(
+                text(
+                    """
+                    SELECT id, name, llm_sport_category, llm_league, llm_gender,
+                           llm_level, market_tier, category, status,
+                           resolution_date, source, market_tags
+                    FROM futures_markets
+                    WHERE status = 'open'
+                      AND (
+                        llm_sport_category IS NULL
+                        OR EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(market_tags) AS t
+                            WHERE t LIKE 'sport:%'
+                              AND t <> 'sport:' || llm_sport_category
+                        )
+                      )
+                    ORDER BY id ASC
+                    LIMIT :cap
+                    """
+                ),
+                {"cap": _FUTURES_CANDIDATE_CAP},
+            )
+        ).all()
+
+        futures_records: list[RecordInput] = []
+        for row in candidate_rows:
+            exclude_reason = should_exclude_from_featured(
+                row.name, row.llm_sport_category, row.status, None, now
+            )
+            if exclude_reason is not None:
+                # Ineligible (resolved / probability-extreme / title-stale) —
+                # not product-visible, so not an actionable defect.
+                continue
+            inline = compute_market_tags(
+                llm_sport_category=row.llm_sport_category,
+                llm_league=row.llm_league,
+                llm_gender=row.llm_gender,
+                llm_level=row.llm_level,
+                market_tier=row.market_tier,
+                category=row.category,
+                status=row.status,
+                resolution_date=row.resolution_date,
+                source=row.source,
+            )
+            stored = row.market_tags if isinstance(row.market_tags, list) else []
+            futures_records.append(
+                RecordInput(
+                    kind="futures",
+                    id=row.id,
+                    inline_tags=inline,
+                    stored_tags=list(stored),
+                )
+            )
+
+        futures_complete = len(candidate_rows) < _FUTURES_CANDIDATE_CAP
+        futures_census = KindCensus(
+            eligible_total=futures_eligible_total,
+            verified=futures_eligible_total if futures_complete else len(futures_records),
+            census_complete=futures_complete,
+            records=futures_records,
+        )
+
+        return evaluate(
+            events=events_census,
+            futures=futures_census,
+            generated_at=now.isoformat(),
+        )
+    except Exception as exc:  # noqa: BLE001 — the verdict must fail closed, not 500
+        return unknown_envelope(f"census_error:{type(exc).__name__}", now.isoformat())
+
+
 @router.get("/taxonomy/dashboard")
 async def taxonomy_dashboard(
     request: Request,
@@ -857,8 +1018,14 @@ async def taxonomy_dashboard(
         for row in signal_tags_result.all()
     ]
 
+    # UX-P001: the versioned verdict answering "is classification hurting the
+    # product?" — separate from the raw stored-coverage (backfill-debt) fields
+    # above, which are kept for compatibility.
+    classification_health = await _compute_classification_health(db, now)
+
     return {
         "generated_at": now.isoformat(),
+        "classification_health": classification_health,
         "event_coverage": event_coverage,
         "futures_coverage": futures_coverage,
         "event_tag_distribution": event_tag_distribution,
