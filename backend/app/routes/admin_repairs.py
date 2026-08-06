@@ -11,7 +11,12 @@ transactional session and RETURNS its own before/after census in the response bo
     POST /api/admin/repairs/{name}?apply=false   # dry-run: census + plan, no writes
     POST /api/admin/repairs/{name}?apply=true    # commit + return after-census
 
-    name ∈ { season-series | inverted-events | tt-retag | team-identity-merge }
+    name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
+             | event-final-scores | resolved-shape-census }
+
+Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` also
+accept those as query params; the dispatcher passes through only what a given
+repair's signature actually names.
 
 Auth: Bearer $ADMIN_TOKEN (or ?secret=). Dry-run is the default — you must pass
 apply=true to write. Each repair's core is a session-taking ``repair()``/
@@ -32,6 +37,10 @@ _REPAIRS = {
     "inverted-events": ("scripts.repair_inverted_completed_at", "repair"),
     "tt-retag": ("scripts.retag_table_tennis", "repair"),
     "team-identity-merge": ("app.utils.team_merge", "run_team_identity_merge"),
+    # CAL-P002: settled events frozen on a NON-final score (we held BOS 3-1 where
+    # the real final was 6-3). Bounded by (sport, date) GROUPS — re-invoke while
+    # ``groups_remaining > 0``. Accepts ?limit=&sport=&newest_first=.
+    "event-final-scores": ("scripts.repair_event_final_scores", "repair"),
     # Dry-run-ONLY census of shape drift on resolved markets (#284 Item 2). It
     # never writes — ``apply`` is ignored; a real resolved rewrite is a separate
     # CALIBRATION_POPULATION_VERSION-bumped queue.
@@ -48,6 +57,9 @@ async def run_repair(
     request: Request,
     secret: str = Query(None),
     apply: bool = Query(False, description="False (default) = dry-run census only; True = commit"),
+    limit: int = Query(None, description="Optional bound, for repairs that accept one"),
+    sport: str = Query(None, description="Optional sport-key filter, for repairs that accept one"),
+    newest_first: bool = Query(None, description="Optional ordering, for repairs that accept it"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run a committed data repair and return its before/after census.
@@ -64,12 +76,22 @@ async def run_repair(
 
     module_path, fn_name = _REPAIRS[name]
     import importlib
+    import inspect
 
     module = importlib.import_module(module_path)
     fn = getattr(module, fn_name)
 
+    # Pass the optional bounds through ONLY to repairs whose signature declares
+    # them, so adding a param here can never break an existing repair.
+    accepted = inspect.signature(fn).parameters
+    extra = {
+        k: v
+        for k, v in (("limit", limit), ("sport", sport), ("newest_first", newest_first))
+        if v is not None and k in accepted
+    }
+
     try:
-        result = await fn(db, apply)
+        result = await fn(db, apply, **extra)
     except Exception as e:
         # Never leave a half-applied repair committed on an error path.
         await db.rollback()
