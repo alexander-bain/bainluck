@@ -5343,6 +5343,9 @@ async def _score_sports_mode_futures(
         )
 
         # Build compact feed data (same shape as _score_futures)
+        # UX-P005 class (a): display rank = position in the probability-sorted
+        # list, never the stored `rank` column (which disagrees on ~23% of
+        # feed-surfaced markets).
         top_outcomes_data = [
             {
                 "id": o.id,
@@ -5350,14 +5353,14 @@ async def _score_sports_mode_futures(
                 "probability": (
                     float(o.current_probability) if o.current_probability else None
                 ),
-                "rank": o.rank,
+                "rank": position,
                 "movement": (
                     float(o.probability_change_24h)
                     if o.probability_change_24h
                     else None
                 ),
             }
-            for o in sorted_outcomes[:3]
+            for position, o in enumerate(sorted_outcomes[:3], start=1)
         ]
         top_outcomes_data = humanize_outcome_names_for_feed(
             top_outcomes_data, market.name
@@ -6588,6 +6591,12 @@ async def _score_futures(
             # movement badge for near-0% outcomes — a thin placeholder nominee ticking
             # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
             # display class).
+            # UX-P005 class (a): the DISPLAY rank is the outcome's position in
+            # this probability-sorted list, not the stored `rank` column. On
+            # 2026-08-06, 14 of 61 feed-surfaced markets carried rank=1 on an
+            # outcome that was not the probability leader — any consumer that
+            # trusts the stored column (native list ordering, "the favorite")
+            # names the wrong winner while the probabilities beside it disagree.
             top_outcomes_data = [
                 {
                     "id": o.id,
@@ -6595,7 +6604,7 @@ async def _score_futures(
                     "probability": (
                         float(o.current_probability) if o.current_probability else None
                     ),
-                    "rank": o.rank,
+                    "rank": position,
                     "movement": (
                         float(o.probability_change_24h)
                         if o.probability_change_24h
@@ -6603,7 +6612,8 @@ async def _score_futures(
                         else None
                     ),
                 }
-                for o in card_outcomes[:3]  # Show top 3 in feed card
+                # Show top 3 in feed card
+                for position, o in enumerate(card_outcomes[:3], start=1)
             ]
 
             # Humanize Yes/No outcome names for feed card display (BR49)
