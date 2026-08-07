@@ -83,6 +83,7 @@ from app.utils.feed_market_quality import (
     classify_market_quality,
     confidence_signal,
     cross_source_agreement,
+    classify_fabricated_book,
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
@@ -5032,6 +5033,11 @@ async def _score_sports_mode_futures(
             # L2-172: needed for the has_closing_line calibration signal; deferred
             # here would lazy-load per outcome and crash this async route.
             FuturesOutcome.calibration_probability,
+            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
+            # rule as the line above — omitting these lazy-loads per outcome and
+            # crashes the async route.
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -5925,6 +5931,11 @@ async def _score_futures(
             # L2-172: needed for the has_closing_line calibration signal; deferred
             # here would lazy-load per outcome and crash this async route.
             FuturesOutcome.calibration_probability,
+            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
+            # rule as the line above — omitting these lazy-loads per outcome and
+            # crashes the async route.
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -6188,6 +6199,32 @@ async def _score_futures(
                 if not live_outcomes:
                     continue
                 sorted_outcomes = live_outcomes
+
+            # UX-P011 (#1574): drop outcomes whose price was manufactured by averaging
+            # an untradeable book. A 1c-bid / 99c-ask quote midpoints to a confident-
+            # looking 50% that nobody would trade at. This runs BEFORE leader selection
+            # on purpose: on Oscars Best Casting the phantoms outranked every real
+            # price, so the card was not merely overstating confidence — it was naming
+            # the wrong leader.
+            phantom_keep_mask, phantom_drop_card = classify_fabricated_book(
+                [
+                    (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                    for o in sorted_outcomes
+                ],
+                # Polymarket negRisk is the mutually exclusive shape. A
+                # polymarket_event bundle is independent CUMULATIVE thresholds
+                # ("closes above $200"), which legitimately sum past 100% and must
+                # never be judged by the exclusive-sum rule.
+                is_exclusive=(market.group_type == "negrisk"),
+            )
+            if phantom_drop_card:
+                continue
+            if not all(phantom_keep_mask):
+                sorted_outcomes = [
+                    o
+                    for o, keep in zip(sorted_outcomes, phantom_keep_mask)
+                    if keep
+                ]
 
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
                 prob = float(o.current_probability) if o.current_probability else None
