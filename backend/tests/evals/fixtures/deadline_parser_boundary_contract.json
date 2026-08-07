@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {"id":"explicit-day-expired","kind":"outcome","label":"Before Jul 25, 2026","now":"2026-08-07T17:00:00Z","probability":0.03,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"bare-month-expired","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"month-year-expired","kind":"outcome","label":"Before July 2026","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"bare-year-expired","kind":"outcome","label":"Before 2026","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"exact-boundary-before","kind":"outcome","label":"Before August","now":"2026-08-01T23:59:58Z","probability":0.01,"grace_days":1,"expected":{"verdict":"keep","reason":"deadline_live"}},
+    {"id":"exact-boundary-after-grace","kind":"outcome","label":"Before August","now":"2026-08-02T00:00:01Z","probability":0.01,"grace_days":1,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"dec-jan-rollover","kind":"outcome","label":"Before December","now":"2026-01-15T12:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"deadline_live"}},
+    {"id":"dst-aware-input","kind":"outcome","label":"Before March 2026","now":"2026-04-03T01:00:00-04:00","probability":0.01,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"naive-clock-refusal","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00","probability":0.01,"expected":{"verdict":"refuse","reason":"invalid_input"}},
+    {"id":"trump-may-prose","kind":"outcome","label":"Trump may resign","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"march-madness-prose","kind":"outcome","label":"In March Madness","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"seed-number-not-date","kind":"outcome","label":"March 5 seed","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"world-cup-month-prose","kind":"outcome","label":"World Cup in March","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"negated-deadline","kind":"outcome","label":"Not before July","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"range-ambiguous","kind":"outcome","label":"July-August","now":"2026-09-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"no_authoritative_deadline"}},
+    {"id":"malformed-date","kind":"outcome","label":"Before February 31, 2026","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"refuse","reason":"invalid_input"}},
+    {"id":"below-threshold-expired","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":0.499999,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"threshold-needs-authority","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":0.5,"expected":{"verdict":"needs_authority","reason":"price_cannot_decide_lifecycle"}},
+    {"id":"above-threshold-needs-authority","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":0.99,"expected":{"verdict":"needs_authority","reason":"price_cannot_decide_lifecycle"}},
+    {"id":"high-prob-confirmed-answer","kind":"outcome","label":"June","now":"2026-08-07T17:00:00Z","probability":0.9995,"lifecycle_authority":"resolved_yes","expected":{"verdict":"keep","reason":"authoritative_answer"}},
+    {"id":"percent-scale-refusal","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":50,"expected":{"verdict":"refuse","reason":"invalid_probability"}},
+    {"id":"string-probability-refusal","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":"0.03","expected":{"verdict":"refuse","reason":"invalid_probability"}},
+    {"id":"future-rung-kept","kind":"outcome","label":"Before September","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"deadline_live"}},
+    {"id":"trace-serving-drift","kind":"parity","diagnostic_action":"keep","serving_action":"drop","expected":{"verdict":"drifted","reason":"diagnostic_serving_mismatch"}},
+    {"id":"shared-authority-target","kind":"parity","diagnostic_action":"drop","serving_action":"drop","expected":{"verdict":"shared","reason":"same_authority"}}
+  ]
+}
