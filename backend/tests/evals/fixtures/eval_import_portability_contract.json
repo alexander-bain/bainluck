@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {"id":"canonical_backend_pytest","import_path":"scripts.evals.alpha","invocation":"backend_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"canonical_repo_root_pytest","import_path":"scripts.evals.alpha","invocation":"repo_root_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"direct_dependency_free_script","import_path":"scripts.evals.alpha","invocation":"direct_script","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"module_execution","import_path":"scripts.evals.alpha","invocation":"module_execution","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"forbidden_backend_prefix","import_path":"backend.scripts.evals.alpha","invocation":"backend_pytest","expected":{"verdict":"REFUSE","reason_codes":["repo_root_only_import"]}},
+    {"id":"relative_import","import_path":".alpha","invocation":"direct_script","expected":{"verdict":"REFUSE","reason_codes":["relative_import_context_loss"]}},
+    {"id":"bare_module","import_path":"alpha","invocation":"backend_pytest","expected":{"verdict":"REFUSE","reason_codes":["noncanonical_eval_import"]}},
+    {"id":"namespace_ambiguity","import_path":"scripts.evals.alpha","invocation":"repo_root_pytest","namespace_ambiguous":true,"expected":{"verdict":"REFUSE","reason_codes":["namespace_ambiguity"]}},
+    {"id":"duplicate_identity","import_path":"scripts.evals.alpha","invocation":"repo_root_pytest","same_file_loaded_twice":true,"expected":{"verdict":"REFUSE","reason_codes":["duplicate_module_identity"]}},
+    {"id":"future_eval_discovery","import_path":"scripts.evals.future","invocation":"backend_pytest","module_discovered":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"future_eval_missing","import_path":"scripts.evals.future","invocation":"backend_pytest","module_discovered":false,"expected":{"verdict":"REFUSE","reason_codes":["future_eval_not_discovered"]}},
+    {"id":"direct_package_dependency","import_path":"scripts.evals.alpha","invocation":"direct_script","requires_package_context":true,"expected":{"verdict":"REFUSE","reason_codes":["direct_execution_package_dependency"]}},
+    {"id":"c156","import_path":"scripts.evals.morning_digest_discover_parity_contract","invocation":"backend_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"c157","import_path":"scripts.evals.nonfutures_envelope_renderability_contract","invocation":"backend_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"c158","import_path":"scripts.evals.codeql_workflow_truth_contract","invocation":"backend_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"c159","import_path":"scripts.evals.data_quality_alert_episode_contract","invocation":"backend_pytest","expected":{"verdict":"ALLOW","reason_codes":[]}}
+  ],
+  "suites": [
+    {"id":"clean_mixed_suite","rows":[{"import_path":"scripts.evals.alpha","invocation":"repo_root_pytest"},{"import_path":"scripts.evals.beta","invocation":"backend_pytest"}],"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"ci_collection_abort","rows":[{"import_path":"backend.scripts.evals.alpha","invocation":"repo_root_pytest"},{"import_path":"backend.scripts.evals.alpha","invocation":"backend_pytest"}],"expected":{"verdict":"REFUSE","reason_codes":["repo_root_only_import","pytest_context_gap"]}}
+  ]
+}
