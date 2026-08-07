@@ -340,3 +340,49 @@ Interacts with the other standing rulings rather than replacing them: CONTINUOUS
 says a lane takes its next work immediately (this is the branching mechanics for doing so);
 Invariant 4 is untouched (the Integrator alone rebases, merges and pushes); the per-WINDOW
 ownership nonce ruling above is orthogonal and still applies to each successor queue.
+## RULINGS — 2026-08-07: the shared master tree (Alex) — two rules from a destroyed-WIP incident
+
+Both rules come out of one event: a `/program latency` window ran `git reset --hard origin/master`
+meaning it for `~/bainluck-dev/latency`, the shell's cwd was `~/bainluck`, and it executed in the
+shared master worktree. Two local commits came back from the reflog; **nine files of uncommitted
+work did not, and never could** — unstaged content has no object in the database, so there was
+nothing for reflog, `fsck`, or `lost-found` to return. Filed as #1575.
+
+### 1. DESTRUCTIVE GIT TAKES `-C`
+
+In any session with more than one worktree in scope, `reset`, `checkout`, `clean`, and `rebase`
+MUST use the explicit `git -C <path> …` form. A bare invocation that relies on an inherited
+working directory is forbidden for these verbs, however obvious the cwd seems.
+
+WHY: cwd is *session* state, not *command* state. It is set by a previous, unrelated call —
+frequently one issued in the same parallel block, where ordering is not guaranteed — so the
+directory a destructive command lands in is not visible in the command itself. `git -C` moves
+the target from invisible session state into the command text, where review can see it. This is
+the write-direction twin of gotcha #47, which already covers the read direction (`git log
+origin/master..HEAD` before committing in a shared tree).
+
+**Named failure: 2026-08-07** — a `cd`-less `git reset --hard` sent in the same block as a
+`cd ~/bainluck` inherited that cwd and reset the master worktree.
+
+### 2. NO ORPHAN WIP
+
+Uncommitted changes in the shared master tree must be committed to a named branch, or stashed
+with a message, **within the session that made them**. Leaving dirty tracked files in `~/bainluck`
+across sessions is not a neutral parking state.
+
+The Integrator enforces this at Phase 0: anything dirty in the master tree older than 24h gets
+committed to a `rescue/<date>` branch rather than tiptoed around. Rescuing it costs one commit;
+the alternative is what happened.
+
+WHY: orphan WIP is worse than lost work — it is a standing tax with no owner. Every integration
+since 2026-08-05 had to read those nine files and prove its own diff was disjoint from them, and
+no cycle could say who owned them or whether they were finished. They imposed that cost on every
+lane while being one wrong cwd away from deletion the entire time — and then they were deleted.
+
+**Named failure: 2026-08-07** — nine files (Board Sentinel, sentinel filing, the calibration
+publish gate, `/calibration` page math, and their tests) dirty in the shared tree since at least
+Aug 5, matching no approved queue, destroyed with no recoverable diff.
+
+**Corollary for the redo:** do not reconstruct lost work by archaeology. Re-do it from *intent*
+in a deliberately scoped queue, or rule it unneeded. A diff nobody can describe is not a
+requirement.
