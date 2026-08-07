@@ -201,3 +201,81 @@ that home for completion.
 Phase 0**. Pre-staging it is dropped. This ends the three-cycles-running "unstaged Integrator
 queue" exception — the Integrator was the one lane whose claim artifact someone else had to
 create for it, which is why it kept running without one.
+
+## RULING — 2026-08-06: Integration ordering is the Integrator's call, not a question for Alex
+
+**(Fable ruling; Alex may veto.)**
+
+**Ruling.** When multiple program queues are simultaneously `ready_for_integration`, the
+Integrator decides the order **without asking anyone**, by this ladder:
+
+1. **Disjoint queues before colliding ones; smallest diff first.** A queue that touches no file
+   another ready queue touches merges immediately, smallest first.
+2. **Among colliding queues, first-certified merges first.** The later-certified queue rebases
+   **in its own worktree** and **re-certifies** — the Integrator does not carry someone else's
+   rebase, and a rebased branch is not certified until its gates are re-run on the new base.
+3. **A P0 security queue jumps the line**, ahead of both rules above.
+
+**Escalate to Alex ONLY when two colliding queues are both P0.** Nothing else about ordering is
+a human decision.
+
+**Named failure: INT-005 stalled on a human scheduling answer with three healthy queues
+waiting.** Nothing was broken, nothing was ambiguous about the *work* — the lane simply had no
+authority to pick an order, so certified, gate-green queues sat idle waiting on a question that
+had an obvious mechanical answer. That is the ANTI-IDLE rule's exact failure mode arriving
+through a gap in delegated authority rather than through a WIP cap.
+
+WHY this ladder and not "merge whatever is oldest": ordering only matters when queues collide,
+and the only real cost in a collision is *who re-runs gates*. Rule 1 gets the free merges out of
+the way so a collision never blocks unrelated work. Rule 2 puts the rebase cost on the queue that
+certified later — the one whose base was already stale — and forbids the Integrator from
+rebasing-and-shipping without re-certification, which would be a merge of code no gate ever saw
+in that combination. Rule 3 exists because a P0 security fix waiting behind a diff-size heuristic
+is the one case where the cheapest order is the wrong one.
+
+**Corollary (already in force):** the Integrator self-writes its claim artifact at Phase 0
+(PROGRAM-LANES Invariant 10), so choosing an order needs no external staging step either.
+
+## RULING — 2026-08-06: CONTINUOUS LANES v1 (Alex) — a lane never idles between cycles
+
+**1. NO IDLE AFTER COMPLETION.** When a lane posts its completion comment it does **not stop**.
+It takes its next work immediately:
+- a **pre-staged NEXT queue** if one exists; otherwise
+- it **SELF-STAGES**: pick the highest-priority open board issue carrying your program's label,
+  write your own queue for it per the standing template (one-sentence visible payoff, hard
+  guardrails, acceptance criteria, board-visible completion), **post that queue text to your
+  program parent as a QUEUE comment for the record**, and execute it.
+
+Self-staging is not a licence to invent scope: the queue must trace to an open, labelled board
+issue, and posting it as a comment before execution is what keeps a self-staged cycle as
+auditable as a Fable-staged one.
+
+**2. STACKING.** Never wait for your previous cycle to merge. Build cycle N+1 **on your own
+branch head**. If an integration bounces, rebase before continuing.
+
+**3. THE ONLY STOP CONDITIONS.** Four, and nothing else:
+- **an unstated judgment call** — post `⚠️ NEEDS RULING` to the parent issue and stop;
+- **context budget ~70% spent** — certify what is done, post `HANDOFF-RELAUNCH`, stop;
+- **the plumbing daily cap**;
+- **PREMISE-BROKEN**.
+
+A lane that stops for any other reason has stopped incorrectly. "Waiting for the merge",
+"waiting for someone to stage the next thing", and "waiting to be told what is next" are not
+stop conditions — they are the failure this ruling names.
+
+**Named failure: 2026-08-06 — four healthy lanes sat idle between cycles while only the
+Integrator worked, with the HUMAN as the message bus.** Every lane had finished cleanly and
+every lane stopped, so the one person the whole model exists to protect became the scheduler,
+hand-carrying "you're done, here's the next thing" to four terminals. The cost is not the idle
+minutes; it is that Alex's surface was supposed to stay fixed (fire lanes, MC rounds, dogfood,
+design runs, ship-gate eyeballs) and this quietly added dispatcher to it.
+
+WHY self-staging and not "wait for Fable": staging is only a bottleneck when the next item is
+*unknown*, and it usually is not — the board already carries a labelled, prioritised queue of
+open issues per program. Reading the top of your own label is mechanical. What genuinely needs a
+human is a taste/ranking/design call, and that already has its own stop condition and its own
+escalation path (THE ONE RULE ABOVE ALL is untouched by this ruling: a self-staged queue that
+turns out to need a judgment call posts ⚠️ NEEDS RULING and stops, exactly like a staged one).
+
+This supersedes the ANTI-IDLE clause of OPERATING MODEL v4 by making it concrete: the caps bound
+work-in-progress, and a lane at completion always has a next move it can make on its own.

@@ -535,6 +535,17 @@ class TestConcludedContentLeavesTheLiveFeed:
             "_score_futures must strip rungs whose own deadline has passed"
         )
 
+    def test_live_path_passes_probabilities_to_the_rung_filter(self):
+        # UX-P006: the probability guard only works if the call site actually
+        # supplies probabilities. Passing bare names would silently strip the
+        # ladder's answer (the "In which month will SpaceX IPO?" winner), and
+        # no pure-function test would catch it.
+        src = self._score_futures_source()
+        assert "current_probability" in src.split("_expired_ladder_rungs(")[1][:400], (
+            "_expired_ladder_rungs must be called with (name, probability) "
+            "pairs so a settled 99% rung is never stripped as a ghost"
+        )
+
     def test_helpers_are_imported_at_module_scope(self):
         # Gotcha #7: a local re-import would shadow the module-level name and
         # raise UnboundLocalError at request time, not import time.
@@ -571,6 +582,44 @@ class TestHealthySiblingsSurvive:
         august = datetime(2026, 8, 5, 23, 25, tzinfo=timezone.utc)
         assert expired_ladder_rungs(["Yes", "No"], august) == set()
         assert expired_ladder_rungs(["Spain", "France", "England"], august) == set()
+
+    def test_day_less_ladder_keeps_its_live_rungs(self):
+        # UX-P006 / #1567. The production aliens ladder (market 109435, read
+        # 2026-08-07) must lose exactly its two impossible rungs and keep the
+        # other seven — including the four future bare months named in the
+        # issue's acceptance criterion. Widening a suppression is the sharp
+        # edge, so this asserts the survivors, not just the casualties.
+        from app.utils.market_staleness import expired_ladder_rungs
+
+        august = datetime(2026, 8, 7, 17, 0, tzinfo=timezone.utc)
+        ladder = [
+            "Before Jan 20, 2029",
+            "Before 2028",
+            "Before 2027",
+            "Before November",
+            "Before December",
+            "Before October",
+            "Before September",
+            "Before July",
+            "Before August",
+        ]
+        expired = expired_ladder_rungs(ladder, august)
+        assert expired == {"Before July", "Before August"}
+        survivors = [rung for rung in ladder if rung not in expired]
+        assert len(survivors) == 7
+        for rung in ("Before September", "Before October", "Before November", "Before December"):
+            assert rung in survivors
+
+    def test_world_cup_qualifying_is_not_suppressed(self):
+        # UX-P006 / #1567 item 2: qualifying runs into November, so the July
+        # tournament-final calendar must not reach it.
+        from app.utils.market_staleness import is_title_implied_stale
+
+        october_2027 = datetime(2027, 10, 12, 12, 0, tzinfo=timezone.utc)
+        assert (
+            is_title_implied_stale("World Cup Qualifying Winner", "soccer", october_2027)
+            is None
+        )
 
 
 class TestDisplayRankMatchesProbability:

@@ -6165,8 +6165,21 @@ async def _score_futures(
             # keeps its last traded price and renders as a live 1-3% option. If
             # every rung has expired the whole ladder is dead — leave the surface
             # rather than show a card made entirely of impossible options.
+            # UX-P006: pass probabilities too. A past-dated rung priced at or
+            # above EXPIRED_RUNG_MAX_PROBABILITY already resolved YES — it is
+            # the ladder's answer ("In which month will SpaceX IPO?" -> "June"
+            # at 99.95%), not a ghost — and stripping it would hide the leader.
             expired_rungs = _expired_ladder_rungs(
-                [o.name for o in sorted_outcomes], now
+                [
+                    (
+                        o.name,
+                        float(o.current_probability)
+                        if o.current_probability is not None
+                        else None,
+                    )
+                    for o in sorted_outcomes
+                ],
+                now,
             )
             if expired_rungs:
                 live_outcomes = [
