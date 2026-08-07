@@ -112,8 +112,12 @@ from app.utils.feed_quality_debug import (
     summarize_missing_ground_truth_db_trace,
 )
 from app.utils.feed_cache import (
+    FEED_PREWARM_KEY_SCOPE_KEY,
+    FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     build_feed_cache_metadata,
+    feed_response_cache_key,
+    feed_response_cache_ttl,
 )
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
@@ -1430,6 +1434,14 @@ async def get_feed(
             mode = "discover"
 
     session_id = _session_id_from_request(request)
+    # LAT-P001: internal pre-warm marker. Read from the ASGI *scope*, never from a
+    # header or query param, so it is unreachable from HTTP — an outside caller
+    # cannot force cold rebuilds (that would be a free DoS lever on the most
+    # expensive endpoint we have). Only the in-process beat, which constructs its
+    # own Request, can set it.
+    _prewarm_rebuild = bool(
+        getattr(request, "scope", None) and request.scope.get(FEED_PREWARM_SCOPE_KEY)
+    )
     debug_global = debug and not debug_personalization and not my_teams_only
     feed_user = None if debug_global else user
     feed_session_id = None if debug_global else session_id
@@ -1453,7 +1465,10 @@ async def get_feed(
     # Session/user feeds change as impressions are recorded. Keep anonymous
     # no-session cache warmer, but make per-session Discover refreshes respond
     # quickly to "already seen" suppression.
-    _cache_ttl = 30 if my_teams_only else (5 if (feed_user or feed_session_id) else 60)
+    _cache_ttl = feed_response_cache_ttl(
+        my_teams_only=my_teams_only,
+        identified=bool(feed_user or feed_session_id),
+    )
     _shared_redis = None
     _cache_status = "disabled"
 
@@ -1466,17 +1481,42 @@ async def get_feed(
 
     if not debug and not exclude_reviewed:
         _cache_status = "miss"
-        _user_part = (
-            f"u:{feed_user.id}"
-            if feed_user
-            else f"s:{feed_session_id}" if feed_session_id else "anon"
+        # LAT-P001: shared key builder — the pre-warm beat writes through the
+        # SAME function, so a warmed key can never drift from the read key.
+        _cache_key = feed_response_cache_key(
+            user_id=feed_user.id if feed_user else None,
+            session_id=feed_session_id,
+            sport=sport,
+            limit=limit,
+            offset=offset,
+            include_events=include_events,
+            include_futures=include_futures,
+            tags=tags,
+            event_pct=event_pct,
+            my_teams_only=my_teams_only,
+            mode=mode,
         )
-        _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}:{mode or 'discover'}"
-        _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
+        if _prewarm_rebuild:
+            # Hand the RESOLVED key back to the in-process warmer. The warmer
+            # publishes under exactly the key this request derived — after the
+            # server-side Discover defaulting above has already rewritten
+            # event_pct/mode — so a warmed key cannot drift from the read key even
+            # if that defaulting changes later.
+            request.scope[FEED_PREWARM_KEY_SCOPE_KEY] = _cache_key
         try:
             _shared_redis = await _rc.get_shared_async_redis()
-            _fresh = await _rc.bounded_redis_call(
-                lambda: _shared_redis.get(_cache_key)
+            # LAT-P001: the pre-warm beat must actually BUILD. Going through the
+            # normal read would short-circuit on the 300s :stale mirror and return
+            # without rebuilding — the warmer would re-publish the same ageing
+            # payload forever and never refresh it, which looks identical from the
+            # outside to a warmer that works. So the warmer skips only the READ; the
+            # publication below is unchanged. This also means live traffic keeps
+            # being served the existing fresh/stale entry at ~15ms while the rebuild
+            # runs underneath it, instead of being exposed to a cold window.
+            _fresh = (
+                _rc.RedisResult(_rc.MISS)
+                if _prewarm_rebuild
+                else await _rc.bounded_redis_call(lambda: _shared_redis.get(_cache_key))
             )
             if _fresh.is_ok:
                 payload = _safe_cache_payload(_fresh.value)
@@ -1503,8 +1543,12 @@ async def get_feed(
                     return payload
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
-            _stale = await _rc.bounded_redis_call(
-                lambda: _shared_redis.get(f"{_cache_key}:stale")
+            _stale = (
+                _rc.RedisResult(_rc.MISS)
+                if _prewarm_rebuild
+                else await _rc.bounded_redis_call(
+                    lambda: _shared_redis.get(f"{_cache_key}:stale")
+                )
             )
             if _stale.is_ok:
                 payload = _safe_cache_payload(_stale.value)
