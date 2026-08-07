@@ -5,6 +5,7 @@ import Link from "next/link";
 import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
+import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -33,6 +34,13 @@ function readSessionSeed(): string {
     return "anon";
   }
 }
+
+// One row of `discover_card.distribution_outcomes` as the card renders it.
+type DistributionRow = {
+  label: string;
+  probability: number | null;
+  movement?: number | null;
+};
 
 interface FuturesCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -163,10 +171,18 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  const distributionRows = data.discover_card?.distribution_outcomes ?? [];
+  // Typed locally: `data.discover_card` is still untyped debt (see the frontend
+  // tsc baseline), so without this annotation these rows arrive as `any` and
+  // leaderFirstSlice's generic widens them to its own constraint.
+  const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
   if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= 4) {
     const maxProb = Math.max(...distributionRows.map((row) => row.probability ?? 0), 0.01);
-    const shownRows = distributionRows.slice(0, 4);
+    // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
+    // leader-first drops the leader — the Fed September card showed four
+    // also-rans totalling 47% while the 56% "No change" row never rendered.
+    // The rank column below is `index + 1` and titled "Rank N by probability",
+    // so an unsorted slice mislabels the rows as well as losing the answer.
+    const shownRows = leaderFirstSlice(distributionRows, 4);
     const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, distributionRows.length - shownRows.length);
 
     return (

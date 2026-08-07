@@ -6,6 +6,7 @@ import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { eventPath } from "@/lib/eventKey";
+import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
@@ -697,7 +698,9 @@ function FuturesFeedCard({
         {/* Top outcomes with probability bars */}
         {data.top_outcomes.length > 1 && (
           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
-            {data.top_outcomes.slice(0, 3).map((outcome, i) => (
+            {/* #1526: leader-first before truncating — i === 0 is styled as
+                THE favorite below, so an unsorted slice bolds an also-ran. */}
+            {leaderFirstSlice(data.top_outcomes, 3).map((outcome, i) => (
               <div key={outcome.id} className="flex items-center gap-2">
                 <span
                   title={outcome.name}
