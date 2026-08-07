@@ -1542,6 +1542,7 @@ async def search_events(
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
     include_upcoming: bool = Query(True, description="Include scheduled games"),
+    debug_timing: bool = Query(False, description="Return per-stage timings in ms"),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
@@ -1565,6 +1566,22 @@ async def search_events(
     # results: "we could not measure" must never read as "there is nothing".
     _deadline = time.monotonic() + (_SEARCH_DEADLINE_MS / 1000.0)
     degraded: list[str] = []
+
+    # LAT-P002/#1494: per-stage timings, the #1197 lever (same shape as
+    # routes/teams.py). The 2026-08-07 baseline showed the two SLOWEST gold queries
+    # returning the two SMALLEST payloads (`us recession 2026` 11.13s/736B,
+    # `masters winner` 9.81s/1237B) while the largest payload answered in 4.37s — so
+    # cost tracks scan, not results. Which SCAN was still an inference, because no
+    # read-only rail on this system can capture a production query plan (#1494 r340).
+    # This makes the next measurement decisive instead of another inference.
+    _stage_ms: dict[str, int] = {}
+    _t0 = time.perf_counter()
+
+    def _mark(label: str) -> None:
+        nonlocal _t0
+        _stage_ms[label] = round((time.perf_counter() - _t0) * 1000)
+        _t0 = time.perf_counter()
+
     await _apply_search_statement_timeout(db)
 
     search_pattern = f"%{q}%"
@@ -1756,6 +1773,7 @@ async def search_events(
         await _recover_search_session(db)
         total_count = 0
         degraded.append("event_count")
+    _mark("event_count")
 
     # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
     fuzzy_corrected: str | None = None
@@ -1848,6 +1866,7 @@ async def search_events(
         await _recover_search_session(db)
         events = []
         degraded.append("events")
+    _mark("event_page")
 
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
@@ -1916,6 +1935,7 @@ async def search_events(
         all_team_names.append(event.home_team_name)
         all_team_names.append(event.away_team_name)
     team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
+    _mark("event_enrichment")
 
     # Format results and group by sport
     formatted_results = []
@@ -2042,6 +2062,7 @@ async def search_events(
             await _recover_search_session(db)
             futures_markets_raw = []
             degraded.append("futures")
+    _mark("futures")
 
     # Re-rank FIRST (name-match priority + volume + wrong-league), THEN dedup —
     # so dedup keeps the volume-winning representative per key. (Dedup-then-rerank
@@ -2269,6 +2290,7 @@ async def search_events(
     # produced "Spain" for "spacex"); the correction still drives the events
     # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
     # so the marquee tie-break has the real contenders before the 5-row cap.
+    _mark("futures_format_concepts")
     team_rank = _search_rank(_team_search_vector(), q).label("team_rank")
     team_search_q = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation,
@@ -2297,6 +2319,7 @@ async def search_events(
             await _recover_search_session(db)
             _team_result_rows = []
             degraded.append("teams")
+    _mark("teams")
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
@@ -2386,6 +2409,10 @@ async def search_events(
         # honestly found nothing — the same "missing evidence is not GREEN" grammar
         # the Flow and Grid Sentinels use. Absent key == complete answer.
         **({"degraded": degraded} if degraded else {}),
+        # LAT-P002/#1494: opt-in only (?debug_timing=1); absent otherwise, so the
+        # normal response shape is untouched.
+        **({"debug_timing": {**_stage_ms,
+                             "total_ms": sum(_stage_ms.values())}} if debug_timing else {}),
     }
 
 

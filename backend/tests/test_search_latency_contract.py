@@ -283,3 +283,24 @@ def test_degraded_is_additive_and_absent_on_a_complete_answer():
     found nothing — missing evidence is not GREEN. And an untouched response shape
     for the normal path: the key is absent, not an empty list."""
     assert '**({"degraded": degraded} if degraded else {})' in SEARCH_SRC
+
+
+# ---------------------------------------------------------------------------
+# debug_timing — the #1197 lever, so the NEXT measurement is decisive
+# ---------------------------------------------------------------------------
+
+def test_debug_timing_is_opt_in_and_absent_by_default():
+    """The normal response shape must be untouched: no key unless asked for."""
+    assert '"debug_timing"' in SEARCH_CODE
+    assert "if debug_timing else {}" in SEARCH_CODE, (
+        "debug_timing must be opt-in; an always-present key changes the payload"
+    )
+
+
+def test_every_db_stage_is_timed_separately():
+    """The 2026-08-07 baseline could not say WHICH stage was slow — the two slowest
+    gold queries returned the two smallest payloads. Each stage that issues its own
+    query must be independently attributable."""
+    for stage in ("event_count", "event_page", "event_enrichment",
+                  "futures", "teams"):
+        assert f'_mark("{stage}")' in SEARCH_CODE, f"stage {stage} is not timed"
