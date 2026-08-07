@@ -14,6 +14,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from app.tasks.polymarket import _poly_book_is_untradeable
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,9 +239,22 @@ async def _run_polymarket_ws_consumer():
             return
 
         try:
-            prob = (float(best_bid) + float(best_ask)) / 2
+            bid_f = float(best_bid)
+            ask_f = float(best_ask)
         except (ValueError, TypeError):
             return
+
+        # #1578: never stream a midpoint from a book nobody will trade inside.
+        # This path matters most of the five, because it is the only one that
+        # UPDATEs an outcome directly rather than going through the upsert — a
+        # wide quote arriving here would overwrite a good stored price with a
+        # phantom. Returning early leaves the existing value untouched; the
+        # real-trade stream (handle_trade, below) is what moves an illiquid
+        # market's price, which is correct.
+        if _poly_book_is_untradeable(bid_f, ask_f):
+            return
+
+        prob = (bid_f + ask_f) / 2
         if prob <= 0 or prob >= 1:
             return
 

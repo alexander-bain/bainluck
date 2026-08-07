@@ -13,9 +13,76 @@ from typing import Optional
 from sqlalchemy import func, select, text
 
 from app.tasks.base import get_task_session
+from app.utils.feed_market_quality import (
+    FEED_PHANTOM_MIN_SPREAD,
+    is_fabricated_midpoint,
+)
 from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================================
+# Untradeable-book guard (#1578, the durable half of #1574)
+# =========================================================================
+
+# UX-P011 stopped Discover from SHOWING a price manufactured by averaging a
+# spread nobody will trade inside. This stops the poller from WRITING one, so the
+# number never exists on any surface.
+#
+# Two predicates, because the write path has two distinct situations:
+#
+#   is_fabricated_midpoint(prob, bid, ask)   — imported from the read side. For a
+#       price handed to us (Gamma's opaque `outcome_prices`): decline it only when
+#       it IS the midpoint of a wide book. If it is something else, it came from
+#       somewhere else and the #151 evidence gate judges it.
+#   _poly_book_is_untradeable(bid, ask)      — for a midpoint WE compute ourselves
+#       (the bid/ask fallback, the websocket stream). No opacity, so the width
+#       test alone settles it.
+#
+# The threshold is deliberately the SAME constant the read side uses, imported
+# rather than restated, so "untradeable" has exactly one meaning in this codebase.
+# It is measured, not tuned (see FEED_PHANTOM_MIN_SPREAD): across the 2026-08-07
+# production feed the spread distribution is bimodal with an empty middle, and any
+# value in [0.16, 0.43] is equivalent. Do not turn it into a knob.
+#
+# Why this is not redundant with the `has_market` evidence gate below: that gate
+# (Queue #151) asks whether a book EXISTS — `best_bid > 0` is satisfied by a 2c
+# bid on a 2c/94c book. It never asks whether the book is TRADEABLE. Measured on
+# production 2026-08-07, resolved+graded Polymarket outcomes carrying a book:
+#
+#   cohort                  n        mean stored price   actual win rate
+#   everything else         47,207   0.3444              0.3264   <- calibrated
+#   wide-spread midpoint     1,580   0.5003              0.0013   <- fabrication
+#
+# The phantom cohort asserts 50% and wins twice in 1,580. #151 fixed half of this
+# and its own comment predicted the rest; this is the other half.
+#
+# Note this guard can only ever DECLINE to write. Every caller is
+# `if prob is None or prob <= 0: continue`, so returning None skips the upsert
+# entirely — it never nulls an existing stored price (gotcha #21, forward-only).
+
+
+def _poly_book_is_untradeable(
+    best_bid: Optional[float],
+    best_ask: Optional[float],
+) -> bool:
+    """True if this Polymarket order book is too wide for its midpoint to be a price.
+
+    Mirrors ``is_fabricated_midpoint`` in ``app/utils/feed_market_quality.py``:
+
+    - A missing side is the WIDEST possible quote on that side (no bid = 0.0, no
+      ask = 1.0), because "nobody will buy this at any price" is a wide book, not a
+      missing one.
+    - Both sides absent means there is no order book at all. The rule does not
+      apply, so model-priced and derived rows pass through untouched — by
+      construction, not by exemption.
+    """
+    if best_bid is None and best_ask is None:
+        return False
+    bid = 0.0 if best_bid is None else float(best_bid)
+    ask = 1.0 if best_ask is None else float(best_ask)
+    return (ask - bid) >= FEED_PHANTOM_MIN_SPREAD
 
 
 # =========================================================================
@@ -1064,6 +1131,20 @@ async def _process_event_batch(
                     # Also keep parent market outcomes (for the moneyline matching task)
                     for market in event.markets:
                         prob = market.outcome_prices[0] if market.outcome_prices else None
+                        # #1578: the least-guarded of the five Polymarket write
+                        # paths — it takes Gamma's precomputed price raw, skipping
+                        # the placeholder filter and the #151 evidence gate that
+                        # _resolve_market_probability applies. Only the phantom
+                        # test is added here, deliberately: this feeds moneyline
+                        # matching, so changing its placeholder/evidence semantics
+                        # belongs in its own change, not riding along in this one.
+                        if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
+                            prob = (
+                                float(market.last_trade_price)
+                                if market.last_trade_price is not None
+                                and 0 < market.last_trade_price < 1
+                                else None
+                            )
                         if prob is None or prob <= 0:
                             continue
                         outcome_name = market.group_item_title or _extract_outcome_name(
@@ -1499,6 +1580,28 @@ def _resolve_market_probability(market) -> float | None:
 
     prob = market.outcome_prices[0] if market.outcome_prices else None
 
+    # #1578: Gamma's precomputed price, when it IS the midpoint of an untradeable
+    # book, is a number nobody will trade at. Decline it here — ahead of the
+    # `return prob` below, which is where the phantom actually enters (NOT the
+    # midpoint fallback further down; a guard placed there would change nothing).
+    #
+    # Both conditions are required, and the second is not pedantry. `outcome_prices`
+    # is opaque: usually the midpoint, but not always. When Gamma's number is
+    # something OTHER than the midpoint of a wide book it came from elsewhere, and
+    # the #151 evidence gate below is the right judge of it — that is what keeps a
+    # real sub-max ask with no bid working. Sharing the read side's function rather
+    # than restating the test is what makes "untradeable" mean one thing in this
+    # codebase, and it is the exact predicate the production census measured:
+    # 179,888 outcomes, and the 1,580 graded ones win 0.13% while asserting 50%.
+    #
+    # Trade evidence beats a wide book, the same priority _kalshi_yes_probability
+    # uses: somebody actually transacted there, so it is a belief even when the
+    # current quotes are garbage.
+    if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
+        if market.last_trade_price is not None and 0 < market.last_trade_price < 1:
+            return float(market.last_trade_price)
+        return None
+
     if prob is not None and prob > 0:
         # A mid-range outcomePrice with no orderbook and no trade is a
         # placeholder/synthetic quote, not price discovery — skip the snapshot
@@ -1507,9 +1610,15 @@ def _resolve_market_probability(market) -> float | None:
             return None
         return prob
 
-    # Midpoint fallback: both bid and ask must be present and positive
+    # Midpoint fallback: both bid and ask must be present and positive, and the
+    # book must be tradeable. #1578: a midpoint WE compute from a wide book is
+    # fabricated by construction — there is no opacity here to give it the benefit
+    # of the doubt, unlike Gamma's price above. Skipping it falls through to the
+    # last-trade fallback directly below, which is precisely the priority
+    # _kalshi_yes_probability uses (tight book -> midpoint; wide -> real trade).
     if (market.best_bid is not None and market.best_bid > 0
-            and market.best_ask is not None and market.best_ask > 0):
+            and market.best_ask is not None and market.best_ask > 0
+            and not _poly_book_is_untradeable(market.best_bid, market.best_ask)):
         return (market.best_bid + market.best_ask) / 2
 
     # Last trade fallback
