@@ -153,9 +153,15 @@ export default function QuantityGroup({
               aria-label={`${rung.label}: ${pct(rung.probability)}`}
             >
               <span
+                title={wideLabels ? rung.label : undefined}
                 className={[
+                  // A FIXED label width, not `max-w-`. With a content-width label
+                  // the `flex-1` track below is a different length on every row,
+                  // so two rungs printing the same % render visibly different
+                  // bars (#1574 acceptance c). Truncate rather than wrap so the
+                  // track always starts at the same x.
                   wideLabels
-                    ? "shrink-0 max-w-[45%] text-[12px] font-semibold leading-tight"
+                    ? "w-[45%] shrink-0 truncate text-[12px] font-semibold leading-tight"
                     : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
                   rung.highlighted ? "text-accent-brand" : "text-text-primary",
                 ].join(" ")}
