@@ -386,3 +386,73 @@ Aug 5, matching no approved queue, destroyed with no recoverable diff.
 **Corollary for the redo:** do not reconstruct lost work by archaeology. Re-do it from *intent*
 in a deliberately scoped queue, or rule it unneeded. A diff nobody can describe is not a
 requirement.
+## RULING — 2026-08-07: Mover headlines are legitimate — UX-P005 class (c) closed as designed behaviour (Alex)
+
+**Ruling.** A Discover card headline may name a **mover** rather than the **leader** when the movement is
+the more interesting fact, **provided the movement is visible on click-through**. This is designed
+behaviour, not a defect. UX-P005 class (c) is **CLOSED**; no card copy is to be rewritten for it, and no
+future queue may re-file it as a contradiction.
+
+**The specimens this closes** (UX-P005 census, 2026-08-06 — 4 cards): Big Brother S28 headlined
+*"Rick Devens up 10.0 points today"* above a list led by Dee Valladares @ 23.5%; Fed Decision in
+September; two Netflix movie cards. Zero cards claimed a *false favourite* — every `"X leads at N%"`
+headline matched its list leader. What the census actually found was movement framing, which is a
+different thing.
+
+**The one condition, and it is a real gate.** The proviso is load-bearing: a mover headline is a
+**promise that the movement is there to be found**. Tapping the card must surface the move — the
+outcome's change, its direction, its window — not just a static list the headline appears to contradict.
+A mover headline over a click-through that cannot show the movement IS a defect, and it is a defect of
+the *detail surface*, not of the copy. That is the only form in which class (c) may be re-opened.
+
+WHY this is not a contradiction: the leader and the mover answer different questions — *who is winning*
+and *what just changed*. A card that always leads with the leader is a standings table; the feed's job
+is to be the most engaging way to explore what the world thinks will happen, and "who moved 10 points
+today" is frequently the more engaging answer. The North Star favours the interesting true fact over
+the ranked one. Nothing here weakens **THE BLEND IS THE PRODUCT** — a mover headline still quotes the
+blend, and a headline probability that disagrees with the list's is still a data bug.
+
+**Named failure this closes: a taste call answered twice in conversation and recorded zero times.**
+UX-P005 correctly refused to rewrite copy on an unstated judgment call and posted ⚠️ NEEDS RULING —
+that was the right move. The failure is downstream of it: the answer was given and never written here,
+so the next census will surface the same 4 cards and the next lane will stop on the same question. An
+unrecorded ruling is an unmade ruling. **Any ruling given verbally is not in force until it is appended
+to this file** — the lane that receives one appends it as part of the cycle that received it.
+
+## RULING — 2026-08-07: A rail is not shipped until it has been invoked post-deploy at its documented default (from INT-007; Fable-endorsed)
+
+**Ruling.** When a queue's deliverable is an **operational rail** — an endpoint, task, repair, or sentinel
+that exists to be *run* — the cycle may not be claimed until that rail has been **invoked on production
+after deploy, at its documented default invocation**, with the response recorded in the report. Green
+gates, a green CI run, and a verified deploy SHA are **necessary and not sufficient**. The default
+invocation specifically: not a scoped-down call, not a subset that happens to work, not the smallest
+input that returns 200. If the rail also documents a resumable contract ("re-invoke until N is 0"), a
+second invocation must be shown to *move* the counter.
+
+**Named failure: CAL-P002 / INT-006 — code integrated and deployed, payoff zero.** The repair merged as
+`28193e9c` with every gate green: 10,931 backend tests, typecheck at baseline, build clean, deploy
+verified on both surfaces. It was also **completely unusable**. `_CANDIDATE_SQL` carried no `LIMIT` and
+ran two correlated `MAX()` subqueries per row before the `limit` slice was applied, so `limit` bounded
+the *output* and not the *scan*. Every unscoped call hit the Heroku 30s router timeout and wrote nothing:
+`?limit=25` — the documented default, and the exact command in the handoff — **H12 at 30.3s**. So did
+`?limit=3`. So did the Flow Sentinel's own guard call, `?limit=6&newest_first=true`, which meant the
+sentinel that was supposed to watch the repair would have reported `unknown` every night indefinitely.
+A second defect compounded it: the selection predicate is unchanged by the repair, so `groups_remaining`
+could never fall and the documented "re-invoke until 0" contract could never terminate.
+
+**One curl would have caught all of it.** Not a test — a test would have had to model Heroku's router
+timeout and production's row counts to see this. The whole failure lives in the gap between "the code
+is correct" and "the thing runs where it has to run", and only running it there closes that gap.
+
+WHY this is not already covered by "board-visible completion": that ruling governs *whether the world
+can see a cycle finished*, this one governs *whether it finished*. And it is the direct rail-shaped
+analogue of the standing evidence bar — **never close on "code shipped"; require measured production
+evidence**. INT-006 was scrupulous about every gate that existed and still shipped a zero-payoff cycle,
+because none of those gates was the one that mattered. The default invocation is the gate that matters,
+and it costs one call.
+
+**Corollary — scope down only downward, never in the claim.** A rail that works scoped
+(`?sport=lacrosse_pll` @ 1.4s) and fails unscoped is a **failing rail**, and the report says so in the
+verdict line. INT-006 got this exactly right — it recorded `PAYOFF BLOCKED` rather than `INTEGRATED`,
+which is why CAL-P002B could be staged against a true premise instead of a claimed one. That honesty is
+the behaviour this ruling makes mandatory rather than admirable.

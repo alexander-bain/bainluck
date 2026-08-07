@@ -208,3 +208,118 @@ def test_market_name_fallback_still_works_for_real_thresholds():
     assert len(points) == 1
     assert points[0]["source"] == "market_name"
     assert points[0]["value"] == 150_000
+
+
+# ── UX-P008 (#1526 residual) — a FIELD must never be routed to a threshold card ──
+#
+# #1526's headline half was the frontend `slice(0, 4)` that dropped the leader.
+# Its "not root-caused here" note carried a second card that nobody had traced:
+# Grammy Best New Artist rendering exactly two rows, `PARTYOF2 1%` and
+# `Rob49 1%`, with the real 68.5% leader nowhere on it.
+#
+# Traced 2026-08-07 against production market 56775571 (`KXGRAMBNA-69`, 67
+# nominees). It was never a frontend defect and it was NOT the suspected
+# `buildHeatmapRows` lowercase-Map collision — that Map never saw more than the
+# two rows it was handed. `_compact_value_thresholds` matched a bare integer
+# anywhere inside a name, and of 67 nominees exactly two contain one:
+# PARTYOF2 -> 2.0 and Rob49 -> 49.0. Two rungs cleared `len >= 2`, the market
+# became a `threshold_heatmap`, and the 65 nominees without a digit — the
+# leader among them — produced no rung and vanished. The ascending value sort
+# put PARTYOF2 (2) above Rob49 (49), which is the rendered card exactly.
+#
+# UX-P005's `_THRESHOLD_SHAPED_RE` closed that path as a side effect while
+# fixing its own class (b). These tests pin it shut, because nothing named this
+# card and a future widening of the shape gate would silently reopen it.
+
+
+def _fmt(name, labels, *, category=None, outcome_count=None):
+    return classify_discover_card_archetype(
+        name=name,
+        category=category,
+        outcomes=[{"name": label, "probability": 0.01} for label in labels],
+        outcome_count=outcome_count if outcome_count is not None else len(labels),
+    )
+
+
+def test_grammy_nominee_names_containing_digits_are_not_a_ladder():
+    # The exact production specimen. A stage name is not a threshold.
+    assert _points("Grammy Winner: Best New Artist", ["PARTYOF2", "Rob49"]) == []
+
+
+def test_grammy_field_keeps_its_leader_and_renders_as_a_distribution():
+    # The 10 highest-probability nominees of production market 56775571, real
+    # names and real prices. The leader must survive classification.
+    nominees = [
+        ("Ella Langley", 0.685), ("SIENNA SPIRO", 0.185), ("Geese", 0.065),
+        ("Rob49", 0.020), ("Dijon", 0.015), ("Megan Moroney", 0.015),
+        ("Bella Kay", 0.015), ("Jane Handcock", 0.010), ("Celeste", 0.010),
+        ("PARTYOF2", 0.010),
+    ]
+    result = classify_discover_card_archetype(
+        name="Grammy Winner: Best New Artist",
+        category="entertainment",
+        outcomes=[{"name": n, "probability": p} for n, p in nominees],
+        outcome_count=67,
+    )
+
+    assert result["threshold_points"] == []
+    assert result["suggested_format"] == "outcome_distribution"
+    # The card the user sees leads with the actual favourite, not a 1% name
+    # that happened to contain a number.
+    assert result["distribution_outcomes"][0]["label"] == "Ella Langley"
+
+
+def test_a_multi_outcome_field_is_not_hijacked_by_a_number_in_its_title():
+    # Production 2026-08-07, market 52755659: 32 NHL teams. "2026-27" scored a
+    # rung at 27, so the card was a `threshold_heatmap` with ONE row. The
+    # frontend needs two rows to draw a heatmap, so it fell through past the
+    # distribution branch to the plain leader card and the 32-team field
+    # disappeared behind a lone "Florida Panthers 11%".
+    result = _fmt(
+        "2026-27 Stanley Cup® Finals Winner",
+        ["Florida Panthers", "Colorado Avalanche", "Carolina Hurricanes", "Dallas Stars"],
+        outcome_count=32,
+    )
+    assert result["threshold_points"] == []
+    assert result["suggested_format"] == "outcome_distribution"
+
+
+def test_a_rejected_incoherent_ladder_is_not_resurrected_by_the_market_name():
+    # Production 2026-08-07, market 58586182. The 13 outcome rungs span 1 to
+    # 3e6 (esports team names: "100T", handicaps), so the scale-coherence guard
+    # correctly binned the ladder — and the market-name fallback then handed it
+    # a fresh rung at 7,000,000 parsed out of "W7M". The guard's comment says it
+    # drops the threshold treatment ENTIRELY; this holds it to that.
+    points = _points(
+        "Counter-Strike: BIG vs Fluxo W7M (BO3) - Esports World Cup Open Qualifier",
+        ["Map 1 Total Rounds: Over 26.5", "Map Handicap: 100T (-1.5)"],
+    )
+    assert points == []
+
+
+def test_the_field_floor_matches_the_distribution_branch():
+    # The suppression floor and the classifier's `count >= 4` distribution
+    # branch must be the same number. If they drift apart, markets in the gap
+    # get neither card: no rung (suppressed) and no distribution (below the
+    # branch), which is how a field silently becomes a bare leader again.
+    import inspect
+
+    from app.utils.discover_card_archetypes import _FIELD_OUTCOME_FLOOR
+
+    source = inspect.getsource(classify_discover_card_archetype)
+    assert f"count >= {_FIELD_OUTCOME_FLOOR}" in source
+
+    # And prove it at the boundary rather than trusting the string match: three
+    # outcomes still take the market-name rung, four no longer do.
+    assert len(_points("Will Bitcoin close above $150,000?", ["a", "b", "c"])) == 1
+    assert _points("Will Bitcoin close above $150,000?", ["a", "b", "c", "d"]) == []
+
+
+def test_binary_threshold_questions_keep_their_rung():
+    # Both directions (gotcha #43). The suppression is scoped to FIELDS; the
+    # two-outcome threshold question this fallback exists for is untouched.
+    for labels in (["Yes", "No"], ["Above", "Below"]):
+        points = _points("Will Bitcoin close above $150,000?", labels)
+        assert len(points) == 1
+        assert points[0]["source"] == "market_name"
+        assert points[0]["value"] == 150_000

@@ -79,6 +79,12 @@ _THRESHOLD_SHAPED_RE = re.compile(
 # than render bars that contradict each other.
 _MAX_LADDER_SCALE_SPREAD = 10_000
 
+# At or above this many outcomes a market is a FIELD, not a threshold question,
+# and `outcome_distribution` is its card. Pinned to the same number the
+# classifier uses for that branch (`count >= 4`); a test asserts they agree, so
+# the two can never drift into a window where a market is neither.
+_FIELD_OUTCOME_FLOOR = 4
+
 
 def _suffix_multiplier(label: str) -> int:
     """Largest k/m/b/t multiplier appearing in a label.
@@ -165,10 +171,32 @@ def _threshold_points(
 
     # Mixed scales mean the labels were never one ladder — drop the threshold
     # treatment entirely rather than render self-contradicting bars.
+    rejected_incoherent = False
     if not _ladder_is_scale_coherent(points):
         points = []
+        rejected_incoherent = True
 
-    if not points:
+    # UX-P008 (#1526 residual). The market-name fallback below is for genuine
+    # single-threshold questions ("Will Bitcoin close above $150,000?", 2
+    # outcomes). Two conditions must keep it out:
+    #
+    #   1. A FIELD. With >= _FIELD_OUTCOME_FLOOR outcomes and not one of them
+    #      carrying a rung, the outcomes ARE the answer and `outcome_distribution`
+    #      is the designed card. A lone rung scraped out of the question hijacks
+    #      it — the classifier tests threshold_heatmap BEFORE `count >= 4`, so a
+    #      stray number in the title wins, the frontend then needs >= 2 rows to
+    #      draw a heatmap, finds one, and falls through PAST the distribution
+    #      branch to the plain leader card. The whole field disappears. Measured
+    #      on production 2026-08-07: "2026-27 Stanley Cup® Finals Winner" (32
+    #      teams) rendered as a lone "Florida Panthers 11%" because "2026-27"
+    #      scored a rung at 27.
+    #   2. AN ALREADY-REJECTED LADDER. The coherence guard above drops the
+    #      threshold treatment *entirely*; falling back to the market name
+    #      immediately resurrects the treatment it just refused. Same production
+    #      market, both defects at once: the Counter-Strike "BIG vs Fluxo W7M"
+    #      card had its 13 outcome rungs correctly binned as incoherent, then
+    #      re-acquired a single rung at 7,000,000 from "W7M" in the title.
+    if not points and not rejected_incoherent and (outcome_count or 0) < _FIELD_OUTCOME_FLOOR:
         # Same shape guard as the per-outcome path — otherwise an ordinal in
         # the QUESTION becomes a rung: "What will be the #2 global Netflix
         # movie this week?" produced a lone threshold at 2 for a card whose
