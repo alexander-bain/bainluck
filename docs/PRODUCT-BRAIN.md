@@ -456,3 +456,66 @@ and it costs one call.
 verdict line. INT-006 got this exactly right — it recorded `PAYOFF BLOCKED` rather than `INTEGRATED`,
 which is why CAL-P002B could be staged against a true premise instead of a claimed one. That honesty is
 the behaviour this ruling makes mandatory rather than admirable.
+
+## RULINGS — 2026-08-07 (Alex, batch): where lanes work, how they lock, how they branch
+
+Three process rulings issued together. All three come from failures that had already happened;
+none is speculative hardening.
+
+### (a) THE MASTER WORKTREE IS INTEGRATOR-ONLY
+
+**Named failures: the nine-file WIP loss (#1575), and four fast-forward breaks in a single
+integration cycle.**
+
+Every lane works in a worktree. Nobody else edits, stages, or commits in `~/bainluck`.
+
+- Codex moves its eval commits out of master onto a `codex/evals` branch, merged by the
+  Integrator like any other lane's branch.
+- The remaining master-side legacy queues migrate to worktrees.
+- **WIP found in the master worktree is FILED, not preserved silently.** Quietly stashing or
+  carrying someone's uncommitted work is how the nine-file loss happened; an issue with the
+  diff attached is recoverable, a stash in a shared tree is not.
+
+WHY this and not "be careful in master": the master worktree is the one tree every lane can
+reach, so it is the only place where one lane's mistake lands on another lane's work. Making
+it single-writer removes the shared mutable state rather than asking five actors to
+coordinate around it. It also makes fast-forward breakage attributable — if only the
+Integrator commits there, a non-fast-forward means the Integrator's own sequence is wrong,
+not that somebody wandered in.
+
+### (b) THE LOCK IS PER-WORKTREE, NOT PER-QUEUE
+
+**Named failure: the 2026-08-07 double-window collision that the per-WINDOW nonce did NOT
+catch** (surfaced by the ux lane; write-up in
+`.claude/handoff/PROGRAM-UX-COLLISION-2026-08-07T1143PT.md`).
+
+A window claims the WORKTREE, in a `LANE-<name>.lock` it refreshes for its whole life — not a
+`status: running` field on whichever queue happens to be open.
+
+WHY the nonce ruling was not enough, stated plainly because it is subtle: the per-WINDOW
+ruling asked the OWNING window to stamp the record, and the owner is the one party with no
+incentive to — it already knows it owns the lane. That is structurally the same defect
+Invariant 10 fixed for the Integrator ("a lane creates its own claim artifact"), reappearing
+one level down. It also left a specific hole the queue-scoped design could never close:
+between posting a completion and staging the next queue, a continuous lane owns the worktree
+while NO queue file says `running` at all — the lane is most claimable at exactly the moment
+it looks unclaimed. A worktree-scoped lock is one read to check and stays valid across the
+staging gap.
+
+The second window in that collision found the file-based check CLEAN and only noticed
+because `git rev-parse HEAD` returned two different SHAs six minutes apart — the sibling had
+rebased the branch underneath it. A compliant window would have raced straight in.
+
+### (c) SUCCESSOR BRANCHES ARE THE DOCUMENTED DEFAULT; ONE HANDOFF VOCABULARY
+
+Successor branches (`program/<name>-2`, `-3`, …) are no longer an amendment to read past —
+they are the default shape, documented as such. The ux lane converts.
+
+Handoff vocabulary standardizes on **`ready_for_integration`**. Not `done`, not "lane idle
+pending Integrator". INT-009 accepted a stack whose queues said `done` and recorded the
+deviation rather than refusing on wording; that judgment was right in the moment and is
+exactly the kind of per-cycle discretion a shared vocabulary should make unnecessary.
+
+WHY one word matters: the Integrator's Phase-0 refusal conditions are mechanical. A refusal
+condition that has to be evaluated on intent instead of on a token is not a gate, it is a
+conversation — and it will eventually be resolved the wrong way by whoever is in a hurry.
