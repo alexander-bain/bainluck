@@ -1,0 +1,19 @@
+[
+  {"id":"a_to_b_local_pins_visible","current_principal":"B","state_owner":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_state_visible"]}},
+  {"id":"a_to_signed_out_state_hidden","current_principal":null,"state_owner":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_state_visible"]}},
+  {"id":"auth_loading_to_b_unknown_withheld","current_principal":"B","ownership_unknown":true,"published":false,"mutation_sent":false,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"auth_loading_unknown_published","current_principal":"B","ownership_unknown":true,"published":true,"dispatch_principal":null,"expected":{"verdict":"REFUSE","reason_codes":["stale_response_published","unknown_owner_not_withheld"]}},
+  {"id":"a_response_finishes_under_b","current_principal":"B","dispatch_principal":"A","completion_principal":"B","published":true,"expected":{"verdict":"REFUSE","reason_codes":["stale_response_published"]}},
+  {"id":"a_debounce_writes_under_b","current_principal":"B","dispatch_principal":"A","completion_principal":"B","mutation_sent":true,"timer_pending":true,"expected":{"verdict":"REFUSE","reason_codes":["mutation_subject_changed","delayed_write_crossed_principal"]}},
+  {"id":"debounce_cancelled_on_switch","current_principal":"B","dispatch_principal":"A","completion_principal":"B","mutation_sent":false,"timer_pending":false,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"constant_swr_record_reused","current_principal":"B","cache_key_principal":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_cache_key"]}},
+  {"id":"principal_keyed_swr","current_principal":"B","cache_key_principal":"B","state_owner":"B","expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"device_global_migration_consumed_by_a","current_principal":"B","migration_consumed_by":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_migration_marker"]}},
+  {"id":"b_owned_migration","current_principal":"B","migration_consumed_by":"B","expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"same_user_token_refresh","current_principal":"A","state_owner":"A","dispatch_principal":"A","completion_principal":"A","published":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"offline_foreign_last_good","current_principal":"B","state_owner":"A","cache_key_principal":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_state_visible","foreign_cache_key"]}},
+  {"id":"multitab_foreign_storage_event","current_principal":"B","state_owner":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_state_visible"]}},
+  {"id":"native_relaunch_b_with_a_cache","current_principal":"B","state_owner":"A","cache_key_principal":"A","expected":{"verdict":"REFUSE","reason_codes":["foreign_state_visible","foreign_cache_key"]}},
+  {"id":"anonymous_device_state","current_principal":null,"state_owner":"anonymous","cache_key_principal":"anonymous","expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"failed_b_fetch_does_not_fallback_to_a","current_principal":"B","state_owner":null,"published":false,"expected":{"verdict":"ALLOW","reason_codes":[]}}
+]
