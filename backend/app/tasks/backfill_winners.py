@@ -4763,6 +4763,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         "api_miss": 0,
         "not_settled": 0,
         "no_match": 0,
+        "unsupported_lookup": 0,
         "errors": [],
     }
 
@@ -4885,8 +4886,25 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         return cid, None, False  # non-429 transient — not definitive
                 return cid, None, False  # 429-exhausted — not definitive, retry next run
 
-        alive_conditions = [r for r in by_condition if r.external_id not in dead_cids]
-        stats["skipped_dead"] = len(by_condition) - len(alive_conditions)
+        # CAL-P003: Gamma's `GET /markets/{id}` takes a NUMERIC Gamma market id.
+        # Handed a 0x… condition_id it answers `422 {"error":"invalid integer"}` —
+        # verified against production 2026-08-07. That is a 4xx, so
+        # `get_market_by_condition` re-raises it (it returns None only for 404),
+        # `_fetch_market` sees a non-429 exception and reports it as NON-definitive,
+        # and the batch circuit-breaker below then reads a batch of structural 422s
+        # as "Gamma is throttling us" and STOPS the whole run — every run, logging
+        # the burn as `rate_limited`. A wrong endpoint was wearing a rate limit's
+        # clothes (gotcha #36's shape: a non-404 must never be read as "not found",
+        # and here it was being read as something even more misleading).
+        #
+        # 0x… ids are simply not addressable on this endpoint, so don't spend a
+        # request discovering that. They are the CLOB rail's cohort (clob_resolve,
+        # binding mapper spec) — counted here, owned there.
+        _addressable = [r for r in by_condition
+                        if not str(r.external_id or "").startswith("0x")]
+        stats["unsupported_lookup"] = len(by_condition) - len(_addressable)
+        alive_conditions = [r for r in _addressable if r.external_id not in dead_cids]
+        stats["skipped_dead"] = len(_addressable) - len(alive_conditions)
 
         for batch_start in range(0, len(alive_conditions), 200):
             if _time.monotonic() - _t0 > _MAX_RUNTIME:
