@@ -452,6 +452,39 @@ export default function OddsChart({
     return filtered;
   }, [aggregateLine, timeRange, commenceTime, smartEndTime]);
 
+  // ── #1003: the blend line is the BACKEND blend, or it is nothing ──
+  // `bainLuckDelta` used to fall back to an unweighted frontend mean of whatever
+  // per-source series happened to be loaded, and still rendered under the
+  // "Bain Luck (aggregated)" name. An unweighted mean is NOT the blend —
+  // production weights are betting 3.0, ESPN 1.5, stat_model 1.0,
+  // Kalshi/Polymarket/MLB 0.8 — so that line, its tooltip row, its callout and
+  // the live hero it feeds via `onActivePointChange` could all print a number
+  // the hero and the Discover card never show. Standing ruling #1 is
+  // card == hero == chart, one number per question, and a fabricated mean
+  // wearing the blend's name is the 57-vs-20 bug with better manners.
+  //
+  // The two gates disagreed by construction, which is why the path existed:
+  // the backend emits `aggregate_line` only when `len(agg_sources) > 1`
+  // (bookmaker consensus counts as one), while the chart drew the aggregated
+  // line whenever `nonBettingSources.length > 0` (bookmakers do not count).
+  //
+  // Now: no backend blend, no blend line. The chart falls back to the same
+  // primary series it uses in sportsbooks-only mode, which is a real measured
+  // source that is labelled as itself.
+  const showBlendLine = isMultiSource && filteredAggregateLine.length > 0;
+
+  // The primary series every "what is the number here" reader uses: the fill
+  // gradient, the lead-change count, the current-probability callout, and the
+  // hover payload sent to the live hero. Single definition so those four can
+  // never disagree about which line the chart is actually about.
+  const primarySeriesKey: string = showBlendLine
+    ? "bainLuckDelta"
+    : history && history.length > 0
+      ? "homeDelta"
+      : nonBettingSources.length > 0
+        ? nonBettingSources[0].dataKey
+        : "homeDelta";
+
   const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
@@ -568,31 +601,16 @@ export default function OddsChart({
     }
 
     // ── Compute Bain Luck aggregated line (multi-source mode) ──
-    // Prefer backend aggregate_line (weighted median with staleness decay)
-    // when available; fall back to naive frontend averaging.
-    if (isMultiSource) {
-      if (filteredAggregateLine && filteredAggregateLine.length > 0) {
-        // Use backend-computed aggregate line
-        for (const point of filteredAggregateLine) {
-          const delta = homeProbToChartAxis(point.home_probability);
-          const dp = ensurePoint(point.timestamp);
-          dp.bainLuckDelta = delta;
-        }
-      } else {
-        // Fallback: average of all available source deltas at each timestamp
-        const sourceDataKeys = resolvedSources.map((s) => s.dataKey);
-        for (const point of Array.from(dataMap.values())) {
-          const values: number[] = [];
-          for (const key of sourceDataKeys) {
-            const val = point[key];
-            if (typeof val === "number" && val !== null) {
-              values.push(val);
-            }
-          }
-          point.bainLuckDelta = values.length > 0
-            ? values.reduce((a, b) => a + b, 0) / values.length
-            : null;
-        }
+    // The backend aggregate_line is a weighted median with staleness decay —
+    // the same blend the hero and the Discover card render.
+    // #1003: ONLY the backend-computed aggregate line. There is deliberately no
+    // frontend fallback — see `showBlendLine` above. If the backend did not
+    // compute a blend, `bainLuckDelta` stays null and no blend line is drawn.
+    if (showBlendLine) {
+      for (const point of filteredAggregateLine) {
+        const delta = homeProbToChartAxis(point.home_probability);
+        const dp = ensurePoint(point.timestamp);
+        dp.bainLuckDelta = delta;
       }
     }
 
@@ -746,7 +764,11 @@ export default function OddsChart({
     }
 
     return sorted;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries]);
+  // #1003: `resolvedSources` and `isMultiSource` dropped — both were read only
+  // by the naive-mean fallback that no longer exists. `showBlendLine` added: it
+  // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
+  // unread here, but it predates this change and is left alone.)
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -838,7 +860,7 @@ export default function OddsChart({
   // X-axis domain), we stamp `leadChangeDelta` directly onto chartData points.
   const leadChangeCount = useMemo(() => {
     if (chartData.length < 2) return 0;
-    const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
+    const key = primarySeriesKey;
     // Clear any previous stamps
     for (const pt of chartData) {
       delete pt.leadChangeDelta;
@@ -858,13 +880,13 @@ export default function OddsChart({
       prevDelta = delta;
     }
     return count;
-  }, [chartData, isMultiSource]);
+  }, [chartData, primarySeriesKey]);
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
   const currentCallout = useMemo(() => {
     if (chartData.length === 0) return null;
-    const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
+    const key = primarySeriesKey;
     // Clear any previous stamps
     for (const pt of chartData) {
       delete pt.calloutDelta;
@@ -884,7 +906,7 @@ export default function OddsChart({
       }
     }
     return null;
-  }, [chartData, isMultiSource]);
+  }, [chartData, primarySeriesKey]);
 
   // Early return for empty data across ALL sources (not just sportsbook odds)
   // If "Since Start" filter caused empty data, auto-reset to "all"
@@ -914,25 +936,16 @@ export default function OddsChart({
     );
   }
 
-  // When sportsbook odds are missing but other sources exist, the chart
-  // should use a non-betting source as the primary fill area.
-  const hasBookmakerData = history && history.length > 0;
-
-  // The primary delta key for the area fill gradient.
-  // When sportsbook odds are missing but other sources exist, fall back to
-  // the first available non-betting source for the fill area.
-  const primaryDeltaKey = isMultiSource
-    ? "bainLuckDelta"
-    : hasBookmakerData
-      ? "homeDelta"
-      : nonBettingSources.length > 0
-        ? nonBettingSources[0].dataKey
-        : "homeDelta";
-
-  // Compute gradient offset for area fill-by-value
+  // Compute gradient offset for area fill-by-value.
+  // #1003: reads `primarySeriesKey`. This used to be a second, independently
+  // written copy of the same ladder — it fell back to a non-betting source when
+  // sportsbooks were missing, while the callout and the hover payload fell back
+  // to `homeDelta`. One definition now, so the fill, the callout, the
+  // lead-change count and the live hero cannot disagree about which line the
+  // chart is actually about.
   const gradientOffset = (() => {
     const deltas = chartData
-      .map((d) => d[primaryDeltaKey] as number | null)
+      .map((d) => d[primarySeriesKey] as number | null)
       .filter((v): v is number => v !== null);
     if (deltas.length === 0) return 0.5;
     const dataMax = Math.max(...deltas);
@@ -976,7 +989,7 @@ export default function OddsChart({
       const hasGameState = matchingPoint && (matchingPoint._homeScore != null || matchingPoint._period);
 
       // Bain Luck aggregated line (multi-source mode)
-      const bainLuckEntry = isMultiSource
+      const bainLuckEntry = showBlendLine
         ? payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null)
         : null;
 
@@ -1043,7 +1056,7 @@ export default function OddsChart({
           })()}
 
           {/* Multi-source mode: Bain Luck aggregated first, then individual sources */}
-          {isMultiSource && bainLuckEntry && (
+          {showBlendLine && bainLuckEntry && (
             <div className="mb-2 pb-2 border-b border-surface-border">
               <p className="text-xs text-text-muted mb-0.5">
                 {BAIN_LUCK_CONFIG.displayName}
@@ -1215,8 +1228,7 @@ export default function OddsChart({
                 return;
               }
               const pt = chartData[idx];
-              const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
-              const delta = pt[primaryDeltaKey] as number | null;
+              const delta = pt[primarySeriesKey] as number | null;
               const homeProb = delta != null ? chartAxisToHomeProb(delta) : 0.5; // 0–100 axis → 0–1
               onActivePointChange({
                 timestamp: pt.timestamp,
@@ -1393,7 +1405,7 @@ export default function OddsChart({
             {/* Area fill removed — was causing green semi-circle artifacts */}
 
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
-            {isMultiSource && (
+            {showBlendLine && (
               <Line
                 type="linear"
                 dataKey="bainLuckDelta"
@@ -1459,7 +1471,7 @@ export default function OddsChart({
                 shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
                   if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
-                  const fillColor = isMultiSource
+                  const fillColor = showBlendLine
                     ? BAIN_LUCK_CONFIG.color
                     : sourceHex("betting");
                   return (
@@ -1494,8 +1506,10 @@ export default function OddsChart({
 
       {/* Source legend */}
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
-        {/* Multi-source mode: Bain Luck aggregated line first (always labeled) */}
-        {isMultiSource && (
+        {/* Multi-source mode: Bain Luck aggregated line first (always labeled).
+            #1003: gated on showBlendLine, not isMultiSource — a legend entry for a
+            line the chart did not draw is the same false claim as the line. */}
+        {showBlendLine && (
           <div className="flex items-center gap-1.5">
             <svg width="20" height="4" className="shrink-0">
               <line
