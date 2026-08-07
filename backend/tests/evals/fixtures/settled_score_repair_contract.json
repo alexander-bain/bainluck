@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "clean-frozen-final-repair",
+      "stored": {"home_score": 3, "away_score": 1},
+      "authority": {"home_score": 6, "away_score": 3, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 3, "away_score": 1},
+      "derived_final_present": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "repair", "reasons": ["authoritative_final_differs"], "mutations": ["home_score", "away_score"], "final_result": 1.0}
+    },
+    {
+      "id": "already-correct-control",
+      "stored": {"home_score": 5, "away_score": 4},
+      "authority": {"home_score": 5, "away_score": 4, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 5, "away_score": 4},
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "noop", "reasons": ["already_authoritative"], "mutations": []}
+    },
+    {
+      "id": "partial-game-refusal",
+      "stored": {"home_score": 3, "away_score": 1},
+      "authority": {"home_score": 4, "away_score": 2, "disposition": "in_progress", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["disposition_not_final"], "mutations": []}
+    },
+    {
+      "id": "provider-disagreement-refusal",
+      "stored": {"home_score": 2, "away_score": 1},
+      "authority": {"home_score": 3, "away_score": 1, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": true},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["provider_disagreement"], "mutations": []}
+    },
+    {
+      "id": "final-tie",
+      "stored": {"home_score": 1, "away_score": 0},
+      "authority": {"home_score": 1, "away_score": 1, "disposition": "final_tie", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 1, "away_score": 0},
+      "derived_final_present": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "repair", "reasons": ["authoritative_final_differs"], "mutations": ["home_score", "away_score"], "final_result": 0.5}
+    },
+    {
+      "id": "special-disposition-refusal",
+      "stored": {"home_score": 0, "away_score": 0},
+      "authority": {"home_score": 0, "away_score": 0, "disposition": "no_contest", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["disposition_not_final"], "mutations": []}
+    },
+    {
+      "id": "swapped-orientation-refusal",
+      "stored": {"home_score": 2, "away_score": 1},
+      "authority": {"home_score": 1, "away_score": 3, "disposition": "final", "same_event_date": true, "same_orientation": false, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["identity_or_orientation_mismatch"], "mutations": []}
+    },
+    {
+      "id": "doubleheader-neighbour-refusal",
+      "stored": {"home_score": 2, "away_score": 8},
+      "authority": {"home_score": 16, "away_score": 3, "disposition": "final", "same_event_date": false, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["event_date_mismatch"], "mutations": []}
+    },
+    {
+      "id": "inverted-timestamps-refusal",
+      "stored": {"home_score": 2, "away_score": 1},
+      "authority": {"home_score": 4, "away_score": 1, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": false,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["event_timestamp_invalid"], "mutations": []}
+    },
+    {
+      "id": "concurrent-change-refusal",
+      "stored": {"home_score": 3, "away_score": 1},
+      "authority": {"home_score": 6, "away_score": 3, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 6, "away_score": 2},
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["concurrent_change"], "mutations": []}
+    },
+    {
+      "id": "atomic-rollback-on-derived-write-failure",
+      "stored": {"home_score": 6, "away_score": 7},
+      "authority": {"home_score": 6, "away_score": 2, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 6, "away_score": 7},
+      "failure_stage": "derived_final_result",
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["atomic_apply_failed"], "mutations": []}
+    },
+    {
+      "id": "completed-at-outside-allowlist",
+      "stored": {"home_score": 3, "away_score": 1},
+      "authority": {"home_score": 6, "away_score": 3, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 3, "away_score": 1},
+      "requested_mutations": ["home_score", "away_score", "completed_at"],
+      "expected": {"verdict": "refuse", "reasons": ["mutation_outside_allowlist"], "mutations": []}
+    },
+    {
+      "id": "derived-probability-outside-allowlist",
+      "stored": {"home_score": 6, "away_score": 7},
+      "authority": {"home_score": 6, "away_score": 2, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 6, "away_score": 7},
+      "requested_mutations": ["home_score", "away_score", "win_probability_sources.final_result"],
+      "expected": {"verdict": "refuse", "reasons": ["mutation_outside_allowlist"], "mutations": []}
+    },
+    {
+      "id": "idempotent-retry-after-success",
+      "stored": {"home_score": 6, "away_score": 3},
+      "authority": {"home_score": 6, "away_score": 3, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 6, "away_score": 3},
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "noop", "reasons": ["already_authoritative"], "mutations": []}
+    },
+    {
+      "id": "authority-timestamp-order-refusal",
+      "stored": {"home_score": 2, "away_score": 1},
+      "authority": {"home_score": 4, "away_score": 1, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false, "timestamp_order_valid": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["authority_timestamp_invalid"], "mutations": []}
+    },
+    {
+      "id": "cross-event-poison",
+      "stored": {"home_score": 2, "away_score": 1},
+      "authority": {"home_score": 9, "away_score": 0, "disposition": "final", "same_event_date": true, "same_orientation": false, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["identity_or_orientation_mismatch"], "mutations": []}
+    },
+    {
+      "id": "poison-first-missing-authority",
+      "batch_position": "first",
+      "stored": {"home_score": 1, "away_score": 0},
+      "authority": {"home_score": null, "away_score": null, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["authority_score_missing"], "mutations": []}
+    },
+    {
+      "id": "poison-middle-missing-authority",
+      "batch_position": "middle",
+      "stored": {"home_score": 1, "away_score": 0},
+      "authority": {"home_score": null, "away_score": null, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["authority_score_missing"], "mutations": []}
+    },
+    {
+      "id": "poison-last-partial-batch-failure",
+      "batch_position": "last",
+      "stored": {"home_score": 1, "away_score": 0},
+      "authority": {"home_score": 2, "away_score": 0, "disposition": "final", "same_event_date": true, "same_orientation": true, "provider_disagreement": false},
+      "event_timestamps_valid": true,
+      "apply_observed": {"home_score": 1, "away_score": 0},
+      "failure_stage": "score_write",
+      "requested_mutations": ["home_score", "away_score"],
+      "expected": {"verdict": "refuse", "reasons": ["atomic_apply_failed"], "mutations": []}
+    }
+  ]
+}
