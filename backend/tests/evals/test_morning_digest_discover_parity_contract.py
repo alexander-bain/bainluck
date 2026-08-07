@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.morning_digest_discover_parity_contract import evaluate
+from scripts.evals.morning_digest_discover_parity_contract import evaluate
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "morning_digest_discover_parity_contract.json"

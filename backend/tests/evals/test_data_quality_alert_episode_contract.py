@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.data_quality_alert_episode_contract import evaluate, fingerprint
+from scripts.evals.data_quality_alert_episode_contract import evaluate, fingerprint
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "data_quality_alert_episode_contract.json"

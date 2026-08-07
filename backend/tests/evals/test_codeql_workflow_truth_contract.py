@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.codeql_workflow_truth_contract import evaluate, evaluate_plan
+from scripts.evals.codeql_workflow_truth_contract import evaluate, evaluate_plan
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "codeql_workflow_truth_contract.json"

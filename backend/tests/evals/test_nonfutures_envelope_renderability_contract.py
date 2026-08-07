@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.nonfutures_envelope_renderability_contract import evaluate
+from scripts.evals.nonfutures_envelope_renderability_contract import evaluate
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "nonfutures_envelope_renderability_contract.json"
