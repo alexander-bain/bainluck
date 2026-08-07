@@ -182,3 +182,154 @@ def test_hold_or_close_table(minutes_since_last_snapshot, expect_hold):
     assert game_may_still_be_running(
         NOW - timedelta(minutes=minutes_since_last_snapshot), NOW
     ) is expect_hold
+
+
+# ---------------------------------------------------------------------------
+# CAL-P005 — end-to-end harness for the espn_sync staleness net.
+#
+# WHY THIS EXISTS. CAL-P002 shipped 38 tests, every one of them on a pure
+# predicate, and the thing that actually broke in production was the glue around
+# them. The lesson generalises: rules tested in isolation prove the rules, not
+# the caller. `_transition_event_statuses_impl` has never had a harness because
+# it runs inside a Celery task over a live ORM session — so this builds one, by
+# dispatching a fake session on statement shape and select order (which is
+# deterministic in this function).
+#
+# The three cases below are the whole producer contract: hold a game that may
+# still be running, close one that is genuinely over and stamp its END time, and
+# still close one nothing ever reported on.
+# ---------------------------------------------------------------------------
+
+
+class _Ev:
+    """Mutable stand-in for an Event row — the net assigns to it directly."""
+
+    def __init__(self, id, sport_key, commence_time, home_score=None, away_score=None,
+                 win_probability_sources=None):
+        self.id = id
+        self.status = "live"
+        self.commence_time = commence_time
+        self.completed_at = None
+        self.home_score = home_score
+        self.away_score = away_score
+        self.win_probability_sources = win_probability_sources or {}
+        self.home_team_name = "Home"
+        self.away_team_name = "Away"
+        self.sport = type("S", (), {"key": sport_key})()
+
+
+class _NetSession:
+    def __init__(self, live, snapshots):
+        self._selects = [[], live, [], []]  # scheduled, live, bogus, future-settled
+        self._snapshots = snapshots
+        self.blend_updates = []
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "MAX(x.captured_at)" in sql:
+            from types import SimpleNamespace
+            return type("R", (), {"all": lambda _s: [
+                SimpleNamespace(event_id=i, last_snap=t)
+                for i, t in self._snapshots.items() if i in params["event_ids"]
+            ]})()
+        if sql.startswith("UPDATE"):
+            self.blend_updates.append(sql)
+            return None
+        rows = self._selects.pop(0)
+        return type("R", (), {
+            "scalars": lambda _s: type("S", (), {"all": lambda _x: rows})()
+        })()
+
+    async def commit(self):
+        pass
+
+
+async def _run_net(live, snapshots, now):
+    import contextlib
+    from unittest.mock import patch
+
+    session = _NetSession(live, snapshots)
+
+    @contextlib.asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    import app.tasks.espn_sync as mod
+
+    class _FrozenNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    with patch("app.tasks.base.get_task_session", _fake_session), \
+            patch.object(mod, "datetime", _FrozenNow):
+        stats = await mod._transition_event_statuses_impl()
+    return session, stats
+
+
+# An NBA game: max duration 3.5h, so 6h since start trips the wall-clock net.
+_LATE = NOW - timedelta(hours=6)
+
+
+class TestStalenessNetEndToEnd:
+    @pytest.mark.asyncio
+    async def test_a_game_still_being_reported_on_is_held_live(self):
+        # THE producer bug. Overtime/extra innings/rain delay: the wall-clock
+        # net fires while the game is still being played, and the mid-game score
+        # becomes a permanent final with the derived winner possibly inverted.
+        ev = _Ev(1, "basketball_nba", _LATE, home_score=45, away_score=56,
+                 win_probability_sources={"kalshi": {"home_win_probability": 0.4}})
+        session, stats = await _run_net(
+            [ev], {1: NOW - timedelta(minutes=5)}, NOW
+        )
+        assert ev.status == "live"
+        assert ev.completed_at is None
+        assert stats["held_still_running"] == 1
+        assert stats["live_to_closed"] == 0
+        # And critically: the blend was NOT graded off the halftime score.
+        assert session.blend_updates == []
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_finished_game_still_closes(self):
+        # The net must keep working — this is what it is for.
+        ended = NOW - timedelta(hours=3)
+        ev = _Ev(2, "basketball_nba", _LATE, home_score=109, away_score=87,
+                 win_probability_sources={"kalshi": {"home_win_probability": 0.8}})
+        session, stats = await _run_net([ev], {2: ended}, NOW)
+        assert ev.status == "closed"
+        assert stats["live_to_closed"] == 1
+        assert stats["held_still_running"] == 0
+        assert session.blend_updates, "a real final must still resolve the blend"
+
+    @pytest.mark.asyncio
+    async def test_the_close_stamps_the_game_end_not_the_processing_time(self):
+        # gotcha #22. The old code wrote now(), which is wrong by however long
+        # the net took to notice — and it is what chart domains stand on.
+        ended = NOW - timedelta(hours=3)
+        ev = _Ev(3, "basketball_nba", _LATE, home_score=4, away_score=2)
+        await _run_net([ev], {3: ended}, NOW)
+        assert ev.completed_at == ended
+        assert ev.completed_at != NOW
+
+    @pytest.mark.asyncio
+    async def test_an_event_nothing_ever_reported_on_closes_with_a_null_end(self):
+        # Silence is not evidence of activity, so it must still close; but we
+        # have no honest end time, so the gap stays visible for the repair.
+        ev = _Ev(4, "basketball_nba", _LATE, home_score=3, away_score=1)
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "closed"
+        assert ev.completed_at is None
+        assert stats["live_to_closed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_held_and_closed_events_are_handled_independently(self):
+        # One bad/held item must never suppress its healthy siblings (gotcha #42).
+        held = _Ev(5, "basketball_nba", _LATE, home_score=45, away_score=56)
+        done = _Ev(6, "basketball_nba", _LATE, home_score=109, away_score=87)
+        _, stats = await _run_net(
+            [held, done],
+            {5: NOW - timedelta(minutes=2), 6: NOW - timedelta(hours=2)},
+            NOW,
+        )
+        assert (held.status, done.status) == ("live", "closed")
+        assert (stats["held_still_running"], stats["live_to_closed"]) == (1, 1)
