@@ -12,6 +12,28 @@ could not measure the thing it exists for. Three defects, all pinned here:
    cold misses of 3.9–8.8 s. It retained none of them.
 3. **No cache dimension.** Warm hits dominate ``/api/feed``, so a blended p95
    cannot express the cold tail — the single number that makes #1459 closable.
+
+Those three shipped in Queue 292. The ops lane then filed six residuals across
+r329 / r330 / r334 — every one closing ``NEEDS-CODE-LANE``, none taken until
+LAT-P003. They are pinned at the bottom of this file:
+
+4. **Unbounded Redis key minting (r329 B2).** The middleware runs BEFORE routing
+   and filters only on the ``/api`` prefix, so a 404 on any arbitrary
+   ``/api/<junk>`` became its own key and ``latency:_endpoints`` has no cap. On
+   Premium-0 / 50 MB / allkeys-lru that evicts COLD keys — the samples this rail
+   exists to keep.
+5. **The payload could not be dated from its own contents (r329 B3).** r330
+   watched ``max_ms`` go 19696.7 -> 12761.0 across 25 minutes at the same n=13:
+   the worst sample ever recorded aged out silently.
+6. **``by_cache_status`` did not sum to ``n`` (r330).** n=13 against a lone
+   ``miss`` bucket of n=12 — the fast half, which is exactly what separates cold
+   tail from warm serve, was invisible.
+7. **``completeness: "complete"`` over a 2-of-5 payload (r334).** The false-green
+   shape Queue 294 removed from the VALUES, still living in the VERDICT.
+8. **An always-sampled endpoint could simply vanish (r334).** ``/api/feed`` was
+   absent from a payload that declared it always-sampled.
+9. **No non-finite guard (r329 B1).** Defensive; unreachable from today's
+   writer, but one inf 500s the whole rail rather than one row.
 """
 
 import os
@@ -193,10 +215,30 @@ class TestCacheBucket:
 # ---------------------------------------------------------------------------
 # The endpoint
 # ---------------------------------------------------------------------------
-def _redis_with(samples: dict[str, list[str]]):
+def _redis_with(samples: dict[str, list[str]], now: float = 0.0):
+    """Fake Redis whose ZRANGEBYSCORE honours `withscores` like the real client.
+
+    The score is the sample timestamp. Members already carry it as their first
+    field, so it is parsed back out — a fixture cannot then drift from the
+    member/score agreement the real writer maintains.
+    """
     r = MagicMock()
     r.smembers.return_value = set(samples.keys())
-    r.zrangebyscore.side_effect = lambda key, lo, hi: samples[key.split("latency:", 1)[1]]
+
+    def _zrangebyscore(key, lo, hi, withscores=False):
+        members = samples[key.split("latency:", 1)[1]]
+        if not withscores:
+            return members
+        out = []
+        for m in members:
+            try:
+                score = float(m.split(":")[0])
+            except (TypeError, ValueError):
+                score = 0.0
+            out.append((m, score))
+        return out
+
+    r.zrangebyscore.side_effect = _zrangebyscore
     return r
 
 
@@ -330,3 +372,239 @@ class TestWriteBound:
         from app.utils.latency_stats import min_samples_for
 
         assert MAX_SAMPLES_PER_ENDPOINT >= min_samples_for(99) * 10
+
+
+# ---------------------------------------------------------------------------
+# #1500 residuals — ops r329 (B1/B2/B3), r330, r334. Each closed NEEDS-CODE-LANE
+# and none had been taken; these pin them so they cannot come back.
+# ---------------------------------------------------------------------------
+class TestEndpointBucketIsBounded:
+    """r329 B2 — an unauthenticated caller could mint unbounded Redis keys.
+
+    The middleware runs BEFORE routing and only filters on the /api prefix, so a
+    404 on any arbitrary `/api/<junk>` used to become its own endpoint key, and
+    `latency:_endpoints` has no cap. Redis is Premium-0 / 50 MB / allkeys-lru,
+    where an oversized working set evicts COLD keys regardless of TTL — the r320
+    grid-sentinel mechanism — so the flood would evict the very cold samples
+    this rail exists to retain.
+    """
+
+    @staticmethod
+    def _keys_written(paths):
+        """Drive the REAL middleware over a real router; collect the Redis keys."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.middleware import latency
+
+        app = FastAPI()
+        app.add_middleware(latency.LatencyMiddleware)
+
+        @app.get("/api/leagues/{sport_key}")
+        def _league(sport_key: str):
+            return {"ok": sport_key}
+
+        @app.get("/api/events/{event_id}")
+        def _event(event_id: int):
+            return {"ok": event_id}
+
+        pipe = MagicMock()
+        redis = MagicMock()
+        redis.pipeline.return_value = pipe
+
+        latency._request_counters.clear()
+        with patch.object(latency, "_get_redis", return_value=redis), \
+             patch.object(latency, "SAMPLE_RATE", 1):
+            client = TestClient(app, raise_server_exceptions=False)
+            for p in paths:
+                client.get(p)
+
+        return [c.args[0] for c in pipe.zadd.call_args_list]
+
+    def test_unmatched_paths_collapse_to_one_bucket(self):
+        """20 distinct junk paths must not mint 20 Redis keys."""
+        from app.middleware.latency import UNMATCHED_BUCKET
+
+        keys = self._keys_written([f"/api/junk-{i}/{i}" for i in range(20)])
+
+        assert len(keys) == 20                      # every request still sampled
+        assert set(keys) == {f"latency:{UNMATCHED_BUCKET}"}   # ...into ONE key
+
+    def test_string_path_params_bucket_by_route_template(self):
+        """`_normalize_path` only collapses numbers and UUIDs, so every route
+        with a STRING path param kept its raw value as its own bucket."""
+        keys = self._keys_written([
+            "/api/leagues/basketball_nba",
+            "/api/leagues/americanfootball_nfl",
+            "/api/leagues/icehockey_nhl",
+        ])
+
+        assert set(keys) == {"latency:/api/leagues/{sport_key}"}
+
+    def test_numeric_ids_still_collapse(self):
+        keys = self._keys_written(["/api/events/1", "/api/events/2", "/api/events/3"])
+        assert set(keys) == {"latency:/api/events/{event_id}"}
+
+    def test_counter_dict_is_bounded(self):
+        """r329 also flagged `_request_counters` as unbounded per-dyno memory
+        growth on the same attacker-controlled input."""
+        from app.middleware import latency
+
+        latency._request_counters.clear()
+        with patch.object(latency, "SAMPLE_RATE", 10):
+            for i in range(latency._MAX_COUNTER_KEYS + 500):
+                latency._should_sample(f"/api/synthetic/{i}")
+
+        assert len(latency._request_counters) <= latency._MAX_COUNTER_KEYS
+
+    def test_skip_prefixes_dead_code_is_gone(self):
+        """Defined, never referenced — and its "/" entry would have skipped
+        every path if it had ever been wired up."""
+        from app.middleware import latency
+
+        assert not hasattr(latency, "_SKIP_PREFIXES")
+
+
+class TestNonFiniteGuard:
+    """r329 B1 — defensive. Unreachable from today's writer (perf_counter is
+    always finite), but the blast radius is the WHOLE rail, not one row."""
+
+    @pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "NaN", "Infinity"])
+    def test_non_finite_samples_are_rejected(self, bad):
+        assert parse_sample_member(f"1.0:{bad}:miss") is None
+
+    def test_a_single_inf_cannot_500_the_whole_rail(self):
+        """json.dumps(allow_nan=False) — Starlette's renderer — raises on inf.
+        One poisoned sample must not take every other endpoint's numbers with
+        it."""
+        import json
+
+        members = [f"{i}.0:{10 + i}.0:hit" for i in range(25)] + ["99.0:inf:miss"]
+        good = [parse_sample_member(m) for m in members]
+        kept = [g[0] for g in good if g is not None]
+
+        assert len(kept) == 25
+        json.dumps(summarize(kept), allow_nan=False)   # renders, does not raise
+
+
+@pytest.mark.asyncio
+async def test_payload_can_be_dated_from_its_own_contents():
+    """r329 B3 / r330 — `max_ms` moved 19696.7 -> 12761.0 across 25 minutes at
+    the SAME n=13: the worst sample the rail ever recorded aged out silently and
+    no consumer could know it had existed."""
+    import time as _t
+
+    from app.routes.admin import get_latency_stats
+
+    now = _t.time()
+    # Oldest sample 30 min old, newest 10 s old.
+    members = [f"{now - 1800}:5000.0:miss"] + [
+        f"{now - 10 - i}:{20 + i}.0:hit" for i in range(24)
+    ]
+    r = _redis_with({"/api/feed": members})
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        out = await get_latency_stats(MagicMock(), "s", 20)
+
+    assert "generated_at" in out and out["generated_at"]
+
+    ep = out["endpoints"][0]
+    # ~10s vs ~1800s — the two must be clearly distinguishable, which is the
+    # whole point: "n=25 from the last minute" != "n=25 from 30 minutes ago".
+    assert ep["newest_sample_age_s"] < 120
+    assert ep["oldest_sample_age_s"] > 1500
+
+
+@pytest.mark.asyncio
+async def test_cache_buckets_account_for_every_sample():
+    """r330 — endpoint n=13 with a lone `miss` bucket of n=12, and a row min_ms
+    of 4.0ms against the miss bucket's 1710.0ms: a real fast sample existed and
+    was invisible. The fast bucket is exactly the half that separates cold tail
+    from warm serve."""
+    from app.routes.admin import get_latency_stats
+
+    members = (
+        [f"{i}.0:1800.0:miss" for i in range(12)]
+        + ["99.0:4.0"]           # legacy 2-field member -> "none" bucket
+    )
+    r = _redis_with({"/api/feed": members})
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        out = await get_latency_stats(MagicMock(), "s", 20)
+
+    ep = out["endpoints"][0]
+    assert ep["n"] == 13
+    assert ep["min_ms"] == 4.0
+    bucketed = sum(b["n"] for b in ep["by_cache_status"].values())
+    assert bucketed + ep["unbucketed_samples"] == ep["n"]
+    assert ep["unbucketed_samples"] == 1
+
+
+@pytest.mark.asyncio
+async def test_completeness_reconciles_against_its_own_denominator():
+    """r334 — `completeness: "complete"` asserted over a 2-of-5 payload with an
+    empty `unreadable_endpoints`. The false-green shape Queue 294 removed from
+    the VALUES was still living in the VERDICT."""
+    from app.routes.admin import get_latency_stats
+
+    r = _redis_with({
+        "/api/playoffs/{league_slug}": ["1.0:29.7:none"],
+        "/api/teams/{identifier}": ["1.0:22.3:none"],
+        "/api/quiet-a": [],      # tracked, readable, nothing in window
+        "/api/quiet-b": [],
+        "/api/quiet-c": [],
+    })
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        out = await get_latency_stats(MagicMock(), "s", 20)
+
+    rec = out["endpoint_reconciliation"]
+    assert rec["tracked"] == 5
+    assert rec["reported"] == 2
+    assert rec["no_samples_in_window"] == 3       # the gap r334 could not see
+    assert rec["unaccounted"] == 0
+    assert rec["reconciles"] is True
+    assert out["completeness"] == "complete"      # now EARNED, not asserted
+
+
+@pytest.mark.asyncio
+async def test_always_sampled_endpoint_never_just_vanishes():
+    """r334 — `/api/feed` was declared always_sampled and was entirely absent.
+    Absence with no timestamp is indistinguishable from a dead sampler."""
+    from app.routes.admin import get_latency_stats
+
+    r = _redis_with({"/api/playoffs/{league_slug}": ["1.0:29.7:none"]})
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        out = await get_latency_stats(MagicMock(), "s", 20)
+
+    feed = [e for e in out["endpoints"] if e["endpoint"] == "/api/feed"]
+    assert len(feed) == 1
+    assert feed[0]["no_samples_in_window"] is True
+    assert feed[0]["n"] == 0
+    assert feed[0]["p95_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_zero_row_survives_top_truncation():
+    """A zero row has no p95 to sort on, so `top` would drop it exactly when the
+    rail is busiest — the moment the signal matters most."""
+    from app.routes.admin import get_latency_stats
+
+    samples = {
+        f"/api/busy-{i}": [f"{j}.0:{100 * (i + 1)}.0:none" for j in range(25)]
+        for i in range(10)
+    }
+    r = _redis_with(samples)
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        out = await get_latency_stats(MagicMock(), "s", 3)   # top=3
+
+    names = [e["endpoint"] for e in out["endpoints"]]
+    assert "/api/feed" in names
+    assert out["endpoint_reconciliation"]["truncated_by_top"] == 7
