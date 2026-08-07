@@ -151,21 +151,12 @@ _POPULATION_SQL = f"""
 # STEP 3 — completed_at derivation, batched and lazy. This is the work that used to
 # ride on EVERY candidate row as two correlated subqueries; only rows with a NULL
 # completed_at need it, and they are the minority (CAL-P002 census: ~8%).
-_LAST_SNAPSHOT_SQL = """
-    SELECT x.event_id, MAX(x.captured_at) AS last_snap
-    FROM (
-        SELECT w.event_id, w.captured_at
-          FROM win_prob_snapshots w
-          JOIN events e ON e.id = w.event_id
-         WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
-        UNION ALL
-        SELECT o.event_id, o.captured_at
-          FROM odds_snapshots o
-          JOIN events e ON e.id = o.event_id
-         WHERE o.event_id = ANY(:event_ids) AND o.captured_at >= e.commence_time
-    ) x
-    GROUP BY x.event_id
-"""
+#
+# Shared with the two staleness nets that PRODUCE the gap, so the producer and the
+# repair can never disagree about what "when did this game end" means.
+from app.utils.event_completion import (  # noqa: E402
+    LAST_POST_COMMENCE_SNAPSHOT_SQL as _LAST_SNAPSHOT_SQL,
+)
 
 _FIX_SCORE_SQL = """
     UPDATE events SET home_score = :home_score, away_score = :away_score
@@ -448,9 +439,14 @@ async def repair(
             new_completed_at = None
             if needs_completed_at:
                 stats["completed_at_gaps"] += 1
-                cand = last_snap.get(r.event_id)
-                # gotcha #46: never stamp a completion that precedes the start.
-                if cand is not None and cand >= r.commence_time:
+                # Same rule the producers now use (gotcha #22/#46) — one helper,
+                # so a fix on one side cannot leave the other behind.
+                from app.utils.event_completion import derive_completed_at
+
+                cand = derive_completed_at(
+                    last_snap.get(r.event_id), r.commence_time
+                )
+                if cand is not None:
                     new_completed_at = cand
                     entry["new_completed_at"] = cand.isoformat()
                 else:
