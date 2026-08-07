@@ -35,6 +35,159 @@ def has_no_real_price(outcome_probabilities: "list[float | None]") -> bool:
     return max(real) < FEED_MIN_REAL_PROBABILITY
 
 
+# #1574 (UX-P011): a price nobody will trade at is not a price. `current_probability`
+# is the book midpoint. When the book is 1c-bid / 99c-ask, that midpoint is an artifact
+# of an EMPTY book, not a belief — the "never-traded illiquid placeholder" phantom of
+# standing ruling 8, and gotcha #19 applied to Polymarket ladders.
+#
+# The threshold is MEASURED, not tuned. Across the 40 distribution cards on the
+# 2026-08-07 production feed (~600 outcomes) the spread distribution is bimodal with an
+# empty middle: healthy outcomes top out at 0.079, phantoms start at 0.44, and exactly
+# THREE outcomes sit anywhere in between. Any value in [0.16, 0.43] gives identical
+# results on that population. If a future population narrows that band, that is a new
+# measurement to record — not a knob to turn.
+#
+# Why 0.20 and not the 0.50 used by kalshi.py `_KALSHI_TIGHT_SPREAD_MAX`: that constant
+# picks a price SOURCE (midpoint vs last trade) at ingest; this one decides whether a
+# stored number may be shown at all. 0.50 would let the measured 0.44 phantoms through.
+# The closest sibling is the Polymarket live poll's 0.15 spread test
+# (prediction_market_matching.py), which is the same source and the same idea.
+FEED_PHANTOM_MIN_SPREAD = 0.20
+
+# The second half of the test, and the reason this is safe across sources. A wide spread
+# alone does NOT mean a fabricated price: Kalshi's ingest guard already falls back to
+# last_price on a wide book, so a wide-spread Kalshi outcome usually carries a REAL
+# traded price. Verified on production 2026-08-07 — every wide-spread Kalshi outcome on
+# the feed (FaZe Media CEO, aliens ladder, SDNY confirmation) failed this equality test
+# and is correctly spared. Only a probability that IS the midpoint of a wide book was
+# manufactured by averaging a spread nobody will trade inside.
+_PHANTOM_MIDPOINT_TOLERANCE = 0.0005
+
+
+def is_fabricated_midpoint(
+    probability: "float | None",
+    yes_bid: "float | None",
+    yes_ask: "float | None",
+) -> bool:
+    """True if this outcome's price was manufactured from an untradeable book (#1574).
+
+    Two conditions, both required:
+      1. the bid/ask spread is at least ``FEED_PHANTOM_MIN_SPREAD`` wide, and
+      2. the stored probability IS that book's midpoint.
+
+    A missing side is the widest possible quote on that side (no bid = 0.0, no ask =
+    1.0), because "nobody will buy this at any price" is a wide book, not a missing one.
+    That is what catches Netflix's ``$100-$110`` bucket: bid NULL / ask 0.93 -> 0.465.
+
+    ``bid`` and ``ask`` BOTH null means there is no order book at all — a model price
+    (DataGolf, odds_api) or a derived complement. Those return False and pass through
+    untouched, which is why the golf and futures-champion controls survive by
+    construction rather than by exemption.
+    """
+    if probability is None:
+        return False
+    if yes_bid is None and yes_ask is None:
+        return False
+    bid = 0.0 if yes_bid is None else float(yes_bid)
+    ask = 1.0 if yes_ask is None else float(yes_ask)
+    if ask - bid < FEED_PHANTOM_MIN_SPREAD:
+        return False
+    return abs(float(probability) - (bid + ask) / 2) < _PHANTOM_MIDPOINT_TOLERANCE
+
+
+# A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
+# phantoms are gone. Alex's ruling (2026-08-07, on #1574): drop the card. A gapped
+# exclusive ladder asserts something false by omission — Netflix keeping only its five
+# edge buckets implies the stock will not close between $50 and $110, when the truth is
+# that those buckets are merely unpriced.
+#
+# The band is definitional, not tuned: an exhaustive partition sums to 1. On the
+# 2026-08-07 feed the nearest survivors were Oscars Best Casting at 0.600 (drops) and
+# the Fed decision ladder at 1.02 (keeps), so any lower bound in (0.60, 1.02) is
+# equivalent.
+FEED_EXCLUSIVE_SUM_MIN = 0.75
+FEED_EXCLUSIVE_SUM_MAX = 1.25
+
+# A ladder needs at least two rungs to be a distribution. Amazon's week-of-Aug-3 card
+# had 15 priced rungs, 14 of them phantom; one surviving rung is not a distribution.
+_MIN_LADDER_REAL_OUTCOMES = 2
+
+
+def phantom_book_leaves_nothing_real(
+    *,
+    book_outcomes: int,
+    real_book_outcomes: int,
+    is_exclusive: bool,
+    survivor_probability_sum: "float | None",
+) -> bool:
+    """True if stripping fabricated midpoints leaves no honest card behind (#1574).
+
+    Applies ONLY to markets that actually lost an outcome to a phantom — the caller
+    checks that first, so a market with a healthy book is never judged here and a
+    long-standing under-summing field is not newly suppressed.
+
+    ``book_outcomes`` counts outcomes carrying any bid or ask; ``real_book_outcomes``
+    counts those that survived. ``is_exclusive`` marks a mutually exclusive field
+    (Polymarket negRisk), where the survivors must still sum to ~100%.
+    """
+    # Every tradeable price this market had was a phantom. Whatever remains is a
+    # no-book complement ("No" at 0.5), which is not a price either.
+    if real_book_outcomes == 0:
+        return True
+    # A multi-rung ladder reduced below two real rungs is no longer a distribution.
+    if book_outcomes >= 3 and real_book_outcomes < _MIN_LADDER_REAL_OUTCOMES:
+        return True
+    # An exclusive field must still cover itself.
+    if is_exclusive:
+        if survivor_probability_sum is None:
+            return True
+        return not (
+            FEED_EXCLUSIVE_SUM_MIN
+            <= float(survivor_probability_sum)
+            <= FEED_EXCLUSIVE_SUM_MAX
+        )
+    return False
+
+
+def classify_fabricated_book(
+    outcomes: "list[tuple[float | None, float | None, float | None]]",
+    *,
+    is_exclusive: bool,
+) -> "tuple[list[bool], bool]":
+    """Decide a whole card's fate in one pure call (#1574).
+
+    ``outcomes`` is ``[(probability, yes_bid, yes_ask), ...]``. Returns
+    ``(keep_mask, drop_card)``: a per-outcome keep flag, and whether the card should
+    be dropped from the feed entirely.
+
+    Lives here rather than inline in ``routes/feed.py`` so the whole decision — not a
+    re-implementation of it — is what the tests exercise.
+    """
+    phantom = [is_fabricated_midpoint(p, b, a) for (p, b, a) in outcomes]
+    keep_mask = [not x for x in phantom]
+    if not any(phantom):
+        # Untouched: a market with a healthy book is never judged, so a long-standing
+        # under-summing field is not newly suppressed by this rule.
+        return keep_mask, False
+
+    def _has_book(idx: int) -> bool:
+        return outcomes[idx][1] is not None or outcomes[idx][2] is not None
+
+    drop = phantom_book_leaves_nothing_real(
+        book_outcomes=sum(1 for i in range(len(outcomes)) if _has_book(i)),
+        real_book_outcomes=sum(
+            1 for i in range(len(outcomes)) if keep_mask[i] and _has_book(i)
+        ),
+        is_exclusive=is_exclusive,
+        survivor_probability_sum=sum(
+            float(outcomes[i][0])
+            for i in range(len(outcomes))
+            if keep_mask[i] and outcomes[i][0] is not None
+        ),
+    )
+    return keep_mask, drop
+
+
 # #1004: unresolved markets whose leader is pinned at a dead extreme render as a
 # lone "100%" (or "0%") card — the locked-near-certain junk class Manus flagged
 # (split from #921; cf. gotcha #23). Suppress them UNLESS there's live interest:

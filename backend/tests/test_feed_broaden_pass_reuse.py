@@ -43,7 +43,17 @@ NOW = datetime(2026, 8, 3, 12, 0, 0, tzinfo=timezone.utc)
 
 
 class _Outcome:
-    def __init__(self, id, name, current_probability, *, change=0.0, opening=None):
+    def __init__(
+        self,
+        id,
+        name,
+        current_probability,
+        *,
+        change=0.0,
+        opening=None,
+        yes_bid=None,
+        yes_ask=None,
+    ):
         self.id = id
         self.name = name
         self.current_probability = current_probability
@@ -53,6 +63,10 @@ class _Outcome:
         self.rank_change_24h = None
         self.team_id = None
         self.calibration_probability = None
+        # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Default None
+        # = no order book, which is the pass-through case.
+        self.current_yes_bid = yes_bid
+        self.current_yes_ask = yes_ask
 
 
 class _Market:

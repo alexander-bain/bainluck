@@ -23,8 +23,11 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    classify_fabricated_book,
     has_no_real_price,
+    is_fabricated_midpoint,
     is_locked_near_certain,
+    phantom_book_leaves_nothing_real,
     has_specific_explanation,
     has_strong_hook,
     quality_score_adjustment,
@@ -992,6 +995,318 @@ class TestNoRealPrice:
         assert has_no_real_price([0.03, 0.02, 0.01]) is False  # leader 3% — real race
         assert has_no_real_price([0.005]) is False  # exactly at floor stays
         assert has_no_real_price([0.22, None, 0.18]) is False  # mixed, real leader
+
+
+class TestFabricatedMidpoint:
+    """#1574 (UX-P011): a price nobody will trade at is not a price.
+
+    Every specimen below is a real row read off production on 2026-08-07, so these
+    tests fail if the rule stops matching the defect it was measured against.
+    """
+
+    # --- SUPPRESS: the phantoms -------------------------------------------------
+
+    def test_spacex_all_rungs_are_the_same_empty_book(self):
+        # 57782305: every one of 16 rungs quoted 1c/99c -> a confident-looking 50%.
+        assert is_fabricated_midpoint(0.5, 0.01, 0.99) is True
+
+    def test_netflix_interior_buckets_are_phantoms(self):
+        # 57782215: 2c/94c -> 0.48, printed five times for mutually exclusive buckets.
+        assert is_fabricated_midpoint(0.48, 0.02, 0.94) is True
+        assert is_fabricated_midpoint(0.475, 0.02, 0.93) is True
+
+    def test_missing_bid_with_a_live_ask_is_still_a_phantom(self):
+        # 57782215 "$100-$110": bid NULL / ask 0.93 -> 0.465. "Nobody will buy this at
+        # any price" is the WIDEST book, not a missing one. Regression guard: an
+        # early draft of this rule exempted any null side and let this rung through.
+        assert is_fabricated_midpoint(0.465, None, 0.93) is True
+
+    def test_oscars_phantoms_outranked_the_real_leader(self):
+        # 58492238: 3c/82c -> 0.425, ranked ABOVE the genuinely-priced 14% leader.
+        assert is_fabricated_midpoint(0.425, 0.03, 0.82) is True
+        assert is_fabricated_midpoint(0.415, 0.02, 0.81) is True
+
+    def test_zero_bid_is_not_treated_as_missing(self):
+        # An explicit 0.0000 bid is common on Polymarket; it is a real quote of zero.
+        assert is_fabricated_midpoint(0.485, 0.0, 0.97) is True
+
+    def test_nvidia_single_bad_rung_breaks_ladder_monotonicity(self):
+        # 57782674: one 48c/99c rung -> 0.735, which sat between two REAL rungs and
+        # broke the ladder's monotonicity. The rung goes; the card stays (below).
+        assert is_fabricated_midpoint(0.735, 0.48, 0.99) is True
+
+    # --- KEEP: the both-direction guard (gotcha #43) -----------------------------
+
+    def test_tight_books_are_real_prices(self):
+        # 20570794 Fed decision ladder — the healthy negRisk control.
+        assert is_fabricated_midpoint(0.56, 0.55, 0.57) is False
+        assert is_fabricated_midpoint(0.385, 0.37, 0.40) is False
+        assert is_fabricated_midpoint(0.0605, 0.058, 0.063) is False
+        # 58492238's real tail, and 57782674's real rungs.
+        assert is_fabricated_midpoint(0.065, 0.03, 0.10) is False
+        assert is_fabricated_midpoint(0.845, 0.81, 0.88) is False
+
+    def test_no_book_at_all_is_never_a_phantom(self):
+        # DataGolf / odds_api model prices (golf field, MLB World Series, NFL Super
+        # Bowl) carry no order book. They survive by CONSTRUCTION, not by exemption —
+        # this is what makes the rule safe for every non-orderbook source.
+        assert is_fabricated_midpoint(0.84224, None, None) is False
+        assert is_fabricated_midpoint(0.5, None, None) is False
+
+    def test_wide_kalshi_book_with_a_real_last_trade_is_kept(self):
+        # THE reason the test is midpoint-equality and not spread alone. Kalshi's
+        # ingest guard already falls back to last_price on a wide book, so these
+        # wide-spread rows carry REAL traded prices. All three are production rows
+        # from the FaZe Media CEO, aliens and SDNY-confirmation cards.
+        assert is_fabricated_midpoint(0.96, 0.03, 0.97) is False  # real last trade
+        assert is_fabricated_midpoint(0.07, 0.02, 0.99) is False
+        assert is_fabricated_midpoint(0.01, 0.0, 1.0) is False
+        assert is_fabricated_midpoint(0.03, 0.0, 1.0) is False
+
+    def test_genuine_near_zero_edge_buckets_are_kept(self):
+        # 57782215's edge buckets: bid NULL / ask 0.01 is a TIGHT book at ~0.
+        assert is_fabricated_midpoint(0.005, None, 0.01) is False
+        assert is_fabricated_midpoint(0.015, 0.01, 0.02) is False
+
+    def test_null_probability_is_not_judged(self):
+        assert is_fabricated_midpoint(None, 0.01, 0.99) is False
+
+    def test_threshold_boundary(self):
+        # Measured chasm: healthy tops out at 0.079, phantoms start at 0.44.
+        assert is_fabricated_midpoint(0.5, 0.30, 0.70) is True   # 0.40 spread
+        assert is_fabricated_midpoint(0.5, 0.45, 0.55) is False  # 0.10 spread
+        # No assertion on the exact knife-edge: binary floats make 0.60 - 0.40 come
+        # out as 0.19999999999999996, so "exactly 0.20" is not a thing a caller can
+        # rely on. It does not matter here — the measured population has an empty
+        # band from 0.079 to 0.44, so nothing real lives anywhere near the line.
+        assert is_fabricated_midpoint(0.5, 0.395, 0.605) is True   # 0.21
+        assert is_fabricated_midpoint(0.5, 0.405, 0.595) is False  # 0.19
+
+
+class TestPhantomBookLeavesNothingReal:
+    """#1574 (UX-P011): the card-level half of the gate."""
+
+    def test_every_tradeable_price_was_a_phantom(self):
+        # 57782305 SpaceX and the thirteen "Up or Down on August 10?" cards: the only
+        # survivor is a no-book complement ("No" at 0.5), which is not a price either.
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=15,
+                real_book_outcomes=0,
+                is_exclusive=False,
+                survivor_probability_sum=0.5,
+            )
+            is True
+        )
+
+    def test_ladder_reduced_below_two_real_rungs(self):
+        # 57782891 Amazon: 15 priced rungs, 14 phantom. One rung is not a distribution.
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=15,
+                real_book_outcomes=1,
+                is_exclusive=False,
+                survivor_probability_sum=1.0,
+            )
+            is True
+        )
+
+    def test_gapped_exclusive_ladder_is_dropped(self):
+        # Alex ruling 2026-08-07: a gapped exclusive ladder asserts something false by
+        # omission. Netflix (0.036) and Oscars Best Casting (0.600) both go.
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=11,
+                real_book_outcomes=5,
+                is_exclusive=True,
+                survivor_probability_sum=0.036,
+            )
+            is True
+        )
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=13,
+                real_book_outcomes=8,
+                is_exclusive=True,
+                survivor_probability_sum=0.600,
+            )
+            is True
+        )
+
+    def test_cumulative_ladder_is_never_judged_by_the_exclusive_sum(self):
+        # 57782674 NVIDIA is a polymarket_event bundle of INDEPENDENT cumulative
+        # thresholds ("closes above $200"), which legitimately sums to 3.635. Judging
+        # it by the exclusive-sum rule would delete a perfectly healthy card.
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=15,
+                real_book_outcomes=13,
+                is_exclusive=False,
+                survivor_probability_sum=3.635,
+            )
+            is False
+        )
+
+    def test_exclusive_field_that_still_covers_itself_is_kept(self):
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=8,
+                real_book_outcomes=6,
+                is_exclusive=True,
+                survivor_probability_sum=0.98,
+            )
+            is False
+        )
+
+    def test_null_survivor_sum_on_an_exclusive_field_drops(self):
+        assert (
+            phantom_book_leaves_nothing_real(
+                book_outcomes=11,
+                real_book_outcomes=2,
+                is_exclusive=True,
+                survivor_probability_sum=None,
+            )
+            is True
+        )
+
+
+class TestClassifyFabricatedBook:
+    """#1574 (UX-P011): whole-card verdicts on the exact production specimens.
+
+    Every book below is copied from `futures_outcomes` as read on 2026-08-07. These
+    are the acceptance criteria expressed as tests: if the feed ever serves one of the
+    DROP cards again, or ever loses one of the KEEP cards, one of these goes red.
+    """
+
+    # (probability, yes_bid, yes_ask)
+    SPACEX = [(0.5, 0.01, 0.99)] * 15 + [(0.5, None, None)]
+    NETFLIX = [
+        (0.48, 0.02, 0.94), (0.48, 0.02, 0.94), (0.475, 0.02, 0.93),
+        (0.475, 0.02, 0.93), (0.475, 0.02, 0.93), (0.465, None, 0.93),
+        (0.015, 0.01, 0.02), (0.0055, 0.001, 0.01), (0.0055, 0.001, 0.01),
+        (0.005, None, 0.01), (0.005, None, 0.01),
+    ]
+    OSCARS = [
+        (0.425, 0.03, 0.82), (0.425, 0.04, 0.81), (0.415, 0.02, 0.81),
+        (0.355, 0.02, 0.69), (0.355, 0.03, 0.68),
+        (0.14, 0.10, 0.18), (0.07, 0.04, 0.10), (0.065, 0.03, 0.10),
+        (0.065, 0.03, 0.10), (0.065, 0.03, 0.10), (0.065, 0.03, 0.10),
+        (0.065, 0.03, 0.10), (0.065, 0.03, 0.10),
+    ]
+    NVIDIA = [
+        (0.845, 0.81, 0.88), (0.735, 0.48, 0.99), (0.73, 0.70, 0.76),
+        (0.5, None, None), (0.5, 0.02, 0.98), (0.465, 0.43, 0.50),
+        (0.285, 0.25, 0.32), (0.255, 0.22, 0.29), (0.15, 0.12, 0.18),
+        (0.125, 0.09, 0.16), (0.085, 0.05, 0.12), (0.055, 0.02, 0.09),
+        (0.045, 0.02, 0.07), (0.035, 0.01, 0.06), (0.035, 0.01, 0.06),
+        (0.025, 0.01, 0.04),
+    ]
+    FED = [
+        (0.56, 0.55, 0.57), (0.385, 0.37, 0.40), (0.0605, 0.058, 0.063),
+        (0.0105, 0.008, 0.013), (0.008, 0.007, 0.009),
+    ]
+    GOLF_FIELD = [(0.84224, None, None), (0.74604, None, None), (0.718, None, None)]
+    UP_OR_DOWN = [(0.5, 0.01, 0.99), (0.5, None, None)]
+    ALIENS = [  # kalshi: wide books, but real last-trade prices
+        (0.225, 0.22, 0.23), (0.165, 0.16, 0.17), (0.0605, 0.058, 0.063),
+        (0.01, 0.0, 1.0), (0.01, 0.0, 1.0),
+    ]
+
+    def test_spacex_card_is_dropped(self):
+        # 57782305 — all 16 rungs printed 50%. The visible payoff of this cycle.
+        _, drop = classify_fabricated_book(self.SPACEX, is_exclusive=False)
+        assert drop is True
+
+    def test_up_or_down_binaries_are_dropped(self):
+        # The thirteen "X Up or Down on August 10?" coin-flip cards.
+        _, drop = classify_fabricated_book(self.UP_OR_DOWN, is_exclusive=False)
+        assert drop is True
+
+    def test_netflix_gapped_exclusive_ladder_is_dropped(self):
+        # 57782215 — the 289% ladder. Survivors total 3.6%, so the field is gapped.
+        keep, drop = classify_fabricated_book(self.NETFLIX, is_exclusive=True)
+        assert drop is True
+        assert sum(keep) == 5  # the five genuinely-priced edge buckets
+
+    def test_oscars_gapped_exclusive_ladder_is_dropped(self):
+        # 58492238 — Alex's ruling: 59.5% surviving is still a gapped partition.
+        keep, drop = classify_fabricated_book(self.OSCARS, is_exclusive=True)
+        assert drop is True
+        assert sum(keep) == 8
+
+    def test_oscars_phantoms_are_exactly_the_top_five(self):
+        # The defect was not just wrong numbers: the five phantoms OUTRANKED the real
+        # 14% leader. Assert the rule removes precisely those five and keeps the rest.
+        keep, _ = classify_fabricated_book(self.OSCARS, is_exclusive=True)
+        assert keep[:5] == [False] * 5
+        assert all(keep[5:])
+
+    # --- the other direction: healthy cards must survive (gotcha #43) ------------
+
+    def test_nvidia_keeps_its_card_and_loses_only_the_bad_rung(self):
+        # 57782674 — a genuinely well-priced CUMULATIVE ladder. It must survive, and
+        # judging it by the exclusive-sum rule (it totals 3.6) would have killed it.
+        keep, drop = classify_fabricated_book(self.NVIDIA, is_exclusive=False)
+        assert drop is False
+        assert keep[0] is True    # the real 0.845 leader stays
+        assert keep[1] is False   # the 48c/99c monotonicity-breaking rung goes
+        assert keep[2] is True
+
+    def test_fed_ladder_untouched(self):
+        keep, drop = classify_fabricated_book(self.FED, is_exclusive=True)
+        assert drop is False
+        assert all(keep)
+
+    def test_model_priced_field_untouched(self):
+        # Golf / odds_api champion fields have no order book at all.
+        keep, drop = classify_fabricated_book(self.GOLF_FIELD, is_exclusive=False)
+        assert drop is False
+        assert all(keep)
+
+    def test_kalshi_wide_book_card_untouched(self):
+        keep, drop = classify_fabricated_book(self.ALIENS, is_exclusive=False)
+        assert drop is False
+        assert all(keep)
+
+    def test_healthy_card_is_never_judged(self):
+        # A market with no phantoms is returned untouched even if its field sums low —
+        # this rule must not newly suppress a long-standing under-summing ladder.
+        low = [(0.20, 0.19, 0.21), (0.10, 0.09, 0.11)]
+        keep, drop = classify_fabricated_book(low, is_exclusive=True)
+        assert drop is False
+        assert all(keep)
+
+    def test_empty_outcomes_do_not_explode(self):
+        assert classify_fabricated_book([], is_exclusive=True) == ([], False)
+
+
+class TestFabricatedMidpointWiring:
+    """The gate is only worth anything if the route still calls it, and only safe if
+    the book columns are eagerly loaded. Both have bitten this repo before."""
+
+    def test_feed_route_calls_the_gate(self):
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        src = inspect.getsource(feed_module)
+        assert "classify_fabricated_book(" in src
+
+    def test_book_columns_are_in_every_outcome_load_only_list(self):
+        # L2-172 / gotcha: a column read inside GET /api/feed but absent from
+        # load_only lazy-loads per outcome and crashes the async route. There are TWO
+        # such lists (discover path and sports-mode path); both must carry the book.
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        src = inspect.getsource(feed_module)
+        assert src.count("FuturesOutcome.current_probability") == 2, (
+            "expected exactly two outcome load_only lists — if this changed, the "
+            "assertions below need to follow"
+        )
+        assert src.count("FuturesOutcome.current_yes_bid") == 2
+        assert src.count("FuturesOutcome.current_yes_ask") == 2
 
 
 class TestFeedQualityDebug:
