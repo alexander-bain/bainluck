@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {"id":"python_codeql_linux","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"javascript_codeql_linux","language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"pull_request","uploads_sarif":true,"security_events_write":true,"fork_pr":true,"requires_repo_secret":false,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"swift_codeql_linux_refusal","language":"swift","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":true,"expected":{"verdict":"REFUSE","reason_codes":["swift_requires_macos"]}},
+    {"id":"swift_codeql_macos","language":"swift","scanner":"codeql","runner":"macos-15","event":"push","uploads_sarif":true,"security_events_write":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"swift_native_alternative","language":"swift","scanner":"native-static-analysis","runner":"macos-15","event":"push","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"swift_has_no_rail","language":"swift","scanner":"none","runner":"macos-15","event":"push","expected":{"verdict":"REFUSE","reason_codes":["native_unscanned"]}},
+    {"id":"one_language_failure_masked","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":true,"matrix_failure":true,"aggregate_green":true,"expected":{"verdict":"REFUSE","reason_codes":["matrix_partial_success_masked"]}},
+    {"id":"missing_sarif_permission","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":false,"expected":{"verdict":"REFUSE","reason_codes":["missing_sarif_permission"]}},
+    {"id":"unsafe_pr_target","language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"pull_request_target","checks_out_pr_head":true,"uploads_sarif":true,"security_events_write":true,"expected":{"verdict":"REFUSE","reason_codes":["untrusted_code_with_write_token","unsupported_event"]}},
+    {"id":"fork_requires_secret","language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"pull_request","fork_pr":true,"requires_repo_secret":true,"expected":{"verdict":"REFUSE","reason_codes":["fork_secret_unavailable"]}},
+    {"id":"master_push","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","triggered":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"weekly_schedule","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"schedule","triggered":true,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"swift_path_filter_miss","language":"swift","scanner":"codeql","runner":"macos-15","event":"push","relevant_change":true,"triggered":false,"expected":{"verdict":"REFUSE","reason_codes":["relevant_path_skipped"]}},
+    {"id":"mutable_action_tag","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","action_ref_mutable":true,"expected":{"verdict":"REFUSE","reason_codes":["mutable_action_ref"]}},
+    {"id":"generated_archive_included","language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"push","generated_included":true,"generated_is_product":false,"expected":{"verdict":"REFUSE","reason_codes":["generated_noise"]}},
+    {"id":"duplicate_workflow_owner","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","duplicate_owner":true,"expected":{"verdict":"REFUSE","reason_codes":["duplicate_scan_owner"]}},
+    {"id":"required_check_renamed","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","job_name":"SAST Python","required_check_expected":"Analyze (python)","expected":{"verdict":"REFUSE","reason_codes":["required_check_detached"]}},
+    {"id":"required_check_stable","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","job_name":"Analyze (python)","required_check_expected":"Analyze (python)","expected":{"verdict":"ALLOW","reason_codes":[]}},
+    {"id":"continue_on_error","language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","failure_tolerated":true,"expected":{"verdict":"REFUSE","reason_codes":["failure_masked"]}}
+  ],
+  "plans": [
+    {"id":"current_repo_gap","required_languages":["python","javascript-typescript","swift"],"rows":[{"language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push"},{"language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"push"}],"expected":{"verdict":"REFUSE","reason_codes":["language_coverage_gap"]}},
+    {"id":"clean_mixed_language_plan","required_languages":["python","javascript-typescript","swift"],"rows":[{"language":"python","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":true},{"language":"javascript-typescript","scanner":"codeql","runner":"ubuntu-latest","event":"push","uploads_sarif":true,"security_events_write":true},{"language":"swift","scanner":"native-static-analysis","runner":"macos-15","event":"push"}],"expected":{"verdict":"ALLOW","reason_codes":[]}}
+  ]
+}
