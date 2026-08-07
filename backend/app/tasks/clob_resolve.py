@@ -63,6 +63,24 @@ logger = logging.getLogger(__name__)
 # for authoritative CLOB re-resolution.
 _DROPPED_SOURCES = ("pass2_loser", "all_losers")
 _WRITE_SOURCE = "clob_authoritative"
+
+# CAL-P003 — the NEVER-GRADED cohort. `_DROPPED_SOURCES` selects markets a
+# heuristic already graded (badly). This selects the strictly larger class the
+# drain has never been able to see: every outcome has `resolution_source IS NULL`
+# and no winner, so `is_winner` is still the column DEFAULT False — UNKNOWN truth,
+# not a set of losses (the same reading precompute_calibration's `is_no_winner_market`
+# rung takes, which is what currently keeps them off the curve).
+#
+# Measured in production 2026-08-07: 273,438 outcomes / ~133,576 markets, 246,489
+# (90.1%) already carrying a calibration price, 99.9% resolved inside 90 days.
+#
+# NOT in any write path. `_load_cohort`'s existing HAVING silently excludes this
+# entire class — `bool_or(fo.resolution_source = ANY(:srcs))` over all-NULL sources
+# is NULL, never TRUE — so admitting it is a deliberate, test-visible act, and it
+# stays dry-run until its own Batch-0 signs off (Amendment-1 precedent).
+_COHORT_NEVER_GRADED = "never_graded"
+_COHORT_DROPPED = "dropped"
+_WRITE_SOURCE_NEVER_GRADED = "clob_never_graded"
 # Amendment 1 (BLESSED): the ordinal tier writes a DISTINCT source so the whole
 # ~15K cohort is separately revertible in one predicate.
 _WRITE_SOURCE_ORDINAL = "clob_ordinal"
@@ -280,7 +298,31 @@ def map_clob_to_outcome(
 # ---------------------------------------------------------------------------
 
 
-async def _load_cohort(session, limit: int, before_id: int | None) -> list:
+def _cohort_having(cohort: str) -> str:
+    """The HAVING predicate selecting `cohort`, sharing every other candidate rule.
+
+    Both cohorts require `bool_or(fo.is_winner) IS NOT TRUE` — we only ever look at
+    markets that crowned nobody. They differ only in WHY nobody is crowned:
+
+    * ``dropped``      — a heuristic (pass2_loser/all_losers) graded it, badly.
+    * ``never_graded`` — nothing graded it at all. ``bool_and(... IS NULL)`` requires
+      EVERY outcome to be source-less, so a partially-graded market is left to the
+      authority ladder rather than half-rewritten here.
+    """
+    if cohort == _COHORT_NEVER_GRADED:
+        return ("HAVING bool_or(fo.is_winner) IS NOT TRUE\n"
+                "           AND bool_and(fo.resolution_source IS NULL)")
+    return ("HAVING bool_or(fo.is_winner) IS NOT TRUE\n"
+            "           AND bool_or(fo.resolution_source = ANY(:srcs))")
+
+
+def _cohort_params(cohort: str) -> dict:
+    """Bind params the cohort's HAVING needs (``:srcs`` only exists for dropped)."""
+    return {} if cohort == _COHORT_NEVER_GRADED else {"srcs": list(_DROPPED_SOURCES)}
+
+
+async def _load_cohort(session, limit: int, before_id: int | None,
+                       cohort: str = _COHORT_DROPPED) -> list:
     clause = "AND fm.id < :before" if before_id else ""
     rows = (await session.execute(text(f"""
         SELECT fm.id, fm.external_id AS cond_id, LEFT(fm.name, 100) AS market_name,
@@ -290,11 +332,10 @@ async def _load_cohort(session, limit: int, before_id: int | None) -> list:
         WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
           AND fm.external_id LIKE '0x%' {clause}
         GROUP BY fm.id, fm.external_id, fm.name, fm.resolution_date, fm.created_at, fm.event_id
-        HAVING bool_or(fo.is_winner) IS NOT TRUE
-           AND bool_or(fo.resolution_source = ANY(:srcs))
+        {_cohort_having(cohort)}
         ORDER BY fm.id DESC
         LIMIT :lim
-    """), {"srcs": list(_DROPPED_SOURCES), "lim": limit,
+    """), {"lim": limit, **_cohort_params(cohort),
            **({"before": before_id} if before_id else {})})).all()
     return rows
 
@@ -428,12 +469,13 @@ async def clob_resolve_sample(limit: int = 60) -> dict:
     return out
 
 
-async def _load_cohort_stratified(session, limit: int) -> list:
+async def _load_cohort_stratified(session, limit: int,
+                                  cohort: str = _COHORT_DROPPED) -> list:
     """Load a vintage-stratified cohort sample: oldest half + newest half, so the
     ordinal invariant is tested against every historical poller version
     (Amendment 1, condition 1). Writes nothing."""
     half = max(1, limit // 2)
-    q = """
+    q = f"""
         WITH cohort AS (
             SELECT fm.id, fm.external_id AS cond_id, LEFT(fm.name, 100) AS market_name,
                    fm.resolution_date, fm.created_at, (fm.event_id IS NOT NULL) AS event_linked
@@ -442,15 +484,14 @@ async def _load_cohort_stratified(session, limit: int) -> list:
             WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
               AND fm.external_id LIKE '0x%'
             GROUP BY fm.id, fm.external_id, fm.name, fm.resolution_date, fm.created_at, fm.event_id
-            HAVING bool_or(fo.is_winner) IS NOT TRUE
-               AND bool_or(fo.resolution_source = ANY(:srcs))
+            {_cohort_having(cohort)}
         )
         (SELECT * FROM cohort ORDER BY created_at ASC LIMIT :half)
         UNION
         (SELECT * FROM cohort ORDER BY created_at DESC LIMIT :half)
     """
     return (await session.execute(
-        text(q), {"srcs": list(_DROPPED_SOURCES), "half": half})).all()
+        text(q), {"half": half, **_cohort_params(cohort)})).all()
 
 
 async def clob_ordinal_batch0(limit: int = 120) -> dict:
@@ -518,6 +559,75 @@ async def clob_ordinal_batch0(limit: int = 120) -> dict:
     out["verdict"] = (
         "PASS" if ck >= 20 and out["label_disagree"] == 0
         else ("FAIL_DISAGREEMENT" if out["label_disagree"] else "INSUFFICIENT_LABEL_SAMPLE"))
+    return out
+
+
+async def clob_never_graded_batch0(limit: int = 120) -> dict:
+    """CAL-P003 Batch-0 (dry-run): vintage-stratified sample of the NEVER-GRADED
+    cohort, proving whether CLOB can authoritatively grade it before one row is
+    written. Mirrors ``clob_ordinal_batch0`` — same mapper, same mandatory
+    integrity guards, same counters. Writes NOTHING.
+
+    The question this answers is narrow and falsifiable: of markets we never
+    graded, how many does CLOB resolve **cleanly** — a determinable label
+    (resolved_direct / resolved_name_match) that also passes name-concordance and
+    date sanity? ``void`` is a real answer too (nobody won), and it stays
+    curve-excluded rather than being forced.
+
+    Verdict is deliberately conservative: PASS needs a real sample (>=50 fetched)
+    AND a clean-resolution rate >=0.50, because the payoff claim is "this cohort is
+    recoverable at scale", not "one market resolved".
+    """
+    from app.tasks.base import get_task_session
+    from app.services.polymarket_api import PolymarketAPIService
+
+    out: dict = {"dry_run": True, "cohort": _COHORT_NEVER_GRADED,
+                 "write_source_if_approved": _WRITE_SOURCE_NEVER_GRADED,
+                 "checked": 0, "fetched": 0, "errors": [],
+                 "by_vintage": {}, "samples": []}
+    for k in _COUNTERS:
+        out[k] = 0
+
+    async with get_task_session() as session:
+        rows = await _load_cohort_stratified(session, limit,
+                                             cohort=_COHORT_NEVER_GRADED)
+        outcomes_by_market = await _load_outcomes(session, [r.id for r in rows])
+
+    service = PolymarketAPIService()
+    sem = asyncio.Semaphore(_CONCURRENCY)
+
+    async def _one(r):
+        async with sem:
+            return await _fetch_and_map(service, r, outcomes_by_market)
+
+    try:
+        results = await asyncio.gather(*[_one(r) for r in rows])
+    finally:
+        await service.close()
+
+    for res in results:
+        out["checked"] += 1
+        _tally(out, res)
+        # A market the API never answered for tells us nothing either way; keep it
+        # out of the rate's denominator instead of scoring it as a failure.
+        if not res.get("error"):
+            out["fetched"] += 1
+        vint = res.get("vintage", "unknown")
+        vb = out["by_vintage"].setdefault(vint, {"total": 0, "clean": 0})
+        vb["total"] += 1
+        if res.get("tier") in _DEFAULT_WRITE_TIERS and res.get("integrity_ok"):
+            vb["clean"] += 1
+        out["samples"].append(res)
+
+    clean = sum(v["clean"] for v in out["by_vintage"].values())
+    out["clean_resolvable"] = clean
+    out["clean_rate"] = round(clean / out["fetched"], 4) if out["fetched"] else None
+    if out["fetched"] < 50:
+        out["verdict"] = "INSUFFICIENT_SAMPLE"
+    elif (out["clean_rate"] or 0) >= 0.50:
+        out["verdict"] = "PASS"
+    else:
+        out["verdict"] = "FAIL_LOW_YIELD"
     return out
 
 

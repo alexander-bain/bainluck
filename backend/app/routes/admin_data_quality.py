@@ -4939,6 +4939,22 @@ async def clob_resolve_sample_endpoint(
     return await clob_resolve_sample(limit=limit)
 
 
+@router.post("/clob-never-graded-batch0")
+async def clob_never_graded_batch0_endpoint(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(120, description="Vintage-stratified sample size"),
+):
+    """CAL-P003 Batch 0 (dry-run): can CLOB authoritatively grade the NEVER-GRADED
+    cohort — resolved Polymarket markets whose outcomes carry no resolution_source
+    at all, currently held off the calibration curve as UNKNOWN truth?
+
+    Writes NOTHING. This is the evidence the Amendment-1 precedent requires before
+    the cohort is granted any write authority; the drain cannot touch it today."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks.clob_resolve import clob_never_graded_batch0
+    return await clob_never_graded_batch0(limit=limit)
+
+
 @router.post("/clob-resolve-drain")
 async def clob_resolve_drain_endpoint(
     request: Request, secret: str = Query(None),

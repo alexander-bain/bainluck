@@ -32,9 +32,17 @@ from __future__ import annotations
 
 # Tier 3 — external settlement: the venue's OWN settled result (API/CLOB). The
 # strongest authority; nothing may overwrite these.
+#
+# CAL-P003: `clob_never_graded` is the CLOB drain's NEVER-GRADED cohort — markets
+# whose outcomes carry NO resolution_source at all (is_winner is still the column
+# DEFAULT False, i.e. UNKNOWN truth, not a set of losses). Same CLOB authority and
+# same binding mapper/guards as `clob_authoritative`; a DISTINCT name purely so
+# this much larger cohort stays revertible in one predicate (binding spec line 25,
+# the Amendment-1 precedent).
 AUTHORITATIVE_SOURCES: frozenset[str] = frozenset({
     "api_settlement",
     "clob_authoritative",
+    "clob_never_graded",
     "clob_ordinal",
     "datagolf_settlement",
     "settlement_sync",
