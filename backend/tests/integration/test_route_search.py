@@ -982,3 +982,37 @@ class TestSearchSportAliases:
     async def test_sport_alias_typeahead_returns_200(self, client, alias):
         resp = await client.get(f"/api/events/typeahead?q={alias}")
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# LAT-P002 / #1494 — the debug_timing lever and an unchanged default shape.
+# These live here (not in tests/test_search_latency_contract.py) because they
+# issue a real request and need the integration `client` fixture.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_debug_timing_returns_per_stage_numbers(client):
+    """The 2026-08-07 baseline could not say WHICH stage was slow — the two slowest
+    gold queries returned the two SMALLEST payloads, so cost tracked scan rather than
+    results. No read-only rail on this system can capture a production query plan
+    (#1494 r340), so the route reports its own stage breakdown instead."""
+    resp = await client.get("/api/events/search?q=lakers&debug_timing=1")
+    assert resp.status_code == 200
+    timings = resp.json().get("debug_timing")
+    assert timings is not None, "?debug_timing=1 must return the breakdown"
+    for stage in ("event_count", "event_page", "futures", "teams", "total_ms"):
+        assert stage in timings, f"missing stage {stage}"
+        assert isinstance(timings[stage], int) and timings[stage] >= 0
+
+
+@pytest.mark.asyncio
+async def test_default_search_response_shape_is_unchanged(client):
+    """A healthy default request must carry neither additive key."""
+    resp = await client.get("/api/events/search?q=lakers")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "debug_timing" not in body, "timings must be opt-in"
+    assert "degraded" not in body, (
+        "a healthy request must not report degradation — that would make the "
+        "signal meaningless"
+    )
