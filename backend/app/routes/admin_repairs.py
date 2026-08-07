@@ -14,9 +14,9 @@ transactional session and RETURNS its own before/after census in the response bo
     name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
              | event-final-scores | resolved-shape-census }
 
-Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` also
-accept those as query params; the dispatcher passes through only what a given
-repair's signature actually names.
+Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
+``offset`` also accept those as query params; the dispatcher passes through only
+what a given repair's signature actually names.
 
 Auth: Bearer $ADMIN_TOKEN (or ?secret=). Dry-run is the default — you must pass
 apply=true to write. Each repair's core is a session-taking ``repair()``/
@@ -60,6 +60,7 @@ async def run_repair(
     limit: int = Query(None, description="Optional bound, for repairs that accept one"),
     sport: str = Query(None, description="Optional sport-key filter, for repairs that accept one"),
     newest_first: bool = Query(None, description="Optional ordering, for repairs that accept it"),
+    offset: int = Query(None, description="Optional resume cursor, for repairs that page"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run a committed data repair and return its before/after census.
@@ -86,7 +87,10 @@ async def run_repair(
     accepted = inspect.signature(fn).parameters
     extra = {
         k: v
-        for k, v in (("limit", limit), ("sport", sport), ("newest_first", newest_first))
+        for k, v in (
+            ("limit", limit), ("sport", sport),
+            ("newest_first", newest_first), ("offset", offset),
+        )
         if v is not None and k in accepted
     }
 

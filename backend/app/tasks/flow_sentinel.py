@@ -1265,6 +1265,14 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
 # Scan budget for the frozen-score guard, in (sport, date) GROUPS — one ESPN
 # scoreboard call each, newest first because fresh defects appear at the head.
 # Small enough to stay well inside HTTP_TIMEOUT (the ESPN client sleeps 0.5s/req).
+#
+# DELIBERATELY HEAD-ONLY. This is a REGRESSION guard — "did we mint a new frozen
+# score last night?" — not a backlog census. The old tail is the repair's job,
+# walked with its ``offset`` cursor; expecting the nightly guard to also drain
+# 955 groups is how a guard becomes a timeout (CAL-P002B: measured 2026-08-07,
+# this exact call H12'd at 30.25s because the repair's `limit` bounded its ESPN
+# calls but not its scan — the flow would have reported `unknown` every night,
+# fail-soft and so never RED, without ever guarding anything).
 _FROZEN_SCORE_GROUPS = 6
 
 

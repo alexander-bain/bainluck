@@ -18,6 +18,10 @@ deliberate counterpart to ``test_espn_score_correction.py`` — see
 ``TestAuthorityBoundaryWithCorrectedFinalScore`` for why the two rules coexist.
 """
 
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.tasks.flow_sentinel import frozen_final_score_events
@@ -257,8 +261,19 @@ class TestRepairIsRegisteredOnTheRail:
         params = inspect.signature(repair).parameters
         # The dispatcher passes these through only if declared; the repair is
         # unusable over 6k+ events without a bound and a resumable cursor.
-        for p in ("limit", "sport", "newest_first"):
+        for p in ("limit", "sport", "newest_first", "offset"):
             assert p in params, f"{p} must stay in the signature (dispatcher passthrough)"
+
+    def test_dispatcher_forwards_the_resume_cursor(self):
+        import inspect
+
+        from app.routes.admin_repairs import run_repair
+
+        # CAL-P002B: `offset` is useless if the endpoint silently drops it. The
+        # dispatcher only forwards params it declares AND the repair names.
+        assert "offset" in inspect.signature(run_repair).parameters
+        src = inspect.getsource(run_repair)
+        assert '("offset", offset)' in src
 
     def test_dry_run_is_the_default(self):
         import inspect
@@ -285,3 +300,335 @@ class TestRepairIsRegisteredOnTheRail:
 )
 def test_anchor_table(ours, espn, expected):
     assert score_is_stale(ours[0], ours[1], espn[0], espn[1], True) is expected
+
+
+# ---------------------------------------------------------------------------
+# CAL-P002B — end-to-end tests of repair() itself.
+#
+# THE GAP THIS CLOSES. CAL-P002 shipped 38 tests, all of them on the pure
+# predicates, and zero on repair(). The predicates were right; the repair was
+# still unusable in production for two reasons nothing in the suite could see:
+#
+#   1. `limit` bounded the ESPN calls but not the SCAN. Candidate rows were
+#      fetched for the WHOLE population, each carrying two correlated MAX()
+#      subqueries, and the slice to `limit` groups happened in Python afterwards.
+#      Every unscoped call H12'd at the 30s router wall (measured 2026-08-07:
+#      limit=3 and limit=25 alike, 30.27s), so the two cohorts holding 179 of the
+#      241 known defects — baseball_mlb and baseball_ncaa — were unreachable.
+#   2. It was NOT resumable. The group predicate is unchanged by the repair, so
+#      `ordered[:limit]` returned the same oldest groups on every invocation and
+#      `groups_remaining` never fell. "Re-invoke until groups_remaining is 0"
+#      could not terminate.
+#
+# Both are properties of the candidate scan and the cursor, not of any predicate,
+# so they are tested here against a session that records the SQL it is asked to
+# run and the parameters it is asked to run it with.
+# ---------------------------------------------------------------------------
+UTC = timezone.utc
+
+
+def _espn_game(espn_id, home, away, home_score, away_score, when, status="post"):
+    return SimpleNamespace(
+        espn_id=espn_id, status=status, date=when,
+        home_team=SimpleNamespace(display_name=home, name=home, short_name=home),
+        away_team=SimpleNamespace(display_name=away, name=away, short_name=away),
+        home_score=home_score, away_score=away_score,
+    )
+
+
+# Three (sport, date) groups, four events. The NBA row is the halftime anchor
+# with the winner flipped; the rest are healthy.
+_GROUPS = [
+    SimpleNamespace(sport_key="basketball_nba", game_date=date(2026, 5, 1), n=1),
+    SimpleNamespace(sport_key="baseball_mlb", game_date=date(2026, 5, 2), n=2),
+    SimpleNamespace(sport_key="icehockey_nhl", game_date=date(2026, 5, 3), n=1),
+]
+
+_EVENTS = [
+    SimpleNamespace(
+        event_id=12080353, espn_id="401", sport_key="basketball_nba", ev_status="closed",
+        home_team_name="Detroit Pistons", away_team_name="Minnesota Timberwolves",
+        # A literal halftime score, frozen: away ahead 56-45. ESPN's final is
+        # 109-87 the OTHER way, so the derived "away won" is also wrong.
+        home_score=45, away_score=56,
+        commence_time=datetime(2026, 5, 1, 23, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 5, 2, 2, 0, tzinfo=UTC), game_date=date(2026, 5, 1),
+    ),
+    SimpleNamespace(
+        event_id=15182558, espn_id="402", sport_key="baseball_mlb", ev_status="completed",
+        home_team_name="Milwaukee Brewers", away_team_name="San Francisco Giants",
+        home_score=3, away_score=16,
+        commence_time=datetime(2026, 5, 2, 23, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 5, 3, 2, 0, tzinfo=UTC), game_date=date(2026, 5, 2),
+    ),
+    SimpleNamespace(
+        event_id=15182559, espn_id="403", sport_key="baseball_mlb", ev_status="completed",
+        home_team_name="Chicago Cubs", away_team_name="St. Louis Cardinals",
+        home_score=4, away_score=2,
+        commence_time=datetime(2026, 5, 2, 23, 30, tzinfo=UTC),
+        completed_at=None, game_date=date(2026, 5, 2),
+    ),
+    SimpleNamespace(
+        event_id=12080400, espn_id="404", sport_key="icehockey_nhl", ev_status="closed",
+        home_team_name="Boston Bruins", away_team_name="Minnesota Wild",
+        home_score=6, away_score=3,
+        commence_time=datetime(2026, 5, 3, 23, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 5, 4, 2, 0, tzinfo=UTC), game_date=date(2026, 5, 3),
+    ),
+]
+
+_BOARDS = {
+    ("basketball_nba", "20260501"): [
+        # 56-45 stored, 109-87 final: a real defect AND a winner flip.
+        _espn_game("401", "Detroit Pistons", "Minnesota Timberwolves", 109, 87,
+                   datetime(2026, 5, 1, 23, 0, tzinfo=UTC)),
+    ],
+    ("baseball_mlb", "20260502"): [
+        _espn_game("402", "Milwaukee Brewers", "San Francisco Giants", 3, 16,
+                   datetime(2026, 5, 2, 23, 0, tzinfo=UTC)),
+        _espn_game("403", "Chicago Cubs", "St. Louis Cardinals", 4, 2,
+                   datetime(2026, 5, 2, 23, 30, tzinfo=UTC)),
+    ],
+    ("icehockey_nhl", "20260503"): [
+        _espn_game("404", "Boston Bruins", "Minnesota Wild", 6, 3,
+                   datetime(2026, 5, 3, 23, 0, tzinfo=UTC)),
+    ],
+}
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+    def one(self):
+        return self._rows[0]
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+
+class _RecordingSession:
+    """A session that answers the repair's queries and records what it was asked.
+
+    Deliberately dispatches on SQL text: the property under test is *which query
+    runs with which bounds*, which is exactly what a mock returning blanket empty
+    results cannot express.
+    """
+
+    def __init__(self):
+        self.calls = []          # (sql, params)
+        self.score_writes = []
+        self.completed_at_writes = []
+        self.blend_writes = 0
+        self.commits = 0
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.calls.append((sql, params or {}))
+
+        if "GROUP BY 1, 2" in sql:
+            return _Result(list(_GROUPS))
+        if "unnest(" in sql:
+            wanted = set(zip(params["g_sports"], params["g_dates"]))
+            return _Result([e for e in _EVENTS if (e.sport_key, e.game_date) in wanted])
+        if "MAX(x.captured_at)" in sql:
+            # Only event 15182559 has a usable post-commence snapshot.
+            return _Result([
+                SimpleNamespace(event_id=i, last_snap=datetime(2026, 5, 3, 3, 0, tzinfo=UTC))
+                for i in params["event_ids"] if i == 15182559
+            ])
+        if "COUNT(*) AS n" in sql:
+            return _Result([SimpleNamespace(n=sum(g.n for g in _GROUPS))])
+        if "UPDATE events SET home_score" in sql:
+            self.score_writes.append(params)
+            return _Result([])
+        if "UPDATE events SET completed_at" in sql:
+            self.completed_at_writes.append(params)
+            return _Result([])
+        if sql.startswith("SELECT events.win_probability_sources"):
+            return _Result([{"final_result": {"probability": 0.0}}])
+        if sql.startswith("UPDATE events SET win_probability_sources"):
+            self.blend_writes += 1
+            return _Result([])
+        raise AssertionError(f"unexpected SQL: {sql[:160]}")
+
+    async def commit(self):
+        self.commits += 1
+
+
+def _fake_espn():
+    svc = SimpleNamespace()
+    svc.get_scoreboard = AsyncMock(
+        side_effect=lambda sport_key, d: list(_BOARDS.get((sport_key, d), []))
+    )
+    return svc
+
+
+async def _run(**kw):
+    from scripts import repair_event_final_scores as mod
+
+    s = _RecordingSession()
+    with patch("app.services.espn_api.get_espn_service", return_value=_fake_espn()):
+        res = await mod.repair(s, kw.pop("apply", False), **kw)
+    return s, res
+
+
+def _candidate_params(session):
+    return [p for sql, p in session.calls if "unnest(" in sql]
+
+
+class TestScanIsBoundedBeforeTheWork:
+    """`limit` must bound the SCAN, not just the ESPN calls."""
+
+    @pytest.mark.asyncio
+    async def test_only_the_selected_groups_are_fetched(self):
+        from app.utils.sport_keys import ESPN_SPORT_MAPPING
+
+        s, res = await _run(limit=1)
+        # THE regression: pre-fix this query ran over the whole population.
+        assert _candidate_params(s) == [{
+            "sport_keys": sorted(ESPN_SPORT_MAPPING),
+            "g_sports": ["basketball_nba"],
+            "g_dates": [date(2026, 5, 1)],
+        }]
+        assert res["groups_scanned"] == 1
+        assert res["events_scanned"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_group_bound_runs_before_any_candidate_fetch(self):
+        s, _ = await _run(limit=1)
+        order = [i for i, (sql, _) in enumerate(s.calls)
+                 if "GROUP BY 1, 2" in sql or "unnest(" in sql]
+        first, second = s.calls[order[0]][0], s.calls[order[1]][0]
+        assert "GROUP BY 1, 2" in first
+        assert "unnest(" in second
+
+    @pytest.mark.asyncio
+    async def test_zero_selected_groups_fetches_no_candidates(self):
+        s, res = await _run(limit=0)
+        assert _candidate_params(s) == []
+        assert res["groups_scanned"] == 0
+
+    def test_no_correlated_subquery_rides_on_every_candidate_row(self):
+        from scripts.repair_event_final_scores import _CANDIDATE_SQL, _GROUPS_SQL
+
+        # The two correlated MAX() subqueries were the whole cost. They now live
+        # in a separate batched query run only for rows with a NULL completed_at.
+        assert "SELECT MAX(" not in _CANDIDATE_SQL
+        assert "SELECT MAX(" not in _GROUPS_SQL
+
+    def test_all_three_queries_share_one_predicate(self):
+        from scripts.repair_event_final_scores import (
+            _CANDIDATE_SQL,
+            _GROUPS_SQL,
+            _POPULATION_SQL,
+            _SETTLED_PREDICATE,
+        )
+
+        # A bound computed over a different population than the work is not a bound.
+        for sql in (_GROUPS_SQL, _CANDIDATE_SQL, _POPULATION_SQL):
+            assert _SETTLED_PREDICATE in sql
+
+    @pytest.mark.asyncio
+    async def test_completed_at_derivation_is_lazy(self):
+        # Only the group holding the NULL-completed_at row pays for the snapshot
+        # query; a group of healthy rows must not trigger it at all.
+        s_nba, _ = await _run(limit=1)
+        assert not [1 for sql, _ in s_nba.calls if "MAX(x.captured_at)" in sql]
+
+        s_mlb, _ = await _run(limit=1, offset=1)
+        snaps = [p for sql, p in s_mlb.calls if "MAX(x.captured_at)" in sql]
+        assert snaps == [{"event_ids": [15182559]}]
+
+
+class TestResumability:
+    """The shipped contract could never terminate; the cursor must."""
+
+    @pytest.mark.asyncio
+    async def test_offset_selects_a_different_group(self):
+        _, first = await _run(limit=1, offset=0)
+        _, second = await _run(limit=1, offset=1)
+        assert first["next_offset"] == 1
+        assert second["groups_offset"] == 1
+        assert second["next_offset"] == 2
+
+    @pytest.mark.asyncio
+    async def test_a_driver_loop_covers_every_group_exactly_once(self):
+        seen, offset, guard = [], 0, 0
+        while True:
+            guard += 1
+            assert guard < 20, "driver loop did not terminate — the CAL-P002 bug"
+            s, res = await _run(limit=1, offset=offset)
+            seen += [p["g_sports"][0] for p in _candidate_params(s)]
+            offset = res["next_offset"]
+            if res["groups_remaining"] == 0:
+                break
+        assert seen == ["basketball_nba", "baseball_mlb", "icehockey_nhl"]
+        assert len(seen) == len(set(seen))
+
+    @pytest.mark.asyncio
+    async def test_groups_remaining_is_measured_against_the_cursor(self):
+        _, res = await _run(limit=2, offset=0)
+        assert (res["groups_total"], res["groups_remaining"]) == (3, 1)
+        _, res = await _run(limit=2, offset=2)
+        assert res["groups_remaining"] == 0
+
+    @pytest.mark.asyncio
+    async def test_newest_first_walks_the_other_end(self):
+        s, _ = await _run(limit=1, newest_first=True)
+        assert _candidate_params(s)[0]["g_sports"] == ["icehockey_nhl"]
+
+
+class TestDeadline:
+    @pytest.mark.asyncio
+    async def test_an_exhausted_budget_stops_before_the_router_does(self):
+        _, res = await _run(limit=3, deadline_seconds=0.0)
+        assert res["stopped_on_deadline"] is True
+        assert res["groups_scanned"] == 0
+        # A truthful cursor: a deadline stop must not advance past unscanned work.
+        assert res["next_offset"] == 0
+        assert res["groups_remaining"] == 3
+
+    @pytest.mark.asyncio
+    async def test_a_normal_run_does_not_report_a_deadline_stop(self):
+        _, res = await _run(limit=3)
+        assert res["stopped_on_deadline"] is False
+        assert res["groups_scanned"] == 3
+
+
+class TestApplyPath:
+    @pytest.mark.asyncio
+    async def test_dry_run_writes_nothing(self):
+        s, res = await _run(limit=3, apply=False)
+        assert (s.score_writes, s.commits, s.blend_writes) == ([], 0, 0)
+        assert res["score_defects"] == 1 and res["scores_repaired"] == 0
+
+    @pytest.mark.asyncio
+    async def test_apply_writes_the_espn_final_and_restamps_the_blend(self):
+        s, res = await _run(limit=3, apply=True)
+        assert s.score_writes == [
+            {"event_id": 12080353, "home_score": 109, "away_score": 87},
+        ]
+        # The staleness net graded the blend off the frozen 45-56 (an away win)
+        # when the real final 109-87 is a HOME win, so the derived final that
+        # calibration grades against is inverted and must be restamped.
+        assert res["winner_flips"] == 1
+        assert s.blend_writes == 1
+        assert s.commits >= 1
+
+    @pytest.mark.asyncio
+    async def test_healthy_rows_are_left_alone(self):
+        s, res = await _run(limit=1, offset=2, apply=True)
+        assert s.score_writes == [] and res["score_defects"] == 0
+
+    @pytest.mark.asyncio
+    async def test_completed_at_gap_is_filled_from_the_last_real_snapshot(self):
+        s, res = await _run(limit=1, offset=1, apply=True)
+        assert res["completed_at_gaps"] == 1
+        assert s.completed_at_writes == [{
+            "event_id": 15182559,
+            "completed_at": datetime(2026, 5, 3, 3, 0, tzinfo=UTC),
+        }]

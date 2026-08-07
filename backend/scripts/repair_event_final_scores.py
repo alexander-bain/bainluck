@@ -53,15 +53,28 @@ SAFETY RAILS (each one earned):
     shape-safe). This changes no weights and no blend math — it restamps a derived
     final that was computed from the wrong score.
   * Commits per (sport, date) group, so a 30s HTTP timeout leaves consistent,
-    resumable progress. Re-invoke until ``groups_remaining`` is 0.
+    resumable progress. Walk the population with ``offset``, advancing by the
+    returned ``next_offset`` until ``groups_remaining`` is 0.
   * Oldest-first by default (gotcha #41 — newest-first ordering never reaches the
     old tail).
 
-    POST /api/admin/repairs/event-final-scores?apply=false            # dry-run census
-    POST /api/admin/repairs/event-final-scores?apply=true&limit=40    # commit a batch
+REACHABILITY (CAL-P002B, 2026-08-07). As first shipped this repair was live but
+uncallable on the cohorts that hold the defects, for two independent reasons:
 
-    python3 scripts/repair_event_final_scores.py            # dry-run ledger
-    python3 scripts/repair_event_final_scores.py --apply    # commit
+  1. ``limit`` bounded the ESPN calls, not the scan. Every candidate row carried
+     two correlated ``MAX()`` subqueries and the slice happened in Python
+     afterwards, so cost tracked the whole population and any unscoped call H12'd
+     at the 30s router wall (``limit=3`` and ``limit=25`` alike). The group
+     selection now happens in SQL, before the work.
+  2. It was not resumable. The group predicate is unchanged by the repair, so
+     re-invoking returned the same oldest groups forever and ``groups_remaining``
+     never fell. Progress now comes from an explicit ``offset`` cursor.
+
+    POST /api/admin/repairs/event-final-scores?apply=false                 # dry-run census
+    POST /api/admin/repairs/event-final-scores?apply=true&offset=25        # next batch
+
+    python3 scripts/repair_event_final_scores.py                   # dry-run ledger
+    python3 scripts/repair_event_final_scores.py --apply --offset 25
 
 Heroku one-off (gotcha #48 — non-detached does not execute in the sandbox;
 PROJECT_PATH=backend puts scripts at /app, so NO `cd backend`). Prefer the endpoint.
@@ -74,38 +87,84 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Settled events that ESPN can adjudicate: terminal status, a stored score, an
 # espn_id to look up, and old enough that "still being played" is not the answer.
-_CANDIDATE_SQL = """
+#
+# ONE definition, three consumers (group census, candidate fetch, after-census) so
+# the bound and the work can never drift onto different populations.
+_SETTLED_PREDICATE = """
+      e.status IN ('closed', 'completed')
+      AND e.espn_id IS NOT NULL
+      AND e.home_score IS NOT NULL
+      AND e.away_score IS NOT NULL
+      AND e.commence_time IS NOT NULL
+      AND e.commence_time < NOW() - INTERVAL '2 days'
+      AND s.key = ANY(:sport_keys)
+"""
+
+_GAME_DATE_EXPR = "(e.commence_time AT TIME ZONE 'America/New_York')::date"
+
+# STEP 1 — the cheap bound. A plain GROUP BY over the settled predicate: no
+# correlated subqueries, no per-row work. This is what `limit` slices, and it must
+# run BEFORE anything expensive.
+#
+# WHY THIS SHAPE (the CAL-P002B defect): the first cut fetched every candidate row
+# — each carrying two correlated MAX() subqueries against win_prob_snapshots and
+# odds_snapshots — and only then sliced to `limit` groups in Python. So `limit`
+# bounded the ESPN calls but not the scan, cost tracked the whole population at
+# ~40ms/row, and every unscoped call H12'd at the 30s router wall (measured
+# 2026-08-07: limit=3 and limit=25 alike). The two defect-heavy cohorts,
+# baseball_mlb and baseball_ncaa, were exactly the ones too big to reach.
+_GROUPS_SQL = f"""
+    SELECT s.key AS sport_key,
+           {_GAME_DATE_EXPR} AS game_date,
+           COUNT(*) AS n
+    FROM events e
+    JOIN sports s ON s.id = e.sport_id
+    WHERE {_SETTLED_PREDICATE}
+    GROUP BY 1, 2
+"""
+
+# STEP 2 — candidate rows for the SELECTED groups only. The unnest join makes the
+# (sport, date) pair filter exact rather than a cross-product of the two arrays.
+# CAST(... AS type[]) rather than `::type[]`: a bind param followed by a `::` cast
+# is dropped by SQLAlchemy text() under asyncpg.
+_CANDIDATE_SQL = f"""
     SELECT e.id AS event_id, e.espn_id, s.key AS sport_key, e.status AS ev_status,
            e.home_team_name, e.away_team_name, e.home_score, e.away_score,
            e.commence_time, e.completed_at,
-           (e.commence_time AT TIME ZONE 'America/New_York')::date AS game_date,
-           (SELECT MAX(w.captured_at) FROM win_prob_snapshots w
-              WHERE w.event_id = e.id AND w.captured_at >= e.commence_time) AS last_wp_snap,
-           (SELECT MAX(o.captured_at) FROM odds_snapshots o
-              WHERE o.event_id = e.id AND o.captured_at >= e.commence_time) AS last_odds_snap
+           {_GAME_DATE_EXPR} AS game_date
     FROM events e
     JOIN sports s ON s.id = e.sport_id
-    WHERE e.status IN ('closed', 'completed')
-      AND e.espn_id IS NOT NULL
-      AND e.home_score IS NOT NULL
-      AND e.away_score IS NOT NULL
-      AND e.commence_time IS NOT NULL
-      AND e.commence_time < NOW() - INTERVAL '2 days'
-      AND s.key = ANY(:sport_keys)
+    JOIN unnest(CAST(:g_sports AS text[]), CAST(:g_dates AS date[]))
+           AS g(sport_key, game_date)
+      ON g.sport_key = s.key AND g.game_date = {_GAME_DATE_EXPR}
+    WHERE {_SETTLED_PREDICATE}
     ORDER BY e.commence_time
 """
 
-_POPULATION_SQL = """
+_POPULATION_SQL = f"""
     SELECT COUNT(*) AS n
     FROM events e
     JOIN sports s ON s.id = e.sport_id
-    WHERE e.status IN ('closed', 'completed')
-      AND e.espn_id IS NOT NULL
-      AND e.home_score IS NOT NULL
-      AND e.away_score IS NOT NULL
-      AND e.commence_time IS NOT NULL
-      AND e.commence_time < NOW() - INTERVAL '2 days'
-      AND s.key = ANY(:sport_keys)
+    WHERE {_SETTLED_PREDICATE}
+"""
+
+# STEP 3 — completed_at derivation, batched and lazy. This is the work that used to
+# ride on EVERY candidate row as two correlated subqueries; only rows with a NULL
+# completed_at need it, and they are the minority (CAL-P002 census: ~8%).
+_LAST_SNAPSHOT_SQL = """
+    SELECT x.event_id, MAX(x.captured_at) AS last_snap
+    FROM (
+        SELECT w.event_id, w.captured_at
+          FROM win_prob_snapshots w
+          JOIN events e ON e.id = w.event_id
+         WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
+        UNION ALL
+        SELECT o.event_id, o.captured_at
+          FROM odds_snapshots o
+          JOIN events e ON e.id = o.event_id
+         WHERE o.event_id = ANY(:event_ids) AND o.captured_at >= e.commence_time
+    ) x
+    GROUP BY x.event_id
 """
 
 _FIX_SCORE_SQL = """
@@ -120,6 +179,14 @@ _FIX_COMPLETED_AT_SQL = """
 # Default group budget per invocation. Each group is ONE ESPN scoreboard call and
 # the client sleeps 0.5s between requests, so this stays inside the 30s HTTP wall.
 _GROUP_LIMIT = 25
+
+# A count alone cannot bound wall-clock: a slow ESPN slate makes 25 groups overrun
+# the 30s router wall even though 25 is usually comfortable. Check elapsed time
+# BEFORE starting each group and stop early, reporting how far we actually got —
+# bounding the loop boundary is only correct if the longest single uninterrupted
+# op (one scoreboard fetch) fits in the margin. It does: ~1s against a 6s reserve.
+_DEADLINE_SECONDS = 22.0
+_GROUP_RESERVE_SECONDS = 6.0
 
 
 def score_is_stale(our_home, our_away, espn_home, espn_away, espn_is_final: bool) -> bool:
@@ -211,20 +278,35 @@ async def repair(
     limit: int = _GROUP_LIMIT,
     sport: str | None = None,
     newest_first: bool = False,
+    offset: int = 0,
+    deadline_seconds: float = _DEADLINE_SECONDS,
 ) -> dict:
     """Session-taking core (shared by the CLI and POST /api/admin/repairs/
     event-final-scores). Commits per group when ``apply``; returns a
     before/after census plus a per-event ledger.
 
     ``limit`` bounds (sport, date) GROUPS — one ESPN scoreboard call each — not
-    events. Re-invoke while ``groups_remaining > 0``.
+    events. ``offset`` skips that many groups in the SAME deterministic order.
+
+    WHY ``offset`` EXISTS. The original contract was "re-invoke while
+    ``groups_remaining > 0``", which could never terminate: the group predicate is
+    *unchanged by the repair* (a corrected score is still a settled event with a
+    score and an espn_id), so ``ordered[:limit]`` returned the SAME oldest groups
+    on every call and ``groups_remaining`` never fell. The rail could only ever
+    have touched the first batch. Progress has to come from an explicit cursor,
+    not from the work shrinking its own candidate set. Drive it with
+    ``next_offset`` — which accounts for an early deadline stop, so it is correct
+    even when fewer than ``limit`` groups were scanned.
     """
+    import time
+
     from sqlalchemy import text
 
     from app.services.espn_api import get_espn_service
     from app.utils.sport_keys import ESPN_SPORT_MAPPING
 
     s = session
+    started = time.monotonic()
     # Gate on the mapping the rest of the ESPN pipeline uses, so this repair never
     # attempts a fetch the other tasks would not make.
     sport_keys = sorted(ESPN_SPORT_MAPPING)
@@ -238,15 +320,42 @@ async def repair(
                 "available": sorted(ESPN_SPORT_MAPPING),
             }
 
-    population = (await s.execute(text(_POPULATION_SQL), {"sport_keys": sport_keys})).one().n
-    rows = (await s.execute(text(_CANDIDATE_SQL), {"sport_keys": sport_keys})).all()
+    # STEP 1 — bound first. One cheap GROUP BY gives both the census denominator
+    # and the orderable group list, so `population` costs no extra scan.
+    group_rows = (await s.execute(text(_GROUPS_SQL), {"sport_keys": sport_keys})).all()
+    population = sum(int(g.n) for g in group_rows)
+    ordered = sorted(
+        ((g.sport_key, g.game_date) for g in group_rows),
+        key=lambda k: (k[1], k[0]),
+        reverse=bool(newest_first),
+    )
+    offset = max(0, int(offset))
+    selected = ordered[offset : offset + max(0, int(limit))]
+
+    # STEP 2 — fetch rows for the SELECTED groups only.
+    rows = []
+    if selected:
+        rows = (await s.execute(text(_CANDIDATE_SQL), {
+            "sport_keys": sport_keys,
+            "g_sports": [k[0] for k in selected],
+            "g_dates": [k[1] for k in selected],
+        })).all()
 
     # Group by (sport_key, ET game date): one ESPN scoreboard call covers a slate.
     groups: dict[tuple[str, object], list] = {}
     for r in rows:
         groups.setdefault((r.sport_key, r.game_date), []).append(r)
-    ordered = sorted(groups, key=lambda k: (k[1], k[0]), reverse=bool(newest_first))
-    selected = ordered[: max(0, int(limit))]
+
+    # STEP 3 — completed_at derivation, only for the rows that lack one.
+    gap_ids = [r.event_id for r in rows if r.completed_at is None]
+    last_snap: dict[int, object] = {}
+    if gap_ids:
+        last_snap = {
+            row.event_id: row.last_snap
+            for row in (await s.execute(
+                text(_LAST_SNAPSHOT_SQL), {"event_ids": gap_ids}
+            )).all()
+        }
 
     espn = get_espn_service()
     stats = {
@@ -263,9 +372,17 @@ async def repair(
         "winner_flips": 0,
     }
     ledger: list[dict] = []
+    groups_scanned = 0
+    stopped_on_deadline = False
 
     for sport_key, game_date in selected:
-        bucket = groups[(sport_key, game_date)]
+        if time.monotonic() - started > deadline_seconds - _GROUP_RESERVE_SECONDS:
+            # Stop cleanly with a truthful cursor rather than being cut off
+            # mid-group by the router. Already-committed groups stand.
+            stopped_on_deadline = True
+            break
+        groups_scanned += 1
+        bucket = groups.get((sport_key, game_date)) or []
         try:
             board = await espn.get_scoreboard(sport_key, game_date.strftime("%Y%m%d"))
         except Exception as exc:  # a dead slate must not kill the whole batch
@@ -331,10 +448,7 @@ async def repair(
             new_completed_at = None
             if needs_completed_at:
                 stats["completed_at_gaps"] += 1
-                candidates = [
-                    t for t in (r.last_wp_snap, r.last_odds_snap) if t is not None
-                ]
-                cand = max(candidates) if candidates else None
+                cand = last_snap.get(r.event_id)
                 # gotcha #46: never stamp a completion that precedes the start.
                 if cand is not None and cand >= r.commence_time:
                     new_completed_at = cand
@@ -407,14 +521,19 @@ async def repair(
             await s.commit()
 
     after = (await s.execute(text(_POPULATION_SQL), {"sport_keys": sport_keys})).one().n
+    next_offset = offset + groups_scanned
     return {
         "repair": "event-final-scores",
         "applied": bool(apply),
         "population": population,
         "population_after": after,
         "groups_total": len(ordered),
-        "groups_scanned": len(selected),
-        "groups_remaining": max(0, len(ordered) - len(selected)),
+        "groups_offset": offset,
+        "groups_scanned": groups_scanned,
+        "groups_remaining": max(0, len(ordered) - next_offset),
+        "next_offset": next_offset,
+        "stopped_on_deadline": stopped_on_deadline,
+        "elapsed_seconds": round(time.monotonic() - started, 2),
         "order": "newest_first" if newest_first else "oldest_first",
         "sport": sport or "all_espn_mapped",
         **stats,
@@ -426,15 +545,16 @@ async def repair(
     }
 
 
-async def run(apply: bool, limit: int, sport: str | None) -> None:
+async def run(apply: bool, limit: int, sport: str | None, offset: int = 0) -> None:
     from app.tasks.base import get_task_session
 
     async with get_task_session() as s:
-        res = await repair(s, apply, limit=limit, sport=sport)
+        res = await repair(s, apply, limit=limit, sport=sport, offset=offset)
 
     print(f"=== CAL-P002 event-final-scores ({'APPLY' if apply else 'DRY-RUN'}) ===")
-    print(f"population={res['population']} groups={res['groups_scanned']}/"
-          f"{res['groups_total']} (remaining {res['groups_remaining']})")
+    print(f"population={res['population']} groups={res['groups_scanned']}"
+          f"@offset {res['groups_offset']}/{res['groups_total']} "
+          f"(remaining {res['groups_remaining']}, next_offset {res['next_offset']})")
     print(f"scanned={res['events_scanned']} score_defects={res['score_defects']} "
           f"winner_flips={res['winner_flips']} completed_at_gaps={res['completed_at_gaps']}")
     print(f"identity_blocked={res['identity_blocked']} not_final={res['espn_not_final']} "
@@ -448,7 +568,8 @@ async def run(apply: bool, limit: int, sport: str | None) -> None:
         print(f"\nCOMMITTED scores={res['scores_repaired']} "
               f"completed_at={res['completed_at_repaired']} blend={res['blend_repaired']}")
         if res["groups_remaining"]:
-            print(f"Re-run until groups_remaining is 0 (now {res['groups_remaining']}).")
+            print(f"Re-run with --offset {res['next_offset']} "
+                  f"({res['groups_remaining']} groups remaining).")
     else:
         print("\nDRY-RUN — pass --apply to commit.")
 
@@ -456,9 +577,12 @@ async def run(apply: bool, limit: int, sport: str | None) -> None:
 if __name__ == "__main__":
     _limit = _GROUP_LIMIT
     _sport = None
+    _offset = 0
     for i, a in enumerate(sys.argv):
         if a == "--limit" and i + 1 < len(sys.argv):
             _limit = int(sys.argv[i + 1])
         if a == "--sport" and i + 1 < len(sys.argv):
             _sport = sys.argv[i + 1]
-    asyncio.run(run("--apply" in sys.argv, _limit, _sport))
+        if a == "--offset" and i + 1 < len(sys.argv):
+            _offset = int(sys.argv[i + 1])
+    asyncio.run(run("--apply" in sys.argv, _limit, _sport, _offset))
