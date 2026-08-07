@@ -207,6 +207,11 @@ ENFORCED_TASKS = frozenset({
     "compute_time_horizon_calibration",  # status + horizons_done/total
     "precompute_calibration_main",     # phase_ledger.terminal + .health
     "coverage_metrics",                # terminal + published + failed_chunks
+    # CAL-P008 (#683): terminal from `_trade_backfill_terminal`. Added because
+    # this task is the exact false-GREEN shape 300H was built for and was not
+    # covered: 500 fetched, 500 empty, 0 snapshots, recorded healthy, every 6h
+    # for ten weeks while the P0 it serves stayed open.
+    "kalshi_trades",                   # terminal + errors
 })
 
 
