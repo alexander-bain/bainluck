@@ -1,0 +1,17 @@
+{"schema_version":1,"cases":[
+{"id":"live-make-playoffs","kind":"cell","probability":0.72,"state":null,"team_identity_valid":true,"season_valid":true,"expected":{"verdict":"probability","reason":"live_qualification"}},
+{"id":"real-zero-live","kind":"cell","probability":0.0,"state":null,"team_identity_valid":true,"season_valid":true,"expected":{"verdict":"probability","reason":"live_qualification"}},
+{"id":"real-one-live","kind":"cell","probability":1.0,"state":null,"team_identity_valid":true,"season_valid":true,"expected":{"verdict":"probability","reason":"live_qualification"}},
+{"id":"clinched-grade","kind":"cell","probability":null,"state":"clinched","expected":{"verdict":"grade","reason":"clinched"}},
+{"id":"eliminated-grade","kind":"cell","probability":null,"state":"eliminated","expected":{"verdict":"grade","reason":"eliminated"}},
+{"id":"missing-withhold","kind":"cell","probability":null,"state":"missing","expected":{"verdict":"withhold","reason":"qualification_unknown"}},
+{"id":"absent-withhold","kind":"cell","probability":null,"state":null,"expected":{"verdict":"withhold","reason":"qualification_unknown"}},
+{"id":"wrong-season","kind":"cell","probability":0.8,"state":null,"season_valid":false,"expected":{"verdict":"refuse","reason":"identity_or_season_invalid"}},
+{"id":"wrong-team","kind":"cell","probability":0.8,"state":null,"team_identity_valid":false,"expected":{"verdict":"refuse","reason":"identity_or_season_invalid"}},
+{"id":"source-conflict","kind":"cell","probability":0.8,"state":null,"duplicate_sources_conflict":true,"expected":{"verdict":"refuse","reason":"source_conflict"}},
+{"id":"invalid-scale","kind":"cell","probability":72,"state":null,"expected":{"verdict":"refuse","reason":"invalid_probability"}},
+{"id":"live-parity","kind":"parity","backend":{"probability":0.72,"state":null},"native":{"probability":0.72,"state":null},"expected":{"verdict":"shared","reason":"same_semantics"}},
+{"id":"clinched-state-lost-native","kind":"parity","backend":{"probability":null,"state":"clinched"},"native":{"probability":null,"state":null},"expected":{"verdict":"drifted","reason":"native_loses_backend_state"}},
+{"id":"eliminated-state-lost-native","kind":"parity","backend":{"probability":null,"state":"eliminated"},"native":{"probability":null,"state":null},"expected":{"verdict":"drifted","reason":"native_loses_backend_state"}},
+{"id":"missing-parity","kind":"parity","backend":{"probability":null,"state":"missing"},"native":{"probability":null,"state":null},"expected":{"verdict":"shared","reason":"same_semantics"}}
+]}
