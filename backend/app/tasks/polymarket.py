@@ -13,6 +13,7 @@ from typing import Optional
 from sqlalchemy import func, select, text
 
 from app.tasks.base import get_task_session
+from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
 
 logger = logging.getLogger(__name__)
 
@@ -1093,6 +1094,42 @@ async def _process_event_batch(
                             "yes_ask": market.best_ask,
                             "last_price": market.last_trade_price,
                         })
+
+                # CAL-P006 (#1527): an impossible field is not a price — refuse it
+                # at CAPTURE rather than storing it and repairing it later.
+                #
+                # negRisk means a single-winner partition, so two legs cannot both
+                # be near-certain. Gamma nonetheless answers 1.00 on EVERY leg for
+                # some long-settled events: 111 Europa League 1X2 markets sat at
+                # Home 1.00 / Away 1.00 / Draw 1.00, a field summing to 300%,
+                # re-stamped on every poll (72 consecutive snapshots, all 1.0).
+                #
+                # Per-leg guards cannot catch this and should not try —
+                # ``_resolve_market_probability`` is permissive at the extremes on
+                # purpose, because ONE near-certain leg is exactly what a settled
+                # market looks like. Only the field view shows the contradiction.
+                #
+                # Skipping is not caution, it is correctness: there is no reading
+                # of this field that is a real price. It also protects the one
+                # field that never gets a second chance — a market first seen after
+                # settlement captures 1.00 as its opening_probability and, because
+                # opening is COALESCEd, keeps it forever.
+                if field_is_incoherent(
+                    (od["prob"] for od in outcome_data),
+                    mutually_exclusive=bool(event.neg_risk),
+                ):
+                    stats["incoherent_fields_skipped"] = (
+                        stats.get("incoherent_fields_skipped", 0) + 1
+                    )
+                    logger.warning(
+                        "Polymarket event %s (%s): %d/%d legs near-certain on a "
+                        "negRisk single-winner field — refusing to capture "
+                        "(#1527)",
+                        event.id, (event.title or "")[:80],
+                        count_near_certain(od["prob"] for od in outcome_data),
+                        len(outcome_data),
+                    )
+                    continue
 
                 # Sort by probability descending to compute ranks
                 outcome_data.sort(key=lambda x: x["prob"], reverse=True)

@@ -26,6 +26,7 @@ from app.utils.resolution_authority import (
     OVERWRITABLE_WINNER_SOURCES_SQL,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
+from app.utils.winner_field_coherence import INCOHERENT_FIELD_HAVING_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     WHERE fm.source = 'kalshi'
                                       AND fm.external_id = :event_ticker
                                       AND fm.status = 'resolved'
-                                    GROUP BY fm.id
+                                    GROUP BY fm.id, fm.mutually_exclusive
                                     HAVING SUM(CASE WHEN fo.is_winner
                                                AND fo.resolution_source NOT IN
                                                    """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
@@ -170,6 +171,11 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                               OR fo.current_probability <= 0.05
                                        ) = COUNT(*)
                                        AND COUNT(*) >= 1
+                                       -- CAL-P006 (#1527): same single-winner
+                                       -- guard as the other two price-crowners.
+                                       -- Kalshi mutex events are the same shape
+                                       -- of risk; three graders, one rule.
+                                       AND """ + INCOHERENT_FIELD_HAVING_SQL + """
                                 )
                                 UPDATE futures_outcomes fo
                                 SET is_winner = (fo.current_probability >= 0.95),
@@ -4304,7 +4310,7 @@ async def _backfill_from_current_probability():
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
-                        GROUP BY fm.id
+                        GROUP BY fm.id, fm.mutually_exclusive
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
                                        """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
@@ -4314,6 +4320,18 @@ async def _backfill_from_current_probability():
                                   OR fo.current_probability <= 0.05
                            ) = COUNT(*)
                            AND COUNT(*) >= 1
+                           -- CAL-P006 (#1527): never price-crown a single-winner
+                           -- partition that has >1 near-certain leg. The sibling
+                           -- grader (_backfill_polymarket_winners) grew exactly
+                           -- this guard for the Women's Wimbledon two-winner bug
+                           -- (Queue #167/#999); THIS pass never did, and it runs
+                           -- over ALL sources — so the whole class walked through
+                           -- here instead. 214+ soccer 1X2 markets ended with
+                           -- Home, Away AND Draw all is_winner=true at 1.00,
+                           -- filing one perfectly-confident wrong forecast per leg
+                           -- into the curve. Deferred to authoritative settlement
+                           -- rather than guessed from an impossible field.
+                           AND """ + INCOHERENT_FIELD_HAVING_SQL + """
                     )
                     UPDATE futures_outcomes fo
                     SET is_winner = (fo.current_probability >= 0.95),
