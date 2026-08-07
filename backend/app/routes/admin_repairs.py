@@ -12,7 +12,8 @@ transactional session and RETURNS its own before/after census in the response bo
     POST /api/admin/repairs/{name}?apply=true    # commit + return after-census
 
     name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
-             | event-final-scores | resolved-shape-census }
+             | event-final-scores | resolved-shape-census
+             | winner-field-coherence }
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` also accept those as query params; the dispatcher passes through only
@@ -48,6 +49,12 @@ _REPAIRS = {
         "app.tasks.backfill_market_shapes",
         "census_resolved_market_shapes",
     ),
+    # CAL-P006 (#1527): dry-run-ONLY census of winner-field coherence violations
+    # on mutually-exclusive markets (>1 winner, and/or >1 near-certain leg). Walks
+    # a bounded market-id WINDOW per call — re-invoke with ?offset=<next_offset>
+    # until ``exhausted``. Accepts ?limit=&offset=&newest_first=. Never writes:
+    # repairing the standing population is a separate, authority-gated queue.
+    "winner-field-coherence": ("app.tasks.census_winner_fields", "census"),
 }
 
 

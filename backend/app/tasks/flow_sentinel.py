@@ -149,6 +149,7 @@ _FLOW_AREA_LABELS = {
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
     "season_aggregate_linkage": "area:event-details",  # season market on a game event (#1220)
     "frozen_final_scores": "area:calibration",  # settled score is not the final (CAL-P002)
+    "winner_field_coherence": "area:calibration",  # mex market w/ >1 winner or >1 certain leg (CAL-P006)
     "team_identity_dupes": "area:event-details",  # unmerged team-identity dupes / adjudication backlog
 }
 _FLOW_TITLES = {
@@ -164,6 +165,7 @@ _FLOW_TITLES = {
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
     "season_aggregate_linkage": "season-aggregate market mislinked to a single game event",
     "frozen_final_scores": "settled event stores a non-final (frozen mid-game) score",
+    "winner_field_coherence": "single-winner market crowned twice, or a field of near-certain legs",
     "team_identity_dupes": "unmerged team-identity dupes remain or adjudication backlog is climbing",
 }
 
@@ -433,6 +435,49 @@ def frozen_final_score_events(ledger: list[dict]) -> list[dict]:
             "stored_score": e.get("stored_score"), "espn_final": e.get("espn_final"),
             "winner_flip": bool(e.get("winner_flip")),
             "commence_time": e.get("commence_time"),
+        })
+    return out
+
+
+def freshly_written_incoherent_fields(defects: list[dict]) -> list[dict]:
+    """CAL-P006 (#1527): the winner-field violations a PRODUCER is still creating.
+
+    A mutually-exclusive market is a single-winner partition, so >1 ``is_winner``
+    or >1 near-certain leg is an impossible state. 214+ soccer 1X2 markets held
+    Home, Away AND Draw at 1.00, all three crowned.
+
+    Only ``written_recently`` rows fail. This is deliberate and it is the whole
+    design of the guard:
+
+    * The standing legacy population cannot be repaired by this queue — a bulk
+      ``is_winner`` reset needs a source that can immediately re-resolve
+      (gotcha #21). Alarming on it every night would make the flow permanently
+      RED for something no agent is allowed to fix, which is precisely the
+      cry-wolf the grid health score was retired for.
+    * A defect row only stays "recently written" while a producer keeps stamping
+      it. The two CAL-P006 producer fixes stop that, so these rows age out of the
+      window on their own — the flow goes green exactly when, and only when, the
+      producers actually stopped. That makes it a falsifiable check on the fix
+      rather than a restatement of the backlog.
+
+    Pure over the ``winner-field-coherence`` census's DRY-RUN output, so guard and
+    census share ONE definition of the defect and cannot drift."""
+    out = []
+    for d in defects or []:
+        if not d.get("written_recently"):
+            continue
+        out.append({
+            "market_id": d.get("market_id"),
+            "source": d.get("source"),
+            "status": d.get("status"),
+            "category": d.get("category"),
+            "name": d.get("name"),
+            "legs": d.get("legs"),
+            "winners": d.get("winners"),
+            "near_certain": d.get("near_certain"),
+            "field_sum": d.get("field_sum"),
+            "classes": d.get("classes") or [],
+            "last_written": d.get("last_written"),
         })
     return out
 
@@ -1341,6 +1386,83 @@ async def _run_frozen_final_scores(client: httpx.AsyncClient) -> dict:
     }
 
 
+# Markets walked per sentinel run. Newest-first, so this is "did anything in the
+# most recent slice of the market table acquire an impossible field".
+_WINNER_FIELD_SCAN = 20000
+
+
+async def _run_winner_field_coherence(client: httpx.AsyncClient) -> dict:
+    """CAL-P006 (#1527): a single-winner market must have exactly one winner.
+
+    Measures via the ``winner-field-coherence`` census in DRY-RUN (it never
+    writes), newest-first, so guard and census cannot drift on what the defect is.
+    A broken or unauthenticated measurement is SKIPPED, never filed — filing on
+    our own broken instrument is the cry-wolf the grid health score was retired
+    for."""
+    headers = _admin_headers()
+    if headers is None:
+        return _unknown_flow(
+            "winner_field_coherence", "ADMIN_TOKEN unset — census rail unavailable"
+        )
+    try:
+        resp = await client.post(
+            "/api/admin/repairs/winner-field-coherence",
+            headers=headers,
+            params={
+                "apply": "false",
+                "limit": _WINNER_FIELD_SCAN,
+                "newest_first": "true",
+            },
+        )
+        resp.raise_for_status()
+        result = (resp.json() or {}).get("result") or {}
+    except Exception as exc:
+        return _unknown_flow(
+            "winner_field_coherence", f"census dry-run failed: {str(exc)[:120]}"
+        )
+
+    walked = int(result.get("markets_walked") or 0)
+    if walked == 0:
+        # checked == 0 can never be a pass (an empty window is not evidence).
+        return _unknown_flow(
+            "winner_field_coherence", "census walked no markets"
+        )
+
+    fresh = freshly_written_incoherent_fields(result.get("defects") or [])
+    failures = [
+        {"detail": f"{f['source']} {f['category'] or 'uncategorised'} market "
+                   f"{f['market_id']} \"{f['name']}\" is mutually exclusive but has "
+                   f"{f['winners']}/{f['legs']} winners and "
+                   f"{f['near_certain']}/{f['legs']} near-certain legs "
+                   f"(field sums to {f['field_sum']}) — written {f['last_written']}, "
+                   f"so a producer is STILL creating this (#1527; census: POST "
+                   f"/api/admin/repairs/winner-field-coherence)"}
+        for f in fresh
+    ]
+    return {
+        "flow": "winner_field_coherence",
+        "checked": walked,
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "evidence": {
+            "markets_walked": walked,
+            "defect_markets": result.get("defect_markets"),
+            "by_class": result.get("by_class"),
+            "by_category": result.get("by_category"),
+            "bogus_winner_outcomes": result.get("bogus_winner_outcomes"),
+            # The standing backlog is reported, never failed on: repairing it is
+            # an authority-gated write, not something this guard can demand.
+            "standing_backlog_in_window": (result.get("defect_markets") or 0)
+            - len(fresh),
+            "written_recently": result.get("written_recently"),
+            "fresh_write_hours": result.get("fresh_write_hours"),
+            "next_offset": result.get("next_offset"),
+            "exhausted": result.get("exhausted"),
+            "fresh_defects": fresh[:10],
+        },
+    }
+
+
 # Clusters awaiting HUMAN adjudication (L2-173) is a needs-user backlog, not an
 # agent-fixable bug — a small standing queue is normal. It only alarms past a
 # conservative backlog size so its CLIMB is visible without crying wolf on the
@@ -1611,6 +1733,7 @@ async def _run_flow_sentinel(
         ("unlinked_held", _run_unlinked_held),
         ("season_aggregate_linkage", _run_season_aggregate_linkage),
         ("frozen_final_scores", _run_frozen_final_scores),
+        ("winner_field_coherence", _run_winner_field_coherence),
         ("team_identity_dupes", _run_team_identity_dupes),
     )
 
