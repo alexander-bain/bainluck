@@ -201,3 +201,37 @@ that home for completion.
 Phase 0**. Pre-staging it is dropped. This ends the three-cycles-running "unstaged Integrator
 queue" exception — the Integrator was the one lane whose claim artifact someone else had to
 create for it, which is why it kept running without one.
+
+## RULING — 2026-08-06: Integration ordering is the Integrator's call, not a question for Alex
+
+**(Fable ruling; Alex may veto.)**
+
+**Ruling.** When multiple program queues are simultaneously `ready_for_integration`, the
+Integrator decides the order **without asking anyone**, by this ladder:
+
+1. **Disjoint queues before colliding ones; smallest diff first.** A queue that touches no file
+   another ready queue touches merges immediately, smallest first.
+2. **Among colliding queues, first-certified merges first.** The later-certified queue rebases
+   **in its own worktree** and **re-certifies** — the Integrator does not carry someone else's
+   rebase, and a rebased branch is not certified until its gates are re-run on the new base.
+3. **A P0 security queue jumps the line**, ahead of both rules above.
+
+**Escalate to Alex ONLY when two colliding queues are both P0.** Nothing else about ordering is
+a human decision.
+
+**Named failure: INT-005 stalled on a human scheduling answer with three healthy queues
+waiting.** Nothing was broken, nothing was ambiguous about the *work* — the lane simply had no
+authority to pick an order, so certified, gate-green queues sat idle waiting on a question that
+had an obvious mechanical answer. That is the ANTI-IDLE rule's exact failure mode arriving
+through a gap in delegated authority rather than through a WIP cap.
+
+WHY this ladder and not "merge whatever is oldest": ordering only matters when queues collide,
+and the only real cost in a collision is *who re-runs gates*. Rule 1 gets the free merges out of
+the way so a collision never blocks unrelated work. Rule 2 puts the rebase cost on the queue that
+certified later — the one whose base was already stale — and forbids the Integrator from
+rebasing-and-shipping without re-certification, which would be a merge of code no gate ever saw
+in that combination. Rule 3 exists because a P0 security fix waiting behind a diff-size heuristic
+is the one case where the cheapest order is the wrong one.
+
+**Corollary (already in force):** the Integrator self-writes its claim artifact at Phase 0
+(PROGRAM-LANES Invariant 10), so choosing an order needs no external staging step either.
