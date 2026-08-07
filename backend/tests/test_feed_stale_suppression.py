@@ -571,3 +571,43 @@ class TestHealthySiblingsSurvive:
         august = datetime(2026, 8, 5, 23, 25, tzinfo=timezone.utc)
         assert expired_ladder_rungs(["Yes", "No"], august) == set()
         assert expired_ladder_rungs(["Spain", "France", "England"], august) == set()
+
+
+class TestDisplayRankMatchesProbability:
+    """UX-P005 class (a). On 2026-08-06, 14 of 61 feed-surfaced markets carried
+    `rank=1` on an outcome that was NOT the probability leader. The feed sorts
+    by probability, so the card itself was right — but it shipped the stale
+    stored `rank` in the payload, so any consumer trusting that column (native
+    list ordering, "the favorite") named a different winner than the
+    probabilities printed beside it."""
+
+    def _score_futures_source(self) -> str:
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        return inspect.getsource(feed_module._score_futures)
+
+    def _sports_mode_source(self) -> str:
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        return inspect.getsource(feed_module._score_sports_mode_futures)
+
+    def test_discover_card_rank_is_positional(self):
+        src = self._score_futures_source()
+        assert "for position, o in enumerate(card_outcomes[:3], start=1)" in src
+        assert '"rank": position,' in src
+
+    def test_sports_card_rank_is_positional(self):
+        src = self._sports_mode_source()
+        assert "for position, o in enumerate(sorted_outcomes[:3], start=1)" in src
+
+    def test_scoring_paths_keep_the_stored_rank(self):
+        # Deliberate boundary: `outcomes_data` feeds SCORING and carries
+        # rank_change_24h. UX-P005 is display-and-payload only — renumbering
+        # there would change ranking, which is out of scope.
+        src = self._score_futures_source()
+        assert '"rank": o.rank,' in src
+        assert '"rank_change_24h": o.rank_change_24h,' in src

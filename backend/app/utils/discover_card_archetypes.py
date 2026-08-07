@@ -61,6 +61,75 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+# UX-P005 class (b). A label only earns a threshold rung if it actually reads
+# as a numeric threshold. Without this, any digit inside a title becomes a rung
+# — "The Bombing of Pan Am 103" scored 103.0 and sorted between the 1s and 3s
+# of a Netflix ladder, and "June 30, 2027" scored 30.
+_THRESHOLD_SHAPED_RE = re.compile(
+    r"[$%<>+]"                     # $6,000 · 45% · <130m · 9m+
+    r"|\d\s*[-–]\s*\d"             # 7-8m · 160-170m
+    r"|\d\s*[kmbt]\b"              # 6m · 1.5t
+    r"|\b(?:bps|bp)\b"             # 1 (25 bps)
+    r"|\b(?:under|over|above|below|at least|at most|more than|less than)\b",
+    re.I,
+)
+
+# Two rungs whose values differ by more than this factor cannot be the same
+# ladder — it means the label set was parsed on mixed scales. Bail out rather
+# than render bars that contradict each other.
+_MAX_LADDER_SCALE_SPREAD = 10_000
+
+
+def _suffix_multiplier(label: str) -> int:
+    """Largest k/m/b/t multiplier appearing in a label.
+
+    In a range label the suffix is written once but governs both numbers:
+    "7-8m" means 7 million to 8 million, not 7 to 8 million. Callers apply this
+    to bare leading numbers so a ladder stays on one scale.
+    """
+    multiplier = 1
+    for match in re.finditer(r"(\d)\s*([kmbt])\b", label, re.I):
+        multiplier = max(
+            multiplier,
+            {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000, "t": 1_000_000_000_000}[
+                match.group(2).lower()
+            ],
+        )
+    return multiplier
+
+
+def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
+    """ONE threshold rung for one outcome label, on a unit-aware scale.
+
+    Replaces a two-parser split that put a single ladder on two different
+    scales: ``extract_threshold`` returned the raw number ("<6m" -> 6) while
+    ``_compact_value_thresholds`` multiplied it ("<6m" -> 6,000,000). Emitting
+    both also produced duplicate rungs — "1 (25 bps)" became a rung at 1 AND a
+    rung at 25 in the same Fed ladder.
+    """
+    if not _THRESHOLD_SHAPED_RE.search(label):
+        return None
+    compact = _compact_value_thresholds(label)
+    if compact:
+        value, unit, direction = compact[0]
+        if value < _MAX_LADDER_SCALE_SPREAD:
+            # A bare leading number in a range label inherits the label's suffix.
+            value *= _suffix_multiplier(label)
+        return value, unit, direction
+    extracted = extract_threshold(label)
+    if not extracted:
+        return None
+    value, unit, direction = extracted
+    return value * _suffix_multiplier(label), unit, direction
+
+
+def _ladder_is_scale_coherent(points: list[dict[str, Any]]) -> bool:
+    magnitudes = [abs(float(p["value"])) for p in points if p.get("value")]
+    if len(magnitudes) < 2:
+        return True
+    return max(magnitudes) / min(magnitudes) <= _MAX_LADDER_SCALE_SPREAD
+
+
 def _threshold_points(
     *,
     name: str,
@@ -71,30 +140,42 @@ def _threshold_points(
 
     for outcome in outcomes:
         outcome_name = _clean_text(outcome.get("name"))
-        extracted = extract_threshold(outcome_name)
-        extracted_values = (
-            [extracted] if extracted else _compact_value_thresholds(outcome_name)
+        # Exactly ONE rung per outcome, on one scale (UX-P005 class b).
+        resolved = _outcome_threshold_value(outcome_name)
+        if resolved is None:
+            continue
+        value, unit, direction = resolved
+        points.append(
+            {
+                "source": "outcome",
+                "label": outcome_name,
+                "value": value,
+                "unit": unit,
+                "direction": direction,
+                "probability": (
+                    outcome.get("probability")
+                    if outcome.get("probability") is not None
+                    else outcome.get("current_probability")
+                ),
+            }
         )
-        for value, unit, direction in extracted_values:
-            points.append(
-                {
-                    "source": "outcome",
-                    "label": outcome_name,
-                    "value": value,
-                    "unit": unit,
-                    "direction": direction,
-                    "probability": (
-                        outcome.get("probability")
-                        if outcome.get("probability") is not None
-                        else outcome.get("current_probability")
-                    ),
-                }
-            )
+
+    # Monotonic display: a ladder read top-to-bottom must not double back.
+    points.sort(key=lambda p: float(p["value"]))
+
+    # Mixed scales mean the labels were never one ladder — drop the threshold
+    # treatment entirely rather than render self-contradicting bars.
+    if not _ladder_is_scale_coherent(points):
+        points = []
 
     if not points:
-        extracted = extract_threshold(name)
-        extracted_values = [extracted] if extracted else _compact_value_thresholds(name)
-        for value, unit, direction in extracted_values:
+        # Same shape guard as the per-outcome path — otherwise an ordinal in
+        # the QUESTION becomes a rung: "What will be the #2 global Netflix
+        # movie this week?" produced a lone threshold at 2 for a card whose
+        # outcomes are film titles.
+        resolved = _outcome_threshold_value(name)
+        if resolved is not None:
+            value, unit, direction = resolved
             points.append(
                 {
                     "source": "market_name",

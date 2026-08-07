@@ -174,3 +174,30 @@ Approved by Alex as **UX pilot cycle 3**.
 - **`~/.handoff-inbox/` remains the documented fallback**, unchanged in shape and unchanged in status: an artifact there is still a HANDOFF IN FLIGHT, never a second source of truth. It is what a lane uses when it finds itself launched without the settings file in scope — a condition that is now diagnosable in one write test rather than costing a cycle.
 
 WHY the inbox survives its own fix: the direct-write path depends on a launch-time condition a lane cannot verify before it is already running, so the protocol keeps a route that works when that condition is absent. What changed is the default — direct write first, inbox on failure — not the guarantee. The strict "in flight, never truth" rule is what keeps the inbox from becoming the third place a queue's status lives: the failure mode that the single-source-of-truth rule exists to prevent, and the reason docs never carry ordering.
+
+## RULING — 2026-08-06: Board-visible completion — a cycle is not done until the board says so
+
+**Ruling.** Every queue completion — program cycles, Codex runs, integrations — posts a comment
+on its **program parent issue** (#1544–#1550) carrying the **queue id**, **verdict**, **branch
+head SHA**, and the report's **key lines**. **A cycle is NOT complete until that comment exists.**
+The LAT-P001 comment on #1545 is the model. Routing is by the program the work belongs to, not by
+who executed it: a Codex run that audits Discover comments on the Discover parent.
+
+**Named failure this closes: local handoff files are invisible to everyone who is not this
+terminal.** `.claude/handoff/` is gitignored and machine-local, so the cloud coordinator, every
+fresh session, and Alex on any other surface cannot see that a cycle finished, what its verdict
+was, or which SHA carries it. Completion has been living in a place only one window can read
+while the board — ruled in v4 as **the SOLE record of priorities, ideas, and completion** — stayed
+silent. Three cycles ran with a queue file saying `done` and a parent issue saying nothing.
+
+WHY the comment and not a status column flip: the column says *that* something finished; the
+comment says *what* finished, *with which verdict*, and *at which SHA* — the three facts a fresh
+session needs to avoid re-doing or contradicting the work. It also makes a PREMISE-BROKEN or
+PARTIAL verdict durable, which a green column actively hides. This is the same single-source
+discipline as the handoff-inbox ruling above: one authoritative home per fact, and the board is
+that home for completion.
+
+**Companion mechanic (same ruling):** the **Integrator self-writes its INT claim artifact at
+Phase 0**. Pre-staging it is dropped. This ends the three-cycles-running "unstaged Integrator
+queue" exception — the Integrator was the one lane whose claim artifact someone else had to
+create for it, which is why it kept running without one.
