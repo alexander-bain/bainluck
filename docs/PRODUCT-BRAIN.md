@@ -279,3 +279,37 @@ turns out to need a judgment call posts ⚠️ NEEDS RULING and stops, exactly l
 
 This supersedes the ANTI-IDLE clause of OPERATING MODEL v4 by making it concrete: the caps bound
 work-in-progress, and a lane at completion always has a next move it can make on its own.
+
+## RULING — 2026-08-07: LANE OWNERSHIP IS PER-WINDOW (Fable; amends CONTINUOUS LANES v1)
+
+**One window per lane is the standing default.** A lane name is not a lock. Ownership belongs to
+a specific *window* — a single running session — and must be provable, not asserted.
+
+**The mechanism.** A queue's `status: running` line MUST carry a **session nonce**: the window's
+start timestamp plus a random suffix. The owning window refreshes a `heartbeat:` alongside it as
+it works.
+
+```
+status: running
+owner: <lane> (window 2026-08-07T14:22PT-a3f9)
+heartbeat: 2026-08-07T15:04PT
+```
+
+**The rule.** A window that opens a queue and finds `status: running` with a heartbeat **under 30
+minutes old STOPS and reports** — *even when the owner line names its own lane*. That last clause
+is the whole point: "I am the calibration lane, this says the calibration lane owns it, therefore
+it is me" is exactly the reasoning that fails. A stale heartbeat (>30 min) means the prior window
+died; the new one may take the lane, and must rewrite the nonce to its own before touching
+anything.
+
+**Named failure: 2026-08-07 — two calibration windows executed CAL-P002B concurrently.** Nothing
+was corrupted, but only by luck and good manners: both happened to converge on the same fix and
+neither pushed over the other. The protocol had no way for either to know the other existed,
+because the queue only ever identified an owner by *lane*, and both windows correctly believed
+they were that lane. Duplicate work is the mild outcome; two windows committing divergent fixes
+to one branch, or one rebasing under the other, is the outcome the nonce prevents.
+
+This interacts with CONTINUOUS LANES v1 rather than weakening it: a lane still never idles between
+cycles, and a self-staging window still takes its next work immediately — it just stamps the nonce
+when it claims, so the *second* window discovers the collision instead of racing into it. Add
+"queue is already running under a live heartbeat" to the lane's stop conditions.
