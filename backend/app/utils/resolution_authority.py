@@ -39,9 +39,16 @@ from __future__ import annotations
 # same binding mapper/guards as `clob_authoritative`; a DISTINCT name purely so
 # this much larger cohort stays revertible in one predicate (binding spec line 25,
 # the Amendment-1 precedent).
+#
+# CAL-P007: `clob_field_repair` is the attended repair of incoherent single-winner
+# FIELDS (#1527) — markets whose every leg was crowned at 1.00. Same CLOB tier-3
+# authority, but established per-LEG by condition_id rather than through the name
+# mapper, so there is no matching step to be wrong. A DISTINCT name, again, purely
+# so this cohort stays revertible in one predicate.
 AUTHORITATIVE_SOURCES: frozenset[str] = frozenset({
     "api_settlement",
     "clob_authoritative",
+    "clob_field_repair",
     "clob_never_graded",
     "clob_ordinal",
     "datagolf_settlement",
