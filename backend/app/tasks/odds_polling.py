@@ -83,6 +83,22 @@ def get_max_duration_for_sport(sport_key: str) -> float:
     return SPORT_MAX_DURATIONS["default"]
 
 
+async def _last_post_commence_snapshot(session, event_id):
+    """Last real snapshot at/after this event's start, or None.
+
+    Per-event rather than batched: only events that are actually about to close
+    pay for it, and a staleness close is rare by construction.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+    row = (await session.execute(
+        _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL), {"event_ids": [event_id]}
+    )).first()
+    return row.last_snap if row else None
+
+
 async def detect_and_close_stale_events(session) -> int:
     """
     Detect live events with stale odds and mark them as "closed".
@@ -183,7 +199,19 @@ async def detect_and_close_stale_events(session) -> int:
             if should_close:
                 close_values = {"status": "closed"}
                 if not event.completed_at:
-                    close_values["completed_at"] = now
+                    # gotcha #22: completed_at is a GAME-END time. now() is when
+                    # the backend noticed, which is wrong by however long the
+                    # bookmakers had been stale — and it is what chart domains
+                    # and "settled" language stand on. Derive it from the last
+                    # real post-commence snapshot, or leave it NULL: a visible
+                    # gap the CAL-P002 repair can fill beats a plausible-looking
+                    # wrong value that nothing will ever question.
+                    from app.utils.event_completion import derive_completed_at
+
+                    close_values["completed_at"] = derive_completed_at(
+                        await _last_post_commence_snapshot(session, event.id),
+                        event.commence_time,
+                    )
                 await session.execute(
                     Event.__table__.update()
                     .where(Event.id == event.id)

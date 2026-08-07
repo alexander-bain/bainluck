@@ -1242,8 +1242,14 @@ async def _transition_event_statuses_impl() -> dict:
 
     Transitions:
     - scheduled → live: commence_time <= now (game has started)
-    - live → closed: commence_time + max_duration has passed AND no score
-      updates in the last 30 min (likely ended, no data source caught it)
+    - live → closed: commence_time + max_duration has passed AND no source has
+      captured a post-commence snapshot in the last 30 min (likely ended, no
+      data source caught it)
+
+    That second condition was claimed here for a long time but never actually
+    implemented, which made this the producer of the CAL-P002 frozen-final-score
+    class: a game running long is closed while still being played, its mid-game
+    score becomes the permanent final, and the blend below is graded off it.
     """
     from app.tasks.base import get_task_session
     from app.tasks.config import SPORT_MAX_DURATIONS
@@ -1294,6 +1300,36 @@ async def _transition_event_statuses_impl() -> dict:
         )
         live_events = live_result.scalars().all()
 
+        # The guard this docstring has always promised but never implemented.
+        # A wall-clock timeout is not evidence a game is over — long games (extra
+        # innings, overtime, a rain delay) blow through max_duration while still
+        # being played, and closing one freezes whatever mid-game score the last
+        # poll wrote AND grades the blend off it. That is the CAL-P002 producer:
+        # an NBA row was found settled on a literal halftime score with the
+        # derived winner inverted. One batched query answers both "is it still
+        # running?" and "when did it end?" (gotcha #22 — completed_at is a
+        # game-end time, never a backend processing timestamp).
+        last_snaps: dict = {}
+        if live_events:
+            from sqlalchemy import text as _sql_text
+
+            from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+            last_snaps = {
+                row.event_id: row.last_snap
+                for row in (await session.execute(
+                    _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL),
+                    {"event_ids": [e.id for e in live_events]},
+                )).all()
+            }
+
+        from app.utils.event_completion import (
+            derive_completed_at,
+            game_may_still_be_running,
+        )
+
+        stats["held_still_running"] = 0
+
         for event in live_events:
             sport_key = event.sport.key if event.sport else ""
             max_hours = SPORT_MAX_DURATIONS.get("default", 4.0)
@@ -1304,9 +1340,20 @@ async def _transition_event_statuses_impl() -> dict:
 
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
             if hours_since_start > max_hours + 0.5:
+                last_snap = last_snaps.get(event.id)
+                if game_may_still_be_running(last_snap, now):
+                    # Leave it live. The next pass re-checks, and a real source
+                    # will almost always settle it before we need to guess.
+                    stats["held_still_running"] += 1
+                    continue
+
                 event.status = "closed"
                 if not event.completed_at:
-                    event.completed_at = now
+                    # None when we have no post-commence snapshot: a visible gap
+                    # the repair can fill beats a wrong value nothing questions.
+                    event.completed_at = derive_completed_at(
+                        last_snap, event.commence_time
+                    )
                 stats["live_to_closed"] += 1
 
                 # Write resolved win probability for prediction market sources.
