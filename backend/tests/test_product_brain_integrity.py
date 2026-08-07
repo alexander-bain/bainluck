@@ -46,7 +46,37 @@ STRUCTURAL_MARKERS = [
     "2026-07-28 late MC round",
 ]
 
-ALL_MARKERS = REQUIRED_MARKERS + STRUCTURAL_MARKERS
+# UX-P010 (2026-08-07). The marker lists above stop a WHOLESALE rewrite, but they
+# named nothing after 2026-07-28, so every ruling from the entire program era was
+# unguarded. That gap is not theoretical: on 2026-08-07 the ux worktree and the
+# master worktree had BOTH accreted two rulings the other lacked (this tree:
+# mover headlines + post-deploy rail invocation; master, unpushed: per-WINDOW
+# lane ownership + the Invariant-2 amendment). Four load-bearing rulings, none
+# of them guarded, one merge away from being dropped silently by whichever side
+# won a conflict — which is precisely the failure mode this file exists for, and
+# the same one the doc header records happening TWICE.
+PROGRAM_ERA_MARKERS = [
+    "THE PROGRAM LAYER",
+    "handoff inbox",
+    "Board-visible completion",
+    "Integration ordering is the Integrator",
+    "CONTINUOUS LANES v1",
+    "Mover headlines are legitimate",
+    "A rail is not shipped until it has been invoked post-deploy",
+    "THE MASTER WORKTREE IS INTEGRATOR-ONLY",
+    "THE LOCK IS PER-WORKTREE",
+    "SUCCESSOR BRANCHES ARE THE DOCUMENTED DEFAULT",
+]
+
+# ⚠️ INTEGRATOR, on merging this branch: two further rulings live ONLY on the
+# master worktree and cannot be referenced from here without turning this branch
+# red before the merge. Add them to PROGRAM_ERA_MARKERS in the merge commit:
+#     "LANE OWNERSHIP IS PER-WINDOW"
+#     "INVARIANT 2 AMENDED"
+# If the merge drops either section instead, that is the divergence above
+# landing as real loss.
+
+ALL_MARKERS = REQUIRED_MARKERS + STRUCTURAL_MARKERS + PROGRAM_ERA_MARKERS
 
 
 def _read_product_brain() -> str:

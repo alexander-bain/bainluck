@@ -176,7 +176,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // leaderFirstSlice's generic widens them to its own constraint.
   const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
   if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= 4) {
-    const maxProb = Math.max(...distributionRows.map((row) => row.probability ?? 0), 0.01);
     // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
     // leader-first drops the leader — the Fed September card showed four
     // also-rans totalling 47% while the 56% "No change" row never rendered.
@@ -221,7 +220,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               {shownRows.map((row, index) => {
                 const probability = row.probability ?? 0;
                 const pct = Math.round(probability * 100);
-                const width = Math.max(5, Math.round((probability / maxProb) * 100));
+                // #1574 acceptance (c): the fill IS the printed number. This was
+                // previously divided by the leader's probability, which renders
+                // the top bar full regardless of its actual value — a 12% leader
+                // looked like a certainty, and two rows printing the same
+                // percentage drew different bars.
+                const width = Math.max(2, Math.round(probability * 100));
                 const displayName = compactOutcomeName(row.label);
                 return (
                   <div
