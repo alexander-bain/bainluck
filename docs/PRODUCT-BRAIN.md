@@ -313,3 +313,30 @@ This interacts with CONTINUOUS LANES v1 rather than weakening it: a lane still n
 cycles, and a self-staging window still takes its next work immediately — it just stamps the nonce
 when it claims, so the *second* window discovers the collision instead of racing into it. Add
 "queue is already running under a live heartbeat" to the lane's stop conditions.
+
+## RULING — 2026-08-07: INVARIANT 2 AMENDED — successor branches; a lane never waits for integration (Alex)
+
+**One queue per branch holds. A lane never waits for integration.**
+
+When a lane finishes a queue whose branch is not yet merged, it opens a **successor branch from
+its own unmerged head** — `program/<name>-2`, `-3`, … — declares the **stack order** in its
+handoff, and continues. The Integrator merges stacks in declared order. **A bounce of branch N
+pauses only N+1's merge, not the lane's work.**
+
+**Why this shape and not the two obvious alternatives.** Piling successive queues onto one branch
+(what the calibration lane did on 2026-08-07 with three cycles on `program/calibration`) keeps the
+lane hot but destroys per-queue certification: the Integrator can no longer take cycle 3 without
+cycles 1 and 2, and a problem anywhere in the stack bounces all of it. Waiting for the merge keeps
+certification clean but idles the lane, which is the exact failure CONTINUOUS LANES v1 exists to
+prevent. Successor branches get both: **certification stays atomic per queue**, and the lane never
+blocks.
+
+The real payoff is what it does to the conversation. Integration lag stops being an interactive
+question — "is my stuff merged yet, can I start the next thing?" — and becomes a **queue-depth
+number the Integrator reports**. Depth is then a metric Alex can read at a glance and act on when
+it climbs, instead of a scheduling negotiation conducted per lane, per cycle.
+
+Interacts with the other standing rulings rather than replacing them: CONTINUOUS LANES v1 still
+says a lane takes its next work immediately (this is the branching mechanics for doing so);
+Invariant 4 is untouched (the Integrator alone rebases, merges and pushes); the per-WINDOW
+ownership nonce ruling above is orthogonal and still applies to each successor queue.
