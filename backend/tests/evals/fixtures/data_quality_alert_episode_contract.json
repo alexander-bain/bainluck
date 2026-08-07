@@ -1,0 +1,19 @@
+[
+  {"id":"same_check_same_episode","check":"espn_freshness","scope":"global","state":"RED","existing":"open","marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"COMMENT","reason_codes":[]}},
+  {"id":"same_check_value_drift","check":"espn_freshness","scope":"global","state":"RED","existing":"open","value":7,"marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"COMMENT","reason_codes":[]}},
+  {"id":"concurrent_loser","check":"odds_api_sparsity","scope":"global","state":"RED","existing":"none","concurrent_claim":"lost","marker_declared":true,"expected":{"fingerprint":"cd603f144671","action":"DEFER","reason_codes":[]}},
+  {"id":"redis_loss_not_identity","check":"odds_api_sparsity","scope":"global","state":"RED","existing":"open","dedup_source":"redis_ttl","marker_declared":true,"expected":{"fingerprint":"cd603f144671","action":"COMMENT","reason_codes":["cooldown_not_durable_identity"]}},
+  {"id":"search_lag","check":"espn_capture_gap","scope":"event","event_id":42,"state":"RED","existing":"open","search_eventual":true,"marker_declared":true,"expected":{"fingerprint":"f742f5106a86","action":"COMMENT","reason_codes":["eventual_search_not_authority"]}},
+  {"id":"board_unknown","check":"espn_freshness","scope":"global","state":"RED","board":"unknown","existing":"none","marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"NO_OP_UNKNOWN","reason_codes":["board_unknown"]}},
+  {"id":"green_recovery","check":"espn_freshness","scope":"global","state":"GREEN","existing":"open","expected":{"fingerprint":"38f5a1983f4f","action":"CLOSE","reason_codes":[]}},
+  {"id":"green_without_issue","check":"espn_freshness","scope":"global","state":"GREEN","existing":"none","expected":{"fingerprint":"38f5a1983f4f","action":"NO_OP_GREEN","reason_codes":[]}},
+  {"id":"recurrence_after_close","check":"espn_freshness","scope":"global","state":"RED","existing":"closed","marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"FILE","reason_codes":[]}},
+  {"id":"distinct_event_a","check":"espn_capture_gap","scope":"event","event_id":42,"state":"RED","existing":"none","marker_declared":true,"expected":{"fingerprint":"f742f5106a86","action":"FILE","reason_codes":[]}},
+  {"id":"distinct_event_b","check":"espn_capture_gap","scope":"event","event_id":43,"state":"RED","existing":"none","marker_declared":true,"expected":{"fingerprint":"e21c4ac8037f","action":"FILE","reason_codes":[]}},
+  {"id":"global_espn","check":"espn_freshness","scope":"global","state":"RED","existing":"none","marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"FILE","reason_codes":[]}},
+  {"id":"odds_never_covered","check":"odds_api_sparsity","scope":"event","event_id":90,"state":"RED","existing":"none","marker_declared":true,"expected":{"fingerprint":"30b5d94a0729","action":"FILE","reason_codes":[]}},
+  {"id":"odds_stopped_midstream","check":"odds_api_capture_stopped","scope":"event","event_id":90,"state":"RED","existing":"none","marker_declared":true,"expected":{"fingerprint":"26f5b8b0cc7b","action":"FILE","reason_codes":[]}},
+  {"id":"missing_marker","check":"espn_freshness","scope":"global","state":"RED","existing":"none","marker_declared":false,"expected":{"fingerprint":"38f5a1983f4f","action":"FILE","reason_codes":["missing_canonical_marker"]}},
+  {"id":"historical_duplicates","check":"espn_freshness","scope":"global","state":"RED","existing":"open","duplicate_open_count":3,"marker_declared":true,"expected":{"fingerprint":"38f5a1983f4f","action":"COMMENT","reason_codes":["historical_duplicates_need_canonical_oldest"]}},
+  {"id":"clean_shared_rail","check":"espn_capture_gap","scope":"event","event_id":42,"state":"RED","existing":"open","marker_declared":true,"expected":{"fingerprint":"f742f5106a86","action":"COMMENT","reason_codes":[]}}
+]
