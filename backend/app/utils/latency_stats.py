@@ -117,6 +117,14 @@ def parse_sample_member(member: str) -> Optional[tuple[float, str]]:
     the rolling window for up to an hour after deploy, so it must parse rather
     than be dropped — dropping it would silently shrink n right when the new
     percentiles are being validated. Returns ``None`` for an unparseable member.
+
+    Non-finite guard (r329 finding B1, ``production-unmeasured``): bare
+    ``float()`` happily accepts ``"nan"`` and ``"inf"``. The current writer
+    cannot produce either — ``duration_ms`` comes from ``perf_counter()`` — but
+    if one ever entered, the blast radius is the WHOLE rail, not one bad row: a
+    NaN makes ``sorted()`` ordering undefined (silently wrong p50/max) and an
+    inf raises in Starlette's ``json.dumps(allow_nan=False)`` at render time,
+    turning every endpoint's numbers into an opaque 500.
     """
     parts = member.split(":")
     if len(parts) < 2:
@@ -124,6 +132,8 @@ def parse_sample_member(member: str) -> Optional[tuple[float, str]]:
     try:
         latency = float(parts[1])
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latency):
         return None
     bucket = parts[2] if len(parts) > 2 and parts[2] else "none"
     return latency, bucket

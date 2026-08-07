@@ -351,7 +351,12 @@ class TestLatencyRail:
             zrangebyscore=MagicMock(side_effect=_zrange),
         )
         out = self._call(r)
-        assert [e["endpoint"] for e in out["endpoints"]] == ["good"]
+        # #1500 (r334): always-sampled endpoints now emit an explicit zero row,
+        # so filter to the MEASURED rows — the C102 boundary claim being pinned
+        # here is "the readable sibling survives a failed sibling", not the row
+        # count.
+        measured = [e for e in out["endpoints"] if not e.get("no_samples_in_window")]
+        assert [e["endpoint"] for e in measured] == ["good"]
         assert out["completeness"] == "partial"
         assert out["unreadable_endpoints"][0]["endpoint"] == "bad"
         assert out["unreadable_endpoints"][0]["status"] == hr.UNAVAILABLE
@@ -374,7 +379,13 @@ class TestLatencyRail:
             zrangebyscore=MagicMock(return_value=[]),
         )
         out = self._call(r)
-        assert out["endpoints"] == []
+        # No MEASURED rows — but the quiet endpoint is now counted rather than
+        # silently dropped, which is what lets `completeness` be earned instead
+        # of asserted (#1500 r334).
+        measured = [e for e in out["endpoints"] if not e.get("no_samples_in_window")]
+        assert measured == []
+        assert out["endpoint_reconciliation"]["no_samples_in_window"] == 1
+        assert out["endpoint_reconciliation"]["reconciles"] is True
         assert out["completeness"] == "complete"
 
     def test_no_endpoints_tracked_keeps_its_note(self):

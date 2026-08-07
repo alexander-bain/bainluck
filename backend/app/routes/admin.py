@@ -546,6 +546,20 @@ async def get_latency_stats(
       blended percentile cannot express the cold cost. Each sample now carries
       its ``X-Feed-Cache`` bucket and ``by_cache_status`` reports each bucket
       separately, so the ``miss`` p95 is readable on its own.
+
+    #1500 residuals (ops r329/r330/r334) — the rail must also be *legible*:
+
+    * ``generated_at`` + per-endpoint ``newest_sample_age_s`` /
+      ``oldest_sample_age_s``. The payload could not be dated from its own
+      contents, and r330 watched a 19.7 s cold observation age out of the window
+      with nothing left to say it had existed.
+    * ``unbucketed_samples`` so ``by_cache_status`` counts + the residual always
+      equal the row's ``n`` (r330 saw n=13 against a lone miss bucket of n=12).
+    * ``endpoint_reconciliation`` so ``completeness`` can see its own
+      denominator; it reads ``unreconciled`` rather than ``complete`` over an
+      unexplained gap (r334 saw ``complete`` asserted over a 2-of-5 payload).
+    * An explicit zero row for an always-sampled endpoint with no in-window
+      samples, so "no traffic" is distinguishable from "the sampler broke".
     """
     _check_admin_secret(secret, request=request)
 
@@ -586,14 +600,23 @@ async def get_latency_stats(
     # client rather than pretending the window was simply empty.
     read_errors: list[dict] = []
 
+    # Tracked, readable, but contributed no in-window sample. `latency:_endpoints`
+    # has a 3660s TTL against a 3600s window, so a member can legitimately sit in
+    # the set with nothing to report. That is benign — but it must be COUNTED,
+    # because it is most of the gap that r334 saw the rail paper over by
+    # declaring itself "complete" (#1500 item 4).
+    empty_endpoints: list[str] = []
+
     for raw_ep in endpoints_set:
         ep = raw_ep.decode() if isinstance(raw_ep, bytes) else raw_ep
         key = f"latency:{ep}"
 
         # Get all members within the time window (score = timestamp).
         # member format: "timestamp:latency_ms[:cache_bucket]"
+        # #1500 (r329 B3): withscores — the scores were always read and then
+        # thrown away, which is why no consumer could date a sample.
         window = health_reads.command(
-            key, lambda k=key: r.zrangebyscore(k, cutoff, "+inf")
+            key, lambda k=key: r.zrangebyscore(k, cutoff, "+inf", withscores=True)
         )
         if window.unavailable:
             read_errors.append(
@@ -607,11 +630,19 @@ async def get_latency_stats(
             continue
         pairs = window.value
         if not pairs:
+            empty_endpoints.append(ep)
             continue
 
         latencies: list[float] = []
         by_bucket: dict[str, list[float]] = _defaultdict(list)
-        for raw_member in pairs:
+        timestamps: list[float] = []
+        for raw_item in pairs:
+            # withscores yields (member, score); tolerate a bare member so a
+            # client configured without scores still parses.
+            if isinstance(raw_item, (tuple, list)) and len(raw_item) == 2:
+                raw_member, raw_score = raw_item
+            else:
+                raw_member, raw_score = raw_item, None
             m = raw_member.decode() if isinstance(raw_member, bytes) else raw_member
             parsed = parse_sample_member(m)
             if parsed is None:
@@ -619,7 +650,13 @@ async def get_latency_stats(
             latency, bucket = parsed
             latencies.append(latency)
             by_bucket[bucket].append(latency)
+            try:
+                if raw_score is not None:
+                    timestamps.append(float(raw_score))
+            except (TypeError, ValueError):
+                pass
         if not latencies:
+            empty_endpoints.append(ep)
             continue
 
         entry = {
@@ -628,6 +665,18 @@ async def get_latency_stats(
             "always_sampled": ep in _ALWAYS_SAMPLE,
             **summarize(latencies),
         }
+        # #1500 (r329 B3 / r330): date the samples. Without this a reader cannot
+        # tell "n=13 from the last 5 minutes" from "n=13 from 59 minutes ago and
+        # traffic has since stopped" — and r330 watched a 19.7s cold observation
+        # age out of the window silently, with nothing in the payload to say it
+        # had ever existed.
+        if timestamps:
+            entry["newest_sample_age_s"] = round(now - max(timestamps), 1)
+            entry["oldest_sample_age_s"] = round(now - min(timestamps), 1)
+        else:
+            entry["newest_sample_age_s"] = None
+            entry["oldest_sample_age_s"] = None
+
         # Only surface the cache dimension where it exists — an endpoint that
         # sets no X-Feed-Cache header lands entirely in the "none" bucket, and
         # repeating the blended numbers under a second heading would be noise.
@@ -637,7 +686,34 @@ async def get_latency_stats(
                 bucket: summarize(values)
                 for bucket, values in sorted(real_buckets.items())
             }
+            # #1500 (r330): the buckets must account for every sample. The rail
+            # reported n=13 with a single `miss` bucket of n=12 while the row's
+            # own min_ms was 4.0ms against the miss bucket's 1710.0ms — a real
+            # fast sample existed and was invisible. The unbucketed remainder
+            # (samples whose response carried no X-Feed-Cache header) is now
+            # published, so bucket counts + residual == n, always.
+            entry["unbucketed_samples"] = len(by_bucket.get("none", []))
         results.append(entry)
+
+    # #1500 (r334): an always-sampled endpoint that contributed nothing must not
+    # simply be absent. `/api/feed` was declared always_sampled and did not
+    # appear at all, which is indistinguishable from the sampler being broken.
+    # An explicit zero row says "no traffic" out loud.
+    measured = {e["endpoint"] for e in results}
+    unreadable_eps = {e["endpoint"] for e in read_errors}
+    zero_rows = [
+        {
+            "endpoint": ep,
+            "samples": 0,
+            "always_sampled": True,
+            "no_samples_in_window": True,
+            **summarize([]),
+            "newest_sample_age_s": None,
+            "oldest_sample_age_s": None,
+        }
+        for ep in sorted(_ALWAYS_SAMPLE)
+        if ep not in measured and ep not in unreadable_eps
+    ]
 
     # Sort by p95 descending so the slowest endpoints are first. A null p95
     # (too few samples to answer) must not sort as "fast" — fall back to the
@@ -659,9 +735,45 @@ async def get_latency_stats(
         )
 
     results.sort(key=_sort_key, reverse=True)
-    results = results[:top]
+    truncated = max(0, len(results) - top)
+    # Zero rows are pinned: they are the "sampling might be broken" signal, and
+    # `top` sorts on p95, where a zero row has nothing to sort by.
+    results = results[:top] + zero_rows
+
+    # #1500 (r334): the completeness verdict must be able to see its own
+    # denominator. It previously read "complete" over a 2-of-5 payload with an
+    # empty `unreadable_endpoints` — the same false-green shape Queue 294
+    # removed from the VALUES, still living in the VERDICT. Every tracked
+    # endpoint now lands in exactly one of these four counts, and the residual
+    # is published rather than resolved by assertion.
+    reconciliation = {
+        "tracked": len(endpoints_set),
+        "returned": len(results),
+        "reported": len(measured),
+        "unreadable": len(read_errors),
+        "no_samples_in_window": len(empty_endpoints),
+        "truncated_by_top": truncated,
+    }
+    accounted = (
+        reconciliation["reported"]
+        + reconciliation["unreadable"]
+        + reconciliation["no_samples_in_window"]
+    )
+    reconciliation["unaccounted"] = reconciliation["tracked"] - accounted
+    reconciliation["reconciles"] = reconciliation["unaccounted"] == 0
+
+    if not reconciliation["reconciles"]:
+        completeness = "unreconciled"
+    elif read_errors:
+        completeness = "partial"
+    else:
+        completeness = "complete"
 
     return {
+        # #1500 (r329 B3): this payload could not be dated from its own
+        # contents. An undated snapshot of two 1-sample rows is
+        # indistinguishable from a broken rail.
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "window": "1 hour",
         "sample_rate": f"1/{os.getenv('LATENCY_SAMPLE_RATE', '10')}",
         "always_sampled_endpoints": sorted(_ALWAYS_SAMPLE),
@@ -675,9 +787,8 @@ async def get_latency_stats(
         # Explicit partial-read provenance: an endpoint whose samples could not
         # be read is named here, never silently absent from `endpoints`.
         "unreadable_endpoints": read_errors,
-        "completeness": (
-            "partial" if read_errors else "complete"
-        ),
+        "endpoint_reconciliation": reconciliation,
+        "completeness": completeness,
     }
 
 

@@ -77,21 +77,67 @@ def _cache_bucket(response) -> str:
         return _BUCKET_NONE
     return raw if raw in _CACHE_BUCKETS else _BUCKET_OTHER
 
-# Paths to skip entirely (health checks, docs, static).
-_SKIP_PREFIXES = ("/docs", "/openapi.json", "/redoc", "/health", "/")
-
 # Regex patterns to normalize dynamic path segments to placeholders.
-# Matches UUIDs, numeric IDs, and sport keys like "basketball_nba".
+# Matches UUIDs and numeric IDs. Fallback only — see _endpoint_bucket, which
+# prefers the route template the router actually matched.
 _ID_PATTERNS = [
     (re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), "/{uuid}"),
     (re.compile(r"/\d+"), "/{id}"),
 ]
 
+# #1500 (ops r329 finding B2): every request that matched NO route collapses
+# into this one constant bucket.
+#
+# The middleware runs before routing, and the only path filter is the /api
+# prefix check in dispatch(). So a 404 on any arbitrary `/api/<junk>` used to be
+# recorded under its own key, and `latency:_endpoints` has no cap — any
+# unauthenticated caller could mint unbounded Redis keys. Redis here is
+# Premium-0 / 50 MB / allkeys-lru, where an oversized working set evicts COLD
+# keys regardless of TTL (r320 lost the grid-sentinel verdict exactly that way),
+# so the flood would take out the very samples this rail exists to keep.
+#
+# One constant bucket instead of dropping the sample outright: it is equally
+# bounded (exactly one key, forever) and a 404 storm stays visible rather than
+# becoming invisible to the only latency rail in production.
+UNMATCHED_BUCKET = "/api/{unmatched}"
+
 # #1500: per-endpoint counters. A single global counter meant a rare endpoint's
-# sampling depended on unrelated traffic. Bounded by the normalized-path space,
-# which is already bounded by the route table (IDs are collapsed by
-# _normalize_path before they get here).
+# sampling depended on unrelated traffic. Now bounded by the ROUTE TABLE rather
+# than by whatever paths callers invent (r329 B2 flagged this same dict as
+# unbounded per-dyno memory growth on attacker-controlled input); the cap below
+# is belt-and-braces in case a future bucket source is less disciplined.
 _request_counters: dict[str, int] = {}
+_MAX_COUNTER_KEYS = 2000
+
+
+def _endpoint_bucket(request, path: str) -> str:
+    """The aggregation bucket for this request: the matched route template.
+
+    ``request.scope["route"]`` is populated by the router during ``call_next``,
+    so it is readable on the way OUT of the middleware even though the
+    middleware itself runs before routing. Verified against Starlette's actual
+    behaviour, not assumed:
+
+    * ``/api/leagues/basketball_nba`` -> ``/api/leagues/{sport_key}``
+    * ``/api/events/12345``           -> ``/api/events/{event_id}``
+    * ``/api/total-junk-9x/aaa``      -> no route -> :data:`UNMATCHED_BUCKET`
+
+    The template is what fixes B2: ``_normalize_path`` only collapses numeric
+    IDs and UUIDs, so every route with a STRING path parameter
+    (``/api/leagues/{sport_key}``, ``/api/hub/{competition}``,
+    ``/api/teams/{identifier}``, ...) kept its raw value as its own bucket.
+
+    Falls back to ``_normalize_path`` when the scope is not a real ASGI dict
+    (test doubles), so callers that hand-build a request object still behave as
+    they did before.
+    """
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return _normalize_path(path)
+    template = getattr(scope.get("route"), "path_format", None)
+    if isinstance(template, str) and template:
+        return template
+    return UNMATCHED_BUCKET
 
 
 def _should_sample(normalized: str) -> bool:
@@ -101,6 +147,12 @@ def _should_sample(normalized: str) -> bool:
     if SAMPLE_RATE <= 1:
         return True
     count = _request_counters.get(normalized, 0) + 1
+    if len(_request_counters) >= _MAX_COUNTER_KEYS and normalized not in _request_counters:
+        # Bounded, and bounded in the direction that keeps the rail honest: drop
+        # the counter state rather than the sample. Sampling is a 1-in-N phase,
+        # so a reset costs at most one endpoint's phase alignment; unbounded
+        # growth would cost dyno memory permanently.
+        _request_counters.clear()
     _request_counters[normalized] = count
     return count % SAMPLE_RATE == 0
 
@@ -169,8 +221,12 @@ class LatencyMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
+        # Bucket by the route template the router actually matched, so the key
+        # space is bounded by the route table instead of by caller input
+        # (#1500 / r329 B2). Read AFTER call_next — that is when scope["route"]
+        # exists.
+        normalized = _endpoint_bucket(request, path)
         # Sampling: per-endpoint 1-in-N, with an always-sample allowlist (#1500).
-        normalized = _normalize_path(path)
         if not _should_sample(normalized):
             return response
 
