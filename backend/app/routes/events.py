@@ -1428,19 +1428,67 @@ async def faceted_search(
 # defaults are set where they can only fire on the pathological case that produces a
 # 503 today, and they are env-tunable: once the after-measurement confirms the new
 # plan, tightening toward the corpus values is a config change, not a deploy.
-_SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "4000"))
-_SEARCH_DEADLINE_MS = int(os.getenv("SEARCH_DEADLINE_MS", "8000"))
+# LAT-P005/#1494 — what the 4000ms default above got WRONG, and it cost a revert.
+#
+# The 4s statement timeout fired on HEALTHY futures queries. Three of eight sampled
+# production queries came back HTTP 200 with ZERO futures (`nba champion`,
+# `masters winner`, `us recession 2026`), and the whole change was reverted
+# (f98d8104). The comment above predicted this exact failure — "a statement timeout
+# that fires on a HEALTHY query returns an EMPTY result set with a 200 — a relevance
+# failure worse than being slow" — and then picked a number too small to honour it.
+#
+# The error was not the number. It was believing the budget buys speed. It does not:
+# **1a/1b/1c** make the query fast; **1e is purely the anti-503 guard.** A tight
+# budget bought nothing and cost recall, so the budget should be as LOOSE as it can
+# be while still beating Heroku's 30s H12 — not as tight as it can be.
+#
+# So: the deadline is the bound (20s, comfortably under H12 with room to serialize),
+# and each stage's statement timeout is derived from the deadline REMAINING rather
+# than a fixed constant. A single fixed value cannot be right for both stages — the
+# futures query legitimately costs more than the events query, so any value tight
+# enough to feel protective on events is too tight for futures. That mismatch is the
+# whole bug.
+_SEARCH_DEADLINE_MS = int(os.getenv("SEARCH_DEADLINE_MS", "20000"))
+
+# Floor: never hand a stage a bound so small that a healthy query cannot finish.
+# If less than this remains, the deadline check skips the stage outright (an honest
+# "we ran out of time") instead of starting a query that is designed to be killed.
+_SEARCH_MIN_STAGE_TIMEOUT_MS = int(os.getenv("SEARCH_MIN_STAGE_TIMEOUT_MS", "2000"))
+
+# Escape hatch only. Unset by default: setting it pins EVERY stage to one fixed
+# bound, which is precisely the shape that caused the revert. Kept so the budget can
+# be tightened by config once a production plan is actually measured — the thing the
+# original comment wanted and could not get.
+_SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")) or None
 
 
-async def _apply_search_statement_timeout(db: AsyncSession) -> None:
-    """Bound every statement in this request's transaction.
+def _stage_timeout_ms(deadline: float | None) -> int:
+    """Statement bound for the next stage: whatever is left of the request deadline.
+
+    Never below :data:`_SEARCH_MIN_STAGE_TIMEOUT_MS` — a bound below the floor means
+    the caller should skip the stage, not run a query it intends to cancel.
+    """
+    if _SEARCH_STATEMENT_TIMEOUT_MS:
+        return _SEARCH_STATEMENT_TIMEOUT_MS
+    if deadline is None:
+        return _SEARCH_DEADLINE_MS
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    return max(_SEARCH_MIN_STAGE_TIMEOUT_MS, remaining_ms)
+
+
+async def _apply_search_statement_timeout(
+    db: AsyncSession, deadline: float | None = None
+) -> None:
+    """Bound the next statement(s) in this request's transaction.
 
     Transaction-scoped (`SET LOCAL`), so it resets on commit/rollback and cannot leak
-    to the next borrower of the pooled connection.
+    to the next borrower of the pooled connection. Re-applied before each bounded
+    stage: a later `SET LOCAL` overrides the earlier one, so every stage is bounded by
+    the time actually left rather than by a constant chosen for a different stage.
     """
     try:
         await db.execute(
-            text(f"SET LOCAL statement_timeout = {int(_SEARCH_STATEMENT_TIMEOUT_MS)}")
+            text(f"SET LOCAL statement_timeout = {int(_stage_timeout_ms(deadline))}")
         )
     except Exception as exc:  # noqa: BLE001 — never fail the search on the guard itself
         logger.warning("search statement_timeout not applied: %s", exc)
@@ -1466,12 +1514,14 @@ def _is_query_timeout(exc: BaseException) -> bool:
     return False
 
 
-async def _recover_search_session(db: AsyncSession) -> None:
+async def _recover_search_session(
+    db: AsyncSession, deadline: float | None = None
+) -> None:
     """A timed-out statement aborts the transaction — roll back so the REMAINING
     stages can still answer, and re-arm the timeout the rollback just cleared."""
     try:
         await db.rollback()
-        await _apply_search_statement_timeout(db)
+        await _apply_search_statement_timeout(db, deadline)
     except Exception as exc:  # noqa: BLE001
         logger.warning("search session recovery failed: %s", exc)
 
@@ -1582,7 +1632,7 @@ async def search_events(
         _stage_ms[label] = round((time.perf_counter() - _t0) * 1000)
         _t0 = time.perf_counter()
 
-    await _apply_search_statement_timeout(db)
+    await _apply_search_statement_timeout(db, _deadline)
 
     search_pattern = f"%{q}%"
     terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
@@ -1770,7 +1820,7 @@ async def search_events(
         # count to "unknown" rather than 503 the whole answer — futures and teams
         # below can still carry the response.
         logger.warning("search count timed out for %r", q)
-        await _recover_search_session(db)
+        await _recover_search_session(db, _deadline)
         total_count = 0
         degraded.append("event_count")
     _mark("event_count")
@@ -1846,7 +1896,7 @@ async def search_events(
             # InFailedSqlTransaction. Recover the session before continuing.
             if _is_query_timeout(exc):
                 logger.warning("search fuzzy fallback timed out for %r", q)
-                await _recover_search_session(db)
+                await _recover_search_session(db, _deadline)
                 degraded.append("did_you_mean")
             fuzzy_corrected = None
 
@@ -1863,7 +1913,7 @@ async def search_events(
             raise
         # LAT-P002/#1494 (1e): degrade the events page rather than 503 the request.
         logger.warning("search event page timed out for %r", q)
-        await _recover_search_session(db)
+        await _recover_search_session(db, _deadline)
         events = []
         degraded.append("events")
     _mark("event_page")
@@ -2045,10 +2095,26 @@ async def search_events(
             Sport.key == sport
         )
 
-    # LAT-P002/#1494 (1e): futures is a non-essential stage — if the request has
-    # already spent its budget, skip it and say so rather than push toward H12.
+    # LAT-P005/#1494: futures is NOT "non-essential enrichment" — that
+    # classification (LAT-P002's) is what got this reverted.
+    #
+    # For a large class of queries the futures market IS the answer: "masters
+    # winner", "nba champion", "us recession 2026" have no event to return, only a
+    # market. Dropping this stage does not produce a slower answer, it produces a
+    # WRONG one — HTTP 200, zero results, and a `degraded` key the caller has to
+    # know to read. Post-deploy that read as "no matches" to everyone who looked,
+    # including the Integrator, and it survived a full deploy verification.
+    #
+    # So the stage is re-armed with the deadline actually REMAINING (a fixed 4s
+    # constant is what killed it: the futures query legitimately costs more than
+    # the events query), and a timeout here is logged at ERROR — it is a recall
+    # incident, not routine shedding.
+    await _apply_search_statement_timeout(db, _deadline)
     if time.monotonic() > _deadline:
-        logger.warning("search deadline exceeded before futures for %r", q)
+        logger.error(
+            "search deadline exceeded before futures for %r — returning an answer "
+            "with the primary result class MISSING", q
+        )
         futures_markets_raw = []
         degraded.append("futures")
     else:
@@ -2058,8 +2124,11 @@ async def search_events(
         except Exception as exc:  # noqa: BLE001
             if not _is_query_timeout(exc):
                 raise
-            logger.warning("search futures timed out for %r", q)
-            await _recover_search_session(db)
+            logger.error(
+                "search futures TIMED OUT for %r — this is a recall failure, not "
+                "load shedding: the answer is now missing its primary result class", q
+            )
+            await _recover_search_session(db, _deadline)
             futures_markets_raw = []
             degraded.append("futures")
     _mark("futures")
@@ -2316,7 +2385,7 @@ async def search_events(
             if not _is_query_timeout(exc):
                 raise
             logger.warning("search teams timed out for %r", q)
-            await _recover_search_session(db)
+            await _recover_search_session(db, _deadline)
             _team_result_rows = []
             degraded.append("teams")
     _mark("teams")

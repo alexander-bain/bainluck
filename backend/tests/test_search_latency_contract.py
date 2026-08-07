@@ -208,7 +208,10 @@ def test_dispatch_survives_having_no_running_loop():
 # ---------------------------------------------------------------------------
 
 def test_statement_timeout_is_armed_before_the_first_query():
-    assert "await _apply_search_statement_timeout(db)" in SEARCH_SRC
+    # LAT-P005: the call now carries the live deadline. Match on the call name
+    # rather than an exact arg list so the guard pins "it is armed", not a
+    # signature — pinning the signature is what made this test fail on a fix.
+    assert "await _apply_search_statement_timeout(db" in SEARCH_SRC
     src = _source_of(events_route._apply_search_statement_timeout)
     assert "SET LOCAL statement_timeout" in src, (
         "must be SET LOCAL — a session-level timeout would leak to the next "
@@ -219,7 +222,17 @@ def test_statement_timeout_is_armed_before_the_first_query():
 def test_budget_is_below_the_heroku_h12_boundary():
     """The whole point: the request must end before the router kills it at 30s."""
     assert events_route._SEARCH_DEADLINE_MS < 30_000
-    assert events_route._SEARCH_STATEMENT_TIMEOUT_MS < events_route._SEARCH_DEADLINE_MS
+    # LAT-P005: the per-stage bound is derived from the deadline remaining rather
+    # than a fixed constant (the fixed 4s is what reverted LAT-P002 — see
+    # TestBudgetCannotStarveAHealthyStage). It can never exceed the deadline by
+    # construction; assert that, instead of comparing against a constant that is
+    # now deliberately unset.
+    assert events_route._stage_timeout_ms(None) <= events_route._SEARCH_DEADLINE_MS
+    if events_route._SEARCH_STATEMENT_TIMEOUT_MS is not None:
+        assert (
+            events_route._SEARCH_STATEMENT_TIMEOUT_MS
+            < events_route._SEARCH_DEADLINE_MS
+        )
 
 
 def test_every_unbounded_stage_is_guarded():
@@ -235,7 +248,7 @@ def test_timeout_recovery_rolls_back_and_rearms():
     stage fails with InFailedSqlTransaction, turning one slow stage into a 500."""
     src = _source_of(events_route._recover_search_session)
     assert "await db.rollback()" in src
-    assert "_apply_search_statement_timeout(db)" in src, (
+    assert "_apply_search_statement_timeout(db" in src, (
         "rollback clears SET LOCAL — the timeout must be re-armed"
     )
 
@@ -304,3 +317,94 @@ def test_every_db_stage_is_timed_separately():
     for stage in ("event_count", "event_page", "event_enrichment",
                   "futures", "teams"):
         assert f'_mark("{stage}")' in SEARCH_CODE, f"stage {stage} is not timed"
+
+
+# ---------------------------------------------------------------------------
+# LAT-P005/#1494 — the budget defect that caused the revert.
+#
+# LAT-P002's 4000ms fixed statement timeout fired on HEALTHY futures queries:
+# 3 of 8 sampled production queries returned HTTP 200 with ZERO futures, and the
+# whole change was reverted (f98d8104). These pin the reasoning, not the number.
+# ---------------------------------------------------------------------------
+class TestBudgetCannotStarveAHealthyStage:
+    def test_deadline_exceeds_the_worst_measured_stage(self):
+        """The budget is the anti-503 guard; it buys no speed.
+
+        1a/1b/1c make the query fast. 1e only stops the request riding to H12.
+        So the bound must be as LOOSE as it can be while beating Heroku's 30s —
+        not as tight as it can be. The worst measured real request was 13.75s
+        (`nba champion`, pre-fix); a budget under that kills healthy queries.
+        """
+        from app.routes.events import _SEARCH_DEADLINE_MS
+
+        WORST_MEASURED_REQUEST_MS = 13_750
+        HEROKU_H12_MS = 30_000
+
+        assert _SEARCH_DEADLINE_MS > WORST_MEASURED_REQUEST_MS, (
+            f"deadline {_SEARCH_DEADLINE_MS}ms is below the worst measured healthy "
+            f"request ({WORST_MEASURED_REQUEST_MS}ms) — it will cancel good queries "
+            "and return empty 200s, which is what reverted LAT-P002"
+        )
+        assert _SEARCH_DEADLINE_MS < HEROKU_H12_MS, (
+            "deadline must still beat H12, or the 503s come back"
+        )
+
+    def test_no_fixed_statement_timeout_by_default(self):
+        """A single fixed bound cannot be right for two stages of different cost.
+
+        Any value tight enough to feel protective on the events query is too
+        tight for the futures query. That mismatch IS the bug, so the fixed
+        override is off by default.
+        """
+        from app.routes.events import _SEARCH_STATEMENT_TIMEOUT_MS
+
+        assert _SEARCH_STATEMENT_TIMEOUT_MS is None
+
+    def test_stage_timeout_is_the_remaining_budget(self):
+        """Each stage gets the time actually left, not a constant."""
+        import time as _t
+
+        from app.routes.events import _SEARCH_DEADLINE_MS, _stage_timeout_ms
+
+        fresh = _stage_timeout_ms(_t.monotonic() + (_SEARCH_DEADLINE_MS / 1000.0))
+        assert fresh > _SEARCH_DEADLINE_MS * 0.9
+
+        # A later stage gets less — but never so little that a healthy query is
+        # started only to be killed.
+        late = _stage_timeout_ms(_t.monotonic() + 0.05)
+        assert late >= 2000
+
+    def test_the_reverted_4s_budget_would_now_fail_this_suite(self):
+        """The specific regression, named.
+
+        `nba champion`'s futures query alone exceeded 4s, so the old constant
+        aborted it on every single request. Guard the class, not the incident.
+        """
+        from app.routes.events import _SEARCH_DEADLINE_MS
+
+        NBA_CHAMPION_FUTURES_MS = 4_000
+        assert _SEARCH_DEADLINE_MS > NBA_CHAMPION_FUTURES_MS * 2
+
+    def test_futures_stage_is_rearmed_with_the_live_deadline(self):
+        """The futures stage must re-arm the bound, not inherit the events one.
+
+        Asserted on source because the failure is structural: the old code armed
+        `statement_timeout` once, up front, and every later stage silently
+        inherited a bound chosen for a cheaper query.
+        """
+        import inspect
+
+        from app.routes import events
+
+        src = inspect.getsource(events.search_events)
+        futures_at = src.find("futures_result = await db.execute(futures_query)")
+        assert futures_at > 0, "futures stage not found — update this guard"
+
+        window = src[:futures_at]
+        rearm = window.rfind("_apply_search_statement_timeout(db, _deadline)")
+        assert rearm > 0, "futures stage does not re-arm the statement timeout"
+
+        # ...and the re-arm is close to the stage, not left far upstream.
+        assert src[rearm:futures_at].count("await db.execute(") <= 1, (
+            "another query runs between the re-arm and the futures stage"
+        )
