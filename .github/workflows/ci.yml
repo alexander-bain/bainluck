@@ -73,10 +73,11 @@ jobs:
         # #10), so a wrong or missing type deploys green. This is the step that
         # notices.
         #
-        # It is a fail-on-new gate, not a clean one. There are 89 pre-existing
-        # errors, recorded per file in frontend/typecheck-baseline.json and
-        # owned by issue #1521; they do not fail the build, and one error more
-        # than them does. A clean gate today would red every push until all 89
+        # It is a fail-on-new gate, not a clean one. Pre-existing errors are
+        # recorded per file in frontend/typecheck-baseline.json (see its
+        # `total`; do not hardcode the count here, it ratchets down) and owned
+        # by issue #1521; they do not fail the build, and one error more than
+        # them does. A clean gate today would red every push until all of them
         # were cleared, and a step that reds every push acquires a `|| true`.
         #
         # The ratchet turns both ways: fixing an error without lowering the
