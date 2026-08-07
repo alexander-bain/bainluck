@@ -148,6 +148,7 @@ _FLOW_AREA_LABELS = {
     "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
     "season_aggregate_linkage": "area:event-details",  # season market on a game event (#1220)
+    "frozen_final_scores": "area:calibration",  # settled score is not the final (CAL-P002)
     "team_identity_dupes": "area:event-details",  # unmerged team-identity dupes / adjudication backlog
 }
 _FLOW_TITLES = {
@@ -162,6 +163,7 @@ _FLOW_TITLES = {
     "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
     "season_aggregate_linkage": "season-aggregate market mislinked to a single game event",
+    "frozen_final_scores": "settled event stores a non-final (frozen mid-game) score",
     "team_identity_dupes": "unmerged team-identity dupes remain or adjudication backlog is climbing",
 }
 
@@ -403,6 +405,35 @@ def inverted_completed_events(events: list[dict]) -> list[dict]:
                 "completed_at": e.get("completed_at"),
                 "inversion_hours": round((commence - completed).total_seconds() / 3600.0, 1),
             })
+    return out
+
+
+def frozen_final_score_events(ledger: list[dict]) -> list[dict]:
+    """Settled events whose stored score is NOT the game's final score (CAL-P002).
+
+    A settled event's score must BE the final. A violation means the page shows a
+    wrong final — we held ``BOS 3-1`` where the real final was ``6-3`` — and every
+    score-derived grade under it stands on a mid-game number. Two producers, one
+    symptom: the wall-clock staleness nets close an event on elapsed time and keep
+    whatever score the last poll wrote (``espn_sync._transition_event_statuses_impl``,
+    ``odds_polling.detect_and_close_stale_events``), and a same-series neighbour's
+    final can land on the wrong sibling.
+
+    Pure over the ledger returned by the ``event-final-scores`` repair's DRY-RUN, so
+    the guard and the repair share ONE definition of the defect and cannot drift.
+    Identity-blocked rows are deliberately excluded — those are an ``espn_id``
+    linkage defect (a different repair), not a frozen score."""
+    out = []
+    for e in ledger or []:
+        if e.get("action") != "fix_score":
+            continue
+        out.append({
+            "event_id": e.get("event_id"), "sport": e.get("sport_key"),
+            "matchup": e.get("matchup"), "status": e.get("status"),
+            "stored_score": e.get("stored_score"), "espn_final": e.get("espn_final"),
+            "winner_flip": bool(e.get("winner_flip")),
+            "commence_time": e.get("commence_time"),
+        })
     return out
 
 
@@ -1231,6 +1262,77 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
     }
 
 
+# Scan budget for the frozen-score guard, in (sport, date) GROUPS — one ESPN
+# scoreboard call each, newest first because fresh defects appear at the head.
+# Small enough to stay well inside HTTP_TIMEOUT (the ESPN client sleeps 0.5s/req).
+_FROZEN_SCORE_GROUPS = 6
+
+
+async def _run_frozen_final_scores(client: httpx.AsyncClient) -> dict:
+    """CAL-P002 regression guard: a settled event's stored score MUST be the final.
+
+    Measures by calling the ``event-final-scores`` repair in DRY-RUN (it writes
+    nothing) over the most recent slates, so the guard and the repair can never
+    drift on what counts as a defect. A broken/unauthenticated measurement is
+    SKIPPED, never filed — filing on our own broken instrument is the cry-wolf the
+    grid health score was retired for."""
+    headers = _admin_headers()
+    if headers is None:
+        return _unknown_flow(
+            "frozen_final_scores", "ADMIN_TOKEN unset — repair rail unavailable"
+        )
+    try:
+        resp = await client.post(
+            "/api/admin/repairs/event-final-scores",
+            headers=headers,
+            params={
+                "apply": "false",
+                "limit": _FROZEN_SCORE_GROUPS,
+                "newest_first": "true",
+            },
+        )
+        resp.raise_for_status()
+        result = (resp.json() or {}).get("result") or {}
+    except Exception as exc:
+        return _unknown_flow(
+            "frozen_final_scores", f"repair dry-run failed: {str(exc)[:120]}"
+        )
+
+    scanned = int(result.get("events_scanned") or 0)
+    if scanned == 0:
+        # checked == 0 can never be a pass (an empty slate is not evidence).
+        return _unknown_flow(
+            "frozen_final_scores",
+            "no settled ESPN-mapped events in the scanned window",
+            groups_scanned=result.get("groups_scanned"),
+        )
+
+    frozen = frozen_final_score_events(result.get("ledger") or [])
+    failures = [
+        {"detail": f"settled {f['sport']} event {f['matchup']} stores score "
+                   f"{f['stored_score']} but ESPN's FINAL is {f['espn_final']} "
+                   f"(id {f['event_id']}"
+                   + (", WINNER FLIP" if f["winner_flip"] else "")
+                   + ") — frozen/wrong final (CAL-P002; POST /api/admin/repairs/"
+                     "event-final-scores?apply=true)"}
+        for f in frozen
+    ]
+    return {
+        "flow": "frozen_final_scores",
+        "checked": scanned,
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "evidence": {
+            "events_scanned": scanned,
+            "groups_scanned": result.get("groups_scanned"),
+            "groups_remaining": result.get("groups_remaining"),
+            "identity_blocked": result.get("identity_blocked"),
+            "winner_flips": result.get("winner_flips"),
+            "frozen_scores": frozen,
+        },
+    }
+
+
 # Clusters awaiting HUMAN adjudication (L2-173) is a needs-user backlog, not an
 # agent-fixable bug — a small standing queue is normal. It only alarms past a
 # conservative backlog size so its CLIMB is visible without crying wolf on the
@@ -1500,6 +1602,7 @@ async def _run_flow_sentinel(
         ("matured_linkage", _run_matured_linkage),
         ("unlinked_held", _run_unlinked_held),
         ("season_aggregate_linkage", _run_season_aggregate_linkage),
+        ("frozen_final_scores", _run_frozen_final_scores),
         ("team_identity_dupes", _run_team_identity_dupes),
     )
 
