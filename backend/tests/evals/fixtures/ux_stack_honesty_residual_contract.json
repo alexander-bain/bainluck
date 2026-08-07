@@ -1,0 +1,11 @@
+[
+  {"id":"phantom_default_drops_sports_keeps","kind":"phantom_parity","fabricated":true,"surface_decisions":{"discover":"DROP","sports":"KEEP"},"expected":{"verdict":"REFUSE","reason_codes":["surface_filter_drift","fabricated_price_survives"]}},
+  {"id":"phantom_both_drop","kind":"phantom_parity","fabricated":true,"surface_decisions":{"discover":"DROP","sports":"DROP"},"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"real_trade_both_keep","kind":"phantom_parity","fabricated":false,"surface_decisions":{"discover":"KEEP","sports":"KEEP"},"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"null_active_point_emits_half","kind":"active_point","series_value":null,"callback_emitted":true,"emitted_probability":0.5,"expected":{"verdict":"REFUSE","reason_codes":["null_signal_emits_probability","null_signal_becomes_even"]}},
+  {"id":"null_active_point_withheld","kind":"active_point","series_value":null,"callback_emitted":false,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"real_active_point_emitted","kind":"active_point","series_value":0.61,"callback_emitted":true,"emitted_probability":0.61,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"sub_half_percent_label_zero_fill_two","kind":"bar_geometry","probability":0.004,"width_pct":2,"expected":{"verdict":"REFUSE","reason_codes":["label_fill_mismatch"]}},
+  {"id":"zero_label_zero_fill","kind":"bar_geometry","probability":0.004,"width_pct":0,"expected":{"verdict":"ALLOW","reason_codes":[]}},
+  {"id":"ordinary_probability_exact_fill","kind":"bar_geometry","probability":0.48,"width_pct":48,"expected":{"verdict":"ALLOW","reason_codes":[]}}
+]
