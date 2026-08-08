@@ -666,3 +666,41 @@ The landing-page question (should the default surface lead with games during a l
 remains unruled. It interacts with the guard above: if games get floored into the default
 feed, that is UX-ownable work in `frontend/` and it materially thickens the UX tier.
 
+
+---
+
+## RULING — 2026-08-08(c): Fable runs the objective pass; Alex gets only judgment calls (Alex)
+
+Completes (a) and (b). (a) set the north star, (b) set who administers it, (c) sets **who
+does the looking**.
+
+### The split
+
+- **Fable runs the objective pass, browser-side.** It delivers the **mechanical gap list plus
+  screenshots**. This is not a preference — it is the only party that can. Agent sessions
+  cannot launch a browser, and `kalshi.com` returns **HTTP 429 in 0.06s** to scripted access,
+  so the comparative column is permanently out of reach for the UX lane on its own.
+- **Alex receives ONLY judgment calls**, presented as **multiple choice with BOTH screenshots
+  attached** — ours and Kalshi's, side by side.
+- **The UX lane administers** (per (b)): owner per row, routing, the scorecard, and staging
+  the `frontend/` subset.
+
+### Why the multiple-choice constraint is the load-bearing part
+
+Alex's 2026-08-08 pass produced fifteen findings in one sitting. Most needed no judgment at
+all — an overlapping label, a two-tick axis, a control that does nothing are simply broken,
+and asking about them wastes the scarcest input in the system. A handful genuinely did need
+taste (should the default surface lead with games? is a team page a better answer than
+tonight's game?).
+
+Mixing the two turns a five-minute decision into a triage session. **The objective pass is
+what separates them**, and it can only be run by whoever holds a browser.
+
+### The standing anti-pattern this forbids
+
+Do not ask Alex to go run the comparison. The lane asked exactly that in UX-P018 and got it —
+but at the cost of Alex doing mechanical work a browser-capable agent should have done, and
+of the findings arriving as prose to be mined rather than as decisions to be made.
+
+Ask **Fable** for the objective pass. Bring Alex only what needs taste, already paired with
+its evidence.
