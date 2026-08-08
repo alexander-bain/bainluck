@@ -204,15 +204,25 @@ class TestPhaseLedgerAdapter:
 
 
 class TestEnforcementScope:
-    """Only the four named adapters gate health. Everything else records as
-    before — a ``status`` key means "no live games" in most of this codebase."""
+    """Only the named adapters gate health. Everything else records as
+    before — a ``status`` key means "no live games" in most of this codebase.
 
-    def test_the_four_calibration_tasks_are_enforced(self):
+    Membership is pinned exactly so that enrolling a task stays a deliberate,
+    test-visible act. Enrolling one makes its verdict AUTHORITATIVE, which can
+    turn a previously-green surface red — that is the point, and it should never
+    happen as a side effect of an unrelated edit.
+    """
+
+    def test_the_enforced_adapters_are_exactly_these(self):
         assert ENFORCED_TASKS == {
             "calibration_prices",
             "compute_time_horizon_calibration",
             "precompute_calibration_main",
             "coverage_metrics",
+            # CAL-P008 (#683): enrolled after a measured false GREEN — 500 markets
+            # fetched, 500 empty, 0 snapshots created, recorded as a success every
+            # 6h for ten weeks. Terminal comes from `_trade_backfill_terminal`.
+            "kalshi_trades",
         }
 
     def test_enforced_task_partial_blocks_success(self):

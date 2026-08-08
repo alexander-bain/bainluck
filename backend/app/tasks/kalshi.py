@@ -1884,6 +1884,33 @@ def _split_kalshi_trades_by_commence(
     return pregame, has_any_trade, has_commence
 
 
+def _trade_backfill_terminal(stats: dict) -> str:
+    """Classify a trade-backfill run for the honest-verdict rail (#1515).
+
+    CAL-P008 (#683). The run measured on 2026-08-07 fetched 500 markets, got 500
+    empty responses, created 0 snapshots and was recorded as a SUCCESS, because
+    the summary carried no terminal at all — so the classifier fell through to the
+    legacy "it returned, so it ran" path. It had been doing that every six hours
+    since May while a P0 stayed open on the number it was supposed to move.
+
+    A run whose entire yield is empty responses is the signature of a window that
+    no longer holds data. That is a FAILURE of this task's purpose even though
+    nothing raised, and it must be able to go red on its own.
+    """
+    candidates = stats.get("candidates", 0)
+    fetched = stats.get("fetched", 0)
+    if not candidates:
+        return "complete"
+    if not fetched:
+        # Budget or deadline stopped the run before it reached the API.
+        return "partial"
+    if stats.get("pregame_snaps", 0) == 0 and stats.get("api_empty", 0) >= fetched:
+        return "failed"
+    if fetched < candidates:
+        return "partial"
+    return "complete"
+
+
 async def _backfill_trade_history(limit: int = 100, deadline: float | None = None):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
@@ -1897,6 +1924,17 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     import asyncio
     from app.tasks.redis_state import get_redis_client
 
+    from app.utils.kalshi_retention import (
+        AT_RISK_AGE_DAYS,
+        PROVABLY_PURGED_AGE_DAYS,
+        is_at_risk,
+    )
+    # The canonical overwritable set: guess-family plus the soft/terminal winner
+    # sources. Reused rather than redefined so this write cannot drift from the
+    # ladder. It is strictly more conservative than `not is_downgrade(...)` for a
+    # tier-1 write, which is the right direction for a capture-side observation.
+    from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL
+
     stats = {
         "candidates": 0,
         "fetched": 0,
@@ -1905,6 +1943,8 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
         "api_empty": 0,
         "missing_commence": 0,
         "trade_pages": 0,
+        "expiring_soon": 0,
+        "window_days": PROVABLY_PURGED_AGE_DAYS,
         "errors": [],
     }
 
@@ -1914,10 +1954,23 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
 
     try:
         async with get_task_session() as session:
+            # CAL-P008 (#683): the candidate set is bounded to settlements Kalshi
+            # can still answer for. Before this bound the walk ran oldest-id-first
+            # through ~150K permanently-purged March rows, so every run spent its
+            # whole budget on markets the API had dropped — measured 2026-08-07:
+            # 500 candidates, 500 fetched, 500 empty, 0 snapshots, reported healthy.
+            # Nothing tags a purged row, so it stayed a candidate forever and the
+            # cursor wrapped straight back onto it. The recoverable window, which
+            # is the only part with a deadline, was never reached.
+            #
+            # Fail-open on both edges: a NULL settlement time is still attempted,
+            # and the bound is the UPPER observed purge age, so the uncertain
+            # 74-86 day band is tried rather than written off.
             result = await session.execute(
                 text("""
                     SELECT fo.id, fo.external_id,
-                           COALESCE(e.commence_time, fm.commence_time)
+                           COALESCE(e.commence_time, fm.commence_time),
+                           COALESCE(fm.resolution_date, e.commence_time, fm.commence_time)
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     LEFT JOIN events e ON e.id = fm.event_id
@@ -1927,6 +1980,11 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                       AND fo.id > :last_id
                       AND COALESCE(fo.resolution_source, '') NOT IN
                           ('no_pregame_trading', 'did_not_play', 'withdrew')
+                      AND (
+                           COALESCE(fm.resolution_date, e.commence_time, fm.commence_time)
+                               IS NULL
+                           OR COALESCE(fm.resolution_date, e.commence_time, fm.commence_time)
+                               >= now() - make_interval(days => :purge_days))
                       AND (
                            NOT EXISTS (
                                SELECT 1 FROM futures_odds_snapshots fos
@@ -1940,14 +1998,27 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                     ORDER BY fo.id ASC
                     LIMIT :lim
                 """),
-                {"lim": limit, "last_id": _last_id},
+                {
+                    "lim": limit,
+                    "last_id": _last_id,
+                    "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                },
             )
-            candidates = [(r[0], r[1], r[2]) for r in result.fetchall()]
+            rows = result.fetchall()
+            candidates = [(r[0], r[1], r[2]) for r in rows]
+            # Early warning: how much of this batch is about to become permanently
+            # unrecoverable. A backfill that stalls turns this number into loss,
+            # so it is reported every run rather than discovered ten weeks later.
+            stats["expiring_soon"] = sum(1 for r in rows if is_at_risk(r[3]))
+            stats["at_risk_days"] = AT_RISK_AGE_DAYS
 
         stats["candidates"] = len(candidates)
         if not candidates:
             _rc.delete(_cursor_key)
             logger.info("Trade backfill: wrapped around, reset cursor")
+            # Nothing recoverable left to fetch IS this task's finished state, not
+            # an idle no-op: the backlog inside the retention window is drained.
+            stats["terminal"] = "complete"
             return stats
 
         # Save cursor for next run (highest outcome ID in this batch)
@@ -2037,11 +2108,21 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
             if no_pregame_ids or pregame_ids:
                 async with get_task_session() as session:
                     if no_pregame_ids:
+                        # `no_pregame_trading` is a tier-1 TERMINAL source. Writing
+                        # it over a tier-2/3 row (api_settlement, box_score, ...)
+                        # is an authority DOWNGRADE that destroys a cited
+                        # settlement to record a capture-side observation. The
+                        # candidate predicate only excludes the three marker
+                        # sources, so every authoritative row was reachable here.
+                        # Guard at the write, per the resolution-authority ladder.
                         await session.execute(
-                            text("""
+                            text(f"""
                                 UPDATE futures_outcomes
                                 SET resolution_source = 'no_pregame_trading'
                                 WHERE id = ANY(:ids)
+                                  AND (resolution_source IS NULL
+                                       OR resolution_source IN
+                                          {OVERWRITABLE_WINNER_SOURCES_SQL})
                             """),
                             {"ids": no_pregame_ids},
                         )
@@ -2060,6 +2141,8 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Trade backfill error: %s", e)
+
+    stats.setdefault("terminal", _trade_backfill_terminal(stats))
 
     logger.info(
         "Trade backfill: %d candidates, %d fetched, %d pages, "
