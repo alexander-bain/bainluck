@@ -43,6 +43,8 @@ nba champion                 name arm under a LEAGUE token present
 nfl mvp                      ``_build_league_ticker_match`` (#993 L2-43)
 outcome-only                 ``_outcome_id_match`` subquery
 nba (league only)            bare-league arm (``league_only_explicit``)
+us recession (both arms)     the LAT-P006 ``UNION`` returns EVERY arm
+us recession (control row)   a sub-3-char term still FILTERS
 ===========================  ==========================================
 
 ``nfl mvp`` and the outcome-only case are the subtle ones: in both, the market
@@ -73,8 +75,11 @@ matching rows it should match". It says nothing about:
 * anything about a table larger than the seed.
 
 Catching the timeout class needs a cost bound on the query itself, not a recall
-assertion — tracked on #1494 (LAT-P006). Do not let a green run here stand in for
-that.
+assertion. LAT-P006 delivered that bound as a SQL-SHAPE guard —
+``TestFuturesRecallArmsAreUnionedNotOred`` in
+``tests/test_search_latency_contract.py`` — rather than as a plan or wall-clock
+assertion, precisely because neither is meaningful on a small seed. Do not let a
+green run HERE stand in for that; they guard different failure modes.
 """
 
 from __future__ import annotations
@@ -121,6 +126,19 @@ _FUTURES_SEEDS = [
     ("KXNFLMVP-26", "MVP Winner?", ["Patrick Mahomes"]),
     # Outcome-only recall: the market name contains neither query term.
     ("kalshi-outcome-only", "Award Winner 2026", ["Caitlin Clark"]),
+    # LAT-P006: `us recession` must return BOTH arms' rows. This one is reachable
+    # ONLY via the outcome arm (the NAME contains neither "us" nor "recession"),
+    # while "US Recession in 2026?" above is reachable only via the name arm. One
+    # query, two arms, two different markets — so a change that collapses the
+    # UNION to a single arm, or to an intersection, fails loudly instead of
+    # quietly halving recall.
+    ("kalshi-us-gdp", "Q4 GDP print above 3%?", ["US recession averted"]),
+    # LAT-P006 control: matches `%recession%` but NOT `%us%`, in name or outcome.
+    # It must stay OUT of the `us recession` result. This is what makes the
+    # 2-character term's ENFORCEMENT observable — LAT-P006 staged "drop sub-3-char
+    # terms from the outcome arm" as a candidate fix, and that candidate would let
+    # this row in. The chosen UNION fix does not, and this pins the difference.
+    ("kalshi-euro-gdp", "Euro area growth 2026?", ["Recession likely"]),
 ]
 
 
@@ -266,6 +284,51 @@ async def test_outcome_only_recall(search):
     names = _futures_names(await search("caitlin clark"))
     assert "Award Winner 2026" in names, (
         f"outcome-only recall lost: got {names!r}"
+    )
+
+
+async def test_union_returns_rows_from_every_recall_arm(search):
+    """LAT-P006: the recall arms are UNIONed, so one query returns BOTH arms.
+
+    `us recession` reaches "US Recession in 2026?" only through the NAME arm and
+    "Q4 GDP print above 3%?" only through the OUTCOME arm. Both must come back.
+
+    This is the guard for the shape LAT-P006 shipped. Combining the arms with a
+    top-level `OR` timed out in production (>10s; the live request measured
+    23.57s and returned zero futures for a market that exists), so they are now
+    combined with `UNION` — set-identical, 437ms. The failure mode a UNION
+    introduces that an OR cannot is collapsing to ONE arm, or to an INTERSECT.
+    Either halves recall while every single-arm test in this file still passes.
+    """
+    names = _futures_names(await search("us recession"))
+    assert "US Recession in 2026?" in names, (
+        f"NAME-arm row lost from the union: got {names!r}"
+    )
+    assert "Q4 GDP print above 3%?" in names, (
+        f"OUTCOME-arm row lost from the union: got {names!r}. The arms are being "
+        "intersected or one arm was dropped — a UNION must return both."
+    )
+
+
+async def test_short_term_is_still_enforced_in_the_outcome_arm(search):
+    """A sub-3-character term still FILTERS; it was not dropped to buy speed.
+
+    `%us%` is a 2-char infix pattern, unservable by a pg_trgm GIN, and it seq-scans
+    3 GB of `futures_outcomes` in production (6,865ms for 64,200 rows — where the
+    3-char control `%ing%` returns MORE rows in 1,171ms). The tempting fix is to
+    drop such terms from the outcome arm. LAT-P006 measured that the term is not
+    the driver — the top-level OR is — and fixed the OR instead, so the term keeps
+    its meaning.
+
+    "Euro area growth 2026?" matches `%recession%` (outcome "Recession likely")
+    but nothing matches `%us%`. If it starts appearing for `us recession`, a short
+    term has been silently dropped and the query now means something else.
+    """
+    names = _futures_names(await search("us recession"))
+    assert "Euro area growth 2026?" not in names, (
+        f"the 2-char term `us` stopped filtering: got {names!r}. Dropping "
+        "sub-3-char terms widens the query — that is a precision regression, not "
+        "an optimisation."
     )
 
 
