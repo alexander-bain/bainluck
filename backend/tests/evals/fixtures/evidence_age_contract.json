@@ -1,0 +1,28 @@
+{
+  "schema_version":"evidence-age-contract/v1",
+  "authority":"C171; current-master admin evidence-age sweep",
+  "cases":[
+    {"id":"fresh","evidence":{"age_s":60,"max_age_s":3600},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"boundary-equal","evidence":{"age_s":3600,"max_age_s":3600},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"just-stale","evidence":{"age_s":3601,"max_age_s":3600},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"far-stale","evidence":{"age_s":1209600,"max_age_s":129600},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"missing-timestamp","evidence":{"timestamp":"missing","max_age_s":3600},"expected":{"authority":"NO_TIMESTAMP","headline":"unknown","display_date":false,"banner":"age_unknown","cache_action":"preserve","reason_codes":["TIMESTAMP_MISSING"]}},
+    {"id":"malformed-timestamp","evidence":{"timestamp":"malformed","max_age_s":3600},"expected":{"authority":"NO_TIMESTAMP","headline":"unknown","display_date":false,"banner":"age_unknown","cache_action":"preserve","reason_codes":["TIMESTAMP_INVALID"]}},
+    {"id":"future-timestamp","evidence":{"timestamp":"future","age_s":-30,"max_age_s":3600},"expected":{"authority":"NO_TIMESTAMP","headline":"unknown","display_date":false,"banner":"clock_invalid","cache_action":"preserve","reason_codes":["TIMESTAMP_IN_FUTURE"]}},
+    {"id":"missed-once-within-grace","evidence":{"age_s":5400,"max_age_s":7200,"producer_alive":false},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":["PRODUCER_DEAD_WITHIN_GRACE"]}},
+    {"id":"missed-many","evidence":{"age_s":21600,"max_age_s":7200,"producer_alive":false},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"long-ttl-stale-payload","evidence":{"age_s":172800,"max_age_s":86400},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"last-good-stale","evidence":{"age_s":10800,"max_age_s":7200,"last_good":true},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"serve_stale","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"producer-death-fresh-grace","evidence":{"age_s":300,"max_age_s":3600,"producer_alive":false},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":["PRODUCER_DEAD_WITHIN_GRACE"]}},
+    {"id":"producer-death-expired","evidence":{"age_s":7201,"max_age_s":7200,"producer_alive":false},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"cache-eviction","evidence":{"evicted":true,"timestamp":"missing"},"expected":{"authority":"NO_EVIDENCE","headline":"unknown","display_date":false,"banner":"unavailable","cache_action":"miss","reason_codes":["CACHE_EVICTED"]}},
+    {"id":"mixed-age","evidence":{"age_s":600,"max_age_s":3600,"component_ages_s":[600,7200]},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["COMPONENT_EXPIRED","EVIDENCE_EXPIRED"]}},
+    {"id":"mixed-all-fresh","evidence":{"age_s":600,"max_age_s":3600,"component_ages_s":[300,600]},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"recovery-fresh","evidence":{"age_s":5,"max_age_s":3600,"fresh_headline":"green"},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"fresh-red-finding","evidence":{"age_s":60,"max_age_s":3600,"fresh_headline":"red"},"expected":{"authority":"FRESH_BOUNDED","headline":"red","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"fresh-amber-finding","evidence":{"age_s":60,"max_age_s":3600,"fresh_headline":"amber"},"expected":{"authority":"FRESH_BOUNDED","headline":"amber","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"daily-sentinel-fresh","evidence":{"age_s":86400,"max_age_s":129600},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}},
+    {"id":"daily-sentinel-silent","evidence":{"age_s":129601,"max_age_s":129600},"expected":{"authority":"DATED_STALE","headline":"stale","display_date":true,"banner":"dated_stale","cache_action":"preserve","reason_codes":["EVIDENCE_EXPIRED"]}},
+    {"id":"hourly-cache-fresh","evidence":{"age_s":3599,"max_age_s":3600},"expected":{"authority":"FRESH_BOUNDED","headline":"green","display_date":true,"banner":"none","cache_action":"serve","reason_codes":[]}}
+  ]
+}
