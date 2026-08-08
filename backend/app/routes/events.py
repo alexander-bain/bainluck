@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, case, cast, Integer, String, literal_column, text
+from sqlalchemy import select, and_, or_, union, func, case, cast, Integer, String, literal_column, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
@@ -2060,6 +2060,55 @@ async def search_events(
     if league_ticker_match is not None:
         _futures_where_or.append(league_ticker_match)
 
+    # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
+    #
+    # MEASURED in production 2026-08-08 (3.2M-row `futures_outcomes`, 3 GB), not
+    # inferred. Each arm ALONE is fast — `us recession 2026` name arm 159ms,
+    # outcome arm 123ms — but `or_()` of exactly those two arms TIMES OUT (>10s;
+    # the live request measured 23.57s and returned zero futures for a market that
+    # exists). UNION of the same arms: 437ms, same row. `nba champion`: >10s -> 701ms.
+    #
+    # WHY: ANDed `IN`-subqueries get transformed into hash semi-joins and ordered
+    # by selectivity, so the cheap selective term drives. A top-level OR BLOCKS
+    # that transformation — the subqueries degrade to subplans probed against a
+    # sequential scan of `futures_markets`, and the worst subplan must materialise
+    # first. For `us recession 2026` that worst subplan is `%us%`: a 2-character
+    # infix pattern is unservable by a pg_trgm GIN (no complete trigram is
+    # extractable), so it seq-scans 3 GB — 6,865ms for 64,200 rows, where the
+    # 3-char control `%ing%` returns MORE rows (72,091) in 1,171ms. Pattern length,
+    # not row count.
+    #
+    # This is 1c's lesson restated for subqueries: ONE arm that defeats the planner
+    # inside a top-level OR poisons the whole predicate. 1c deleted the bad arm and
+    # paid three cycles of unverified-recall risk. Here nothing needs deleting —
+    # UNION and OR are SET-IDENTICAL, so recall and precision are preserved by
+    # construction, not by argument. That is why this fix, and not the four
+    # candidates LAT-P006 staged (each of which traded recall).
+    #
+    # The open/unresolved filters are pushed INTO each arm (AND distributes over
+    # UNION) as well as kept on the outer query: unfiltered arms hand the outer
+    # query every RESOLVED market they match, which cost `nba champion` 6,387ms
+    # vs 701ms. The outer copy is deliberate redundancy — it keeps the predicate
+    # correct if the pushed-down copy is ever removed.
+    _futures_open_now = (
+        FuturesMarket.status == "open",
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= datetime.now(timezone.utc),
+        ),
+    )
+    _futures_arm_selects = [
+        select(FuturesMarket.id).where(arm, *_futures_open_now)
+        for arm in _futures_where_or
+    ]
+    if len(_futures_arm_selects) > 1:
+        _futures_candidates = union(*_futures_arm_selects).subquery()
+        _futures_candidate_filter = FuturesMarket.id.in_(
+            select(_futures_candidates.c.id)
+        )
+    else:
+        _futures_candidate_filter = FuturesMarket.id.in_(_futures_arm_selects[0])
+
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
     # (~151ms); outcome text was weight C (minor), so ordering on the proven
@@ -2073,12 +2122,8 @@ async def search_events(
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            or_(*_futures_where_or),
-            FuturesMarket.status == "open",
-            or_(
-                FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= datetime.now(timezone.utc),
-            ),
+            _futures_candidate_filter,
+            *_futures_open_now,
         )
         .order_by(
             futures_search_rank.desc(),

@@ -408,3 +408,113 @@ class TestBudgetCannotStarveAHealthyStage:
         assert src[rearm:futures_at].count("await db.execute(") <= 1, (
             "another query runs between the re-arm and the futures stage"
         )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P006 — the COST bound the recall gate structurally cannot provide.
+#
+# The missing half of the CI rail, named in test_search_recall_contract.py's
+# SCOPE LIMIT: on the LAT-P005 re-land that gate reported `SEARCH RECALL 5/5`
+# and CI went green while production returned ZERO futures for
+# `us recession 2026`. Both were correct — the predicate matched, the query was
+# too slow to finish (23.57s, dropped at the 20s deadline).
+#
+# A recall assertion cannot detect a timeout, and neither can a plan assertion
+# or a wall-clock assertion on a seeded CI database: both are functions of data
+# volume, and the seed is always small. So the bound is asserted on SQL SHAPE —
+# the one property that is volume-independent and still causally tied to the
+# cost.
+#
+# MEASURED in production 2026-08-08 (`futures_outcomes` 3.2M rows / 3 GB):
+#
+#   us recession 2026   name arm alone  159ms | outcome arm alone  123ms
+#                       OR of the two   >10,000ms TIMEOUT
+#                       UNION           437ms          (same 1 row)
+#   nba champion        OR              >10,000ms TIMEOUT
+#                       UNION           701ms          (same 46 rows)
+#
+# ANDed `IN`-subqueries become hash semi-joins the planner orders by
+# selectivity. A top-level OR blocks that transformation, so they degrade to
+# subplans probed against a seq scan of `futures_markets`. ONE arm that defeats
+# the planner inside a top-level OR poisons the whole predicate — 1c's lesson,
+# restated for subqueries.
+# ---------------------------------------------------------------------------
+class TestFuturesRecallArmsAreUnionedNotOred:
+    """Guard the SHAPE whose absence cost 23.57s and a wrong answer."""
+
+    def test_recall_arms_are_not_combined_with_a_top_level_or(self):
+        assert "or_(*_futures_where_or)" not in SEARCH_CODE, (
+            "FUTURES_ARMS_ORED reintroduced: the futures recall arms are being "
+            "combined with a top-level OR again. Measured >10s (production "
+            "23.57s, zero futures returned for a market that exists) versus "
+            "437ms for the set-identical UNION. Use union() of per-arm id "
+            "selects."
+        )
+
+    def test_recall_arms_are_combined_with_a_union(self):
+        assert "union(*_futures_arm_selects)" in SEARCH_CODE, (
+            "the UNION of the futures recall arms is gone — if the arms are "
+            "combined some other way, re-point this guard deliberately"
+        )
+
+    def test_open_and_unresolved_filters_are_pushed_into_each_arm(self):
+        """AND distributes over UNION, and it is worth 9x.
+
+        Unfiltered arms hand the outer query every RESOLVED market they match:
+        `nba champion` measured 6,387ms with the filters only on the outer query
+        versus 701ms with them pushed into each arm.
+        """
+        assert "select(FuturesMarket.id).where(arm, *_futures_open_now)" in SEARCH_CODE, (
+            "the open/unresolved filters are no longer pushed into each UNION "
+            "arm — measured 6,387ms -> 701ms on `nba champion`"
+        )
+
+    def test_the_outer_query_still_carries_the_filters_too(self):
+        """Deliberate redundancy: the predicate stays correct if the push-down
+        is ever removed. Cheap, because the outer query sees only candidate ids."""
+        assert "*_futures_open_now," in SEARCH_CODE
+
+    def test_the_ored_shape_would_fail_this_guard(self):
+        """Mutation check — the guard must reject the shape it replaced.
+
+        A guard that passes on the defect is not a guard. This reconstructs
+        LAT-P005's exact line and asserts the check above catches it.
+        """
+        reverted_shape = "        .where(\n            or_(*_futures_where_or),\n"
+        assert "or_(*_futures_where_or)" in reverted_shape
+        assert "or_(*_futures_where_or)" not in SEARCH_CODE, (
+            "the mutation check and the live source disagree — the guard is "
+            "not actually discriminating"
+        )
+
+    def test_the_union_survives_compilation_as_a_single_scalar_subquery(self):
+        """The compiled form must be `id IN (SELECT ... UNION SELECT ...)`.
+
+        Compiled rather than source-matched, because the failure mode a UNION
+        introduces is silent: `union()` of one arm, or a stray `intersect()`,
+        reads fine and halves recall.
+        """
+        from sqlalchemy import union as _union
+
+        from app.models import FuturesMarket
+
+        arm_a = FuturesMarket.name.ilike("%recession%")
+        arm_b = FuturesMarket.id.in_(select(FuturesMarket.id).where(
+            FuturesMarket.name.ilike("%us%")
+        ))
+        open_now = (FuturesMarket.status == "open",)
+        candidates = _union(
+            *[select(FuturesMarket.id).where(arm, *open_now) for arm in (arm_a, arm_b)]
+        ).subquery()
+        sql = _compile(
+            select(FuturesMarket).where(
+                FuturesMarket.id.in_(select(candidates.c.id)), *open_now
+            )
+        ).upper()
+
+        assert " UNION " in sql, "the arms did not compile to a UNION"
+        assert "INTERSECT" not in sql, "an INTERSECT would silently halve recall"
+        # status appears once per arm plus once on the outer query.
+        assert sql.count("FUTURES_MARKETS.STATUS") >= 3, (
+            "the open filter is not present in every arm plus the outer query"
+        )
