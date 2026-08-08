@@ -2182,6 +2182,10 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
     try:
         from app.services.kalshi_api import KalshiAPIService
 
+        # CAL-P009 (#651): one measured horizon for every Kalshi recovery rail,
+        # so they cannot disagree about when upstream data dies.
+        from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
         service = KalshiAPIService()
 
         async with get_task_session() as session:
@@ -2193,6 +2197,15 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                     WHERE fm.source = 'kalshi'
                       AND fm.status = 'resolved'
                       AND fm.external_id ~ '^KX'
+                      -- CAL-P009 (#651): a series whose only remaining work is
+                      -- provably purged is not "a series that needs work" — it is
+                      -- the api_empty cohort the cursor comment below already
+                      -- blames for starving later series. The rotation made the
+                      -- starvation survivable; this stops it being generated.
+                      -- Fail-open on a NULL settlement date.
+                      AND (fm.resolution_date IS NULL
+                           OR fm.resolution_date
+                              >= now() - make_interval(days => :purge_days))
                       AND (
                           -- original: has an opening but missing/unmoved cal price
                           (fo.opening_probability IS NOT NULL
@@ -2209,7 +2222,7 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                               ))
                       )
                     ORDER BY 1
-                """))
+                """), {"purge_days": PROVABLY_PURGED_AGE_DAYS})
             series_list = [r[0] for r in sr.fetchall()]
             stats["series"] = len(series_list)
 
@@ -3606,6 +3619,9 @@ async def _backfill_kalshi_price_history(
     }
 
     try:
+        # CAL-P009 (#651): one measured horizon for every Kalshi recovery rail,
+        # so they cannot disagree about when upstream data dies.
+        from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
         from app.services.kalshi_api import KalshiAPIService
 
         async with get_task_session() as session:
@@ -3646,16 +3662,29 @@ async def _backfill_kalshi_price_history(
                               )
                               OR fo.opening_probability IS NULL
                           )
+                          -- CAL-P009 (#651): the FLOOR that #152's sort was
+                          -- missing. Oldest-first was chosen to reach the edge
+                          -- cohort before it expires (comment below), but with no
+                          -- lower bound it starts at rows that crossed the cliff
+                          -- MONTHS ago and never arrives at the edge at all —
+                          -- measured 2026-08-07, every probed market settled
+                          -- before ~2026-05-20 returns 200 with zero candles.
+                          -- Ordering was never the bug; the missing floor was.
+                          -- Fail-open: NULL settlement dates stay candidates.
+                          AND (fm.resolution_date IS NULL
+                               OR fm.resolution_date
+                                  >= now() - make_interval(days => :purge_days))
                         -- #152 Item 2 (Queue #151 flag): oldest-resolved FIRST so
                         -- the drain harvests the 2-3mo EDGE cohort before it crosses
                         -- the ~2-3mo candlestick cliff (gotcha #35 — Kalshi MARKET
                         -- data is permanently lost after that window). DESC kept
                         -- re-harvesting the freshest (safe) cohort and never reached
-                        -- the edge before it expired.
+                        -- the edge before it expired. Correct, and now bounded: with
+                        -- the floor above, "oldest" means oldest STILL-RECOVERABLE.
                         ORDER BY fm.resolution_date ASC NULLS LAST
                         LIMIT :limit
                     """),
-                    {"limit": limit},
+                    {"limit": limit, "purge_days": PROVABLY_PURGED_AGE_DAYS},
                 )
             outcomes = result.fetchall()
 
