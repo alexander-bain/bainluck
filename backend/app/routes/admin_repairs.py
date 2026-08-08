@@ -13,7 +13,7 @@ transactional session and RETURNS its own before/after census in the response bo
 
     name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
              | event-final-scores | resolved-shape-census
-             | winner-field-coherence }
+             | winner-field-coherence | winner-field-repair }
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` also accept those as query params; the dispatcher passes through only
@@ -55,6 +55,14 @@ _REPAIRS = {
     # until ``exhausted``. Accepts ?limit=&offset=&newest_first=. Never writes:
     # repairing the standing population is a separate, authority-gated queue.
     "winner-field-coherence": ("app.tasks.census_winner_fields", "census"),
+    # CAL-P007 (#1527), approved by Alex 2026-08-07 under attended capped-batch
+    # discipline: the WRITE half. Re-resolves an incoherent single-winner field
+    # from CLOB per-leg authority (each leg is its own condition_id), then nulls
+    # the impossible captured prices. Fails closed on anything ambiguous. Writes
+    # at most APPLY_MARKET_CAP markets per call — a module constant, not a param,
+    # so the cap cannot be dialled off mid-run. Accepts ?limit=&offset=.
+    # ATTENDED ONLY: never wire this to a beat.
+    "winner-field-repair": ("app.tasks.repair_winner_field", "repair"),
 }
 
 
