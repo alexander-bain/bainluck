@@ -1,0 +1,118 @@
+{
+  "schema_version": "search-missing-answer-contract/v1",
+  "authority": "C163; INT-014 merge 11833903; production verification 7/8 with us recession 2026 missing",
+  "cases": [
+    {
+      "id": "us-recession-2026",
+      "query": "us recession 2026",
+      "known_matches": {"futures": ["future:us-recession-2026"]},
+      "result": {"returned": {"events": [], "futures": [], "teams": [], "concepts": []}, "degraded": ["futures"], "complete": false, "display_state": "UNKNOWN", "cacheable": false, "deadline_ms": 20000, "elapsed_ms": 20020, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "UNKNOWN", "cacheable": false, "reason_codes": ["DEGRADED_RESPONSE", "KNOWN_FUTURES_MISSING"]}
+    },
+    {
+      "id": "masters-winner",
+      "query": "masters winner",
+      "known_matches": {"futures": ["future:masters-2026"]},
+      "result": {"returned": {"events": [], "futures": ["future:masters-2026"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 9810, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "lakers",
+      "query": "lakers",
+      "known_matches": {"events": ["event:lakers-next"], "teams": ["team:lakers"]},
+      "result": {"returned": {"events": ["event:lakers-next"], "futures": [], "teams": ["team:lakers"], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 3100, "event_total_known": true, "event_total": 1},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "fed",
+      "query": "fed",
+      "known_matches": {"futures": ["future:fed-next-meeting"]},
+      "result": {"returned": {"events": [], "futures": ["future:fed-next-meeting"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 4200, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "super-bowl",
+      "query": "super bowl",
+      "known_matches": {"futures": ["future:super-bowl-winner"]},
+      "result": {"returned": {"events": [], "futures": ["future:super-bowl-winner"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 5600, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "world-cup",
+      "query": "world cup",
+      "known_matches": {"concepts": ["concept:world-cup"], "futures": ["future:world-cup-winner"]},
+      "result": {"returned": {"events": [], "futures": ["future:world-cup-winner"], "teams": [], "concepts": ["concept:world-cup"]}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 6100, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "entity-year-phrasing",
+      "query": "california governor 2026",
+      "known_matches": {"futures": ["future:ca-governor-2026"]},
+      "result": {"returned": {"events": [], "futures": ["future:ca-governor-2026"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 7200, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "family-phrasing",
+      "query": "who wins the nba title",
+      "known_matches": {"futures": ["future:nba-champion"]},
+      "result": {"returned": {"events": [], "futures": ["future:nba-champion"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 8400, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "futures-timeout-with-events",
+      "query": "nba champion",
+      "known_matches": {"futures": ["future:nba-champion"]},
+      "result": {"returned": {"events": ["event:nba-finals"], "futures": [], "teams": [], "concepts": []}, "degraded": ["futures"], "complete": false, "display_state": "PARTIAL", "cacheable": false, "deadline_ms": 20000, "elapsed_ms": 20010, "event_total_known": true, "event_total": 1},
+      "expected": {"display_state": "PARTIAL", "cacheable": false, "reason_codes": ["DEGRADED_RESPONSE", "KNOWN_FUTURES_MISSING"]}
+    },
+    {
+      "id": "all-stages-timeout",
+      "query": "election",
+      "known_matches": {},
+      "result": {"returned": {"events": [], "futures": [], "teams": [], "concepts": []}, "degraded": ["event_count", "events", "futures", "teams"], "complete": false, "display_state": "UNKNOWN", "cacheable": false, "deadline_ms": 20000, "elapsed_ms": 22000, "event_total_known": false, "event_total": null},
+      "expected": {"display_state": "UNKNOWN", "cacheable": false, "reason_codes": ["DEGRADED_RESPONSE"]}
+    },
+    {
+      "id": "count-result-disagreement",
+      "query": "red sox",
+      "known_matches": {"events": ["event:red-sox"]},
+      "result": {"returned": {"events": ["event:red-sox"], "futures": [], "teams": ["team:red-sox"], "concepts": []}, "degraded": ["event_count"], "complete": false, "display_state": "PARTIAL", "cacheable": false, "deadline_ms": 20000, "elapsed_ms": 9500, "event_total_known": false, "event_total": 0},
+      "expected": {"display_state": "PARTIAL", "cacheable": false, "reason_codes": ["DEGRADED_RESPONSE", "UNKNOWN_EVENT_TOTAL_FABRICATED"]}
+    },
+    {
+      "id": "degraded-empty-masquerades-as-no-matches",
+      "query": "us recession 2026",
+      "known_matches": {"futures": ["future:us-recession-2026"]},
+      "result": {"returned": {"events": [], "futures": [], "teams": [], "concepts": []}, "degraded": ["futures"], "complete": false, "display_state": "NO_MATCHES", "cacheable": false, "deadline_ms": 20000, "elapsed_ms": 20005, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "UNKNOWN", "cacheable": false, "reason_codes": ["DEGRADED_RESPONSE", "DISPLAY_STATE_DISHONEST", "KNOWN_FUTURES_MISSING"]}
+    },
+    {
+      "id": "degraded-empty-cache-refused",
+      "query": "masters winner",
+      "known_matches": {"futures": ["future:masters-2026"]},
+      "result": {"returned": {"events": [], "futures": [], "teams": [], "concepts": []}, "degraded": ["futures"], "complete": false, "display_state": "UNKNOWN", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 20007, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "UNKNOWN", "cacheable": false, "reason_codes": ["CACHE_DECISION_DISHONEST", "DEGRADED_RESPONSE", "KNOWN_FUTURES_MISSING"]}
+    },
+    {
+      "id": "deadline-below-h12",
+      "query": "nba champion",
+      "known_matches": {"futures": ["future:nba-champion"]},
+      "result": {"returned": {"events": [], "futures": ["future:nba-champion"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 29999, "elapsed_ms": 19500, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": []}
+    },
+    {
+      "id": "deadline-at-h12-refused",
+      "query": "nba champion",
+      "known_matches": {"futures": ["future:nba-champion"]},
+      "result": {"returned": {"events": [], "futures": ["future:nba-champion"], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "RESULTS", "cacheable": true, "deadline_ms": 30000, "elapsed_ms": 19500, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "RESULTS", "cacheable": true, "reason_codes": ["DEADLINE_NOT_BELOW_H12"]}
+    },
+    {
+      "id": "clean-honest-miss",
+      "query": "definitely nonexistent market phrase",
+      "known_matches": {},
+      "result": {"returned": {"events": [], "futures": [], "teams": [], "concepts": []}, "degraded": [], "complete": true, "display_state": "NO_MATCHES", "cacheable": true, "deadline_ms": 20000, "elapsed_ms": 4400, "event_total_known": true, "event_total": 0},
+      "expected": {"display_state": "NO_MATCHES", "cacheable": true, "reason_codes": []}
+    }
+  ]
+}
