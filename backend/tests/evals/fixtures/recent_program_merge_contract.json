@@ -1,0 +1,27 @@
+{
+  "schema_version":"recent-program-merge/v1",
+  "authority":"C174 review of 272a341e, 6ba34445, 655ed6ac",
+  "cases":[
+    {"id":"typeahead-normal-2char","program":"latency","kind":"typeahead","input":{"query_length":2},"expected":{"verdict":"PASS","payload_state":"complete","cache_action":"write","client_state":"fresh","outcome_arm":"skip","reason_codes":[]}},
+    {"id":"typeahead-normal-3char","program":"latency","kind":"typeahead","input":{"query_length":3},"expected":{"verdict":"PASS","payload_state":"complete","cache_action":"write","client_state":"fresh","outcome_arm":"run","reason_codes":[]}},
+    {"id":"typeahead-timeout-hidden","program":"latency","kind":"typeahead","input":{"query_length":4,"futures_timeout":true,"degraded_exposed":false},"expected":{"verdict":"REFUSE","payload_state":"degraded","cache_action":"skip","client_state":"partial","outcome_arm":"run","reason_codes":["DEGRADATION_HIDDEN","FUTURES_STAGE_TIMEOUT"]}},
+    {"id":"typeahead-timeout-exposed","program":"latency","kind":"typeahead","input":{"query_length":4,"futures_timeout":true,"degraded_exposed":true},"expected":{"verdict":"PASS","payload_state":"degraded","cache_action":"skip","client_state":"partial","outcome_arm":"run","reason_codes":["FUTURES_STAGE_TIMEOUT"]}},
+    {"id":"typeahead-short-timeout","program":"latency","kind":"typeahead","input":{"query_length":2,"futures_timeout":true,"degraded_exposed":true},"expected":{"verdict":"PASS","payload_state":"degraded","cache_action":"skip","client_state":"partial","outcome_arm":"skip","reason_codes":["FUTURES_STAGE_TIMEOUT"]}},
+    {"id":"typeahead-cache-decoy","program":"latency","kind":"typeahead","input":{"query_length":8,"futures_timeout":false},"expected":{"verdict":"PASS","payload_state":"complete","cache_action":"write","client_state":"fresh","outcome_arm":"run","reason_codes":[]}},
+    {"id":"typeahead-threshold-boundary","program":"latency","kind":"typeahead","input":{"query_length":3,"futures_timeout":false},"expected":{"verdict":"PASS","payload_state":"complete","cache_action":"write","client_state":"fresh","outcome_arm":"run","reason_codes":[]}},
+    {"id":"reachability-unwired","program":"calibration","kind":"reachability","input":{"wired":false},"expected":{"verdict":"PASS","section":"unavailable","count":null,"checked":false,"reason_codes":["COUNT_NOT_WIRED"]}},
+    {"id":"reachability-purged-zero","program":"calibration","kind":"reachability","input":{"wired":true,"count":0},"expected":{"verdict":"PASS","section":"complete","count":0,"checked":true,"reason_codes":[]}},
+    {"id":"reachability-purged-count","program":"calibration","kind":"reachability","input":{"wired":true,"count":70088},"expected":{"verdict":"PASS","section":"complete","count":70088,"checked":true,"reason_codes":[]}},
+    {"id":"reachability-unknown","program":"calibration","kind":"reachability","input":{"wired":true,"count":null},"expected":{"verdict":"REFUSE","section":"incomplete","count":null,"checked":false,"reason_codes":["COUNT_UNKNOWN"]}},
+    {"id":"reachability-bool-decoy","program":"calibration","kind":"reachability","input":{"wired":true,"count":true},"expected":{"verdict":"REFUSE","section":"incomplete","count":null,"checked":false,"reason_codes":["COUNT_UNKNOWN"]}},
+    {"id":"reachability-recoverable","program":"calibration","kind":"reachability","input":{"wired":true,"count":12},"expected":{"verdict":"PASS","section":"complete","count":12,"checked":true,"reason_codes":[]}},
+    {"id":"reachability-empty-unwired","program":"calibration","kind":"reachability","input":{"wired":false,"count":0},"expected":{"verdict":"PASS","section":"unavailable","count":null,"checked":false,"reason_codes":["COUNT_NOT_WIRED"]}},
+    {"id":"ux-daily-path","program":"ux","kind":"ux_priority","input":{"who":"family","frequency":"daily"},"expected":{"verdict":"PASS","priority":"high","payoff_valid":true,"reason_codes":[]}},
+    {"id":"ux-weekly-path","program":"ux","kind":"ux_priority","input":{"who":"friends","frequency":"weekly"},"expected":{"verdict":"PASS","priority":"medium","payoff_valid":true,"reason_codes":[]}},
+    {"id":"ux-rare-path","program":"ux","kind":"ux_priority","input":{"who":"one admin","frequency":"quarterly"},"expected":{"verdict":"PASS","priority":"low","payoff_valid":true,"reason_codes":[]}},
+    {"id":"ux-rare-corruption","program":"ux","kind":"ux_priority","input":{"who":"shared-device family","frequency":"quarterly","data_corruption":true},"expected":{"verdict":"PASS","priority":"eligible_exception","payoff_valid":true,"reason_codes":["DATA_CORRUPTION_EXCEPTION"]}},
+    {"id":"ux-missing-who","program":"ux","kind":"ux_priority","input":{"frequency":"daily"},"expected":{"verdict":"REFUSE","priority":"high","payoff_valid":false,"reason_codes":["PAYOFF_MISSING_WHO_OR_FREQUENCY"]}},
+    {"id":"ux-missing-frequency","program":"ux","kind":"ux_priority","input":{"who":"family"},"expected":{"verdict":"REFUSE","priority":"low","payoff_valid":false,"reason_codes":["PAYOFF_MISSING_WHO_OR_FREQUENCY"]}},
+    {"id":"ux-corruption-missing-payoff","program":"ux","kind":"ux_priority","input":{"data_corruption":true},"expected":{"verdict":"REFUSE","priority":"eligible_exception","payoff_valid":false,"reason_codes":["DATA_CORRUPTION_EXCEPTION","PAYOFF_MISSING_WHO_OR_FREQUENCY"]}}
+  ]
+}
