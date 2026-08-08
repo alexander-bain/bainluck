@@ -518,3 +518,131 @@ class TestFuturesRecallArmsAreUnionedNotOred:
         assert sql.count("FUTURES_MARKETS.STATUS") >= 3, (
             "the open filter is not present in every arm plus the outer query"
         )
+
+
+TYPEAHEAD_SRC = _source_of(events_route.typeahead_search)
+TYPEAHEAD_CODE = _strip_comments(TYPEAHEAD_SRC)
+
+
+# ---------------------------------------------------------------------------
+# LAT-P007 — /typeahead. The SAME defects as /search, never propagated.
+#
+# `/typeahead` fires on every keystroke and had NO bound of any kind. Measured in
+# production 2026-08-08:
+#
+#   q=re    12.06s     q=ni  11.06s     q=la  10.99s      <- 2 chars
+#   q=rec    7.08s     q=nik  2.67s     q=lak  2.58s      <- 3 chars
+#
+# `min_length=2`, so the endpoint's MINIMUM allowed query is its worst case and
+# it is the first thing every user fires. The cliff sits exactly at the pg_trgm
+# boundary across six independent stems, so it is pattern length, not popularity.
+#
+# Three causes, all already solved in /search and none propagated here:
+#   1. `outcomes.any(...)` — a CORRELATED EXISTS over 3.2M rows. /search moved to
+#      a non-correlated IN in #993. Measured 3,468ms -> 66.8ms, IDENTICAL results.
+#   2. a top-level OR over the recall arms (LAT-P006). 9,682ms -> 2,414ms, same
+#      990 rows.
+#   3. no request budget at all.
+# ---------------------------------------------------------------------------
+class TestTypeaheadIsBoundedAndIndexable:
+    def test_outcome_arm_is_not_correlated(self):
+        """`.any()` re-probes per candidate row; the IN form scans once.
+
+        52x on identical results. This is the #993 Slice-Speed change that
+        /search got and /typeahead did not.
+        """
+        assert "FuturesMarket.outcomes.any(" not in TYPEAHEAD_CODE, (
+            "CORRELATED_OUTCOME_ARM reintroduced in /typeahead: measured 3,468ms "
+            "vs 66.8ms for the set-identical non-correlated IN form"
+        )
+        assert "select(FuturesOutcome.market_id).where(" in TYPEAHEAD_CODE, (
+            "the non-correlated outcome subquery is gone from /typeahead"
+        )
+
+    def test_outcome_arm_is_skipped_for_sub_three_char_queries(self):
+        """A 2-char infix pattern is unservable by a pg_trgm GIN.
+
+        That arm alone measured 8,633ms for `%re%`. It is not a recall trade:
+        17 of the 20 visible rows for `re` came from this arm and all 17 were
+        substring accidents (Lamprecht, Baltimore, Guterres, Villarreal).
+        """
+        assert "_TA_MIN_OUTCOME_MATCH_CHARS = 3" in TYPEAHEAD_CODE, (
+            "the threshold must be 3 — that is where the pg_trgm cliff is"
+        )
+        # Defined is not enough; it must GATE the arm. An earlier version of this
+        # guard passed while the arm ran unconditionally, because the constant was
+        # still sitting there unused.
+        assert TYPEAHEAD_CODE.count("_TA_MIN_OUTCOME_MATCH_CHARS") >= 2, (
+            "the sub-3-char threshold is defined but never used — `q=re` goes "
+            "back to seq-scanning 3 GB of futures_outcomes for 8.6s of noise"
+        )
+        gate_at = TYPEAHEAD_CODE.find("if len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS")
+        arm_at = TYPEAHEAD_CODE.find("select(FuturesOutcome.market_id).where(")
+        assert 0 < gate_at < arm_at, (
+            "the outcome arm is not inside the sub-3-char gate"
+        )
+
+    def test_the_gate_is_on_the_whole_query_not_on_individual_terms(self):
+        """Must NOT contradict LAT-P006's guard.
+
+        LAT-P006 pins that a short term still FILTERS inside a multi-term AND
+        (`us recession` must not admit "Euro area growth"). /typeahead matches
+        the WHOLE query string as one pattern, so the gate is on `q`, not on a
+        per-term loop. A per-term version here would be the candidate LAT-P006
+        measured and rejected.
+        """
+        assert "len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE, (
+            "the sub-3-char gate must test the whole query, not per-term"
+        )
+
+    def test_typeahead_recall_arms_are_unioned_not_ored(self):
+        assert "or_(*ta_futures_where)" not in TYPEAHEAD_CODE, (
+            "FUTURES_ARMS_ORED in /typeahead: measured 9,682ms vs 2,414ms for "
+            "the set-identical UNION"
+        )
+        assert "union(*_ta_arm_selects)" in TYPEAHEAD_CODE
+
+    def test_typeahead_has_a_request_budget(self):
+        """It had none at all — nothing stopped it riding to H12 at 12s."""
+        from app.routes.events import _TYPEAHEAD_DEADLINE_MS
+
+        assert _TYPEAHEAD_DEADLINE_MS < 30_000, "must beat Heroku H12"
+        assert _TYPEAHEAD_DEADLINE_MS > 2_400 * 2, (
+            "the bound must be LOOSE relative to the worst healthy stage "
+            "(~2.4s measured post-fix). A tight bound cancels good queries and "
+            "returns empty 200s — that is what reverted LAT-P002."
+        )
+        assert "_apply_search_statement_timeout(db, _ta_deadline)" in TYPEAHEAD_CODE
+
+    def test_the_budget_starts_after_the_cache_read(self):
+        """A cache hit returns before touching the DB and must not be charged."""
+        cache_at = TYPEAHEAD_CODE.find("_cached")
+        deadline_at = TYPEAHEAD_CODE.find("_ta_deadline = time.monotonic()")
+        assert 0 < cache_at < deadline_at, (
+            "the deadline is being started before the cache read"
+        )
+
+    def test_a_degraded_answer_is_never_cached(self):
+        """A 45s TTL turns one slow moment into a sticky wrong answer.
+
+        Without this, a single futures timeout writes a futures-less dropdown
+        into Redis and everyone typing that prefix gets it for the full TTL.
+        """
+        assert "if not _ta_degraded:" in TYPEAHEAD_CODE, (
+            "CACHE_DECISION_DISHONEST: a degraded typeahead answer is being "
+            "written to Redis and will be served for the full 45s TTL"
+        )
+        setex_at = TYPEAHEAD_CODE.find("setex(_cache_key")
+        guard_at = TYPEAHEAD_CODE.find("if not _ta_degraded:")
+        assert 0 < guard_at < setex_at, "the cache write is not under the guard"
+
+    def test_timeout_recovery_is_present_because_queries_follow(self):
+        """Two fuzzy-fallback queries run after the futures stage.
+
+        A timed-out statement aborts the transaction, so without a rollback those
+        would fail on a poisoned session.
+        """
+        assert "_recover_search_session(db, _ta_deadline)" in TYPEAHEAD_CODE
+        assert "_is_query_timeout(exc)" in TYPEAHEAD_CODE, (
+            "a non-timeout error must still propagate, not be swallowed"
+        )

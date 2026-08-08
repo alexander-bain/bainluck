@@ -248,6 +248,57 @@ async def search(seeded_db):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture
+async def typeahead(seeded_db):
+    """LAT-P007: the same real-Postgres treatment for `/typeahead`.
+
+    Nothing in this repo exercised typeahead recall against real rows, so its
+    predicate could be changed freely and silently. It is the surface that fires
+    on every keystroke, so it deserves the guard more than `/search` does, not
+    less.
+
+    Redis is patched out: `typeahead_search` reads a cache before touching the
+    database, and a hit would make every assertion here test Redis instead of the
+    predicate.
+    """
+    from unittest.mock import patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.services.database import get_db, get_db_rw
+
+    _engine, maker = seeded_db
+
+    async def _override():
+        async with maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override
+    app.dependency_overrides[get_db_rw] = _override
+
+    with patch("app.tasks.redis_state.get_redis_client", side_effect=RuntimeError("no redis")):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+
+            async def _do(q: str) -> dict:
+                resp = await client.get("/api/events/typeahead", params={"q": q})
+                assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
+                return resp.json()
+
+            yield _do
+
+    app.dependency_overrides.clear()
+
+
+def _typeahead_texts(payload) -> list[str]:
+    items = payload.get("suggestions", payload) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return []
+    return [str(i.get("text") or i.get("name") or "") for i in items if isinstance(i, dict)]
+
+
 def _futures_names(payload: dict) -> list[str]:
     return [f.get("name") or f.get("market_name") for f in payload.get("futures", [])]
 
@@ -383,3 +434,44 @@ async def test_recall_summary(search, capsys):
         )
 
     assert found == len(cases), f"recall {found}/{len(cases)}, missing {missing}"
+
+
+# --------------------------------------------------------------------------
+# LAT-P007 — /typeahead recall, against real Postgres
+# --------------------------------------------------------------------------
+async def test_typeahead_still_finds_its_market(typeahead):
+    """The 3-char+ path keeps working after the UNION + non-correlated rewrite.
+
+    `/typeahead` measured 9,682ms -> 2,414ms on the same 990 production rows.
+    Both changes are set-identical, so recall must be untouched.
+    """
+    texts = _typeahead_texts(await typeahead("recession"))
+    assert any("Recession" in t for t in texts), (
+        f"typeahead lost its market: got {texts!r}"
+    )
+
+
+async def test_typeahead_outcome_recall_survives_above_the_threshold(typeahead):
+    """The outcome arm still runs at 3+ characters.
+
+    "Award Winner 2026" is reachable ONLY through an outcome name
+    ("Caitlin Clark"). The sub-3-char skip must not have disabled the arm
+    outright — it is scoped to short queries, nothing else.
+    """
+    texts = _typeahead_texts(await typeahead("caitlin"))
+    assert any("Award Winner" in t for t in texts), (
+        f"typeahead outcome-name recall lost above the threshold: got {texts!r}"
+    )
+
+
+async def test_typeahead_short_query_answers_without_the_outcome_scan(typeahead):
+    """A 2-char query must still answer, and must not 500.
+
+    At two characters the outcome arm is skipped: it measured 8,633ms against
+    3 GB of `futures_outcomes` and returned 17 of 20 visible rows as substring
+    accidents (Lamprecht, Baltimore, Guterres). The endpoint still has to
+    RESPOND — `min_length=2`, so this is a legal query and the most common one
+    a user fires.
+    """
+    payload = await typeahead("re")
+    assert isinstance(_typeahead_texts(payload), list)
