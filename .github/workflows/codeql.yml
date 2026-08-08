@@ -30,7 +30,39 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          language: ${{ matrix.language }}
+          # PLURAL. `languages:`, not `language:` — #1591.
+          #
+          # This workflow spent at least two days analysing NOTHING. It passed
+          # `language:` (singular), which is not an input this action has, so it
+          # was dropped with only a warning:
+          #
+          #   ##[warning]Unexpected input(s) 'language', valid inputs are
+          #     [... 'languages' ...]
+          #
+          # With no language pinned, init falls back to autodetecting the whole
+          # repository:
+          #
+          #   Autodetected languages: python, javascript, swift, actions
+          #   ##[error]Swift analysis is only supported on macOS runner images.
+          #
+          # `ios/` makes Swift autodetect, Swift needs a macOS runner, and the
+          # abort happens in `init` — BEFORE analysis — so it took python and
+          # javascript-typescript down with it. Both matrix jobs failed
+          # identically because both were doing the same full-repo autodetect;
+          # the matrix was decorative until this line was fixed.
+          #
+          # Nothing caught it because CodeQL is not a required check: eight
+          # consecutive red runs, no merge blocked, no alert. A scanner that is
+          # red continuously and reported to nobody looks exactly like one with
+          # nothing to report — gotcha #53, at the level of the rail.
+          #
+          # Swift stays unanalysed, deliberately (Alex, 2026-08-08): restoring
+          # python + javascript-typescript is the win, and `ios/` would need a
+          # separate macOS-runner job. `actions` is likewise not analysed here;
+          # it would be an added matrix entry, not a change to this input.
+          #
+          # Guarded by frontend/e2e/contract/codeqlLanguages.contract.test.js.
+          languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Autobuild
