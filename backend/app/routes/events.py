@@ -1,14 +1,16 @@
 """Events API endpoints."""
 
 import logging
+import os
 import re
+import time
 
 logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, case, cast, Integer, String, literal_column
+from sqlalchemy import select, and_, or_, func, case, cast, Integer, String, literal_column, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
@@ -1410,6 +1412,149 @@ async def faceted_search(
     }
 
 
+# ---------------------------------------------------------------------------
+# LAT-P002/#1494 (1e): a bounded budget for /api/events/search.
+#
+# Nothing bounded this request before — no deadline, no statement timeout, no
+# cancellation anywhere on the path. That is exactly why a slow plan rode all the way
+# to the Heroku router's 30s H12 limit and returned a **503** instead of an answer: the
+# only thing that ever stopped the request was the platform killing it.
+#
+# The corpus (search_latency_budget_contract.json) models 900ms/2500ms. These defaults
+# are deliberately looser than that. A statement timeout that fires on a HEALTHY query
+# returns an EMPTY result set with a 200 — a relevance failure worse than being slow —
+# and this window could not obtain a production query plan to prove the new plan's real
+# cost (EXPLAIN is unavailable through every read-only rail: see #1494 r340). So the
+# defaults are set where they can only fire on the pathological case that produces a
+# 503 today, and they are env-tunable: once the after-measurement confirms the new
+# plan, tightening toward the corpus values is a config change, not a deploy.
+# LAT-P005/#1494 — what the 4000ms default above got WRONG, and it cost a revert.
+#
+# The 4s statement timeout fired on HEALTHY futures queries. Three of eight sampled
+# production queries came back HTTP 200 with ZERO futures (`nba champion`,
+# `masters winner`, `us recession 2026`), and the whole change was reverted
+# (f98d8104). The comment above predicted this exact failure — "a statement timeout
+# that fires on a HEALTHY query returns an EMPTY result set with a 200 — a relevance
+# failure worse than being slow" — and then picked a number too small to honour it.
+#
+# The error was not the number. It was believing the budget buys speed. It does not:
+# **1a/1b/1c** make the query fast; **1e is purely the anti-503 guard.** A tight
+# budget bought nothing and cost recall, so the budget should be as LOOSE as it can
+# be while still beating Heroku's 30s H12 — not as tight as it can be.
+#
+# So: the deadline is the bound (20s, comfortably under H12 with room to serialize),
+# and each stage's statement timeout is derived from the deadline REMAINING rather
+# than a fixed constant. A single fixed value cannot be right for both stages — the
+# futures query legitimately costs more than the events query, so any value tight
+# enough to feel protective on events is too tight for futures. That mismatch is the
+# whole bug.
+_SEARCH_DEADLINE_MS = int(os.getenv("SEARCH_DEADLINE_MS", "20000"))
+
+# Floor: never hand a stage a bound so small that a healthy query cannot finish.
+# If less than this remains, the deadline check skips the stage outright (an honest
+# "we ran out of time") instead of starting a query that is designed to be killed.
+_SEARCH_MIN_STAGE_TIMEOUT_MS = int(os.getenv("SEARCH_MIN_STAGE_TIMEOUT_MS", "2000"))
+
+# Escape hatch only. Unset by default: setting it pins EVERY stage to one fixed
+# bound, which is precisely the shape that caused the revert. Kept so the budget can
+# be tightened by config once a production plan is actually measured — the thing the
+# original comment wanted and could not get.
+_SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")) or None
+
+
+def _stage_timeout_ms(deadline: float | None) -> int:
+    """Statement bound for the next stage: whatever is left of the request deadline.
+
+    Never below :data:`_SEARCH_MIN_STAGE_TIMEOUT_MS` — a bound below the floor means
+    the caller should skip the stage, not run a query it intends to cancel.
+    """
+    if _SEARCH_STATEMENT_TIMEOUT_MS:
+        return _SEARCH_STATEMENT_TIMEOUT_MS
+    if deadline is None:
+        return _SEARCH_DEADLINE_MS
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    return max(_SEARCH_MIN_STAGE_TIMEOUT_MS, remaining_ms)
+
+
+async def _apply_search_statement_timeout(
+    db: AsyncSession, deadline: float | None = None
+) -> None:
+    """Bound the next statement(s) in this request's transaction.
+
+    Transaction-scoped (`SET LOCAL`), so it resets on commit/rollback and cannot leak
+    to the next borrower of the pooled connection. Re-applied before each bounded
+    stage: a later `SET LOCAL` overrides the earlier one, so every stage is bounded by
+    the time actually left rather than by a constant chosen for a different stage.
+    """
+    try:
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = {int(_stage_timeout_ms(deadline))}")
+        )
+    except Exception as exc:  # noqa: BLE001 — never fail the search on the guard itself
+        logger.warning("search statement_timeout not applied: %s", exc)
+
+
+def _is_query_timeout(exc: BaseException) -> bool:
+    """True for a Postgres statement_timeout cancellation, however SQLAlchemy wraps it.
+
+    SQLSTATE 57014 (query_canceled) is the authority; the driver class names are
+    checked too because asyncpg does not always surface a sqlstate attribute through
+    SQLAlchemy's wrapper.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if type(cur).__name__ in {"QueryCanceledError", "QueryCanceled"}:
+            return True
+        for attr in ("sqlstate", "pgcode"):
+            if getattr(cur, attr, None) == "57014":
+                return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
+
+
+async def _recover_search_session(
+    db: AsyncSession, deadline: float | None = None
+) -> None:
+    """A timed-out statement aborts the transaction — roll back so the REMAINING
+    stages can still answer, and re-arm the timeout the rollback just cleared."""
+    try:
+        await db.rollback()
+        await _apply_search_statement_timeout(db, deadline)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("search session recovery failed: %s", exc)
+
+
+# LAT-P002/#1494 (1d): strong references to in-flight search-log tasks. asyncio only
+# holds a WEAK reference to a task, so a fire-and-forget task can be garbage-collected
+# mid-await and the write silently vanishes. Discard on completion so this cannot grow.
+_SEARCH_LOG_TASKS: set = set()
+
+
+def _dispatch_search_log(**kwargs) -> None:
+    """Fire the search-query write WITHOUT awaiting it.
+
+    LAT-P002/#1494 (1d): this used to be awaited on the request's critical path
+    (`await _log_search_query(...)`), which meant every search paid for a second
+    session's INSERT **and COMMIT** before the response was returned — despite the
+    docstring below claiming it "never blocks". Combined with `get_optional_user`'s
+    own session, an authenticated search held three connections out of
+    `pool_size=10 / max_overflow=10`. Contract: `analytics_awaited: false`.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (sync test harness). Return BEFORE building the coroutine
+        # so we don't leave an un-awaited one behind. Logging is optional.
+        return
+    task = asyncio.create_task(_log_search_query(**kwargs))
+    _SEARCH_LOG_TASKS.add(task)
+    task.add_done_callback(_SEARCH_LOG_TASKS.discard)
+
+
 async def _log_search_query(
     query: str,
     result_count: Optional[int],
@@ -1447,6 +1592,7 @@ async def search_events(
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
     include_upcoming: bool = Query(True, description="Include scheduled games"),
+    debug_timing: bool = Query(False, description="Return per-stage timings in ms"),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
@@ -1464,30 +1610,69 @@ async def search_events(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days_back)
 
+    # LAT-P002/#1494 (1e): arm the request budget before the first query.
+    # `degraded` names any stage we could not complete — an empty list is a full
+    # answer. This is deliberately explicit rather than silently returning fewer
+    # results: "we could not measure" must never read as "there is nothing".
+    _deadline = time.monotonic() + (_SEARCH_DEADLINE_MS / 1000.0)
+    degraded: list[str] = []
+
+    # LAT-P002/#1494: per-stage timings, the #1197 lever (same shape as
+    # routes/teams.py). The 2026-08-07 baseline showed the two SLOWEST gold queries
+    # returning the two SMALLEST payloads (`us recession 2026` 11.13s/736B,
+    # `masters winner` 9.81s/1237B) while the largest payload answered in 4.37s — so
+    # cost tracks scan, not results. Which SCAN was still an inference, because no
+    # read-only rail on this system can capture a production query plan (#1494 r340).
+    # This makes the next measurement decisive instead of another inference.
+    _stage_ms: dict[str, int] = {}
+    _t0 = time.perf_counter()
+
+    def _mark(label: str) -> None:
+        nonlocal _t0
+        _stage_ms[label] = round((time.perf_counter() - _t0) * 1000)
+        _t0 = time.perf_counter()
+
+    await _apply_search_statement_timeout(db, _deadline)
+
     search_pattern = f"%{q}%"
     terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
     expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
-    # Collect sport alias keys from any term (not just full query)
+    # Collect sport alias keys from any term (not just full query), and remember
+    # WHICH terms were league tokens — LAT-P002/#1494 needs the split to stop a
+    # league token from widening the event predicate (see below).
     sport_alias_keys: list[str] | None = None
     for term, _ in expanded:
         keys = _SPORT_SEARCH_ALIASES.get(term.lower())
         if keys:
             sport_alias_keys = keys if not sport_alias_keys else sport_alias_keys + keys
+    non_league_expanded = [
+        (t, e) for t, e in expanded if t.lower() not in _SPORT_SEARCH_ALIASES
+    ]
 
-    # --- Event filter: FTS primary with ILIKE fallback ---
-    # Build FTS filter (handles stemming: "mayor" matches "mayoral")
     fts_q = " ".join(
         exp if exp else term for term, exp in expanded
     )
-    fts_event_filter = or_(
-        _fts_filter(Event.home_team_name, fts_q),
-        _fts_filter(Event.away_team_name, fts_q),
-    )
-    if sport_alias_keys:
-        fts_event_filter = or_(fts_event_filter, Sport.key.in_(sport_alias_keys))
 
-    # Build ILIKE fallback filter (catches substring matches FTS misses)
+    # --- Event filter: trigram-servable ILIKE only ---
+    # LAT-P002/#1494 (1c): the event WHERE used to OR an FTS arm
+    # (`to_tsvector(col) @@ websearch_to_tsquery(q)`) with the ILIKE arm. NO
+    # migration creates a tsvector or expression index — the only indexes on these
+    # columns are `gin_trgm_ops` trigram GINs (a7b8c9d0e1f2_add_pg_trgm,
+    # add_search_indexes), which an FTS `@@` predicate cannot use. A single
+    # unindexable arm inside the top-level OR forces a seq scan of `events` for the
+    # WHOLE predicate, which is the dominant cost behind the ~20s median.
+    #
+    # This is the SAME fix already proven in this file for futures (see the
+    # `#993 index-usage` note further down): dropping the FTS arm let the planner
+    # bitmap-scan the trigram index, 252->90ms with IDENTICAL recall on the frozen
+    # benchmark. `ts_rank_cd` still orders results in the ORDER BY, computed only
+    # over the rows the trigram WHERE returns.
+    #
+    # Recall delta is confined to stem-only matches: ILIKE substring is otherwise a
+    # SUPERSET of the FTS arm here (the multi-term ILIKE requires every term but
+    # allows them to land in different columns, where FTS required them all in one).
+    # The frozen gold set is the guard.
     if len(terms) > 1:
         ilike_conditions = []
         for term, expansion in expanded:
@@ -1495,38 +1680,58 @@ async def search_events(
                 _build_expanded_ilike(Event.home_team_name, term, expansion),
                 _build_expanded_ilike(Event.away_team_name, term, expansion),
             ))
-        ilike_event_filter = and_(*ilike_conditions)
+        team_filter = and_(*ilike_conditions)
     else:
         term, expansion = expanded[0]
-        ilike_event_filter = or_(
+        team_filter = or_(
             _build_expanded_ilike(Event.home_team_name, term, expansion),
             _build_expanded_ilike(Event.away_team_name, term, expansion),
         )
-        if sport_alias_keys:
-            ilike_event_filter = or_(ilike_event_filter, Sport.key.in_(sport_alias_keys))
 
-    team_filter = or_(fts_event_filter, ilike_event_filter)
+    # LAT-P002/#1494 (1b): a league token must NOT widen the event predicate.
+    # The old code OR'd `Sport.key.in_(sport_alias_keys)` in bare, so "nba champion"
+    # matched EVERY basketball_nba event in the window — the term "champion" was not
+    # required at all. Corpus case `nba-champion-league-or-all-refused`, refusal code
+    # LEAGUE_TERM_BROADENS_EVENT_SCOPE
+    # (backend/tests/evals/fixtures/search_latency_budget_contract.json).
+    #
+    # The league arm now has to carry the remaining terms with it:
+    #   "nba champion" -> NBA events whose team names match "champion" (correctly ~0;
+    #                     the real answer is the futures market, which still surfaces)
+    #   "nba lakers"   -> Lakers games, not every NBA game
+    #   "nba"          -> the bare league arm is kept, since a league-only query IS
+    #                     asking for the league (corpus case `league_only_explicit`).
+    if sport_alias_keys:
+        league_scope = Sport.key.in_(sport_alias_keys)
+        if non_league_expanded:
+            remaining = [
+                or_(
+                    _build_expanded_ilike(Event.home_team_name, t, e),
+                    _build_expanded_ilike(Event.away_team_name, t, e),
+                )
+                for t, e in non_league_expanded
+            ]
+            league_scope = and_(league_scope, *remaining)
+        team_filter = or_(team_filter, league_scope)
 
-    # Build base query - search both home and away team names
-    query = (
-        select(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .options(selectinload(Event.sport))
-        .where(
-            team_filter,
-            Event.commence_time >= cutoff,
-        )
-    )
+    # LAT-P002/#1494 (1a): collect the predicate ONCE so the count can be built from
+    # it directly. The count used to be `select(count()).select_from(query.subquery())`
+    # over the fully-ordered `select(Event)` — so every counted row paid for the
+    # ts_rank_cd computation, the 9-arm event_tags JSONB CASE, the status CASE and two
+    # commence_time CASE sort keys, plus a full entity projection it never read.
+    # Contract: count_shape=predicate_identity_only, count_has_ordering=false,
+    # count_has_entity_projection=false.
+    event_conditions = [team_filter, Event.commence_time >= cutoff]
 
     # Filter by status based on include_upcoming
     if include_upcoming:
-        query = query.where(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+        event_conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
     else:
-        query = query.where(Event.status.in_(["live", "completed", "closed"]))
+        event_conditions.append(Event.status.in_(["live", "completed", "closed"]))
 
     # Filter by sport if specified
     if sport:
-        query = query.where(Sport.key == sport)
+        event_conditions.append(Sport.key == sport)
 
     # Filter by taxonomy tags via GIN index
     if tags:
@@ -1534,11 +1739,19 @@ async def search_events(
         try:
             tag_list = _json.loads(tags)
             if isinstance(tag_list, list) and tag_list:
-                query = query.where(
+                event_conditions.append(
                     Event.event_tags.op("@>")(cast(_json.dumps(tag_list), JSONB))
                 )
         except (ValueError, TypeError):
             pass
+
+    # Build base query - search both home and away team names
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
+        .where(*event_conditions)
+    )
 
     # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
     # Using CASE statement for status priority
@@ -1587,18 +1800,55 @@ async def search_events(
         ).desc().nulls_last(),
     )
 
-    # Get total count (before pagination)
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total_count = total_result.scalar()
+    # Get total count (before pagination). LAT-P002/#1494 (1a): built from the shared
+    # predicate, NOT from `query.subquery()` — identity only, no ORDER BY, no entity
+    # projection. Postgres does not strip a subquery's ORDER BY, so the old form made
+    # the count pay the full sort-key cost per candidate row for a number nobody sorts.
+    count_query = (
+        select(func.count())
+        .select_from(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(*event_conditions)
+    )
+    try:
+        total_result = await db.execute(count_query)
+        total_count = total_result.scalar()
+    except Exception as exc:  # noqa: BLE001
+        if not _is_query_timeout(exc):
+            raise
+        # LAT-P002/#1494 (1e): the count is what used to ride to H12. Degrade the
+        # count to "unknown" rather than 503 the whole answer — futures and teams
+        # below can still carry the response.
+        logger.warning("search count timed out for %r", q)
+        await _recover_search_session(db, _deadline)
+        total_count = 0
+        degraded.append("event_count")
+    _mark("event_count")
 
     # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
     fuzzy_corrected: str | None = None
-    if total_count == 0 and len(terms) == 1 and not sport_alias_keys:
+    if total_count == 0 and not degraded and len(terms) == 1 and not sport_alias_keys:
         try:
+            # LAT-P002/#1494 (1c): the WHERE uses the `%` OPERATOR, which the
+            # ix_teams_name_trgm GIN can serve; `similarity(a,b) > 0.25` is the
+            # function form and cannot use the index at all — and it was evaluated
+            # three times per row (SELECT, WHERE, ORDER BY).
+            #
+            # `%` tests `similarity >= pg_trgm.similarity_threshold`, which defaults to
+            # 0.3 — STRICTER than the 0.25 this path has always used, so switching
+            # naively would silently narrow "did you mean". Pin the threshold for this
+            # transaction and keep the explicit `> 0.25` as the exact boundary check
+            # (`%` is `>=`, the old predicate was `>`). Recall is therefore identical;
+            # only the access path changes.
+            await db.execute(
+                text("SET LOCAL pg_trgm.similarity_threshold = 0.25")
+            )
             best_team = await db.execute(
                 select(Team.name, func.similarity(Team.name, q).label("sim"))
-                .where(func.similarity(Team.name, q) > 0.25)
+                .where(
+                    Team.name.op("%")(q),
+                    func.similarity(Team.name, q) > 0.25,
+                )
                 .order_by(func.similarity(Team.name, q).desc())
                 .limit(1)
             )
@@ -1610,36 +1860,63 @@ async def search_events(
                     Event.home_team_name.ilike(fuzzy_pattern),
                     Event.away_team_name.ilike(fuzzy_pattern),
                 )
+                # LAT-P002/#1494 (1a): same predicate-list shape as the primary path,
+                # so the fallback count is identity-only too.
+                fuzzy_conditions = [fuzzy_filter, Event.commence_time >= cutoff]
+                if include_upcoming:
+                    fuzzy_conditions.append(
+                        Event.status.in_(["scheduled", "live", "completed", "closed"])
+                    )
+                else:
+                    fuzzy_conditions.append(Event.status.in_(["live", "completed", "closed"]))
+                if sport:
+                    fuzzy_conditions.append(Sport.key == sport)
                 query = (
                     select(Event)
                     .join(Sport, Event.sport_id == Sport.id)
                     .options(selectinload(Event.sport))
-                    .where(fuzzy_filter, Event.commence_time >= cutoff)
+                    .where(*fuzzy_conditions)
                 )
-                if include_upcoming:
-                    query = query.where(Event.status.in_(["scheduled", "live", "completed", "closed"]))
-                else:
-                    query = query.where(Event.status.in_(["live", "completed", "closed"]))
-                if sport:
-                    query = query.where(Sport.key == sport)
                 fuzzy_search_rank = _search_rank(_event_search_vector(), fuzzy_corrected)
                 query = query.order_by(
                     status_order,
                     fuzzy_search_rank.desc(),
                     Event.commence_time.desc().nulls_last(),
                 )
-                total_count_r = await db.execute(select(func.count()).select_from(query.subquery()))
+                total_count_r = await db.execute(
+                    select(func.count())
+                    .select_from(Event)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .where(*fuzzy_conditions)
+                )
                 total_count = total_count_r.scalar()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — the fallback is best-effort
+            # LAT-P002/#1494 (1e): a timeout in here ABORTS the transaction, so the
+            # old bare `pass` would have left every later stage failing on
+            # InFailedSqlTransaction. Recover the session before continuing.
+            if _is_query_timeout(exc):
+                logger.warning("search fuzzy fallback timed out for %r", q)
+                await _recover_search_session(db, _deadline)
+                degraded.append("did_you_mean")
+            fuzzy_corrected = None
 
     # Apply pagination
     offset = (page - 1) * per_page
     query = query.offset(offset).limit(per_page)
 
     # Execute
-    result = await db.execute(query)
-    events = result.scalars().all()
+    try:
+        result = await db.execute(query)
+        events = result.scalars().all()
+    except Exception as exc:  # noqa: BLE001
+        if not _is_query_timeout(exc):
+            raise
+        # LAT-P002/#1494 (1e): degrade the events page rather than 503 the request.
+        logger.warning("search event page timed out for %r", q)
+        await _recover_search_session(db, _deadline)
+        events = []
+        degraded.append("events")
+    _mark("event_page")
 
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
@@ -1708,6 +1985,7 @@ async def search_events(
         all_team_names.append(event.home_team_name)
         all_team_names.append(event.away_team_name)
     team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
+    _mark("event_enrichment")
 
     # Format results and group by sport
     formatted_results = []
@@ -1817,8 +2095,43 @@ async def search_events(
             Sport.key == sport
         )
 
-    futures_result = await db.execute(futures_query)
-    futures_markets_raw = futures_result.scalars().unique().all()
+    # LAT-P005/#1494: futures is NOT "non-essential enrichment" — that
+    # classification (LAT-P002's) is what got this reverted.
+    #
+    # For a large class of queries the futures market IS the answer: "masters
+    # winner", "nba champion", "us recession 2026" have no event to return, only a
+    # market. Dropping this stage does not produce a slower answer, it produces a
+    # WRONG one — HTTP 200, zero results, and a `degraded` key the caller has to
+    # know to read. Post-deploy that read as "no matches" to everyone who looked,
+    # including the Integrator, and it survived a full deploy verification.
+    #
+    # So the stage is re-armed with the deadline actually REMAINING (a fixed 4s
+    # constant is what killed it: the futures query legitimately costs more than
+    # the events query), and a timeout here is logged at ERROR — it is a recall
+    # incident, not routine shedding.
+    await _apply_search_statement_timeout(db, _deadline)
+    if time.monotonic() > _deadline:
+        logger.error(
+            "search deadline exceeded before futures for %r — returning an answer "
+            "with the primary result class MISSING", q
+        )
+        futures_markets_raw = []
+        degraded.append("futures")
+    else:
+        try:
+            futures_result = await db.execute(futures_query)
+            futures_markets_raw = futures_result.scalars().unique().all()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_query_timeout(exc):
+                raise
+            logger.error(
+                "search futures TIMED OUT for %r — this is a recall failure, not "
+                "load shedding: the answer is now missing its primary result class", q
+            )
+            await _recover_search_session(db, _deadline)
+            futures_markets_raw = []
+            degraded.append("futures")
+    _mark("futures")
 
     # Re-rank FIRST (name-match priority + volume + wrong-league), THEN dedup —
     # so dedup keeps the volume-winning representative per key. (Dedup-then-rerank
@@ -2046,6 +2359,7 @@ async def search_events(
     # produced "Spain" for "spacex"); the correction still drives the events
     # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
     # so the marquee tie-break has the real contenders before the 5-row cap.
+    _mark("futures_format_concepts")
     team_rank = _search_rank(_team_search_vector(), q).label("team_rank")
     team_search_q = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation,
@@ -2058,13 +2372,29 @@ async def search_events(
     )
     if sport:
         team_search_q = team_search_q.where(Sport.key == sport)
-    team_search_result = await db.execute(team_search_q)
+    # LAT-P002/#1494 (1e): teams is a non-essential stage too.
+    if time.monotonic() > _deadline:
+        logger.warning("search deadline exceeded before teams for %r", q)
+        _team_result_rows = []
+        degraded.append("teams")
+    else:
+        try:
+            team_search_result = await db.execute(team_search_q)
+            _team_result_rows = team_search_result.all()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("search teams timed out for %r", q)
+            await _recover_search_session(db, _deadline)
+            _team_result_rows = []
+            degraded.append("teams")
+    _mark("teams")
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
     # rank-first / marquee tie-break ordering before capping at 5.
     team_rows = _sort_matched_team_rows(_dedupe_prefix_duplicate_team_rows([
-        row for row in team_search_result.all()
+        row for row in _team_result_rows
         if not _is_individual_sport(row.sport_key)
     ]))
     teams_seen: set[str] = set()
@@ -2110,7 +2440,14 @@ async def search_events(
         # middleware state for any other path that does populate it.
         _uid = current_user.id if current_user else getattr(request.state, "user_id", None)
         _sid = request.headers.get("x-session-id") or request.cookies.get("session_id")
-        await _log_search_query(q, total_count, _top_id, _uid, _sid)
+        # LAT-P002/#1494 (1d): dispatched, NOT awaited — see _dispatch_search_log.
+        _dispatch_search_log(
+            query=q,
+            result_count=total_count,
+            top_result_id=_top_id,
+            user_id=_uid,
+            session_id=_sid,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("search-log dispatch failed: %s", exc)
 
@@ -2136,6 +2473,15 @@ async def search_events(
             "include_upcoming": include_upcoming,
         },
         **({"did_you_mean": fuzzy_corrected} if fuzzy_corrected else {}),
+        # LAT-P002/#1494 (1e): ADDITIVE and present only when something was cut short.
+        # A stage we could not complete must be distinguishable from a stage that
+        # honestly found nothing — the same "missing evidence is not GREEN" grammar
+        # the Flow and Grid Sentinels use. Absent key == complete answer.
+        **({"degraded": degraded} if degraded else {}),
+        # LAT-P002/#1494: opt-in only (?debug_timing=1); absent otherwise, so the
+        # normal response shape is untouched.
+        **({"debug_timing": {**_stage_ms,
+                             "total_ms": sum(_stage_ms.values())}} if debug_timing else {}),
     }
 
 
