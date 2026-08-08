@@ -4825,28 +4825,64 @@ async def debug_phase3(
 @router.get("/task-metrics")
 async def get_task_metrics(
     request: Request, secret: str = Query(None),
-    task_name: str = Query("kalshi_settled"),
+    task: str = Query(None),
+    task_name: str = Query(None),
 ):
-    """Read task execution metrics from Redis."""
+    """Read task execution metrics from Redis for ONE named task.
+
+    #1008. This endpoint used to take `task_name` with a default of
+    `"kalshi_settled"`, and every known caller asks for `?task=`. FastAPI drops
+    unknown query params silently, so **every** `?task=<anything>` call fell
+    through to the default and answered about `kalshi_settled` — while the
+    response body carried no task name to give it away.
+
+    That is the whole of #1008's reported symptom. Four different `?task=` values
+    returned a byte-identical record in July because all four were reading
+    `kalshi_settled`, whose key then held a 437803ms SoftTimeLimitExceeded run.
+    Ops read that as a poll_kalshi soft-limit and filed a round-120 alarm on it.
+    Today the same four return a byte-identical `{}` for the same reason.
+
+    Three things make that unrepeatable:
+      1. `task` is accepted (and `task_name` kept, so nothing already written
+         against it breaks).
+      2. There is NO default. A call that names no task is a 400 listing the
+         valid names — it can never be mistaken for an answer about a task.
+      3. The reply always echoes the task it describes.
+
+    The body now comes from the canonical ``redis_state.get_task_metrics`` — the
+    same reader behind ``/celery/task-metrics/{name}`` and the cockpit tile —
+    instead of a hand-rolled ``hgetall`` that skipped the 24h counters, the byte
+    decoding, the retired-task label and the explicit ``no_data`` marker. One
+    definition of "task metrics", so these surfaces cannot drift apart.
+    """
     _check_admin_secret(secret, request=request)
 
-    import json as _json
-    from app.tasks.redis_state import get_redis_client
+    from app.tasks.redis_state import get_all_task_metrics, get_task_metrics as _read
+
+    resolved = task or task_name
+    if not resolved:
+        # Deliberately an error, not a default. A silent default is exactly what
+        # made this endpoint answer confidently about the wrong task for a month.
+        try:
+            known = sorted(
+                m.get("task") for m in get_all_task_metrics() if m.get("task")
+            )
+        except Exception:
+            known = []
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "task is required",
+                "hint": "pass ?task=<name>; this endpoint no longer defaults to "
+                        "kalshi_settled (#1008)",
+                "known_tasks": known,
+            },
+        )
 
     try:
-        rc = get_redis_client()
-        key = f"bainluck:task_metrics:{task_name}"
-        data = rc.hgetall(key)
-        result = {}
-        for k, v in data.items():
-            if k == "last_result_summary":
-                try:
-                    result[k] = _json.loads(v)
-                except Exception:
-                    result[k] = v
-            else:
-                result[k] = v
-        return result
+        return _read(resolved)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
