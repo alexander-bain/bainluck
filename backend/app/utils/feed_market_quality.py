@@ -317,6 +317,54 @@ _DAILY_EQUITY_DIRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #1579: the SAME filler family, matched by SHAPE instead of by asset roster.
+#
+# `_DAILY_EQUITY_DIRECTION_RE` above names its assets, so it only ever covers the
+# slice of Polymarket's daily-direction product that somebody remembered to add.
+# Measured on production 2026-08-07 it had drifted behind badly: of the open
+# "Up or Down on <date>?" markets it missed every commodity (Gold XAUUSD, Silver
+# XAGUSD, WTI, Natural Gas NG), every non-US index (DAX, FTSE 100 UKX, Hang Seng
+# HSI, Nikkei 225 NIK, NYA) and a row of equities (COIN, MU, PLTR, ABNB, OPEN,
+# MSTR). Four of the commodity ones reached the live feed at once, all printing
+# exactly 50% — four identical coin flips, which is the duplicate-family and
+# boring-rate target in one.
+#
+# The family's real signature is its TITLE SHAPE, which Polymarket generates
+# uniformly: a parenthesised ticker, a direction phrase, and a date. Keying on
+# that ends the drift — a new asset is covered the day it appears.
+#
+# It is deliberately NOT just "up or down + a date", which would over-fire. The
+# parenthesised ticker is what excludes the neighbours measured on the same feed:
+# "Berlin State Election: Turnout Up or Down?", "Canada's population Up or Down
+# this year?" and the Pokemon-card family ("Charizard ex Up or Down: July") all
+# lack one and are untouched here.
+_TICKERED_DAILY_DIRECTION_RE = re.compile(
+    r"\([A-Z0-9][A-Z0-9./&^-]{0,9}\)"          # (XAUUSD), (SPY), (EUR/USD), (NG)
+    r".*?\b("
+    r"up or down|closes? above|closes? below|close above|close below"
+    r")\b.*\b("
+    r"today|tomorrow|on|"
+    rf"{_MONTH_RE}|"
+    r"\d{1,2}/\d{1,2}"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_daily_direction_filler(name: "str | None") -> bool:
+    """True if ``name`` is a dated daily price-direction market (#1579).
+
+    The union of the legacy asset roster and the shape rule, so callers get one
+    answer and neither branch can be forgotten at a call site.
+    """
+    if not name:
+        return False
+    return bool(
+        _DAILY_EQUITY_DIRECTION_RE.search(name)
+        or _TICKERED_DAILY_DIRECTION_RE.search(name)
+    )
+
+
 _WEATHER_BUCKET_RE = re.compile(
     r"\b("
     r"temperature|degrees?|rainfall|snowfall|precipitation|weather|"
@@ -951,7 +999,7 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(spotify|billboard)\b", lower):
         return "story:music_charts"
 
-    if _DAILY_EQUITY_DIRECTION_RE.search(name):
+    if is_daily_direction_filler(name):
         return "story:daily_equity_direction"
 
     if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
@@ -1041,7 +1089,7 @@ def classify_market_quality(
         or asset_price_level
     )
     weather_bucket = bool(_WEATHER_BUCKET_RE.search(name))
-    daily_equity_direction = bool(_DAILY_EQUITY_DIRECTION_RE.search(name))
+    daily_equity_direction = is_daily_direction_filler(name)
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
     entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
