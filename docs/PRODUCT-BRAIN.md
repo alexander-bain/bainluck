@@ -704,3 +704,72 @@ of the findings arriving as prose to be mined rather than as decisions to be mad
 
 Ask **Fable** for the objective pass. Bring Alex only what needs taste, already paired with
 its evidence.
+
+---
+
+## RULINGS — 2026-08-08(d): Alex's batch on the preference-test findings
+
+Four decisions, closing everything the UX lane had open. (a) set the north star, (b) who
+administers it, (c) who does the looking; (d) is the first batch of judgment calls the (c)
+process was built to produce.
+
+### 1. The landing page LEADS WITH TONIGHT'S GAMES during a live season
+
+**Ruled:** during a live season, `bainluck.com` leads with **tonight's games — live or
+starting soon** — with the Discover mix **below**.
+
+This closes GAP 2. The finding was that the default surface returned **55 cards with ZERO
+game events** while 18 games were live; the first twelve cards on an August evening were led
+by *"Will the U.S. confirm that aliens exist?"* and *"Hantavirus pandemic in 2026?"*.
+
+That was **designed behaviour** — the Discover event demotion caps non-exceptional events at
+score 35 so futures can compete — which is exactly why the lane refused to "fix" it and asked
+instead. The design was right for a pure discovery surface and wrong once *"find tonight's
+game"* became a north-star task. Discover is not being demoted; it is being placed **below**
+the thing a returning user most often came for.
+
+Note what this does NOT say: it is not "show every game", and it is not a scoreboard. Live or
+imminent games lead; the discovery mix keeps the page.
+
+### 2. Search RELEVANCE is `program:ux`; latency owns COST
+
+**Ruled:** #1590 is `program:ux`. **Search relevance is product quality. Latency owns cost.
+Shared-file work coordinates via declared rebases, as usual.**
+
+This is the resolution of the boundary question that blocked UX-P020 outright. Ruling (b)
+correctly sent search *latency* to the latency lane, and the lane then over-read it: because
+`app/routes/events.py` held the latency work, the lane treated the whole FILE as foreign and
+concluded it had nothing to do.
+
+**A file is not an owner.** Two lanes can hold different concerns in one file — cost and
+quality are different questions with different judgment behind them — and the coordination
+mechanism for that already exists and is boring: declared rebases. The lane's instinct to
+avoid collisions was right; converting it into "I cannot work here" was not.
+
+### 3. TRUTH VIOLATIONS OUTRANK ALL POLISH
+
+**Ruled:** #1588 and #1589 lead the queue.
+
+- **#1588** — a first-inning prop still quoting **52% "No"** after a first-inning run scored.
+- **#1589** — playoff odds showing **63%** where reality is **~90%**, a 27-point error.
+
+These are not slow, ugly, or confusing. They are the product **stating something false**, with
+a confident number attached, on a page the user is reading while they can see the truth with
+their own eyes. That outranks every legibility and speed item on the list regardless of
+frequency — and it is a sharpening of the usage-weighted rule in (a), not an exception to it:
+frequency weighting decides among things that are *merely imperfect*. A false number is not on
+that scale.
+
+#1588 is additionally a direct violation of the standing **"settled means settled"** ruling.
+
+### 4. Fable settles the /sports blank-sections question post-merge
+
+**Ruled:** after `program/ux-9` merges, **Fable re-checks the `/sports` blank-sections symptom
+in Chrome** to settle whether UX-P022's storage guard was the cause.
+
+The lane found a coherent mechanism — UX-P017 dropped a `try/catch`, and the new call sites
+run inside a `useEffect` on a page that only reads preferences, where a throw unmounts the
+subtree — and fixed it, while explicitly **refusing to claim it as the confirmed cause**,
+because it could not drive a browser. That refusal is the correct behaviour, and (c) is why:
+the party with the browser settles it.
+
