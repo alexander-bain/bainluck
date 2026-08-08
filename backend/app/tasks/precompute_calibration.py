@@ -3625,6 +3625,21 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         population_version=CALIBRATION_POPULATION_VERSION,
         generation=getattr(runner, "generation", None),
         with_terminal_calibration_price=coverage_with_terminal_price,
+        # CAL-P011 (Alex ruling 2026-08-08): the reachability tier is CONTRACTED
+        # and served, but this build does not yet COUNT it. Its population is the
+        # outcomes the coverage CTE chain excludes by construction (no captured
+        # price), so it cannot be read off ``coverage_bridge_summary`` — it needs
+        # its own scan of resolved outcomes joined to their market's settlement
+        # date. That scan is not added blind here: #1479 has this task already
+        # exceeding its hourly window under backfill DB contention, and a heavy
+        # new join is exactly how a census makes the curve it reports on late.
+        # So the tier ships explicitly unavailable-with-a-reason rather than
+        # absent (which would read as "nothing was purged") or guessed.
+        reachability_unavailable_reason=(
+            "counts not yet wired: the unpriced population is outside the "
+            "coverage CTE chain and needs its own bounded scan (owed; see #1479 "
+            "for why it was not added to this task blind)"
+        ),
     )
     # The measured universe total and the summed partition are two reads of the
     # same CTE, so they must agree exactly; if they ever do not, the CASE stopped
