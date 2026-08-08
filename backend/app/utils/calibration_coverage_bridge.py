@@ -148,6 +148,82 @@ EXCLUSION_RUNGS: tuple[str, ...] = tuple(
     key for key, _rule in BRIDGE_RUNGS if key != PLOTTED_RUNG
 )
 
+# ---------------------------------------------------------------------------
+# THE REACHABILITY TIER (CAL-P011 — Alex ruling 2026-08-08)
+# ---------------------------------------------------------------------------
+# "Provably-purged outcomes become a NAMED TIER in the coverage census —
+# visible with its own count, never invisible in the ungraded remainder;
+# publishing the count is the standing house rule for every exclusion."
+#
+# WHY THIS IS NOT A ``BRIDGE_RUNGS`` RUNG. The coverage population requires a
+# usable price (``opening_probability IS NOT NULL``, strictly between 0 and 1).
+# An outcome whose price was PURGED upstream never had one captured, so it is
+# not merely excluded from the curve — it is outside the coverage denominator
+# altogether. Adding it to :data:`BRIDGE_RUNGS` would put a non-member inside a
+# partition of the coverage population and break the one reconciliation that
+# partition exists to enforce. So the tier sits one level ABOVE the coverage
+# bridge, over the wider resolved population, with the coverage total as its
+# terminal member — the same hinge trick the observation bridge uses.
+#
+#     resolved_futures_outcomes
+#       = outcomes_with_calibration_coverage + Σ(unpriced reachability tiers)
+#
+# THE FAILURE THIS CORRECTS. Before this tier, "we have not graded it yet" and
+# "no API on earth still holds this price" summed into ONE remainder. #683 sat
+# open as a P0 for ten weeks because nobody could tell those apart — the same
+# empty-200 confusion as gotcha #51, one level up: an absent price read as a
+# fact about our progress when it was a fact about Kalshi's retention policy.
+
+#: The terminal tier — outcomes that DID reach the coverage bridge. Part of the
+#: partition so the tiers sum to the resolved total; not an absence.
+PRICED_TIER = "priced_in_coverage"
+
+#: Ordered partition of the RESOLVED futures-outcome population. FIRST MATCH
+#: WINS, exactly as :data:`BRIDGE_RUNGS`. Reordering is a contract change.
+REACHABILITY_TIERS: tuple[tuple[str, str], ...] = (
+    (
+        PRICED_TIER,
+        "Carries a usable calibration price, so it enters the coverage bridge "
+        "and is accounted for there. This tier is the hinge between the two "
+        "reconciliations, not a second headline.",
+    ),
+    (
+        "unpriced_provably_purged",
+        "No usable price, and the market settled longer ago than the MEASURED "
+        "Kalshi retention horizon — every probe at this age returned 404, so no "
+        "upstream API still holds the price. This is permanently unrecoverable "
+        "and must never be counted as work outstanding.",
+    ),
+    (
+        "unpriced_recoverable",
+        "No usable price, but the market settled recently enough that the price "
+        "is still expected to be retrievable, or the source is not subject to "
+        "the retention horizon at all. This IS work outstanding.",
+    ),
+    (
+        "unpriced_unknown_age",
+        "No usable price and no settlement date, so reachability cannot be "
+        "established either way. Deliberately its own tier: folding it into "
+        "either neighbour would invent a fact, which is the exact failure this "
+        "census exists to prevent.",
+    ),
+)
+
+#: Every reachability tier except the terminal one.
+UNPRICED_TIERS: tuple[str, ...] = tuple(
+    key for key, _rule in REACHABILITY_TIERS if key != PRICED_TIER
+)
+
+REACHABILITY_TIER_KEYS: tuple[str, ...] = tuple(key for key, _rule in REACHABILITY_TIERS)
+
+_REACHABILITY_RULES: dict[str, str] = dict(REACHABILITY_TIERS)
+
+RESOLVED_UNIT_RULE = (
+    "One resolved futures outcome, priced or not. This is the widest honest "
+    "denominator: everything calibration could in principle have graded. It is "
+    "strictly larger than the coverage population, which requires a price."
+)
+
 RUNG_KEYS: tuple[str, ...] = tuple(key for key, _rule in BRIDGE_RUNGS)
 
 _RUNG_RULES: dict[str, str] = dict(BRIDGE_RUNGS)
@@ -183,6 +259,95 @@ def _rung_cell(key: str, value: Any) -> dict[str, Any]:
 
 def _rung_rules(key: str) -> str:
     return _RUNG_RULES.get(key, "")
+
+
+def _tier_cell(key: str, value: Any) -> dict[str, Any]:
+    """One reachability tier, with the same measured/unknown honesty as a rung."""
+    known = isinstance(value, int) and not isinstance(value, bool)
+    return {
+        "key": key,
+        "unit": UNIT_FUTURES_OUTCOME,
+        "outcomes": int(value) if known else None,
+        "checked": known,
+        "rule": _REACHABILITY_RULES.get(key, ""),
+    }
+
+
+def build_reachability_bridge(
+    tier_counts: dict[str, int | None] | None,
+    *,
+    coverage_total: int | None,
+    unavailable_reason: str | None = None,
+) -> dict[str, Any]:
+    """The third reconciliation: resolved outcomes -> the coverage population.
+
+    ``tier_counts`` maps every key in :data:`REACHABILITY_TIER_KEYS` to its
+    measured count, or ``None`` where it could not be measured. Passing ``None``
+    for the whole mapping means the build did not compute this tier at all; the
+    section is then explicitly ``unavailable`` with a reason rather than absent,
+    because an absent section reads as "nothing was purged", which is the lie
+    this tier was ruled into existence to stop.
+
+    ``coverage_total`` is the hinge — the coverage bridge's own total, counted by
+    a different code path. When the build supplies its own ``priced_in_coverage``
+    count as well, the two must agree; disagreeing means the two reconciliations
+    are standing on different populations and the section says so.
+
+    This section carries its OWN status and never contributes to the coverage
+    bridge's ``invariants``. A coverage bridge that reconciles is a true claim
+    about the coverage bridge; letting an unwired tier above it mark that claim
+    broken would be its own kind of dishonesty.
+    """
+    if not tier_counts:
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": unavailable_reason or "reachability tier not computed by this build",
+            "unit": UNIT_FUTURES_OUTCOME,
+            "from": "resolved_futures_outcomes",
+            "to": "outcomes_with_calibration_coverage",
+            "tiers": [_tier_cell(key, None) for key, _rule in REACHABILITY_TIERS],
+            "resolved_futures_outcomes": None,
+            "reconciles": False,
+            "residual": None,
+            "violations": ["REACHABILITY_UNAVAILABLE"],
+        }
+
+    cells = [_tier_cell(key, tier_counts.get(key)) for key, _rule in REACHABILITY_TIERS]
+    by_key = {cell["key"]: cell for cell in cells}
+
+    priced = by_key[PRICED_TIER]["outcomes"]
+    unpriced_values = [by_key[key]["outcomes"] for key in UNPRICED_TIERS]
+    all_known = priced is not None and all(v is not None for v in unpriced_values)
+
+    violations: list[str] = []
+    if not all_known:
+        violations.append("REACHABILITY_TIER_UNKNOWN")
+
+    resolved_total = (
+        priced + sum(unpriced_values) if all_known else None  # type: ignore[operator]
+    )
+
+    # The hinge, counted twice by two different code paths — the same honesty
+    # check the coverage bridge applies to ``plotted``.
+    if priced is not None and isinstance(coverage_total, int):
+        if priced != coverage_total:
+            violations.append("COVERAGE_HINGE_DIVERGES")
+    else:
+        violations.append("COVERAGE_HINGE_UNCHECKED")
+
+    return {
+        "status": STATUS_COMPLETE if not violations else STATUS_INCOMPLETE,
+        "unit": UNIT_FUTURES_OUTCOME,
+        "from": "resolved_futures_outcomes",
+        "to": "outcomes_with_calibration_coverage",
+        "rule": RESOLVED_UNIT_RULE,
+        "tiers": cells,
+        "resolved_futures_outcomes": resolved_total,
+        "reconciles": all_known,
+        "residual": 0 if all_known else None,
+        "coverage_total_crosscheck": coverage_total,
+        "violations": violations,
+    }
 
 
 def unavailable_census(
@@ -227,6 +392,9 @@ def unavailable_census(
             "reconciles": False,
             "residual": None,
         },
+        "reachability_bridge": build_reachability_bridge(
+            None, coverage_total=None, unavailable_reason=reason
+        ),
         "invariants": {"ok": False, "violations": ["CENSUS_UNAVAILABLE"]},
     }
 
@@ -240,6 +408,8 @@ def build_coverage_census(
     population_version: str,
     generation: str | None = None,
     with_terminal_calibration_price: int | None = None,
+    reachability_tier_counts: dict[str, int | None] | None = None,
+    reachability_unavailable_reason: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the census from directly counted rungs.
 
@@ -337,6 +507,14 @@ def build_coverage_census(
             "reconciles": coverage_reconciles,
             "residual": coverage_residual,
         },
+        # Bridge C — reachability (futures_outcome), one level ABOVE coverage.
+        # Carries its own status; deliberately NOT folded into ``invariants``
+        # below, so an unwired tier cannot mark a sound coverage bridge broken.
+        "reachability_bridge": build_reachability_bridge(
+            reachability_tier_counts,
+            coverage_total=coverage_total,
+            unavailable_reason=reachability_unavailable_reason,
+        ),
         "observation_bridge": {
             "unit": UNIT_CURVE_OBSERVATION,
             "futures_outcomes_plotted": plotted,
