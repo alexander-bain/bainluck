@@ -1474,6 +1474,13 @@ _SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")
 # keystroke surface is a worse failure than being slow.
 _TYPEAHEAD_DEADLINE_MS = int(os.getenv("TYPEAHEAD_DEADLINE_MS", "10000"))
 
+# LAT-P010/#1494 GAP 1: below this many characters an infix ILIKE cannot be served
+# by a pg_trgm GIN (no complete trigram is extractable from the pattern), so it
+# seq-scans. Shared by /search and /typeahead so the two surfaces agree on where
+# the cliff is — they had drifted, which is how /search kept the defect for three
+# cycles after /typeahead's twin was fixed.
+_SEARCH_MIN_OUTCOME_MATCH_CHARS = 3
+
 
 def _stage_timeout_ms(deadline: float | None) -> int:
     """Statement bound for the next stage: whatever is left of the request deadline.
@@ -2060,7 +2067,43 @@ async def search_events(
     else:
         term, exp = expanded[0]
         futures_name_ilike = _build_expanded_ilike(FuturesMarket.name, term, exp)
-        futures_outcome_match = _outcome_id_match(term, exp)
+        # LAT-P010/#1494 GAP 1: for a SINGLE sub-3-character term, the outcome arm
+        # drops that term and keeps only its expansion (if any).
+        #
+        # This is LAT-P007's /typeahead fix, arriving on /search. INT-019's control
+        # pass found /search slower than /typeahead on every short stem tested,
+        # because LAT-P006 closed /search for named MULTI-WORD queries and this
+        # single-short-term path was never touched.
+        #
+        # MEASURED in production 2026-08-08. A 2-char infix pattern is unservable
+        # by a pg_trgm GIN, so it seq-scans `futures_outcomes` (3.2M rows / 3 GB):
+        #     %re%           374,988 rows   6,830ms
+        #     %la%           192,448 rows   4,917ms
+        #     %los angeles%    7,726 rows     657ms   <- the expansion IS servable
+        # End to end: `re` measured 20.4s wall on TWO passes (futures stage 7.5s of
+        # a 8.4s request); `la` 1.9-3.1s (futures 1.4-2.4s).
+        #
+        # It is not a recall trade — verified by LOOKING, not assumed. For BOTH
+        # `re` and `la`, **0 of the 10 visible futures come from the outcome arm**;
+        # every one is a name match. The reason is structural: futures are ordered
+        # by `ts_rank_cd` over the NAME vector, so a market matched only through an
+        # outcome scores ~0 and sorts below every name match. With a 2-char term
+        # there are always thousands of name matches, so the outcome arm cannot
+        # reach the page. It costs seconds to contribute nothing.
+        #
+        # The EXPANSION is kept: `la` -> `los angeles` is meaningful, servable, and
+        # cheap (4,917ms -> 657ms). Only the unindexable base term is dropped.
+        #
+        # Scoped to the SINGLE-term path on purpose. LAT-P006 pins that a short
+        # term still FILTERS inside a multi-term AND (`us recession` must not admit
+        # "Euro area growth"), and that guard must keep passing — so the multi-term
+        # branch above is deliberately untouched.
+        if len(term) < _SEARCH_MIN_OUTCOME_MATCH_CHARS:
+            futures_outcome_match = (
+                _outcome_id_match(exp, None) if exp else None
+            )
+        else:
+            futures_outcome_match = _outcome_id_match(term, exp)
 
     futures_name_match = futures_name_ilike
 
@@ -2069,9 +2112,13 @@ async def search_events(
     # /typeahead so the two paths agree (L2-45).
     league_ticker_match = _build_league_ticker_match(expanded)
 
-    _futures_where_or = [futures_name_match, futures_outcome_match]
-    if league_ticker_match is not None:
-        _futures_where_or.append(league_ticker_match)
+    # LAT-P010: `futures_outcome_match` is None when a single sub-3-char term
+    # dropped it (see above). Filter rather than append conditionally, so a future
+    # arm that also becomes optional cannot silently add a `None` to the UNION.
+    _futures_where_or = [
+        arm for arm in (futures_name_match, futures_outcome_match, league_ticker_match)
+        if arm is not None
+    ]
 
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
@@ -2795,7 +2842,7 @@ async def typeahead_search(
     # (`us recession` must not admit "Euro area growth"), and this must not
     # contradict that guard.
     _ta_q_compact = q.strip()
-    _TA_MIN_OUTCOME_MATCH_CHARS = 3
+    _TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS  # shared; see LAT-P010
     if len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS:
         ta_futures_where.append(
             FuturesMarket.id.in_(
