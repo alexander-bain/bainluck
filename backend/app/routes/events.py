@@ -1461,6 +1461,19 @@ _SEARCH_MIN_STAGE_TIMEOUT_MS = int(os.getenv("SEARCH_MIN_STAGE_TIMEOUT_MS", "200
 # original comment wanted and could not get.
 _SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")) or None
 
+# LAT-P007/#1494: /typeahead had NO bound of any kind — no deadline, no statement
+# timeout, no degraded reporting — and measured 12.06s for `q=re` in production
+# on 2026-08-08. Nothing stopped it riding to Heroku's 30s H12.
+#
+# This buys NO speed; that is LAT-P005's lesson and it applies unchanged. The
+# speed comes from the query fixes at the futures stage. This is purely the
+# anti-H12 guard, and it is deliberately LOOSE: the worst healthy stage measured
+# after those fixes is ~2.4s, so 10s is ~4x headroom over the worst real query
+# while still beating H12 by 20s. A tight bound here would recreate LAT-P002 —
+# a statement timeout firing on a HEALTHY query returns an empty 200, which on a
+# keystroke surface is a worse failure than being slow.
+_TYPEAHEAD_DEADLINE_MS = int(os.getenv("TYPEAHEAD_DEADLINE_MS", "10000"))
+
 
 def _stage_timeout_ms(deadline: float | None) -> int:
     """Statement bound for the next stage: whatever is left of the request deadline.
@@ -2600,6 +2613,10 @@ async def typeahead_search(
     except Exception:
         pass
 
+    # LAT-P007: start the request budget AFTER the cache read — a cache hit has
+    # already returned above and never touches the database.
+    _ta_deadline = time.monotonic() + (_TYPEAHEAD_DEADLINE_MS / 1000.0)
+
     now = datetime.now(timezone.utc)
     pattern = f"%{q}%"
     suggestions = []
@@ -2743,23 +2760,85 @@ async def typeahead_search(
     # fetches the correct-league market ("nba mvp" → NBA "MVP Winner", ticker
     # kxnba%, no "nba" in the name) that the shared reranker then surfaces over the
     # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
-    ta_futures_where = [
-        futures_name_filter,
-        FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(pattern)),
-    ]
+    ta_futures_where = [futures_name_filter]
+
+    # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
+    # for a sub-3-character query. Both measured in production 2026-08-08.
+    #
+    # (1) The correlated form. `FuturesMarket.outcomes.any(...)` compiles to an
+    # EXISTS re-probed per candidate row of `futures_markets` (730K rows) against
+    # `futures_outcomes` (3.2M rows / 3 GB). /search replaced exactly this with a
+    # non-correlated IN in #993's Slice-Speed; /typeahead never got the change.
+    # For `%rec%`: correlated 3,468ms -> non-correlated 66.8ms, **52x, on
+    # IDENTICAL results** (n=254 either way). It is set-identical, so there is no
+    # recall or precision consequence — only the plan changes.
+    #
+    # (2) The sub-3-char skip. `min_length=2`, so the endpoint's MINIMUM allowed
+    # query is also its worst case, and it is the first thing every user fires.
+    # A 2-char infix pattern is unservable by a pg_trgm GIN (no complete trigram
+    # is extractable), so `%re%` seq-scans 3 GB: that arm ALONE measured 8,633ms,
+    # and the endpoint measured **12.06s** for `q=re`. The cliff is at exactly the
+    # trigram boundary, across six independent stems — 2-char 4.4-12.1s vs 3-char
+    # 1.85-2.67s — so it is pattern length, not query popularity.
+    #
+    # This is NOT a recall trade, and that was checked by LOOKING rather than
+    # assuming. For `re`, 17 of the 20 visible rows came from this arm alone, and
+    # all 17 were substring accidents: "3M Open Winner" (golfer Lamp-re-cht),
+    # "Pro Baseball Champion" (Baltimo-re), "Nobel Peace Prize Winner 2026"
+    # (Gute-rre-s), "Champions League Winner" (Villar-re-al). Not one is a
+    # plausible answer to "re". At two characters an outcome substring matches
+    # inside almost any name, so the arm is a noise generator that costs 8.6s.
+    #
+    # The market NAME arm still runs at 2 chars — a title match at least describes
+    # the thing being suggested. Scoped to the WHOLE query, not to individual
+    # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
+    # (`us recession` must not admit "Euro area growth"), and this must not
+    # contradict that guard.
+    _ta_q_compact = q.strip()
+    _TA_MIN_OUTCOME_MATCH_CHARS = 3
+    if len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS:
+        ta_futures_where.append(
+            FuturesMarket.id.in_(
+                select(FuturesOutcome.market_id).where(
+                    FuturesOutcome.name.ilike(pattern)
+                )
+            )
+        )
+
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
     if ta_league_ticker_match is not None:
         ta_futures_where.append(ta_league_ticker_match)
+
+    # LAT-P007: UNION, not OR — the LAT-P006 treatment, same reasoning, same
+    # measurement rail. A top-level OR blocks the hash-semi-join transformation,
+    # so the arms degrade to subplans probed against a seq scan of
+    # `futures_markets`. Measured on `rec`: OR 9,682ms -> UNION 2,414ms, same 990
+    # rows. UNION and OR are set-identical, so recall and precision are preserved
+    # by construction. Filters pushed into each arm (AND distributes over UNION);
+    # kept on the outer query as deliberate redundancy.
+    _ta_open_now = (
+        FuturesMarket.status == "open",
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+    )
+    _ta_arm_selects = [
+        select(FuturesMarket.id).where(arm, *_ta_open_now)
+        for arm in ta_futures_where
+    ]
+    if len(_ta_arm_selects) > 1:
+        _ta_candidates = union(*_ta_arm_selects).subquery()
+        _ta_candidate_filter = FuturesMarket.id.in_(select(_ta_candidates.c.id))
+    else:
+        _ta_candidate_filter = FuturesMarket.id.in_(_ta_arm_selects[0])
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            or_(*ta_futures_where),
-            FuturesMarket.status == "open",
-            or_(
-                FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= now,
-            ),
+            _ta_candidate_filter,
+            *_ta_open_now,
         )
         .order_by(
             FuturesMarket.market_tier.asc().nulls_last(),
@@ -2767,14 +2846,36 @@ async def typeahead_search(
         )
         .limit(20)
     )
-    futures_result = await db.execute(futures_query)
+    # LAT-P007: bound the one expensive stage, and NEVER cache a degraded answer.
+    #
+    # The futures stage is the only one that has ever been slow here (teams 42ms,
+    # events 105ms, futures up to 8.6s pre-fix). On a timeout the transaction is
+    # aborted, so recovery is mandatory rather than optional: two fuzzy-fallback
+    # queries still run after this point and would fail on the poisoned session.
+    # The three suggestion pools are already plain dicts by now, so the rollback
+    # cannot expire anything (gotcha #6).
+    _ta_degraded = False
+    await _apply_search_statement_timeout(db, _ta_deadline)
+    try:
+        futures_result = await db.execute(futures_query)
+    except Exception as exc:  # noqa: BLE001
+        if not _is_query_timeout(exc):
+            raise
+        logger.error(
+            "typeahead futures TIMED OUT for %r — the dropdown is answering "
+            "without its futures suggestions", q
+        )
+        await _recover_search_session(db, _ta_deadline)
+        futures_result = None
+        _ta_degraded = True
     # #993 typeahead parity: the SAME reranker /search uses (name-match priority +
     # volume + narrower-scope + wrong-league demotion) — so the dropdown surfaces
     # the entity's real correct-league market instead of a cross-category novelty
     # or a substring-cousin league before the 5-item cut. Shared helpers end-to-end
     # (query recall + rerank) → the two paths agree (L2-45).
     ta_futures_ranked = _rerank_search_futures(
-        futures_result.scalars().unique().all(), ta_expanded
+        futures_result.scalars().unique().all() if futures_result is not None else [],
+        ta_expanded,
     )
     futures_pool = []
     seen_futures_keys: set[str] = set()
@@ -3040,11 +3141,18 @@ async def typeahead_search(
     # so every keystroke ran the full queries. Writing here makes the Slice-A
     # outcome projection cache-miss-only and holds the <150ms p50 budget. 45s TTL
     # keeps probabilities fresh without re-querying on every keystroke.
-    try:
-        from app.tasks.redis_state import get_redis_client as _get_rc
-        _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))
-    except Exception:
-        pass
+    #
+    # LAT-P007: a DEGRADED answer is never cached. Without this a single slow
+    # moment writes a futures-less dropdown into Redis and every user typing that
+    # prefix gets the wrong answer for the full 45s TTL — a transient becomes a
+    # sticky one. Caching an answer you know is incomplete is worse than not
+    # caching at all.
+    if not _ta_degraded:
+        try:
+            from app.tasks.redis_state import get_redis_client as _get_rc
+            _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))
+        except Exception:
+            pass
 
     # Track query for trending searches (fire-and-forget, no PII)
     try:
