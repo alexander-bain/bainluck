@@ -8,6 +8,7 @@ import {
   reconcileLegacyBucket,
   pendingAnonymousMigration,
   completeAnonymousMigration,
+  browserStore,
 } from "@/lib/principalStorage";
 import {
   INTERESTS_POLICY,
@@ -48,10 +49,10 @@ export function useInterestSync() {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
     if (scope.kind !== "principal") return;
 
-    const store = window.localStorage;
+    const store = browserStore();
+    if (!store) return;
 
     // Retire the pre-partition device-global key first. Under a signed-in scope
     // this DELETES it unread, which is precisely what stops another account's

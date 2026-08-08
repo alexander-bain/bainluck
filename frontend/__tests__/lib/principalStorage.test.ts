@@ -15,6 +15,7 @@ import {
   reconcileLegacyBucket,
   pendingAnonymousMigration,
   completeAnonymousMigration,
+  safeStore,
   type BucketPolicy,
   type KeyValueStore,
 } from "@/lib/principalStorage";
@@ -221,5 +222,85 @@ describe("end-to-end: the exact sequence #1496 reported", () => {
     expect(pendingAnonymousMigration(POLICY, store)).toBe("[7,8]");
     completeAnonymousMigration(POLICY, store);
     expect(pendingAnonymousMigration(POLICY, store)).toBeNull();
+  });
+});
+
+// UX-P022 — a storage failure must never reach React.
+//
+// Regression guard for a defect this queue's own predecessor introduced.
+// UX-P017 moved the pin logic into this module and, in doing so, dropped the
+// `try/catch` the old `savePinnedIds` carried ("localStorage might be full or
+// disabled"). That was worse than the original gap: the calls now run inside a
+// `useEffect` on pages that only READ preferences (`/sports` mounts
+// `useCategoryInterests`), and an effect that throws unmounts its subtree — so
+// a storage failure stops being "pins didn't persist" and becomes "the page is
+// blank".
+//
+// Personalization is an enhancement. It must not be able to take a page down.
+
+/** A store that fails the way a real browser fails. */
+function hostileStore(mode: "read" | "write" | "all"): KeyValueStore {
+  const fail = () => {
+    throw new DOMException("QuotaExceededError");
+  };
+  return {
+    getItem: mode === "write" ? () => "[1,2]" : fail,
+    setItem: mode === "read" ? () => undefined : fail,
+    removeItem: mode === "read" ? () => undefined : fail,
+  };
+}
+
+describe("safeStore — storage failures degrade, they do not throw", () => {
+  it("a throwing setItem (quota exceeded) is swallowed", () => {
+    const store = safeStore(hostileStore("write"));
+    expect(() => store.setItem("k", "v")).not.toThrow();
+  });
+
+  it("a throwing getItem (privacy mode) reads as absent, not as an exception", () => {
+    const store = safeStore(hostileStore("read"));
+    expect(() => store.getItem("k")).not.toThrow();
+    expect(store.getItem("k")).toBeNull();
+  });
+
+  it("a throwing removeItem is swallowed", () => {
+    const store = safeStore(hostileStore("all"));
+    expect(() => store.removeItem("k")).not.toThrow();
+  });
+
+  it("every operation survives a fully hostile store", () => {
+    const store = safeStore(hostileStore("all"));
+    expect(() => {
+      store.setItem("a", "1");
+      store.getItem("a");
+      store.removeItem("a");
+    }).not.toThrow();
+  });
+
+  it("the whole bucket pipeline survives a hostile store (the /sports path)", () => {
+    // reconcileLegacyBucket -> pendingAnonymousMigration -> complete... is what
+    // `useCategoryInterests` runs in an effect on /sports. None of it may throw.
+    const store = safeStore(hostileStore("all"));
+    const policy: BucketPolicy = { base: "bainluck_categoryInterests" };
+    const scope = { kind: "anonymous" as const };
+
+    expect(() => {
+      reconcileLegacyBucket(policy, scope, store);
+      pendingAnonymousMigration(policy, store);
+      completeAnonymousMigration(policy, store);
+    }).not.toThrow();
+  });
+
+  it("a healthy store is passed through unchanged (both directions)", () => {
+    const backing = new Map<string, string>();
+    const store = safeStore({
+      getItem: (k) => backing.get(k) ?? null,
+      setItem: (k, v) => void backing.set(k, v),
+      removeItem: (k) => void backing.delete(k),
+    });
+
+    store.setItem("k", "v");
+    expect(store.getItem("k")).toBe("v");
+    store.removeItem("k");
+    expect(store.getItem("k")).toBeNull();
   });
 });
