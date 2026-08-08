@@ -51,7 +51,30 @@ harmless on name matching alone silently drops them.
 
 NOTE for the re-land (#1494): commit ``2c9f961f`` claims 1c drops the FTS arm
 from the WHERE with "IDENTICAL recall on the frozen benchmark". **That claim has
-never been tested.** These cases are what test it.
+never been tested.** These cases are what test it. (Result: it held — the
+re-land preserved recall on 7 of 8 production queries where LAT-P002 lost 3.)
+
+SCOPE LIMIT — read this before quoting a green run
+--------------------------------------------------
+**This gate proves PREDICATE recall, not production recall.** It seeds a handful
+of rows, so every query here is fast and nothing ever hits the request budget.
+
+That is not hypothetical. On the LAT-P005 re-land this gate reported
+``SEARCH RECALL 5/5`` and CI went green, while production STILL returned zero
+futures for ``us recession 2026`` — that query costs ~23.6s against the real
+table and gets dropped at the 20s deadline. **Both results were correct.** The
+predicate matches; the query is too slow to finish.
+
+So a green n/n here rules out exactly one failure mode: "the WHERE clause stopped
+matching rows it should match". It says nothing about:
+
+* timeout-induced loss, which is a function of real data volume and load;
+* ranking or ordering;
+* anything about a table larger than the seed.
+
+Catching the timeout class needs a cost bound on the query itself, not a recall
+assertion — tracked on #1494 (LAT-P006). Do not let a green run here stand in for
+that.
 """
 
 from __future__ import annotations
@@ -285,5 +308,15 @@ async def test_recall_summary(search, capsys):
         print(f"\nSEARCH RECALL: {found}/{len(cases)} found", flush=True)
         if missing:
             print(f"SEARCH RECALL MISSING: {missing}", flush=True)
+        # Printed EVERY run, next to the number, because the number is the thing
+        # people will quote. See SCOPE LIMIT in the module docstring: this gate
+        # went 5/5 green on the LAT-P005 re-land while production still returned
+        # zero futures for `us recession 2026`. Both were correct.
+        print(
+            "SEARCH RECALL SCOPE: predicate recall only, on a small seeded DB. "
+            "This gate CANNOT detect timeout-induced recall loss (#1494) — a green "
+            "n/n here does not mean production recall is intact.",
+            flush=True,
+        )
 
     assert found == len(cases), f"recall {found}/{len(cases)}, missing {missing}"
