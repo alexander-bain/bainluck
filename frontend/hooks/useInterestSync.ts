@@ -1,65 +1,101 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
 import { fetchUserPreferences, updateSportAffinities } from "@/lib/api";
-
-const STORAGE_KEY = "bainluck_categoryInterests";
-const SYNC_DONE_KEY = "bainluck_interestsSyncedToServer";
+import { resolveScope, type ClientScope } from "@/lib/clientPrincipal";
+import {
+  reconcileLegacyBucket,
+  pendingAnonymousMigration,
+  completeAnonymousMigration,
+} from "@/lib/principalStorage";
+import {
+  INTERESTS_POLICY,
+  parseInterests,
+  mergeInterests,
+  mergeIsNoop,
+  type Interests,
+} from "@/lib/categoryInterests";
 
 /**
- * One-time migration of localStorage category interests to server on first sign-in.
- * Merge strategy: takes max of localStorage and server values per category.
- * Same pattern as usePinSync.
+ * One-time migration of a device's ANONYMOUS category interests into an account
+ * on first sign-in. Merge strategy: max of device and server value per category.
+ *
+ * UX-P017 (#1496, fourth defect — found while fixing the other three, not in the
+ * original report). This hook used to read the device-global
+ * `bainluck_categoryInterests` key and merge it into whichever account signed
+ * in, gated on the device-global `bainluck_interestsSyncedToServer` flag. Two
+ * failures fell out of that, both real:
+ *
+ *   • Account A's leftover interests were max-merged into account B's SERVER
+ *     affinities the first time B signed in on A's device. A max-merge is the
+ *     worst possible direction for a wrong-provenance write: it can only raise
+ *     B's affinities, so it silently steers B's Discover feed toward A's tastes
+ *     and never corrects itself.
+ *   • Whichever account consumed the flag burned it for the device, so a later
+ *     genuine anonymous→account migration was skipped forever.
+ *
+ * Both are fixed by the same rule the pin hooks now follow: the migration source
+ * is the anonymous bucket, and a signed-in account's state is never input to it.
  */
 export function useInterestSync() {
-  const { isAuthenticated, isLoading } = useAuthContext();
-  const hasSynced = useRef(false);
+  const { isAuthenticated, isLoading, user } = useAuthContext();
+  const uid = user?.uid ?? null;
+
+  const scope = useMemo<ClientScope>(
+    () => resolveScope({ isLoading, isAuthenticated, uid }),
+    [isLoading, isAuthenticated, uid]
+  );
 
   useEffect(() => {
-    if (isLoading || !isAuthenticated || hasSynced.current) return;
+    if (typeof window === "undefined") return;
+    if (scope.kind !== "principal") return;
 
-    if (typeof window !== "undefined" && localStorage.getItem(SYNC_DONE_KEY)) {
-      hasSynced.current = true;
+    const store = window.localStorage;
+
+    // Retire the pre-partition device-global key first. Under a signed-in scope
+    // this DELETES it unread, which is precisely what stops another account's
+    // leftovers from becoming this account's migration input.
+    reconcileLegacyBucket(INTERESTS_POLICY, scope, store);
+
+    const raw = pendingAnonymousMigration(INTERESTS_POLICY, store);
+    if (raw === null) return;
+
+    const anonymous = parseInterests(raw);
+    if (Object.keys(anonymous).length === 0) {
+      completeAnonymousMigration(INTERESTS_POLICY, store);
       return;
     }
 
-    // Read localStorage interests
-    let localInterests: Record<string, number> = {};
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) localInterests = JSON.parse(stored);
-    } catch {
-      // ignore
-    }
+    let cancelled = false;
 
-    // No local interests to migrate
-    if (Object.keys(localInterests).length === 0) {
-      hasSynced.current = true;
-      if (typeof window !== "undefined") {
-        localStorage.setItem(SYNC_DONE_KEY, "true");
-      }
-      return;
-    }
-
-    // Fetch server interests, merge, save
     fetchUserPreferences()
       .then(async (prefs) => {
-        const serverInterests = prefs.sport_affinities || {};
-        const merged: Record<string, number> = { ...serverInterests };
+        // The account changed while the read was in flight — abandon rather
+        // than write this device's interests into whoever is signed in now.
+        if (cancelled) return;
 
-        for (const [key, value] of Object.entries(localInterests)) {
-          merged[key] = Math.max(merged[key] ?? 0, value);
+        const server = (prefs.sport_affinities as Interests) || {};
+        const merged = mergeInterests(server, anonymous);
+
+        if (mergeIsNoop(server, merged)) {
+          completeAnonymousMigration(INTERESTS_POLICY, store);
+          return;
         }
 
         await updateSportAffinities(merged);
-        hasSynced.current = true;
-        if (typeof window !== "undefined") {
-          localStorage.setItem(SYNC_DONE_KEY, "true");
-        }
+        if (cancelled) return;
+
+        // Consumed only after the write succeeds; a failure leaves the bucket
+        // intact so the next mount can retry.
+        completeAnonymousMigration(INTERESTS_POLICY, store);
       })
       .catch((err) => {
         console.warn("Failed to sync interests to server:", err);
       });
-  }, [isAuthenticated, isLoading]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
 }

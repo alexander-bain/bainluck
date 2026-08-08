@@ -14,6 +14,12 @@ import {
 } from "@/lib/api";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useCategoryInterests, getLevelLabel } from "@/hooks/useCategoryInterests";
+import {
+  resolvePrincipal,
+  principalKey,
+  bindToPrincipal,
+  dataForPrincipal,
+} from "@/lib/clientPrincipal";
 import { TelemetryPreferences } from "@/components/Analytics";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -74,24 +80,50 @@ export default function PreferencesPage() {
     isMaxReached: isFuturesMaxReached,
   } = usePinnedFutures();
 
-  // Fetch pinned items data
-  const { data: pinnedEvents } = useSWR(
-    pinnedIds.length > 0 ? ["prefs-pinned-events", ...pinnedIds] : null,
-    () => fetchEventsByIds(pinnedIds),
+  // The stable resolved principal for this viewer (UX-P017 / #1496). Null while
+  // auth is restoring, when signed out, and during the supersession window where
+  // a user object exists without a usable uid — every personalized record below
+  // is suppressed until it resolves.
+  //
+  // The defect this closes: these keys used to be constants ("user-preferences")
+  // or id-only tuples. An authenticated A→B switch keeps `isAuthenticated` true,
+  // so the key never changed and B read A's teams for the whole revalidation
+  // window. Same-principal renders reuse a byte-identical key, so SWR dedup is
+  // untouched.
+  const principal = resolvePrincipal({
+    isLoading: authLoading,
+    isAuthenticated,
+    uid: user?.uid,
+  });
+
+  // Fetch pinned items data. `pinnedIds` is already principal-scoped by the pin
+  // hooks; the principal is in the key as well so a cached body can never be
+  // read across accounts even when two accounts pin the same id.
+  const { data: pinnedEventsRecord } = useSWR(
+    pinnedIds.length > 0 ? principalKey("prefs", principal, "pinned-events", pinnedIds) : null,
+    async () => bindToPrincipal(principal!, await fetchEventsByIds(pinnedIds)),
   );
-  const { data: pinnedFutures } = useSWR(
-    pinnedFuturesIds.length > 0 ? ["prefs-pinned-futures", ...pinnedFuturesIds] : null,
-    () => fetchFuturesByIds(pinnedFuturesIds),
+  const pinnedEvents = dataForPrincipal(pinnedEventsRecord, principal);
+
+  const { data: pinnedFuturesRecord } = useSWR(
+    pinnedFuturesIds.length > 0
+      ? principalKey("prefs", principal, "pinned-futures", pinnedFuturesIds)
+      : null,
+    async () => bindToPrincipal(principal!, await fetchFuturesByIds(pinnedFuturesIds)),
   );
+  const pinnedFutures = dataForPrincipal(pinnedFuturesRecord, principal);
 
   // Auth'd user preferences
   const {
-    data: prefs,
+    data: prefsRecord,
     mutate: mutatePrefs,
   } = useSWR(
-    isAuthenticated ? "user-preferences" : null,
-    fetchUserPreferences,
+    principalKey("prefs", principal, "user-preferences"),
+    async () => bindToPrincipal(principal!, await fetchUserPreferences()),
   );
+  // Second, independent guard behind the key: a fetch dispatched under account A
+  // that resolves after the switch to B renders nothing rather than A's teams.
+  const prefs = dataForPrincipal(prefsRecord, principal);
 
   const handleRefresh = () => mutatePrefs();
 

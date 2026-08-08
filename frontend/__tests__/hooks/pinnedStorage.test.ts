@@ -1,231 +1,170 @@
 /**
- * Tests for pinned events/futures storage logic.
+ * Pinned events/futures storage.
  *
- * Since usePinnedEvents and usePinnedFutures are React hooks,
- * we test the underlying storage functions (loadPinnedIds, savePinnedIds)
- * and the core logic patterns directly.
+ * Rewritten in UX-P017 (#1496). The previous version of this file defined its
+ * own `loadPinnedIds`/`savePinnedIds` and then asserted on inline array
+ * operations (`ids.push(4)` → `[1,2,3,4]`), so it never imported a single line
+ * of production code and would have passed unchanged if the pin hooks had been
+ * deleted outright. It was green throughout the entire life of the P1
+ * cross-account write it nominally covered.
  *
- * The hooks are thin wrappers around useState + localStorage,
- * so testing the storage contract gives us high confidence.
+ * It now exercises the real modules, and carries the dimension the old file was
+ * missing: pins belong to an OWNER, not to a device.
  */
 
-// Mock localStorage
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: jest.fn((key: string) => store[key] || null),
-    setItem: jest.fn((key: string, value: string) => { store[key] = value; }),
-    removeItem: jest.fn((key: string) => { delete store[key]; }),
-    clear: jest.fn(() => { store = {}; }),
-    _getStore: () => store,
-  };
-})();
+import { parseIds, serializeIds, mergeForMigration } from "@/lib/pinnedIds";
+import {
+  bucketKeyFor,
+  legacyKey,
+  type BucketPolicy,
+  type KeyValueStore,
+} from "@/lib/principalStorage";
+import { resolveScope } from "@/lib/clientPrincipal";
 
-Object.defineProperty(global, 'localStorage', { value: localStorageMock });
-
-const EVENTS_KEY = 'bainluck_pinnedEvents';
-const FUTURES_KEY = 'bainluck_pinnedFutures';
+const EVENTS_POLICY: BucketPolicy = { base: "bainluck_pinnedEvents" };
+const FUTURES_POLICY: BucketPolicy = { base: "bainluck_pinnedFutures" };
 const MAX_PINNED = 6;
 
-// Helper functions that mirror the hook logic
-function loadPinnedIds(key: string): number[] {
-  try {
-    const stored = localStorage.getItem(key);
-    if (!stored) return [];
-    const parsed = JSON.parse(stored);
-    if (Array.isArray(parsed) && parsed.every((id: unknown) => typeof id === 'number')) {
-      return parsed;
-    }
-    return [];
-  } catch {
-    return [];
+const SCOPE_A = resolveScope({ isLoading: false, isAuthenticated: true, uid: "acct-a" });
+const SCOPE_B = resolveScope({ isLoading: false, isAuthenticated: true, uid: "acct-b" });
+const SCOPE_ANON = resolveScope({ isLoading: false, isAuthenticated: false, uid: null });
+const SCOPE_PENDING = resolveScope({ isLoading: true, isAuthenticated: false, uid: null });
+
+class FakeStore implements KeyValueStore {
+  private map = new Map<string, string>();
+  getItem(key: string) {
+    return this.map.has(key) ? (this.map.get(key) as string) : null;
+  }
+  setItem(key: string, value: string) {
+    this.map.set(key, value);
+  }
+  removeItem(key: string) {
+    this.map.delete(key);
   }
 }
 
-function savePinnedIds(key: string, ids: number[]): void {
-  localStorage.setItem(key, JSON.stringify(ids));
+/** Store ids into the bucket the given scope owns. */
+function savePins(policy: BucketPolicy, scope: ReturnType<typeof resolveScope>, store: FakeStore, ids: number[]) {
+  const key = bucketKeyFor(policy, scope);
+  if (!key) throw new Error("no bucket for an unresolved scope — the hook must not write");
+  store.setItem(key, serializeIds(ids));
 }
 
-beforeEach(() => {
-  localStorageMock.clear();
-  jest.clearAllMocks();
-});
+/** Read ids from the bucket the given scope owns. */
+function loadPins(policy: BucketPolicy, scope: ReturnType<typeof resolveScope>, store: FakeStore): number[] {
+  const key = bucketKeyFor(policy, scope);
+  if (!key) return [];
+  return parseIds(store.getItem(key));
+}
 
-// =============================================================================
-// Load/Save Operations
-// =============================================================================
-describe('loadPinnedIds', () => {
-  test('returns empty array when nothing stored', () => {
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+describe("parsing stored pins", () => {
+  it("returns empty when nothing is stored", () => {
+    expect(parseIds(null)).toEqual([]);
   });
 
-  test('loads valid array', () => {
-    localStorage.setItem(EVENTS_KEY, JSON.stringify([1, 2, 3]));
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([1, 2, 3]);
+  it("loads a valid array", () => {
+    expect(parseIds(JSON.stringify([1, 2, 3]))).toEqual([1, 2, 3]);
   });
 
-  test('returns empty array for invalid JSON', () => {
-    localStorage.setItem(EVENTS_KEY, 'not valid json');
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("returns empty for invalid JSON", () => {
+    expect(parseIds("not valid json")).toEqual([]);
   });
 
-  test('returns empty array for non-array JSON', () => {
-    localStorage.setItem(EVENTS_KEY, JSON.stringify({ id: 1 }));
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("returns empty for non-array JSON", () => {
+    expect(parseIds(JSON.stringify({ id: 1 }))).toEqual([]);
   });
 
-  test('returns empty array for array with non-numbers', () => {
-    localStorage.setItem(EVENTS_KEY, JSON.stringify([1, 'two', 3]));
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("returns empty for an array with non-numbers", () => {
+    expect(parseIds(JSON.stringify([1, "two", 3]))).toEqual([]);
   });
 
-  test('returns empty array for null value', () => {
-    localStorage.setItem(EVENTS_KEY, 'null');
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("returns empty for a null value", () => {
+    expect(parseIds("null")).toEqual([]);
   });
 
-  test('handles empty array', () => {
-    localStorage.setItem(EVENTS_KEY, JSON.stringify([]));
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("handles an empty array", () => {
+    expect(parseIds(JSON.stringify([]))).toEqual([]);
   });
 });
 
-describe('savePinnedIds', () => {
-  test('saves array to localStorage', () => {
-    savePinnedIds(EVENTS_KEY, [1, 2, 3]);
-    expect(localStorage.setItem).toHaveBeenCalledWith(EVENTS_KEY, '[1,2,3]');
+describe("round-trip through an owner's bucket", () => {
+  it("save then load preserves data", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_A, store, [10, 20, 30]);
+    expect(loadPins(EVENTS_POLICY, SCOPE_A, store)).toEqual([10, 20, 30]);
   });
 
-  test('saves empty array', () => {
-    savePinnedIds(EVENTS_KEY, []);
-    expect(localStorage.setItem).toHaveBeenCalledWith(EVENTS_KEY, '[]');
-  });
-});
+  it("events and futures stay independent", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_A, store, [1, 2, 3]);
+    savePins(FUTURES_POLICY, SCOPE_A, store, [10, 20]);
 
-// =============================================================================
-// Pin/Unpin Logic
-// =============================================================================
-describe('pin logic', () => {
-  test('pin adds event to list', () => {
-    const ids = [1, 2, 3];
-    const eventId = 4;
-    if (!ids.includes(eventId) && ids.length < MAX_PINNED) {
-      ids.push(eventId);
-    }
-    expect(ids).toEqual([1, 2, 3, 4]);
+    expect(loadPins(EVENTS_POLICY, SCOPE_A, store)).toEqual([1, 2, 3]);
+    expect(loadPins(FUTURES_POLICY, SCOPE_A, store)).toEqual([10, 20]);
   });
 
-  test('pin ignores duplicate', () => {
-    const ids = [1, 2, 3];
-    const eventId = 2;
-    const originalLength = ids.length;
-    if (!ids.includes(eventId) && ids.length < MAX_PINNED) {
-      ids.push(eventId);
-    }
-    expect(ids.length).toBe(originalLength);
+  it("clearing stores an empty array", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_A, store, [1, 2, 3]);
+    savePins(EVENTS_POLICY, SCOPE_A, store, []);
+    expect(loadPins(EVENTS_POLICY, SCOPE_A, store)).toEqual([]);
   });
 
-  test('pin rejected at max', () => {
-    const ids = [1, 2, 3, 4, 5, 6];
-    const eventId = 7;
-    let success = false;
-    if (!ids.includes(eventId) && ids.length < MAX_PINNED) {
-      ids.push(eventId);
-      success = true;
-    }
-    expect(success).toBe(false);
-    expect(ids.length).toBe(6);
-  });
-
-  test('unpin removes event from list', () => {
-    const ids = [1, 2, 3, 4];
-    const result = ids.filter(id => id !== 2);
-    expect(result).toEqual([1, 3, 4]);
-  });
-
-  test('unpin non-existent event is no-op', () => {
-    const ids = [1, 2, 3];
-    const result = ids.filter(id => id !== 99);
-    expect(result).toEqual([1, 2, 3]);
+  it("an anonymous visitor keeps their own pins across loads", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_ANON, store, [4, 5]);
+    expect(loadPins(EVENTS_POLICY, SCOPE_ANON, store)).toEqual([4, 5]);
   });
 });
 
-// =============================================================================
-// Toggle Logic
-// =============================================================================
-describe('toggle logic', () => {
-  test('toggle pins unpinned event', () => {
-    let ids = [1, 2];
-    const eventId = 3;
-    if (ids.includes(eventId)) {
-      ids = ids.filter(id => id !== eventId);
-    } else if (ids.length < MAX_PINNED) {
-      ids = [...ids, eventId];
-    }
-    expect(ids).toEqual([1, 2, 3]);
+describe("pins belong to an owner, not to a device (#1496)", () => {
+  it("account B does not read account A's pins", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_A, store, [1, 2, 3]);
+
+    expect(loadPins(EVENTS_POLICY, SCOPE_B, store)).toEqual([]);
+    expect(loadPins(EVENTS_POLICY, SCOPE_A, store)).toEqual([1, 2, 3]);
   });
 
-  test('toggle unpins pinned event', () => {
-    let ids = [1, 2, 3];
-    const eventId = 2;
-    if (ids.includes(eventId)) {
-      ids = ids.filter(id => id !== eventId);
-    } else if (ids.length < MAX_PINNED) {
-      ids = [...ids, eventId];
-    }
-    expect(ids).toEqual([1, 3]);
-  });
-});
-
-// =============================================================================
-// Max Limit
-// =============================================================================
-describe('max pinned limit', () => {
-  test('isMaxReached is true at 6 events', () => {
-    const ids = [1, 2, 3, 4, 5, 6];
-    expect(ids.length >= MAX_PINNED).toBe(true);
+  it("an account does not read the anonymous bucket as its own", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_ANON, store, [7, 8]);
+    expect(loadPins(EVENTS_POLICY, SCOPE_A, store)).toEqual([]);
   });
 
-  test('isMaxReached is false below 6', () => {
-    const ids = [1, 2, 3, 4, 5];
-    expect(ids.length >= MAX_PINNED).toBe(false);
+  it("nothing is readable or writable while identity is unresolved", () => {
+    const store = new FakeStore();
+    expect(bucketKeyFor(EVENTS_POLICY, SCOPE_PENDING)).toBeNull();
+    expect(loadPins(EVENTS_POLICY, SCOPE_PENDING, store)).toEqual([]);
+    expect(() => savePins(EVENTS_POLICY, SCOPE_PENDING, store, [1])).toThrow();
+  });
+
+  it("no owner writes to the pre-partition device-global key", () => {
+    const store = new FakeStore();
+    savePins(EVENTS_POLICY, SCOPE_A, store, [1]);
+    savePins(EVENTS_POLICY, SCOPE_B, store, [2]);
+    savePins(EVENTS_POLICY, SCOPE_ANON, store, [3]);
+
+    expect(store.getItem(legacyKey(EVENTS_POLICY))).toBeNull();
   });
 });
 
-// =============================================================================
-// Round-trip (save then load)
-// =============================================================================
-describe('round-trip', () => {
-  test('save then load preserves data', () => {
-    const original = [10, 20, 30];
-    savePinnedIds(EVENTS_KEY, original);
-    const loaded = loadPinnedIds(EVENTS_KEY);
-    expect(loaded).toEqual(original);
+describe("pin / unpin / toggle, against the merge cap", () => {
+  it("respects the max when adopting migrated pins", () => {
+    const { merged, toPush } = mergeForMigration([1, 2, 3, 4, 5], [6, 7], MAX_PINNED);
+    expect(merged).toHaveLength(MAX_PINNED);
+    expect(toPush).toEqual([6]);
   });
 
-  test('save then load works for futures key', () => {
-    const original = [100, 200];
-    savePinnedIds(FUTURES_KEY, original);
-    const loaded = loadPinnedIds(FUTURES_KEY);
-    expect(loaded).toEqual(original);
+  it("ignores a duplicate", () => {
+    const { merged, toPush } = mergeForMigration([1, 2, 3], [2], MAX_PINNED);
+    expect(merged).toEqual([1, 2, 3]);
+    expect(toPush).toEqual([]);
   });
 
-  test('events and futures are independent', () => {
-    savePinnedIds(EVENTS_KEY, [1, 2, 3]);
-    savePinnedIds(FUTURES_KEY, [10, 20]);
-
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([1, 2, 3]);
-    expect(loadPinnedIds(FUTURES_KEY)).toEqual([10, 20]);
-  });
-});
-
-// =============================================================================
-// Clear All
-// =============================================================================
-describe('clearAll', () => {
-  test('clearing sets empty array', () => {
-    savePinnedIds(EVENTS_KEY, [1, 2, 3]);
-    savePinnedIds(EVENTS_KEY, []);
-    expect(loadPinnedIds(EVENTS_KEY)).toEqual([]);
+  it("adopts nothing when the account is already at the max", () => {
+    const { merged, toPush } = mergeForMigration([1, 2, 3, 4, 5, 6], [7], MAX_PINNED);
+    expect(merged).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(toPush).toEqual([]);
   });
 });
