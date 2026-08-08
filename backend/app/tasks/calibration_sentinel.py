@@ -46,6 +46,7 @@ from app.tasks.base import get_task_session
 from app.tasks.precompute_calibration import (
     _compute_horizon_mce,
     binary_is_malformed,
+    kalshi_prop_threshold_exclude_sql,
     market_is_esports_multi_bundle,
     market_needs_mex_normalization,
 )
@@ -212,7 +213,11 @@ def classify_coverage(
 
     ``overlap_fractions`` maps a known-class key to the fraction of the cohort's
     outcomes it covers (esports_multi_bundle / malformed_binary / mex_normalization
-    / void / heuristic / poly_placeholder). The soccer 2-way draw class is
+    / void / heuristic / poly_placeholder / kalshi_prop_threshold). The vocabulary
+    must stay a SUPERSET of what the curve actually excludes: any exclusion the
+    curve ships but this cannot name reads as a fully unexplained break and files
+    a P1 against a cohort that is already handled (CAL-P013 — six such issues were
+    open at once). The soccer 2-way draw class is
     structural (an events-table soccer moneyline), so it's keyed off category +
     provenance rather than a per-outcome flag.
     """
@@ -273,6 +278,11 @@ WITH base AS (
         fm.created_at AS created_at,
         fo.is_winner AS is_winner,
         fo.resolution_source AS resolution_source,
+        -- CAL-P013: the SHIPPED prop-threshold exclusion, rendered from the
+        -- curve's own canonical predicate rather than re-typed here. Without it
+        -- the sentinel cannot EXPLAIN a cohort the curve already drops, and
+        -- files it as a fully unexplained P1 break.
+        {prop_threshold} AS is_kalshi_prop_threshold,
         COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
         COUNT(*) OVER (PARTITION BY fo.market_id) AS n_outcomes,
         SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) OVER (PARTITION BY fo.market_id) AS n_winners,
@@ -300,6 +310,7 @@ SELECT
     SUM(CASE WHEN mutually_exclusive AND n_outcomes >= 3 AND n_winners = 1 AND cp_sum > 1.15 THEN 1 ELSE 0 END) AS mex_norm_n,
     SUM(CASE WHEN resolution_source IN {void_in} THEN 1 ELSE 0 END) AS void_n,
     SUM(CASE WHEN resolution_source IN {heuristic_in} THEN 1 ELSE 0 END) AS heuristic_n,
+    SUM(CASE WHEN is_kalshi_prop_threshold THEN 1 ELSE 0 END) AS kalshi_prop_threshold_n,
     MIN(created_at) AS min_created_at
 FROM base
 GROUP BY 1, 2, 3, 4, 5, 6
@@ -344,6 +355,7 @@ SELECT
     0 AS mex_norm_n,
     0 AS void_n,
     0 AS heuristic_n,
+    0 AS kalshi_prop_threshold_n,
     NULL::timestamptz AS min_created_at
 FROM sides
 GROUP BY category, bucket
@@ -361,6 +373,15 @@ def _in_list(items: tuple[str, ...]) -> str:
 _FUTURES_MINING_SQL = _FUTURES_MINING_SQL.format(
     void_in=_in_list(_VOID_SOURCES),
     heuristic_in=_in_list(_HEURISTIC_SOURCES),
+    # CAL-P013: imported, never re-typed. If the curve's band or regex moves,
+    # the sentinel's explanation moves with it in the same commit.
+    prop_threshold=kalshi_prop_threshold_exclude_sql(
+        source="fm.source",
+        name="fo.name",
+        category="COALESCE(fm.llm_sport_category, 'unknown')",
+        calibration_probability="fo.calibration_probability",
+        opening_probability="fo.opening_probability",
+    ),
 )
 
 
@@ -380,6 +401,7 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     cohort["overlap_counts"]["mex_normalization"] += row["mex_norm_n"]
     cohort["overlap_counts"]["void"] += row["void_n"]
     cohort["overlap_counts"]["heuristic"] += row["heuristic_n"]
+    cohort["overlap_counts"]["kalshi_prop_threshold"] += row["kalshi_prop_threshold_n"]
     mca = row.get("min_created_at")
     if mca is not None:
         cur = cohort["min_created_at"]
@@ -401,6 +423,7 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
             "esports_multi_bundle": 0,
             "mex_normalization": 0,
             "void": 0,
+            "kalshi_prop_threshold": 0,
             "heuristic": 0,
         },
         "min_created_at": None,
