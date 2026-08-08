@@ -1,10 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
 import { fetchUserPreferences, updateSportAffinities } from "@/lib/api";
+import { resolveScope, type ClientScope } from "@/lib/clientPrincipal";
+import { bucketKeyFor, reconcileLegacyBucket } from "@/lib/principalStorage";
+import {
+  INTERESTS_POLICY,
+  parseInterests,
+  serializeInterests,
+  type Interests,
+} from "@/lib/categoryInterests";
+import { createPrincipalDebouncer } from "@/lib/principalDebounce";
 
-const STORAGE_KEY = "bainluck_categoryInterests";
+const SAVE_DEBOUNCE_MS = 2000;
 
 /**
  * Interest levels — maps to the onboarding 4-level selector.
@@ -33,71 +42,129 @@ export function getLevelLabel(value: number): string {
   return "Nah";
 }
 
-function loadLocalInterests(): Record<string, number> {
-  if (typeof window === "undefined") return {};
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return {};
-    return JSON.parse(stored);
-  } catch {
-    return {};
-  }
-}
-
-function saveLocalInterests(interests: Record<string, number>) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(interests));
-}
-
 /**
  * Hook for reading/writing category interests.
  * Auth'd users: reads/writes via API (sport affinities).
- * Anonymous users: reads/writes via localStorage.
+ * Anonymous users: reads/writes via the device's anonymous bucket.
+ *
+ * Account boundary (UX-P017 / #1496): state is bound to the owner it was loaded
+ * for, and the debounced server save is cancelled the moment the owner changes.
+ * Before this, a 2s save holding account A's map fired after a switch to B and
+ * was written to B with B's token — a durable cross-account write, not a stale
+ * read.
  */
+interface OwnedInterests {
+  bucket: string | null;
+  interests: Interests;
+}
+
 export function useCategoryInterests() {
-  const { isAuthenticated, isLoading: authLoading } = useAuthContext();
-  const [interests, setInterestsState] = useState<Record<string, number>>({});
+  const { isAuthenticated, isLoading: authLoading, user } = useAuthContext();
+  const uid = user?.uid ?? null;
+
+  const scope = useMemo<ClientScope>(
+    () => resolveScope({ isLoading: authLoading, isAuthenticated, uid }),
+    [authLoading, isAuthenticated, uid]
+  );
+  const bucket = bucketKeyFor(INTERESTS_POLICY, scope);
+
+  // Interests carry the owner they belong to, so the render between an account
+  // change and the reload effect shows nothing rather than the previous account.
+  const [state, setState] = useState<OwnedInterests>({ bucket: null, interests: {} });
   const [isLoading, setIsLoading] = useState(true);
-  const saveTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Load initial data
+  const debouncerRef = useRef(createPrincipalDebouncer<Interests>(SAVE_DEBOUNCE_MS));
+
+  // A synchronous mirror of `state`. Two thumb clicks in the same tick must
+  // compose, and reading React state directly would give the pre-click value
+  // for the second one. Every write goes through `publish` so the two cannot
+  // drift.
+  const stateRef = useRef<OwnedInterests>(state);
+  const publish = useCallback((next: OwnedInterests) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
+
+  const interests = state.bucket === bucket && bucket !== null ? state.interests : {};
+
+  // Cancel any save that no longer belongs to the current owner. This runs on
+  // every identity change, which is the account-switch guard; the unmount
+  // cleanup covers navigating away mid-debounce.
   useEffect(() => {
-    if (authLoading) return;
+    const debouncer = debouncerRef.current;
+    debouncer.retarget(scope.kind === "principal" ? scope.principal : null);
+  }, [scope]);
 
-    if (isAuthenticated) {
-      fetchUserPreferences()
-        .then((prefs) => {
-          setInterestsState(prefs.sport_affinities || {});
-          setIsLoading(false);
-        })
-        .catch(() => {
-          setIsLoading(false);
-        });
-    } else {
-      setInterestsState(loadLocalInterests());
-      setIsLoading(false);
+  useEffect(() => {
+    const debouncer = debouncerRef.current;
+    return () => debouncer.cancel();
+  }, []);
+
+  // Load for the current owner.
+  useEffect(() => {
+    if (scope.kind === "pending") {
+      publish({ bucket: null, interests: {} });
+      setIsLoading(true);
+      return;
     }
-  }, [isAuthenticated, authLoading]);
 
-  const setInterest = useCallback((category: string, value: number) => {
-    setInterestsState(prev => {
-      const updated = { ...prev, [category]: value };
+    const store = typeof window === "undefined" ? null : window.localStorage;
+    if (store) reconcileLegacyBucket(INTERESTS_POLICY, scope, store);
 
-      if (isAuthenticated) {
-        // Debounce server saves to batch rapid thumb clicks
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-          updateSportAffinities(updated).catch((err) => {
+    const key = bucketKeyFor(INTERESTS_POLICY, scope);
+    if (!key) return;
+
+    if (scope.kind === "anonymous") {
+      publish({ bucket: key, interests: parseInterests(store?.getItem(key) ?? null) });
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+
+    fetchUserPreferences()
+      .then((prefs) => {
+        // A response that resolved after the account changed must not paint.
+        if (cancelled) return;
+        publish({ bucket: key, interests: (prefs.sport_affinities as Interests) || {} });
+        setIsLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+
+  const setInterest = useCallback(
+    (category: string, value: number) => {
+      // No stable owner yet — refuse rather than attribute the edit to the
+      // wrong account.
+      if (!bucket) return;
+
+      const current = stateRef.current.bucket === bucket ? stateRef.current.interests : {};
+      const updated = { ...current, [category]: value };
+      publish({ bucket, interests: updated });
+
+      if (scope.kind === "principal") {
+        // Debounce server saves to batch rapid thumb clicks. The save is owned
+        // by this principal; if the account changes before it fires, the
+        // `retarget` effect above drops it before it is ever dispatched.
+        debouncerRef.current.schedule(scope.principal, updated, (payload) => {
+          updateSportAffinities(payload).catch((err) => {
             console.warn("Failed to save interests:", err);
           });
-        }, 2000);
-      } else {
-        saveLocalInterests(updated);
+        });
+      } else if (typeof window !== "undefined") {
+        window.localStorage.setItem(bucket, serializeInterests(updated));
       }
-
-      return updated;
-    });
-  }, [isAuthenticated]);
+    },
+    [bucket, scope, publish]
+  );
 
   return { interests, setInterest, isLoading };
 }
