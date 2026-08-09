@@ -1295,3 +1295,5 @@ failure this document already records happening twice.
 - [005](rulings/005-extract-on-touch.md) — 2026-08-09 — Extract-on-touch (Alex)
 - [006](rulings/006-process-artifact-hygiene.md) — 2026-08-09 — Process artifact hygiene (Alex)
 - [007](rulings/007-native-riders.md) — 2026-08-09 — Native riders, and the deferred slot rotation (Alex)
+- [008](rulings/008-lock-validity-is-pid-alive.md) — 2026-08-09 — Lock validity is the owner pid being alive (Alex)
+- [009](rulings/009-precompute-calibration-freeze.md) — 2026-08-09 — precompute_calibration.py is frozen until the publish converges (Alex)
