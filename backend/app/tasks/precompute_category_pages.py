@@ -23,18 +23,35 @@ STALE_CACHE_TTL = 86400  # 24 hours — served when primary cache is cold
 
 
 async def _precompute_politics():
-    """Build the politics response and cache it."""
+    """Build the politics response and cache it.
+
+    Writes the ``:stale`` mirror alongside the primary key, as entertainment and
+    economics already did. Politics was the one page in the family missing it, so
+    a lapsed 2h primary key had nothing behind it and every visitor paid the full
+    rebuild — 10.4s here on 2026-08-09 against a 294ms cache hit (#1607).
+
+    Also records per-stage wall times into the run report, so the dominant stage
+    of that rebuild is attributable from the admin rail instead of guessed. This
+    build is the same code the request path falls back to, so timing it here times
+    the user's worst case.
+    """
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
     from app.routes.politics import get_politics
 
+    stage_ms: dict = {}
     async with get_task_session() as db:
-        response = await get_politics(db)
+        response = await get_politics(db, stage_ms=stage_ms)
 
     rc = get_redis_client()
-    rc.set(f"{CACHE_PREFIX}politics", json.dumps(response, default=str), ex=CACHE_TTL)
-    logger.info("Cached politics category page (%d markets)", response.get("total_markets", 0))
-    return response.get("total_markets", 0)
+    payload = json.dumps(response, default=str)
+    rc.set(f"{CACHE_PREFIX}politics", payload, ex=CACHE_TTL)
+    rc.set(f"{CACHE_PREFIX}politics:stale", payload, ex=STALE_CACHE_TTL)
+    total = response.get("total_markets", 0)
+    logger.info(
+        "Cached politics category page (%d markets) stages=%s", total, stage_ms
+    )
+    return {"total_markets": total, "stage_ms": stage_ms}
 
 
 async def _precompute_entertainment():

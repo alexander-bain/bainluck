@@ -10,6 +10,7 @@ Single endpoint returns the full response consumed by the frontend.
 import json
 import logging
 import re
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -510,26 +511,103 @@ def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
 # Main endpoint
 # ---------------------------------------------------------------------------
 
-@router.get("")
-async def get_politics_cached(db: AsyncSession = Depends(get_db)):
-    """Return all politics market data (Redis-cached, precomputed hourly)."""
+POLITICS_CACHE_KEY = "bainluck:category:politics"
+POLITICS_STALE_KEY = "bainluck:category:politics:stale"
+# 24h, matching STALE_CACHE_TTL in tasks/precompute_category_pages.py. The primary
+# key lives 2h against an hourly beat; the mirror has to outlive a beat outage, not
+# a beat gap, so it is an order of magnitude longer on purpose.
+POLITICS_STALE_TTL = 86400
+
+
+async def _write_politics_stale(response: dict) -> None:
+    """Mirror a freshly-built response so the NEXT cold request is cheap.
+
+    Never raises: a failed mirror write must not turn a good response into a 500.
+    """
     from app.tasks.redis_state import get_async_redis_client
 
     try:
         rc = get_async_redis_client()
-        cached = await rc.get("bainluck:category:politics")
-        await rc.aclose()
-        if cached:
-            return json.loads(cached)
+        try:
+            await rc.set(
+                POLITICS_STALE_KEY,
+                json.dumps(response, default=str),
+                ex=POLITICS_STALE_TTL,
+            )
+        finally:
+            await rc.aclose()
     except Exception:
-        pass  # Fall through to live query
-
-    return await get_politics(db)
+        logger.warning("Politics: stale mirror write failed", exc_info=True)
 
 
-async def get_politics(db: AsyncSession):
-    """Build politics response from database (called by precompute task + fallback)."""
+@router.get("")
+async def get_politics_cached(db: AsyncSession = Depends(get_db)):
+    """Return all politics market data (Redis-cached, precomputed hourly).
+
+    Three tiers in order: the hourly primary key, a 24h stale mirror, then a live
+    rebuild. Politics was the only page in this family with no middle tier, so a
+    lapsed primary key sent every visitor through the full rebuild — measured at
+    **10.4s** by the warmer's own rail on 2026-08-09, against a 294ms cache hit
+    (#1607). The mirror converts that outage from "ten seconds" to "a few hours
+    stale", which on a page of multi-week election markets is not a visible
+    difference.
+
+    Deliberately NO request deadline here. The sibling economics route wraps its
+    rebuild in ``asyncio.wait_for(..., 25)`` and returns ``{"themes": {}}`` when it
+    fires; LAT-P002 was reverted from master for exactly that shape — a bound that
+    trips on a healthy build serves a confidently wrong answer. Slow is a worse
+    answer than fast; empty is a worse answer than slow.
+    """
+    from app.tasks.redis_state import get_async_redis_client
+
+    # "Redis said no such key" and "Redis did not answer" are different facts and
+    # must not collapse into one silent fall-through (gotcha #53).
+    cache_state = "miss"
+    try:
+        rc = get_async_redis_client()
+        try:
+            cached = await rc.get(POLITICS_CACHE_KEY)
+            if cached:
+                return json.loads(cached)
+            stale = await rc.get(POLITICS_STALE_KEY)
+            if stale:
+                logger.info("Politics: primary cache miss — serving stale mirror")
+                return json.loads(stale)
+        finally:
+            # The previous version leaked the connection whenever the GET raised.
+            await rc.aclose()
+    except Exception:
+        cache_state = "unavailable"
+        logger.warning("Politics: cache read failed", exc_info=True)
+
+    # Both tiers empty. Loud, because this is the 10s path and the old code took
+    # it in total silence — which is why #1607 read a dead cache as a slow query.
+    logger.warning(
+        "Politics: cache %s — rebuilding live on the request path", cache_state
+    )
+    response = await get_politics(db)
+    await _write_politics_stale(response)
+    return response
+
+
+async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
+    """Build politics response from database (called by precompute task + fallback).
+
+    ``stage_ms`` is an optional out-parameter. When a dict is passed, per-stage wall
+    times are recorded into it. The hourly warmer passes one, so the cold build's
+    dominant stage is readable from ``/api/admin/category-precompute/last`` — no
+    debug flag on the public route, and no production ``EXPLAIN`` rail, which this
+    environment does not have. Attribution is measured where the build already
+    runs rather than inferred from the outside.
+    """
     now = datetime.now(timezone.utc)
+
+    def _mark(name: str, t0: float) -> float:
+        if stage_ms is not None:
+            stage_ms[name] = round((time.perf_counter() - t0) * 1000, 1)
+        return time.perf_counter()
+
+    _t = time.perf_counter()
 
     result = await db.execute(
         select(FuturesMarket)
@@ -544,10 +622,12 @@ async def get_politics(db: AsyncSession):
         )
     )
     all_markets = list(result.scalars().unique().all())
+    _t = _mark("market_query", _t)
 
     # Collapse Polymarket sub-markets sharing a group_id into a single
     # representative market with merged outcomes (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
+    _t = _mark("group_by_group_id", _t)
 
     def _leader_prob(m):
         outcomes = sorted(
@@ -570,6 +650,7 @@ async def get_politics(db: AsyncSession):
             continue
         theme = _classify_theme(m)
         themed[theme].append(m)
+    _t = _mark("theme_classify", _t)
 
     def build_section(markets: list, limit: int = 10) -> list[dict]:
         rows = []
@@ -587,6 +668,7 @@ async def get_politics(db: AsyncSession):
     presidential, outcome_id_map = _build_presidential(
         themed.get("presidential", [])
     )
+    _t = _mark("presidential", _t)
 
     # ── Presidential candidate history (30d, downsampled to 50pts) ──
     if outcome_id_map:
@@ -627,54 +709,61 @@ async def get_politics(db: AsyncSession):
                 c["history"] = [
                     {"t": t.isoformat(), "p": p} for t, p in raw
                 ]
+    _t = _mark("presidential_history", _t)
 
     # Congressional — with chamber control + senate map
     congressional_markets = themed.get("congressional", [])
     chamber_control = _find_chamber_control(congressional_markets)
     senate_map = _build_senate_map(congressional_markets)
+    _t = _mark("congressional", _t)
 
     # Cross-source spotlight
     cross_source = find_cross_source_markets(
         list(all_markets), market_row_fn=_cross_source_row_fn
     )
+    _t = _mark("cross_source", _t)
 
     total = len(all_markets)
+
+    themes = {
+        "presidential": presidential,
+        "congressional": {
+            "count": len(congressional_markets),
+            "markets": build_section(congressional_markets),
+            "chamber_control": chamber_control,
+            "senate_map": senate_map if senate_map else None,
+        },
+        "gubernatorial": {
+            "count": len(themed.get("gubernatorial", [])),
+            "markets": build_section(themed.get("gubernatorial", [])),
+        },
+        "policy": {
+            "count": len(themed.get("policy", [])),
+            "markets": build_section(themed.get("policy", []), 12),
+        },
+        "scotus": {
+            "count": len(themed.get("scotus", [])),
+            "markets": build_section(themed.get("scotus", [])),
+        },
+        "international": {
+            "count": len(themed.get("international", [])),
+            "markets": build_section(themed.get("international", []), 12),
+        },
+        "other": {
+            "count": len(themed.get("other", [])),
+            "markets": build_section(themed.get("other", []), 6),
+        },
+    }
+    by_source = {
+        "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
+        "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),
+    }
+    _mark("sections", _t)
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
-        "themes": {
-            "presidential": presidential,
-            "congressional": {
-                "count": len(congressional_markets),
-                "markets": build_section(congressional_markets),
-                "chamber_control": chamber_control,
-                "senate_map": senate_map if senate_map else None,
-            },
-            "gubernatorial": {
-                "count": len(themed.get("gubernatorial", [])),
-                "markets": build_section(themed.get("gubernatorial", [])),
-            },
-            "policy": {
-                "count": len(themed.get("policy", [])),
-                "markets": build_section(themed.get("policy", []), 12),
-            },
-            "scotus": {
-                "count": len(themed.get("scotus", [])),
-                "markets": build_section(themed.get("scotus", [])),
-            },
-            "international": {
-                "count": len(themed.get("international", [])),
-                "markets": build_section(themed.get("international", []), 12),
-            },
-            "other": {
-                "count": len(themed.get("other", [])),
-                "markets": build_section(themed.get("other", []), 6),
-            },
-        },
+        "themes": themes,
         "cross_source": cross_source,
-        "by_source": {
-            "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
-            "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),
-        },
+        "by_source": by_source,
     }
