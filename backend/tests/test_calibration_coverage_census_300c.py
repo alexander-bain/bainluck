@@ -358,25 +358,43 @@ class TestEveryBuildStatementParses:
 
 
 class TestShipsOffUntilTheFuturesPhaseHasRoom:
-    """The census measures inside a phase that is already over budget.
+    """The switch's shipped state, and the guarantee that OFF costs nothing.
 
-    Deploy-day phase ledger: plan ``infeasible``, ``infeasible_phases:
-    ["futures"]``, futures floors 1351697/1351955/1299533 ms against a 1380000 ms
-    deadline, last run CANCELLED at 1299533 ms with nothing published. So the
-    switch ships OFF, and OFF has to cost the build literally nothing — not
-    "about the same", nothing.
+    **CAL-P020 (2026-08-09) flipped the shipped state, deliberately.** This class
+    was written when the census measured inside a phase that was already over
+    budget — deploy-day ledger: plan ``infeasible``, futures floors
+    1351697/1351955/1299533 ms against a 1380000 ms deadline, nothing published.
+    OFF was the honest answer then.
+
+    CAL-P016 gave the phase a way to fit (staged, resumable chunks) and switched
+    it on, which removed the budget objection and replaced it with a scoping one:
+    ``_main_futures_sql`` refused the census under a frozen scope, so with
+    staging the only path that can finish, the census could never run at all.
+    CAL-P020 chunk-scopes the universe and the switch goes on.
+
+    What does NOT change is the second half of this class's subject: OFF must
+    still cost the build literally nothing — not "about the same", nothing. Those
+    tests now monkeypatch the switch off rather than rely on the shipped value,
+    which is strictly better, since they were only ever meaningful about the OFF
+    state and previously depended on it being the default.
     """
 
-    def test_it_ships_off(self):
-        assert pc.COVERAGE_CENSUS_ENABLED is False
+    def test_it_ships_on_now_that_the_universe_is_chunk_scoped(self):
+        assert pc.COVERAGE_CENSUS_ENABLED is True
+        # The reason it can: the staged scope no longer rescans the world.
+        assert "JOIN market_info mi ON mi.market_id = fo.market_id" in (
+            pc._coverage_universe_cte(chunk_scoped=True)
+        )
 
-    def test_off_emits_no_sql_at_all(self):
+    def test_off_emits_no_sql_at_all(self, monkeypatch):
+        monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", False)
         assert pc._coverage_bridge_ctes() == ""
         assert pc._coverage_bridge_select_columns() == ""
         assert pc._coverage_bridge_join() == ""
 
     @pytest.mark.asyncio
-    async def test_off_leaves_the_build_statement_free_of_the_census(self):
+    async def test_off_leaves_the_build_statement_free_of_the_census(self, monkeypatch):
+        monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", False)
         captured: list[str] = []
 
         class _Recorder(_StubDB):
@@ -435,7 +453,8 @@ class TestShipsOffUntilTheFuturesPhaseHasRoom:
         assert restored == off[0]
 
     @pytest.mark.asyncio
-    async def test_off_reports_disabled_rather_than_zero_or_broken(self):
+    async def test_off_reports_disabled_rather_than_zero_or_broken(self, monkeypatch):
+        monkeypatch.setattr(pc, "COVERAGE_CENSUS_ENABLED", False)
         payload = await pc.compute_calibration_payload(_StubDB([_futures_row()]))
         census = payload["calibration_coverage_census"]
         assert census["status"] == "unavailable"

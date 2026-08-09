@@ -2333,9 +2333,19 @@ def _calibration_population_ctes(
 # costs the build exactly nothing.
 # =============================================================================
 
-#: See the block comment above. OFF pending the chunk-scoped coverage universe;
-#: ``_main_futures_sql`` refuses the staged scope while this is True.
-COVERAGE_CENSUS_ENABLED = False
+#: CAL-P020 (2026-08-09): ON. The chunk-scoped coverage universe the block above
+#: says this waits for is built — ``_coverage_universe_cte(chunk_scoped=True)``
+#: narrows the universe to the chunk, and ``_coverage_global_rung_sql`` counts
+#: ``market_result_unavailable`` once per generation against the unscoped
+#: ``market_info``. The refusal in ``_main_futures_sql`` is kept, narrowed to the
+#: invariant it was standing in for: under a frozen scope the universe must be
+#: chunk-scoped.
+#:
+#: Turning it on was not optional maintenance. CAL-P016 switched the staged path
+#: on because the monolith cannot finish, which made "census XOR publish" into
+#: "never census" — the 2026-08-02 ruling's surface was unreachable by
+#: construction for as long as the build worked.
+COVERAGE_CENSUS_ENABLED = True
 
 #: The reason string a disabled census reports, so the page and any operator can
 #: tell "we chose not to measure this yet" from "we measured nothing".
@@ -2389,7 +2399,92 @@ def _coverage_bridge_column(rung: str) -> str:
     return f"cb_{rung}"
 
 
-def _coverage_bridge_ctes() -> str:
+def _coverage_universe_cte(*, chunk_scoped: bool) -> str:
+    """The COVERAGE population — one definition, in one of two scopes.
+
+    **Global** (``chunk_scoped=False``): every resolved futures outcome carrying
+    a usable calibration price. Joined to ``futures_markets`` directly rather
+    than to ``market_info`` so the symmetric DataGolf-residual withholding stays
+    a VISIBLE rung (``market_result_unavailable``) instead of an invisible
+    pre-filter.
+
+    **Chunk-scoped** (``chunk_scoped=True``, CAL-P020): the same population
+    restricted to the outcomes of THIS chunk's markets, by an INNER JOIN onto
+    the roster-scoped ``market_info``. Additive across chunks because a market —
+    and therefore its ``vm_id`` — never straddles a chunk boundary; that is the
+    invariant ``plan_units`` exists to protect and that
+    ``_STAGED_COUNT_DISTINCT_COLUMNS`` already records a dependency on.
+
+    Under the chunk scope ``market_result_unavailable`` can never fire, because
+    every row in the universe joined ``market_info`` to get here. Its members
+    belong to no chunk at all, so they are counted exactly once by
+    :func:`_coverage_global_rung_sql`. The rung is deliberately NOT dropped from
+    the ladder in this scope — one ladder, counted zero, is a far smaller thing
+    to keep honest than two ladders that agree today.
+    """
+    if chunk_scoped:
+        return """
+            coverage_universe AS (
+                SELECT fo.id AS outcome_id,
+                    fo.market_id AS market_id,
+                    fo.resolution_source AS resolution_source,
+                    (fo.calibration_probability IS NOT NULL) AS has_terminal_cal_price
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            )"""
+    return """
+            coverage_universe AS (
+                SELECT fo.id AS outcome_id,
+                    fo.market_id AS market_id,
+                    fo.resolution_source AS resolution_source,
+                    (fo.calibration_probability IS NOT NULL) AS has_terminal_cal_price
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            )"""
+
+
+def _coverage_global_rung_sql() -> str:
+    """CAL-P020: the ONE rung whose members belong to no chunk, counted once.
+
+    ``market_result_unavailable`` is ``mi.market_id IS NULL`` — an outcome in the
+    coverage universe whose market ``market_info`` dropped. Globally that is
+    exactly the DataGolf residual cohort; under the staged scope it would
+    otherwise be every out-of-chunk outcome, summed ~N times. So the staged path
+    counts it here instead: once per generation, against the UNSCOPED
+    ``market_info``.
+
+    Reuses :func:`_calibration_population_ctes` VERBATIM for the same
+    load-bearing reason :func:`_futures_generation_sql` does — a hand-written
+    second copy of the eligibility predicate is the C14 drift, and here it would
+    put the census and the curve on different definitions of "eligible market".
+    Naming the full chain is free: PostgreSQL does not execute an unreferenced
+    ``WITH`` subquery, so everything downstream of ``market_info`` is planned
+    away and what runs is one pass over the coverage universe plus a hash
+    anti-join.
+    """
+    return (
+        "WITH "
+        + _calibration_population_ctes()
+        + ","
+        + _coverage_universe_cte(chunk_scoped=False)
+        + f"""
+            SELECT COUNT(*) AS {_coverage_bridge_column('market_result_unavailable')},
+                COUNT(*) AS cb_coverage_total,
+                COUNT(*) FILTER (WHERE cu.has_terminal_cal_price)
+                    AS cb_with_terminal_cal_price
+            FROM coverage_universe cu
+            LEFT JOIN market_info mi ON mi.market_id = cu.market_id
+            WHERE mi.market_id IS NULL
+        """
+    )
+
+
+def _coverage_bridge_ctes(*, frozen: bool = False) -> str:
     """The census CTEs, appended to the canonical population chain.
 
     Deliberately built ON TOP of ``market_info`` / ``normalized`` / ``deduped``
@@ -2397,6 +2492,9 @@ def _coverage_bridge_ctes() -> str:
     already materialized, so this costs one scan of the coverage universe plus
     hash joins, it cannot drift from the curve it explains, and both ends of the
     bridge are guaranteed to come from ONE generation of one transaction.
+
+    ``frozen`` scopes the universe to the chunk (CAL-P020). The rung ladder below
+    is IDENTICAL in both scopes — only the universe narrows.
     """
     if not COVERAGE_CENSUS_ENABLED:
         # Emit nothing at all — including the separating comma, which this block
@@ -2424,23 +2522,10 @@ def _coverage_bridge_ctes() -> str:
         f"COUNT(*) FILTER (WHERE rung = '{key}') AS {_coverage_bridge_column(key)}"
         for key in _COVERAGE_RUNG_KEYS
     )
-    return f""",
-            -- Queue 300C: the COVERAGE population — every resolved futures
-            -- outcome carrying a usable calibration price. Joined to
-            -- futures_markets directly (not market_info) so the symmetric
-            -- DataGolf-residual withholding is a visible rung rather than an
-            -- invisible pre-filter.
-            coverage_universe AS (
-                SELECT fo.id AS outcome_id,
-                    fo.market_id AS market_id,
-                    fo.resolution_source AS resolution_source,
-                    (fo.calibration_probability IS NOT NULL) AS has_terminal_cal_price
-                FROM futures_outcomes fo
-                JOIN futures_markets fm ON fm.id = fo.market_id
-                WHERE fm.status = 'resolved'
-                  AND fo.opening_probability IS NOT NULL
-                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
-            ),
+    return (
+        ","
+        + _coverage_universe_cte(chunk_scoped=frozen)
+        + f""",
             -- FIRST MATCH WINS. The order is the contract's rung order; changing
             -- it moves outcomes between rungs and is a contract change.
             coverage_bridge AS (
@@ -2462,6 +2547,7 @@ def _coverage_bridge_ctes() -> str:
                         AS cb_with_terminal_cal_price
                 FROM coverage_bridge
             )"""
+    )
 
 
 # Queue 300D Item 0: ONE statement text, built in one of two scopes.
@@ -2476,32 +2562,29 @@ def _coverage_bridge_ctes() -> str:
 # 150-line SELECT is how the staged path and the monolith would drift
 # apart on the first exclusion rung anybody added to only one of them.
 def _main_futures_sql(*, frozen: bool = False) -> str:
-    # Queue 300D Item 2 — the census and the staged scope are NOT yet compatible,
-    # and this refuses rather than lets them produce a confident wrong number.
+    # Queue 300D Item 2 refused this combination outright, because
+    # ``coverage_universe`` scanned EVERY resolved priced futures outcome. Under
+    # chunking each chunk rescanned all of it and LEFT JOINed it against only its
+    # own ``normalized`` / ``deduped``, classifying every out-of-chunk outcome as
+    # ``market_result_unavailable`` — so ``cb_coverage_total`` came out ~N times
+    # the real figure with the rungs badly skewed. A census wrong in the
+    # CONFIDENT direction is the one thing the 300C bridge exists to prevent.
     #
-    # ``coverage_universe`` scans EVERY resolved futures outcome carrying a
-    # usable price. That universe is not vm-scoped, so under chunking each chunk
-    # would rescan all of it and LEFT JOIN it against only its own ``normalized``
-    # / ``deduped`` — classifying every out-of-chunk outcome as
-    # ``market_result_unavailable`` or ``question_ungraded``. Summed across N
-    # chunks, ``cb_coverage_total`` would come out ~N times the real figure with
-    # the rungs badly skewed: a census that is wrong in the confident direction,
-    # which is the one thing the 300C bridge exists to prevent.
-    #
-    # Turning it on therefore needs its own work, not a flag flip: the coverage
-    # universe has to be split into the part attributable to a chunk (its
-    # markets' outcomes) and a single global pass for the rungs that belong to
-    # no chunk at all (``market_result_unavailable`` and the truth rungs, whose
-    # outcomes are not in ``market_info`` and so are in no vm). Until that
-    # lands, the census stays ``unavailable`` — which is exactly what Item 2's
-    # acceptance asks for: never zero, never inferred.
+    # CAL-P020 does the work that refusal was standing in for, so the guard
+    # narrows to the invariant rather than the combination: under a frozen scope
+    # the universe MUST be chunk-scoped. The blanket refusal cannot stay — since
+    # CAL-P016 the staged path is the only one that can finish, so "census XOR
+    # publish" had quietly become "never census".
     if frozen and COVERAGE_CENSUS_ENABLED:
-        raise ValueError(
-            "coverage census is not chunk-scoped: enabling it under the staged "
-            "futures path would multiply the census by the chunk count. Scope "
-            "coverage_universe per chunk (plus one global pass for the "
-            "out-of-population rungs) before flipping COVERAGE_CENSUS_ENABLED."
-        )
+        universe = _coverage_universe_cte(chunk_scoped=True)
+        if "JOIN market_info" not in universe:
+            raise ValueError(
+                "coverage census is not chunk-scoped: enabling it under the "
+                "staged futures path would multiply the census by the chunk "
+                "count. Scope coverage_universe per chunk (plus one global pass "
+                "for the out-of-population rungs) before flipping "
+                "COVERAGE_CENSUS_ENABLED."
+            )
     return (
             "WITH "
             + _calibration_population_ctes(
@@ -2597,7 +2680,7 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(DISTINCT vm_id) AS published_questions
                 FROM deduped
             )"""
-            + _coverage_bridge_ctes()
+            + _coverage_bridge_ctes(frozen=frozen)
             + """,
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
@@ -2843,6 +2926,27 @@ async def _run_staged_futures(db, runner, sql_builder):
         )
         return None
 
+    # CAL-P020: the one rung that belongs to no chunk. Counted here rather than
+    # per unit, ONCE, against the unscoped ``market_info`` — and only now that
+    # every unit is banked, so an incomplete beat never pays for it.
+    global_census: list[dict] = []
+    if COVERAGE_CENSUS_ENABLED:
+        await runner.apply_statement_timeout(db, PHASE_FUTURES)
+        with runner.stage("read:coverage_global_rung"):
+            global_row = (await db.execute(text(_coverage_global_rung_sql()))).one()
+        await runner.commit(db)
+        # Same accessor the unit rows use below: a driver Row exposes
+        # ``_mapping``, a plain object does not. ``.one()`` rather than
+        # ``.first()`` on purpose — this is an ungrouped aggregate, so exactly
+        # one row is guaranteed, and a missing one must abort the build loudly.
+        # Skipping it quietly would publish the rung as the sum of the chunks'
+        # zeros, i.e. a confident 0 for a rung nobody counted (gotcha #53).
+        global_census.append(
+            dict(global_row._mapping)
+            if hasattr(global_row, "_mapping")
+            else dict(vars(global_row))
+        )
+
     with runner.stage("staged:finalize"):
         banked = collect_unit_results(cursor, chunks)
         # A null-keyed row is an empty chunk's census carrier, not a bucket (see
@@ -2860,7 +2964,9 @@ async def _run_staged_futures(db, runner, sql_builder):
                     keep.append(row)
             bucket_rows.append(keep)
         merged = merge_futures_rows(
-            bucket_rows, census_columns=census_columns, extra_censuses=census_only
+            bucket_rows,
+            census_columns=census_columns,
+            extra_censuses=census_only + global_census,
         )
     logger.info(
         "calibration staged futures: generation %s COMPLETE — %d units, %d merged buckets",

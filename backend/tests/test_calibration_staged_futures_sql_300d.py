@@ -350,38 +350,54 @@ class TestAPartialBeatIsCancelledNotFailed:
         assert not issubclass(StagedFuturesIncomplete, (KeyboardInterrupt, SystemExit))
 
 
-class TestCoverageCensusIsRefusedUnderStaging:
-    """Item 2's census cannot ride the staged path yet, and must say so loudly.
+class TestCoverageCensusRidesTheStagedPath:
+    """SUPERSEDED BY CAL-P020 (2026-08-09) — a deliberate semantic change.
 
-    ``coverage_universe`` is not vm-scoped: every chunk would rescan all of it
-    and LEFT JOIN it against only its own slice of the population, so the summed
-    census would come out roughly N times too large with the rungs skewed. That
-    is a confidently wrong number, which is worse than no number — so the
-    builder refuses instead of emitting it.
+    This class previously asserted the OPPOSITE: that
+    ``COVERAGE_CENSUS_ENABLED is False`` and that a frozen scope with the census
+    on always raises. Both were correct for Queue 300D, whose census scanned the
+    whole universe per chunk and would have published a ~N-times-inflated
+    number.
+
+    CAL-P016 then made that refusal untenable rather than merely inconvenient:
+    with the staged path the only scope that can finish, "refuse the census
+    under staging" became "never census", and the 2026-08-02 coverage ruling had
+    no reachable surface at all. CAL-P020 chunk-scopes the universe and counts
+    the one out-of-chunk rung globally, so the combination is now correct and
+    the guard narrows to the invariant.
+
+    These tests are rewritten, not deleted — the inflation they protected
+    against is still real, and ``TestTheGuardStillRefusesTheWrongThing`` in
+    ``test_calibration_coverage_census_chunked_p020.py`` proves the narrowed
+    guard still catches it by mutation.
     """
 
-    def test_census_stays_off_so_the_monolith_is_unchanged(self):
+    def test_census_is_on_and_the_monolith_carries_it(self):
         from app.tasks.precompute_calibration import COVERAGE_CENSUS_ENABLED
 
-        assert COVERAGE_CENSUS_ENABLED is False
-        assert "coverage_universe" not in _main_futures_sql()
+        assert COVERAGE_CENSUS_ENABLED is True
+        assert "coverage_universe" in _main_futures_sql()
 
-    def test_staged_scope_refuses_to_build_with_the_census_on(self, monkeypatch):
+    def test_staged_scope_now_builds_with_the_census_on(self):
+        from app.tasks.precompute_calibration import _coverage_universe_cte
+
+        sql = _main_futures_sql(frozen=True)
+        # Chunk-scoped: it reaches the roster-scoped market_info, not the whole
+        # futures_markets table. This is the difference the refusal existed for.
+        # Compared on the whole CTE — the join line alone also appears in the
+        # population chain, so a substring check on it would be vacuous.
+        assert _coverage_universe_cte(chunk_scoped=True) in sql
+        assert _coverage_universe_cte(chunk_scoped=False) not in sql
+
+    def test_the_narrowed_guard_still_refuses_an_unscoped_universe(self, monkeypatch):
+        from app.tasks.precompute_calibration import _coverage_universe_cte
+
         monkeypatch.setattr(
-            "app.tasks.precompute_calibration.COVERAGE_CENSUS_ENABLED", True
+            "app.tasks.precompute_calibration._coverage_universe_cte",
+            lambda *, chunk_scoped: _coverage_universe_cte(chunk_scoped=False),
         )
         with pytest.raises(ValueError, match="not chunk-scoped"):
             _main_futures_sql(frozen=True)
-
-    def test_the_refusal_names_the_work_that_would_lift_it(self, monkeypatch):
-        monkeypatch.setattr(
-            "app.tasks.precompute_calibration.COVERAGE_CENSUS_ENABLED", True
-        )
-        with pytest.raises(ValueError) as excinfo:
-            _main_futures_sql(frozen=True)
-        message = str(excinfo.value)
-        assert "coverage_universe" in message
-        assert "out-of-population" in message
 
 
 @pytest.mark.skipif(sqlglot is None, reason="sqlglot not installed")

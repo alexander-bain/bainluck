@@ -278,6 +278,22 @@ class _FakeDB:
         # (``test_calibration_staged_futures.test_a_three_chunk_split_merges_back_to_the_monolith``).
         if "select market_id, source, vm_id, is_grouped" in text_form:
             return _Result(rows=[_roster_row()])
+        # CAL-P020 turned the coverage census on, which puts ONE more statement
+        # after the last unit: the global pass for
+        # ``market_result_unavailable``, the single rung whose members belong to
+        # no chunk. Exempted for the same reason as the generation read — it is
+        # not one of the ten payload queries, and letting it pop a queued result
+        # would shift every later assertion onto the wrong one.
+        # Matched on the anti-join, NOT on the ``cb_`` column name: every chunk
+        # statement carries that column too, so the obvious discriminator would
+        # intercept the unit read and shift the sequence by one — which is the
+        # exact failure this whole block of exemptions exists to prevent.
+        if "where mi.market_id is null" in text_form:
+            return _Result(one=SimpleNamespace(
+                cb_market_result_unavailable=0,
+                cb_coverage_total=0,
+                cb_with_terminal_cal_price=0,
+            ))
         if not self._results:
             return _Result()
         return self._results.pop(0)
