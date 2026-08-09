@@ -1,0 +1,19 @@
+{
+  "headlines": [
+    {"id": "nested-grid-red", "children": ["good", "critical"], "expected": "critical"},
+    {"id": "nested-classification-warning", "children": ["good", "warning"], "expected": "warning"},
+    {"id": "all-clean", "children": ["good", "good"], "expected": "good"},
+    {"id": "no-evidence", "children": [], "expected": "unknown"}
+  ],
+  "classification": [
+    {"rate": 0.10, "expected": "good"},
+    {"rate": 0.20, "expected": "warning"},
+    {"rate": 0.31, "expected": "critical"}
+  ],
+  "labeling": [
+    {"input": {"insufficient_strata": 0, "empty_queues": 0, "census_complete": true}, "expected": "good"},
+    {"input": {"insufficient_strata": 1, "empty_queues": 0, "census_complete": true}, "expected": "warning"},
+    {"input": {"insufficient_strata": 0, "empty_queues": 1, "census_complete": true}, "expected": "warning"},
+    {"input": {"insufficient_strata": 0, "empty_queues": 0, "census_complete": false}, "expected": "unknown"}
+  ]
+}
