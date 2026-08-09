@@ -1289,3 +1289,9 @@ not migrated on purpose: rewriting the file whose whole job is to survive rewrit
 failure this document already records happening twice.
 
 - [001](rulings/001-ruling-files-replace-product-brain-appends.md) — 2026-08-09 — Ruling appends become one file per ruling (Fable)
+- [002](rulings/002-eval-registry-canonical-contracts.md) — 2026-08-09 — Eval registry: canonical contracts by domain (Alex)
+- [003](rulings/003-clients-format-never-adjudicate.md) — 2026-08-09 — Clients format, never adjudicate (Alex)
+- [004](rulings/004-one-slo-per-program.md) — 2026-08-09 — One SLO per program (Alex)
+- [005](rulings/005-extract-on-touch.md) — 2026-08-09 — Extract-on-touch (Alex)
+- [006](rulings/006-process-artifact-hygiene.md) — 2026-08-09 — Process artifact hygiene (Alex)
+- [007](rulings/007-native-riders.md) — 2026-08-09 — Native riders, and the deferred slot rotation (Alex)
