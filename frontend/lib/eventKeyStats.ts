@@ -657,21 +657,45 @@ export function computeSharedChartDomain(
   start.setSeconds(0, 0);
   end.setSeconds(0, 0);
 
-  // Compute explicit X-axis ticks at clean time boundaries
+  // Compute explicit X-axis ticks at clean time boundaries.
+  //
+  // UX-P022: the interval used to FLOOR at 30 minutes
+  // (`durationMin < 180 ? 30 : 60`, then doubled while it produced >10 ticks).
+  // That only ever coarsened, never refined, so a chart shorter than ~an hour
+  // got no interior tick at all. A live game 21 minutes old rendered exactly
+  // "1:10 PM" and "1:31 PM" across a full-width chart — the reader cannot tell
+  // whether a move happened two minutes ago or twenty.
+  //
+  // The ladder below refines as well as coarsens: it picks the smallest clean
+  // interval that keeps the tick count at or under the target. A 21-minute
+  // window now steps by 5 minutes.
   const durationMs = end.getTime() - start.getTime();
   const durationMin = durationMs / 60000;
-  let intervalMin = durationMin < 180 ? 30 : 60;
-  while (durationMin / intervalMin > 10) intervalMin *= 2;
+  const MAX_TICKS = 8;
+  const INTERVAL_LADDER_MIN = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
+  let intervalMin =
+    INTERVAL_LADDER_MIN.find((step) => durationMin / step <= MAX_TICKS) ??
+    INTERVAL_LADDER_MIN[INTERVAL_LADDER_MIN.length - 1];
+  // Degenerate window (everything inside one step): keep the endpoints only.
+  while (durationMin / intervalMin > MAX_TICKS) intervalMin *= 2;
 
   const ticks: string[] = [];
   ticks.push(fmtDate(start, "h:mm a"));
+
+  // A boundary tick landing right next to the end label collides with it and
+  // Recharts silently drops one of the pair — which is how a 3-tick axis
+  // rendered as 2. Reserve a slice of the window for the end label instead.
+  const endMs = end.getTime();
+  const minGapMs = Math.max(durationMs * 0.06, 30_000);
 
   const cursor = new Date(start);
   const curMins = cursor.getMinutes();
   const nextBoundary = Math.ceil((curMins + 1) / intervalMin) * intervalMin;
   cursor.setMinutes(nextBoundary, 0, 0);
-  while (cursor < end) {
-    ticks.push(fmtDate(cursor, "h:mm a"));
+  while (cursor.getTime() < endMs) {
+    if (endMs - cursor.getTime() >= minGapMs) {
+      ticks.push(fmtDate(cursor, "h:mm a"));
+    }
     cursor.setMinutes(cursor.getMinutes() + intervalMin);
   }
 

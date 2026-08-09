@@ -803,8 +803,20 @@ export default function OddsChart({
     const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
     const chartDuration = chartEnd - chartStart;
 
-    // Minimum spacing: 3% of chart duration (prevents overlapping labels)
-    const minSpacing = Math.max(chartDuration * 0.03, 120_000); // At least 2 minutes
+    // Minimum spacing before two markers are collapsed into one.
+    //
+    // UX-P022: this used to be `max(duration * 3%, 2 minutes)`. Label collision
+    // is a function of PIXELS, but the 2-minute floor is a function of TIME, and
+    // the two only agree at one chart length. On a 3-hour game 2 minutes is
+    // ~1% of the width and far too tight; on a 21-minute live game it is ~10% of
+    // the width, so two markers 2 minutes apart were both kept and their labels
+    // printed on top of each other — the unreadable "T9|1" smear on a live Red
+    // Sox chart.
+    //
+    // Spacing is now purely proportional, so it means the same thing at every
+    // chart length: markers must be at least 7% of the visible width apart, which
+    // is comfortably wider than a 2–4 character period label at 11px.
+    const minSpacing = chartDuration * 0.07;
 
     const filtered = periodBoundaries
       .filter((b) => {
@@ -833,11 +845,17 @@ export default function OddsChart({
       deduped.push(b);
     }
 
-    return deduped.map((b, i) => ({
+    return deduped.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), "h:mm a"),
-      // Alternate label positions: even=top-left, odd=top-right
-      labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
+      // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight. That
+      // reads like it spreads them out, but it does the opposite — a left-anchored
+      // label grows rightward and the next right-anchored one grows leftward, so
+      // adjacent labels grow TOWARD each other and meet in the middle. Anchoring
+      // every label on the same side makes the gap between two markers the actual
+      // space available to the first one's text, which is what the spacing rule
+      // above assumes.
+      labelPosition: "insideTopLeft",
     }));
   }, [periodBoundaries, chartData]);
 
@@ -1362,8 +1380,19 @@ export default function OddsChart({
                 dataKey={source.dataKey}
                 name={source.displayName}
                 stroke={source.color}
-                strokeWidth={1}
-                strokeOpacity={0.28}
+                // UX-P022: these were pinned at width 1 / opacity 0.28 in BOTH
+                // states. At that weight, on a light card, a source line that
+                // tracks the blend closely is invisible — so pressing
+                // "+ N sources" listed the sources in the legend and changed
+                // NOTHING on the graph. The control looked broken because, as
+                // far as the reader could tell, it was.
+                //
+                // Collapsed still means blend-dominant (L2-131, and "the blend
+                // is the product"). Expanding is the reader explicitly asking to
+                // see the spread, so the lines become legible — a deliberate
+                // comparison surface, entered on purpose, not shown by default.
+                strokeWidth={legendExpanded ? 1.75 : 1}
+                strokeOpacity={legendExpanded ? 0.85 : 0.28}
                 strokeDasharray={source.dashPattern ?? undefined}
                 dot={false}
                 activeDot={{ r: 3, fill: source.color }}

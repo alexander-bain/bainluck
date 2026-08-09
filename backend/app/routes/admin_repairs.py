@@ -55,6 +55,13 @@ _REPAIRS = {
     # until ``exhausted``. Accepts ?limit=&offset=&newest_first=. Never writes:
     # repairing the standing population is a separate, authority-gated queue.
     "winner-field-coherence": ("app.tasks.census_winner_fields", "census"),
+    # CAL-P012 (#1544): dry-run-ONLY count of the reachability tiers CAL-P011
+    # named — how much of the ungraded remainder is provably purged upstream
+    # versus still recoverable. Walks a bounded outcome-id WINDOW per call
+    # (unbounded aggregates over ``futures_outcomes`` time out); re-invoke with
+    # ?offset=<next_offset> until ``exhausted``. Accepts ?limit=&offset=.
+    # Never writes: ``apply`` is accepted and ignored.
+    "reachability-census": ("app.tasks.census_reachability", "census"),
     # CAL-P007 (#1527), approved by Alex 2026-08-07 under attended capped-batch
     # discipline: the WRITE half. Re-resolves an incoherent single-winner field
     # from CLOB per-leg authority (each leg is its own condition_id), then nulls

@@ -68,15 +68,35 @@ PROGRAM_ERA_MARKERS = [
     "SUCCESSOR BRANCHES ARE THE DOCUMENTED DEFAULT",
 ]
 
-# ⚠️ INTEGRATOR, on merging this branch: two further rulings live ONLY on the
-# master worktree and cannot be referenced from here without turning this branch
-# red before the merge. Add them to PROGRAM_ERA_MARKERS in the merge commit:
-#     "LANE OWNERSHIP IS PER-WINDOW"
-#     "INVARIANT 2 AMENDED"
-# If the merge drops either section instead, that is the divergence above
-# landing as real loss.
+# LAT-P008b (2026-08-08): the two rulings the note below waited on are now on
+# master and verified present in the doc from this branch, so they are guarded
+# rather than deferred. The ⚠️ INTEGRATOR hand-off note they carried is
+# discharged and removed — an instruction that has been carried out is worse
+# than useless left in place, because the next reader re-does it.
+DEFERRED_NOW_GUARDED = [
+    "LANE OWNERSHIP IS PER-WINDOW",
+    "INVARIANT 2 AMENDED",
+]
 
-ALL_MARKERS = REQUIRED_MARKERS + STRUCTURAL_MARKERS + PROGRAM_ERA_MARKERS
+# LAT-P008b (2026-08-08). Alex rulings banked from the latency window. The
+# synthetic-traffic ruling is the load-bearing one: it kills the PERMANENT
+# BLOCKER pattern, where an acceptance criterion can only be satisfied by a
+# condition the product does not have yet (users, a season, a vendor). #1500 sat
+# unclosable on exactly that for several cycles while being the sole stated
+# blocker on #1459.
+RULINGS_2026_08_08 = [
+    "SYNTHETIC TRAFFIC IS REAL TRAFFIC",
+    "PERMANENT BLOCKER",
+    "THREE-WINNER REPAIR",
+]
+
+ALL_MARKERS = (
+    REQUIRED_MARKERS
+    + STRUCTURAL_MARKERS
+    + PROGRAM_ERA_MARKERS
+    + DEFERRED_NOW_GUARDED
+    + RULINGS_2026_08_08
+)
 
 
 def _read_product_brain() -> str:
@@ -120,10 +140,12 @@ def test_product_brain_is_not_a_wholesale_regeneration() -> None:
         line for line in text.splitlines() if line.startswith("## ")
     ]
     # Baseline banked in commit 47ece922 had 16 "## " sections. Allow growth
-    # (new rulings append), never silent collapse.
-    assert len(ruling_sections) >= 16, (
+    # (new rulings append), never silent collapse. Raised to 31 by LAT-P008b:
+    # a floor that never tracks the real count stops guarding the sections added
+    # since it was written — the same gap PROGRAM_ERA_MARKERS was created to fix.
+    assert len(ruling_sections) >= 31, (
         f"docs/PRODUCT-BRAIN.md has only {len(ruling_sections)} '## ' sections; "
-        f"the banked baseline (commit 47ece922) had 16. A wholesale "
+        f"the guarded floor is 31. A wholesale "
         f"'consolidation' rewrite has collapsed the accreted ruling history. "
         f"Restore from git and append the new ruling instead of regenerating."
     )

@@ -33,6 +33,7 @@ import {
   reconcileLegacyBucket,
   pendingAnonymousMigration,
   completeAnonymousMigration,
+  browserStore,
   type BucketPolicy,
 } from "@/lib/principalStorage";
 import { parseIds, serializeIds, mergeForMigration } from "@/lib/pinnedIds";
@@ -83,7 +84,8 @@ export function usePinnedIds(
   // rather than as the previous account's pins.
   const pinnedIds = state.bucket === bucket && bucket !== null ? state.ids : EMPTY;
 
-  const store = typeof window === "undefined" ? null : window.localStorage;
+  // Storage failures must never reach React — see `safeStore`.
+  const store = useMemo(() => browserStore(), []);
 
   // Load whenever the owner changes (mount, sign-in, A→B, sign-out).
   useEffect(() => {
