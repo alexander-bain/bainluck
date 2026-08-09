@@ -1,0 +1,15 @@
+{
+  "cases": [
+    {"id": "valid-extension", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "child", "relation": "extends", "target": "base"}]}]}, "changed": ["child"], "expected": {"verdict": "ALLOW", "errors": []}},
+    {"id": "valid-supersession", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "replacement", "relation": "supersedes", "target": "base"}]}]}, "changed": ["replacement"], "expected": {"verdict": "ALLOW", "errors": []}},
+    {"id": "orphan-new-artifact", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": []}]}, "changed": ["orphan"], "expected": {"verdict": "REFUSE", "errors": ["CHANGED_ARTIFACT_UNREGISTERED"]}},
+    {"id": "duplicate-canonical", "registry": {"domains": [{"domain": "a", "canonical": "same", "members": []}, {"domain": "b", "canonical": "same", "members": []}]}, "expected": {"verdict": "REFUSE", "errors": ["ARTIFACT_REGISTERED_TWICE"]}},
+    {"id": "unknown-target", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "child", "relation": "extends", "target": "ghost"}]}]}, "expected": {"verdict": "REFUSE", "errors": ["MEMBER_TARGET_UNKNOWN"]}},
+    {"id": "missing-target", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "child", "relation": "extends"}]}]}, "expected": {"verdict": "REFUSE", "errors": ["MEMBER_TARGET_MISSING"]}},
+    {"id": "invalid-relation", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "child", "relation": "copies", "target": "base"}]}]}, "expected": {"verdict": "REFUSE", "errors": ["MEMBER_RELATION_INVALID"]}},
+    {"id": "cross-domain-target", "registry": {"domains": [{"domain": "a", "canonical": "a_base", "members": [{"name": "a_child", "relation": "extends", "target": "b_base"}]}, {"domain": "b", "canonical": "b_base", "members": []}]}, "expected": {"verdict": "REFUSE", "errors": ["CROSS_DOMAIN_RELATION"]}},
+    {"id": "relation-cycle", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "a", "relation": "extends", "target": "b"}, {"name": "b", "relation": "extends", "target": "a"}]}]}, "expected": {"verdict": "REFUSE", "errors": ["RELATION_CYCLE"]}},
+    {"id": "duplicate-member", "registry": {"domains": [{"domain": "d", "canonical": "base", "members": [{"name": "a", "relation": "extends", "target": "base"}, {"name": "a", "relation": "extends", "target": "base"}]}]}, "expected": {"verdict": "REFUSE", "errors": ["ARTIFACT_REGISTERED_TWICE"]}},
+    {"id": "incomplete-domain", "registry": {"domains": [{"domain": "", "canonical": "base", "members": []}]}, "expected": {"verdict": "REFUSE", "errors": ["DOMAIN_INCOMPLETE"]}}
+  ]
+}
