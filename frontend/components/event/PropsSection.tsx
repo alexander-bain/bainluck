@@ -34,10 +34,13 @@
  * price and renders the honest state, never blank.
  */
 
+import type { ReactNode } from "react";
+
 import QuantityGroup, { type QuantityRung } from "@/components/QuantityGroup";
 import { probabilityHeat } from "@/lib/probabilityColors";
 import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
+import { groupByPropFamily, type PropFamilyGroup } from "@/lib/propFamily";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -175,6 +178,19 @@ function signedDelta(from: number | null | undefined, to: number | null | undefi
   return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
 }
 
+/**
+ * UX-P036 (K14): a row that has BOTH endpoints and rounds to zero movement —
+ * the "84% → 84% ±0" row. On the measured live game these were 36 of 81 rows
+ * (44%) in a section subtitled "how far the live number has moved".
+ *
+ * A row missing an endpoint is NOT unchanged — it renders an honest pending
+ * chip and must stay in plain sight.
+ */
+function isUnchanged(item: PropMark): boolean {
+  if (item.pregame_mark == null || item.current == null) return false;
+  return Math.round((item.current - item.pregame_mark) * 100) === 0;
+}
+
 /** A card mark carries a shape-appropriate visual: a field or ladder with ≥2
  *  named outcomes and no pending state. Everything else renders as a row. */
 function isCardMark(item: PropMark): boolean {
@@ -215,6 +231,21 @@ export default function PropsSection({
   const cards = ranked.filter(isCardMark);
   const rows = ranked.filter((item) => !isCardMark(item));
 
+  // UX-P036 (K14): recover the prop family the backend encodes in the key and
+  // drops from the label, so a row reading "Tommy White: 4+" sits under a header
+  // that says 4+ WHAT. Marks whose key carries no family — the golf/combat
+  // concept page builds them with a numeric market id — collapse to one unnamed
+  // group and render through the ORIGINAL markup path below, unchanged.
+  const groups = groupByPropFamily(rows, (item) => item.key);
+  const grouped = !(groups.length === 1 && groups[0].name === null);
+
+  const renderRow = (item: PropMark) =>
+    isBinaryBarMark(item) ? (
+      <BinaryBarRow key={item.key} item={item} state={activeState} />
+    ) : (
+      <PropRow key={item.key} item={item} state={activeState} />
+    );
+
   return (
     <section id="props-script" className="bg-surface-card rounded-card shadow-card p-6">
       <div className="flex items-baseline gap-2.5 mb-1">
@@ -225,17 +256,21 @@ export default function PropsSection({
       </div>
       <p className="text-xs text-text-muted mb-4">{meta.blurb}</p>
 
-      {rows.length > 0 && (
-        <div className="space-y-2">
-          {rows.map((item) =>
-            isBinaryBarMark(item) ? (
-              <BinaryBarRow key={item.key} item={item} state={activeState} />
-            ) : (
-              <PropRow key={item.key} item={item} state={activeState} />
-            ),
-          )}
-        </div>
-      )}
+      {rows.length > 0 &&
+        (grouped ? (
+          <div className="space-y-4">
+            {groups.map((group, i) => (
+              <PropFamilyBlock
+                key={group.name ?? `unnamed-${i}`}
+                group={group}
+                state={activeState}
+                renderRow={renderRow}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">{rows.map(renderRow)}</div>
+        ))}
 
       {cards.length > 0 && (
         <div className={`grid gap-3 sm:grid-cols-2 ${rows.length > 0 ? "mt-4" : ""}`}>
@@ -249,6 +284,50 @@ export default function PropsSection({
         </div>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Family block (UX-P036 / K14) — one named prop family, and, in THE DIVERGENCE,
+// the rows that did NOT move folded behind a disclosure that names its own count.
+//
+// Collapsed, never dropped (gotcha #43): the section's whole claim is that it
+// shows movement, so a row with zero movement is noise in the list and evidence
+// in the drawer. Every mark stays reachable, and the count is stated out loud.
+// ---------------------------------------------------------------------------
+
+function PropFamilyBlock({
+  group,
+  state,
+  renderRow,
+}: {
+  group: PropFamilyGroup<PropMark>;
+  state: PropsState;
+  renderRow: (item: PropMark) => ReactNode;
+}) {
+  // Only THE DIVERGENCE has a notion of "didn't move". THE SCRIPT and WHAT HIT
+  // list everything, grouped but uncollapsed.
+  const collapsible = state === "divergence";
+  const moved = collapsible ? group.items.filter((i) => !isUnchanged(i)) : group.items;
+  const unchanged = collapsible ? group.items.filter(isUnchanged) : [];
+
+  return (
+    <div>
+      {group.name && (
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary mb-1">
+          {group.name}
+        </div>
+      )}
+      {moved.length > 0 && <div className="space-y-2">{moved.map(renderRow)}</div>}
+      {unchanged.length > 0 && (
+        <details className={moved.length > 0 ? "mt-1.5" : ""}>
+          <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+            {unchanged.length} unchanged
+          </summary>
+          <div className="mt-1 space-y-2">{unchanged.map(renderRow)}</div>
+        </details>
+      )}
+    </div>
   );
 }
 
