@@ -465,6 +465,13 @@ export interface SearchResultClickParams extends FunnelDimensions {
 export interface AnswerVisibleTypeaheadParams {
   query: string;
   answers_shown: number;
+  /**
+   * Which dropdown rendered the answer (#1620). The two search surfaces are
+   * mutually exclusive by viewport, and until #1620 only the desktop one both
+   * showed answers and reported them — so this metric silently described half
+   * the user base. Optional to stay additive for any historical consumer.
+   */
+  surface?: "desktop" | "mobile";
 }
 
 export interface ReturnVisitParams {

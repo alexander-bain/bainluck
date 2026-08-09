@@ -9,6 +9,17 @@ import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
+// #1620: shared with the desktop SearchBar. Phones never received #993 Slice A
+// because this component rendered its own, poorer row. Logic there, classes here.
+import {
+  countAnswersShown,
+  suggestionDisplayText,
+  suggestionSubtitle,
+  suggestionTypeLabel,
+  isMovementWorthShowing,
+  toPercent,
+} from "@/lib/searchSuggestionDisplay";
+import { useAnalyticsContext } from "@/components/Analytics";
 
 interface Props {
   isOpen: boolean;
@@ -17,6 +28,7 @@ interface Props {
 
 export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
   const router = useRouter();
+  const { track } = useAnalyticsContext();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<TypeaheadSuggestion[]>([]);
@@ -82,6 +94,17 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
         ...data.suggestions,
       ]);
       setDidYouMean(data.did_you_mean ?? null);
+      // #1620: the phone reports answer exposure too. Until now only the desktop
+      // dropdown emitted this, so `answer_visible_typeahead` described half the
+      // user base — and the half that HAD the feature.
+      const withAnswer = countAnswersShown(data.suggestions);
+      if (withAnswer > 0) {
+        track("answer_visible_typeahead", {
+          query: q,
+          answers_shown: withAnswer,
+          surface: "mobile",
+        });
+      }
     } catch (err) {
       // A newer keystroke aborted this request — a fresher one owns the state.
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -93,7 +116,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
       // request must not turn it off out from under the fresh one.
       if (gate.owns(controller)) setLoading(false);
     }
-  }, [gate]);
+  }, [gate, track]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -219,26 +242,41 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
               {s.type === "hub" && (s.emoji || "\u{1F3DF}")}
             </span>
             <div className="flex-1 min-w-0">
-              <div className="text-base text-text-primary truncate">{s.text}</div>
-              {s.type === "event" && s.commence_time && (
-                <div className="text-xs text-text-muted mt-0.5">
-                  {s.status === "live" ? "Live now" : new Date(s.commence_time).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                </div>
-              )}
-              {s.type === "futures" && s.market_type_label && (
-                <div className="text-xs text-accent-brand mt-0.5">{s.market_type_label}</div>
-              )}
+              <div className="text-base text-text-primary truncate">
+                {suggestionDisplayText(s)}
+              </div>
+              {(() => {
+                const sub = suggestionSubtitle(s);
+                if (!sub) return null;
+                if (sub.kind === "futures-answer") {
+                  // #993 Slice A, finally on the phone: lead with the answer.
+                  const { leader, second, movement } = sub.answer;
+                  return (
+                    <div className="text-xs text-text-secondary truncate mt-0.5">
+                      <span className="text-text-primary font-medium">
+                        {leader.name} {toPercent(leader.probability)}%
+                      </span>
+                      {isMovementWorthShowing(movement) && (
+                        <span className={movement > 0 ? "text-accent-live" : "text-accent-danger"}>
+                          {" "}{movement > 0 ? "↑" : "↓"}{Math.abs(toPercent(movement))}
+                        </span>
+                      )}
+                      {second && (
+                        <span className="text-text-muted">
+                          {" · "}{second.name} {toPercent(second.probability)}%
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+                if (sub.kind === "futures-label") {
+                  return <div className="text-xs text-accent-brand mt-0.5">{sub.text}</div>;
+                }
+                return <div className="text-xs text-text-muted mt-0.5">{sub.text}</div>;
+              })()}
             </div>
             <span className="text-xs text-text-muted flex-shrink-0">
-              {s.type === "team"
-                ? "Team"
-                : s.type === "event"
-                ? "Game"
-                : s.type === "event_concept"
-                ? "Event"
-                : s.type === "hub"
-                ? "Hub"
-                : "Futures"}
+              {suggestionTypeLabel(s)}
             </span>
           </button>
         ))}

@@ -10,6 +10,16 @@ import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
+// #1620: row presentation is shared with MobileSearchOverlay so the two
+// dropdowns cannot drift again. Logic there, classes here.
+import {
+  countAnswersShown,
+  suggestionDisplayText,
+  suggestionSubtitle,
+  suggestionTypeLabel,
+  isMovementWorthShowing,
+  toPercent,
+} from "@/lib/searchSuggestionDisplay";
 
 interface SearchBarProps {
   initialQuery?: string;
@@ -124,11 +134,13 @@ export default function SearchBar({
       setIsOpen(merged.length > 0);
       // #993 Slice A: measure real exposure of the answer-in-typeahead so the
       // Alex-test interviews can be cross-checked against it.
-      const withAnswer = data.suggestions.filter(
-        (s) => s.type === "futures" && (s.top_outcomes ?? []).some((o) => o.probability != null)
-      ).length;
+      const withAnswer = countAnswersShown(data.suggestions);
       if (withAnswer > 0) {
-        track("answer_visible_typeahead", { query: q, answers_shown: withAnswer });
+        track("answer_visible_typeahead", {
+          query: q,
+          answers_shown: withAnswer,
+          surface: "desktop",
+        });
       }
     } catch (err) {
       // A newer keystroke aborted this request — a fresher one owns the state.
@@ -459,70 +471,43 @@ export default function SearchBar({
 
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-text-primary truncate">
-                  {suggestion.type === "futures"
-                    ? formatFuturesName(suggestion.text)
-                    : suggestion.text}
+                  {suggestionDisplayText(suggestion)}
                 </div>
-                {suggestion.type === "event" && suggestion.commence_time && (
-                  <div className="text-xs text-slate">
-                    {suggestion.status === "live"
-                      ? "Live now"
-                      : formatEventTime(suggestion.commence_time)}
-                  </div>
-                )}
-                {suggestion.type === "event_concept" && (
-                  <div className="text-xs text-slate">
-                    Event{suggestion.sport_key ? ` · ${suggestion.sport_key}` : ""}
-                  </div>
-                )}
-                {suggestion.type === "hub" && (
-                  <div className="text-xs text-slate">Browse all markets</div>
-                )}
-                {suggestion.type === "futures" && (() => {
-                  // #993 Slice A: lead with the answer — leader + probability
-                  // (already #23-normalized server-side), then the runner-up as
-                  // space allows, with a movement arrow when |Δ24h| ≥ 2pts.
-                  const outs = (suggestion.top_outcomes ?? []).filter(
-                    (o) => o.probability != null
-                  );
-                  if (outs.length > 0) {
-                    const leader = outs[0];
-                    const second = outs[1];
-                    const mv = leader.movement ?? 0;
+                {(() => {
+                  const sub = suggestionSubtitle(suggestion);
+                  if (!sub) return null;
+                  if (sub.kind === "futures-answer") {
+                    // #993 Slice A: lead with the answer — leader + probability
+                    // (already #23-normalized server-side), then the runner-up
+                    // as space allows, with a movement arrow when |Δ24h| ≥ 2pts.
+                    const { leader, second, movement } = sub.answer;
                     return (
                       <div className="text-xs text-text-secondary truncate">
                         <span className="text-text-primary font-medium">
-                          {leader.name} {Math.round((leader.probability as number) * 100)}%
+                          {leader.name} {toPercent(leader.probability)}%
                         </span>
-                        {Math.abs(mv) >= 0.02 && (
-                          <span className={mv > 0 ? "text-accent-live" : "text-accent-danger"}>
-                            {" "}{mv > 0 ? "↑" : "↓"}{Math.abs(Math.round(mv * 100))}
+                        {isMovementWorthShowing(movement) && (
+                          <span className={movement > 0 ? "text-accent-live" : "text-accent-danger"}>
+                            {" "}{movement > 0 ? "↑" : "↓"}{Math.abs(toPercent(movement))}
                           </span>
                         )}
                         {second && (
                           <span className="text-text-muted">
-                            {" · "}{second.name} {Math.round((second.probability as number) * 100)}%
+                            {" · "}{second.name} {toPercent(second.probability)}%
                           </span>
                         )}
                       </div>
                     );
                   }
-                  return suggestion.market_type_label ? (
-                    <div className="text-xs text-accent-brand">{suggestion.market_type_label}</div>
-                  ) : null;
+                  if (sub.kind === "futures-label") {
+                    return <div className="text-xs text-accent-brand">{sub.text}</div>;
+                  }
+                  return <div className="text-xs text-slate">{sub.text}</div>;
                 })()}
               </div>
 
               <span className="text-xs text-text-muted flex-shrink-0">
-                {suggestion.type === "team"
-                  ? "Team"
-                  : suggestion.type === "event"
-                  ? "Game"
-                  : suggestion.type === "hub"
-                  ? "Hub"
-                  : suggestion.type === "event_concept"
-                  ? "Event"
-                  : "Futures"}
+                {suggestionTypeLabel(suggestion)}
               </span>
             </button>
           ))}
@@ -571,33 +556,6 @@ export function rankTeamsFirst(
   return [...promoted, ...rest];
 }
 
-function formatFuturesName(name: string): string {
-  return name
-    .replace(/^(?:NBA|NHL|MLB|NFL|MLS|WNBA|PGA)\s+Playoffs?:\s*/i, "")
-    .replace(/\s*\d{4}(-\d{2,4})?\s*$/, "")
-    .trim();
-}
-
-function formatEventTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-
-  if (diffHours < 0) return "Recently";
-  if (diffHours < 1) return `In ${Math.round(diffHours * 60)} min`;
-  if (diffHours < 24) {
-    return date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
-
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+// formatFuturesName / formatEventTime moved to lib/searchSuggestionDisplay.ts
+// (#1620) so the phone dropdown gets the same treatment. Do not re-declare them
+// here — __tests__/components/searchDropdownParity.test.ts fails if you do.
