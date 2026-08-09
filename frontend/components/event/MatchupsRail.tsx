@@ -16,6 +16,7 @@ import {
   isMatchupChild,
   splitChildren,
 } from "@/lib/eventConceptDisplay";
+import { groupMatchupsByFamily } from "@/lib/matchupFamilies";
 import type { EventConceptChild } from "@/lib/types";
 import FighterAvatar from "./FighterAvatar";
 import MatchupDuel from "./MatchupDuel";
@@ -95,6 +96,65 @@ function RailChild({ child, index, dim }: { child: EventConceptChild; index: num
   return <MatchupCard child={child} dim={dim} />;
 }
 
+const GRID_CLASS =
+  "flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0";
+
+/** #1602: one block of the rail — a flat grid, or, only when the field is large
+ *  enough to be a wall, collapsed family groups. `groupMatchupsByFamily` returns
+ *  null for every field at or under MATCHUP_GROUPING_THRESHOLD and for any field
+ *  that is all one family, so the flat path below is byte-for-byte today's
+ *  behaviour for a UFC card, a cycling GC or a soccer bracket. */
+function RailBody({
+  items,
+  dim,
+  className,
+}: {
+  items: EventConceptChild[];
+  dim?: boolean;
+  className?: string;
+}) {
+  const groups = groupMatchupsByFamily(items);
+  const extra = className ? ` ${className}` : "";
+
+  if (!groups) {
+    return (
+      <div className={`${GRID_CLASS}${extra}`}>
+        {items.map((child, i) => (
+          <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`space-y-1${extra}`}>
+      {groups.map((g) => (
+        // Deliberately an UNCONTROLLED <details>: nothing passes `open`, so React
+        // never rewrites it and a group the user opened survives the page's 30s
+        // live refresh — SWR swaps data in place, the rail is not remounted, and
+        // `g.key` is a stable family id rather than an index. Same reason the
+        // "Completed" disclosure below has always held its state.
+        // Collapsed by default, all of them: the census showed no single lead
+        // family (match winners 399 vs completed 338), so auto-opening one would
+        // be inventing a relevance ranking.
+        <details
+          key={g.key}
+          className="border-b border-surface-border last:border-b-0 pb-1.5"
+        >
+          <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer py-2">
+            {g.label} ({g.items.length})
+          </summary>
+          <div className={`${GRID_CLASS} mt-2 mb-1`}>
+            {g.items.map((child, i) => (
+              <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} />
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 interface MatchupsRailProps {
   items: EventConceptChild[];
   /** L2-130: a child already shown in the container hero — excluded from the rail
@@ -108,31 +168,24 @@ export default function MatchupsRail({ items, exclude, title }: MatchupsRailProp
   const shown = (items || []).filter((c) => c !== exclude);
   if (shown.length === 0) return null;
   const { live, settled } = splitChildren(shown);
-  const gridClass =
-    "flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0";
 
   return (
     <section id="matchups" className="bg-surface-card rounded-card shadow-card p-6">
       <h2 className="text-title-3 font-semibold text-text-primary mb-4">{title || "Matchups & props"}</h2>
-      {live.length > 0 && (
-        // Mobile: a horizontal-scroll rail. Desktop (L2-113): a responsive 2–3-col
-        // grid so wide viewports don't hide bouts behind a scroll gutter.
-        <div className={gridClass}>
-          {live.map((child, i) => (
-            <RailChild key={childReactKey(child, i)} child={child} index={i} />
-          ))}
-        </div>
-      )}
+      {/* Mobile: a horizontal-scroll rail. Desktop (L2-113): a responsive 2–3-col
+          grid so wide viewports don't hide bouts behind a scroll gutter. #1602:
+          above MATCHUP_GROUPING_THRESHOLD that grid becomes collapsed family
+          groups instead of one 52,000px wall. */}
+      {live.length > 0 && <RailBody items={live} />}
       {settled.length > 0 && (
         <details className="mt-4">
           <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
             Completed ({settled.length})
           </summary>
-          <div className={`${gridClass} mt-2`}>
-            {settled.map((child, i) => (
-              <RailChild key={childReactKey(child, i)} child={child} index={i} dim />
-            ))}
-          </div>
+          {/* The settled tail costs no height while collapsed, but on this page it
+              is 744 cards — opening it would be the identical wall one click in,
+              so it groups by the same rule. */}
+          <RailBody items={settled} dim className="mt-2" />
         </details>
       )}
       {live.length === 0 && settled.length === 0 && (

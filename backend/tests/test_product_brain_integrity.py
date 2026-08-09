@@ -13,6 +13,7 @@ explicit Alex ruling — update the marker list below IN THE SAME CHANGE and say
 so in the commit message. Do not delete a marker to make the test pass.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,42 @@ RULINGS_2026_08_08_REISSUED = [
     "FRESH-WINDOW MEASUREMENT PASS",
 ]
 
+# CAL-P021 (2026-08-09). The exit exam. Guarded harder than a normal ruling for
+# a structural reason: this one is a GATE, so the incentive to quietly soften it
+# is real in a way it is not for a ruling that merely describes how to work. The
+# seven items are pinned individually, so dropping one — the cheapest possible
+# way to pass — fails CI rather than passing the exam.
+RULING_EXIT_EXAM = [
+    "THE CALIBRATION EXIT EXAM",
+    "volume-proven trading",
+    "matched-bucket comparison",
+    # Substrings chosen to sit inside ONE line of the doc: the ruling text is
+    # wrapped, so "no massive-error category left unexplained" spans a newline
+    # and would never match however intact the ruling is — a guard that can
+    # only fail is worse than no guard.
+    "massive-error category",
+    "per-source panels",
+    "native app's calibration surface",
+    "actually firing",
+    "786K recoverable cohort",
+]
+
+# CAL-P022 (2026-08-09). The three exit-exam unblocks, taken in one sitting.
+# Banked the same window they were heard in, which is the whole lesson of the
+# 2026-08-08 re-issued batch: a ruling that dies with its window costs Alex a
+# third telling. Ruling 9 in particular is pinned by its LADDER, because the
+# cheap way to get it wrong is to keep tier 1 and quietly drop tier 3 — which
+# would republish "unknown" as "untraded", the exact dishonesty it forbids.
+RULINGS_2026_08_09 = [
+    "the three exit-exam unblocks",
+    "RULING 9 RESOLVED",
+    "movement_inferred",
+    "Never collapsed into \"untraded\"",
+    "N is MEASURED, not chosen",
+    "BOUNDED PILOT FIRST",
+    "PAUSE; specimens first",
+]
+
 ALL_MARKERS = (
     REQUIRED_MARKERS
     + STRUCTURAL_MARKERS
@@ -112,7 +149,26 @@ ALL_MARKERS = (
     + DEFERRED_NOW_GUARDED
     + RULINGS_2026_08_08
     + RULINGS_2026_08_08_REISSUED
+    + RULING_EXIT_EXAM
+    + RULINGS_2026_08_09
 )
+
+#: The exam is a separate FILE, so the marker guard above cannot protect it —
+#: deleting `docs/CALIBRATION-EXIT-EXAM.md` would leave PRODUCT-BRAIN's ruling
+#: intact and pointing at nothing. Guarded by its own test below.
+EXIT_EXAM = PRODUCT_BRAIN.parent / "CALIBRATION-EXIT-EXAM.md"
+
+#: One per exam item. A scoreboard that loses a row is how a seven-item gate
+#: silently becomes a six-item one.
+EXIT_EXAM_ITEMS = [
+    "Ruling 9 shipped",
+    "matched-bucket comparison",
+    "Cricket and entertainment",
+    "per-source panels",
+    "consistent with web",
+    "proven by drill",
+    "786K recoverable",
+]
 
 
 def _read_product_brain() -> str:
@@ -166,3 +222,54 @@ def test_product_brain_is_not_a_wholesale_regeneration() -> None:
         f"'consolidation' rewrite has collapsed the accreted ruling history. "
         f"Restore from git and append the new ruling instead of regenerating."
     )
+
+
+# ---------------------------------------------------------------------------
+# CAL-P021 — the exit exam is a gate, and a gate needs its own guard.
+# ---------------------------------------------------------------------------
+def test_exit_exam_document_exists() -> None:
+    assert EXIT_EXAM.exists(), (
+        f"docs/CALIBRATION-EXIT-EXAM.md is missing at {EXIT_EXAM}. Alex's "
+        "2026-08-09 ruling makes this document the rotation trigger for the "
+        "calibration slot: the slot rotates when this file shows all seven "
+        "items green with linked proof. Deleting it does not pass the exam."
+    )
+
+
+@pytest.mark.parametrize("item", EXIT_EXAM_ITEMS)
+def test_exit_exam_retains_every_item(item: str) -> None:
+    text = EXIT_EXAM.read_text(encoding="utf-8")
+    assert item in text, (
+        f"exam item {item!r} is missing from docs/CALIBRATION-EXIT-EXAM.md. "
+        "All seven items are required together — dropping one is the cheapest "
+        "way to 'pass', so it fails here instead."
+    )
+
+
+def test_exit_exam_keeps_a_scoreboard_row_per_item() -> None:
+    """Seven items, seven scoreboard rows.
+
+    The scoreboard is what Alex reads first; an item that survives in prose but
+    vanishes from the table is invisible in the one sitting the ruling grants.
+    """
+    text = EXIT_EXAM.read_text(encoding="utf-8")
+    # Anchored to the scoreboard's own row shape (`| N | `). A looser test
+    # also counts the bucket table and the evidence log, which is how it first
+    # reported 20 rows for a 7-row table.
+    numbered = re.findall(r"^\| [1-7] \| ", text, re.MULTILINE)
+    assert len(numbered) == 7, (
+        f"the exam scoreboard has {len(numbered)} numbered rows, expected 7."
+    )
+
+
+def test_exit_exam_records_the_ruling_nine_inference_as_an_inference() -> None:
+    """The one place this lane read a decision INTO Alex's wording.
+
+    Item 1 requires "ruling 9 shipped"; RULINGS-NEEDED.md item 9 was still open
+    with options A and B. A was inferred. That inference must stay visible and
+    labelled — if it silently hardens into a quoted ruling, a wrong turn becomes
+    unauditable, and the correction costs a cycle instead of a line.
+    """
+    text = EXIT_EXAM.read_text(encoding="utf-8")
+    assert "inference" in text.lower()
+    assert "Option A" in text

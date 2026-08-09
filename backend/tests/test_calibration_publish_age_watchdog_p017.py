@@ -75,6 +75,76 @@ class TestThePublishAgeHeartbeatExists:
         assert "'complete'" in ctx and "NOT IN" in ctx
 
 
+class TestTheAlertNamesTheStageNotOnlyThePhase:
+    """CAL-P023 — the drill ran, and the alert stopped one level short.
+
+    Issue #1604 (auto-filed 2026-08-09 09:46 PT) is this check's FIRST live
+    firing, and it worked: value 181.36h against a 2h threshold, P1, deduped,
+    with the phase attached. But the body read ``phase: futures, phase_status:
+    cancelled, duration_ms: 726557`` and then ``detail: ''``.
+
+    Empty, because a phase CANCELLED by the build's own budget writes no detail
+    — only a phase that dies on a statement timeout does. CAL-P017 promised
+    "phase futures, stage ``read:futures_population``"; production delivered the
+    phase and not the stage, and the stage is the half that says WHERE the time
+    went.
+
+    It was never in ``phases[]`` to be read. ``record_stage`` accumulates into a
+    TOP-LEVEL ``stages`` map, so no query over ``phases[]`` could ever have
+    named a stage, whatever the terminal state.
+    """
+
+    def test_the_stage_map_is_read_not_only_the_phase_array(self):
+        check = _check("calibration_publish_age")
+        ctx = check.get("context_query")
+        # Non-vacuity: the pre-CAL-P023 query read ONLY `phases`, so both of
+        # these fail against it.
+        assert "'stages'" in ctx, "the top-level stage map is where the stage names live"
+        assert "jsonb_each" in ctx, "the stage map is an object, not an array"
+        # The phase half must SURVIVE the addition — this is additive evidence,
+        # not a replacement.
+        assert "jsonb_array_elements" in ctx and "'complete'" in ctx
+
+    def test_stages_are_ordered_by_cost_so_the_expensive_one_leads(self):
+        ctx = _check("calibration_publish_age")["context_query"]
+        assert "ORDER BY" in ctx and "DESC" in ctx
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_phase_with_no_detail_still_yields_a_stage(self):
+        """The exact #1604 shape: empty detail, and the evidence is still useful."""
+        from app.tasks.data_quality_watchdog import _run_context_query
+
+        # Rows as production returns them post-fix: the cancelled phase (whose
+        # `detail` is blank, exactly as #1604 showed) followed by the stage map.
+        rows = [
+            {"terminal": "cancelled", "published": "false", "phase": "futures",
+             "phase_status": "cancelled", "detail": "", "duration_ms": "726557"},
+            {"terminal": "cancelled", "published": "false",
+             "phase": "stage:read:futures_unit", "duration_ms": "626242"},
+            {"terminal": "cancelled", "published": "false",
+             "phase": "stage:staged:cursor_invalidate", "duration_ms": "0"},
+        ]
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                class _R:
+                    def mappings(self_inner):
+                        class _M:
+                            def all(self_m):
+                                return rows
+                        return _M()
+                return _R()
+
+        out = await _run_context_query(
+            _Session(), {"name": "calibration_publish_age", "context_query": "SELECT 1"}
+        )
+        assert "futures" in out
+        # The two lines that make the alert actionable rather than restating it:
+        # where the time went, and that the cursor did not carry over.
+        assert "read:futures_unit" in out
+        assert "cursor_invalidate" in out
+
+
 class TestTheContextQueryCannotSuppressAnAlert:
     """Diagnostic garnish must never turn a fired alert into a swallowed one."""
 

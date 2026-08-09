@@ -1,0 +1,22 @@
+{
+  "policy": {"contract_version": "python-import-guard/v1"},
+  "cases": [
+    {"id":"from-dotted","source":"from backend.scripts.evals.foo import bar\n","expected":{"verdict":"REFUSE","forbidden":["from:backend.scripts.evals.foo"],"current_regex_flags":true}},
+    {"id":"import-dotted","source":"import backend.app.main as main\n","expected":{"verdict":"REFUSE","forbidden":["import:backend.app.main"],"current_regex_flags":true}},
+    {"id":"from-exact-backend","source":"from backend import scripts\n","expected":{"verdict":"REFUSE","forbidden":["from:backend"],"current_regex_flags":false}},
+    {"id":"import-exact-backend","source":"import backend\n","expected":{"verdict":"REFUSE","forbidden":["import:backend"],"current_regex_flags":false}},
+    {"id":"semicolon-import","source":"enabled = True; import backend.app.main\n","expected":{"verdict":"REFUSE","forbidden":["import:backend.app.main"],"current_regex_flags":false}},
+    {"id":"multiple-import-names","source":"import json, backend.app.main, pathlib\n","expected":{"verdict":"REFUSE","forbidden":["import:backend.app.main"],"current_regex_flags":false}},
+    {"id":"function-local-alias","source":"def load():\n    from backend.scripts.evals.foo import bar as value\n    return value\n","expected":{"verdict":"REFUSE","forbidden":["from:backend.scripts.evals.foo"],"current_regex_flags":true}},
+    {"id":"literal-importlib","source":"import importlib\nmodule = importlib.import_module('backend.scripts.evals.foo')\n","expected":{"verdict":"REFUSE","forbidden":["dynamic:backend.scripts.evals.foo"],"current_regex_flags":false}},
+    {"id":"import-module-alias","source":"from importlib import import_module\nmodule = import_module('backend.app.main')\n","expected":{"verdict":"REFUSE","forbidden":["dynamic:backend.app.main"],"current_regex_flags":false}},
+    {"id":"docstring-is-not-import","source":"'''Example:\nfrom backend.scripts.evals.foo import bar\n'''\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":true}},
+    {"id":"multiline-string-is-not-import","source":"message = \"\"\"\nimport backend.app.main\n\"\"\"\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":true}},
+    {"id":"comment-is-not-import","source":"# from backend.scripts.evals.foo import bar\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":false}},
+    {"id":"canonical-eval-import","source":"from scripts.evals.foo import bar\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":false}},
+    {"id":"canonical-app-import","source":"from app.utils.sport_keys import SPORT_LEAGUE_MAP\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":false}},
+    {"id":"similar-package-name","source":"from backend_helpers import thing\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":false}},
+    {"id":"relative-package-import","source":"from .helpers import thing\n","expected":{"verdict":"ALLOW","forbidden":[],"current_regex_flags":false}},
+    {"id":"syntax-error-is-not-skipped","source":"from backend. import nope\n","expected":{"verdict":"REFUSE","forbidden":["SYNTAX_ERROR"],"current_regex_flags":true}}
+  ]
+}
