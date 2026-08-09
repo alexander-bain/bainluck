@@ -1,0 +1,329 @@
+/**
+ * Grouping and duplicate-merging for the event page's "Additional Markets"
+ * section (UX-P037, gaps K10 + K11).
+ *
+ * Why this module exists — four things measured on SIX live games, 2026-08-09:
+ *
+ * 1. The category patterns below are NFL/NBA-shaped (coin toss, gatorade,
+ *    halftime, MVP) and match nothing MLB emits, so 100% of rows on 6/6 games
+ *    fell into one bucket titled "Other Markets". That is gap K11.
+ * 2. A single card rendered 34–61 outcome bars, because the old cap limited
+ *    CARDS per category, never OUTCOMES per card. That is gap K10.
+ * 3. The header counted `market_name` groups, so it read "1 markets grouped by
+ *    category" above 34 bars.
+ * 4. Worst: outcomes merged by label kept whichever probability was FURTHEST
+ *    FROM 0.5. Across the six games there were 92 duplicate label pairs, 86% of
+ *    them materially disagreeing, so the page rendered
+ *    "Ronald Acuña Jr.: Home Runs O/U 0.5 — 91%" (the wire carried 0.095, 0.125
+ *    and 0.905). Preferring the extreme systematically prefers exactly what a
+ *    stale or illiquid Polymarket midpoint looks like — gotcha #19.
+ *
+ * The statistic was on the wire the whole time: every Polymarket prop label is
+ * `Player: Statistic O/U Threshold`. Same shape as UX-P036's finding on the
+ * divergence section — data we fetched and declined to show.
+ *
+ * PURE: no I/O, no React, no DB.
+ */
+
+/**
+ * How far two probabilities carrying the SAME label may differ and still be
+ * treated as one price.
+ *
+ * Above this, the client cannot say which is right: `other` rows carry only
+ * `market_name`, `outcome_name`, `probability` and `source`, so there is no
+ * field that distinguishes them. Showing both would be showing source
+ * divergence, which the standing *"the blend is the product"* ruling forbids;
+ * showing the extreme is the bug this module exists to remove. So a
+ * materially-disagreeing label is WITHHELD and counted — never silently
+ * dropped, and never guessed at.
+ */
+export const AGREEMENT_TOLERANCE = 0.02;
+
+/**
+ * Float slack on the tolerance comparison. `0.52 - 0.5` is `0.020000000000000018`
+ * in IEEE 754, so a bare `>` withholds a pair that is EXACTLY at tolerance.
+ */
+const TOLERANCE_EPSILON = 1e-9;
+
+/** Outcome bars shown up-front on one card; the rest sit in a disclosure. */
+export const MAX_OUTCOMES_PER_CARD = 8;
+
+/** Cards shown up-front in one category; the rest sit in a disclosure. */
+export const MAX_CARDS_PER_CATEGORY = 5;
+
+/** Category that collects rows whose label names a player statistic. */
+export const PLAYER_PROPS_CATEGORY = "Player Props";
+
+export interface OtherMarketRow {
+  market_name?: string | null;
+  outcome_name?: string | null;
+  probability?: number | null;
+  source?: string | null;
+}
+
+export interface ParsedPropLabel {
+  player: string;
+  statistic: string;
+  /** Kept as the source string so "0.5" never renders as "0.5000000001". */
+  threshold: string;
+}
+
+/** `Ronald Acuña Jr.: Home Runs O/U 0.5` → player / statistic / threshold. */
+const PROP_LABEL_RE = /^(.+?):\s*(.+?)\s+O\/U\s+(\d+(?:\.\d+)?)\s*$/;
+
+/**
+ * The player, statistic and threshold encoded in a Polymarket prop label, or
+ * null when the label carries none.
+ *
+ * Null is the IMPORTANT case, not the edge case: NFL novelty props, golf and
+ * the bare `Yes` / `No` / `NRFI` rows all land here, and every one of them must
+ * keep rendering exactly as it does today.
+ */
+export function parsePropLabel(
+  outcomeName: string | null | undefined,
+): ParsedPropLabel | null {
+  if (typeof outcomeName !== "string") return null;
+  const match = PROP_LABEL_RE.exec(outcomeName.trim());
+  if (!match) return null;
+  const [, player, statistic, threshold] = match;
+  if (!player.trim() || !statistic.trim()) return null;
+  return { player: player.trim(), statistic: statistic.trim(), threshold };
+}
+
+const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: string; subtitle: string }> = [
+  { pattern: /first\s*(score|td|touchdown|goal|basket)/i, category: "Game Props", subtitle: "scoring & flow" },
+  { pattern: /halftime|half\s*time|leader\s*at/i, category: "Game Props", subtitle: "scoring & flow" },
+  { pattern: /overtime|OT\b|extra\s*time/i, category: "Game Props", subtitle: "scoring & flow" },
+  { pattern: /coin\s*toss|gatorade|anthem|color/i, category: "Novelty Props", subtitle: "fun markets" },
+  { pattern: /mvp|most\s*valuable/i, category: "MVP", subtitle: "game MVP probability" },
+  { pattern: /double\s*double|triple\s*double/i, category: "Player Performance", subtitle: "statistical milestones" },
+  { pattern: /both\s*teams?\s*(to\s*)?score/i, category: "Game Props", subtitle: "scoring & flow" },
+];
+
+/** Unchanged fallback for rows whose label names no statistic. */
+export function categorizeMarketName(name: string): { category: string; subtitle: string } {
+  for (const { pattern, category, subtitle } of CATEGORY_PATTERNS) {
+    if (pattern.test(name)) return { category, subtitle };
+  }
+  return { category: "Other Markets", subtitle: "additional markets" };
+}
+
+/** Rows already covered by the market maps / hero above this section. */
+export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
+  const lower = (m.market_name || "").toLowerCase();
+  const outLower = (m.outcome_name || "").toLowerCase();
+  if (lower.includes("spread") || lower.includes("handicap")) return true;
+  if (lower.includes("total") && (outLower.includes("over") || outLower.includes("under"))) return true;
+  if (lower.includes("moneyline") || lower.includes("winner") || lower.includes("match result")) return true;
+  return false;
+}
+
+/** Market names that are just the two-sided win probability shown in the hero. */
+export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null): Set<string> {
+  const byName = new Map<string, number[]>();
+  for (const m of markets ?? []) {
+    const name = m.market_name || "";
+    if (!byName.has(name)) byName.set(name, []);
+    if (m.probability != null) byName.get(name)!.push(m.probability);
+  }
+  const winProb = new Set<string>();
+  for (const [name, probs] of byName) {
+    if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
+      winProb.add(name);
+    }
+  }
+  return winProb;
+}
+
+export interface LabeledRow {
+  label: string;
+  probability: number | null;
+  source: string | null;
+}
+
+export interface MergedOutcome {
+  label: string;
+  prob: number;
+  source: string;
+  /** How many wire rows agreed on this price. Drives the `Nx` badge. */
+  sourceCount: number;
+}
+
+export interface OutcomeMergeResult {
+  outcomes: MergedOutcome[];
+  /** Labels withheld because their duplicates disagreed beyond tolerance. */
+  withheld: number;
+}
+
+/**
+ * Collapse rows sharing a label into one outcome each.
+ *
+ * Duplicates that AGREE collapse exactly as they always did, keeping the
+ * `sourceCount` badge — that is the legitimate multi-source case the badge was
+ * built for, and a single row trivially agrees with itself.
+ *
+ * Duplicates that DISAGREE are withheld and counted. This is the whole point of
+ * the module: the old rule picked `Math.abs(p - 0.5)`-maximal, which is how a
+ * 9.5% home-run prop came to render as 91%.
+ */
+export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
+  const order: string[] = [];
+  const byLabel = new Map<string, LabeledRow[]>();
+
+  for (const row of rows) {
+    const label = row.label || "Unknown";
+    let bucket = byLabel.get(label);
+    if (!bucket) {
+      bucket = [];
+      byLabel.set(label, bucket);
+      order.push(label);
+    }
+    bucket.push(row);
+  }
+
+  const outcomes: MergedOutcome[] = [];
+  let withheld = 0;
+
+  for (const label of order) {
+    const group = byLabel.get(label) as LabeledRow[];
+    const probs = group.map((r) => r.probability ?? 0);
+    const spread = Math.max(...probs) - Math.min(...probs);
+
+    if (spread > AGREEMENT_TOLERANCE + TOLERANCE_EPSILON) {
+      withheld += 1;
+      continue;
+    }
+
+    outcomes.push({
+      label,
+      prob: probs[0],
+      source: group[0].source || "unknown",
+      sourceCount: group.length,
+    });
+  }
+
+  return { outcomes, withheld };
+}
+
+export interface MarketCard {
+  name: string;
+  outcomes: MergedOutcome[];
+  withheld: number;
+}
+
+export interface MarketCategoryGroup {
+  title: string;
+  subtitle: string;
+  cards: MarketCard[];
+  withheld: number;
+}
+
+export interface MarketSection {
+  categories: MarketCategoryGroup[];
+  /** Outcome bars reachable on screen — what the header must count. */
+  renderedOutcomes: number;
+  /** Labels withheld across the whole section. */
+  withheld: number;
+}
+
+const CATEGORY_ORDER = [
+  "MVP",
+  "Game Props",
+  PLAYER_PROPS_CATEGORY,
+  "Player Performance",
+  "Novelty Props",
+  "Other Markets",
+];
+
+/**
+ * Build the whole section: filter, categorise, merge, and report honest counts.
+ *
+ * Player-prop rows are grouped by their STATISTIC, so a live MLB game shows
+ * "Home Runs" and "Strikeouts" instead of one 61-bar heap named after the
+ * matchup. Everything else keeps the original `categorizeMarketName` path, so
+ * NFL, golf and novelty payloads are untouched.
+ */
+export function buildMarketSection(rows: OtherMarketRow[] | undefined | null): MarketSection {
+  const all = rows ?? [];
+  const winProb = findWinProbMarkets(all);
+  const kept = all.filter(
+    (m) => !isRedundantWithMarketMaps(m) && !winProb.has(m.market_name || ""),
+  );
+
+  if (kept.length < 3) return { categories: [], renderedOutcomes: 0, withheld: 0 };
+
+  interface Draft {
+    title: string;
+    subtitle: string;
+    cardOrder: string[];
+    cards: Map<string, LabeledRow[]>;
+  }
+  const drafts = new Map<string, Draft>();
+  const draftOrder: string[] = [];
+
+  for (const row of kept) {
+    const parsed = parsePropLabel(row.outcome_name);
+
+    const title = parsed ? PLAYER_PROPS_CATEGORY : categorizeMarketName(row.market_name || "").category;
+    const subtitle = parsed ? "by statistic" : categorizeMarketName(row.market_name || "").subtitle;
+    const cardName = parsed ? parsed.statistic : row.market_name || "Unknown";
+    // Inside a "Home Runs" card the statistic is redundant; the threshold is
+    // not, because a statistic carries several (0.5 and 1.5 both occur live).
+    const label = parsed
+      ? `${parsed.player} O/U ${parsed.threshold}`
+      : row.outcome_name || "Unknown";
+
+    let draft = drafts.get(title);
+    if (!draft) {
+      draft = { title, subtitle, cardOrder: [], cards: new Map() };
+      drafts.set(title, draft);
+      draftOrder.push(title);
+    }
+
+    let card = draft.cards.get(cardName);
+    if (!card) {
+      card = [];
+      draft.cards.set(cardName, card);
+      draft.cardOrder.push(cardName);
+    }
+    card.push({ label, probability: row.probability ?? null, source: row.source ?? null });
+  }
+
+  let renderedOutcomes = 0;
+  let withheld = 0;
+
+  const categories: MarketCategoryGroup[] = draftOrder.map((title) => {
+    const draft = drafts.get(title) as Draft;
+    let categoryWithheld = 0;
+
+    const cards: MarketCard[] = draft.cardOrder.map((name) => {
+      const merged = mergeOutcomes(draft.cards.get(name) as LabeledRow[]);
+      const outcomes = [...merged.outcomes].sort((a, b) => b.prob - a.prob);
+      renderedOutcomes += outcomes.length;
+      categoryWithheld += merged.withheld;
+      return { name, outcomes, withheld: merged.withheld };
+    });
+
+    withheld += categoryWithheld;
+    return {
+      title: draft.title,
+      subtitle: draft.subtitle,
+      // A card can be emptied entirely by withholding; it must not render as a
+      // headed card with no bars.
+      cards: cards.filter((c) => c.outcomes.length > 0),
+      withheld: categoryWithheld,
+    };
+  });
+
+  return {
+    categories: categories
+      .filter((c) => c.cards.length > 0)
+      .sort((a, b) => {
+        const ai = CATEGORY_ORDER.indexOf(a.title);
+        const bi = CATEGORY_ORDER.indexOf(b.title);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      }),
+    renderedOutcomes,
+    withheld,
+  };
+}
