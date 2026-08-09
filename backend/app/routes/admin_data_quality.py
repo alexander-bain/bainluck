@@ -4350,15 +4350,27 @@ async def trigger_calibration_prices(
 
 import re as _re
 
-_MUTATING_RE = _re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
-    _re.IGNORECASE,
+from app.utils.sql_read_guard import MUTATING_RE as _MUTATING_RE  # still used by GET /query
+from app.utils.sql_read_guard import (
+    SqlGuardError,
+    assert_executable_for_analyze,
+    assert_read_only,
+    build_explain_sql,
+    needs_limit_wrap,
+    resolve_explain_timeout_ms,
+    resolve_row_cap,
 )
 
 
 class _DbQueryRequest(BaseModel):
     sql: str
     limit: int = 500
+    # LAT-P019 (#1619): plan support. `explain` never appears in `sql` — the caller
+    # supplies a plain SELECT and the server composes the EXPLAIN around it, so the
+    # SELECT/WITH allowlist is untouched by this addition. See app/utils/sql_read_guard.
+    explain: bool = False
+    analyze: bool = False
+    timeout_ms: Optional[int] = None
 
 
 @router.post("/db-query")
@@ -4370,39 +4382,79 @@ async def admin_db_query(
 ):
     """Run a read-only SQL query via POST (SQL stays out of URL/access logs).
 
-    Safety layers:
+    Safety layers (all of them pure functions in `app/utils/sql_read_guard`):
     1. Must start with SELECT or WITH (no mutations)
     2. No semicolons except trailing (no multi-statement)
     3. READ ONLY transaction
     4. 10s statement timeout
     5. Server-side row cap (min of request limit, 1000)
+
+    `explain: true` returns a query PLAN instead of rows (LAT-P019, #1619). The plan
+    path adds no way to reach the database that the row path did not already have:
+    the same guards run first, the same READ ONLY transaction wraps it, and the
+    EXPLAIN keyword is composed server-side rather than accepted from the caller.
+
+    Plan-without-ANALYZE is the useful mode and the safe one: it does not execute the
+    statement, which is exactly why it works on the queries worth investigating — a
+    statement that always hits the timeout still yields a plan, because planning it
+    costs nothing. `analyze: true` DOES execute, and is gated accordingly.
     """
+    # Function-local, matching this file's prevailing idiom (there are ~10 other
+    # local `import json as _json` sites). A module-level `_json` here would be the
+    # only one, and would sit under every function that already rebinds the name
+    # locally — gotcha #7 territory for no benefit.
+    import json as _json
     import time as _t
 
     _check_admin_secret(secret, request=request)
 
-    sql_stripped = body.sql.strip().rstrip(";")
+    try:
+        if body.analyze and not body.explain:
+            raise SqlGuardError("`analyze` requires `explain: true`")
+        # Refused rather than ignored: a timeout the caller set and the server
+        # silently dropped is worse than an error, because the caller reads the
+        # resulting duration as if the bound had applied.
+        if body.timeout_ms is not None and not body.explain:
+            raise SqlGuardError("`timeout_ms` is only supported with `explain: true`")
 
-    # Reject multi-statement (semicolons within the body)
-    if ";" in sql_stripped:
-        raise HTTPException(status_code=400, detail="Multi-statement queries not allowed")
+        if body.analyze:
+            sql_stripped = assert_executable_for_analyze(body.sql)
+        else:
+            sql_stripped = assert_read_only(body.sql)
+    except SqlGuardError as e:
+        raise HTTPException(status_code=400, detail=e.detail)
 
-    if _MUTATING_RE.search(sql_stripped):
-        raise HTTPException(status_code=400, detail="Only SELECT queries are allowed")
-
-    upper = sql_stripped.lstrip().upper()
-    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
-        raise HTTPException(status_code=400, detail="Query must start with SELECT or WITH")
-
-    row_cap = min(body.limit, 1000)
+    row_cap = resolve_row_cap(body.limit)
     _start = _t.monotonic()
+
+    if body.explain:
+        timeout_ms = resolve_explain_timeout_ms(body.timeout_ms)
+        explain_sql = build_explain_sql(sql_stripped, analyze=body.analyze)
+        try:
+            await db.execute(text("SET TRANSACTION READ ONLY"))
+            await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}ms'"))
+            # No LIMIT is appended here, deliberately. The row path wraps the
+            # statement to cap the result set; doing that on the plan path would
+            # return the plan of a DIFFERENT query than the one production runs,
+            # which is the single way this rail could quietly mislead.
+            raw = (await db.execute(text(explain_sql))).scalar()
+            plan = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            return {
+                "explain": True,
+                "analyzed": body.analyze,
+                "plan": plan,
+                "explain_sql": explain_sql,
+                "statement_timeout_ms": timeout_ms,
+                "duration_ms": round((_t.monotonic() - _start) * 1000, 1),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)[:500])
 
     try:
         await db.execute(text("SET TRANSACTION READ ONLY"))
         await db.execute(text("SET LOCAL statement_timeout = '10s'"))
 
-        has_limit = "limit" in sql_stripped.lower().split("order")[-1] or "fetch" in sql_stripped.lower()
-        bounded = sql_stripped if has_limit else f"{sql_stripped} LIMIT {row_cap}"
+        bounded = f"{sql_stripped} LIMIT {row_cap}" if needs_limit_wrap(sql_stripped) else sql_stripped
         result = await db.execute(text(bounded))
         columns = list(result.keys())
         raw_rows = result.fetchmany(row_cap)

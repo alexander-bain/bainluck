@@ -475,6 +475,8 @@ When fixing ANY data quality, matching, or display issue:
 | Grid health audit | `GET /api/admin/audit/all` (Authorization: Bearer $ADMIN_TOKEN) |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` (Authorization: Bearer $ADMIN_TOKEN) |
 | Ad-hoc SQL (read-only) | `POST /api/admin/db-query` (Authorization: Bearer $ADMIN_TOKEN, body: `{"sql":"...","limit":500}`) |
+| **Query plan** | same endpoint, `{"sql":"SELECT ...","explain":true}` → `EXPLAIN (FORMAT JSON)`. Supply a plain SELECT — the server composes the EXPLAIN; typing `EXPLAIN ...` yourself is still rejected. Does **not** execute, so it works on queries that always hit the timeout. `"analyze":true` DOES execute (SELECT-only, no leading `WITH`). Bound via `"timeout_ms"` (500 ms–25 s, default 10 s) |
+| **Production query timings** | `pg_stat_statements` is installed — `SELECT calls, mean_exec_time, max_exec_time, shared_blks_read FROM pg_stat_statements WHERE query LIKE ...`. Two caveats, both measured: it sits near its 5,000-entry cap so **ad-hoc probe queries get evicted**, and **errored statements are never recorded**, so a timing-out query is invisible and `max_exec_time` is a max over successful runs only |
 | API docs | https://api.bainluck.com/docs |
 | Priority + status (only source) | https://github.com/alexander-bain/bainluck/issues |
 | Standing product rulings | `docs/PRODUCT-BRAIN.md` |
