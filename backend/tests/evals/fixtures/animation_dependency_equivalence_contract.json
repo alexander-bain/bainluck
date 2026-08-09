@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {"id": "clean-lazy-animation", "input": {"content_ready": true, "content_visible": true, "waiting_for_animation_chunk": false, "initial_hidden": false, "no_motion_fallback_visible": true, "measured_before_kb": 291, "measured_after_kb": 266}, "expected": {"verdict": "ALLOW", "reasons": []}},
+    {"id": "slow-feature-chunk", "input": {"content_ready": true, "content_visible": false, "waiting_for_animation_chunk": true, "initial_hidden": true, "no_motion_fallback_visible": false}, "expected": {"verdict": "REFUSE", "reasons": ["ANIMATION_CHUNK_GATES_CONTENT", "INITIAL_STATE_HAS_NO_VISIBLE_FALLBACK"]}},
+    {"id": "feature-chunk-network-failure", "input": {"content_ready": true, "content_visible": false, "waiting_for_animation_chunk": true, "animation_chunk_failed": true, "initial_hidden": true, "no_motion_fallback_visible": false}, "expected": {"verdict": "REFUSE", "reasons": ["ANIMATION_CHUNK_GATES_CONTENT", "INITIAL_STATE_HAS_NO_VISIBLE_FALLBACK", "OPTIONAL_CHUNK_FAILURE_HIDES_CONTENT"]}},
+    {"id": "reduced-motion-visible", "input": {"content_ready": true, "content_visible": true, "reduced_motion": true}, "expected": {"verdict": "ALLOW", "reasons": []}},
+    {"id": "reduced-motion-hidden", "input": {"content_ready": true, "content_visible": false, "reduced_motion": true}, "expected": {"verdict": "REFUSE", "reasons": ["CONTENT_VISIBILITY_REGRESSION", "REDUCED_MOTION_HIDES_CONTENT"]}},
+    {"id": "dependency-claim-with-static-hooks", "input": {"claims_dependency_absent": true, "static_dependency_imports": ["useSpring", "useTransform"]}, "expected": {"verdict": "REFUSE", "reasons": ["BUNDLE_CLAIM_EXCEEDS_IMPORT_GRAPH"]}},
+    {"id": "precise-feature-chunk-claim", "input": {"claims_dependency_absent": false, "static_dependency_imports": ["useSpring"]}, "expected": {"verdict": "ALLOW", "reasons": []}},
+    {"id": "provider-per-row-unproven", "input": {"multiple_providers": 40, "loader_dedup_proven": false}, "expected": {"verdict": "REFUSE", "reasons": ["FEATURE_LOADER_FANOUT_UNPROVEN"]}},
+    {"id": "provider-fanout-measured", "input": {"multiple_providers": 40, "loader_dedup_proven": true}, "expected": {"verdict": "ALLOW", "reasons": []}},
+    {"id": "dom-parity", "input": {"dom_changed": false, "focus_order_changed": false, "controls_changed": false}, "expected": {"verdict": "ALLOW", "reasons": []}},
+    {"id": "focus-order-regression", "input": {"focus_order_changed": true}, "expected": {"verdict": "REFUSE", "reasons": ["BEHAVIORAL_PARITY_BROKEN"]}},
+    {"id": "bundle-grew", "input": {"measured_before_kb": 266, "measured_after_kb": 270}, "expected": {"verdict": "REFUSE", "reasons": ["NO_MEASURED_BUNDLE_IMPROVEMENT"]}},
+    {"id": "bundle-equal", "input": {"measured_before_kb": 266, "measured_after_kb": 266}, "expected": {"verdict": "REFUSE", "reasons": ["NO_MEASURED_BUNDLE_IMPROVEMENT"]}}
+  ]
+}
