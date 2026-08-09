@@ -1,0 +1,42 @@
+[
+  {
+    "id": "dead-key-404-immediate",
+    "input": {"has_error": true, "error_status": 404, "is_validating": true},
+    "expected": {"state": "not_found", "reason": "definitive_404"}
+  },
+  {
+    "id": "timeout-still-retrying",
+    "input": {"has_error": true, "is_validating": true},
+    "expected": {"state": "loading", "reason": "temporary_failure_retrying"}
+  },
+  {
+    "id": "timeout-exhausted-is-not-dead-key",
+    "input": {"has_error": true, "retries_exhausted": true},
+    "expected": {"state": "unavailable", "reason": "temporary_failure_exhausted"}
+  },
+  {
+    "id": "server-500-at-ceiling-is-not-dead-key",
+    "input": {"has_error": true, "error_status": 500, "ceiling_reached": true},
+    "expected": {"state": "unavailable", "reason": "temporary_failure_exhausted"}
+  },
+  {
+    "id": "rate-limit-exhausted-is-not-dead-key",
+    "input": {"has_error": true, "error_status": 429, "retries_exhausted": true},
+    "expected": {"state": "unavailable", "reason": "temporary_failure_exhausted"}
+  },
+  {
+    "id": "slow-success-does-not-flash-error",
+    "input": {"is_loading": true, "ceiling_reached": true},
+    "expected": {"state": "loading", "reason": "request_in_flight"}
+  },
+  {
+    "id": "stale-data-wins-over-background-404",
+    "input": {"has_data": true, "has_error": true, "error_status": 404, "retries_exhausted": true},
+    "expected": {"state": "ready", "reason": "data_wins"}
+  },
+  {
+    "id": "settled-empty-response",
+    "input": {},
+    "expected": {"state": "not_found", "reason": "empty_settled"}
+  }
+]
