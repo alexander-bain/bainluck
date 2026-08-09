@@ -1,0 +1,7 @@
+[
+  {"id": "clean-tracked-install", "input": {"ruling_tracked": true, "command_tracked": true, "ci_marker": true, "local_command_matches": true}, "expected": {"verdict": "ACCEPT", "reason": "distributed_and_guarded"}},
+  {"id": "gitignored-local-command", "input": {"ruling_tracked": true, "command_tracked": false, "ci_marker": false, "local_command_matches": true}, "expected": {"verdict": "REFUSE", "reason": "implementation_not_distributed"}},
+  {"id": "do-not-remove-without-marker", "input": {"ruling_tracked": true, "command_tracked": true, "ci_marker": false, "local_command_matches": true}, "expected": {"verdict": "REFUSE", "reason": "claimed_guard_absent"}},
+  {"id": "installed-command-stale", "input": {"ruling_tracked": true, "command_tracked": true, "ci_marker": true, "local_command_matches": false}, "expected": {"verdict": "REFUSE", "reason": "installed_command_drift"}},
+  {"id": "local-only-ruling", "input": {"ruling_tracked": false, "command_tracked": true, "ci_marker": true, "local_command_matches": true}, "expected": {"verdict": "REFUSE", "reason": "ruling_not_distributed"}}
+]
