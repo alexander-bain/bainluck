@@ -139,6 +139,24 @@ _FUTURES_SEEDS = [
     # terms from the outcome arm" as a candidate fix, and that candidate would let
     # this row in. The chosen UNION fix does not, and this pins the difference.
     ("kalshi-euro-gdp", "Euro area growth 2026?", ["Recession likely"]),
+    # LAT-P013: the apostrophe case. `d'or` is FOUR characters, so LAT-P010's
+    # `len(term) < 3` gate admitted it, but pg_trgm splits the pattern on the
+    # apostrophe and can extract no trigram from `d` or `or` — so `%d'or%`
+    # seq-scanned 3 GB of `futures_outcomes`. Measured 19,171ms / 13,677ms against
+    # a 615ms `dora` control of the SAME LENGTH.
+    #
+    # Reachable via the market NAME, which is the arm the gate KEEPS. This is the
+    # row that proves the fix did not buy speed with recall.
+    ("kalshi-ballondor-2026", "Ballon d'Or Winner 2026", ["Lamine Yamal"]),
+    # LAT-P013: the stated cost. Its NAME contains no apostrophe form at all, so
+    # it is reachable ONLY through the outcome arm — the arm the gate drops for a
+    # single no-trigram term. Pinned below as a DELIBERATE trade, not an accident.
+    # Two outcomes on purpose: the multi-term outcome arm requires EACH term to
+    # match SOME outcome of the market, so `award d'or` needs one outcome carrying
+    # "award" and one carrying "d'Or". With a single outcome the multi-term case
+    # would fail for a reason that has nothing to do with what it is testing.
+    ("kalshi-france-award", "France Football Award 2026",
+     ["Winner of the d'Or", "Award vacated"]),
 ]
 
 
@@ -315,6 +333,13 @@ def _futures_names(payload: dict) -> list[str]:
         ("nba champion", "NBA Champion 2026"),
         # Name contains no "nfl" — reachable ONLY via the ticker prefix arm.
         ("nfl mvp", "MVP Winner?"),
+        # LAT-P013: the multi-term apostrophe query, untouched by this queue's
+        # gate (which is single-term only) and therefore a pure regression guard.
+        ("ballon d'or", "Ballon d'Or Winner 2026"),
+        # LAT-P013: the SINGLE-term no-trigram query — the one that measured
+        # 19,171ms. The gate drops only its OUTCOME arm; the NAME arm must still
+        # answer, or the fix has traded a slow answer for no answer.
+        ("d'or", "Ballon d'Or Winner 2026"),
     ],
 )
 async def test_query_returns_its_market(search, query, must_find):
@@ -383,6 +408,74 @@ async def test_short_term_is_still_enforced_in_the_outcome_arm(search):
     )
 
 
+async def test_the_outcome_arm_trade_for_a_no_trigram_single_term_is_deliberate(search):
+    """LAT-P013's stated cost, pinned so it is a decision and not an accident.
+
+    For a SINGLE term that yields no pg_trgm trigram (`d'or`, `u.s.`, `a.i.`), the
+    outcome arm is dropped and only the market NAME arm runs. "France Football
+    Award 2026" is reachable only through its outcome ("Winner of the d'Or"), so
+    it does not come back for `d'or`.
+
+    Why that is the right trade, in production numbers rather than in principle:
+    the arm being dropped is what made this query cost 13.7-19.2s, and at that
+    cost it does not reliably return anything at all. Of two production samples on
+    2026-08-09, one came back `degraded: [futures, teams]` — HTTP 200 with ZERO
+    futures, gotcha #53's shape. So the real before/after is not "outcome recall
+    vs none", it is "an intermittently empty answer in 19s" vs "the name matches,
+    every time, in well under a second".
+
+    NOTE this is a WEAKER justification than LAT-P010 had for `re`/`la`, and it is
+    recorded as weaker rather than borrowed. There, 0 of 10 visible futures came
+    from the outcome arm because thousands of name matches outranked it. Here name
+    matches are few, so an outcome-only row COULD have reached the page. If this
+    trade ever needs undoing, the fix is a servable outcome predicate for
+    punctuation-split terms, not widening the gate back.
+    """
+    names = _futures_names(await search("d'or"))
+    assert "France Football Award 2026" not in names, (
+        f"got {names!r} — the outcome arm is running for a no-trigram single "
+        "term again, which is the 19s seq scan LAT-P013 removed"
+    )
+
+
+async def test_a_multi_term_query_keeps_its_no_trigram_outcome_arm(search):
+    """The gate is single-term ONLY, and that scoping is measured, not assumed.
+
+    `ballon or` — an explicit 2-char token inside a multi-term AND — measured 85ms
+    in production against a 36ms control, because the ANDed arms let the selective
+    term drive. The multi-term path has no defect to fix, and LAT-P006 pins that a
+    short term must still FILTER there.
+
+    So "France Football Award 2026", unreachable for the single term `d'or`, IS
+    reachable for `award d'or`, where `award` seeds and `d'or` filters.
+    """
+    names = _futures_names(await search("award d'or"))
+    assert "France Football Award 2026" in names, (
+        f"got {names!r} — the single-term gate has leaked into the multi-term "
+        "branch and is dropping outcome recall it must not touch"
+    )
+
+
+async def test_an_all_short_token_query_falls_back_rather_than_returning_nothing(search):
+    """The edge case LAT-P013 required be decided explicitly rather than left open.
+
+    A query whose every token is unservable has no term that can seed cheaply.
+    THE CHOICE MADE: change nothing. Multi-term queries keep the existing
+    behaviour, and a single unservable term keeps its NAME arm. Nothing silently
+    returns empty — which was the stated unacceptable outcome.
+
+    `d'or a.i.` is two tokens, neither yielding a trigram. It must still answer
+    with the same shape any other query does, not a hard-coded empty.
+    """
+    payload = await search("d'or a.i.")
+    assert isinstance(payload.get("futures"), list), (
+        "an all-unservable query stopped returning a well-formed futures list"
+    )
+    assert "degraded" not in payload or "futures" not in (payload.get("degraded") or []), (
+        f"an all-unservable query is shedding its futures stage: {payload.get('degraded')!r}"
+    )
+
+
 async def test_league_only_query_still_broad(search):
     """`league_only_explicit`: a bare league token keeps the wide arm.
 
@@ -410,6 +503,10 @@ async def test_recall_summary(search, capsys):
         ("nba champion", "NBA Champion 2026"),
         ("nfl mvp", "MVP Winner?"),
         ("caitlin clark", "Award Winner 2026"),
+        # LAT-P013: the no-trigram cases. `d'or` is the single-term one that
+        # measured 19,171ms; it must still answer off the NAME arm.
+        ("ballon d'or", "Ballon d'Or Winner 2026"),
+        ("d'or", "Ballon d'Or Winner 2026"),
     ]
     found, missing = 0, []
     for query, expected in cases:

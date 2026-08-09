@@ -43,6 +43,11 @@ def _strip_comments(src: str) -> str:
 SEARCH_SRC = _source_of(events_route.search_events)
 SEARCH_CODE = _strip_comments(SEARCH_SRC)
 
+# LAT-P013: the shortest term the OLD `len(term) < 3` gate would still admit. Any
+# case used to prove the new predicate catches something the old one missed has to
+# be at least this long, or it proves nothing.
+_MIN_LEN_THE_OLD_GATE_ADMITTED = events_route._SEARCH_MIN_OUTCOME_MATCH_CHARS
+
 
 def _compile(stmt) -> str:
     return str(stmt.compile(dialect=postgresql.dialect(),
@@ -313,10 +318,47 @@ def test_debug_timing_is_opt_in_and_absent_by_default():
 def test_every_db_stage_is_timed_separately():
     """The 2026-08-07 baseline could not say WHICH stage was slow — the two slowest
     gold queries returned the two smallest payloads. Each stage that issues its own
-    query must be independently attributable."""
-    for stage in ("event_count", "event_page", "event_enrichment",
+    query must be independently attributable.
+
+    LAT-P013 split the old single `event_enrichment` mark. That one label bundled
+    FOUR things — the odds query, its Python aggregation, the GEI percentiles and
+    the team lookup — so when it measured 16,516ms on `q=la` in production it could
+    not say which of the four. The same complaint this test was written to answer,
+    one level down."""
+    for stage in ("event_count", "event_page",
+                  "event_odds_query", "event_odds_aggregate",
+                  "event_gei", "event_teams",
                   "futures", "teams"):
         assert f'_mark("{stage}")' in SEARCH_CODE, f"stage {stage} is not timed"
+
+
+def test_the_odds_enrichment_query_is_a_lateral_top_one_not_a_window_scan():
+    """LAT-P013/#1494. `event_enrichment` was the entire cost of every search that
+    returned real team events — 16,516ms of a 21,032ms request for `q=la`, against
+    ~0ms for a query returning no events — because it ranked
+    `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY captured_at DESC)`
+    across the FULL snapshot history of all ~25 result events, then joined the
+    survivors back by id. Tier-1 events poll every 32s, so that history is deep.
+
+    The replacement takes one LATERAL top-1 per event, walking
+    `ix_odds_snapshots_bookmaker_closing (event_id, bookmaker, captured_at DESC)`
+    in its own index order. Both directions asserted so neither can come back."""
+    enrich = SEARCH_CODE.split("event_ids = [e.id for e in events]", 1)[1]
+    enrich = enrich.split('_mark("event_odds_aggregate")', 1)[0]
+
+    assert "row_number()" not in enrich, (
+        "the window-function scan over full snapshot history is back — it reads and "
+        "sorts every snapshot of every event on the page to keep one row per bookmaker"
+    )
+    assert ".lateral(" in enrich, "the per-event LATERAL top-1 is gone"
+    assert ".distinct(OddsSnapshot.bookmaker)" in enrich, (
+        "DISTINCT ON (bookmaker) is what makes the lateral a top-1 per bookmaker"
+    )
+    assert "OddsSnapshot.captured_at.desc()" in enrich, "latest-first ordering is gone"
+    assert "OddsSnapshot.id.desc()" in enrich, (
+        "the id tiebreak is what makes the pick deterministic among equal "
+        "captured_at, where row_number() left it arbitrary"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -566,31 +608,31 @@ class TestTypeaheadIsBoundedAndIndexable:
         17 of the 20 visible rows for `re` came from this arm and all 17 were
         substring accidents (Lamprecht, Baltimore, Guterres, Villarreal).
         """
-        # Assert the EFFECTIVE value, not the literal. LAT-P010 moved the 3 into a
-        # shared module constant so /search and /typeahead cannot drift on where
-        # the cliff is; pinning the literal made this guard fail on that correct
-        # change, which is the LAT-P005 lesson about pinning the wrong thing.
-        from app.routes.events import _SEARCH_MIN_OUTCOME_MATCH_CHARS
+        # Assert the EFFECTIVE RULE, not the literal and not the constant's name.
+        # LAT-P010 moved the 3 into a shared module constant so /search and
+        # /typeahead cannot drift on where the cliff is; pinning the literal made
+        # this guard fail on that correct change. LAT-P013 then found that a shared
+        # CONSTANT was still the wrong thing to pin, because `len(q)` is the wrong
+        # PREDICATE: `d'or` is 4 characters and pg_trgm can serve neither surface.
+        # So pin the rule both surfaces must obey.
+        from app.routes.events import _SEARCH_MIN_OUTCOME_MATCH_CHARS, _has_extractable_trigram
 
         assert _SEARCH_MIN_OUTCOME_MATCH_CHARS == 3, (
             "the threshold must be 3 — that is where the pg_trgm cliff is"
         )
-        assert "_TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE, (
-            "/typeahead must use the SHARED threshold — the two surfaces drifting "
+        assert not _has_extractable_trigram("re"), "`re` must still be gated"
+        assert _has_extractable_trigram("rec"), "`rec` must still be servable"
+
+        assert "_has_extractable_trigram(_ta_q_compact)" in TYPEAHEAD_CODE, (
+            "/typeahead must use the SHARED predicate — the two surfaces drifting "
             "is how /search kept this defect for three cycles after /typeahead's "
-            "twin was fixed"
+            "twin was fixed, and sharing only a CONSTANT was not enough to stop "
+            "them both admitting `d'or`"
         )
-        # Defined is not enough; it must GATE the arm. An earlier version of this
-        # guard passed while the arm ran unconditionally, because the constant was
-        # still sitting there unused.
-        assert TYPEAHEAD_CODE.count("_TA_MIN_OUTCOME_MATCH_CHARS") >= 2, (
-            "the sub-3-char threshold is defined but never used — `q=re` goes "
-            "back to seq-scanning 3 GB of futures_outcomes for 8.6s of noise"
-        )
-        gate_at = TYPEAHEAD_CODE.find("if len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS")
+        gate_at = TYPEAHEAD_CODE.find("if _has_extractable_trigram(_ta_q_compact)")
         arm_at = TYPEAHEAD_CODE.find("select(FuturesOutcome.market_id).where(")
         assert 0 < gate_at < arm_at, (
-            "the outcome arm is not inside the sub-3-char gate"
+            "the outcome arm is not inside the unservable-pattern gate"
         )
 
     def test_the_gate_is_on_the_whole_query_not_on_individual_terms(self):
@@ -602,8 +644,8 @@ class TestTypeaheadIsBoundedAndIndexable:
         per-term loop. A per-term version here would be the candidate LAT-P006
         measured and rejected.
         """
-        assert "len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE, (
-            "the sub-3-char gate must test the whole query, not per-term"
+        assert "_has_extractable_trigram(_ta_q_compact)" in TYPEAHEAD_CODE, (
+            "the unservable-pattern gate must test the whole query, not per-term"
         )
 
     def test_typeahead_recall_arms_are_unioned_not_ored(self):
@@ -690,9 +732,9 @@ class TestSearchSkipsTheUnservableOutcomeArm:
         from app.routes.events import _SEARCH_MIN_OUTCOME_MATCH_CHARS
 
         assert _SEARCH_MIN_OUTCOME_MATCH_CHARS == 3
-        assert "_TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE
-        assert "len(term) < _SEARCH_MIN_OUTCOME_MATCH_CHARS" in SEARCH_CODE, (
-            "/search no longer gates its outcome arm on the shared threshold"
+        assert "_has_extractable_trigram(_ta_q_compact)" in TYPEAHEAD_CODE
+        assert "if not _has_extractable_trigram(term):" in SEARCH_CODE, (
+            "/search no longer gates its outcome arm on the shared predicate"
         )
 
     def test_the_gate_is_only_on_the_single_term_path(self):
@@ -702,16 +744,29 @@ class TestSearchSkipsTheUnservableOutcomeArm:
         (`us recession` must not admit "Euro area growth"). Applying this gate
         per-term would break that. The multi-term branch stays untouched.
         """
+        # Anchor on the FUTURES block, not on `if len(terms) > 1:`. There are two
+        # of those in search_events and the first belongs to the EVENT team filter,
+        # so this slice used to start ~11k characters early: `head` was the events
+        # branch and `tail` swallowed the whole futures block, which made the
+        # "not in head" half of this test vacuous. LAT-P013 caught it by mutation —
+        # leaking the gate into the multi-term futures branch stayed green.
+        assert SEARCH_CODE.count("futures_name_conditions = [") == 1
         multi = SEARCH_CODE[
-            SEARCH_CODE.find("if len(terms) > 1:") : SEARCH_CODE.find("futures_name_match = futures_name_ilike")
+            SEARCH_CODE.find("futures_name_conditions = [") : SEARCH_CODE.find("futures_name_match = futures_name_ilike")
         ]
-        head, _, tail = multi.partition("    else:")
-        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" not in head, (
-            "the sub-3-char gate leaked into the MULTI-term branch — that is the "
-            "candidate LAT-P006 measured and rejected, and it would break the "
-            "`us recession` / 'Euro area growth' guard"
+        head, sep, tail = multi.partition("    else:")
+        assert sep, "the single-term futures branch is gone — slice anchors are stale"
+        assert "_has_extractable_trigram" not in head, (
+            "the unservable-pattern gate leaked into the MULTI-term branch — that "
+            "is the candidate LAT-P006 measured and rejected, and it would break "
+            "the `us recession` / 'Euro area growth' guard.\n"
+            "LAT-P013 re-verified the scoping against a control rather than "
+            "inheriting it: `ballon or` — an explicit 2-char token inside a "
+            "multi-term AND — measured 85ms in production against a 36ms control, "
+            "because the ANDed arms let the selective term drive. The multi-term "
+            "path does not have this defect and must not be 'fixed'."
         )
-        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" in tail, (
+        assert "_has_extractable_trigram" in tail, (
             "the gate is not on the single-term path"
         )
 
@@ -725,6 +780,59 @@ class TestSearchSkipsTheUnservableOutcomeArm:
             "the expansion is being dropped along with the base term — `la` loses "
             "its `los angeles` outcome recall for no latency gain"
         )
+
+    def test_the_predicate_is_the_alnum_run_not_the_length(self):
+        """LAT-P013/#1494 — `len(term) < 3` is the wrong proxy for "unservable".
+
+        pg_trgm splits a pattern on non-alphanumerics before extracting trigrams,
+        so what decides servability is the longest ALPHANUMERIC RUN, not the
+        length. `d'or` is 4 characters and yields no trigram at all.
+
+        MEASURED in production 2026-08-09, paired against a LENGTH-MATCHED control
+        4s apart so length is held constant and the run is the only variable:
+            q=d'or  (len 4, run 2)  futures 19,171ms / 13,677ms
+            q=dora  (len 4, run 4)  futures      615ms
+        22-31x, and `d'or` blew the deadline outright: HTTP 200 with
+        `degraded: [futures, teams]` — a wrong answer, not merely a slow one.
+        """
+        from app.routes.events import _has_extractable_trigram as servable
+
+        # Unservable — no run of 3 alphanumerics. All four are len >= 4, so the
+        # OLD length gate admitted every one of them.
+        for q in ("d'or", "u.s.", "a.i.", "a.j.", "a-b-c", "30-30"):
+            assert not servable(q), f"{q!r} yields no pg_trgm trigram but is admitted"
+            assert len(q) >= _MIN_LEN_THE_OLD_GATE_ADMITTED, (
+                f"{q!r} must be a case the old len() gate could not catch, "
+                "otherwise it proves nothing"
+            )
+
+        # Servable — a run of >= 3 survives punctuation around it.
+        for q in ("dora", "o'neal", "l.a. lakers", "nba", "2026", "José"):
+            assert servable(q), f"{q!r} is servable and must not be gated"
+
+    def test_the_new_predicate_still_gates_everything_the_old_one_did(self):
+        """A widening, never a narrowing.
+
+        LAT-P010's gate must keep firing on exactly what it fired on before, or
+        this queue silently re-opens the defect it was written to close. A term
+        under 3 characters cannot contain a run of 3, so the new rule is a strict
+        superset — asserted, not argued.
+        """
+        from app.routes.events import (
+            _SEARCH_MIN_OUTCOME_MATCH_CHARS as FLOOR,
+            _has_extractable_trigram as servable,
+        )
+        import itertools
+        import string
+
+        alphabet = string.ascii_lowercase[:6] + string.digits[:3] + ".'- "
+        for n in range(1, FLOOR):
+            for combo in itertools.product(alphabet, repeat=n):
+                term = "".join(combo)
+                assert not servable(term), (
+                    f"{term!r} is under the {FLOOR}-char floor that LAT-P010 "
+                    "gated, but the new predicate would let it through"
+                )
 
     def test_a_dropped_arm_cannot_reach_the_union_as_none(self):
         """The arm list is FILTERED, not conditionally appended.
@@ -742,5 +850,5 @@ class TestSearchSkipsTheUnservableOutcomeArm:
         INT-019 found /search slower than /typeahead on all 13 stems it tried.
         This is the test that fails if they diverge again.
         """
-        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" in SEARCH_CODE
-        assert "_TA_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE
+        assert "_has_extractable_trigram(term)" in SEARCH_CODE
+        assert "_has_extractable_trigram(_ta_q_compact)" in TYPEAHEAD_CODE
