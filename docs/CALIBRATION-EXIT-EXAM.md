@@ -19,13 +19,18 @@ so no cycle can finish and then discover its evidence was unobtainable.
 | 2 | Trading-activity section led by matched-bucket comparison | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23`, pinned by test to the real payload | rendered proof; needs the merge + the browser rail |
 | 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 measured, undiagnosed | a census rail — the distinguishing query times out in `db-query` |
 | 4 | Source graph redesigned — per-source panels | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23` | rendered proof; needs the merge + the browser rail |
-| 5 | Native calibration surface consistent with web | 🔴 unassessed | — (ready to stage, needs no prod) |
+| 5 | Native calibration surface consistent with web | 🟢 **PASSED 2026-08-09 (CAL-P026)** — rendered on both, every headline figure identical, both banner the staleness | — |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
 | 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **BASELINE ESTABLISHED 2026-08-09** — 797,871 recoverable, measured to exhaustion | a second dated measurement; ~Aug 15 |
 
-**One item is green** (6, watchdog half). Item 7 has its first datapoint for the first time.
-Items **2 and 4 are built** (CAL-P025) and now wait only on being merged and photographed.
-Item **5 is the last one that is unblocked and unstarted**, and it needs no production access.
+**Two items are green** (5, and 6's watchdog half). Item 7 has its first datapoint. Items **2 and
+4 are built** (CAL-P025) and wait only on being merged and photographed.
+
+**Nothing on this exam is now unblocked and unstarted.** Every remaining item waits on the publish
+converging (1, 3, 7), on a merge plus a capture (2, 4), on elapsed time (7), or on another lane
+(6's sentinel half, #1548). That is a different state from every previous cycle, and it means the
+lane's throughput is no longer the binding constraint — **`calibration:main` publishing again is**,
+which is CAL-P024's payoff and is sitting unmerged in the Integrator's queue.
 
 ### Why items 2 and 4 were taken while the build is dark — the reason generalises
 
@@ -339,6 +344,53 @@ recalibration. If it is *not*, that is a real miscalibration and more interestin
 Distinguishing them is a bounded query: for the 914 outcomes in that bucket, does the price move
 before settlement, or is it a single stamped quote? **Needs a fresh prod window.**
 
+### Free evidence nobody had collected — the `price_moved` split (CAL-P026, 2026-08-09 14:10 PT)
+
+The published payload already carries `price_moved` on every bucket row, so the high-band cohort
+can be split **without any new query at all**. Splitting kalshi entertainment's bucket 9:
+
+| cohort | n | predicted | actual | error |
+|---|---|---|---|---|
+| `price_moved = true` | **816** | 95.1% | **67.5%** | **−27.5pp** |
+| `price_moved = false` | 98 | 94.9% | 86.7% | −8.1pp |
+
+**The collapse lives almost entirely on the MOVED side**, and the unchanged side is ~3.4x better
+calibrated. That is consistent with the settlement-collapse mechanism rather than against it: a
+settled post-game quote stamped as the closing line *is* a price that moved away from its opening,
+so `price_moved` reads TRUE. (Stated explicitly because the intuition runs the other way — "a
+single stamped quote" sounds like it should read as unchanged, and this window initially misread
+it that way before checking what `price_moved` actually compares.)
+
+It is **suggestive, not conclusive.** `price_moved` is `calibration_probability IS DISTINCT FROM
+opening_probability` — it says a price moved, never *when*. The decisive question is whether the
+close was captured after settlement, which needs snapshot timestamps and therefore still needs the
+rail. What this does buy: a cheap, published discriminator that a future exclusion can be measured
+against, and a reason to expect the answer to be an exclusion with a count rather than a
+recalibration.
+
+### polymarket cricket is ONE bucket, not a broad miscalibration
+
+Same split, same payload. Cricket's 9.38pp/n=3,003 is concentrated, not diffuse:
+
+| bucket | n | predicted | actual | error |
+|---|---|---|---|---|
+| b3 (34%) | **1,435** (48% of the cohort) | 33.6% | 33.7% | **+0.1pp** — well calibrated |
+| b5 (52%) | 608 | 51.6% | 80.6% | **+29.0pp** |
+| b2 (25%) | 263 | 25.6% | 9.5% | **−16.1pp** |
+
+Nearly half the cohort sits in a well-calibrated bucket; the error mass is b5 (+29pp) with a
+smaller opposite-signed b2 (−16pp). **Both directions appear on moved AND unchanged rows alike**
+(b5: +30.7pp moved / +28.2pp unchanged), so unlike entertainment this one is *not* an artifact of
+the closing-price capture — a defect that shows up equally regardless of whether the price moved
+is a property of the population, not of the quote.
+
+The bidirectional mid-band shape — a ~25% leg resolving ~10% and a ~52% leg resolving ~80% — is
+what a **3-outcome market read as if it were 2-outcome** looks like: cricket carries draws /
+ties / no-results, and a field whose third leg is systematically over-priced makes the other two
+under-priced by the mirror amount. That is a concrete, falsifiable hypothesis and it is the first
+one this exam has had for cricket. **Untested** — confirming it needs outcome-count and leg
+composition per market, which is a rail, not a `db-query`.
+
 ---
 
 ## 4. Source graph redesigned — per-source panels, not overlaid lines
@@ -417,7 +469,96 @@ visual, and the rail that can take it grades production.
 **Required proof:** side-by-side — native surface and web `/calibration` showing the same
 population version, the same generated-at, and the same headline figures. Rendered on both.
 
-**Status: 🔴 not green — but the flagged RISK is likely a false alarm (source read, 2026-08-09).**
+**Status: 🟢 PASSED 2026-08-09 (CAL-P026) — rendered on both surfaces, figures identical.**
+
+### The proof
+
+Both surfaces rendered against **the same production response** — `generated_at
+2026-08-02T03:23:54.886392+00:00`, `population_version q267`. That is not a coincidence of timing:
+production has been serving that one payload since 2026-08-02 (Item 0 of every window this week
+re-confirms it), so a capture of web today and a render of the frozen 2026-08-02 fixture natively
+are the same bytes, not two nearby snapshots.
+
+| figure | web (browser rail) | native (`ImageRenderer`) |
+|---|---|---|
+| cohort / hero population | **389,385** | **389,385** |
+| never-moved excluded | **263,022** | **263,022** |
+| full population | **652,407** | **652,407** |
+| markets | 534,269 | 534,269 |
+| ECE · MCE | 1.5pp · 1.4pp | 1.5pp · 1.4pp |
+| Brier | 0.165 | 0.165 |
+| date range | Aug 2021–Aug 2026 | Aug 2021–Aug 2026 |
+| stale banner | ✅ "Showing the last complete snapshot." | ✅ same sentence |
+
+- **web** — `browser-audit.yml` run
+  [31336823181](https://github.com/alexander-bain/bainluck/actions/runs/31336823181), pack
+  `calibration`, `result: pass`, requested == observed frontend SHA
+  `2a9f42b50fae93c33559cb680865967b04281c03`, backend `2a9f42b5`. Artifacts
+  `calibration.anonymous.{desktop,mobile}.terminal.png`.
+- **native** — `CalibrationParityTests.testProductionPayloadRendersTheStaleSurfaceForSideBySideEvidence`,
+  which rasterises the real `CalibrationSurfaceView` from `CalibrationProdFixture` and prints its
+  own parity line: `population=q267 contract=matched cache=stale
+  generated=2026-08-02T03:23:54.886392+00:00 cohort_n=389385 full_n=652407 reconciles=true`.
+
+**The flagged honesty risk is confirmed a FALSE ALARM, now with a picture rather than a source
+read.** Native banners the stale payload in the same words web does.
+
+### The one difference, and why it is not a defect
+
+Web renders *"built Aug 2, 3:23 AM (8 days ago)"*; native renders *"built Aug 1, 8:27 PM (24h
+ago)"*. Both are correct and neither disagrees about the instant:
+
+- the **clock time** differs because both use a locale formatter and the two renderers sat in
+  different zones (the CI runner in UTC, the simulator in PDT). `2026-08-02T03:23:54Z` *is*
+  Aug 1, 8:23 PM PDT.
+- the **age** differs because the native fixture is frozen with the `age_s` the server sent on the
+  day it was captured (86,461 s ≈ 24 h), while web read today's envelope (~8 d).
+
+This is exactly why the parity hooks publish the **raw ISO instant** rather than the formatted
+string — a comparison of display text would have failed here on a timezone and passed on a wrong
+number. Web's hook made the same choice; native's now matches it.
+
+### What CAL-P026 had to build before the proof was possible
+
+The exam predicted this item would be *"confirming correct behaviour, not finding a live bug"*.
+On the honesty question that was right. But the item could not be *evidenced*, and the reason was
+structural rather than cosmetic:
+
+1. **Native never rendered the population version.** `CalibrationViewModel` decoded it,
+   adjudicated it against `compatiblePopulationVersions`, and exposed `populationVersion` — and
+   the View referenced 45 view-model properties, *not including that one*.
+2. **Native had ZERO `accessibilityIdentifier`s on the entire surface**, while web publishes
+   `data-population-version`, `data-cache-status`, `data-contract-state`, `data-generated-at`,
+   `data-cohort-n`, `data-full-n` and the partition counts, with
+   `calibrationAuditHooks.test.tsx` failing CI if one is dropped.
+
+So the side-by-side could only ever have been a person comparing two screenshots — a check
+performed once, on the day somebody cares, and drifting silently afterwards. **Web's own source
+had already named this**, in the comment above its population-count hook: *"a native surface
+reading the other one diverges silently. Both are published here as data so the parity check reads
+numbers, not text."* The data was published for a consumer that did not exist.
+
+CAL-P026 built it: `CalibrationViewModel.Parity` (one descriptor, read by both the hooks and the
+tests, so there is no second derivation to drift — ruling 003), matching
+`accessibilityIdentifier`s named with web's own testids, nine `CalibrationParityTests` pinning the
+figures against the frozen production payload, and a three-test **cross-language** contract gate
+(`frontend/e2e/contract/calibrationSurfaceParity.contract.test.js`) that fails when a native hook
+is renamed away from web's testid or when the two fixtures stop describing the same response.
+
+**So item 5 does not just pass — it stays passed.** A future divergence is a red CI run, not a
+thing somebody notices in a screenshot months later.
+
+### The one caveat worth stating
+
+The native figures come from a **frozen fixture**, not a live device fetch, so this proves the two
+surfaces AGREE ON A PAYLOAD rather than that native's networking is healthy. That is the right
+scope — the exam asks whether the two surfaces describe the same data the same way — and the live
+fetch path is covered separately by `CalibrationAvailabilityTests`. It is named here so nobody
+reads more into the picture than it shows.
+
+---
+
+### Superseded — the pre-CAL-P026 assessment, kept for the record
 
 **The specific fear was:** web renders the stale-tier banner (`data-cache-status`, "as of <time>
 (N ago)"); if native does not, then during the current outage **native is showing a week-old curve
@@ -579,6 +720,42 @@ Every claim above traces to a dated measurement. Add rows; never edit one.
 | 2026-08-09 13:40 | cae1 | **items 2 and 4 BUILT** — `compareMatchedBuckets` + `buildSourcePanels`; frontend suite **1,843 passed / 0 failed** (was 1,832), build clean, typecheck 84 = baseline. 7 mutations confirm every load-bearing rule | items 2, 4 |
 | 2026-08-09 13:45 | cae1 | local Chromium **fails to launch** in the agent sandbox (`playwright-core` → "Target page, context or browser has been closed"), re-confirming that rendered evidence needs the remote rail against a deployed build | items 2, 4, 5 |
 | 2026-08-09 14:05 | cae1 | **live dual-ECE drift**, published `by_source` vs client derivation on the same buckets: 4 of 5 sources agree at display precision, **`odds_api_spreads` 0.7pp published vs 0.6pp derived**. Panels rewired to render the published value (ruling 003); the pre-existing Source Comparison table still derives and is reported as owed | item 4 |
+
+| 2026-08-09 14:06 | 8f3d | `/api/calibration` **200 in 0.66s**, `cache.status="stale"`, `age_s=668487` (**7.74 d**) — publish still `2026-08-02T03:23:54Z`, census still `payload_predates_census`. Fourth rising reading today (7.53 → 7.59 → 7.70 → 7.74 d) | items 1/3/7 blocked |
+| 2026-08-09 14:10 | 8f3d | **kalshi entertainment b9 split by `price_moved`**: moved n=816 pred 95.1% act 67.5% (−27.5pp) vs unchanged n=98 pred 94.9% act 86.7% (−8.1pp) — collapse is on the MOVED side, consistent with settlement-collapse | item 3 |
+| 2026-08-09 14:10 | 8f3d | **polymarket cricket is one bucket**: b3 n=1,435 (+0.1pp, well calibrated) · b5 n=608 (+29.0pp) · b2 n=263 (−16.1pp); b5's error is equal on moved and unchanged ⇒ population defect, not capture artifact | item 3 |
+| 2026-08-09 14:11 | 8f3d | **the native gate RUNS in a program worktree** — `xcodebuild` fails resolving Firebase/gRPC binary artifacts (`dl.google.com` egress blocked), but `-clonedSourcePackagesDirPath <existing DerivedData>/SourcePackages -disableAutomaticPackageResolution` reuses the cached artifacts: `** BUILD SUCCEEDED **` | gotcha, below |
+| 2026-08-09 14:22 | 8f3d | native suite **530 passed / 0 failed** (was 521); contract suite **311 / 0** (was 308); both new gates non-vacuous by mutation | item 5 |
+| 2026-08-09 14:26 | 8f3d | **item 5 side-by-side PASSED** — browser-audit run [31336823181](https://github.com/alexander-bain/bainluck/actions/runs/31336823181) `result: pass`, frontend SHA requested == observed `2a9f42b5`; native `ImageRenderer` render of the same payload. 389,385 · 263,022 · 652,407 · ECE 1.5pp · MCE 1.4pp · Brier 0.165 identical on both; both banner staleness | item 5 |
+
+## A gotcha this window measured — the native gate is NOT unavailable in a program worktree
+
+Gotcha #50 covers the SwiftUI `#Preview` macro-sandbox failure and its
+`-Xfrontend -disable-sandbox` fix. There is a **second, different** blocker that hits any
+*fresh* worktree, and it looks like a hard wall:
+
+```
+failed downloading 'https://dl.google.com/firebase/ios/bin/grpc/1.69.1/rc0/grpc.zip'
+  which is required by binary target 'grpc': downloadError("The request timed out.")   ×11
+```
+
+The git-based SPM packages are cached (`~/Library/Caches/org.swift.swiftpm/repositories`), but the
+**binary** targets are zips fetched from `dl.google.com`, and that egress is blocked. A program
+worktree at a new path gets a new DerivedData hash, so it re-resolves from scratch and dies here —
+which reads as "iOS cannot be gated from this lane".
+
+It can. The artifacts are already extracted under an existing DerivedData:
+
+```
+xcodebuild -scheme "Bain Luck" -destination 'generic/platform=iOS Simulator' \
+  -clonedSourcePackagesDirPath ~/Library/Developer/Xcode/DerivedData/Bain_Luck-<hash>/SourcePackages \
+  -disableAutomaticPackageResolution \
+  OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' build
+```
+
+Both flags are needed: the first points at the cached artifacts, the second stops SPM trying to
+re-resolve anyway. **Do not delete the SPM cache to "start clean"** — gotcha #50's existing warning
+applies with double force here, since the artifacts cannot be re-downloaded at all.
 
 ## Open questions for Alex
 

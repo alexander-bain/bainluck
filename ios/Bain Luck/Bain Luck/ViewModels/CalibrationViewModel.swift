@@ -474,6 +474,87 @@ final class CalibrationViewModel: ObservableObject {
 
     var populationVersion: String? { data?.populationVersion }
 
+    // MARK: - Cross-surface parity (CAL-P026, exam item 5)
+
+    /// The figures web publishes as `data-*` attributes on `/calibration`, in one
+    /// place, so the surface's accessibility hooks and the parity tests read the
+    /// SAME values rather than each recomputing them.
+    ///
+    /// ## Why native needed this at all
+    ///
+    /// The exit exam asks for native and web "showing the same population
+    /// version, the same generated-at, and the same headline figures". Web can
+    /// answer that question mechanically: `app/calibration/page.tsx` publishes
+    /// `data-population-version`, `data-cache-status`, `data-contract-state`,
+    /// `data-generated-at`, `data-cohort-n`, `data-full-n` and the partition
+    /// counts, and `calibrationAuditHooks.test.tsx` fails CI if one is dropped.
+    /// Native published NOTHING — the whole surface carried zero
+    /// `accessibilityIdentifier`s — so the only way to compare the two was for a
+    /// person to squint at two screenshots.
+    ///
+    /// That is the failure this exam keeps rediscovering in other forms: a
+    /// property that can only be checked by eye is checked once, on the day
+    /// somebody cares, and then drifts silently. Web's own source says so, in the
+    /// comment above its population-count hook — *"a native surface reading the
+    /// other one diverges silently. Both are published here as data so the parity
+    /// check reads numbers, not text."* The data half of that sentence was
+    /// written for a consumer that did not exist yet. This is that consumer.
+    ///
+    /// ## What this is NOT
+    ///
+    /// It is not a second derivation. Every field below reads an existing
+    /// published property or an existing `CalibrationMath` roll-up — the same
+    /// ones the visible surface renders. Ruling 003 ("clients format, never
+    /// adjudicate") forbids computing a calibration number twice in two
+    /// languages, and CAL-P025 was caught by exactly that rule mid-build. If a
+    /// figure is wrong here it is wrong on screen too, which is the point: the
+    /// hooks must describe the surface, not shadow it.
+    struct Parity: Equatable {
+        var populationVersion: String
+        var contractState: String
+        var cacheStatus: String
+        var generatedAt: String
+        var cohortN: Int
+        var fullN: Int
+        var movedN: Int
+        var unchangedN: Int
+        var notApplicableN: Int
+        var ece: Double
+        var mce: Double
+        var brier: Double
+        var markets: Int
+
+        /// The partition invariant web publishes as `data-partition-reconciles`.
+        var reconciles: Bool { movedN + unchangedN + notApplicableN == fullN }
+    }
+
+    /// `contractState` mirrors web's `data-contract-state`: what THIS BUILD
+    /// decided about the version the server sent, which is a different fact from
+    /// the version itself. Web draws the same distinction for the same reason.
+    var parity: Parity {
+        let state: String
+        switch populationVersionState {
+        case .matched: state = "matched"
+        case .mismatched: state = "mismatched"
+        case .unverified: state = "unverified"
+        }
+        return Parity(
+            populationVersion: data?.populationVersion ?? "",
+            contractState: state,
+            cacheStatus: data?.cache?.status ?? "fresh",
+            generatedAt: data?.cache?.generatedAt ?? data?.generatedAt ?? "",
+            cohortN: cohortN,
+            fullN: fullN,
+            movedN: movedN,
+            unchangedN: unchangedN,
+            notApplicableN: notApplicableN,
+            ece: cohortECE,
+            mce: cohortMCE,
+            brier: cohortBrier,
+            markets: data?.totalMarkets ?? 0
+        )
+    }
+
     /// `nil`/blank payload version means an older/lean payload that predates the
     /// contract field — rendered, but never claimed as verified. Refusing those
     /// would hand any older cached copy the power to blank the screen.

@@ -113,6 +113,47 @@ struct CalibrationSurfaceView: View {
         .padding(.horizontal).padding(.bottom, 32)
         .frame(maxWidth: contentMaxWidth)
         .frame(maxWidth: .infinity)
+        .accessibilityIdentifier(Self.surfaceHook)
+        .accessibilityValue(Self.provenanceValue(viewModel.parity))
+    }
+
+    // MARK: - Cross-surface parity hooks (CAL-P026, exam item 5)
+
+    /// The native analogue of web's `data-*` attributes on `/calibration`.
+    ///
+    /// Web grades its own surface on machine-readable state rather than prose —
+    /// `data-population-version`, `data-cache-status`, `data-contract-state`,
+    /// `data-generated-at`, `data-cohort-n` — and `calibrationAuditHooks.test.tsx`
+    /// fails CI if one is dropped. Before this, native had **no**
+    /// `accessibilityIdentifier` anywhere on this surface, so the exam's
+    /// "native and web show the same figures" could only ever be answered by a
+    /// human comparing two screenshots.
+    ///
+    /// The names deliberately MATCH web's `data-testid`s. A reader holding the two
+    /// files side by side should not have to translate, and the contract test that
+    /// pins both reads one list.
+    static let surfaceHook = "calibration-surface"
+    static let generatedAtHook = "calibration-generated-at"
+    static let outcomesHook = "calibration-stat-outcomes"
+    static let eceHook = "calibration-stat-ece"
+    static let brierHook = "calibration-stat-brier"
+    static let marketsHook = "calibration-stat-markets"
+
+    /// Provenance travels as ONE structured `accessibilityValue` rather than as
+    /// three elements, because it describes the surface as a whole and inventing
+    /// three invisible sub-elements to carry it would be a worse lie about the
+    /// view hierarchy than a compact string is about the value.
+    ///
+    /// `key=value` pairs, space-separated, stable order — parseable without a
+    /// grammar and readable in Accessibility Inspector without one either.
+    static func provenanceValue(_ p: CalibrationViewModel.Parity) -> String {
+        "population=\(p.populationVersion.isEmpty ? "none" : p.populationVersion)"
+            + " contract=\(p.contractState)"
+            + " cache=\(p.cacheStatus)"
+            + " generated=\(p.generatedAt.isEmpty ? "none" : p.generatedAt)"
+            + " cohort_n=\(p.cohortN)"
+            + " full_n=\(p.fullN)"
+            + " reconciles=\(p.reconciles)"
     }
 
     // MARK: - Stale banner
@@ -189,6 +230,13 @@ struct CalibrationSurfaceView: View {
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Text("\(viewModel.dateRangeLabel.map { "Data \($0)" } ?? "\(viewModel.formattedTotalOutcomes) resolved outcomes") \u{00B7} Updated \(viewModel.updatedLabel)")
                 .font(.caption2).foregroundStyle(.tertiary)
+                // Mirrors web's `data-testid="calibration-generated-at"` /
+                // `data-generated-at`: the RAW ISO timestamp, not the "Aug 2" a
+                // reader sees. The formatted string is a display decision and
+                // differs between the two platforms' date formatters; the
+                // instant it names must not.
+                .accessibilityIdentifier(Self.generatedAtHook)
+                .accessibilityValue(viewModel.parity.generatedAt)
         }.padding(.top, 8)
     }
 
@@ -198,9 +246,20 @@ struct CalibrationSurfaceView: View {
         VStack(spacing: 10) {
             eceHeroCard
             HStack(spacing: 10) {
+                // The VALUE published beside each card is the number itself, not
+                // the abbreviated string on screen ("652K"). Web's hooks do the
+                // same, and for the same reason: a parity check that compared
+                // display strings would fail on a thousands separator and pass on
+                // a wrong number.
                 miniStatCard("OUTCOMES", viewModel.formattedCohortOutcomes, "checkmark.circle.fill", .blue)
+                    .accessibilityIdentifier(Self.outcomesHook)
+                    .accessibilityValue(String(viewModel.parity.cohortN))
                 miniStatCard("MARKETS", viewModel.formattedMarkets, "chart.bar.fill", .purple)
+                    .accessibilityIdentifier(Self.marketsHook)
+                    .accessibilityValue(String(viewModel.parity.markets))
                 miniStatCard("BRIER", String(format: "%.3f", viewModel.cohortBrier), "target", .orange)
+                    .accessibilityIdentifier(Self.brierHook)
+                    .accessibilityValue(String(format: "%.4f", viewModel.parity.brier))
             }
         }
     }
@@ -230,6 +289,11 @@ struct CalibrationSurfaceView: View {
         }
         .frame(maxWidth: .infinity).padding(.vertical, 16)
         .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityIdentifier(Self.eceHook)
+        // ECE and MCE together, because web's ECE card publishes both and the
+        // pair is the claim — an ECE quoted without its worst bucket is the
+        // number this page exists to stop people reading alone.
+        .accessibilityValue(String(format: "%.4f %.4f", viewModel.parity.ece, viewModel.parity.mce))
     }
 
     private func miniStatCard(_ label: String, _ value: String, _ icon: String, _ color: Color) -> some View {
