@@ -1,0 +1,9 @@
+[
+  {"id": "warm-positive", "input": {"positive": true, "negative": true, "stale": true, "build": "none"}, "expected": {"response": "positive", "write": "none"}},
+  {"id": "known-negative", "input": {"positive": false, "negative": true, "stale": false, "build": "success"}, "expected": {"response": "404", "write": "none"}},
+  {"id": "new-valid-event", "input": {"positive": false, "negative": false, "stale": false, "build": "success"}, "expected": {"response": "live", "write": "positive_and_stale_clear_negative"}},
+  {"id": "never-valid-miss", "input": {"positive": false, "negative": false, "stale": false, "build": "none"}, "expected": {"response": "404", "write": "negative"}},
+  {"id": "temporary-none-with-last-good", "input": {"positive": false, "negative": false, "stale": true, "build": "none"}, "expected": {"response": "stale", "write": "none"}},
+  {"id": "exception-with-last-good", "input": {"positive": false, "negative": false, "stale": true, "build": "exception"}, "expected": {"response": "stale", "write": "none"}},
+  {"id": "exception-without-last-good", "input": {"positive": false, "negative": false, "stale": false, "build": "exception"}, "expected": {"response": "error", "write": "none"}}
+]
