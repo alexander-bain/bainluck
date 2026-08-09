@@ -38,3 +38,14 @@ convergence with a revert boundary at every step.
 
 **The reason to write it down** is that both of these read as prudent engineering when proposed.
 The ruling is not that the cleanup is wrong; it is that the cleanup does not get its own queue.
+
+## The cache envelope contract
+
+Written out as a one-page spec at **`docs/contracts/cache-envelope.md`**: five fields —
+`generation`, `created_at`, `quality`, `availability`, `lifecycle_watermark` — with the rules
+that make them load-bearing rather than decorative. Apply it to the tier you are already in.
+
+First customers, in likely order of being touched: the `/api/event/{key}` concept cache (#1107,
+where Codex C224 found a 24h fallback with no age or status disclosure — three of these five
+fields simply absent), then the calibration durable copy, which already publishes `cache.status`
+and `cache.reason` and is the closest thing to a working prototype.
