@@ -1,0 +1,7 @@
+{
+  "groups": [
+    {"key": "winner", "items": [{"id": "w1", "effects": 2}, {"id": "w2", "effects": 2}, {"id": "w3", "effects": 2}]},
+    {"key": "totals", "items": [{"id": "t1", "effects": 2}, {"id": "t2", "effects": 2}]},
+    {"key": "other", "items": [{"id": "o1", "effects": 1}]}
+  ]
+}
