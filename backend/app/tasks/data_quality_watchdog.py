@@ -285,6 +285,65 @@ CHECKS: list[dict[str, Any]] = [
         "severity": "P1",
         "message": "A live NBA/NFL/NHL/MLB game ESPN was covering has no ESPN win-probability snapshot in 15 min — live capture gap; its chart will lose the curve (recoverable via backfill_espn_win_prob)",
     },
+    # --- Output freshness (P1) ---
+    #
+    # CAL-P017 (Alex, 2026-08-08), named failure: an EIGHT-DAY silent publish
+    # failure that ended in a 503. `precompute_calibration_main` ran every hour
+    # and FAILED every hour — phase `futures`, stage `read:futures_population`,
+    # statement timeout at 22.5 min — while nothing published after 2026-08-02
+    # 03:23Z. /api/calibration served a progressively staler curve for a week and
+    # then went fully dark when the last-good copy crossed SERVE_MAX_AGE_S.
+    #
+    # Nothing was watching the OUTPUT. Every existing check here watches an input
+    # (did source X land rows?) or a process; a task that runs on schedule and
+    # fails on schedule looks healthy to all of them, and `task-metrics` counts
+    # it as having run. The ruling this encodes: **watch output freshness
+    # directly, never infer it from process health.**
+    #
+    # Two beats, not one: the precompute is hourly, so a single miss is a blip
+    # (a deploy, a lock, one slow run) and firing on it would train the reader to
+    # ignore the alarm. Two consecutive misses is a pattern.
+    #
+    # A MISSING row must FAIL, not pass. COALESCE over the subquery yields a
+    # large sentinel age rather than NULL, because "no snapshot has ever been
+    # published" is strictly worse than a stale one — and passes_threshold()
+    # treats a NULL under `lte` as a PASS (correct for coverage checks, exactly
+    # wrong here). Do not "simplify" this to a bare MAX().
+    {
+        "name": "calibration_publish_age",
+        "query": (
+            "SELECT COALESCE("
+            "  (SELECT EXTRACT(EPOCH FROM (NOW() - generated_at)) / 3600.0"
+            "     FROM durable_state_snapshots"
+            "    WHERE identity = 'calibration:main'),"
+            "  99999)"
+        ),
+        # Attached to the alert only when it fails: WHICH phase broke, so the
+        # issue says "phase futures timed out at 22.5 min" rather than
+        # "calibration is stale". The ledger is written by every run, including
+        # the ones that fail, which is exactly why it is the useful witness.
+        "context_query": (
+            "SELECT payload #>> '{terminal}' AS terminal,"
+            "       payload #>> '{outcome,published}' AS published,"
+            "       ph.value #>> '{name}' AS phase,"
+            "       ph.value #>> '{status}' AS phase_status,"
+            "       left(COALESCE(ph.value #>> '{detail}', ''), 300) AS detail,"
+            "       ph.value #>> '{duration_ms}' AS duration_ms"
+            "  FROM durable_state_snapshots,"
+            "       jsonb_array_elements(payload -> 'phases') AS ph"
+            " WHERE identity = 'calibration:main:phase_ledger'"
+            "   AND ph.value #>> '{status}' NOT IN ('complete', 'resumed')"
+            " LIMIT 5"
+        ),
+        "threshold": 2,
+        "comparison": "lte",
+        "severity": "P1",
+        "message": (
+            "No successful calibration publish in over 2 hours (2 beats) — "
+            "/api/calibration is serving a stale curve and will 503 outright once "
+            "the last-good copy crosses SERVE_MAX_AGE_S"
+        ),
+    },
 ]
 
 
@@ -647,6 +706,46 @@ def _set_redis_dedup(check_name: str, issue_number: int | None = None) -> None:
 # Main task
 # ---------------------------------------------------------------------------
 
+async def _run_context_query(session, check: dict[str, Any]) -> str:
+    """Failure-only evidence for a check that declares a ``context_query``.
+
+    CAL-P017. Returns a markdown block for the alert body, or ``""`` when the
+    check declares no context query, the query returns nothing, or it fails.
+
+    **Never raises.** An alert that fires with a plain diagnosis is a good
+    outcome; an alert suppressed because its garnish query blew up is not. The
+    rollback on failure matters as much as the catch: a failed statement aborts
+    the asyncpg transaction, so without it every subsequent check would die with
+    ``InFailedSQLTransactionError`` — the #1001 cascade, re-entered through a new
+    door.
+    """
+    sql = check.get("context_query")
+    if not sql:
+        return ""
+    try:
+        rows = (await session.execute(text(sql))).mappings().all()
+    except Exception as exc:
+        logger.warning(
+            "Watchdog context query failed for '%s': %s", check.get("name"), exc
+        )
+        try:
+            await session.rollback()
+        except Exception:
+            logger.warning("Rollback after context-query failure also failed", exc_info=True)
+        return ""
+    if not rows:
+        return ""
+    lines = [
+        "### Evidence",
+        "",
+        *(
+            "- " + ", ".join(f"**{k}**: `{v}`" for k, v in row.items() if v is not None)
+            for row in rows
+        ),
+    ]
+    return "\n".join(lines)
+
+
 async def _run_data_quality_watchdog() -> dict[str, Any]:
     """Run all data quality checks and fire alerts for failures."""
     stats: dict[str, Any] = {
@@ -695,7 +794,18 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                     check["threshold"],
                     check["severity"],
                 )
+                # CAL-P017: a check may carry a ``context_query`` — extra
+                # evidence gathered ONLY on failure and prepended to the
+                # diagnosis, so the filed issue names the proximate cause
+                # instead of restating the symptom. Run inside its own
+                # try/except and its own savepoint discipline: this is
+                # diagnostic garnish, and it must never turn a fired alert into
+                # a swallowed one (or abort the transaction for the checks after
+                # it — #1001's cascade).
+                context = await _run_context_query(session, check)
                 diagnosis = get_llm_diagnosis(check, value)
+                if context:
+                    diagnosis = f"{context}\n\n{diagnosis}"
 
                 # Email
                 try:

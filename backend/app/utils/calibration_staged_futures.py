@@ -61,6 +61,7 @@ so, rather than guessing.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -89,6 +90,7 @@ __all__ = [
     "StagedFuturesCursor",
     "UnitChunk",
     "advance",
+    "bucket_of",
     "can_advance",
     "collect_unit_results",
     "decode_staged_cursor",
@@ -97,6 +99,7 @@ __all__ = [
     "merge_futures_rows",
     "new_staged_cursor",
     "plan_units",
+    "retain_planned_units",
     "unit_key",
 ]
 
@@ -328,6 +331,30 @@ def _flag(value: Any) -> str:
 # =============================================================================
 
 
+def bucket_of(vm_id: Any, buckets: int) -> int:
+    """Which unit a ``vm_id`` belongs to — from the ``vm_id`` ALONE.
+
+    CAL-P016. This is the whole convergence fix in one function. The unit a
+    question lands in is a property of that question and nothing else, so a
+    market resolving into the population cannot move any OTHER question between
+    units. Contrast the positional accumulator this replaced, where one new
+    ``vm_id`` early in sort order pushed every later boundary along and changed
+    every downstream unit key — which invalidated the entire cursor by a second
+    route even after the key itself was made per-unit.
+
+    SHA-256 rather than :func:`hash`: the bucket must be identical in the next
+    beat, in another dyno, and after a deploy. ``PYTHONHASHSEED`` is randomised
+    per process, so the builtin would re-partition the population on every
+    restart — silently, and only in production.
+    """
+    if not isinstance(buckets, int) or isinstance(buckets, bool):
+        raise ValueError("buckets must be an int")
+    if buckets < 1:
+        raise ValueError("buckets must be >= 1")
+    digest = hashlib.sha256(str(vm_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % buckets
+
+
 @dataclass(frozen=True)
 class UnitChunk:
     """One Stage B unit: whole virtual questions and the markets inside them."""
@@ -335,18 +362,36 @@ class UnitChunk:
     index: int
     vm_ids: tuple[str, ...]
     market_ids: tuple[int, ...]
+    #: Sorted ``(market_id, source, vm_id, is_grouped)`` roster tuples for THIS
+    #: unit's markets — the same tuple :func:`generation_fingerprint` digests
+    #: globally, scoped to the unit. Defaulted so a hand-built chunk in a test
+    #: stays valid; the planner always fills it.
+    members: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
-        """Short stable digest of this chunk's ``vm_id`` set.
+        """Short stable digest of everything this chunk is ABOUT.
 
         A cursor entry names a chunk by this key rather than by index, so a
-        banked unit can be VALIDATED against the chunk it claims: change the
-        roster or the chunk size and the keys move, and a stale unit simply
-        stops matching any planned chunk instead of being silently mapped onto
+        banked unit can be VALIDATED against the chunk it claims: change what
+        the unit contains and the key moves, and a stale unit simply stops
+        matching any planned chunk instead of being silently mapped onto
         whatever now sits at index 3.
+
+        CAL-P016 widened this from the ``vm_id`` set to the unit's full roster
+        MEMBERSHIP. Digesting only ``vm_id``s left the inverse hole to the
+        boundary-shift one: a market resolving INTO an existing ``vm_id`` left
+        the key unchanged while making the banked rows stale, so a unit computed
+        without that market would have been resumed as though it were current.
+        ``vm_ids`` and ``market_ids`` stay in the digest so a chunk constructed
+        without ``members`` is still distinguished rather than colliding.
         """
-        return input_fingerprint(UNIT_KEY_VM_ID, *self.vm_ids)[:16]
+        parts = (
+            [f"vm:{vm}" for vm in self.vm_ids]
+            + [f"mk:{market}" for market in self.market_ids]
+            + [f"mb:{member}" for member in self.members]
+        )
+        return input_fingerprint(UNIT_KEY_VM_ID, *parts)[:16]
 
     @property
     def market_count(self) -> int:
@@ -362,7 +407,7 @@ class UnitChunk:
         }
 
 
-def plan_units(rows: Iterable[Any], *, max_markets_per_chunk: int) -> tuple[UnitChunk, ...]:
+def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     """Cut the Stage A roster into chunks of WHOLE virtual questions.
 
     **A ``vm_id`` is never split.** The population keys two things on ``vm_id``
@@ -378,29 +423,44 @@ def plan_units(rows: Iterable[Any], *, max_markets_per_chunk: int) -> tuple[Unit
     completeness is a per-market property, and a market lives in exactly one
     ``vm_id``, so keeping ``vm_id``s whole keeps fields whole.
 
-    Deterministic by construction: ``vm_id``s are placed in sorted order, so the
-    same roster always yields the same chunks, in the same order, with the same
-    keys. The cursor depends on that — a re-plan that shuffled units would orphan
-    every banked one.
+    Deterministic by construction: a ``vm_id``'s unit is :func:`bucket_of` that
+    ``vm_id``, so the same roster always yields the same chunks, in the same
+    order, with the same keys. The cursor depends on that — a re-plan that
+    shuffled units would orphan every banked one.
 
-    ``max_markets_per_chunk`` is a target, not a ceiling. **A single ``vm_id``
-    holding more markets than the target still gets its own whole chunk** — it
-    is never truncated, and it is never merged with a neighbour. An oversized
-    unit is a real thing (a large Polymarket group), and the honest response is
-    one big chunk that may not fit the beat; splitting it would produce a chunk
-    that fits and is wrong.
+    **CAL-P016: the partition is CONTENT-ADDRESSED, not positional.** ``buckets``
+    fixes how many units the population is cut into, and membership is decided
+    per ``vm_id`` by hash. This is what lets units accumulate ACROSS beats. The
+    positional accumulator it replaces cut on a running market count over sorted
+    ``vm_id``s, so a single market resolving into the population shifted every
+    later boundary and re-keyed every later unit; the cursor then discarded all
+    of them, and a build that banks 1-2 units of 40+ per beat could never finish.
+    That is measured, not theorised — the 2026-08-03 flip banked one unit at
+    19:15Z and threw it away at 20:15Z, and ``/api/calibration`` went dark on
+    2026-08-09 as a direct consequence.
+
+    Unit SIZE is therefore a distribution rather than a cap, which is the price
+    of stability and is deliberate: a bucket's cost varies, and the beat's
+    deadline — not the planner — is what stops a run mid-plan. **A single
+    ``vm_id`` is still never split**, so an oversized unit (a large Polymarket
+    group) still gets processed whole; splitting it would produce a chunk that
+    fits and is wrong.
+
+    Empty buckets produce no chunk at all, so :func:`is_complete` compares
+    against real work rather than against a fixed grid of mostly-nothing.
 
     Raises ``ValueError`` on a roster row with no ``vm_id`` or no ``market_id``:
     such a row cannot be placed in any unit, and silently skipping it would drop
     real markets out of the population while every count still looked plausible.
     """
-    if not isinstance(max_markets_per_chunk, int) or isinstance(max_markets_per_chunk, bool):
-        raise ValueError("max_markets_per_chunk must be an int")
-    if max_markets_per_chunk < 1:
-        raise ValueError("max_markets_per_chunk must be >= 1")
+    if not isinstance(buckets, int) or isinstance(buckets, bool):
+        raise ValueError("buckets must be an int")
+    if buckets < 1:
+        raise ValueError("buckets must be >= 1")
 
     by_vm: dict[str, list[int]] = {}
     seen: dict[str, set[int]] = {}
+    members_by_vm: dict[str, set[str]] = {}
     for row in rows:
         raw_vm = _get(row, UNIT_KEY_VM_ID)
         raw_market = _get(row, "market_id")
@@ -409,36 +469,45 @@ def plan_units(rows: Iterable[Any], *, max_markets_per_chunk: int) -> tuple[Unit
         vm_id = str(raw_vm)
         market_id = int(raw_market)
         bucket = by_vm.setdefault(vm_id, [])
-        members = seen.setdefault(vm_id, set())
+        market_seen = seen.setdefault(vm_id, set())
         # One market belongs to exactly one vm_id, but the roster carries a row
         # per (market, source) and a defensive dedupe keeps the market_ids list
         # a true set — the chunk restriction predicate is built from it.
-        if market_id not in members:
-            members.add(market_id)
+        if market_id not in market_seen:
+            market_seen.add(market_id)
             bucket.append(market_id)
-
-    chunks: list[UnitChunk] = []
-    current_vms: list[str] = []
-    current_markets: list[int] = []
-    for vm_id in sorted(by_vm):
-        markets = by_vm[vm_id]
-        if current_vms and len(current_markets) + len(markets) > max_markets_per_chunk:
-            chunks.append(
-                UnitChunk(
-                    index=len(chunks),
-                    vm_ids=tuple(current_vms),
-                    market_ids=tuple(sorted(current_markets)),
+        # The membership digest is per ROSTER ROW, not per market: source and
+        # is_grouped are exactly what generation_fingerprint watches globally,
+        # and a unit that resumes must be able to see them change.
+        members_by_vm.setdefault(vm_id, set()).add(
+            "\x1e".join(
+                (
+                    str(market_id),
+                    _text(_get(row, "source")),
+                    vm_id,
+                    _flag(_get(row, "is_grouped")),
                 )
             )
-            current_vms, current_markets = [], []
-        current_vms.append(vm_id)
-        current_markets.extend(markets)
-    if current_vms:
+        )
+
+    grouped: dict[int, list[str]] = {}
+    for vm_id in sorted(by_vm):
+        grouped.setdefault(bucket_of(vm_id, buckets), []).append(vm_id)
+
+    chunks: list[UnitChunk] = []
+    for index in sorted(grouped):
+        vm_ids = grouped[index]
+        market_ids: list[int] = []
+        members: set[str] = set()
+        for vm_id in vm_ids:
+            market_ids.extend(by_vm[vm_id])
+            members |= members_by_vm[vm_id]
         chunks.append(
             UnitChunk(
-                index=len(chunks),
-                vm_ids=tuple(current_vms),
-                market_ids=tuple(sorted(current_markets)),
+                index=index,
+                vm_ids=tuple(vm_ids),
+                market_ids=tuple(sorted(market_ids)),
+                members=tuple(sorted(members)),
             )
         )
     return tuple(chunks)
@@ -716,11 +785,25 @@ def decode_staged_cursor(
       nothing there that is usable. Start over; that is not an error.
     * :data:`~app.utils.calibration_phase_ledger.INVALIDATE` — something is
       there but we cannot vouch for it: wrong schema, wrong task, wrong
-      population version, wrong input fingerprint, **wrong generation
-      fingerprint**, or a malformed shape. The generation-fingerprint case is
-      the LATE ARRIVAL: the roster moved under us, so every banked unit
-      describes a population that no longer exists and mixing it with fresh
-      chunks is ``LATE_ARRIVAL_NOT_INVALIDATED``.
+      population version, wrong input fingerprint, or a malformed shape.
+
+      **CAL-P016 removed the generation fingerprint from this list**, and that
+      is the convergence fix. A moved roster used to invalidate the WHOLE
+      cursor: the digest covers every ``(market_id, source, vm_id, is_grouped)``
+      in the population, markets resolve continuously, so it moved between every
+      pair of hourly beats and threw away everything banked. Units could only
+      accumulate if the population held still, and it never does — so the build
+      could never finish, and ``/api/calibration`` went dark.
+
+      ``LATE_ARRIVAL_NOT_INVALIDATED`` is **preserved and made finer**, not
+      weakened. It now holds per UNIT via :func:`retain_planned_units`: a banked
+      unit survives only if its key still matches a planned chunk, and the key
+      digests that unit's own roster membership. A unit whose contents changed
+      stops matching and is recomputed; a unit untouched by the arrival is still
+      exactly the census it always was. What may never happen — mixing rows
+      computed against two different definitions of the SAME unit — still cannot.
+      The population version and input fingerprint remain wholesale invalidators,
+      because those change what a unit MEANS rather than which markets are in it.
     * :data:`~app.utils.calibration_phase_ledger.REFUSE` — a DIFFERENT owner
       holds an UNEXPIRED lease. Another beat is mid-build; two workers each
       advancing half a cursor is how a generation gets mixed. Doing nothing is
@@ -753,8 +836,11 @@ def decode_staged_cursor(
         return blank, INVALIDATE
     if raw.get("input_fingerprint") != expected_input_fingerprint:
         return blank, INVALIDATE
-    if raw.get("generation_fingerprint") != expected_generation_fingerprint:
-        return blank, INVALIDATE
+    # NOTE: generation_fingerprint is deliberately NOT checked here (CAL-P016).
+    # It is still carried and still written, because it names which roster a
+    # cursor was last advanced against and that is worth having in the payload —
+    # but a mismatch is now handled per-unit by retain_planned_units, not by
+    # discarding the cursor. See this function's docstring for why.
 
     held_by = raw.get("owner") or ""
     lease = raw.get("lease_expires_at")
@@ -792,6 +878,41 @@ def decode_staged_cursor(
             terminal=str(raw.get("terminal") or TERMINAL_PARTIAL),
         ),
         RESUME if resumable else FRESH,
+    )
+
+
+def retain_planned_units(
+    cursor: StagedFuturesCursor, chunks: Iterable[Any]
+) -> tuple[StagedFuturesCursor, tuple[str, ...]]:
+    """Drop banked units that no longer match a planned chunk.
+
+    CAL-P016. This is where ``LATE_ARRIVAL_NOT_INVALIDATED`` is enforced now
+    that :func:`decode_staged_cursor` no longer discards a whole cursor when the
+    roster moves. Returns ``(cursor, dropped_keys)`` — the keys are returned
+    rather than merely logged so a caller can record how much drift a beat
+    actually cost, which is the number that says whether the build is
+    converging.
+
+    A unit is kept iff its key is in the plan. Because a chunk key digests that
+    chunk's full roster membership, "in the plan" means *this exact set of
+    questions, markets, sources and grouping flags* — so a kept unit's rows are
+    still a census of precisely what the new plan asks that unit for. A unit
+    whose contents changed re-keys, matches nothing, and is recomputed.
+
+    Idempotent, and a no-op in the common case where nothing drifted.
+    """
+    planned = {unit_key(chunk) for chunk in chunks}
+    kept = tuple(name for name in cursor.committed_units if name in planned)
+    dropped = tuple(name for name in cursor.committed_units if name not in planned)
+    if not dropped:
+        return cursor, ()
+    return (
+        replace(
+            cursor,
+            committed_units=kept,
+            unit_results={name: cursor.unit_results[name] for name in kept},
+        ),
+        dropped,
     )
 
 
@@ -856,10 +977,13 @@ def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
     nothing to compute, and that is a real, if rare, state rather than a stuck
     build.
 
-    A committed unit that matches NO planned chunk makes this False. That should
-    be unreachable (the generation fingerprint invalidates a cursor whose roster
-    moved), so if it happens the plan and the cursor disagree about what the
-    population is, and refusing to publish is the only safe answer.
+    A committed unit that matches NO planned chunk makes this False. Callers run
+    :func:`retain_planned_units` first, which removes exactly those, so reaching
+    here with one means the plan and the cursor disagree about what the
+    population is — and refusing to publish is the only safe answer. Kept as a
+    belt-and-braces check rather than relaxed to a subset test: "every planned
+    unit is banked" and "nothing unplanned is banked" are both required, and the
+    second is what catches a retention step that was skipped.
     """
     planned = {unit_key(chunk) for chunk in chunks}
     committed = {name for name in cursor.committed_units if name in cursor.unit_results}
