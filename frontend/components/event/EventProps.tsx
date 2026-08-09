@@ -11,6 +11,7 @@ import type { EventConceptChild, EventConceptSection } from "@/lib/types";
 import {
   stageGradedWinner,
   stagePendingLabel,
+  isLikelyPersonName,
   isPersonFieldDomain,
 } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
@@ -49,8 +50,12 @@ function PropCard({ child, domain }: { child: EventConceptChild; domain?: string
   const person = isPersonFieldDomain(domain);
   // L2-175 Item 2c: person-field rows (cyclists, fighters, golfers) carry a
   // Wikipedia headshot with an initials fallback — the shared EntityImage path.
+  // UX-P032 (#1600): `person` is a DOMAIN gate — tennis passes it, and then every
+  // prop outcome ("Over 16.5 games", "Under") became a doomed Wikipedia lookup.
+  // The row-level guard asks whether THIS name is a person, which is what the
+  // lookup actually depends on.
   const avatar = (name: string, size = 22) =>
-    person ? (
+    person && isLikelyPersonName(name) ? (
       <EntityImage type="wikipedia" name={name} size={size} className="shrink-0" />
     ) : null;
 

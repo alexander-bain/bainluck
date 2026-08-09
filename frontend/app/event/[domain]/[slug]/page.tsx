@@ -20,6 +20,11 @@ import {
   headlinerMatchup,
   settledChampion,
 } from "@/lib/eventConceptDisplay";
+import {
+  CONCEPT_LOADING_CEILING_MS,
+  conceptRenderState,
+  isDeadKeyError,
+} from "@/lib/conceptLoadingState";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import EventHeader from "@/components/event/EventHeader";
@@ -71,9 +76,20 @@ export default function EventConceptPage() {
   // L2-175 Item 2d: don't flash the "Event not found" error while the very first
   // fetch is still retrying (the backend can be slow/cold — #249's 45s half). We
   // keep the skeleton up until retries are genuinely exhausted, then show the error.
+  //
+  // UX-P031 (#1599): that guard could never let go. `retriesExhausted` is set only
+  // from inside `onErrorRetry`, which SWR skips for a deduped or double-mounted
+  // errored request, so a dead key sat on "Loading event…" forever — still spinning
+  // at the browser-audit rail's 45s capture, on both viewports, five days apart.
+  // The ceiling below is the escape that does NOT depend on that flag being set.
+  // See lib/conceptLoadingState.ts for the full mechanism.
   const [retriesExhausted, setRetriesExhausted] = useState(false);
+  const [ceilingReached, setCeilingReached] = useState(false);
   useEffect(() => {
     setRetriesExhausted(false);
+    setCeilingReached(false);
+    const timer = setTimeout(() => setCeilingReached(true), CONCEPT_LOADING_CEILING_MS);
+    return () => clearTimeout(timer);
   }, [decodedKey]);
 
   const { data, error, isLoading, isValidating } = useSWR(
@@ -83,6 +99,13 @@ export default function EventConceptPage() {
       revalidateOnFocus: false,
       errorRetryCount: 3,
       onErrorRetry: (err, key, config, revalidate, { retryCount }) => {
+        // UX-P031 (#1599): a 404 is the backend saying this key does not exist.
+        // Retrying it three times cannot change the answer; it only buys six
+        // more seconds of spinner in front of a page we already know is dead.
+        if (isDeadKeyError(err)) {
+          setRetriesExhausted(true);
+          return;
+        }
         if (retryCount >= 3) {
           setRetriesExhausted(true);
           return;
@@ -150,16 +173,24 @@ export default function EventConceptPage() {
   // L2-175 Item 2d: show the skeleton until we have data OR retries are genuinely
   // exhausted. During the retry window (error present, not yet given up) we keep the
   // spinner instead of flashing "Event not found" and then loading successfully.
-  const stillLoading =
-    !data && (isLoading || isValidating || (!!error && !retriesExhausted));
-  if (stillLoading) {
+  // UX-P031 (#1599): that decision now lives in a pure, tested function so the
+  // "Event not found" terminal is provably reachable from every state.
+  const renderState = conceptRenderState({
+    hasData: !!data,
+    error,
+    isLoading,
+    isValidating,
+    retriesExhausted,
+    ceilingReached,
+  });
+  if (renderState === "loading") {
     return (
       <div className="max-w-4xl mx-auto py-12">
         <LoadingSpinner text="Loading event..." />
       </div>
     );
   }
-  if (error || !data) {
+  if (renderState === "not-found" || !data) {
     return (
       <div className="max-w-4xl mx-auto py-12">
         <ErrorMessage

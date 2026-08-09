@@ -230,32 +230,168 @@ export function sportKeyToEspnHeadshotSport(sportKey: string | null): string {
 // 2. Wikipedia / MediaWiki API
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// UX-P032 (#1600) — bounding the lookup itself
+//
+// A tennis draw fired ~600 failing requests at Wikipedia's REST API in a single
+// page load, and 2,175 console errors five days earlier (browser-audit runs
+// 31323268137 and 30864618239). The row-level name guard (`isLikelyPersonName`)
+// removes most of them at the call site, but the guard below is what makes the
+// STORM structurally impossible, for every caller of this function including
+// ones not yet written.
+//
+// What was measured, so the fix is aimed at the real thing (UX-P032 Item 1):
+// `en.wikipedia.org/api/rest_v1/page/summary/<title>` answers `200` for a valid
+// title and an honest `404` for a nonsense one, with `access-control-allow-origin: *`
+// in both cases. The endpoint shape and CORS were never wrong. So the
+// `net::ERR_FAILED` the rail recorded — on `Brandon_Nakashima`, a REAL article —
+// is Wikipedia REFUSING us after the burst, which is self-inflicted.
+//
+// That distinction drives the design: a 404 is the source answering healthily
+// ("no article"), and it is already cached, so it costs one request per name
+// ever. Only a THROW means we are being refused, and only a throw counts toward
+// the circuit below.
+// ---------------------------------------------------------------------------
+
+/**
+ * Consecutive-failure circuit breaker.
+ *
+ * Pure and clock-injectable so the policy is unit-testable without timers or a
+ * network. Exported for tests; callers should use the shared instance.
+ */
+export class LookupCircuit {
+  private consecutiveFailures = 0;
+  private openUntilMs = 0;
+
+  constructor(
+    private readonly threshold: number,
+    private readonly cooldownMs: number,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  /** While open, callers must not issue a request at all. */
+  isOpen(): boolean {
+    return this.now() < this.openUntilMs;
+  }
+
+  /** Any answer from the source — including a 404 — proves it is still talking. */
+  recordSuccess(): void {
+    this.consecutiveFailures = 0;
+    this.openUntilMs = 0;
+  }
+
+  /** A throw: refused, offline, or timed out. */
+  recordFailure(): void {
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= this.threshold) {
+      this.openUntilMs = this.now() + this.cooldownMs;
+      this.consecutiveFailures = 0;
+    }
+  }
+}
+
+/**
+ * Five throws in a row is not a coincidence, and 60s is long enough for a rate
+ * limit window to roll over while still self-healing without a reload.
+ *
+ * Deliberately NOT the alternative of negative-caching a throw for the cache's
+ * 24h TTL: that would bound the storm too, but it would also poison a real
+ * person's headshot for a day because of one transient blip. The circuit stops
+ * the refire without attributing a network failure to a name.
+ */
+const WIKIPEDIA_CIRCUIT = new LookupCircuit(5, 60_000);
+
+/**
+ * Cap on simultaneous lookups. The point is not throughput — it is that a page
+ * with hundreds of rows must not open hundreds of sockets in one frame, which is
+ * what earns the rate limit that produced the throws in the first place. Four at
+ * a time drains a large field in well under a second while looking like a
+ * browser rather than a scraper.
+ */
+const MAX_CONCURRENT_LOOKUPS = 4;
+let activeLookups = 0;
+const lookupQueue: Array<() => void> = [];
+
+function acquireLookupSlot(): Promise<void> {
+  if (activeLookups < MAX_CONCURRENT_LOOKUPS) {
+    activeLookups += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    lookupQueue.push(() => {
+      activeLookups += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseLookupSlot(): void {
+  activeLookups = Math.max(0, activeLookups - 1);
+  lookupQueue.shift()?.();
+}
+
+/**
+ * In-flight requests by cache key. The localStorage cache cannot help a request
+ * that has not returned yet, so without this every row sharing a name (and a
+ * large field has many) opens its own socket for the same title.
+ */
+const inFlightLookups = new Map<string, Promise<string | null>>();
+
+/** Test seam — resets the module-level bounding state between cases. */
+export function __resetWikipediaLookupState(): void {
+  inFlightLookups.clear();
+  lookupQueue.length = 0;
+  activeLookups = 0;
+  WIKIPEDIA_CIRCUIT.recordSuccess();
+}
+
 /**
  * Fetch a thumbnail image URL from Wikipedia for an entity name.
- * Returns null if not found or on error.
+ * Returns null if not found, if the lookup fails, or while the circuit is open.
  */
 export async function getWikipediaImage(entityName: string): Promise<string | null> {
   const cacheKey = `wiki_${entityName.toLowerCase().replace(/\s+/g, "_")}`;
   const cached = cacheGet<string | null>(cacheKey);
   if (cached !== undefined) return cached;
 
-  try {
-    const title = entityName.replace(/ /g, "_");
-    const res = await fetch(
-      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) {
-      cacheSet(cacheKey, null);
+  // Refused recently — do not add to the pile. Falls back to initials, which is
+  // what a failed lookup rendered anyway.
+  if (WIKIPEDIA_CIRCUIT.isOpen()) return null;
+
+  const existing = inFlightLookups.get(cacheKey);
+  if (existing) return existing;
+
+  const pending = (async (): Promise<string | null> => {
+    await acquireLookupSlot();
+    try {
+      const title = entityName.replace(/ /g, "_");
+      const res = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      // The source answered, so it is healthy — even on a 404.
+      WIKIPEDIA_CIRCUIT.recordSuccess();
+      if (!res.ok) {
+        cacheSet(cacheKey, null);
+        return null;
+      }
+      const data = await res.json();
+      const url: string | null = data.thumbnail?.source || null;
+      cacheSet(cacheKey, url);
+      return url;
+    } catch {
+      // A throw is the source refusing us (or the network being gone). Not
+      // cached against the name — the name is probably fine, we are the problem.
+      WIKIPEDIA_CIRCUIT.recordFailure();
       return null;
+    } finally {
+      releaseLookupSlot();
+      inFlightLookups.delete(cacheKey);
     }
-    const data = await res.json();
-    const url: string | null = data.thumbnail?.source || null;
-    cacheSet(cacheKey, url);
-    return url;
-  } catch {
-    return null;
-  }
+  })();
+
+  inFlightLookups.set(cacheKey, pending);
+  return pending;
 }
 
 // ============================================================================

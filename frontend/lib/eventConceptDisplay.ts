@@ -31,6 +31,82 @@ export function isPersonFieldDomain(domain?: string | null): boolean {
   return domain != null && PERSON_FIELD_DOMAINS.has(domain.toLowerCase());
 }
 
+/**
+ * UX-P032 (#1600) — is this string plausibly a PERSON'S NAME, as opposed to a
+ * market outcome label?
+ *
+ * The domain gate above is necessary but not sufficient, and the gap is exactly
+ * what the comment on `PERSON_FIELD_DOMAINS` already promised and the code never
+ * delivered: "no headshot for 'United States' or 'Under 63.5'". Tennis IS a
+ * person-field domain, so `isPersonFieldDomain` returns true — and the avatar is
+ * then rendered for every OUTCOME name on the page, which on a prop row is
+ * `Over 16.5 games`, `Adrian Mannarino -1.5 games`, `Under`, `No`.
+ *
+ * Each of those became a Wikipedia lookup. A single tennis draw fired ~600 of
+ * them (browser-audit 31323268137), and none could ever resolve — they are not
+ * article titles and never will be. Domain-level gating asks "could a row here be
+ * a person?"; this asks "is THIS row a person?", which is the question the lookup
+ * actually depends on.
+ *
+ * Deliberately conservative in the direction of REJECTING. A missed headshot is
+ * an initials circle nobody notices; a wrong lookup is a doomed network request
+ * that costs the user and hammers a third party. Only applied where we are
+ * already claiming the row is a person — it is NOT a general entity filter, and
+ * must not be used on award nominees or film titles, where digits and colons are
+ * ordinary ("Blade Runner 2049", "Mission: Impossible").
+ */
+/**
+ * Words that mark a market OUTCOME rather than a competitor. A person's name
+ * essentially never contains one, and every entry here was observed as a real
+ * lookup title on the tennis draw or is the direct analogue on another
+ * person-field domain (MMA method-of-victory outcomes are literally "Decision",
+ * "Submission", "KO/TKO" — the same defect wearing a different sport).
+ *
+ * Matched as whole tokens, never as prefixes: "over" must not reject "Overton".
+ */
+const MARKET_OUTCOME_TOKENS = new Set([
+  // binary / threshold
+  "over", "under", "yes", "no", "draw", "tie", "any", "either", "neither",
+  "o", "u",
+  // scoring units
+  "game", "games", "set", "sets", "point", "points", "ace", "aces", "break",
+  "breaks", "tiebreak", "tiebreaker", "total", "totals", "spread", "handicap",
+  // match-state outcomes
+  "match", "matches", "completed", "retired", "walkover", "abandoned",
+  "cancelled", "canceled", "postponed", "suspended",
+  // combat / generic result outcomes
+  "decision", "submission", "knockout", "ko", "tko", "round", "rounds",
+  "winner", "win", "wins", "loss", "losses", "field", "other",
+]);
+
+export function isLikelyPersonName(name?: string | null): boolean {
+  if (!name) return false;
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+
+  // A person's name carries no digits. This single rule retires the whole
+  // handicap/threshold family: "-1.5 games", "Over 16.5", "Under 63.5".
+  if (/\d/.test(trimmed)) return false;
+
+  // Matchup and market-title shapes rather than a competitor. `\bv\b` does not
+  // fire inside "van Gisbergen" — the boundary after `v` is what makes it safe.
+  if (/\bv(s\.?)?\b/i.test(trimmed)) return false;
+  if (trimmed.includes(":")) return false;
+
+  // Market vocabulary. Tokenised on non-letters rather than matched as a prefix,
+  // which is what keeps "Overton" and "Nooijer" — real surnames that merely BEGIN
+  // with an outcome word — out of the net. It also splits "O/U" and "KO/TKO" into
+  // their parts, so the notation forms are caught without a special case.
+  const tokens = trimmed.toLowerCase().split(/[^a-z]+/i).filter(Boolean);
+  if (tokens.some((t) => MARKET_OUTCOME_TOKENS.has(t))) return false;
+
+  // A market title dressed as a row. Real names — including
+  // "Jean-Christophe Peraud" or "Juan Manuel Cerundolo" — stay well inside this.
+  if (trimmed.split(/\s+/).length > 5) return false;
+
+  return true;
+}
+
 /** Competitors sorted by probability desc (the winner-field leaderboard order). */
 export function fieldOrder(
   competitors: EventConceptCompetitor[],

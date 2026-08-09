@@ -36,7 +36,7 @@
 
 import QuantityGroup, { type QuantityRung } from "@/components/QuantityGroup";
 import { probabilityHeat } from "@/lib/probabilityColors";
-import { isPersonFieldDomain } from "@/lib/eventConceptDisplay";
+import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
 
 export type PropsState = "script" | "divergence" | "graded";
@@ -430,9 +430,12 @@ function FieldPropCard({
           return (
             <div key={`${o.name}-${i}`}>
               <div className="flex items-center gap-2">
-                {withAvatars && o.name && (
+                {withAvatars && o.name && isLikelyPersonName(o.name) && (
                   // L2-147 Item 2: golfer headshot (Wikipedia) next to the name —
                   // graceful initials fallback when no image resolves.
+                  // UX-P032 (#1600): the domain gate alone let every prop OUTCOME
+                  // through ("Over 16.5 games", "Adrian Mannarino -1.5 games"), so a
+                  // tennis draw fired ~600 Wikipedia lookups that could never resolve.
                   <EntityImage type="wikipedia" name={o.name} size={20} />
                 )}
                 <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
