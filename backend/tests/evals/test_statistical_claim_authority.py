@@ -2,7 +2,7 @@ import copy
 import json
 from pathlib import Path
 
-from backend.scripts.evals.statistical_claim_authority import evaluate_statistical_claim, holm_rejections
+from scripts.evals.statistical_claim_authority import evaluate_statistical_claim, holm_rejections
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "statistical_claim_authority.json"

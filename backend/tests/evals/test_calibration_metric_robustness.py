@@ -1,4 +1,4 @@
-from backend.scripts.evals.calibration_metric_robustness import (
+from scripts.evals.calibration_metric_robustness import (
     compare,
     equal_mass_ece,
     fixed_width_ece,

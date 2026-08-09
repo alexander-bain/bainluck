@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.event_negative_cache_precedence_contract import decide
+from scripts.evals.event_negative_cache_precedence_contract import decide
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "event_negative_cache_precedence_contract.json"

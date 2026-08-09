@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.collapsed_family_mount_contract import render_plan, validate_plan
+from scripts.evals.collapsed_family_mount_contract import render_plan, validate_plan
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "collapsed_family_mount_contract.json"

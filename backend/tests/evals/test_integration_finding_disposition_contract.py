@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.integration_finding_disposition_contract import disposition
+from scripts.evals.integration_finding_disposition_contract import disposition
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "integration_finding_disposition_contract.json"
