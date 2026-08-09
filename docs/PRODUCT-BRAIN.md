@@ -1122,3 +1122,71 @@ before the visible 403).
 - SUBAGENTS: allowed inside the integrator session for READ-ONLY work only —
   parallel test shards, conflict scouting, post-deploy probes. Read in parallel,
   write in series.
+
+---
+
+## RULING — 2026-08-09: THE CALIBRATION EXIT EXAM (Alex) — the slot rotates on evidence, not on effort
+
+**DO NOT REMOVE (CI-guarded).**
+
+> The calibration slot rotates to Discover only when a single evidence document
+> (`docs/CALIBRATION-EXIT-EXAM.md`) shows all seven items below, **each with linked proof**.
+> Alex reviews the exam **in one sitting**; his pass is the rotation trigger.
+
+1. **Ruling 9 shipped** and the published count reflects **volume-proven trading** — *both
+   figures named*.
+2. The **trading-activity section led by the matched-bucket comparison**; the raw cross-cohort
+   tiles demoted or removed.
+3. **Cricket and entertainment** each get a named diagnosis cycle ending in a fix, a documented
+   exclusion, or a proven *"the market is genuinely bad here"* — **no massive-error category left
+   unexplained**.
+4. The **source graph redesigned for legibility** — per-source panels, not overlaid lines.
+5. The **native app's calibration surface verified consistent with web**.
+6. **Monitoring proven by drill** — the publish-age watchdog and the sentinel guards observed
+   **actually firing**, not merely merged.
+7. **Backfill recovery measurably progressing** against the 786K recoverable cohort, with the
+   capture-floor re-measure on **~2026-08-15**.
+
+### What this changes about how the lane finishes
+
+The lane has run twenty cycles and shipped continuously. What it has NOT done is assemble its
+work into one thing a reader can judge in a sitting — every payoff lives in a separate report,
+several are "owed post-deploy", and the reader has to reconstruct the state from twenty
+documents. **The exam is the deliverable now, not the queues.** A cycle that ships code and does
+not move an exam item has not moved the lane toward rotation.
+
+Note the shape of the seven: three are *numbers that must be published and true* (1, 3, 7), two
+are *legibility* (2, 4), one is *cross-surface consistency* (5), and one is *proof the alarms
+work* (6). Only item 7 has a date, and only because it waits on elapsed time.
+
+### "Observed actually firing, not merely merged" is the general form
+
+Item 6 restates, for monitoring, the rule this doc already banks as *"a rail is not shipped until
+it has been invoked post-deploy"*. It is called out separately because monitoring is the case
+where the gap is most dangerous and least visible: a watchdog that was merged but never fired
+looks exactly like a watchdog with nothing to report. The 2026-08-02 publish failure went
+unnoticed for eight days behind precisely that ambiguity.
+
+### The sequencing constraint the exam creates (read before staging any of it)
+
+Items 1 and 3 both change what the published curve plots, so both carry a
+`CALIBRATION_POPULATION_VERSION` bump — and a bump takes `/calibration` **dark** until the next
+successful beat, because `snapshot_verdict` refuses a cached artifact whose version is not the
+deployed one. The already-staged CAL-P019 carries a third bump for the same reason.
+
+**No version bump may ship until the build is publishing again.** Shipping one against a build
+that cannot publish re-creates the 2026-08-02 outage exactly. That makes CAL-P016's convergence
+the critical path for most of the exam, not merely one queue among several.
+
+### Ruling 9 is hereby OPTION A, by implication — flagged, not assumed silently
+
+`RULINGS-NEEDED.md` item 9 offered **A** (approve a versioned volume-based well-traded bar) or
+**B** (keep the snapshot-movement bar). Item 1 says ruling 9 is *shipped* and the published count
+reflects *volume-proven* trading with *both figures named* — B ships nothing and names no
+figures, and "both figures" is A's own before/after-counts requirement. So A is selected.
+
+Recorded as an inference rather than a quotation, because it is one, and a one-line correction
+from Alex is cheaper than a lane blocking on a question he has effectively already answered.
+A's conditions carry over intact: before/after counts **by source**, sources with no volume
+concept **excluded**, NULL **explicitly UNKNOWN** (never "untraded"), and a published population
+version.
