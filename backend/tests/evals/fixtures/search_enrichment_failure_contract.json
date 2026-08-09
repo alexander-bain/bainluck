@@ -1,0 +1,7 @@
+[
+  {"id": "odds-timeout-preserves-events", "input": {"stage": "event_odds", "failure": "query_timeout", "has_base_results": true}, "expected": {"http": 200, "base_results": true, "degraded": ["event_odds"]}},
+  {"id": "gei-timeout-preserves-events", "input": {"stage": "event_gei", "failure": "query_timeout", "has_base_results": true}, "expected": {"http": 200, "base_results": true, "degraded": ["event_gei"]}},
+  {"id": "team-enrichment-timeout-preserves-events", "input": {"stage": "event_teams", "failure": "query_timeout", "has_base_results": true}, "expected": {"http": 200, "base_results": true, "degraded": ["event_teams"]}},
+  {"id": "odds-programming-error-fails-loudly", "input": {"stage": "event_odds", "failure": "value_error", "has_base_results": true}, "expected": {"http": 500, "base_results": false, "degraded": []}},
+  {"id": "clean-enrichment", "input": {"stage": "event_odds", "failure": null, "has_base_results": true}, "expected": {"http": 200, "base_results": true, "degraded": []}}
+]
