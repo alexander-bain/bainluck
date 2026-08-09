@@ -1,0 +1,21 @@
+{
+ "schema_version":"manus-retirement/v1","authority":"Alex ruling 2026-08-08: Manus defunct","cases":[
+ {"id":"required-red-workflow","path":".github/workflows/manus-sweep.yml","input":{"kind":"required_ci","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"optional-social-workflow","path":".github/workflows/social-ground-truth.yml","input":{"kind":"optional_workflow","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"health-command-current-status","path":".claude/commands/health.md","input":{"kind":"health_command"},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"health-suite-api","path":"backend/scripts/manus_health_suite.py","input":{"kind":"api_script","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"verify-api","path":"backend/scripts/manus_verify.py","input":{"kind":"api_script","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"poll-api","path":"backend/scripts/manus_poll.py","input":{"kind":"api_script","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"social-extractor-api","path":"backend/scripts/extract_social_ground_truth_with_manus.py","input":{"kind":"api_script","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"historical-audit-files","path":"Manus/audit_results/**","input":{"kind":"historical_artifact","historical":true,"cites_evidence":true},"expected":{"action":"retain","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"historical-prompts","path":"Manus/prompts/**","input":{"kind":"historical_artifact","historical":true},"expected":{"action":"retain","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"replacement-grid-sentinel","path":"backend/app/tasks/grid_sentinel.py","input":{"kind":"active_doc","replacement":true},"expected":{"action":"annotate","reproduction_path":"replacement","notice_required":true}},
+ {"id":"issue-872-program","path":"github:#872","input":{"kind":"issue_citation","cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"issue-980-reproduction","path":"github:#980","input":{"kind":"issue_citation","cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"issue-982-reproduction","path":"github:#982","input":{"kind":"issue_citation","cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"issue-983-reproduction","path":"github:#983","input":{"kind":"issue_citation","cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"issue-1101-workflow-failure","path":"github:#1101","input":{"kind":"issue_citation","cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"unavailable","notice_required":true}},
+ {"id":"legacy-ground-truth-auditor","path":"backend/scripts/audit_grid_accuracy.py","input":{"kind":"active_doc","replacement":true,"cites_evidence":true},"expected":{"action":"annotate","reproduction_path":"replacement","notice_required":true}},
+ {"id":"intake-script","path":"backend/scripts/manus_intake.py","input":{"kind":"api_script","executable":true},"expected":{"action":"delete","reproduction_path":"unavailable","notice_required":false}},
+ {"id":"archived-backlog","path":"docs/archive/backlog-2026-07-24-final.md","input":{"kind":"historical_artifact","historical":true,"cites_evidence":true},"expected":{"action":"retain","reproduction_path":"unavailable","notice_required":true}}
+ ]}
