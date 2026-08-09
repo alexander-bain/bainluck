@@ -1,0 +1,12 @@
+{"schema_version":"int023-curator-residual/v1","cases":[
+{"id":"current-explicit-exact","input":{"status":"accepted","source_age_days":1,"max_age_days":14,"identity_confident":true},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"reviewed-still-refused","input":{"status":"reviewed","source_age_days":1,"identity_confident":true},"expected":{"verdict":"REFUSE","reason_codes":["NOT_EXPLICITLY_ACCEPTED"]}},
+{"id":"reimport-old-corpus-refused","input":{"status":"accepted","source_age_days":30,"import_age_days":0,"max_age_days":14,"identity_confident":true},"expected":{"verdict":"REFUSE","reason_codes":["SOURCE_EVIDENCE_STALE"]}},
+{"id":"percent-wildcard-refused","input":{"status":"accepted","source_age_days":1,"identity_confident":true,"wildcard_unescaped":true},"expected":{"verdict":"REFUSE","reason_codes":["WILDCARD_UNESCAPED"]}},
+{"id":"name-only-refused","input":{"status":"accepted","source_age_days":1,"identity_confident":false},"expected":{"verdict":"REFUSE","reason_codes":["IDENTITY_UNPROVED"]}},
+{"id":"revoked-persisted-refused","input":{"status":"accepted","source_age_days":1,"identity_confident":true,"revoked":true,"persisted_live":true},"expected":{"verdict":"REFUSE","reason_codes":["REVOCATION_NOT_APPLIED"]}},
+{"id":"partial-publish-refused","input":{"status":"accepted","source_age_days":1,"identity_confident":true,"generation_partial":true,"published":true},"expected":{"verdict":"REFUSE","reason_codes":["PARTIAL_GENERATION_PUBLISHED"]}},
+{"id":"partial-held","input":{"status":"accepted","source_age_days":1,"identity_confident":true,"generation_partial":true,"published":false},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"approved-exact","input":{"status":"approved","source_age_days":14,"max_age_days":14,"identity_confident":true},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"missing-decision","input":{"source_age_days":1,"identity_confident":true},"expected":{"verdict":"REFUSE","reason_codes":["NOT_EXPLICITLY_ACCEPTED"]}}
+]}
