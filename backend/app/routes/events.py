@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, Integer, String, literal_column, text
+from sqlalchemy import select, and_, or_, union, func, case, cast, Integer, String, literal_column, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert
 
@@ -1482,6 +1482,41 @@ _TYPEAHEAD_DEADLINE_MS = int(os.getenv("TYPEAHEAD_DEADLINE_MS", "10000"))
 # cycles after /typeahead's twin was fixed.
 _SEARCH_MIN_OUTCOME_MATCH_CHARS = 3
 
+# LAT-P013/#1494: `len(term)` is the WRONG PROXY for the sentence directly above.
+#
+# pg_trgm splits a pattern on non-alphanumerics before extracting trigrams, so what
+# decides whether the GIN can serve `%term%` is the longest ALPHANUMERIC RUN in the
+# term — not its length. A term can be comfortably over the character floor and
+# still yield no extractable trigram, and those terms pay the full seq scan of
+# `futures_outcomes` (3.2M rows / 3 GB) that LAT-P010 fixed for short tokens only.
+#
+# MEASURED in production 2026-08-09, paired against a LENGTH-MATCHED control run
+# 4s apart, so length is held constant and the alnum run is the only variable:
+#     q=d'or   (4 chars, longest run 2)   futures stage  19,171ms / 13,677ms
+#     q=dora   (4 chars, longest run 4)   futures stage       615ms
+#     q=u.s.   (4 chars, longest run 1)   futures stage     7,644ms
+#     q=a.i.   (4 chars, longest run 1)   futures stage     2,142ms
+# 22-31x its own length-matched control, and `d'or` blew the request deadline
+# outright — HTTP 200 with `degraded: [futures, teams]`, i.e. a WRONG answer, not
+# merely a slow one. `len(term) < 3` cannot see any of these: all four are len 4.
+#
+# The queries that hit this are ordinary, not exotic: `u.s.`, `a.i.`, `d'or`,
+# `a.j.`, `j.d.` — initialisms and elided names a user types without a thought.
+def _has_extractable_trigram(term: str) -> bool:
+    """True when pg_trgm can extract at least one trigram from ``%term%``.
+
+    Mirrors pg_trgm's own rule: it breaks the pattern on non-alphanumerics, so a
+    servable infix pattern needs a run of >= 3 alphanumeric characters somewhere.
+    Underscore is deliberately NOT a word character here — pg_trgm treats it as a
+    separator even though Python's ``\\w`` does not.
+
+    Pure — safe to unit test, and asserted in both directions by the guard suite.
+    """
+    return any(
+        len(run) >= _SEARCH_MIN_OUTCOME_MATCH_CHARS
+        for run in re.findall(r"[^\W_]+", term or "", re.UNICODE)
+    )
+
 
 def _stage_timeout_ms(deadline: float | None) -> int:
     """Statement bound for the next stage: whatever is left of the request deadline.
@@ -1944,30 +1979,61 @@ async def search_events(
     aggregated_odds_map = {}
 
     if event_ids:
-        # Get the most recent snapshot per bookmaker per event
-        ranked_subq = (
-            select(
-                OddsSnapshot.id,
-                OddsSnapshot.event_id,
-                func.row_number().over(
-                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                    order_by=OddsSnapshot.captured_at.desc()
-                ).label("rn")
-            )
-            .where(OddsSnapshot.event_id.in_(event_ids))
-            .subquery()
-        )
-
-        latest_odds_query = (
+        # LAT-P013/#1494: the most recent snapshot per bookmaker per event, as a
+        # LATERAL top-1 per event rather than a window function over the whole
+        # history of every event on the page.
+        #
+        # The old shape ranked `row_number() OVER (PARTITION BY event_id, bookmaker
+        # ORDER BY captured_at DESC)` across every snapshot of all ~25 result events
+        # and then joined the survivors back to `odds_snapshots` by id. It therefore
+        # read, sorted and windowed the ENTIRE odds history of the page to keep one
+        # row per bookmaker — and Tier-1 teams poll at 32s, so that history is deep.
+        #
+        # MEASURED in production 2026-08-09 with `?debug_timing=1`. This stage is
+        # the whole cost of any query that returns real team events, and ~nothing
+        # for a query that returns none — which is exactly the signature of a cost
+        # that scales with snapshot volume rather than with result count:
+        #     q=la        25 events   event_enrichment 16,516ms  (of a 21,032ms request)
+        #     q=yankees   18 events   event_enrichment  8,635ms  (of a  9,229ms request)
+        #     q=dodgers   25 events   event_enrichment  3,024ms  (of a  3,585ms request)
+        #     q=stanley cup  0 events event_enrichment      0ms
+        # Corroborating the volume: a bare `count(*)` over the snapshots of just SIX
+        # Yankees events exceeds the admin db-query 10s statement timeout.
+        #
+        # `q=la` is the case that shows this is not merely slow. The stage ate the
+        # request budget, so the futures stage was SHED — HTTP 200, `degraded:
+        # [futures, teams]`, zero futures returned. Gotcha #53's shape: an empty
+        # answer that reads as "nothing matches".
+        #
+        # The rewrite drives off the 25 `events` PKs and, per event, walks
+        # `ix_odds_snapshots_bookmaker_closing (event_id, bookmaker, captured_at
+        # DESC)` in its own index order. DISTINCT ON then takes the first row per
+        # bookmaker as it streams: no sort, no window, no join back. The result SET
+        # is identical; the only behavioural change is that `id DESC` makes the
+        # choice among equal `captured_at` deterministic, where `row_number()` left
+        # it arbitrary.
+        _latest_snap = (
             select(OddsSnapshot)
-            .join(ranked_subq, and_(
-                OddsSnapshot.id == ranked_subq.c.id,
-                ranked_subq.c.rn == 1
-            ))
+            .where(OddsSnapshot.event_id == Event.id)
+            .distinct(OddsSnapshot.bookmaker)
+            .order_by(
+                OddsSnapshot.bookmaker,
+                OddsSnapshot.captured_at.desc(),
+                OddsSnapshot.id.desc(),
+            )
+            .lateral("latest_snap")
+        )
+        _snap = aliased(OddsSnapshot, _latest_snap)
+        latest_odds_query = (
+            select(_snap)
+            .select_from(Event)
+            .join(_latest_snap, true())
+            .where(Event.id.in_(event_ids))
         )
 
         latest_odds_result = await db.execute(latest_odds_query)
         all_snapshots = latest_odds_result.scalars().all()
+        _mark("event_odds_query")
 
         # Group snapshots by event and aggregate
         from collections import defaultdict
@@ -1996,9 +2062,11 @@ async def search_events(
                 "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
+    _mark("event_odds_aggregate")
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
+    _mark("event_gei")
 
     # Build team lookup for logos/colors in search results
     all_team_names = []
@@ -2006,7 +2074,13 @@ async def search_events(
         all_team_names.append(event.home_team_name)
         all_team_names.append(event.away_team_name)
     team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
-    _mark("event_enrichment")
+    # LAT-P013: the old single `event_enrichment` mark bundled the odds query, its
+    # Python aggregation, the GEI percentiles and the team lookup into one number,
+    # so "enrichment is 16.5s" could not say WHICH of the four. Split so the next
+    # measurement attributes rather than re-infers — LAT-P011's lesson, applied to
+    # the stage that turned out to matter. The four marks still partition the same
+    # interval (`_mark` resets its own clock), so `total_ms` is unchanged.
+    _mark("event_teams")
 
     # Format results and group by sport
     formatted_results = []
@@ -2099,7 +2173,13 @@ async def search_events(
         # term still FILTERS inside a multi-term AND (`us recession` must not admit
         # "Euro area growth"), and that guard must keep passing — so the multi-term
         # branch above is deliberately untouched.
-        if len(term) < _SEARCH_MIN_OUTCOME_MATCH_CHARS:
+        #
+        # LAT-P013 kept that scoping and re-verified it with a control rather than
+        # inheriting it: `ballon or` — an explicit 2-char token inside a multi-term
+        # AND — measured 85ms against a 36ms control, because the ANDed arms let the
+        # selective term drive. The multi-term path does NOT have this defect. What
+        # it widened is the PREDICATE, from `len(term)` to pg_trgm's actual rule.
+        if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
             )
@@ -2842,9 +2922,13 @@ async def typeahead_search(
     # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
     # (`us recession` must not admit "Euro area growth"), and this must not
     # contradict that guard.
+    #
+    # LAT-P013 widened the predicate here in lockstep with /search. The two
+    # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
+    # have to share the RULE. `d'or` is 4 characters, so the old length test
+    # admitted it on both paths while pg_trgm could serve neither.
     _ta_q_compact = q.strip()
-    _TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS  # shared; see LAT-P010
-    if len(_ta_q_compact) >= _TA_MIN_OUTCOME_MATCH_CHARS:
+    if _has_extractable_trigram(_ta_q_compact):
         ta_futures_where.append(
             FuturesMarket.id.in_(
                 select(FuturesOutcome.market_id).where(
