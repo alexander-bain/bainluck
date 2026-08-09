@@ -407,16 +407,24 @@ def _grid_sentinel_group() -> dict | None:
     rows = []
     any_real = False
     any_artifact = False
+    any_unverified = False
     for lg in per:
         if not isinstance(lg, dict):
             continue
         real = int(lg.get("real_defects") or 0)
         arts = int(lg.get("explained_artifacts") or 0)
         watch = int(lg.get("watch") or 0)
+        # LAT-P017 (#1608): the tile recomputed its own status from real_defects
+        # alone, so a league whose freshness self-check never ran still rendered
+        # a clean green here even once the sentinel itself stopped claiming one.
+        # A skipped check is AMBER: not a REAL defect (so "RED means REAL"
+        # holds), but not something we are entitled to call green either.
+        skipped = list(lg.get("checks_skipped") or [])
         any_real = any_real or real > 0
         # L2-157: watch is blend-hidden ("never RED") — it does NOT escalate to
         # amber. Only genuine explained artifacts do.
         any_artifact = any_artifact or arts > 0
+        any_unverified = any_unverified or bool(skipped)
         league = str(lg.get("league") or "?")
         issue = filed_by_league.get(league)
         rows.append({
@@ -426,12 +434,19 @@ def _grid_sentinel_group() -> dict | None:
             "real_defects": real,
             "explained_artifacts": arts,
             "watch": watch,
-            "status": "red" if real else ("amber" if arts else "green"),
+            "checks_skipped": skipped,
+            "status": (
+                "red" if real else "amber" if (arts or skipped) else "green"
+            ),
             "issue": issue,
             "issue_url": _GH_ISSUE_URL.format(issue) if issue else None,
         })
 
-    overall = "red" if any_real else ("amber" if any_artifact else "green")
+    overall = (
+        "red" if any_real
+        else "amber" if (any_artifact or any_unverified)
+        else "green"
+    )
     return {
         "status": overall,
         "mode": raw.get("mode"),

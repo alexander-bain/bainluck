@@ -7,10 +7,19 @@ thin.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Per-panel Postgres statement timeout. This bounds an ADMIN MEASUREMENT query
+# only — it is NOT a request deadline on a user-facing route (LAT-P002 was
+# reverted for adding one of those, and this queue's guardrails forbid it).
+_PANEL_STATEMENT_TIMEOUT = "10s"
+_GAME_STATE_STATEMENT_TIMEOUT = "15s"
+
 
 def _expected_sources_for_sport(sport_key: str) -> dict[str, bool]:
     """Which data sources are expected to have coverage for this sport?"""
@@ -27,7 +36,6 @@ def _expected_sources_for_sport(sport_key: str) -> dict[str, bool]:
         "polymarket": True,
     }
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # ---------------------------------------------------------------------------
@@ -131,46 +139,86 @@ _TIER1_SPORTS = [
 
 
 async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]:
-    """2a. Event-level source coverage (last 7 days to +2 days)."""
+    """2a. Event-level source coverage (last 7 days to +2 days).
+
+    LAT-P017 (#1608): this query used to time out at the section's 10s bound,
+    which darkened four dashboard panels. Three shape defects, each measured
+    against production before and after:
+
+    1. ``wp_sources`` carried ``captured_at >= NOW() - 7 days``. That column is
+       NOT in ``ix_winprob_event_source (event_id, source)``, so the predicate
+       broke the index-only scan and forced a heap fetch per candidate row
+       against a visibility map last vacuumed days earlier. Dropping it took the
+       win-prob arm from 7,927ms to 549ms on an identical 1-day window.
+       SEMANTIC CHANGE, deliberate: a source that recorded a win-prob snapshot
+       for an in-window event now counts as covering it regardless of when the
+       snapshot was taken. The old filter silently under-counted pre-game
+       coverage of upcoming events. Measured blast radius on a 1-day window: one
+       cell moved (boxing_boxing kalshi 4 -> 5).
+    2. The two ``LEFT JOIN``s were row-multiplying (one row per event x source),
+       so ``COUNT(*) AS total_events`` counted JOINED ROWS, not events, and
+       every ``COUNT(DISTINCT ...)`` paid to de-duplicate the explosion. The
+       source sets are now pre-aggregated to one row per event, which makes the
+       joins 1:1 and ``COUNT(*)`` a true event count.
+    3. ``recent_events`` selected ``win_probability_sources`` (a large JSONB)
+       that no output field reads.
+
+    Measured on production: >10,300ms (statement timeout, panel dark) -> 1,307ms
+    for the full 7-day window.
+    """
     coverage_q = await db.execute(text("""
         WITH recent_events AS (
             SELECT e.id, s.key AS sport_key,
                    e.external_id, e.espn_id, e.statpal_fixture_id,
-                   e.win_probability_sources,
                    e.status
             FROM events e
             JOIN sports s ON e.sport_id = s.id
             WHERE e.commence_time >= NOW() - INTERVAL '7 days'
               AND e.commence_time <= NOW() + INTERVAL '2 days'
         ),
-        pm_links AS (
-            SELECT DISTINCT fm.event_id, fm.source AS pm_source
-            FROM futures_markets fm
-            WHERE fm.event_id IS NOT NULL
-              AND fm.source IN ('kalshi', 'polymarket')
-        ),
-        wp_sources AS (
-            SELECT DISTINCT wp.event_id, wp.source AS wp_source
+        wp_pairs AS (
+            SELECT DISTINCT wp.event_id, wp.source
             FROM win_prob_snapshots wp
-            WHERE wp.captured_at >= NOW() - INTERVAL '7 days'
+            JOIN recent_events re ON re.id = wp.event_id
+        ),
+        wp AS (
+            SELECT event_id,
+                   bool_or(source = 'espn') AS espn,
+                   bool_or(source = 'stat_model') AS model,
+                   bool_or(source = 'mlb') AS mlb,
+                   bool_or(source = 'kalshi') AS kalshi,
+                   bool_or(source = 'polymarket') AS poly
+            FROM wp_pairs GROUP BY event_id
+        ),
+        pm_pairs AS (
+            SELECT DISTINCT fm.event_id, fm.source
+            FROM futures_markets fm
+            JOIN recent_events re ON re.id = fm.event_id
+            WHERE fm.source IN ('kalshi', 'polymarket')
+        ),
+        pm AS (
+            SELECT event_id,
+                   bool_or(source = 'kalshi') AS kalshi,
+                   bool_or(source = 'polymarket') AS poly
+            FROM pm_pairs GROUP BY event_id
         )
         SELECT
             re.sport_key,
             COUNT(*) AS total_events,
-            COUNT(CASE WHEN re.status = 'live' THEN 1 END) AS live_events,
+            COUNT(*) FILTER (WHERE re.status = 'live') AS live_events,
             COUNT(re.external_id) AS has_odds_api,
             COUNT(re.espn_id) AS has_espn,
             COUNT(re.statpal_fixture_id) AS has_statpal,
-            COUNT(DISTINCT CASE WHEN wp.wp_source = 'espn' THEN re.id END) AS has_espn_wp,
-            COUNT(DISTINCT CASE WHEN wp.wp_source = 'stat_model' THEN re.id END) AS has_model,
-            COUNT(DISTINCT CASE WHEN wp.wp_source = 'mlb' THEN re.id END) AS has_mlb,
-            COUNT(DISTINCT CASE WHEN wp.wp_source = 'kalshi' THEN re.id END) AS has_kalshi_wp,
-            COUNT(DISTINCT CASE WHEN wp.wp_source = 'polymarket' THEN re.id END) AS has_polymarket_wp,
-            COUNT(DISTINCT CASE WHEN pm.pm_source = 'kalshi' THEN re.id END) AS has_kalshi_pm,
-            COUNT(DISTINCT CASE WHEN pm.pm_source = 'polymarket' THEN re.id END) AS has_polymarket_pm
+            COUNT(*) FILTER (WHERE wp.espn) AS has_espn_wp,
+            COUNT(*) FILTER (WHERE wp.model) AS has_model,
+            COUNT(*) FILTER (WHERE wp.mlb) AS has_mlb,
+            COUNT(*) FILTER (WHERE wp.kalshi) AS has_kalshi_wp,
+            COUNT(*) FILTER (WHERE wp.poly) AS has_polymarket_wp,
+            COUNT(*) FILTER (WHERE pm.kalshi) AS has_kalshi_pm,
+            COUNT(*) FILTER (WHERE pm.poly) AS has_polymarket_pm
         FROM recent_events re
-        LEFT JOIN pm_links pm ON pm.event_id = re.id
-        LEFT JOIN wp_sources wp ON wp.event_id = re.id
+        LEFT JOIN wp ON wp.event_id = re.id
+        LEFT JOIN pm ON pm.event_id = re.id
         GROUP BY re.sport_key
         ORDER BY COUNT(*) DESC
     """))
@@ -241,40 +289,70 @@ async def _query_coverage_trend(
     # Include prediction market links (event_id IS NOT NULL) alongside
     # win_prob_snapshots so Kalshi/Polymarket coverage reflects game-market
     # linking, not just live win-probability polling.
+    # LAT-P017 (#1608): the ``wp`` CTE was a DISTINCT over the ENTIRE
+    # win_prob_snapshots table (1.9M rows, no predicate at all) and ``pm`` over
+    # every linked futures market, to answer a question about a 14-day event
+    # window. Cost scaled with table volume instead of with the size of the
+    # answer, so this was the section's SECOND independent timeout — reachable
+    # only once the first was fixed. Both source sets are now scoped to the
+    # windowed events and pre-aggregated to one row per event, so the joins are
+    # 1:1 rather than row-multiplying.
+    # Measured on production: >10,248ms (statement timeout) -> 1,598ms.
     wp_trend_q = await db.execute(
         text("""
-            WITH wp AS (
+            WITH ev AS (
+                SELECT e.id,
+                       DATE(e.commence_time) AS event_date,
+                       s.key AS sport_key
+                FROM events e
+                JOIN sports s ON e.sport_id = s.id
+                WHERE s.key = ANY(:sports)
+                  AND e.commence_time >= NOW() - INTERVAL '14 days'
+                  AND e.commence_time <= NOW()
+            ),
+            wp_pairs AS (
                 SELECT DISTINCT wp.event_id, wp.source
                 FROM win_prob_snapshots wp
+                JOIN ev ON ev.id = wp.event_id
             ),
-            pm AS (
+            pm_pairs AS (
                 SELECT DISTINCT fm.event_id, fm.source
                 FROM futures_markets fm
-                WHERE fm.event_id IS NOT NULL
-                  AND fm.source IN ('kalshi', 'polymarket')
+                JOIN ev ON ev.id = fm.event_id
+                WHERE fm.source IN ('kalshi', 'polymarket')
+            ),
+            wp AS (
+                SELECT event_id,
+                       bool_or(source = 'espn') AS espn,
+                       bool_or(source = 'stat_model') AS model,
+                       bool_or(source = 'kalshi') AS kalshi,
+                       bool_or(source = 'polymarket') AS poly
+                FROM wp_pairs GROUP BY event_id
+            ),
+            pm AS (
+                SELECT event_id,
+                       bool_or(source = 'kalshi') AS kalshi,
+                       bool_or(source = 'polymarket') AS poly
+                FROM pm_pairs GROUP BY event_id
             )
             SELECT
-                DATE(e.commence_time) AS event_date,
-                s.key AS sport_key,
-                COUNT(DISTINCT e.id) AS total,
-                COUNT(DISTINCT CASE WHEN wp.source = 'espn' THEN e.id END) AS espn_wp,
-                COUNT(DISTINCT CASE WHEN wp.source = 'stat_model' THEN e.id END) AS model,
+                ev.event_date,
+                ev.sport_key,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE wp.espn) AS espn_wp,
+                COUNT(*) FILTER (WHERE wp.model) AS model,
                 GREATEST(
-                    COUNT(DISTINCT CASE WHEN wp.source = 'kalshi' THEN e.id END),
-                    COUNT(DISTINCT CASE WHEN pm.source = 'kalshi' THEN e.id END)
+                    COUNT(*) FILTER (WHERE wp.kalshi),
+                    COUNT(*) FILTER (WHERE pm.kalshi)
                 ) AS kalshi,
                 GREATEST(
-                    COUNT(DISTINCT CASE WHEN wp.source = 'polymarket' THEN e.id END),
-                    COUNT(DISTINCT CASE WHEN pm.source = 'polymarket' THEN e.id END)
+                    COUNT(*) FILTER (WHERE wp.poly),
+                    COUNT(*) FILTER (WHERE pm.poly)
                 ) AS polymarket
-            FROM events e
-            JOIN sports s ON e.sport_id = s.id
-            LEFT JOIN wp ON wp.event_id = e.id
-            LEFT JOIN pm ON pm.event_id = e.id
-            WHERE s.key = ANY(:sports)
-              AND e.commence_time >= NOW() - INTERVAL '14 days'
-              AND e.commence_time <= NOW()
-            GROUP BY DATE(e.commence_time), s.key
+            FROM ev
+            LEFT JOIN wp ON wp.event_id = ev.id
+            LEFT JOIN pm ON pm.event_id = ev.id
+            GROUP BY ev.event_date, ev.sport_key
         """),
         {"sports": _TIER1_SPORTS},
     )
@@ -335,30 +413,100 @@ async def _query_futures_coverage(db: AsyncSession) -> list[dict[str, Any]]:
     ]
 
 
+async def run_db_panel(
+    db: AsyncSession,
+    panel: str,
+    build: Callable[[], Awaitable[Any]],
+    *,
+    on_error: Callable[[str], Any],
+    statement_timeout: str | None = None,
+) -> Any:
+    """Run one dashboard panel in its own transaction scope.
+
+    LAT-P017 (#1608) — THE CASCADE FIX, which is a separate defect from any
+    single slow query and outlives fixing one.
+
+    Every DB-backed panel shares one ``Depends(get_db)`` session. When a panel
+    caught a ``QueryCanceledError`` it swallowed it and returned an error
+    marker, but never rolled back, so the session was left holding an ABORTED
+    transaction. Every later panel then died on
+    ``InFailedSQLTransactionError`` — measured in production 2026-08-09: one
+    timeout in ``source_coverage`` darkened ``database`` and
+    ``game_state_coverage``, neither of which was slow.
+
+    Rolling back on BOTH paths also scopes ``SET LOCAL statement_timeout`` to
+    the panel that set it, instead of leaking one panel's bound onto the next.
+    Read-only work, so a rollback discards nothing.
+
+    ``statement_timeout`` is applied INSIDE this panel's own transaction.
+    ``SET LOCAL`` is transaction-scoped, so a bound set before the isolation
+    boundary would be discarded by the first rollback and silently stop
+    applying to every later panel.
+    """
+    try:
+        if statement_timeout:
+            # asyncpg cannot run "SET LOCAL ...; SELECT ..." as one prepared
+            # statement (gotcha #45 class — #232): separate execute, same txn.
+            await db.execute(text(f"SET LOCAL statement_timeout = '{statement_timeout}'"))
+        result = await build()
+    except Exception as e:
+        await db.rollback()
+        return on_error(str(e))
+    await db.rollback()
+    return result
+
+
 async def build_source_coverage_section(
     db: AsyncSession, now: datetime
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Build all source-coverage data.
 
     Returns ``(source_coverage, coverage_trend, futures_coverage)``.
-    On error, returns lists with a single ``{"error": ...}`` entry.
+
+    LAT-P017 (#1608): these three outputs are now isolated from each other.
+    Previously ONE try wrapped all of them, so a single timeout produced
+    ``[{"error": e}], [], [{"error": e}]`` — meaning (a) ``futures_coverage``
+    reported a failure it never actually suffered, its error string a copy of a
+    neighbour's, and (b) ``coverage_trend`` degraded to a BARE EMPTY LIST with
+    no marker at all, indistinguishable from "there is genuinely no trend data".
+    That silent one is gotcha #53 exactly, and it is the reason this class went
+    unnoticed: the endpoint returned HTTP 200 and the panel just looked empty.
+    Each query now fails on its own behalf or not at all, and no failure can
+    present as absence.
     """
-    try:
-        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
-
-        source_coverage = await _query_event_source_coverage(db)
-        sport_activity = await _query_sport_activity(db)
-
-        # Attach snapshot counts to coverage rows
+    source_coverage = await run_db_panel(
+        db, "source_coverage",
+        lambda: _query_event_source_coverage(db),
+        on_error=lambda e: [{"error": e}],
+        statement_timeout=_PANEL_STATEMENT_TIMEOUT,
+    )
+    if source_coverage and "error" not in source_coverage[0]:
+        sport_activity = await run_db_panel(
+            db, "sport_activity",
+            lambda: _query_sport_activity(db),
+            on_error=lambda e: {},
+            statement_timeout=_PANEL_STATEMENT_TIMEOUT,
+        )
         for row in source_coverage:
             row["snapshots_24h"] = sport_activity.get(row["sport"], 0)
 
-        coverage_trend = await _query_coverage_trend(db, now)
-        futures_coverage = await _query_futures_coverage(db)
+    coverage_trend = await run_db_panel(
+        db, "coverage_trend",
+        lambda: _query_coverage_trend(db, now),
+        # NEVER a bare [] on failure: an empty trend is a legitimate answer, so
+        # a failure that returned one would be silently indistinguishable from
+        # it. The marker is what makes the difference visible.
+        on_error=lambda e: [{"error": e}],
+        statement_timeout=_PANEL_STATEMENT_TIMEOUT,
+    )
+    futures_coverage = await run_db_panel(
+        db, "futures_coverage",
+        lambda: _query_futures_coverage(db),
+        on_error=lambda e: [{"error": e}],
+        statement_timeout=_PANEL_STATEMENT_TIMEOUT,
+    )
 
-        return source_coverage, coverage_trend, futures_coverage
-    except Exception as e:
-        return [{"error": str(e)}], [], [{"error": str(e)}]
+    return source_coverage, coverage_trend, futures_coverage
 
 
 # ---------------------------------------------------------------------------
@@ -428,68 +576,72 @@ def build_worker_section(now: datetime) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 async def build_database_section(db: AsyncSession) -> dict[str, Any]:
-    """Build database health stats (sizes, growth, dead tuples, trends)."""
-    try:
-        db_q = await db.execute(text("""
-            SELECT
-                (SELECT COUNT(*) FROM events WHERE status IN ('live', 'scheduled')
-                 AND commence_time >= NOW() - INTERVAL '1 day') AS active_events,
-                (SELECT COUNT(*) FROM events WHERE status = 'live') AS live_events,
-                (SELECT COUNT(*) FROM odds_snapshots
-                 WHERE captured_at >= NOW() - INTERVAL '1 hour') AS snapshots_last_hour,
-                (SELECT COUNT(*) FROM win_prob_snapshots
-                 WHERE captured_at >= NOW() - INTERVAL '1 hour') AS winprob_last_hour,
-                (SELECT pg_database_size(current_database())) AS db_size_bytes,
-                (SELECT MIN(captured_at) FROM odds_snapshots
-                 WHERE captured_at >= NOW() - INTERVAL '7 days') AS oldest_snapshot_7d
-        """))
-        db_row = db_q.one()
+    """Build database health stats (sizes, growth, dead tuples, trends).
 
-        db_size_mb = db_row.db_size_bytes / 1024 / 1024
-        db_size_gb = db_row.db_size_bytes / (1024**3)
+    LAT-P017 (#1608): no longer swallows its own exceptions. Error handling is
+    centralised in :func:`run_db_panel`, which ALSO rolls the session back — a
+    local ``except: return {"error": ...}`` here could not do that, so a caught
+    failure left the shared transaction aborted and took out every panel after
+    it. A handler that hides the error from the isolator defeats the isolation.
+    """
+    db_q = await db.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM events WHERE status IN ('live', 'scheduled')
+             AND commence_time >= NOW() - INTERVAL '1 day') AS active_events,
+            (SELECT COUNT(*) FROM events WHERE status = 'live') AS live_events,
+            (SELECT COUNT(*) FROM odds_snapshots
+             WHERE captured_at >= NOW() - INTERVAL '1 hour') AS snapshots_last_hour,
+            (SELECT COUNT(*) FROM win_prob_snapshots
+             WHERE captured_at >= NOW() - INTERVAL '1 hour') AS winprob_last_hour,
+            (SELECT pg_database_size(current_database())) AS db_size_bytes,
+            (SELECT MIN(captured_at) FROM odds_snapshots
+             WHERE captured_at >= NOW() - INTERVAL '7 days') AS oldest_snapshot_7d
+    """))
+    db_row = db_q.one()
 
-        growth_rate_mb_per_day, days_until_full = await _compute_growth_rate(
-            db, db_size_gb
-        )
+    db_size_mb = db_row.db_size_bytes / 1024 / 1024
+    db_size_gb = db_row.db_size_bytes / (1024**3)
 
-        table_sizes = await _query_table_sizes(db)
-        dead_tuples = await _query_dead_tuples(db)
+    growth_rate_mb_per_day, days_until_full = await _compute_growth_rate(
+        db, db_size_gb
+    )
 
-        total_live = sum(d["live_tuples"] for d in dead_tuples)
-        total_dead = sum(d["dead_tuples"] for d in dead_tuples)
+    table_sizes = await _query_table_sizes(db)
+    dead_tuples = await _query_dead_tuples(db)
 
-        # Record DB size for trending and fetch history
-        from app.tasks.redis_state import record_db_size, get_db_size_history
+    total_live = sum(d["live_tuples"] for d in dead_tuples)
+    total_dead = sum(d["dead_tuples"] for d in dead_tuples)
 
-        record_db_size(db_size_mb)
-        db_size_trend = get_db_size_history(days=90)
+    # Record DB size for trending and fetch history
+    from app.tasks.redis_state import record_db_size, get_db_size_history
 
-        return {
-            "active_events": db_row.active_events,
-            "live_events": db_row.live_events,
-            "snapshots_last_hour": db_row.snapshots_last_hour,
-            "winprob_last_hour": db_row.winprob_last_hour,
-            "db_size_mb": round(db_size_mb, 1),
-            "growth_rate_mb_per_day": growth_rate_mb_per_day,
-            "days_until_full": days_until_full,
-            "table_sizes": table_sizes,
-            "dead_tuples": dead_tuples,
-            "total_live_tuples": total_live,
-            "total_dead_tuples": total_dead,
-            "dead_tuple_pct": round(
-                total_dead / max(total_live + total_dead, 1) * 100, 1
-            ),
-            "size_trend": db_size_trend,
-            "plan": {
-                "name": "standard-0",
-                "storage_limit_gb": 64,
-                "storage_used_gb": round(db_size_gb, 2),
-                "storage_pct": round(db_size_gb / 64 * 100, 1),
-                "connections_limit": 200,
-            },
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    record_db_size(db_size_mb)
+    db_size_trend = get_db_size_history(days=90)
+
+    return {
+        "active_events": db_row.active_events,
+        "live_events": db_row.live_events,
+        "snapshots_last_hour": db_row.snapshots_last_hour,
+        "winprob_last_hour": db_row.winprob_last_hour,
+        "db_size_mb": round(db_size_mb, 1),
+        "growth_rate_mb_per_day": growth_rate_mb_per_day,
+        "days_until_full": days_until_full,
+        "table_sizes": table_sizes,
+        "dead_tuples": dead_tuples,
+        "total_live_tuples": total_live,
+        "total_dead_tuples": total_dead,
+        "dead_tuple_pct": round(
+            total_dead / max(total_live + total_dead, 1) * 100, 1
+        ),
+        "size_trend": db_size_trend,
+        "plan": {
+            "name": "standard-0",
+            "storage_limit_gb": 64,
+            "storage_used_gb": round(db_size_gb, 2),
+            "storage_pct": round(db_size_gb / 64 * 100, 1),
+            "connections_limit": 200,
+        },
+    }
 
 
 async def _compute_growth_rate(
@@ -620,60 +772,63 @@ _INDICATORS_BASE_SQL = """
 
 
 async def build_game_state_section(db: AsyncSession) -> list[dict[str, Any]]:
-    """Build game state indicator coverage by sport."""
-    try:
-        from app.utils.sport_keys import EXPECTED_GAME_STATE_INDICATORS
+    """Build game state indicator coverage by sport.
 
-        # asyncpg cannot run "SET LOCAL ...; SELECT ..." as one prepared
-        # statement (gotcha #45 class — #232) — it must be a separate execute in
-        # the same transaction, or the whole tile errors out.
-        gs_sql = text(
-            _INDICATORS_BASE_SQL
-            + """
-            SELECT sport_key,
-                   COUNT(*) AS total_events,
-                   MIN(indicator_count) AS min_indicators,
-                   MAX(indicator_count) AS max_indicators,
-                   ROUND(AVG(indicator_count), 1) AS avg_indicators,
-                   COUNT(*) FILTER (WHERE indicator_count = 0) AS zero_count
-            FROM per_event
-            GROUP BY sport_key
-            ORDER BY total_events DESC
-        """
-        )
-        await db.execute(text("SET LOCAL statement_timeout = '15s'"))
-        gs_result = await db.execute(gs_sql)
-        gs_rows = gs_result.fetchall()
+    LAT-P017 (#1608): error handling centralised in :func:`run_db_panel` so a
+    failure rolls the shared session back instead of aborting later panels.
+    This panel was a CASCADE VICTIM in production, not a slow query — it failed
+    with InFailedSQLTransactionError because source_coverage timed out first.
+    """
+    from app.utils.sport_keys import EXPECTED_GAME_STATE_INDICATORS
 
-        game_state_section: list[dict[str, Any]] = []
-        for row in gs_rows:
-            sport_key = row[0]
-            total = int(row[1])
-            min_ind = int(row[2])
-            max_ind = int(row[3])
-            avg_ind = float(row[4])
-            zero_count = int(row[5])
-            expected = EXPECTED_GAME_STATE_INDICATORS.get(sport_key)
+    # The 15s bound now comes from run_db_panel, which issues its SET LOCAL
+    # inside this panel's own transaction. asyncpg cannot run
+    # "SET LOCAL ...; SELECT ..." as one prepared statement (gotcha #45 class —
+    # #232), so it stays a separate execute in the same transaction.
+    gs_sql = text(
+        _INDICATORS_BASE_SQL
+        + """
+        SELECT sport_key,
+               COUNT(*) AS total_events,
+               MIN(indicator_count) AS min_indicators,
+               MAX(indicator_count) AS max_indicators,
+               ROUND(AVG(indicator_count), 1) AS avg_indicators,
+               COUNT(*) FILTER (WHERE indicator_count = 0) AS zero_count
+        FROM per_event
+        GROUP BY sport_key
+        ORDER BY total_events DESC
+    """
+    )
+    gs_result = await db.execute(gs_sql)
+    gs_rows = gs_result.fetchall()
 
-            entry: dict[str, Any] = {
-                "sport_key": sport_key,
-                "total_events": total,
-                "min_indicators": min_ind,
-                "max_indicators": max_ind,
-                "avg_indicators": avg_ind,
-                "zero_count": zero_count,
-                "expected": expected,
-                "type": "fixed" if expected is not None else "variable",
-            }
-            game_state_section.append(entry)
+    game_state_section: list[dict[str, Any]] = []
+    for row in gs_rows:
+        sport_key = row[0]
+        total = int(row[1])
+        min_ind = int(row[2])
+        max_ind = int(row[3])
+        avg_ind = float(row[4])
+        zero_count = int(row[5])
+        expected = EXPECTED_GAME_STATE_INDICATORS.get(sport_key)
 
-        # Second pass for fixed sports: get actual bucket counts
-        if any(e["type"] == "fixed" for e in game_state_section):
-            await _fill_fixed_sport_buckets(db, game_state_section)
+        entry: dict[str, Any] = {
+            "sport_key": sport_key,
+            "total_events": total,
+            "min_indicators": min_ind,
+            "max_indicators": max_ind,
+            "avg_indicators": avg_ind,
+            "zero_count": zero_count,
+            "expected": expected,
+            "type": "fixed" if expected is not None else "variable",
+        }
+        game_state_section.append(entry)
 
-        return game_state_section
-    except Exception as e:
-        return [{"error": str(e)}]
+    # Second pass for fixed sports: get actual bucket counts
+    if any(e["type"] == "fixed" for e in game_state_section):
+        await _fill_fixed_sport_buckets(db, game_state_section)
+
+    return game_state_section
 
 
 async def _fill_fixed_sport_buckets(

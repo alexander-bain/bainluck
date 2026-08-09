@@ -447,10 +447,35 @@ def classify_findings(findings: list[dict], league: str, now=None) -> dict:
             "explained": explained, "watch": watch}
 
 
-def grid_verdict(classified: dict) -> str:
-    """RED if any REAL finding, else GREEN. (AMBER is reserved for the cockpit,
-    which shows AMBER when only explained artifacts / watches exist.)"""
-    return "red" if classified["real"] else "green"
+GREEN_UNVERIFIED = "green_unverified"
+
+
+def grid_verdict(classified: dict, checks_skipped: list[str] | None = None) -> str:
+    """RED if any REAL finding, GREEN_UNVERIFIED if a check could not run, else
+    GREEN. (AMBER is reserved for the cockpit, which shows AMBER when only
+    explained artifacts / watches exist.)
+
+    LAT-P017 (#1608). CLAUDE.md's contract is "RED means REAL" — which only
+    holds if GREEN means every check actually ran. It did not. When the
+    freshness self-check hit its statement timeout, ``freshness_findings``
+    returned ``[]``, which is the same value it returns when the league is
+    perfectly fresh, so the league reported a confident ``green`` having
+    measured nothing. Production 2026-08-09T07:25Z: mlb and nba both
+    ``verdict=green`` with ``stats.freshness.skipped=true``.
+
+    ``stale-when-active`` is one of this sentinel's own REAL defect classes, so
+    the check that was silently skipped is the one that catches it.
+
+    RED is deliberately unchanged, so nothing that reads ``verdict == "red"``
+    shifts meaning. What changes is that a skipped check no longer borrows
+    GREEN's authority — and, critically, no longer satisfies the close-on-green
+    path that auto-closes a league's open grid issue.
+    """
+    if classified["real"]:
+        return "red"
+    if checks_skipped:
+        return GREEN_UNVERIFIED
+    return "green"
 
 
 # ---------------------------------------------------------------------------
@@ -618,11 +643,36 @@ async def _grid_freshness(league: str, now=None) -> dict:
             await session.execute(
                 __import__("sqlalchemy").text("SET LOCAL statement_timeout = '15s'")
             )
-            stmt = (
-                select(func.max(FuturesOutcome.last_updated))
-                .select_from(FuturesOutcome)
-                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            # LAT-P017 (#1608): this was ONE query that joined futures_outcomes
+            # to futures_markets and took MAX() across the join. It timed out at
+            # the 15s bound in production, which silently skipped the freshness
+            # self-check on 2 of 3 leagues while both still reported green.
+            #
+            # Split into two steps so each uses an index the other cannot:
+            # resolve the league's market ids first (the ILIKE/category arm,
+            # ~1,600 rows for MLB), then take MAX(last_updated) over
+            # futures_outcomes keyed by ix_futures_outcomes_market_id. The
+            # single joined form gave the planner no way to use both.
+            #
+            # MEASURED on production (MLB): the joined form >10,354ms (timeout);
+            # the two-step form 2,630ms; step 1 alone 668ms over 1,598 markets.
+            # CAVEAT, stated rather than glossed: the measured two-step used
+            # `market_id = ANY(ARRAY(SELECT ...))`, while this ships
+            # `market_id IN (SELECT ...)`. They are semantically identical and
+            # Postgres plans both as a semi-join, but they are not the same SQL
+            # text, and the guardrail closed production reads before the shipped
+            # form could be timed. The deployed number is OWED, not implied.
+            # The subquery form is used deliberately over a Python-side id list:
+            # it stays correct for a league matching any number of markets,
+            # where a bounded IN-list would have to truncate and quietly return
+            # a wrong MAX.
+            market_ids = (
+                select(FuturesMarket.id)
                 .where(or_(*conds), FuturesMarket.status.in_(("open", "closed")))
+                .scalar_subquery()
+            )
+            stmt = select(func.max(FuturesOutcome.last_updated)).where(
+                FuturesOutcome.market_id.in_(market_ids)
             )
             newest = (await session.execute(stmt)).scalar()
     except Exception as exc:
@@ -709,8 +759,14 @@ async def _run_league(client: httpx.AsyncClient, league: str, now=None) -> dict:
     fresh = await _grid_freshness(league, now)
     findings += freshness_findings(fresh, league)
 
+    # LAT-P017 (#1608): track which checks could not run, so the verdict can
+    # tell "nothing to report" apart from "I could not look" (gotcha #53).
+    checks_skipped: list[str] = []
+    if fresh.get("skipped"):
+        checks_skipped.append("freshness")
+
     classified = classify_findings(findings, league, now)
-    verdict = grid_verdict(classified)
+    verdict = grid_verdict(classified, checks_skipped)
     return {
         "league": league,
         "grid_ok": not degraded,
@@ -720,6 +776,7 @@ async def _run_league(client: httpx.AsyncClient, league: str, now=None) -> dict:
         "sources": grid.get("sources_available"),
         "classified": classified,
         "verdict": verdict,
+        "checks_skipped": checks_skipped,
         "watch_count": len(classified.get("watch") or []),
         "stats": {**selfcheck_stats, "freshness": fresh},
     }
@@ -773,14 +830,20 @@ async def _run_grid_sentinel(
 
     # --- Scorecard ---
     red = [lg for lg in stats["leagues"] if lg["verdict"] == "red"]
+    unverified = [lg for lg in stats["leagues"] if lg["verdict"] == GREEN_UNVERIFIED]
     stats["scorecard"] = {
         "leagues_total": len(stats["leagues"]),
         "leagues_red": len(red),
-        "leagues_green": len(stats["leagues"]) - len(red),
+        # LAT-P017 (#1608): green is counted, not inferred as "everything that
+        # is not red". The old `total - red` arithmetic is what let a league
+        # whose freshness check never ran be tallied as green.
+        "leagues_green": len(stats["leagues"]) - len(red) - len(unverified),
+        "leagues_unverified": len(unverified),
         "per_league": [
             {
                 "league": lg["league"],
                 "verdict": lg["verdict"],
+                "checks_skipped": lg.get("checks_skipped") or [],
                 "phase": lg["classified"]["phase"],
                 "real_defects": len(lg["classified"]["real"]),
                 "explained_artifacts": len(lg["classified"]["explained"]),
@@ -803,6 +866,12 @@ async def _run_grid_sentinel(
         open_issues = list_open_alert_issues()
         for lg in red:
             stats["filed"].append(file_grid_issue(lg["classified"], open_issues=open_issues))
+        # LAT-P017 (#1608): STRICT green only. This is the close-on-green path —
+        # it auto-CLOSES a league's open grid issue. Before this change a league
+        # whose freshness self-check silently timed out still reached here, so a
+        # check that never ran could close a real issue. GREEN_UNVERIFIED is
+        # deliberately excluded: it neither files nor closes, it just waits for
+        # a run that could actually look.
         green_leagues = [
             lg for lg in stats["leagues"]
             if lg["verdict"] == "green" and lg.get("grid_ok")

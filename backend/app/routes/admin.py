@@ -487,12 +487,14 @@ async def operations_dashboard(
     _check_admin_secret(secret, request=request)
 
     from app.utils.admin_dashboard import (
+        _GAME_STATE_STATEMENT_TIMEOUT,
         build_quota_section,
         build_source_coverage_section,
         build_worker_section,
         build_database_section,
         build_matching_metrics,
         build_game_state_section,
+        run_db_panel,
     )
 
     now = datetime.now(timezone.utc)
@@ -502,9 +504,23 @@ async def operations_dashboard(
         await build_source_coverage_section(db, now)
     )
     worker_section = build_worker_section(now)
-    db_section = await build_database_section(db)
+    # LAT-P017 (#1608): every DB-backed panel goes through run_db_panel, which
+    # rolls the shared session back on failure. Calling one of these directly
+    # would let an aborted transaction leak into the panels after it — the
+    # measured cascade that darkened `database` and `game_state_coverage` when
+    # only `source_coverage` was actually slow.
+    db_section = await run_db_panel(
+        db, "database",
+        lambda: build_database_section(db),
+        on_error=lambda e: {"error": e},
+    )
     matching_history = build_matching_metrics()
-    game_state_section = await build_game_state_section(db)
+    game_state_section = await run_db_panel(
+        db, "game_state_coverage",
+        lambda: build_game_state_section(db),
+        on_error=lambda e: [{"error": e}],
+        statement_timeout=_GAME_STATE_STATEMENT_TIMEOUT,
+    )
 
     return {
         "generated_at": now.isoformat(),
