@@ -1,0 +1,79 @@
+{
+  "cases": [
+    {
+      "id": "clean-independent-panels",
+      "input": {"panels": [{"outcome": "ok", "timeout_local": true, "scope_closed": true}, {"outcome": "ok"}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "timeout-marked-and-contained",
+      "input": {"panels": [{"outcome": "timeout", "error_exposed": true, "rolled_back": true}, {"outcome": "ok"}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "timeout-looks-empty",
+      "input": {"panels": [{"outcome": "timeout", "error_exposed": false, "rolled_back": true}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PANEL_FAILURE_PRESENTED_AS_EMPTY"]}
+    },
+    {
+      "id": "timeout-poisons-sibling",
+      "input": {"panels": [{"outcome": "timeout", "error_exposed": true, "rolled_back": false}, {"outcome": "cascade_failure"}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PANEL_FAILURE_CASCADED", "PANEL_FAILURE_NOT_ISOLATED"]}
+    },
+    {
+      "id": "set-local-leaks",
+      "input": {"panels": [{"outcome": "ok", "timeout_local": true, "scope_closed": false}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PANEL_TIMEOUT_SCOPE_LEAKED"]}
+    },
+    {
+      "id": "all-leagues-clean",
+      "input": {"configured_checks": ["mlb", "nba", "nhl"], "completed_checks": ["mlb", "nba", "nhl"], "claimed_status": "green"},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "deadline-skips-final-league",
+      "input": {"configured_checks": ["mlb", "nba", "nhl"], "completed_checks": ["mlb", "nba"], "claimed_status": "green"},
+      "expected": {"verdict": "REFUSE", "reasons": ["RUN_COMPLETENESS_HIDDEN"]}
+    },
+    {
+      "id": "skipped-freshness-is-unverified",
+      "input": {"configured_checks": ["freshness"], "completed_checks": [], "check_skipped": true, "claimed_status": "green_unverified"},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "skipped-freshness-says-green",
+      "input": {"configured_checks": ["freshness"], "completed_checks": [], "check_skipped": true, "claimed_status": "green"},
+      "expected": {"verdict": "REFUSE", "reasons": ["RUN_COMPLETENESS_HIDDEN", "SKIPPED_CHECK_CLAIMED_GREEN"]}
+    },
+    {
+      "id": "red-precedes-unverified",
+      "input": {"configured_checks": ["shape", "freshness"], "completed_checks": ["shape"], "check_skipped": true, "real_defects": 1, "claimed_status": "red"},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "unverified-cannot-close",
+      "input": {"configured_checks": ["shape", "freshness"], "completed_checks": ["shape"], "claimed_status": "green_unverified", "close_issue": true},
+      "expected": {"verdict": "REFUSE", "reasons": ["UNVERIFIED_RUN_CLOSED_ISSUE"]}
+    },
+    {
+      "id": "open-market-is-newest",
+      "input": {"freshness_rows": [{"status": "open", "updated_at": 20}, {"status": "closed", "updated_at": 10}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "closed-market-masks-stale-open",
+      "input": {"freshness_rows": [{"status": "open", "updated_at": 10}, {"status": "closed", "updated_at": 20}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["CLOSED_MARKET_MASKED_OPEN_FRESHNESS"]}
+    },
+    {
+      "id": "overlapping-source-coverage",
+      "input": {"source_sets": [[1, 2], [2]], "reported_coverage": 2},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "disjoint-source-coverage",
+      "input": {"source_sets": [[1], [2]], "reported_coverage": 1},
+      "expected": {"verdict": "REFUSE", "reasons": ["COVERAGE_UNION_UNDERCOUNTED"]}
+    }
+  ]
+}
