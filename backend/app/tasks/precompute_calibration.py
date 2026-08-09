@@ -3616,6 +3616,17 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         + list(totals_rows)
         + list(bookmaker_rows)
     )
+    # CAL-P012: the reachability total, read (never computed) here. Wrapped
+    # because a supporting census must not be able to break the payload it
+    # supports — see the fail-open note on the kwarg below.
+    try:
+        from app.tasks.census_reachability import read_published_counts
+        from app.tasks.redis_state import get_redis_client
+
+        _reachability_counts = read_published_counts(get_redis_client())
+    except Exception:
+        _reachability_counts = None
+
     coverage_census = _coverage_census_or_disabled(
         rung_counts=coverage_rung_counts,
         sportsbook_curve_legs=sportsbook_curve_legs,
@@ -3625,20 +3636,28 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         population_version=CALIBRATION_POPULATION_VERSION,
         generation=getattr(runner, "generation", None),
         with_terminal_calibration_price=coverage_with_terminal_price,
-        # CAL-P011 (Alex ruling 2026-08-08): the reachability tier is CONTRACTED
-        # and served, but this build does not yet COUNT it. Its population is the
-        # outcomes the coverage CTE chain excludes by construction (no captured
-        # price), so it cannot be read off ``coverage_bridge_summary`` — it needs
-        # its own scan of resolved outcomes joined to their market's settlement
-        # date. That scan is not added blind here: #1479 has this task already
-        # exceeding its hourly window under backfill DB contention, and a heavy
-        # new join is exactly how a census makes the curve it reports on late.
-        # So the tier ships explicitly unavailable-with-a-reason rather than
-        # absent (which would read as "nothing was purged") or guessed.
+        # CAL-P011 contracted the reachability tier; CAL-P012 counts it. The
+        # count is NOT computed here on purpose: its population is outside the
+        # coverage CTE chain, and #1479 already has this task exceeding its
+        # hourly window under backfill contention, so a heavy join here is
+        # exactly how a census makes the curve it reports on late. Instead the
+        # bounded census (``app/tasks/census_reachability``) publishes a total
+        # and this reads it — an O(1) Redis GET on the critical path.
+        #
+        # Fail-open at every step: no cache, unreadable cache, malformed cache
+        # or a partial walk all yield None, which routes to the explicit
+        # ``unavailable`` section. A supporting census must never be able to
+        # break the payload it supports, and a partial number presented as a
+        # total is worse than no number.
+        reachability_tier_counts=_reachability_counts,
         reachability_unavailable_reason=(
-            "counts not yet wired: the unpriced population is outside the "
-            "coverage CTE chain and needs its own bounded scan (owed; see #1479 "
-            "for why it was not added to this task blind)"
+            None
+            if _reachability_counts
+            else (
+                "no complete reachability census published yet — run "
+                "POST /api/admin/repairs/reachability-census to walk it, or "
+                "publish_full_census() to cache a total"
+            )
         ),
     )
     # The measured universe total and the summed partition are two reads of the
