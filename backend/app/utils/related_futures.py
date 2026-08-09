@@ -4,6 +4,18 @@ Extracted from routes/events.py `get_related_futures` (783 lines)
 to make deduplication and filtering independently testable.
 """
 
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+# How old a futures quote may be before it stops being a valid answer to
+# "what are their chances?" during a live season (#1589).
+#
+# Season-long markets (make playoffs, win total, division) are polled on cycles
+# measured in hours -- Kalshi every 2h, Polymarket hourly -- so a quote a full
+# day old is not "slightly behind", it is a market nobody is maintaining.
+STALE_AFTER_HOURS = 24
+
 
 # Merge groups that are per-team (one entry per source, not per outcome)
 _PER_TEAM_MERGE_GROUPS = {
@@ -13,16 +25,40 @@ _PER_TEAM_MERGE_GROUPS = {
 _PER_TEAM_MERGE_SUFFIXES = ("_division", "_conf_champion", "_conf_1_seed", "_conf_playin")
 
 
-def dedup_by_merge_group(futures: list[dict]) -> list[dict]:
+def dedup_by_merge_group(
+    futures: list[dict],
+    now: datetime | None = None,
+    stale_after_hours: int = STALE_AFTER_HOURS,
+) -> list[dict]:
     """Deduplicate futures entries by merge group.
 
     For per-team groups (win_total, make_playoffs, division winners),
     uses merge_group alone as the key. For multi-outcome groups
     (championship, matchups), uses (merge_group, outcome_name).
 
-    Keeps the entry with highest bookmaker_count. Aggregates all sources
-    into an `all_sources` list on the winner.
+    Keeps the FRESHEST-ELIGIBLE entry with the highest bookmaker_count, and
+    aggregates all sources into an `all_sources` list on the winner.
+
+    #1589 -- why freshness gates this at all. The rule used to be "highest
+    bookmaker_count wins", full stop. **Most liquid is not most correct when one
+    of them is stale.** A season-long market carried by many bookmakers but no
+    longer being updated outranked a fresher quote from fewer, so the page could
+    publish a months-old number with total confidence: Alex saw the Red Sox at
+    63% to make the playoffs when the real figure was ~90%.
+
+    So stale entries are demoted, not deleted. If every entry in a group is
+    stale we still return the best of them rather than dropping the row --
+    blanking the "Bigger Picture" section would be a worse regression than a
+    stale number, and it is the failure mode a naive filter would introduce
+    (gotcha #43).
+
+    `now` is injected so the staleness boundary is deterministically testable
+    and never seeded off the wall clock (gotcha #44).
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=stale_after_hours)
+
     groups: dict[tuple, list[dict]] = {}
     ungrouped: list[dict] = []
     for f in futures:
@@ -40,11 +76,39 @@ def dedup_by_merge_group(futures: list[dict]) -> list[dict]:
         if len(entries) == 1:
             result.append(entries[0])
         else:
-            entries.sort(key=lambda x: x.get("bookmaker_count", 0), reverse=True)
+            # Fresh first, then liquidity. `is_stale` is a bool, so sorting on
+            # (not stale, bookmaker_count) keeps the old preference intact
+            # WITHIN each freshness tier and only ever promotes a fresh entry
+            # over a stale one.
+            entries.sort(
+                key=lambda x: (
+                    not _is_stale(x.get("last_updated"), cutoff),
+                    x.get("bookmaker_count", 0),
+                ),
+                reverse=True,
+            )
             winner = entries[0]
             winner["all_sources"] = list({e["source"] for e in entries if e.get("source")})
             result.append(winner)
     return result
+
+
+def _is_stale(last_updated: str | None, cutoff: datetime) -> bool:
+    """True when a quote is older than the cutoff, or carries no timestamp.
+
+    A missing timestamp counts as stale: it is an entry that cannot show it is
+    current, and the whole point here is to prefer one that can. It is only a
+    demotion -- an all-stale group still returns its best entry.
+    """
+    if not last_updated:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(last_updated).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed < cutoff
 
 
 def build_futures_entry(
