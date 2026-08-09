@@ -1102,3 +1102,23 @@ its findings gets a note saying the artifact is readable but **the reproduction 
 so the finding is a lead to re-establish rather than evidence to act on — plus any known
 window in which the provider was already lying (here, degradation from 2026-07-28, three days
 before the visible 403).
+
+---
+
+## RULING: Integrator single-writer + throughput (Alex, 2026-08-09)
+
+- INVARIANT: exactly ONE integrator session; only it pushes master. Never a second
+  integrator, never a pushing subagent. (Named failure: PRODUCT-BRAIN lost-updates.)
+- STANDING SCOPE (no "go" needed, ever): merge CI-green program branches; run
+  suites/gates; deploy; file issues; fix test-only/eval breakage. Anything outside
+  scope = file needs-user issue and END the wait, never idle. (Named failure:
+  44-min "awaiting go" stall, int-024.)
+- BATCHING: multiple waiting branches with disjoint files merge in ONE cycle —
+  one combined suite, one CI run, one deploy. (Named failure: latency-11/-12
+  queued as two round-trips.)
+- PIPELINING: while CI runs on a pushed merge, prep + focused-test the next
+  branch locally; push only after previous CI is green. (Named failure: ~10-min
+  integrator idle per cycle.)
+- SUBAGENTS: allowed inside the integrator session for READ-ONLY work only —
+  parallel test shards, conflict scouting, post-deploy probes. Read in parallel,
+  write in series.
