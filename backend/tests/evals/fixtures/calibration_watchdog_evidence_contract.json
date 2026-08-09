@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "cancelled-futures-exact-five-phase-ledger",
+      "payload": {
+        "phases": [
+          {"name":"futures","status":"cancelled"},
+          {"name":"sports","status":"pending"},
+          {"name":"diagnostics","status":"pending"},
+          {"name":"aggregate","status":"pending"},
+          {"name":"serialize_gate_publish","status":"pending"}
+        ],
+        "stages": {
+          "session:acquire":12,
+          "read:futures_generation":1000,
+          "read:futures_unit":626242,
+          "staged:cursor_invalidate":0,
+          "checkpoint:write":20,
+          "session:commit":15,
+          "ledger:write":10
+        }
+      },
+      "expected": {
+        "selected":["phase:futures:cancelled","stage:staged:cursor_invalidate","stage:read:futures_unit","stage:read:futures_generation","stage:checkpoint:write","stage:session:commit","stage:session:acquire","stage:ledger:write"],
+        "reasons":[]
+      }
+    },
+    {
+      "id":"one-malformed-stage",
+      "payload":{"phases":[{"name":"futures","status":"timeout"}],"stages":{"read:futures_unit":5000,"broken":"five seconds"}},
+      "expected":{"selected":["phase:futures:timeout","stage:read:futures_unit"],"reasons":["MALFORMED_STAGE_DURATION"]}
+    },
+    {
+      "id":"legacy-ledger-without-stages",
+      "payload":{"phases":[{"name":"futures","status":"failed"}]},
+      "expected":{"selected":["phase:futures:failed"],"reasons":["STAGES_MISSING"]}
+    },
+    {
+      "id":"complete-ledger-has-no-actionable-context",
+      "payload":{"phases":[{"name":"futures","status":"complete"}],"stages":{}},
+      "expected":{"selected":[],"reasons":["NO_ACTIONABLE_CONTEXT"]}
+    },
+    {
+      "id":"missing-ledger-shape",
+      "payload":{},
+      "expected":{"selected":[],"reasons":["NO_ACTIONABLE_CONTEXT","PHASES_MISSING","STAGES_MISSING"]}
+    },
+    {
+      "id":"limit-keeps-failure-and-cursor-before-cost",
+      "limit":3,
+      "payload":{"phases":[{"name":"futures","status":"cancelled"}],"stages":{"read:a":900,"read:b":800,"staged:cursor_resume":0,"read:c":700}},
+      "expected":{"selected":["phase:futures:cancelled","stage:staged:cursor_resume","stage:read:a"],"reasons":[]}
+    }
+  ]
+}
