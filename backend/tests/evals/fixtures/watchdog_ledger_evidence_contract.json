@@ -1,0 +1,47 @@
+{
+  "policy": {"contract_version": "watchdog-ledger-evidence/v1", "row_limit": 10},
+  "cases": [
+    {
+      "id": "cancelled_phase_empty_detail_with_stages",
+      "payload": {"phases": [{"name": "futures", "status": "cancelled", "detail": "", "duration_ms": 726557}], "stages": {"read:futures_unit": 626242, "staged:cursor_invalidate": 0}},
+      "expected_current": {"verdict": "useful_evidence", "names": ["futures", "stage:read:futures_unit", "stage:staged:cursor_invalidate"]},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["futures", "stage:read:futures_unit", "stage:staged:cursor_invalidate"]}
+    },
+    {
+      "id": "missing_stage_map_keeps_phase",
+      "payload": {"phases": [{"name": "futures", "status": "cancelled", "duration_ms": 12}]},
+      "expected_current": {"verdict": "useful_evidence", "names": ["futures"]},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["futures"]}
+    },
+    {
+      "id": "json_null_stage_map_must_not_erase_phase",
+      "payload": {"phases": [{"name": "futures", "status": "cancelled", "duration_ms": 12}], "stages": null},
+      "expected_current": {"verdict": "no_evidence", "names": []},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["futures"]}
+    },
+    {
+      "id": "poison_stage_must_not_erase_valid_siblings",
+      "payload": {"phases": [{"name": "futures", "status": "cancelled", "duration_ms": 12}], "stages": {"read:futures_unit": 900, "poison": "unknown", "cleanup": 4}},
+      "expected_current": {"verdict": "no_evidence", "names": []},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["futures", "stage:read:futures_unit", "stage:cleanup"]}
+    },
+    {
+      "id": "wrong_phase_shape_must_not_erase_valid_stages",
+      "payload": {"phases": {}, "stages": {"read:futures_unit": 900}},
+      "expected_current": {"verdict": "no_evidence", "names": []},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["stage:read:futures_unit"]}
+    },
+    {
+      "id": "stage_cost_order_is_descending",
+      "payload": {"phases": [], "stages": {"cheap": 1, "expensive": 1000, "middle": 50}},
+      "expected_current": {"verdict": "useful_evidence", "names": ["stage:expensive", "stage:middle", "stage:cheap"]},
+      "expected_contract": {"verdict": "useful_evidence", "names": ["stage:expensive", "stage:middle", "stage:cheap"]}
+    },
+    {
+      "id": "completed_phase_is_not_failure_evidence",
+      "payload": {"phases": [{"name": "futures", "status": "complete", "duration_ms": 12}], "stages": {}},
+      "expected_current": {"verdict": "no_evidence", "names": []},
+      "expected_contract": {"verdict": "no_evidence", "names": []}
+    }
+  ]
+}
