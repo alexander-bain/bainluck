@@ -44,6 +44,7 @@ from app.models.models import (
     Team,
 )
 from app.services import get_db, get_db_rw
+from app.utils.tonights_games import lead_with_tonights_games
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     compute_aggregate_probability as _compute_aggregate_probability,
@@ -2162,6 +2163,30 @@ async def get_feed(
         # touches no score and can never empty the feed (gotcha #42/#43).
         feed_items = _pin_marquee_items(feed_items)
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "marquee_pin")
+
+        # === TONIGHT'S GAMES LEAD (Alex ruling 2026-08-08(d)(1)) ===
+        # Discover-mode only: the landing page leads with tonight's games — live
+        # or starting soon — with the Discover mix below. The finding was 55
+        # cards with ZERO game events while games were on, led by aliens and
+        # hantavirus.
+        #
+        # PROMOTE, DO NOT UN-DEMOTE. The demotion above stays exactly as it is:
+        # it is load-bearing for the rest of Discover, and #1091 is the standing
+        # lesson that changing a feed cap is how the Sports tab got emptied.
+        # This is a pure stable reorder in the same shape as the marquee pin —
+        # it moves at most MAX_LEAD already-present items to the front, touches
+        # no score, drops nothing, and returns the list unchanged on any error.
+        #
+        # It runs AFTER the marquee pin deliberately: an in-progress marquee
+        # concept (The Open, a World Cup final) is the bigger story and keeps the
+        # very top. Tonight's games lead the rest.
+        if not my_teams_only and (
+            (event_pct is not None and event_pct < 0.3) or not include_events
+        ):
+            feed_items = lead_with_tonights_games(feed_items)
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "tonights_games_lead"
+            )
 
         total = len(feed_items)
         paginated = feed_items[offset : offset + limit]
