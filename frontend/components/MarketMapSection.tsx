@@ -12,6 +12,7 @@ import {
   buildDensityFromThresholds,
   sportVocab,
   posOnRail,
+  collapseDuplicateRungs,
 } from "@/lib/marketMapUtils";
 
 interface MarketMapSectionProps {
@@ -172,9 +173,17 @@ export default function MarketMapSection({
     );
     if (fullGameSpreads.length === 0) return null;
 
-    const parsed = fullGameSpreads
+    const parsedRaw = fullGameSpreads
       .map((s) => parseSpreadOutcome(s.outcome_name, s.probability ?? 0, s.source, homeTeam, awayTeam))
       .filter((p): p is NonNullable<typeof p> => p != null);
+
+    // One rung per (side, threshold). Duplicates arrive when several games'
+    // markets are linked to one event; see collapseDuplicateRungs.
+    const parsed = collapseDuplicateRungs(
+      parsedRaw,
+      (p) => `${p.isHome ? "H" : "A"}|${p.threshold}`,
+      (p) => p.probability,
+    ).rows;
 
     if (parsed.length === 0) return null;
 
@@ -505,9 +514,16 @@ export default function MarketMapSection({
       const spreads = halfGroups[half];
       if (!spreads || spreads.length === 0) continue;
 
-      const rawParsed = spreads
+      const rawParsedAll = spreads
         .map((s) => parseSpreadOutcome(s.outcome_name, s.probability ?? 0, s.source, homeTeam, awayTeam))
         .filter((p): p is NonNullable<typeof p> => p != null);
+      // Collapse before the monotonicity pass: equal duplicates satisfy
+      // `prob <= lastProb` trivially, so that guard cannot remove them.
+      const rawParsed = collapseDuplicateRungs(
+        rawParsedAll,
+        (p) => `${p.isHome ? "H" : "A"}|${p.threshold}`,
+        (p) => p.probability,
+      ).rows;
       if (rawParsed.length === 0) continue;
 
       // Enforce monotonicity per team: P(team wins by X) >= P(team wins by X+Y)
@@ -645,7 +661,14 @@ export default function MarketMapSection({
     }
 
     for (const halfKey of ["1H", "2H"] as const) {
-      const halfItems = halfTotalGroups[halfKey] || [];
+      const halfItemsRaw = halfTotalGroups[halfKey] || [];
+      // One rung per threshold, before the monotonicity pass and before the
+      // density/O-U reduce that duplicated points would skew.
+      const halfItems = collapseDuplicateRungs(
+        halfItemsRaw,
+        (t) => String(t.threshold ?? 0),
+        (t) => t.over_probability ?? t.probability ?? 0,
+      ).rows;
       if (halfItems.length < 2) continue;
 
       const sorted = [...halfItems].sort((a, b) => (a.threshold ?? 0) - (b.threshold ?? 0));
