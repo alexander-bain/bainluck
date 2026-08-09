@@ -387,6 +387,50 @@ def _bump_window_counter(pipe, key: str):
     pipe.incr(key)
 
 
+def record_task_started(task_name: str):
+    """Record that a task RAN, written in its first moments — CAL-P024b.
+
+    Every other counter in this module is written when a run ENDS, by the
+    handlers in ``_tracked_run``. That makes them all conditional on the process
+    surviving long enough to reach a handler, and a hard kill does not: a
+    Heroku R15 memory kill is a SIGKILL, and Celery's hard ``time_limit`` tears
+    the child down. Neither runs an ``except`` block, so a run that dies that
+    way leaves **no trace at all** — not a success, not a failure, not an
+    incomplete.
+
+    The consequence is not a missing statistic, it is a WRONG one with the
+    opposite sign. ``precompute_calibration_main`` was hard-killed ~16 minutes
+    into every hourly beat, and its counters read ``successes_24h: 0,
+    failures_24h: 0`` — indistinguishable from a task that is not scheduled.
+    Two separate windows concluded from that shape that the **beat was not
+    firing** and went looking at the scheduler and the queue, when the beat was
+    firing on time every hour and dying of memory. An absent observation was
+    read as an observed absence: gotcha #53's shape, in the instrument rather
+    than the data.
+
+    So: fires are counted at the start, outcomes at the end, and the gap between
+    them is exactly the number of runs that died without being able to say so.
+    ``starts_24h - (successes + failures + incompletes)`` is the hard-kill count,
+    and it is a first-class number rather than an inference.
+
+    Deliberately the cheapest possible write (two Redis ops, best-effort,
+    swallowing everything): it runs before the work on every task in the system,
+    so it must never be the reason a task fails to start.
+    """
+    try:
+        r = get_redis_client()
+        key = f"{TASK_METRICS_PREFIX}:{task_name}"
+        pipe = r.pipeline()
+        pipe.hset(key, mapping={"last_started_at": _utc_now_iso()})
+        pipe.expire(key, TASK_METRICS_TTL)
+        _bump_window_counter(pipe, f"{TASK_METRICS_PREFIX}:{task_name}:starts")
+        pipe.execute()
+    except Exception:
+        # Never let metrics recording break a task — least of all this one,
+        # which is the first thing every task does.
+        pass
+
+
 def record_task_success(
     task_name: str,
     duration_ms: float,
@@ -535,15 +579,24 @@ def get_task_metrics(task_name: str) -> dict:
         success_key = f"{TASK_METRICS_PREFIX}:{task_name}:successes"
         failure_key = f"{TASK_METRICS_PREFIX}:{task_name}:failures"
         incomplete_key = f"{TASK_METRICS_PREFIX}:{task_name}:incompletes"
+        start_key = f"{TASK_METRICS_PREFIX}:{task_name}:starts"
         successes_24h = int(r.get(success_key) or 0)
         failures_24h = int(r.get(failure_key) or 0)
         incompletes_24h = int(r.get(incomplete_key) or 0)
+        starts_24h = int(r.get(start_key) or 0)
+        # CAL-P024b: runs that began and never reached ANY end handler — a
+        # SIGKILL (Heroku R15 memory) or a hard ``time_limit`` teardown. Clamped
+        # at zero because a run can legitimately start in one 24h window and
+        # finish in the next.
+        hard_kills_24h = max(0, starts_24h - (successes_24h + failures_24h + incompletes_24h))
 
         result = {
             "task": task_name,
             "successes_24h": successes_24h,
             "failures_24h": failures_24h,
             "incompletes_24h": incompletes_24h,
+            "starts_24h": starts_24h,
+            "hard_kills_24h": hard_kills_24h,
         }
 
         for k, v in data.items():
@@ -578,6 +631,21 @@ def get_task_metrics(task_name: str) -> dict:
         # the cockpit). Real, current failures still surface: any failure in the
         # last 24h keeps failures_24h > 0, so the consecutive bands below stay live.
         if successes_24h == 0 and failures_24h == 0 and incompletes_24h == 0:
+            # CAL-P024b: "no outcomes" has TWO causes and they are opposites.
+            # If the task also never STARTED, it is idle — the reading above.
+            # If it started and recorded nothing, every run was killed before it
+            # could reach a handler, which is the worst state this surface can
+            # describe, not the most benign. ``precompute_calibration_main`` sat
+            # in exactly that state for a week reading ``no_data``, and two
+            # windows took the reading at face value and went looking for a
+            # scheduler fault while the beat fired hourly and died of memory.
+            if starts_24h > 0:
+                result["health"] = "critical"
+                result["health_reason"] = (
+                    f"{starts_24h} runs started, none reached an end handler "
+                    "— hard-killed (memory / hard time limit)"
+                )
+                return result
             result["health"] = "no_data"
         elif consecutive >= 5:
             result["health"] = "critical"

@@ -753,3 +753,112 @@ class TestIncompleteHealthIsNotGreen:
         tasks = redis_state.get_all_task_metrics()
         degraded = [t["task"] for t in tasks if t.get("health") == "degraded"]
         assert degraded == ["compute_time_horizon_calibration"]
+
+
+class TestTheFireIsCountedAtTheStart:
+    """CAL-P024b — fix the instrument before the patient.
+
+    Every other counter in ``redis_state`` is written by an end handler, so all
+    of them are conditional on the process living long enough to reach one. A
+    Heroku R15 memory kill is a SIGKILL and Celery's hard ``time_limit`` tears
+    the child down; neither runs an ``except`` block.
+
+    The failure this produced was not a missing number but a number with the
+    WRONG SIGN. ``precompute_calibration_main`` was hard-killed ~16 minutes into
+    every hourly beat and read ``successes_24h: 0, failures_24h: 0, health:
+    no_data`` — the same shape as a task nobody schedules. Two separate windows
+    read that as "the beat is not firing" and went looking at the scheduler and
+    the queue while the beat fired on time, hourly, and died of memory.
+    """
+
+    def test_a_start_is_recorded_before_any_outcome(self, monkeypatch):
+        fake = _FakeMetricsRedis({})
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        redis_state.record_task_started("some_task")
+        assert fake.counters[f"{TASK_METRICS_PREFIX}:some_task:starts"] == b"1"
+
+    def test_the_start_counter_does_not_slide_its_own_expiry(self, monkeypatch):
+        """A lifetime total must never be read as a recent rate (gotcha #49).
+
+        The same trap ``_bump_window_counter`` exists for: an hourly task would
+        push the TTL out every hour and the 24h window would never roll.
+        """
+        fake = _FakeMetricsRedis({})
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        for _ in range(3):
+            redis_state.record_task_started("some_task")
+        key = f"{TASK_METRICS_PREFIX}:some_task:starts"
+        sets = [c for c in fake.calls if c[0] == "set" and c[1] == key]
+        assert all(c[4] is True for c in sets), "the window stamp must be SET NX"
+        assert fake.counters[key] == b"3"
+
+    def test_starts_never_break_the_task(self, monkeypatch):
+        """It runs before the work on every task in the system."""
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: None)
+        redis_state.record_task_started("some_task")  # must not raise
+
+    def test_started_and_killed_reads_critical_not_no_data(self, monkeypatch):
+        """THE reversal. Same zero outcomes, opposite verdict, on one new fact."""
+        fake = _FakeMetricsRedis(
+            {"precompute_calibration_main": {b"consecutive_failures": b"0"}},
+            counters={f"{TASK_METRICS_PREFIX}:precompute_calibration_main:starts": b"24"},
+        )
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        result = redis_state.get_task_metrics("precompute_calibration_main")
+        assert result["health"] == "critical"
+        assert result["starts_24h"] == 24
+        assert result["hard_kills_24h"] == 24
+        assert "hard-killed" in result["health_reason"]
+
+    def test_a_genuinely_idle_task_is_still_no_data(self, monkeypatch):
+        """Non-vacuity for the test above: with no starts, the old reading stands.
+
+        If this went critical too, the reversal would just be a louder alarm on
+        every dormant task rather than a new distinction.
+        """
+        fake = _FakeMetricsRedis({"some_task": {b"consecutive_failures": b"0"}})
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        result = redis_state.get_task_metrics("some_task")
+        assert result["health"] == "no_data"
+        assert result["starts_24h"] == 0
+        assert result["hard_kills_24h"] == 0
+
+    def test_a_healthy_task_reports_no_hard_kills(self, monkeypatch):
+        fake = _FakeMetricsRedis(
+            {"some_task": {b"consecutive_failures": b"0"}},
+            counters={
+                f"{TASK_METRICS_PREFIX}:some_task:starts": b"10",
+                f"{TASK_METRICS_PREFIX}:some_task:successes": b"10",
+            },
+        )
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        result = redis_state.get_task_metrics("some_task")
+        assert result["hard_kills_24h"] == 0
+        assert result["health"] == "healthy"
+
+    def test_a_run_straddling_the_window_boundary_never_goes_negative(self, monkeypatch):
+        """More outcomes than starts is legitimate, not a bug to surface."""
+        fake = _FakeMetricsRedis(
+            {"some_task": {b"consecutive_failures": b"0"}},
+            counters={
+                f"{TASK_METRICS_PREFIX}:some_task:starts": b"2",
+                f"{TASK_METRICS_PREFIX}:some_task:successes": b"3",
+            },
+        )
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        assert redis_state.get_task_metrics("some_task")["hard_kills_24h"] == 0
+
+    def test_the_tracked_runner_records_the_start_before_running(self):
+        """Wiring, source-level: the call must precede the work AND the try.
+
+        Inside the ``try`` would be nearly as good but not quite — the point is
+        that nothing between task entry and the first Redis write can prevent
+        the fire from being counted.
+        """
+        import inspect
+
+        from app.tasks import _tracked_run
+
+        source = inspect.getsource(_tracked_run)
+        assert "record_task_started(task_name)" in source
+        assert source.index("record_task_started(task_name)") < source.index("run_async(")

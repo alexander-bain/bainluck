@@ -83,6 +83,7 @@ def _tracked_run(task_name: str, async_fn):
     """
     from app.tasks.redis_state import (
         record_task_incomplete,
+        record_task_started,
         record_task_success,
         record_task_failure,
         touch_worker_liveness,
@@ -94,6 +95,12 @@ def _tracked_run(task_name: str, async_fn):
     # generation (real wedge → RED) from one left by a dead/restarted generation
     # (stale → reconcile, no page). Best-effort; never blocks the task.
     touch_worker_liveness()
+    # CAL-P024b: the FIRE is recorded here, before the work, because every other
+    # counter in this function is written by a handler and a hard kill reaches
+    # no handler. Without it "started 24 times and died 24 times" and "never
+    # scheduled" are the same observation — which is how a memory kill was read
+    # as a scheduling fault for a week. Fix the instrument before the patient.
+    record_task_started(task_name)
     start = _time.monotonic()
     try:
         result = run_async(async_fn)
