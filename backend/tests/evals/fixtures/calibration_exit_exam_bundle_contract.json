@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id":"clean-entertainment-inference",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":true,"claimed_population_inference":true,"effect_verdict":"meaningful improvement","before":{"observations":9489,"independent_questions":64,"population_hash":"ent-v1","canonical_ece":0.0587,"alternate_ece":0.061,"brier":0.19,"sparse_bins":3},"after":{"observations":9489,"independent_questions":64,"population_hash":"ent-v1","canonical_ece":0.049,"alternate_ece":0.052,"brier":0.18,"sparse_bins":3}},
+      "expected":{"verdict":"ACCEPT","reasons":[]}
+    },
+    {
+      "id":"small-cricket-forensic",
+      "bundle":{"consequential_claim":false,"clustered_uncertainty":false,"claimed_population_inference":false,"effect_verdict":"no meaningful change","before":{"observations":3003,"independent_questions":8,"population_hash":"cricket-v1","canonical_ece":0.0938,"alternate_ece":0.101,"brier":0.22,"sparse_bins":7},"after":{"observations":3003,"independent_questions":8,"population_hash":"cricket-v1","canonical_ece":0.091,"alternate_ece":0.099,"brier":0.219,"sparse_bins":7}},
+      "expected":{"verdict":"ACCEPT","reasons":[]}
+    },
+    {
+      "id":"small-cricket-population-claim",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":true,"claimed_population_inference":true,"effect_verdict":"no meaningful change","before":{"observations":3003,"independent_questions":8,"population_hash":"cricket-v1","canonical_ece":0.0938,"alternate_ece":0.101,"brier":0.22,"sparse_bins":7},"after":{"observations":3003,"independent_questions":8,"population_hash":"cricket-v1","canonical_ece":0.091,"alternate_ece":0.099,"brier":0.219,"sparse_bins":7}},
+      "expected":{"verdict":"REFUSE","reasons":["INDEPENDENT_SAMPLE_TOO_SMALL_FOR_INFERENCE"]}
+    },
+    {
+      "id":"rows-without-independent-questions",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":false,"claimed_population_inference":true,"effect_verdict":"meaningful improvement","before":{"observations":9489,"independent_questions":0,"population_hash":"x","canonical_ece":0.06,"alternate_ece":0.06,"brier":0.20,"sparse_bins":2},"after":{"observations":9489,"independent_questions":0,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":2}},
+      "expected":{"verdict":"REFUSE","reasons":["CLUSTERED_UNCERTAINTY_MISSING","INDEPENDENT_QUESTION_COUNT_INVALID","INDEPENDENT_SAMPLE_TOO_SMALL_FOR_INFERENCE"]}
+    },
+    {
+      "id":"robustness-fields-missing",
+      "bundle":{"consequential_claim":false,"clustered_uncertainty":false,"claimed_population_inference":false,"effect_verdict":"no meaningful change","before":{"observations":10,"independent_questions":5,"population_hash":"x","canonical_ece":0.09},"after":{"observations":10,"independent_questions":5,"population_hash":"x","canonical_ece":0.09}},
+      "expected":{"verdict":"REFUSE","reasons":["ROBUSTNESS_METRICS_MISSING","SPARSE_BIN_DISCLOSURE_INVALID"]}
+    },
+    {
+      "id":"exact-floor",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":true,"claimed_population_inference":true,"effect_verdict":"meaningful improvement","before":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.055,"alternate_ece":0.056,"brier":0.20,"sparse_bins":0},"after":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":0}},
+      "expected":{"verdict":"ACCEPT","reasons":[]}
+    },
+    {
+      "id":"below-floor-called-improvement",
+      "bundle":{"consequential_claim":false,"clustered_uncertainty":false,"claimed_population_inference":false,"effect_verdict":"meaningful improvement","before":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.0549,"alternate_ece":0.056,"brier":0.20,"sparse_bins":0},"after":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":0}},
+      "expected":{"verdict":"REFUSE","reasons":["EFFECT_FLOOR_VERDICT_WRONG"]}
+    },
+    {
+      "id":"alternate-binning-reverses",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":true,"claimed_population_inference":true,"effect_verdict":"meaningful improvement","before":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.06,"alternate_ece":0.05,"brier":0.20,"sparse_bins":1},"after":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.051,"brier":0.19,"sparse_bins":1}},
+      "expected":{"verdict":"REFUSE","reasons":["ALTERNATE_BINNING_CONTRADICTS"]}
+    },
+    {
+      "id":"brier-reverses",
+      "bundle":{"consequential_claim":true,"clustered_uncertainty":true,"claimed_population_inference":true,"effect_verdict":"meaningful improvement","before":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.06,"alternate_ece":0.06,"brier":0.19,"sparse_bins":1},"after":{"observations":200,"independent_questions":100,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.20,"sparse_bins":1}},
+      "expected":{"verdict":"REFUSE","reasons":["BRIER_CONTRADICTS"]}
+    },
+    {
+      "id":"population-changed",
+      "bundle":{"consequential_claim":false,"clustered_uncertainty":false,"claimed_population_inference":false,"effect_verdict":"no meaningful change","before":{"observations":100,"independent_questions":50,"population_hash":"a","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":1},"after":{"observations":120,"independent_questions":60,"population_hash":"b","canonical_ece":0.049,"alternate_ece":0.049,"brier":0.18,"sparse_bins":1}},
+      "expected":{"verdict":"REFUSE","reasons":["INDEPENDENT_POPULATION_CHANGED","POPULATION_CHANGED"]}
+    },
+    {
+      "id":"forensic-overclaim",
+      "bundle":{"consequential_claim":false,"clustered_uncertainty":false,"claimed_population_inference":true,"effect_verdict":"no meaningful change","before":{"observations":10,"independent_questions":5,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":4},"after":{"observations":10,"independent_questions":5,"population_hash":"x","canonical_ece":0.05,"alternate_ece":0.05,"brier":0.19,"sparse_bins":4}},
+      "expected":{"verdict":"REFUSE","reasons":["FORENSIC_EVIDENCE_OVERCLAIMED"]}
+    }
+  ]
+}
