@@ -856,3 +856,88 @@ substring accidents, so the "dangerous" change was a precision improvement.
 
 prop-threshold coverage completion → table-tennis 47pp diagnosis → purged-tier reconciliation queue
 → broad Polymarket families. Operational sequencing, not standing judgment; recorded for continuity.
+
+---
+
+## RULINGS — 2026-08-08(e): Alex's second batch
+
+### 1. Prop-cliff bands: TIGHTEN PER MEASURED CLIFF — `program:calibration`
+
+**Ruled:** each affected series' degenerate band is set **where its own measured cliff
+begins** — not at a shared constant. Shipped as a **versioned methodology change**: a
+population version bump, with **published per-series exclusion counts**. Counts are never
+silent. **Fixture-first.**
+
+**#1140 / #1141 still close only on a post-deploy sentinel run showing suppression** — the
+calibration lane's own bar, which this ruling does not relax.
+
+Two things worth naming because they generalise past this card:
+
+- **"Per measured cliff" beats a shared constant** for the same reason the UX lane's marker
+  spacing did (UX-P022): one constant applied across series that behave differently is only
+  right for the series it was tuned on. A threshold has to be derived from the thing it
+  bounds.
+- **A silent exclusion count is a silent denominator change.** This repo has been bitten by
+  exactly that (`project_cal_coverage_denominator`, `project_calibration_pass2loser_poison`):
+  a population that quietly changes shape makes every before/after comparison across the
+  boundary meaningless. Publishing the counts is what keeps the metric legible.
+
+Owner: **calibration lane**. Recorded here, routed on the cards; the UX lane does not execute
+it.
+
+### 2. #1589 precedes the landing page
+
+**Ruled:** the playoff-odds error (63% shown, ~90% actual) is done **before** the
+lead-with-games landing-page change.
+
+A straight application of (d)(3) rather than a new rule: truth violations outrank polish, and
+a wrong number outranks a better arrangement of correct ones. Worth recording anyway, because
+the landing-page work was already pre-staged and the tempting move is to finish what is
+queued rather than re-sort against a ruling made after it was staged. **A standing ruling
+re-orders work already in the queue.**
+
+### 3. Codex C175's four client parity P1s → UX/native queue
+
+**Ruled:** routed to the UX/native queue via the board.
+
+The class: `/search` and `/typeahead` now emit an additive `degraded` stage list, and **every
+client decodes it and throws it away** — web full search, native full search, both web
+typeahead surfaces, and native typeahead. All four then replace prior results with a partial
+and present it as complete.
+
+The sharp edge, in Codex's words: *a typed degraded success is more destructive than a hard
+failure*, because thrown errors preserve or fall back while an HTTP-200 partial takes the
+success path. **This is the false-absence bug #1494 kept fixing server-side, reintroduced
+client-side.** The backend now tells the truth; the clients discard it.
+
+### 4. LINEAGE: ancestry < patch-id < content
+
+**Ruled:** recorded as a standing rule. It earned it three times in one day.
+
+To answer *"is this change already on master?"* there are three tests, in increasing strength:
+
+| test | command | fails when |
+|---|---|---|
+| **ancestry** | `git merge-base --is-ancestor <sha> origin/master` | the commit was merged as a **rebased copy** — i.e. normally, here |
+| **patch-id** | `git cherry origin/master <branch>` | the Integrator **resolved a conflict** during the rebase, changing the diff |
+| **content** | `git diff <sha> origin/master -- <paths>` | essentially never — it asks the question you actually mean |
+
+**Ancestry is the weakest and the most tempting**, because it is one command and returns a
+clean boolean. In this repo it is also usually WRONG: Invariant 4 gives rebasing to the
+Integrator, so merged work reaches master as a rebased copy with a different SHA. `2309d434`
+reported "not an ancestor" while every line of it was on master.
+
+The three occasions today:
+
+1. **UX-P017's stack** — ancestry said the prior UX branches were unmerged; a file-by-file
+   content check proved P012/P013/P015 were fully present, which is what let cycle 17 branch
+   fresh instead of stacking on spent branches.
+2. **INT-019's handoff correction** — `git cherry` (patch-id) reduced `program/ux-8` to one
+   commit, catching a stale "STACKED, unmerged" declaration the lane had published.
+3. **UX-P022/P023's rebase instructions** — a plain merge conflicted precisely because master
+   held rebased copies; the isolating `--onto` base had to be derived from that fact.
+
+**The rule:** never report merge state from ancestry alone. Use patch-id to reduce a stack,
+and content to settle whether a change is present. And per UX-P016's lesson, a rebase
+instruction is **tested, not asserted** — "the files are disjoint" is not the same claim as
+"it applies cleanly".
