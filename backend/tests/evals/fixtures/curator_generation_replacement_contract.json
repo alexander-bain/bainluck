@@ -1,0 +1,14 @@
+{"schema_version":"curator-generation-replacement/v1","cases":[
+{"id":"accepted-new","input":{"new_status":"accepted"},"expected":{"action":"upsert","live":true,"reason":"accepted"}},
+{"id":"accepted-updated","input":{"old_status":"accepted","new_status":"approved"},"expected":{"action":"upsert","live":true,"reason":"accepted"}},
+{"id":"accepted-to-rejected","input":{"old_status":"accepted","new_status":"rejected"},"expected":{"action":"revoke","live":false,"reason":"review_changed"}},
+{"id":"accepted-to-pending","input":{"old_status":"accepted","new_status":"pending"},"expected":{"action":"revoke","live":false,"reason":"review_changed"}},
+{"id":"missing-decision","input":{"old_status":"accepted"},"expected":{"action":"exclude","live":false,"reason":"decision_missing"}},
+{"id":"absent-from-complete-generation","input":{"old_status":"accepted","absent_from_generation":true},"expected":{"action":"retire_absent","live":false,"reason":"generation_replaced"}},
+{"id":"absent-from-partial-generation","input":{"old_status":"accepted","absent_from_generation":true,"generation_complete":false},"expected":{"action":"preserve_last_good","live":true,"reason":"generation_partial"}},
+{"id":"partial-new-accepted-not-published","input":{"new_status":"accepted","generation_complete":false},"expected":{"action":"preserve_last_good","live":false,"reason":"generation_partial"}},
+{"id":"recovery-complete","input":{"old_status":"accepted","new_status":"accepted","generation_complete":true},"expected":{"action":"upsert","live":true,"reason":"accepted"}},
+{"id":"rejected-remains-rejected","input":{"old_status":"rejected","new_status":"rejected"},"expected":{"action":"revoke","live":false,"reason":"review_changed"}},
+{"id":"pending-to-accepted","input":{"old_status":"pending","new_status":"accepted"},"expected":{"action":"upsert","live":true,"reason":"accepted"}},
+{"id":"approved-to-rejected","input":{"old_status":"approved","new_status":"rejected"},"expected":{"action":"revoke","live":false,"reason":"review_changed"}}
+]}
