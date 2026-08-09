@@ -15,13 +15,13 @@ so no cycle can finish and then discover its evidence was unobtainable.
 
 | # | Item | Status | Blocked on |
 |---|---|---|---|
-| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🔴 not started | healthy publish (version bump) |
+| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🟡 **RULED 2026-08-09** — definition settled, unbuilt | healthy publish (version bump) |
 | 2 | Trading-activity section led by matched-bucket comparison | 🔴 not started | — (ready to stage) |
 | 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 measured, undiagnosed | fresh prod window |
 | 4 | Source graph redesigned — per-source panels | 🔴 not started | — (ready to stage) |
 | 5 | Native calibration surface consistent with web | 🔴 unassessed | — (ready to stage) |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟡 watchdog deployed today | a fresh window to observe; sentinel half is plumbing #1548 |
-| 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🔴 not started | Alex ruling on the Polymarket recovery write; elapsed time |
+| 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **PILOT AUTHORISED 2026-08-09** | a fresh prod window; ~Aug 15 |
 
 **Nothing is green.** Two items (2, 4) are unblocked and stageable today.
 
@@ -46,21 +46,35 @@ That makes CAL-P016's convergence the critical path for most of this exam.
 **by source**; sources with no volume concept excluded; NULL published as UNKNOWN, never
 "untraded"; a bumped population version; **both figures named** in the payload.
 
-**Status: 🔴 not started.**
+**Status: 🟡 RULED 2026-08-09 — the definition is settled; nothing is built.**
 
-Ruling 9 (`.claude/handoff/RULINGS-NEEDED.md`, OPEN list, item 9) asked whether
-`FuturesOutcome.volume > 0` may replace snapshot movement as the well-traded bar. Alex's exam
-wording selects **Option A** — see the PRODUCT-BRAIN section for why that is an inference and
-what would correct it in one line.
+The A/B inference is **superseded and no longer load-bearing.** Alex ruled directly, and better
+than either option: *"use volume when we have it, and infer volume from multiple price moves
+otherwise."* Per-row, not per-source. Full text in PRODUCT-BRAIN § RULINGS 2026-08-09(b).
 
-Today's bar is snapshot movement (`price_moved`), which is what the payload's trading-activity
-dimension is built on. Moving to volume changes the published cohort, hence the version bump,
-hence the sequencing constraint above.
+The published definition is an ordered ladder, each row carrying its provenance:
 
-**Owed before staging:** a fresh-window census of `FuturesOutcome.volume` coverage by source —
-what fraction is >0, =0, and NULL. If NULL dominates on a source, that source's "volume-proven"
-count is mostly UNKNOWN and must publish as such rather than collapsing into untraded. This is
-the same denominator-honesty failure CAL-P014 fixed one surface over.
+1. `volume_proven` — `volume` populated; traded iff `> 0`
+2. `movement_inferred` — no volume, adequate observation density, `>= N` distinct price changes
+3. `unknown` — neither; **published as its own count, never folded into "untraded"**
+
+"Both figures named" = all three counts published, by source.
+
+**Two things that make this real work rather than a predicate change:**
+
+- **`price_moved` is not a move count.** It is `calibration_probability IS DISTINCT FROM
+  opening_probability` — closed-away-from-open. A market that traded all day and returned to its
+  open reads as untraded today. Tier 2 must be built fresh from `futures_odds_snapshots`
+  (`outcome_id`, `probability`, `captured_at`).
+- **Tier 2 is density-gated.** 3 snapshots can yield at most 2 moves however much a market traded;
+  calling that untraded is gotcha #53's shape. Below the threshold: `unknown`.
+
+**N is measured, not chosen.** On rows carrying BOTH volume and adequate snapshots, measure how
+well `>= N moves` predicts `volume > 0`. That fixes N and yields a publishable precision figure.
+A weak proxy is a finding to report, not a number to ship.
+
+**Owed before staging:** the overlap census above (volume coverage by source × snapshot density ×
+move counts). Read-only, one bounded rail, no ruling needed.
 
 ---
 
@@ -217,8 +231,17 @@ Two things gate actual recovery:
   it needs Alex's authorisation before any recovery write.**
 - **The capture-floor re-measure (#1586) waits on elapsed time**, ~2026-08-15 by Alex's date.
 
+**AUTHORISED 2026-08-09 — bounded pilot.** Alex ruled: grade a capped batch (~5K outcomes),
+attended, then **measure the effect on the published Polymarket curve and report before going
+further**. Rationale: a full run could more than double the Polymarket curve (191,738 today), and
+Polymarket is the worst-calibrated source — that is measured on 5K, not discovered on 246K.
+
+The pilot must report: before/after ECE by bucket, the cleanly-resolvable vs ambiguous split
+(sample says ~64.3% clean), and the disposition of the ~36% that do not resolve cleanly.
+
 **First action, and it needs no ruling:** run the reachability census to exhaustion and publish
-the baseline. It is a read-only rail that is already deployed.
+the baseline. It is a read-only rail that is already deployed, and without it there is no first
+datapoint for "measurably progressing" to be measured against.
 
 ---
 
@@ -237,9 +260,21 @@ Every claim above traces to a dated measurement. Add rows; never edit one.
 
 ## Open questions for Alex
 
-1. **Ruling 9 = Option A?** Inferred from item 1's wording. One line confirms or corrects it.
-2. **The Polymarket recovery write** (273K never-graded outcomes) — item 7 cannot progress
-   materially without it. Same attended, capped-batch discipline as the three-winner repair.
-3. **The three-winner apply scope**, still open from 2026-08-08: the census found 3,585 defect
-   markets / 1,885 multi-winner, ~9x the approved "214+", and not a soccer cohort (soccer 678,
-   politics 750 — and politics has legitimate multi-winner structures).
+**All three are ANSWERED as of 2026-08-09** (PRODUCT-BRAIN § RULINGS 2026-08-09(b)):
+
+1. ~~Ruling 9 = Option A?~~ → **Ruled directly**, and more precisely than A: the volume /
+   hardened-movement / unknown ladder. The inference is retired, not confirmed.
+2. ~~Polymarket recovery write?~~ → **Bounded pilot first** (~5K, attended, curve impact reported
+   before going further).
+3. ~~Three-winner scope?~~ → **Pause; 10 eyeballed specimens per category first.** Plus the lane's
+   own correction: the 1,885 multi-winner extension was already granted on 2026-08-08, and the
+   3,585 figure mixes in `incoherent_field` (bad PRICES), which the winner rail cannot fix at all.
+
+Nothing is currently blocked on Alex. Every remaining item is blocked on a fresh production window,
+on the publish converging, or on elapsed time.
+
+### The one thing that would change this
+
+If N turns out unmeasurable — i.e. too few rows carry BOTH volume and adequate snapshot density to
+validate the proxy — then tier 2 has no empirical basis and item 1 comes back with a real choice
+(ship tier 1 + unknown only, or keep the old bar). Flagged now so it is not a surprise later.

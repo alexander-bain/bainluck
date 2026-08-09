@@ -1190,3 +1190,84 @@ from Alex is cheaper than a lane blocking on a question he has effectively alrea
 A's conditions carry over intact: before/after counts **by source**, sources with no volume
 concept **excluded**, NULL **explicitly UNKNOWN** (never "untraded"), and a published population
 version.
+
+---
+
+## RULINGS — 2026-08-09(b): the three exit-exam unblocks (Alex, in session)
+
+**DO NOT REMOVE (CI-guarded).**
+
+Three decisions the exam was blocked on, taken in one sitting after the lane walked through each.
+Banked immediately: rulings lost with the window that heard them is this lane's named failure mode
+(Alex had to issue the 2026-08-08 batch a THIRD time).
+
+### 1. RULING 9 RESOLVED — the well-traded ladder: volume where we have it, hardened movement where we don't
+
+**Ruled (Alex, refining Option A):** *"Use volume when we have it, and infer volume from multiple
+price moves otherwise."*
+
+This supersedes the A/B choice in `RULINGS-NEEDED.md` item 9, which offered only "volume bar" or
+"keep the movement bar". The ruling is better than either, because it is **per-row rather than
+per-source** and it replaces the weak proxy instead of merely falling back to it. The published
+definition becomes an ordered ladder, each row carrying HOW it was classified:
+
+1. `volume_proven` — `volume` is populated; traded iff `> 0`.
+2. `movement_inferred` — no volume, but the outcome has enough price observations for the test to
+   mean something, and shows **>= N distinct price changes**.
+3. `unknown` — neither. Published as its own count. **Never collapsed into "untraded".**
+
+Alex's "both figures named" is satisfied by publishing all three counts, by source.
+
+**Two engineering constraints the lane applies (not new decisions — consequences of the ruling):**
+
+- **`price_moved` today is NOT a count of moves.** It is a two-point comparison,
+  `calibration_probability IS DISTINCT FROM opening_probability` — *did it close away from its
+  open*. A market that traded all day and returned to its opening price reads as **untraded**. So
+  tier 2 is a NEW measurement built from `futures_odds_snapshots` (`outcome_id`, `probability`,
+  `captured_at`), not a tweak to the existing flag. The existing bar being weaker than it looks is
+  an argument FOR the ruling, not against it.
+- **Tier 2 is gated on observation density.** An outcome with 3 snapshots can show at most 2 moves
+  however much it traded; classifying it untraded would be a sampling artifact presented as a
+  finding — gotcha #53's shape exactly ("an empty 200 is not an absence"). Below the density
+  threshold the row is `unknown`, not `untraded`.
+
+**N is MEASURED, not chosen.** On the overlap population — rows carrying both volume and adequate
+snapshots — measure how well ">= N moves" predicts "volume > 0". That fixes N empirically and
+yields a precision figure to publish alongside the counts. If the proxy turns out weak, that is a
+finding to report, not a number to ship.
+
+**Context that shapes how loudly this is presented:** the lane measured the trading-activity effect
+on 2026-08-09 and it is SMALL — within a probability bucket, moved and unmoved differ by 1-2pp,
+except the 35-50% mid band where traded outcomes over-predict by 5.7pp vs 1.4pp. Sharpening the
+definition sharpens a mostly-small signal with one real spike. The section should say so.
+
+### 2. Polymarket recovery — BOUNDED PILOT FIRST, not the full run
+
+**Ruled:** grade a capped batch (~5K outcomes), attended, then **measure the effect on the
+published Polymarket curve and report before going further.**
+
+The cohort is 273,438 resolved outcomes with no `resolution_source` at all, 90.1% already priced.
+The Polymarket curve is 191,738 observations, so a full run could **more than double it** — and
+Polymarket is the worst-calibrated source (2.72pp vs Kalshi 0.82pp). A content change that large
+is measured on 5K, not discovered on 246K.
+
+The pilot reports: before/after ECE by bucket, the cleanly-resolvable vs ambiguous split (the
+sample says ~64.3% clean), and what happened to the ~36% that did not resolve cleanly.
+
+### 3. Winner-field defects — PAUSE; specimens first
+
+**Ruled:** nothing runs until Alex sees **10 eyeballed specimens per category** from a fresh
+dry-run. This is the gate he asked for on 2026-08-08 and whose output has never been produced.
+
+Standing correction recorded with it, because the lane had reported this wrongly: the 2026-08-08
+extension to **all 1,885 multi-winner markets** was already given, and the "~9x the approved 214+"
+alarm compared two different things. **3,585 is the count of defect MARKETS across two classes** —
+`multi_winner` (1,885; a wrong WINNER, which `winner-field-repair` fixes) and `incoherent_field`
+(the rest; impossible PRICES summing past 100%, which that rail cannot fix and which is a separate
+read-side exclusion question).
+
+Also recorded: Alex's "politics has legitimate multi-winner structures" concern is **already
+structurally enforced**, not merely gated by specimens. `repair_winner_field` fails closed — it
+writes only where the CLOB returns exactly one winner across the legs, so a genuinely multi-winner
+market returns several and is SKIPPED with a recorded reason. It cannot convert correct data into
+incorrect data. The pause is for Alex's own eyes on the evidence, not because the rail is unsafe.

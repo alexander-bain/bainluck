@@ -126,6 +126,22 @@ RULING_EXIT_EXAM = [
     "786K recoverable cohort",
 ]
 
+# CAL-P022 (2026-08-09). The three exit-exam unblocks, taken in one sitting.
+# Banked the same window they were heard in, which is the whole lesson of the
+# 2026-08-08 re-issued batch: a ruling that dies with its window costs Alex a
+# third telling. Ruling 9 in particular is pinned by its LADDER, because the
+# cheap way to get it wrong is to keep tier 1 and quietly drop tier 3 — which
+# would republish "unknown" as "untraded", the exact dishonesty it forbids.
+RULINGS_2026_08_09 = [
+    "the three exit-exam unblocks",
+    "RULING 9 RESOLVED",
+    "movement_inferred",
+    "Never collapsed into \"untraded\"",
+    "N is MEASURED, not chosen",
+    "BOUNDED PILOT FIRST",
+    "PAUSE; specimens first",
+]
+
 ALL_MARKERS = (
     REQUIRED_MARKERS
     + STRUCTURAL_MARKERS
@@ -134,6 +150,7 @@ ALL_MARKERS = (
     + RULINGS_2026_08_08
     + RULINGS_2026_08_08_REISSUED
     + RULING_EXIT_EXAM
+    + RULINGS_2026_08_09
 )
 
 #: The exam is a separate FILE, so the marker guard above cannot protect it —
