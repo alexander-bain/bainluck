@@ -2333,19 +2333,45 @@ def _calibration_population_ctes(
 # costs the build exactly nothing.
 # =============================================================================
 
-#: CAL-P020 (2026-08-09): ON. The chunk-scoped coverage universe the block above
-#: says this waits for is built — ``_coverage_universe_cte(chunk_scoped=True)``
-#: narrows the universe to the chunk, and ``_coverage_global_rung_sql`` counts
-#: ``market_result_unavailable`` once per generation against the unscoped
-#: ``market_info``. The refusal in ``_main_futures_sql`` is kept, narrowed to the
-#: invariant it was standing in for: under a frozen scope the universe must be
-#: chunk-scoped.
+#: CAL-P020 (2026-08-09) turned this ON. CAL-P024 (2026-08-09, same day) turned
+#: it back OFF, and this comment is the MEASUREMENT rather than an opinion,
+#: because the pre-CAL-P020 version of it said only "off pending the chunk-scoped
+#: universe" — which reads as unfinished work, so the next window finished the
+#: work and flipped the switch. It was not the scoping that was missing. It was
+#: the budget, and the budget was never re-measured.
 #:
-#: Turning it on was not optional maintenance. CAL-P016 switched the staged path
-#: on because the monolith cannot finish, which made "census XOR publish" into
-#: "never census" — the 2026-08-02 ruling's surface was unreachable by
-#: construction for as long as the build worked.
-COVERAGE_CENSUS_ENABLED = True
+#: WHAT PRODUCTION SAID, from two consecutive beats of the staged futures build
+#: (``calibration:main:phase_ledger``, read 2026-08-09 19:11-19:18Z):
+#:
+#: * 16:15:00Z, census OFF (master ``b4aa0039``): ``read:futures_unit`` 626,242 ms
+#:   for **10 units committed** — **62.6 s/unit**.
+#: * 18:15:00Z, census ON (master ``75dfee56``, CAL-P020 deployed ~17:11Z):
+#:   ``read:futures_unit`` 632,103 ms for **1 unit committed** — **632 s/unit**.
+#:
+#: Same population, same ``STAGED_FUTURES_BUCKETS`` partition, same statement
+#: except the census. **~10x per unit.** A beat's usable window is ~687 s
+#: (726 s cancelled, less ~39 s to freeze the generation), so:
+#:
+#: * OFF: 128 units x 62.6 s = ~2.2 h of compute = **~13 beats**.
+#: * ON:  128 units x 632 s  = ~22.5 h of compute = **~128 beats**, i.e. more
+#:   than five days of uninterrupted hourly beats.
+#:
+#: It cannot get five days. ``_main_input_fingerprint`` hashes the SOURCE of the
+#: build's SQL functions, so any deploy touching one resets the cursor to zero —
+#: and this file took **25 commits in the 14 days** to 2026-08-09 (~1.8/day). The
+#: build's convergence time exceeded the lane's own edit interval by an order of
+#: magnitude. That is a RATE MISMATCH, not a cursor bug: CAL-P016's per-unit
+#: retention works exactly as designed and cannot help while a unit costs ten
+#: minutes.
+#:
+#: Note what this is NOT. Nothing of CAL-P020 is reverted — the chunk-scoped
+#: universe, the global rung pass and the narrowed refusal are correct, tested,
+#: and exactly what the census needs. Only the switch moved. The ordering is the
+#: whole point: **the census EXPLAINS the curve, so it cannot come before the
+#: curve publishes.** Turn it back on when the build is publishing AND a unit's
+#: cost with it on has been measured against the beat window - not when the
+#: surrounding code merely looks finished.
+COVERAGE_CENSUS_ENABLED = False
 
 #: The reason string a disabled census reports, so the page and any operator can
 #: tell "we chose not to measure this yet" from "we measured nothing".
@@ -2763,6 +2789,53 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
         """)
 
 
+def _record_convergence_projection(
+    runner, *, done: int, planned: int, ran_this_beat: int, unit_ms_this_beat: float
+) -> None:
+    """Say, in the ledger, how many more beats this build needs to publish.
+
+    CAL-P024. The ledger already recorded ``read:futures_unit`` and the cursor
+    already recorded ``committed_units``; nothing divided one by the other, so
+    the single most important fact about the build — **will it ever finish** —
+    lived in two rows of two different snapshots and had to be reconstructed by
+    hand, a day late, by someone who thought to look.
+
+    Both times that reconstruction was done it changed the plan. On 2026-08-09
+    it turned "the staged build is working, ~13 beats out" into "~128 beats out,
+    i.e. never, because a deploy resets it roughly every 13 hours". A build that
+    needs 128 more beats should say 128 on its own first beat.
+
+    Deliberately recorded even when ``ran_this_beat`` is 0: a beat that banked
+    nothing is the most important one to be able to see, and an absent stage
+    reads as "fine" (gotcha #53). ``unit_ms_mean`` is then omitted rather than
+    guessed, because there is no sample to average.
+    """
+    remaining = max(0, planned - done)
+    runner.ledger.record_stage("staged:units_done", done)
+    runner.ledger.record_stage("staged:units_planned", planned)
+    runner.ledger.record_stage("staged:units_this_beat", ran_this_beat)
+    if not ran_this_beat:
+        return
+    unit_ms_mean = unit_ms_this_beat / ran_this_beat
+    runner.ledger.record_stage("staged:unit_ms_mean", int(unit_ms_mean))
+    # The window a FUTURE beat gets for units is the phase budget less what
+    # freezing the generation costs — measured from this beat rather than
+    # assumed, since the freeze is the one cost every beat pays again.
+    window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
+    usable_ms = max(0.0, window_ms - (runner.elapsed_ms() - unit_ms_this_beat))
+    units_per_beat = usable_ms / unit_ms_mean if unit_ms_mean > 0 else 0.0
+    beats = math.ceil(remaining / units_per_beat) if units_per_beat >= 1 else -1
+    # -1 is NOT "unknown": it is "this beat could not complete a single unit in
+    # its whole window", which is a different and worse fact than a large count.
+    runner.ledger.record_stage("staged:beats_to_publish", beats)
+    logger.info(
+        "calibration staged futures: %d/%d units, %.1f s/unit, ~%.1f units/beat "
+        "=> %s beats to publish",
+        done, planned, unit_ms_mean / 1000.0, units_per_beat,
+        "MORE THAN ONE BEAT PER UNIT" if beats < 0 else beats,
+    )
+
+
 async def _run_staged_futures(db, runner, sql_builder):
     """Read the futures population one chunk of whole virtual questions at a time.
 
@@ -2844,7 +2917,7 @@ async def _run_staged_futures(db, runner, sql_builder):
         # honest empty curve rather than stalling forever on zero units.
         return []
 
-    cursor, action = await load_staged_cursor(
+    cursor, action, reason = await load_staged_cursor(
         population_version=runner.population_version,
         input_fingerprint=runner.fingerprint,
         generation_fingerprint=gen_digest,
@@ -2858,6 +2931,13 @@ async def _run_staged_futures(db, runner, sql_builder):
         logger.info("calibration staged futures: cursor held by another run — standing down")
         return None
     runner.ledger.record_stage(f"staged:cursor_{action}", 0)
+    # CAL-P024: the action alone is not diagnostic. Five distinct causes produce
+    # INVALIDATE, and on 2026-08-09 the one that fired (a deploy moving
+    # ``_main_input_fingerprint``) cost the build all ten units it had banked —
+    # a fact that took source reading and `git show` across two merges to
+    # establish, because the ledger recorded only "invalidate".
+    runner.ledger.record_stage(f"staged:cursor_reason:{reason}", 0)
+    logger.info("calibration staged futures: cursor %s (%s)", action, reason)
 
     # CAL-P016: the roster moves between every pair of hourly beats, so a cursor
     # is now kept and pruned per unit instead of discarded whole. Only units the
@@ -2876,6 +2956,8 @@ async def _run_staged_futures(db, runner, sql_builder):
     # -- Stage 2: process whole units -----------------------------------------
     chunk_sql = text(sql_builder(frozen=True))
     done = 0
+    ran_this_beat = 0
+    unit_ms_this_beat = 0.0
     for chunk in chunks:
         if cursor.has(chunk.key):
             done += 1
@@ -2886,6 +2968,7 @@ async def _run_staged_futures(db, runner, sql_builder):
                 done, len(chunks),
             )
             break
+        unit_started = time.monotonic()
         # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
         # previous unit's commit ended, so without this the next unit would run
         # with no statement timeout and no session identity (Queue 300B).
@@ -2917,6 +3000,16 @@ async def _run_staged_futures(db, runner, sql_builder):
             logger.warning("calibration staged futures: cursor write failed — stopping")
             return None
         done += 1
+        ran_this_beat += 1
+        unit_ms_this_beat += (time.monotonic() - unit_started) * 1000.0
+
+    _record_convergence_projection(
+        runner,
+        done=done,
+        planned=len(chunks),
+        ran_this_beat=ran_this_beat,
+        unit_ms_this_beat=unit_ms_this_beat,
+    )
 
     # -- Stage 3: finalize globally, or not at all ----------------------------
     if not is_complete(cursor, chunks):
@@ -4441,6 +4534,25 @@ def _main_input_fingerprint() -> str:
     * :data:`REPRESENTATIVE_TIE_AUTHORITY` — hashed explicitly rather than left
       implicit in the SQL text, so the authority is a named, greppable input to
       the fingerprint instead of an incidental substring of it.
+
+    CAL-P024 adds :data:`COVERAGE_CENSUS_ENABLED`, and it is the same class of
+    hole as the two above — found, this time, by flipping the switch and noticing
+    the digest did not move. The switch is read inside
+    ``_coverage_bridge_ctes`` / ``_coverage_bridge_join`` /
+    ``_coverage_bridge_select_columns``, which ``_main_futures_sql`` CALLS but
+    which are not themselves hashed; ``inspect.getsource`` returns a function's
+    own text, not its callees'. So the census switch changed the emitted
+    statement while leaving the fingerprint identical, and a cursor banked with
+    the census ON was resumable by code with it OFF — units built from two
+    different statements merged into one payload, which is exactly what this
+    digest exists to make impossible.
+
+    Hashed by VALUE and by name for the same reason
+    :data:`REPRESENTATIVE_TIE_AUTHORITY` is: a greppable input beats an
+    incidental substring. The general rule this keeps re-teaching — hashing a
+    function's source covers that function, never what it calls — is why new
+    SQL-shaping inputs belong on this list explicitly rather than being assumed
+    covered.
     """
     from app.utils.calibration_phase_ledger import input_fingerprint
 
@@ -4456,7 +4568,10 @@ def _main_input_fingerprint() -> str:
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"
     return input_fingerprint(
-        CALIBRATION_POPULATION_VERSION, REPRESENTATIVE_TIE_AUTHORITY, source
+        CALIBRATION_POPULATION_VERSION,
+        REPRESENTATIVE_TIE_AUTHORITY,
+        f"coverage_census={COVERAGE_CENSUS_ENABLED}",
+        source,
     )
 
 

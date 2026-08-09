@@ -379,9 +379,22 @@ class TestShipsOffUntilTheFuturesPhaseHasRoom:
     state and previously depended on it being the default.
     """
 
-    def test_it_ships_on_now_that_the_universe_is_chunk_scoped(self):
-        assert pc.COVERAGE_CENSUS_ENABLED is True
-        # The reason it can: the staged scope no longer rescans the world.
+    def test_it_ships_off_again_because_the_scoping_was_never_the_budget(self):
+        """CAL-P024. Chunk-scoping was necessary and it was not sufficient.
+
+        CAL-P020 removed the scoping objection correctly — the staged universe
+        really does no longer rescan the world — and then read that as the whole
+        blocker. It was not. Production, two consecutive beats: **62.6 s/unit
+        with the census off, 632 s/unit with it on**, which is ~22.5 h of compute
+        for 128 units against a ~687 s window per beat.
+
+        Both halves of this class's subject are therefore true at once, and that
+        is the point worth pinning: the chunk scope is built and correct, AND the
+        switch is off. The second is a budget fact, not a verdict on the first.
+        """
+        assert pc.COVERAGE_CENSUS_ENABLED is False
+        # Still true, still built, still what the census will use when it can
+        # be afforded — the scoping objection stays answered.
         assert "JOIN market_info mi ON mi.market_id = fo.market_id" in (
             pc._coverage_universe_cte(chunk_scoped=True)
         )

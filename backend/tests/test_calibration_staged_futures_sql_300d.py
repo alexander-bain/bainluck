@@ -372,13 +372,31 @@ class TestCoverageCensusRidesTheStagedPath:
     guard still catches it by mutation.
     """
 
-    def test_census_is_on_and_the_monolith_carries_it(self):
-        from app.tasks.precompute_calibration import COVERAGE_CENSUS_ENABLED
+    @pytest.fixture
+    def census_on(self, monkeypatch):
+        """Explicitly enable the census.
 
-        assert COVERAGE_CENSUS_ENABLED is True
+        CAL-P024 shipped the switch OFF again on a measured budget (62.6 s/unit
+        off vs 632 s/unit on), so the tests below can no longer lean on the
+        default. Patching it is strictly better anyway: each test now states the
+        state it is about instead of inheriting it.
+        """
+        monkeypatch.setattr("app.tasks.precompute_calibration.COVERAGE_CENSUS_ENABLED", True)
+
+    def test_the_monolith_carries_the_census_when_it_is_on(self, census_on):
         assert "coverage_universe" in _main_futures_sql()
 
-    def test_staged_scope_now_builds_with_the_census_on(self):
+    def test_the_shipped_default_is_off_on_a_measured_budget(self):
+        """CAL-P024 reversal. The scoping was built; the budget was not checked."""
+        from app.tasks.precompute_calibration import COVERAGE_CENSUS_ENABLED
+
+        assert COVERAGE_CENSUS_ENABLED is False
+        # And with it off the census contributes no SQL at all, so the staged
+        # build pays exactly nothing for it — which is the property that makes
+        # turning it off a real fix rather than a deferral.
+        assert "coverage_universe" not in _main_futures_sql(frozen=True)
+
+    def test_staged_scope_now_builds_with_the_census_on(self, census_on):
         from app.tasks.precompute_calibration import _coverage_universe_cte
 
         sql = _main_futures_sql(frozen=True)
@@ -389,7 +407,7 @@ class TestCoverageCensusRidesTheStagedPath:
         assert _coverage_universe_cte(chunk_scoped=True) in sql
         assert _coverage_universe_cte(chunk_scoped=False) not in sql
 
-    def test_the_narrowed_guard_still_refuses_an_unscoped_universe(self, monkeypatch):
+    def test_the_narrowed_guard_still_refuses_an_unscoped_universe(self, census_on, monkeypatch):
         from app.tasks.precompute_calibration import _coverage_universe_cte
 
         monkeypatch.setattr(

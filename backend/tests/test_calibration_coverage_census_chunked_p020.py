@@ -35,9 +35,12 @@ than implied by coverage here.
 
 from __future__ import annotations
 
+import inspect
 import re
 
 import pytest
+
+from app.tasks import precompute_calibration
 
 try:
     import sqlglot
@@ -84,14 +87,40 @@ def census_on(monkeypatch):
 
 
 class TestTheSwitchIsOn:
-    """Item 4. The last line of the change, and the point of the queue."""
+    """Item 4 — REVERSED by CAL-P024, and only the DEFAULT moved.
 
-    def test_census_ships_enabled(self):
+    CAL-P020 turned the census on. Two production beats then measured what that
+    cost: **62.6 s/unit with it off, 632 s/unit with it on** — ~10x — against a
+    ~687 s beat window, which turned a ~13-beat build into a ~128-beat one that
+    a deploy resets roughly every 13 hours. So the switch ships OFF again.
+
+    Everything else in this file still passes with the census explicitly ON via
+    the ``census_on`` fixture, and that is deliberate: CAL-P020's machinery is
+    correct and is exactly what the census needs when the build can afford it.
+    What was wrong was the default, not the code — so the proof stays and only
+    the shipped value changes.
+    """
+
+    def test_census_ships_disabled_because_a_unit_costs_ten_minutes_with_it_on(self):
         from app.tasks.precompute_calibration import COVERAGE_CENSUS_ENABLED
 
-        assert COVERAGE_CENSUS_ENABLED is True
+        assert COVERAGE_CENSUS_ENABLED is False
 
-    def test_the_staged_path_declares_every_census_column_it_emits(self):
+    def test_the_measurement_is_recorded_where_the_next_window_will_read_it(self):
+        """The reason must be a NUMBER in the source, not a mood.
+
+        CAL-P020 flipped this switch on in good faith: the comment it read said
+        only "off pending the chunk-scoped universe", which describes unfinished
+        work, so it finished the work and flipped. Nothing told it the budget had
+        never been re-measured. A comment that carries the measurement cannot be
+        read that way.
+        """
+        source = inspect.getsource(precompute_calibration)
+        head = source[: source.index("COVERAGE_CENSUS_ENABLED = False")]
+        for token in ("62.6", "632", "128 beats"):
+            assert token in head, f"the census switch must ship with {token!r} beside it"
+
+    def test_the_staged_path_declares_every_census_column_it_emits(self, census_on):
         """``merge_futures_rows`` refuses a column it was not told the KIND of.
 
         The census columns are declared next to the statement that emits them,

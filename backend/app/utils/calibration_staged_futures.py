@@ -94,6 +94,7 @@ __all__ = [
     "can_advance",
     "collect_unit_results",
     "decode_staged_cursor",
+    "decode_staged_cursor_detailed",
     "generation_fingerprint",
     "is_complete",
     "merge_futures_rows",
@@ -109,6 +110,27 @@ __all__ = [
 UNIT_KEY_VM_ID = "vm_id"
 
 STAGED_FUTURES_SCHEMA = "calibration-staged-futures/v1"
+
+# --- Why a cursor was not resumed (CAL-P024) ---------------------------------
+#
+# Short stable tokens, deliberately not prose: they are recorded on every beat
+# and the question worth asking is never "why did this one reset" but "which
+# cause resets us every time". Five of them used to be one indistinguishable
+# ``staged:cursor_invalidate``.
+REASON_ABSENT = "absent"
+REASON_MALFORMED = "malformed"
+REASON_SCHEMA = "schema_mismatch"
+REASON_TASK = "task_mismatch"
+REASON_UNIT_KEY = "unit_key_mismatch"
+REASON_POPULATION_VERSION = "population_version_changed"
+#: A deploy touching any SQL function hashed by ``_main_input_fingerprint``.
+REASON_INPUT_FINGERPRINT = "input_fingerprint_changed"
+REASON_MALFORMED_UNITS = "malformed_units"
+REASON_LEASE_HELD = "lease_held_by_other"
+#: The snapshot read itself threw — an unreadable cursor is a fresh one.
+REASON_READ_FAILED = "read_failed"
+REASON_RESUMABLE = "resumable"
+REASON_NOTHING_BANKED = "nothing_banked"
 
 # --- The row shape Stage B returns and Stage C merges -------------------------
 #
@@ -775,7 +797,53 @@ def decode_staged_cursor(
     generation: int,
     now: float,
 ) -> tuple[StagedFuturesCursor, str]:
+    """``(cursor, action)`` — :func:`decode_staged_cursor_detailed` without the reason.
+
+    Kept as the two-value form because that is what every caller that does not
+    log wants. The predicate chain lives in the detailed function ONLY; a second
+    copy of "why is this cursor unusable" is the C14 drift this module already
+    refuses elsewhere.
+    """
+    cursor, action, _reason = decode_staged_cursor_detailed(
+        raw,
+        expected_population_version=expected_population_version,
+        expected_input_fingerprint=expected_input_fingerprint,
+        expected_generation_fingerprint=expected_generation_fingerprint,
+        owner=owner,
+        generation=generation,
+        now=now,
+    )
+    return cursor, action
+
+
+def decode_staged_cursor_detailed(
+    raw: Any,
+    *,
+    expected_population_version: str,
+    expected_input_fingerprint: str,
+    expected_generation_fingerprint: str,
+    owner: str,
+    generation: int,
+    now: float,
+) -> tuple[StagedFuturesCursor, str, str]:
     """Load a persisted cursor, refusing anything not provably resumable.
+
+    Returns ``(cursor, action, reason)``. CAL-P024 added the third value, and the
+    reason it exists is worth stating: **five distinct causes below all produce
+    the same** ``INVALIDATE``, and the caller records only
+    ``staged:cursor_invalidate``. When the 2026-08-09 18:15Z beat discarded the
+    ten units the 16:15Z beat had banked, establishing WHICH cause fired took a
+    source read plus ``git show`` across two merges — and the cycle before that
+    could not establish it at all and mis-attributed the stall to beat delivery.
+
+    A cursor reset is the most consequential event in this build's life: it is
+    the difference between a build that is slow and one that can never finish.
+    "It reset" without "because the input fingerprint moved" is gotcha #53's
+    shape — one observable standing in for several different facts.
+
+    The reason is a short stable token, not prose, so it can be counted across
+    beats: the useful question is never "why did this one reset" but "which
+    cause is resetting us every time".
 
     Returns ``(cursor, action)`` using the sibling's four actions, imported from
     ``calibration_phase_ledger`` rather than redefined so the two halves of the
@@ -823,19 +891,26 @@ def decode_staged_cursor(
         generation=generation,
     )
     if raw is None:
-        return blank, FRESH
+        return blank, FRESH, REASON_ABSENT
     if not isinstance(raw, dict):
-        return blank, INVALIDATE
-    if raw.get("schema") != STAGED_FUTURES_SCHEMA or raw.get("task") != MAIN_BUILD_TASK:
-        return blank, INVALIDATE
+        return blank, INVALIDATE, REASON_MALFORMED
+    if raw.get("schema") != STAGED_FUTURES_SCHEMA:
+        return blank, INVALIDATE, REASON_SCHEMA
+    if raw.get("task") != MAIN_BUILD_TASK:
+        # Split from the schema check purely so the two report separately: a
+        # foreign task's cursor and a stale schema are different operational
+        # stories, and they were indistinguishable while they shared a branch.
+        return blank, INVALIDATE, REASON_TASK
     if raw.get("unit_key") != UNIT_KEY_VM_ID:
         # A cursor cut on a different partition key is not a cursor for this
         # plan; its unit keys mean something else entirely.
-        return blank, INVALIDATE
+        return blank, INVALIDATE, REASON_UNIT_KEY
     if raw.get("population_version") != expected_population_version:
-        return blank, INVALIDATE
+        return blank, INVALIDATE, REASON_POPULATION_VERSION
     if raw.get("input_fingerprint") != expected_input_fingerprint:
-        return blank, INVALIDATE
+        # THE one that fires in practice. A deploy touching any SQL function in
+        # ``_main_input_fingerprint`` lands here and costs every banked unit.
+        return blank, INVALIDATE, REASON_INPUT_FINGERPRINT
     # NOTE: generation_fingerprint is deliberately NOT checked here (CAL-P016).
     # It is still carried and still written, because it names which roster a
     # cursor was last advanced against and that is worth having in the payload —
@@ -848,12 +923,16 @@ def decode_staged_cursor(
         float(lease) if isinstance(lease, (int, float)) and not isinstance(lease, bool) else 0.0
     )
     if held_by and held_by != owner and lease_expires_at > now:
-        return replace(blank, owner=held_by, lease_expires_at=lease_expires_at), REFUSE
+        return (
+            replace(blank, owner=held_by, lease_expires_at=lease_expires_at),
+            REFUSE,
+            REASON_LEASE_HELD,
+        )
 
     committed = raw.get("committed_units")
     results = raw.get("unit_results")
     if not isinstance(committed, list) or not isinstance(results, dict):
-        return blank, INVALIDATE
+        return blank, INVALIDATE, REASON_MALFORMED_UNITS
 
     # A unit is resumable only if it is BOTH declared committed and carries a
     # stored row list. A unit marked done with no rows is a bookkeeping error,
@@ -878,6 +957,7 @@ def decode_staged_cursor(
             terminal=str(raw.get("terminal") or TERMINAL_PARTIAL),
         ),
         RESUME if resumable else FRESH,
+        REASON_RESUMABLE if resumable else REASON_NOTHING_BANKED,
     )
 
 

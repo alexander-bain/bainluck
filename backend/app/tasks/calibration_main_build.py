@@ -838,11 +838,19 @@ async def load_staged_cursor(
     generation: int,
     max_age_s: float = STATE_MAX_AGE_S,
 ):
-    """Read + classify the staged futures cursor (fresh/resume/invalidate/refuse)."""
+    """Read + classify the staged futures cursor.
+
+    Returns ``(cursor, action, reason)``. The third value is CAL-P024's: the
+    caller records it beside the action, because five different causes all
+    produce ``INVALIDATE`` and the stage name alone could not tell an operator
+    which one had just cost the build every unit it had banked.
+    """
     from app.services.durable_snapshots import read_snapshot_standalone
     from app.utils.calibration_staged_futures import (
+        REASON_ABSENT,
+        REASON_READ_FAILED,
         STAGED_FUTURES_SCHEMA,
-        decode_staged_cursor,
+        decode_staged_cursor_detailed,
         new_staged_cursor,
     )
 
@@ -861,11 +869,13 @@ async def load_staged_cursor(
         )
     except Exception as exc:  # noqa: BLE001 — an unreadable cursor is a fresh one
         logger.warning("calibration staged cursor read failed: %s", exc)
-        return blank, INVALIDATE
+        return blank, INVALIDATE, REASON_READ_FAILED
     if not read.ok or read.envelope is None:
-        return blank, (FRESH if read.status == "missing" else INVALIDATE)
+        if read.status == "missing":
+            return blank, FRESH, REASON_ABSENT
+        return blank, INVALIDATE, f"envelope_{read.status}"
 
-    return decode_staged_cursor(
+    return decode_staged_cursor_detailed(
         read.envelope.payload,
         expected_population_version=population_version,
         expected_input_fingerprint=input_fingerprint,

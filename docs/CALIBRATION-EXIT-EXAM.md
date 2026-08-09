@@ -75,10 +75,55 @@ shows `staged:cursor_resume` and `committed_units` climbs 10 → ~20, CAL-P016 i
 the publish is ~13 beats out. If it shows `staged:cursor_invalidate` again with the count back at
 ~10, the build is thrashing and CAL-P016 is not done.
 
-### ⚠️ The beat is NOT firing hourly — measured directly, and it changes the projection
+### ✅ THE DECISIVE READ WAS TAKEN — 2026-08-09 19:11–19:18Z, window `4a9d`. It is the second answer.
 
-The 17:15Z miss was initially written off as benign (the INT-024 dyno restart at ~17:11Z straddled
-it). **Watching a second scheduled beat disproved that.** Observed continuously 16:27Z → 18:20Z:
+The section above set the test. **The build is thrashing, and the cause is this lane's own last
+merge.**
+
+**First, a correction to the section below it.** Window b2e4 stopped watching at **18:20Z**; the
+18:15Z beat committed its first unit at **18:22:22Z** and wrote its ledger at **18:27:03Z**. So the
+beat it concluded had never fired had in fact fired, two minutes after it looked away. The "~40%
+fire rate" therefore rests on one confirmed miss (17:15Z, straddling the INT-024 restart) and one
+mis-read. It is not established. Acting on it — `heavy` queue depth was the recommended first
+place to look, and reads **0** — would have been a cycle spent on a phantom.
+
+| question | answer |
+|---|---|
+| did a second staged beat run? | ✅ **yes** — generation `1786299300221` = 18:15:00Z |
+| did the banked unit survive? | ❌ **NO** — `staged:cursor_invalidate` again; `committed_units` **10 → 1** |
+| why? | **`input_fingerprint` moved.** CAL-P020 edited `_main_futures_sql` and `_calibration_population_ctes` — two of the four functions `_main_input_fingerprint` hashes by `inspect.getsource`. INT-024 deployed it ~17:11Z. |
+| per-unit cost | 16:15Z, census OFF: **62.6 s/unit**. 18:15Z, census ON: **632 s/unit**. |
+
+**CAL-P020 flipped `COVERAGE_CENSUS_ENABLED = True` and made every unit ~10x more expensive.** At
+62.6 s/unit the 128-unit build is ~2.2 h ≈ 13 beats. At 632 s/unit it is **~22.5 h of compute**
+against a ~687 s usable window per beat — **~117 more beats**, over five days of unbroken hourly
+beats.
+
+It cannot get five days. **`precompute_calibration.py` took 25 commits in the 14 days to
+2026-08-09 (~1.8/day)**, and any one touching a hashed function resets the cursor to zero. **The
+build's convergence time now exceeds the lane's own edit interval by an order of magnitude.** That
+is a rate mismatch, not a cursor bug: CAL-P016's per-unit retention works exactly as designed and
+cannot help while a unit costs ten minutes.
+
+**Say the shape of this plainly, because it is the second occurrence.** CAL-P020 exists because
+CAL-P016 had made the census unbuildable; it fixed that by making the curve unpublishable. Two
+correct decisions composing into a dark surface — the same pair of switches, eight days apart,
+each guarded by a rule that correctly said "do not touch the other thing".
+
+**Fixed in CAL-P024** (`program/calibration-22`): the switch goes back off on the measured budget,
+with the numbers written beside it; the switch joins the fingerprint (flipping it changed the
+statement but *not* the digest, so units built under two different statements were mutually
+resumable); the ledger names *which* of five causes reset the cursor; and every beat now records
+`staged:beats_to_publish`, so "slow" and "never" stop looking alike.
+
+**Still genuinely open — do not treat as answered:** the 19:15Z beat produced no ledger and no
+cursor write for 23+ minutes (watched to 19:38Z), against 12 minutes for 18:15Z. So beats *are*
+intermittently missing; the rate is unmeasured and the cause unknown. `heavy` queue depth is 0 and
+`background` is **442** (documented threshold: 50) — the latter is an ops finding, not this lane's.
+
+### ⚠️ Superseded — the original "beat is NOT firing hourly" reading
+
+Kept for the record; corrected above. Observed 16:27Z → 18:20Z:
 
 | observation | 16:36Z | 18:20Z |
 |---|---|---|
@@ -86,27 +131,10 @@ it). **Watching a second scheduled beat disproved that.** Observed continuously 
 | ledger generation | 16:15:00Z | **16:15:00Z — unchanged** |
 | cursor `committed_units` / `updated_at` | 10 @ 16:26:24Z | **10 @ 16:26:24Z — unchanged** |
 
-**Neither the 17:15Z nor the 18:15Z beat ran.** Two consecutive misses is not a deploy artifact.
-And the 24h counter corroborates it independently: **10 recorded runs in 24 hours against an
-hourly schedule** is a ~40% fire rate, not a healthy one.
-
-**Why this matters more than it looks.** Convergence needs ~13 successful staged beats *in a row*
-against a cursor that survives between them. The projection "~13 beats ⇒ ~13 hours" silently
-assumed hourly firing. At the observed rate it is **~32+ hours at best**, and every extra hour of
-wall-clock is more roster drift for `retain_planned_units` to absorb — the drift the design
-tolerates *per beat* compounds against a build that takes days rather than hours to finish.
-
-**So there are now TWO open questions, not one, and this is the newer one:**
-
-1. does a banked unit survive into the next beat? (unobserved — no next beat occurred)
-2. **why is an hourly beat firing ~40% of the time?** (new, and it gates question 1 from ever
-   being answered)
-
-Question 2 is plausibly the more urgent: a build that cannot converge because it never gets to run
-looks exactly like a build that cannot converge because its cursor thrashes, and the two have
-completely different fixes. Whoever takes this must distinguish them before changing code —
-`heavy` queue depth/concurrency and beat-scheduler delivery are the first places to look, not
-`calibration_staged_futures.py`.
+Read as "neither the 17:15Z nor the 18:15Z beat ran". The 18:15Z half is now known to be a
+two-minute-early read. **The lesson is worth more than the datum: this lane's projections have twice
+turned on a snapshot taken just before the thing it was waiting for.** A negative observation about
+a periodic process needs a margin past the full period, and should say what margin it used.
 
 ---
 
