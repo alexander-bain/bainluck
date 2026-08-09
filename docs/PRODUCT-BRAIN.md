@@ -1034,3 +1034,71 @@ is the read most likely to be blocked. Three payoffs are owed right now for exac
 each from a cycle whose code shipped fine. Front-loading converts "verification we could not
 reach" into Item 0. Companion trap, twice hit: a pass taken minutes after a deploy reads as a
 regression. **The warm second pass is the honest number.**
+
+---
+
+## RULINGS — 2026-08-08(f): defunct-provider cleanup, and how evidence rails get watched
+
+### 1. A consumption census precedes any replace/retire call
+
+**Ruled:** before retiring a data pipeline, **trace end-to-end what reads its output**. Nothing
+user-visible consumes it → retire, with the evidence attached. Something real does → stage the
+replacement.
+
+Ordered for `social-ground-truth.yml` and immediately vindicated. The census (UX-P027,
+`.claude/handoff/SOCIAL-GROUND-TRUTH-CENSUS.md`) found the uploaded rows drive a **live
+candidate-pool recall lane in Discover** (`_external_curator_recall_market_ids`, `feed.py:706`,
+called at `:3259` and `:5625`). Retiring the pipeline would have **silently removed a live
+recall lane**, not merely stopped a feed.
+
+**The part worth generalising:** the FIRST consumer the census found was debug-only —
+`external_curator_items` inside `if debug:` at `feed.py:2197`, landing in `debug_payload` and
+touching nothing. Stopping there would have produced "diagnostics only → retire", the wrong
+answer. The live consumer was 1,500 lines earlier in the same file and read the ORM model
+directly rather than through the report helpers, so it did not appear in a grep for those
+helpers.
+
+**A census is only worth the exhaustiveness of its grep.** "I found the consumer" is not the
+same claim as "I found all of them" — the same distinction as ancestry-vs-content in the
+lineage rule, one level up.
+
+It also surfaced a state nobody had named: the pipeline stopped producing 2026-07-28 but the
+lane never stopped reading, so Discover is recalling against a **frozen corpus** — not inert,
+not current, and silent about which.
+
+### 2. An evidence rail must be watched BY CONSTRUCTION
+
+**Ruled** for `browser-audit.yml` (#1598): repair it, schedule it via **GitHub Actions cron —
+not a Cowork scheduled task** — and wire red runs into **sentinel auto-filing**. Adopt Codex's
+**C181 jank-classification pack** as its finding vocabulary. Rendered-proof obligations (the
+#1574c class) route to this rail once green; **Fable remains the on-demand verifier**.
+
+The failure this closes is subtler than the one it replaces. The retired Manus sweep lied —
+it reported `success` having collected nothing. Its replacement does the opposite: its header
+states *"the one thing this workflow must never do is report GREEN without evidence"*, and it
+delivers, failing loudly and correctly. It had still been **red and unnoticed since
+2026-08-03**, because it is manual-dispatch with no alert path.
+
+**A rail that fails honestly into an empty room is not much better than one that lies.**
+Honest failure is necessary and not sufficient; someone — or something — has to be listening.
+Hence cron plus auto-filing: watched by construction, not by remembering.
+
+"Not a Cowork scheduled task" is deliberate: the watching must live in the same system as the
+thing being watched, so it cannot drift out of the repo or die with a session.
+
+### 3. The #1497 deletion deviation is RATIFIED
+
+**Ruled:** deleting `manus-sweep.yml` outright — against #1497's "do not delete the workflows"
+— was correct. **The rollback-surface premise died with the provider.** Preserving
+dispatchability for an API that returns `USER_IS_DEACTIVATED` preserves nothing.
+
+The general form: **when a card's suggested scope rests on a premise, and the premise dies,
+the scope dies with it.** Re-derive from the intent — here, *don't destroy history* — which
+was fully honoured by keeping `Manus/audit_results/` and the scripts.
+
+**Also ratified as a reusable template:** the lane's nine "lead, not a measurement" issue notes
+are the standard pattern for defunct-evidence cleanup. When a provider dies, every issue citing
+its findings gets a note saying the artifact is readable but **the reproduction path is gone**,
+so the finding is a lead to re-establish rather than evidence to act on — plus any known
+window in which the provider was already lying (here, degradation from 2026-07-28, three days
+before the visible 403).
