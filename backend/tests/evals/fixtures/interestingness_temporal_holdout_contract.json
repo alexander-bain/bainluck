@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "clean-future-holdout-improves",
+      "cutoff": "2026-08-01T00:00:00Z", "min_holdout": 4, "top_k": 2,
+      "fit_population": "train", "evaluation_population": "holdout", "time_authority": "labeled_at",
+      "baseline_population_hash": "2a22080e9415ea1c", "candidate_population_hash": "2a22080e9415ea1c",
+      "rows": [
+        {"item_id":"t1","labeled_at":"2026-07-30T00:00:00Z","label":1,"baseline_score":0.9,"candidate_score":0.9},
+        {"item_id":"t2","labeled_at":"2026-07-31T00:00:00Z","label":0,"baseline_score":0.8,"candidate_score":0.1},
+        {"item_id":"h1","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.9,"candidate_score":0.9},
+        {"item_id":"h2","labeled_at":"2026-08-02T01:00:00Z","label":1,"baseline_score":0.1,"candidate_score":0.8},
+        {"item_id":"h3","labeled_at":"2026-08-02T02:00:00Z","label":0,"baseline_score":0.8,"candidate_score":0.2},
+        {"item_id":"h4","labeled_at":"2026-08-02T03:00:00Z","label":0,"baseline_score":0.2,"candidate_score":0.1}
+      ],
+      "expected":{"verdict":"IMPROVEMENT","reasons":[]}
+    },
+    {
+      "id":"same-market-reappears-after-cutoff", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":2, "top_k":2,
+      "fit_population":"train", "evaluation_population":"holdout", "time_authority":"labeled_at",
+      "baseline_population_hash":"wrong", "candidate_population_hash":"wrong",
+      "rows":[
+        {"item_id":"repeat","labeled_at":"2026-07-31T00:00:00Z","label":1,"baseline_score":0.5,"candidate_score":0.8},
+        {"item_id":"repeat","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.5,"candidate_score":0.8},
+        {"item_id":"fresh","labeled_at":"2026-08-02T01:00:00Z","label":0,"baseline_score":0.6,"candidate_score":0.2}
+      ],
+      "expected":{"verdict":"REFUSE","reasons":["BASELINE_POPULATION_MISMATCH","CANDIDATE_POPULATION_MISMATCH","ITEM_LEAKAGE"]}
+    },
+    {
+      "id":"current-fitter-trains-and-evaluates-all", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":2, "top_k":2,
+      "fit_population":"all", "evaluation_population":"all", "time_authority":"labeled_at",
+      "baseline_population_hash":"wrong", "candidate_population_hash":"wrong",
+      "rows":[
+        {"item_id":"t","labeled_at":"2026-07-31T00:00:00Z","label":1,"baseline_score":0.4,"candidate_score":0.9},
+        {"item_id":"h1","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.6,"candidate_score":0.8},
+        {"item_id":"h2","labeled_at":"2026-08-02T01:00:00Z","label":0,"baseline_score":0.7,"candidate_score":0.1}
+      ],
+      "expected":{"verdict":"REFUSE","reasons":["BASELINE_POPULATION_MISMATCH","CANDIDATE_POPULATION_MISMATCH","EVAL_NOT_HOLDOUT_ONLY","FIT_NOT_TRAIN_ONLY"]}
+    },
+    {
+      "id":"market-date-used-instead-of-label-time", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":2, "top_k":2,
+      "fit_population":"train", "evaluation_population":"holdout", "time_authority":"market_date",
+      "baseline_population_hash":"wrong", "candidate_population_hash":"wrong",
+      "rows":[
+        {"item_id":"h1","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.4,"candidate_score":0.8},
+        {"item_id":"h2","labeled_at":"2026-08-02T01:00:00Z","label":0,"baseline_score":0.6,"candidate_score":0.2}
+      ],
+      "expected":{"verdict":"REFUSE","reasons":["BASELINE_POPULATION_MISMATCH","CANDIDATE_POPULATION_MISMATCH","WRONG_TIME_AUTHORITY"]}
+    },
+    {
+      "id":"small-one-class-holdout", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":3, "top_k":2,
+      "fit_population":"train", "evaluation_population":"holdout", "time_authority":"labeled_at",
+      "baseline_population_hash":"wrong", "candidate_population_hash":"wrong",
+      "rows":[
+        {"item_id":"h1","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.4,"candidate_score":0.8},
+        {"item_id":"h2","labeled_at":"2026-08-02T01:00:00Z","label":1,"baseline_score":0.6,"candidate_score":0.9}
+      ],
+      "expected":{"verdict":"REFUSE","reasons":["BASELINE_POPULATION_MISMATCH","CANDIDATE_POPULATION_MISMATCH","HOLDOUT_ONE_CLASS","HOLDOUT_TOO_SMALL"]}
+    },
+    {
+      "id":"below-two-point-floor", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":2, "top_k":2,
+      "fit_population":"train", "evaluation_population":"holdout", "time_authority":"labeled_at", "floor_points":2,
+      "baseline_population_hash":"7e18f737311b2dc3", "candidate_population_hash":"7e18f737311b2dc3",
+      "rows":[
+        {"item_id":"a","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.9,"candidate_score":0.9},
+        {"item_id":"b","labeled_at":"2026-08-02T01:00:00Z","label":0,"baseline_score":0.8,"candidate_score":0.8}
+      ],
+      "expected":{"verdict":"NO_MEANINGFUL_CHANGE","reasons":[]}
+    },
+    {
+      "id":"deterministic-tie", "cutoff":"2026-08-01T00:00:00Z", "min_holdout":2, "top_k":1,
+      "fit_population":"train", "evaluation_population":"holdout", "time_authority":"labeled_at",
+      "baseline_population_hash":"7e18f737311b2dc3", "candidate_population_hash":"7e18f737311b2dc3",
+      "rows":[
+        {"item_id":"b","labeled_at":"2026-08-02T01:00:00Z","label":0,"baseline_score":0.5,"candidate_score":0.5},
+        {"item_id":"a","labeled_at":"2026-08-02T00:00:00Z","label":1,"baseline_score":0.5,"candidate_score":0.5}
+      ],
+      "expected":{"verdict":"NO_MEANINGFUL_CHANGE","reasons":[]}
+    }
+  ]
+}
