@@ -1297,3 +1297,4 @@ failure this document already records happening twice.
 - [007](rulings/007-native-riders.md) — 2026-08-09 — Native riders, and the deferred slot rotation (Alex)
 - [008](rulings/008-lock-validity-is-pid-alive.md) — 2026-08-09 — Lock validity is the owner pid being alive (Alex)
 - [009](rulings/009-precompute-calibration-freeze.md) — 2026-08-09 — precompute_calibration.py is frozen until the publish converges (Alex)
+- [010](rulings/010-sentry-keep-sdk-modular-init.md) — 2026-08-09 — Sentry: keep the SDK, spike a modular init (Alex)

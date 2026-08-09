@@ -83,6 +83,13 @@ logs/
 
 # Node (for frontend)
 node_modules/
+# Also match a node_modules SYMLINK, which the trailing-slash pattern above does NOT.
+# Worktrees cannot afford their own install, so every lane symlinks master's node_modules --
+# and because git SAW that symlink as untracked, the standing advice became "delete it before
+# committing". Lanes did, which is why a refreshed worktree arrives with NO deps at all and
+# codex cannot run exact-branch suites (the ts-jest report, 2026-08-09). One missing slash
+# turned a convenience into a recurring setup failure. Do not re-add the slash.
+node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
