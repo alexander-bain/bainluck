@@ -475,3 +475,38 @@ async def test_typeahead_short_query_answers_without_the_outcome_scan(typeahead)
     """
     payload = await typeahead("re")
     assert isinstance(_typeahead_texts(payload), list)
+
+
+# --------------------------------------------------------------------------
+# LAT-P010 — /search's single sub-3-char term (#1494 GAP 1)
+# --------------------------------------------------------------------------
+async def test_short_single_term_search_still_answers(search):
+    """A 2-char query must still return its NAME matches.
+
+    The outcome arm is dropped at 2 characters (it seq-scans 3 GB and, measured
+    in production, contributed 0 of 10 visible rows because ts_rank_cd sorts
+    outcome-only matches below every name match). The NAME arm must survive —
+    "US Recession in 2026?" contains "re".
+    """
+    names = _futures_names(await search("re"))
+    assert any("Recession" in (n or "") for n in names), (
+        f"a 2-char query lost its name matches too: got {names!r}. Only the "
+        "OUTCOME arm should be dropped below 3 characters."
+    )
+
+
+async def test_multi_term_short_token_still_filters_after_lat_p010(search):
+    """LAT-P010 must not have leaked into the multi-term path.
+
+    This is LAT-P006's guard restated at the boundary LAT-P010 introduced: in
+    `us recession`, the 2-char `us` still FILTERS, so a market matching only
+    `%recession%` stays out. If LAT-P010's gate were applied per-term instead of
+    to the single-term path, this row would be admitted.
+    """
+    names = _futures_names(await search("us recession"))
+    assert "Euro area growth 2026?" not in names, (
+        f"the sub-3-char gate leaked into the multi-term AND: got {names!r}"
+    )
+    assert "US Recession in 2026?" in names, (
+        f"multi-term recall broke: got {names!r}"
+    )

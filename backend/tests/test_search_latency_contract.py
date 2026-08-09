@@ -566,8 +566,19 @@ class TestTypeaheadIsBoundedAndIndexable:
         17 of the 20 visible rows for `re` came from this arm and all 17 were
         substring accidents (Lamprecht, Baltimore, Guterres, Villarreal).
         """
-        assert "_TA_MIN_OUTCOME_MATCH_CHARS = 3" in TYPEAHEAD_CODE, (
+        # Assert the EFFECTIVE value, not the literal. LAT-P010 moved the 3 into a
+        # shared module constant so /search and /typeahead cannot drift on where
+        # the cliff is; pinning the literal made this guard fail on that correct
+        # change, which is the LAT-P005 lesson about pinning the wrong thing.
+        from app.routes.events import _SEARCH_MIN_OUTCOME_MATCH_CHARS
+
+        assert _SEARCH_MIN_OUTCOME_MATCH_CHARS == 3, (
             "the threshold must be 3 — that is where the pg_trgm cliff is"
+        )
+        assert "_TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE, (
+            "/typeahead must use the SHARED threshold — the two surfaces drifting "
+            "is how /search kept this defect for three cycles after /typeahead's "
+            "twin was fixed"
         )
         # Defined is not enough; it must GATE the arm. An earlier version of this
         # guard passed while the arm ran unconditionally, because the constant was
@@ -646,3 +657,90 @@ class TestTypeaheadIsBoundedAndIndexable:
         assert "_is_query_timeout(exc)" in TYPEAHEAD_CODE, (
             "a non-timeout error must still propagate, not be swallowed"
         )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P010 — /search's single sub-3-char term. #1494 GAP 1.
+#
+# INT-019's control pass found /search slower than /typeahead on EVERY short stem
+# tested. LAT-P006 closed /search for named MULTI-WORD queries; the single-term
+# path was never touched, so /search kept the exact defect LAT-P007 had just
+# removed from /typeahead — the mirror image of LAT-P007 itself.
+#
+# MEASURED in production 2026-08-08:
+#   %re%            374,988 outcome rows   6,830ms
+#   %la%            192,448 outcome rows   4,917ms
+#   %los angeles%     7,726 outcome rows     657ms   (the expansion IS servable)
+#   /search q=re    20.4s wall on TWO passes; futures stage 7.5s of an 8.4s request
+#   /search q=la    1.9-3.1s; futures 1.4-2.4s
+#
+# And it buys nothing: for BOTH `re` and `la`, 0 of the 10 visible futures come
+# from the outcome arm. Futures are ordered by ts_rank_cd over the NAME vector, so
+# an outcome-only match scores ~0 and sorts below every name match; with a 2-char
+# term there are always thousands of name matches, so the arm cannot reach the
+# page.
+# ---------------------------------------------------------------------------
+class TestSearchSkipsTheUnservableOutcomeArm:
+    def test_threshold_is_shared_between_search_and_typeahead(self):
+        """One constant, both surfaces. Drift is how this defect survived.
+
+        /typeahead was fixed at LAT-P007 and /search was not, because nothing
+        tied them together. A shared constant makes the next change land on both.
+        """
+        from app.routes.events import _SEARCH_MIN_OUTCOME_MATCH_CHARS
+
+        assert _SEARCH_MIN_OUTCOME_MATCH_CHARS == 3
+        assert "_TA_MIN_OUTCOME_MATCH_CHARS = _SEARCH_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE
+        assert "len(term) < _SEARCH_MIN_OUTCOME_MATCH_CHARS" in SEARCH_CODE, (
+            "/search no longer gates its outcome arm on the shared threshold"
+        )
+
+    def test_the_gate_is_only_on_the_single_term_path(self):
+        """Must not contradict LAT-P006's multi-term guard.
+
+        LAT-P006 pins that a short term still FILTERS inside a multi-term AND
+        (`us recession` must not admit "Euro area growth"). Applying this gate
+        per-term would break that. The multi-term branch stays untouched.
+        """
+        multi = SEARCH_CODE[
+            SEARCH_CODE.find("if len(terms) > 1:") : SEARCH_CODE.find("futures_name_match = futures_name_ilike")
+        ]
+        head, _, tail = multi.partition("    else:")
+        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" not in head, (
+            "the sub-3-char gate leaked into the MULTI-term branch — that is the "
+            "candidate LAT-P006 measured and rejected, and it would break the "
+            "`us recession` / 'Euro area growth' guard"
+        )
+        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" in tail, (
+            "the gate is not on the single-term path"
+        )
+
+    def test_the_expansion_survives_when_the_base_term_is_dropped(self):
+        """`la` -> `los angeles` is meaningful, servable and cheap.
+
+        Dropping the whole arm would lose real recall; dropping only the
+        unindexable base term keeps it. 4,917ms -> 657ms on the outcome scan.
+        """
+        assert "_outcome_id_match(exp, None) if exp else None" in SEARCH_CODE, (
+            "the expansion is being dropped along with the base term — `la` loses "
+            "its `los angeles` outcome recall for no latency gain"
+        )
+
+    def test_a_dropped_arm_cannot_reach_the_union_as_none(self):
+        """The arm list is FILTERED, not conditionally appended.
+
+        `or_(None, ...)`/`union(select().where(None))` would be a silent
+        correctness bug rather than a loud one.
+        """
+        assert "if arm is not None" in SEARCH_CODE, (
+            "a None arm can reach the UNION"
+        )
+
+    def test_search_and_typeahead_now_agree_on_the_cliff(self):
+        """The parity assertion this whole gap was: both surfaces gate, both at 3.
+
+        INT-019 found /search slower than /typeahead on all 13 stems it tried.
+        This is the test that fails if they diverge again.
+        """
+        assert "_SEARCH_MIN_OUTCOME_MATCH_CHARS" in SEARCH_CODE
+        assert "_TA_MIN_OUTCOME_MATCH_CHARS" in TYPEAHEAD_CODE
