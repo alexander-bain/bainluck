@@ -617,6 +617,7 @@ async def _grid_freshness(league: str, now=None) -> dict:
     Returns a dict with the age and whether it is a real staleness defect."""
     from datetime import datetime, timezone
 
+    from sqlalchemy import any_ as sa_any_
     from sqlalchemy import func, or_, select
 
     from app.config.league_configs import get_league_config
@@ -656,12 +657,35 @@ async def _grid_freshness(league: str, now=None) -> dict:
             #
             # MEASURED on production (MLB): the joined form >10,354ms (timeout);
             # the two-step form 2,630ms; step 1 alone 668ms over 1,598 markets.
-            # CAVEAT, stated rather than glossed: the measured two-step used
-            # `market_id = ANY(ARRAY(SELECT ...))`, while this ships
-            # `market_id IN (SELECT ...)`. They are semantically identical and
-            # Postgres plans both as a semi-join, but they are not the same SQL
-            # text, and the guardrail closed production reads before the shipped
-            # form could be timed. The deployed number is OWED, not implied.
+            #
+            # LAT-P018 (#1628 cycle) PAID THE CAVEAT LAT-P017 RECORDED HERE, and
+            # the caveat was not cosmetic — it was the bug. LAT-P017 measured
+            # `market_id = ANY(ARRAY(SELECT ...))` but shipped
+            # `market_id IN (SELECT ...)`, calling them "semantically identical,
+            # and Postgres plans both as a semi-join". Semantically identical:
+            # yes. Planned the same: NO.
+            #
+            # Timed on production 2026-08-09 (deployed 38485c8e, warm, control
+            # drift 4.7%), both forms, both call orders, per league:
+            #     MLB   IN (SELECT ...)  >10,264ms TIMEOUT   ANY(ARRAY(...))  933ms
+            #     NBA   IN (SELECT ...)  >10,283ms TIMEOUT   ANY(ARRAY(...))  895ms
+            #     NHL   IN (SELECT ...)      572ms           ANY(ARRAY(...))  499ms
+            # Four separate timeouts across two passes. NHL is fast either way
+            # because its id set is small; the two leagues with a real id set
+            # (MLB ~1,600 markets) are the ones that fail.
+            #
+            # The semi-join lets the planner choose a strategy driven by
+            # futures_outcomes (3.8M rows / 3,079 MB), so it stops using
+            # ix_futures_outcomes_market_id. ARRAY() materialises the id set
+            # first — one pass over futures_markets — and then the array-membership
+            # test drives that index. Same rows, same answer, ~11x under bound
+            # instead of over it.
+            #
+            # So LAT-P017's fix for the skipped freshness self-check would NOT
+            # have fixed it: MLB and NBA would still have blown the 15s bound and
+            # still reported green with the check skipped — the exact failure
+            # LAT-P017 was written to end. Ship the form that was measured.
+            #
             # The subquery form is used deliberately over a Python-side id list:
             # it stays correct for a league matching any number of markets,
             # where a bounded IN-list would have to truncate and quietly return
@@ -672,7 +696,7 @@ async def _grid_freshness(league: str, now=None) -> dict:
                 .scalar_subquery()
             )
             stmt = select(func.max(FuturesOutcome.last_updated)).where(
-                FuturesOutcome.market_id.in_(market_ids)
+                FuturesOutcome.market_id == sa_any_(func.array(market_ids))
             )
             newest = (await session.execute(stmt)).scalar()
     except Exception as exc:

@@ -355,7 +355,162 @@ def test_grid_freshness_does_not_join_outcomes_to_markets():
         "join is the shape that timed out; resolve market ids first"
     )
     assert "scalar_subquery" in names, "market ids must be resolved as a subquery"
-    assert "in_" in names, "the MAX() must be keyed by market_id IN (...)"
+    # LAT-P018: this line previously read
+    #     assert "in_" in names, "the MAX() must be keyed by market_id IN (...)"
+    # which was BOTH vacuous and wrong-way-round. Vacuous because
+    # `FuturesMarket.status.in_(("open","closed"))` also contributes `in_` to
+    # `names`, so the assertion held no matter what market_id did. Wrong-way-round
+    # because the form it demanded — `market_id IN (SELECT ...)` — is the one that
+    # times out in production (see the ARRAY guards below). A guard that pins the
+    # defect it was written to prevent is worse than no guard.
+    assert "array" in names, (
+        "the market-id set must be MATERIALISED with ARRAY(...) before the "
+        "membership test; a bare semi-join times out on MLB and NBA"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3b. LAT-P018: the shipped form must BE the measured form
+#
+# LAT-P017 measured `market_id = ANY(ARRAY(SELECT ...))` and shipped
+# `market_id IN (SELECT ...)`, recording in a comment that the two "are
+# semantically identical and Postgres plans both as a semi-join". Semantically
+# identical, yes. Planned the same, no. Timed on production 2026-08-09
+# (deployed 38485c8e, warm, both call orders, control drift 4.7%):
+#
+#     league   IN (SELECT ...)              ANY(ARRAY(SELECT ...))
+#     mlb      >10,304ms  never returned    4,600ms cold / 484ms warm
+#     nba      >10,290ms  never returned    6,514ms cold / 788ms warm
+#     nhl        2,096ms / 727ms              724ms / 840ms
+#
+# Six timeouts across three passes on MLB+NBA, zero on the ARRAY form. The
+# semi-join lets the planner pick a strategy driven by futures_outcomes (3.8M
+# rows / 3,079 MB) and abandon ix_futures_outcomes_market_id; ARRAY() forces the
+# id set to be built first so that index drives the scan.
+#
+# These guards are compiled-SQL, not wall-clock, so they are deterministic in CI.
+# ---------------------------------------------------------------------------
+
+_GOOD_SQL = (
+    "SELECT max(futures_outcomes.last_updated) AS max_1 FROM futures_outcomes "
+    "WHERE futures_outcomes.market_id = ANY (array((SELECT futures_markets.id "
+    "FROM futures_markets WHERE futures_markets.status IN ('open', 'closed'))))"
+)
+_BAD_SQL_SEMIJOIN = (
+    "SELECT max(futures_outcomes.last_updated) AS max_1 FROM futures_outcomes "
+    "WHERE futures_outcomes.market_id IN (SELECT futures_markets.id "
+    "FROM futures_markets WHERE futures_markets.status IN ('open', 'closed'))"
+)
+_BAD_SQL_ANY_SUBQUERY = (
+    "SELECT max(futures_outcomes.last_updated) AS max_1 FROM futures_outcomes "
+    "WHERE futures_outcomes.market_id = ANY (SELECT futures_markets.id "
+    "FROM futures_markets WHERE futures_markets.status IN ('open', 'closed'))"
+)
+_BAD_SQL_TRUNCATED_LIST = (
+    "SELECT max(futures_outcomes.last_updated) AS max_1 FROM futures_outcomes "
+    "WHERE futures_outcomes.market_id IN (1, 2, 3)"
+)
+
+
+def _materialises_the_id_set(sql: str) -> bool:
+    """True only if the market-id set is built as an ARRAY before membership.
+
+    Pure predicate over SQL text so it can be mutation-checked in BOTH
+    directions (below) without touching the database or the source tree.
+    """
+    flat = " ".join(sql.split()).lower()
+    if "futures_outcomes.market_id" not in flat:
+        return False
+    if "= any (array((select" not in flat:
+        return False
+    # ...and the id set is still a subquery, not a truncated Python-side list,
+    # which would silently return a WRONG max for a league with many markets.
+    return "from futures_markets" in flat
+
+
+def test_the_materialisation_predicate_actually_discriminates():
+    """Mutation check, both directions — the guard must be able to FAIL.
+
+    LAT-P017 shipped two vacuous guards, one of which asserted its own lambda
+    argument. A predicate that returns True for everything is not a guard.
+    """
+    assert _materialises_the_id_set(_GOOD_SQL) is True
+    assert _materialises_the_id_set(_BAD_SQL_SEMIJOIN) is False
+    assert _materialises_the_id_set(_BAD_SQL_ANY_SUBQUERY) is False
+    assert _materialises_the_id_set(_BAD_SQL_TRUNCATED_LIST) is False
+
+
+class _SqlCapturingSession:
+    """Records the compiled SQL instead of executing it."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    async def execute(self, stmt, params=None):
+        from sqlalchemy.dialects import postgresql
+
+        try:
+            txt = str(
+                stmt.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+        except Exception:
+            txt = str(stmt)
+        self.statements.append(" ".join(txt.split()))
+        return _FakeResult()
+
+
+async def _capture_freshness_sql(league: str) -> list[str]:
+    """The SQL `_grid_freshness` really emits, taken from the code path itself.
+
+    Deliberately not hand-written to resemble the query: reconstructing it by
+    hand is precisely how LAT-P017 came to certify a form it never ran.
+    """
+    import contextlib
+
+    import app.tasks.base as base
+
+    session = _SqlCapturingSession()
+
+    @contextlib.asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    original = base.get_task_session
+    base.get_task_session = _fake_session
+    try:
+        await gs._grid_freshness(league)
+    finally:
+        base.get_task_session = original
+    return session.statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("league", ["mlb", "nba", "nhl"])
+async def test_grid_freshness_ships_the_form_that_was_measured(league):
+    """#1628 cycle: the compiled SQL must materialise the id set."""
+    statements = await _capture_freshness_sql(league)
+    max_stmts = [s for s in statements if "max(futures_outcomes.last_updated)" in s]
+    assert max_stmts, f"no freshness MAX() query was emitted for {league}"
+    for sql in max_stmts:
+        assert _materialises_the_id_set(sql), (
+            f"{league}: freshness MAX() reverted to a semi-join.\n"
+            f"Measured on production: the semi-join never returned inside 10s on "
+            f"mlb/nba across six attempts; the ARRAY form returned in <1s warm.\n"
+            f"Emitted SQL: {sql}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_grid_freshness_still_bounds_itself_with_a_statement_timeout():
+    """The ARRAY form is fast, but the bound is what makes a slow day visible
+    as a SKIPPED check rather than a hung task."""
+    statements = await _capture_freshness_sql("mlb")
+    assert any("statement_timeout" in s for s in statements), (
+        "the 15s bound must survive the query rewrite"
+    )
 
 
 # ---------------------------------------------------------------------------
