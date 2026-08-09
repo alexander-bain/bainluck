@@ -1,0 +1,7 @@
+[
+  {"id": "six-hundred-doomed-stop-at-threshold", "outcomes": {"repeat": "throw", "count": 600}, "threshold": 5, "expected_admitted": 5},
+  {"id": "small-transient-burst-recovers", "outcomes": ["throw", "throw", "success", "throw", "success"], "threshold": 5, "expected_admitted": 5},
+  {"id": "healthy-404-is-not-circuit-failure", "outcomes": ["throw", "throw", "not_found", "throw", "throw", "success"], "threshold": 5, "expected_admitted": 6},
+  {"id": "exact-threshold-opens", "outcomes": ["throw", "throw", "throw", "throw", "throw", "success", "success"], "threshold": 5, "expected_admitted": 5},
+  {"id": "below-threshold-does-not-open", "outcomes": ["throw", "throw", "throw", "throw"], "threshold": 5, "expected_admitted": 4}
+]
