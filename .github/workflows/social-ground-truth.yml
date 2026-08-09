@@ -13,7 +13,7 @@ on:
         default: false
         type: boolean
       accept_high_confidence:
-        description: "Accept high-confidence Manus rows without a separate review pass"
+        description: "Accept high-confidence extracted rows without a separate review pass"
         required: false
         default: false
         type: boolean
@@ -27,7 +27,7 @@ jobs:
       run:
         working-directory: backend
     env:
-      MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
       DEFAULT_CAPTURE_URL: ${{ secrets.SOCIAL_GROUND_TRUTH_CAPTURE_URL }}
       INPUT_CAPTURE_URL: ${{ inputs.capture_url }}
@@ -50,14 +50,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          # UX-P028: these two checks used to `exit 0`, so a run that did NOTHING
+          # reported GREEN — the same "healthy mechanism, absent signal" failure the
+          # retired vendor rail died of. A misconfigured rail must be RED; that is the
+          # only way anyone finds out it stopped producing.
           CAPTURE_URL="${INPUT_CAPTURE_URL:-$DEFAULT_CAPTURE_URL}"
-          if [ -z "${MANUS_API_KEY:-}" ]; then
-            echo "MANUS_API_KEY secret is not set; skipping social ground-truth run."
-            exit 0
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY secret is not set; the extraction step cannot run."
+            exit 1
           fi
           if [ -z "$CAPTURE_URL" ]; then
-            echo "No capture URL provided. Set SOCIAL_GROUND_TRUTH_CAPTURE_URL or pass workflow_dispatch capture_url."
-            exit 0
+            echo "::error::No capture URL provided. Set SOCIAL_GROUND_TRUTH_CAPTURE_URL or pass workflow_dispatch capture_url."
+            exit 1
           fi
 
           DATE="$(TZ=America/Los_Angeles date +%Y%m%d)"

@@ -1,7 +1,7 @@
-"""Review Manus social ground-truth extraction rows.
+"""Review social ground-truth extraction rows.
 
 This helper keeps the social-ground-truth loop offline and review-gated. It
-accepts the JSONL output from extract_social_ground_truth_with_manus.py, applies
+accepts the JSONL output from extract_social_ground_truth.py, applies
 explicit accept/reject decisions, and can emit an accepted-only file for
 EXTERNAL_CURATOR_GROUND_TRUTH_PATHS.
 
@@ -24,7 +24,7 @@ from typing import Any, Iterable, TextIO
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.extract_social_ground_truth_with_manus import REVIEW_FIELDS  # noqa: E402
+from app.utils.social_ground_truth_extraction import REVIEW_FIELDS  # noqa: E402
 
 ACCEPTED_STATUSES = {"accepted", "approved", "reviewed"}
 REJECTED_STATUSES = {"rejected", "dismissed"}
@@ -145,7 +145,7 @@ def _clean(value: Any) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("input", help="Review JSONL from extract_social_ground_truth_with_manus.py")
+    parser.add_argument("input", help="Review JSONL from extract_social_ground_truth.py")
     parser.add_argument("--output", default="-", help="Reviewed JSONL output path")
     parser.add_argument(
         "--accepted-output",
