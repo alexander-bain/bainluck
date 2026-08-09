@@ -1,0 +1,14 @@
+{
+  "clean_pair_template": {
+    "baseline_ms": 1000, "candidate_ms": 500, "control_ms": 200,
+    "baseline_failed": false, "candidate_failed": false,
+    "request_shape_baseline": "anon-limit20", "request_shape_candidate": "anon-limit20",
+    "cache_state_baseline": "cold", "cache_state_candidate": "cold"
+  },
+  "adversaries": [
+    {"id": "different-limit", "set": {"request_shape_candidate": "anon-limit5"}, "reason": "REQUEST_SHAPE_MISMATCH"},
+    {"id": "warm-candidate", "set": {"cache_state_candidate": "warm"}, "reason": "CACHE_STATE_MISMATCH"},
+    {"id": "missing-control", "set": {"control_ms": null}, "reason": "CONTROL_MISSING"},
+    {"id": "missing-order", "set": {"order": null}, "reason": "ORDER_UNDECLARED"}
+  ]
+}
