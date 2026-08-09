@@ -1,0 +1,16 @@
+{"schema_version":"live-curator-recall/v1","cases":[
+{"id":"accepted-current","input":{"review_status":"accepted","age_hours":1,"generation_complete":true},"expected":{"eligible":true,"action":"recall","reason_codes":[]}},
+{"id":"approved-current","input":{"review_status":"approved","age_hours":2,"generation_complete":true},"expected":{"eligible":true,"action":"recall","reason_codes":[]}},
+{"id":"reviewed-excluded","input":{"review_status":"reviewed","age_hours":1,"generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["NOT_EXPLICITLY_ACCEPTED"]}},
+{"id":"missing-status-excluded","input":{"age_hours":1,"generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["NOT_EXPLICITLY_ACCEPTED"]}},
+{"id":"rejected-excluded","input":{"review_status":"rejected","age_hours":1,"generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["NOT_EXPLICITLY_ACCEPTED"]}},
+{"id":"accepted-stale-excluded","input":{"review_status":"accepted","age_hours":289,"max_age_hours":168,"generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["EVIDENCE_STALE"]}},
+{"id":"unknown-age-excluded","input":{"review_status":"accepted","generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["FRESHNESS_UNKNOWN"]}},
+{"id":"future-time-excluded","input":{"review_status":"accepted","age_hours":-2,"generation_complete":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["FUTURE_TIMESTAMP"]}},
+{"id":"partial-generation-excluded","input":{"review_status":"accepted","age_hours":1,"generation_complete":false},"expected":{"eligible":false,"action":"exclude","reason_codes":["GENERATION_PARTIAL"]}},
+{"id":"partial-preserves-marked-last-good","input":{"review_status":"accepted","age_hours":1,"generation_complete":false,"last_good":true},"expected":{"eligible":false,"action":"serve_stale_marked","reason_codes":["GENERATION_PARTIAL"]}},
+{"id":"review-revoked","input":{"review_status":"accepted","age_hours":1,"generation_complete":true,"revoked":true},"expected":{"eligible":false,"action":"exclude","reason_codes":["REVIEW_REVOKED"]}},
+{"id":"duplicate-current-idempotent","input":{"review_status":"accepted","age_hours":1,"generation_complete":true,"duplicate_replay":true},"expected":{"eligible":true,"action":"idempotent_recall","reason_codes":[]}},
+{"id":"recovery-new-current","input":{"review_status":"accepted","age_hours":0,"generation_complete":true},"expected":{"eligible":true,"action":"recall","reason_codes":[]}},
+{"id":"boundary-current","input":{"review_status":"accepted","age_hours":168,"max_age_hours":168,"generation_complete":true},"expected":{"eligible":true,"action":"recall","reason_codes":[]}}
+]}
