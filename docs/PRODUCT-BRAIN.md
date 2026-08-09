@@ -941,3 +941,96 @@ The three occasions today:
 and content to settle whether a change is present. And per UX-P016's lesson, a rebase
 instruction is **tested, not asserted** — "the files are disjoint" is not the same claim as
 "it applies cleanly".
+
+---
+
+## RULINGS — 2026-08-08 (Alex, re-issued batch): the owed calibration calls, and two process fixes
+
+**Re-issued after two delivery failures.** These were ruled, and then lost with the window that
+heard them. They are banked here — the one home that outlives a window — expressly so that no
+future window re-asks them. That is this doc's founding failure mode, recorded in its own header:
+rulings "only ever restored in the working tree and never banked in git".
+
+### (1) THREE-WINNER APPLY — re-issued unchanged; already banked, not restated
+
+The authorization above in **"RULINGS — 2026-08-08 (Alex, batch)"** stands verbatim and needs no
+amendment: **all 1,885 markets**, attended capped batches, gated on the specimen check — **10
+eyeballed specimens per category** proving genuine single-winner markets graded incoherently
+**before any category's writes run**. **Politics has legitimate multi-winner structures — do not
+repair correct data**; a category that cannot produce 10 clean specimens does not run. Re-issue
+confirmed 2026-08-08; the earlier section is the text, this line is the receipt that it survived
+the re-ask.
+
+### (2) PROP-THRESHOLD BANDS: TIGHTEN PER MEASURED CLIFF, PER SERIES
+
+Ruled 2026-08-09 as issued; re-issued into this batch. Three parts, all required together:
+
+- **Tighten per measured cliff, per series** — not one global band. Each series gets the band its
+  own measured cliff supports.
+- **Versioned methodology change** — the band change carries a population/methodology version.
+- **Published per-series exclusion counts** — every series states how many outcomes its band
+  excluded.
+
+WHY all three and not just the first: a global band is a guess applied uniformly to series whose
+settlement behaviour differs, and the cliff is *measurable*, so measuring beats guessing (the same
+move as the retention cliff — a predicate cannot consume a range written in prose, gotcha #35).
+Versioning is what keeps the curve comparable: silently changing an exclusion rule makes today's
+ECE incomparable with yesterday's while both call themselves ECE. And an exclusion nobody can
+count is indistinguishable from a defect — the published count is what lets a reader tell a
+deliberate band from a silent data loss (gotcha #51).
+
+### (3) COVERAGE DENOMINATOR: PUBLISH BOTH FIGURES, NAMED
+
+Publish **both**, each with its denominator in its name:
+
+- **"92.2% of priced outcomes"**
+- **"~56% of all resolved, including purged/recoverable"**
+
+Per the standing publish-both-counts doctrine. **The deprecated alias stays until nothing reads
+it** — removal is gated on readers, not on a date.
+
+WHY: neither number alone is honest. 92.2% flatters by silently dropping outcomes that never had
+a price; ~56% understates by counting rows Kalshi permanently deleted and we can never grade.
+Naming both makes the *gap between them* the visible quantity — and that gap is the recoverable
+backlog, which is the thing anyone reading a coverage figure actually wants to know. This is
+CAL-P014's rule applied to its own headline: a coverage percentage must publish its own
+denominator.
+
+### (4) RETIRE OR REWRITE THE CAL-P010 BRANCH
+
+End the chronic `git cherry` false positive. INT-016 merged `bd5ecd3c` **with a `#51 → #53`
+renumbering edit**, so its patch-id differs from master's copy permanently; every calibration cycle
+since has been told the commit is unmerged, re-verified it by content, and dropped it again.
+Retire the branch or rewrite it so its content matches what master carries.
+
+WHY this is worth a ruling rather than another note: a false positive that recurs **by
+construction** is not a warning, it is noise that trains the reviewer to skip the check — and the
+check is real the one time it fires honestly. Three cycles have now each spent review time
+rediscovering the same non-defect. The ladder this established stands and is worth keeping:
+**ancestry < patch-id < content** — a conflict-resolved merge defeats the first two.
+
+### (5) LANES DECLARE THE PREDECESSOR'S QUEUE-ID, NOT A BASE SHA
+
+Ratifies the Integrator's request (raised at INT-019, repeated at INT-021). A queue's handoff
+declares its predecessor as a **queue-id** (`CAL-P014`), not as `base: <sha>`.
+
+WHY: **three consecutive integration cycles corrected a stale `base:` SHA.** A SHA goes stale the
+instant the Integrator rebases the branch underneath it; a queue-id never does. The Integrator
+resolves lineage by content regardless — so the SHA field carries risk without carrying
+information, which is the definition of a field to delete.
+
+### (6) THE FRESH-WINDOW MEASUREMENT PASS FRONT-LOADS THE OWED PROD READS
+
+The next measurement pass runs in a **fresh window** and takes these reads **first**, before
+anything else touches production:
+
+- **GAP 1 warm timing** (`/api/events/search` vs `/typeahead`)
+- **CAL-P012 published counts** (the purged tier, read off `/api/calibration`)
+- **UX-P023 closed-window props**
+
+WHY first and not last: the `data_exfiltration` guardrail taints a session after a handful of
+credentialed calls, so a prod read placed at the *end* of a cycle — as verification usually is —
+is the read most likely to be blocked. Three payoffs are owed right now for exactly that reason,
+each from a cycle whose code shipped fine. Front-loading converts "verification we could not
+reach" into Item 0. Companion trap, twice hit: a pass taken minutes after a deploy reads as a
+regression. **The warm second pass is the honest number.**
