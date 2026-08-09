@@ -50,6 +50,23 @@ deploying could never deliver. That is the same mistake in a different coat: shi
 pipeline that is not producing, and counting the ship. The freeze forces the question in the
 right order — *is it publishing yet?* — before any more work is aimed at the file.
 
+## CAL-P024 is the BASELINE, not a violation
+
+CAL-P024 touches this file. That is not an exception grudgingly granted — **it is the commit the
+~13-beat count is measured FROM.** The freeze exists so that a known-good producer version can run
+undisturbed long enough to prove it converges; that requires a version to start from, and
+CAL-P024 is it. Commits *after* the baseline are what restart the count.
+
+Stated explicitly because a freeze with an unstated baseline gets read either as "nothing may
+land, including the thing being measured" (nothing ever starts) or as "each new commit is the new
+baseline" (nothing ever finishes).
+
+## The successor is already written
+
+Ruling 011 (well-traded = volume-when-present) is staged NOW as the freeze-lift successor queue,
+so the moment the lift condition is met the work executes rather than begins. Zero days between
+the freeze lifting and the first thing worth publishing through the unfrozen pipeline.
+
 ## What is NOT frozen
 
 Everything downstream and adjacent: the route, the read-side payload, the watchdogs, the census
