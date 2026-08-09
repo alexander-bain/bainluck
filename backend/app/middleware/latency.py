@@ -57,6 +57,26 @@ WINDOW_SECONDS = 3600
 # 50 MB.
 MAX_SAMPLES_PER_ENDPOINT = int(os.getenv("LATENCY_MAX_SAMPLES", "2000"))
 
+# #1459 (LAT-P011): the slow-event forensic ring.
+#
+# The sorted set above keeps `timestamp:latency:cache_bucket` for one hour — it
+# can say /api/feed had a 13.6 s p100 and nothing about WHICH STAGE spent the
+# time. So the tail had to be hunted by hand, and three consecutive queues
+# hand-ran a spaced benchmark and measured three different spike rates (9%, 10%,
+# then 0.3% over a full clock hour). At 0.3% you need thousands of hand-fired
+# requests to collect the eight tail events the analysis needs.
+#
+# The attribution is already in the response: `X-Feed-Stages`. Recording the
+# slow ones into a small capped list makes the tail a read instead of a stakeout.
+SLOW_EVENT_MS = float(os.getenv("LATENCY_SLOW_EVENT_MS", "5000"))
+SLOW_EVENT_MAX = int(os.getenv("LATENCY_SLOW_EVENT_MAX", "500"))
+# Longer than the 1h percentile window on purpose: a tail event is rare, and the
+# whole failure being fixed is that it aged out before anyone could read it
+# (r330 watched a 19.7 s cold observation expire with nothing left to say it had
+# existed). Bounded by SLOW_EVENT_MAX, so the TTL costs nothing extra.
+SLOW_EVENT_TTL_SECONDS = int(os.getenv("LATENCY_SLOW_EVENT_TTL", str(7 * 24 * 3600)))
+SLOW_EVENT_KEY = "latency:slow_events"
+
 # #1500: cache-status buckets recorded alongside each sample. Constrained to a
 # fixed allowlist so the dimension can never grow unbounded — an unknown header
 # value collapses to "other". Warm hits dominate the /api/feed population, so a
@@ -193,6 +213,50 @@ def _get_redis():
         return None
 
 
+async def _record_slow_event(
+    normalized: str,
+    duration_ms: float,
+    cache_bucket: str,
+    response,
+    rss_mb: Optional[float] = None,
+) -> None:
+    """Append one tail observation to the bounded slow-event ring (#1459).
+
+    Same discipline as the sampled write below it: fast-fail client, the
+    blocking round-trip pushed off the event loop under a hard timeout, and a
+    bare ``except`` so observability can never fail a user's request.
+    """
+    try:
+        from app.utils.latency_stats import build_slow_event
+
+        try:
+            stages = response.headers.get("x-feed-stages")
+        except Exception:
+            stages = None
+
+        r = _get_redis()
+        if r is None:
+            return
+
+        member = build_slow_event(
+            timestamp=time.time(),
+            path=normalized,
+            duration_ms=duration_ms,
+            cache_bucket=cache_bucket,
+            stages=stages,
+            rss_mb=rss_mb,
+        )
+        pipe = r.pipeline(transaction=False)
+        # LPUSH + LTRIM(0, MAX-1) keeps the ring newest-first and capped, so a
+        # sustained outage cannot grow the key without bound.
+        pipe.lpush(SLOW_EVENT_KEY, member)
+        pipe.ltrim(SLOW_EVENT_KEY, 0, SLOW_EVENT_MAX - 1)
+        pipe.expire(SLOW_EVENT_KEY, SLOW_EVENT_TTL_SECONDS)
+        await asyncio.wait_for(asyncio.to_thread(pipe.execute), timeout=0.6)
+    except Exception:
+        logger.debug("Slow-event record failed", exc_info=True)
+
+
 class LatencyMiddleware(BaseHTTPMiddleware):
     """Records sampled request latencies into Redis sorted sets."""
 
@@ -210,6 +274,7 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         duration_ms = (time.perf_counter() - start) * 1000
 
         # Log memory for slow requests to diagnose OOM crashes (#809)
+        rss_mb: Optional[float] = None
         if duration_ms > 5000:
             try:
                 import resource
@@ -226,6 +291,15 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         # (#1500 / r329 B2). Read AFTER call_next — that is when scope["route"]
         # exists.
         normalized = _endpoint_bucket(request, path)
+
+        # #1459: record the tail BEFORE the sampling gate. A slow request on a
+        # 1-in-10 endpoint is precisely the observation worth keeping, and
+        # gating it behind sampling would throw away 9 of every 10 of them.
+        if duration_ms >= SLOW_EVENT_MS:
+            await _record_slow_event(
+                normalized, duration_ms, _cache_bucket(response), response, rss_mb
+            )
+
         # Sampling: per-endpoint 1-in-N, with an always-sample allowlist (#1500).
         if not _should_sample(normalized):
             return response

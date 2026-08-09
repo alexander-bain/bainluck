@@ -792,6 +792,90 @@ async def get_latency_stats(
     }
 
 
+@router.get("/latency-slow-events")
+async def get_latency_slow_events(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    limit: int = Query(100, ge=1, le=500, description="Newest N tail events"),
+    min_ms: float = Query(0, ge=0, description="Only events at or above this latency"),
+):
+    """The recorded tail of slow requests, WITH per-stage attribution (#1459).
+
+    ``/latency-stats`` answers "how slow was this endpoint in the last hour".
+    It cannot answer "why was that particular request slow", because a sample is
+    only ``timestamp:latency:cache_bucket`` and it ages out after 60 minutes.
+
+    That gap is what made the ``/api/feed`` tail unhuntable. LAT-P008, LAT-P009
+    and LAT-P011 each hand-fired a spaced benchmark hoping to catch spikes live,
+    and measured 2-in-23 (9%), 6-in-59 (10%), then **1-in-345 (0.3%)** across a
+    full clock hour — the phenomenon is episodic, so a one-hour stakeout is a
+    coin flip. Three hypotheses were refuted, none confirmed, and the analysis
+    kept dying on sample size rather than on reasoning.
+
+    This ring records every request over ``LATENCY_SLOW_EVENT_MS`` (default 5s)
+    along with its ``X-Feed-Stages`` breakdown and dominant stage, capped at
+    ``LATENCY_SLOW_EVENT_MAX`` entries with a 7-day TTL. Whoever picks the tail
+    up next reads the events that already happened instead of waiting for new
+    ones.
+
+    Empty is a legitimate, explicitly-stated answer: ``n: 0`` with the threshold
+    echoed means "no request crossed the bar", which is different from "the
+    recorder is broken" — and different again from the 503 a dead Redis returns.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import time as _time
+
+    from app.middleware.latency import (
+        SLOW_EVENT_KEY,
+        SLOW_EVENT_MAX,
+        SLOW_EVENT_MS,
+    )
+    from app.utils.latency_stats import parse_slow_event, summarize_slow_events
+
+    # Same acquisition discipline as /latency-stats: a dead Redis must degrade
+    # to a bounded 503 saying "cannot measure", never to an empty window that
+    # reads as "no tail events".
+    r, failure = health_reads.client(key=SLOW_EVENT_KEY)
+    if failure is not None:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {failure.error}")
+
+    read = health_reads.command(
+        SLOW_EVENT_KEY, lambda: r.lrange(SLOW_EVENT_KEY, 0, SLOW_EVENT_MAX - 1)
+    )
+    if read.unavailable:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {read.error}")
+
+    raw_entries = read.value or []
+    parsed = [rec for entry in raw_entries if (rec := parse_slow_event(entry)) is not None]
+    # Unparseable entries are counted, not silently dropped — a corrupt writer
+    # must be visible rather than looking like a quiet window.
+    unparseable = len(raw_entries) - len(parsed)
+
+    matching = [rec for rec in parsed if float(rec.get("ms", 0)) >= min_ms]
+    matching.sort(key=lambda rec: rec.get("t") or 0, reverse=True)
+
+    now = _time.time()
+    newest = matching[0].get("t") if matching else None
+    oldest = matching[-1].get("t") if matching else None
+
+    return {
+        "generated_at": now,
+        "threshold_ms": SLOW_EVENT_MS,
+        "ring_capacity": SLOW_EVENT_MAX,
+        "ring_used": len(parsed),
+        "unparseable_entries": unparseable,
+        "min_ms_filter": min_ms,
+        "matching": len(matching),
+        # Self-dating, per the #1500 legibility residual: a payload nobody can
+        # date is a payload nobody can trust.
+        "newest_event_age_s": round(now - newest, 1) if newest else None,
+        "oldest_event_age_s": round(now - oldest, 1) if oldest else None,
+        "summary": summarize_slow_events(matching),
+        "events": matching[:limit],
+    }
+
+
 @router.get("/candidate-base-state")
 async def get_candidate_base_state(
     request: Request,
