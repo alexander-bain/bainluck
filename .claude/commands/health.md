@@ -145,10 +145,7 @@ git -C /Users/bain/bainluck status --short | head -10
 # Feed quality audit (if script exists)
 cd /Users/bain/bainluck/backend && python3 scripts/audit_feed_quality.py 2>&1 | tail -10
 
-# Manus audit — last run
-cat /Users/bain/bainluck/Manus/audit_results/latest/manifest.json 2>/dev/null \
-  | python3 -c "import json,sys; m=json.load(sys.stdin); tasks=m.get('tasks',{}); done=sum(1 for t in tasks.values() if t.get('status')=='complete'); print(f'Last Manus: {m.get(\"date\",\"?\")} — {done}/{len(tasks)} complete')" \
-  || echo "No Manus audit results"
+# (Manus audit check removed — provider defunct. See section K.)
 ```
 
 ### 2. Analyze and present results
@@ -214,10 +211,16 @@ For each section, present:
 - Last 3 commits
 - Uncommitted changes
 
-**K. Manus QA Audit**
-- Last audit date — flag if >7 days old
-- Module completion rate
-- Key findings from completed reports (scan `Manus/audit_results/latest/*.md` for lines containing "critical", "broken", "crash", "error", "0/100", "0%")
+**K. Manus QA Audit — REMOVED, provider defunct**
+
+Manus is **permanently retired** (Alex ruling 2026-07-31; confirmed defunct 2026-08-08) and
+`manus-sweep.yml` is deleted. This check was still instructing every session to read a
+manifest that can never be written again, so it always reported the same stale April date —
+a health check that cannot change is noise, and a check that cannot fail is not a check.
+
+`Manus/audit_results/` is **kept** as historical evidence and stays readable. What no longer
+exists is the ability to RE-RUN or re-verify: any Manus finding is a frozen artifact, not a
+reproducible one. Grid accuracy moved to the Grid Sentinel's sampled ground-truth self-check.
 
 ### 3. Summary table
 
@@ -236,7 +239,6 @@ Present a single summary table:
 | Feed Quality          | ...    | ...                     |
 | Database & Infra      | ...    | ...                     |
 | Tests & Deploys       | ...    | ...                     |
-| Manus QA              | ...    | ...                     |
 ```
 
 ### 4. Top 3 recommendations

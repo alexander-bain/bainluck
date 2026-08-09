@@ -396,7 +396,7 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 
 ## Session Startup: Health Check
 
-Run `/health` at the start of every session. It covers all production checks: Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, and feed quality. (The Manus audit-status check is dead — Manus was permanently retired 2026-07-31.) See `.claude/commands/health.md` for the full definition.
+Run `/health` at the start of every session. It covers all production checks: Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, and feed quality. (The Manus audit-status check has been **removed** from `/health` — Manus was permanently retired 2026-07-31 and confirmed defunct 2026-08-08; `manus-sweep.yml` is deleted. `Manus/audit_results/` is kept as frozen historical evidence, but no Manus finding can be re-run or re-verified.) See `.claude/commands/health.md` for the full definition.
 
 **Thresholds for immediate action:**
 - Sentry issue >100 events in 24h → triage now
