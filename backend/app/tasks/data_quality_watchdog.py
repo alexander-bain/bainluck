@@ -322,18 +322,51 @@ CHECKS: list[dict[str, Any]] = [
         # issue says "phase futures timed out at 22.5 min" rather than
         # "calibration is stale". The ledger is written by every run, including
         # the ones that fail, which is exactly why it is the useful witness.
+        #
+        # CAL-P023: the phase half alone was NOT enough, and production proved
+        # it. Issue #1604 (auto-filed 2026-08-09 09:46 PT, the first live firing
+        # of this check) named `phase: futures, phase_status: cancelled,
+        # duration_ms: 726557` and then `detail: ''` — because a phase CANCELLED
+        # by the build's own budget writes no detail, unlike one that dies on a
+        # statement timeout. So the alert said WHICH phase and not WHERE in it,
+        # which is the half CAL-P017 actually promised ("stage
+        # read:futures_population").
+        #
+        # The stage breakdown was never in `phases[]` to be read: the runner
+        # accumulates it in a TOP-LEVEL `stages` map (see
+        # `calibration_phase_ledger.record_stage`). Hence the UNION — phases
+        # first, then the stage map ordered by cost, which is what turns
+        # "futures was cancelled" into "it spent 626s in read:futures_unit and
+        # invalidated its cursor". That cursor line is diagnostic gold: it
+        # distinguishes a build that is slow from one that is not converging.
         "context_query": (
-            "SELECT payload #>> '{terminal}' AS terminal,"
-            "       payload #>> '{outcome,published}' AS published,"
-            "       ph.value #>> '{name}' AS phase,"
-            "       ph.value #>> '{status}' AS phase_status,"
-            "       left(COALESCE(ph.value #>> '{detail}', ''), 300) AS detail,"
-            "       ph.value #>> '{duration_ms}' AS duration_ms"
-            "  FROM durable_state_snapshots,"
-            "       jsonb_array_elements(payload -> 'phases') AS ph"
-            " WHERE identity = 'calibration:main:phase_ledger'"
-            "   AND ph.value #>> '{status}' NOT IN ('complete', 'resumed')"
-            " LIMIT 5"
+            "SELECT terminal, published, phase, phase_status, detail, duration_ms"
+            "  FROM ("
+            "   SELECT payload #>> '{terminal}' AS terminal,"
+            "          payload #>> '{outcome,published}' AS published,"
+            "          ph.value #>> '{name}' AS phase,"
+            "          ph.value #>> '{status}' AS phase_status,"
+            "          left(COALESCE(ph.value #>> '{detail}', ''), 300) AS detail,"
+            "          ph.value #>> '{duration_ms}' AS duration_ms,"
+            "          0 AS ord, 0::bigint AS cost"
+            "     FROM durable_state_snapshots,"
+            "          jsonb_array_elements(payload -> 'phases') AS ph"
+            "    WHERE identity = 'calibration:main:phase_ledger'"
+            "      AND ph.value #>> '{status}' NOT IN ('complete', 'resumed')"
+            "   UNION ALL"
+            "   SELECT payload #>> '{terminal}',"
+            "          payload #>> '{outcome,published}',"
+            "          'stage:' || st.key,"
+            "          NULL, NULL,"
+            "          st.value #>> '{}',"
+            "          1 AS ord,"
+            "          COALESCE((st.value #>> '{}')::bigint, 0)"
+            "     FROM durable_state_snapshots,"
+            "          jsonb_each(COALESCE(payload -> 'stages', '{}'::jsonb)) AS st"
+            "    WHERE identity = 'calibration:main:phase_ledger'"
+            "  ) x"
+            " ORDER BY ord, cost DESC"
+            " LIMIT 10"
         ),
         "threshold": 2,
         "comparison": "lte",
