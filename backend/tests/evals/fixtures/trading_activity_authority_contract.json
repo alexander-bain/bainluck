@@ -1,0 +1,8 @@
+[
+  {"id": "positive-volume-wins", "input": {"volume": 12.0, "snapshots": 1, "distinct_moves": 0, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "traded", "provenance": "volume_proven"}},
+  {"id": "zero-volume-is-proven-untraded", "input": {"volume": 0.0, "snapshots": 100, "distinct_moves": 20, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "untraded", "provenance": "volume_proven"}},
+  {"id": "null-volume-dense-and-moving", "input": {"volume": null, "snapshots": 10, "distinct_moves": 4, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "traded", "provenance": "movement_inferred"}},
+  {"id": "null-volume-dense-and-still", "input": {"volume": null, "snapshots": 10, "distinct_moves": 1, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "untraded", "provenance": "movement_inferred"}},
+  {"id": "null-volume-sparse-never-untraded", "input": {"volume": null, "snapshots": 3, "distinct_moves": 0, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "unknown", "provenance": "insufficient_density"}},
+  {"id": "density-boundary", "input": {"volume": null, "snapshots": 5, "distinct_moves": 3, "min_snapshots": 5, "min_moves": 3}, "expected": {"classification": "traded", "provenance": "movement_inferred"}}
+]
