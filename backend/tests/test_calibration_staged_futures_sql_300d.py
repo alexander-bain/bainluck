@@ -203,26 +203,41 @@ class TestRepresentativeTieAuthority:
 class TestShippedState:
     """What is actually switched on, pinned so it cannot drift silently."""
 
-    def test_staged_path_ships_off(self):
-        """Queue 300E turned it on, measured it in production, and turned it back.
+    def test_staged_path_ships_on_with_its_convergence_fix(self):
+        """Queue 300E turned it on, measured it, and turned it back. CAL-P016
+        fixed what the measurement found and turned it on again.
 
-        The switch is OFF again, but the question it is pinned against has
-        changed. 300D's reason was ignorance — the staged statement had never
-        executed. 300E's reason is a measurement: it executed twice, and the
-        second beat invalidated the first beat's banked unit, because the
-        generation fingerprint covers the whole roster and the roster moves
-        between hourly beats. Units are resumable within a beat and worthless
-        across beats, which is the opposite of the point.
+        The history in three lines, because a fourth flip should not be made on
+        a hunch: 300D shipped it OFF out of ignorance (the staged statement had
+        never executed). 300E executed it twice in production and turned it off
+        on EVIDENCE — the second beat invalidated the first beat's banked unit,
+        because the generation fingerprint covers the whole roster and the
+        roster moves between hourly beats. Units were resumable within a beat
+        and worthless across beats, which is the opposite of the point.
 
-        So this test is not "we never tried it." It is "we tried it, here is
-        what it cost, and the fix is a per-unit cursor identity rather than a
-        whole-roster one" — see the constant's docstring for the two ledger
-        records. Flipping it on again without that change would reproduce the
-        same two beats.
+        Leaving it off had a cost that came due: the monolith kept timing out at
+        ~22.5 min every hour, nothing published after 2026-08-02 03:23Z, and
+        /api/calibration went fully dark on 2026-08-09 when the last-good copy
+        crossed SERVE_MAX_AGE_S.
+
+        CAL-P016 made the cursor converge — per-unit validation plus a
+        content-addressed partition, both required — so the switch is ON. The
+        three constants are pinned together deliberately: the flip is only sound
+        while the partition is stable and the retention step exists, and a future
+        edit that removes either should fail HERE rather than in production.
         """
-        from app.tasks.calibration_main_build import STAGED_FUTURES_ENABLED
+        from app.tasks.calibration_main_build import (
+            STAGED_FUTURES_BUCKETS,
+            STAGED_FUTURES_ENABLED,
+        )
+        from app.utils.calibration_staged_futures import (
+            bucket_of,
+            retain_planned_units,
+        )
 
-        assert STAGED_FUTURES_ENABLED is False
+        assert STAGED_FUTURES_ENABLED is True
+        assert isinstance(STAGED_FUTURES_BUCKETS, int) and STAGED_FUTURES_BUCKETS >= 1
+        assert callable(bucket_of) and callable(retain_planned_units)
 
     def test_the_serve_path_can_never_stage(self):
         """Not a switch — a structural guarantee.
