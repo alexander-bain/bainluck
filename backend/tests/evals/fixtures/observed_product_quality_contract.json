@@ -1,0 +1,18 @@
+{
+  "impressions": [
+    {"card_id": "live-1", "surface": "web", "position": 1},
+    {"card_id": "resolved-1", "surface": "web", "position": 2},
+    {"card_id": "resolved-1", "surface": "native", "position": 1},
+    {"card_id": "missing-1", "surface": "native", "position": 2}
+  ],
+  "lifecycle": {
+    "live-1": {"authoritative_stale": false, "reason": "eligible"},
+    "resolved-1": {"authoritative_stale": true, "reason": "status_terminal"}
+  },
+  "expected": {
+    "impressions": 4, "known": 3, "unknown": 1, "stale": 2,
+    "stale_rate_known": 0.6666666666666666, "unknown_rate": 0.25,
+    "reasons": {"missing_authority": 1, "status_terminal": 2},
+    "surfaces": {"native": 2, "web": 2}
+  }
+}
