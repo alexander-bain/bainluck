@@ -15,7 +15,11 @@
  * - Hoverable tooltip shows details
  */
 
-import { motion, AnimatePresence } from "framer-motion";
+import { m, AnimatePresence } from "framer-motion";
+// This file uses the raw `m` primitives behind an explicit provider, rather than the wrapped
+// ones in `@/components/motion`, because `AnimatePresence` must see a motion component as its
+// direct child for the `exit` animation below to run.
+import { MotionProvider } from "@/components/motion";
 import { useState, useMemo } from "react";
 import { transitionFast } from "@/lib/animations";
 
@@ -121,6 +125,7 @@ export default function ThresholdSparkline({
       </div>
 
       {/* Points */}
+      <MotionProvider>
       {sortedPoints.map((point, idx) => {
         const prob = point.probability ?? 0;
         const xPercent = range > 0 ? ((point.threshold_value - minVal) / range) * 100 : 50;
@@ -139,7 +144,7 @@ export default function ThresholdSparkline({
             }}
           >
             {/* Dot */}
-            <motion.button
+            <m.button
               className={`
                 rounded-full cursor-pointer
                 transition-shadow duration-150
@@ -161,7 +166,7 @@ export default function ThresholdSparkline({
             {/* Tooltip on hover */}
             <AnimatePresence>
               {isHovered && (
-                <motion.div
+                <m.div
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 4 }}
@@ -179,7 +184,7 @@ export default function ThresholdSparkline({
                       {(prob * 100).toFixed(0)}%
                     </div>
                   </div>
-                </motion.div>
+                </m.div>
               )}
             </AnimatePresence>
 
@@ -194,6 +199,7 @@ export default function ThresholdSparkline({
           </div>
         );
       })}
+      </MotionProvider>
     </div>
   );
 }

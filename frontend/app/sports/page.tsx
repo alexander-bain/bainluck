@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { fetchFeed, fetchGroupedFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GroupedFeedResponse } from "@/lib/types";

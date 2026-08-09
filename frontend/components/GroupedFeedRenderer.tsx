@@ -12,7 +12,7 @@
  * - market → FuturesCard (fallback for ungrouped markets)
  */
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { staggerContainer, staggerItem } from "@/lib/animations";
 import type {
   GroupedFeedItem,

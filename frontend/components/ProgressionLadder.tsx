@@ -5,7 +5,7 @@
  * Designed to be similar in size/style to FuturesCard.
  */
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
 import { getWikipediaImage } from "@/lib/images";

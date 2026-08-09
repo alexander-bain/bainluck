@@ -12,11 +12,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 
-// framer-motion's motion.* render their base element under SSR; map them to the
+// framer-motion's motion.*/m.* render their base element under SSR; map them to the
 // plain tag so the static markup is stable and dependency-light.
-jest.mock("framer-motion", () => ({
-  __esModule: true,
-  motion: new Proxy(
+//
+// `m` and `LazyMotion` are mocked alongside `motion` because #1631 moved these components onto
+// the provider-bound primitives in `components/motion.tsx`, which are built from `m` +
+// `LazyMotion`. `LazyMotion` emits no DOM of its own, so a passthrough keeps the static markup
+// byte-identical to what this test asserted before the bundle split.
+const tagProxy = () =>
+  new Proxy(
     {},
     {
       get: (_t, tag: string) => {
@@ -26,7 +30,17 @@ jest.mock("framer-motion", () => ({
         return Comp;
       },
     },
-  ),
+  );
+
+jest.mock("framer-motion", () => ({
+  __esModule: true,
+  motion: tagProxy(),
+  m: tagProxy(),
+  LazyMotion: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  AnimatePresence: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  domAnimation: {},
 }));
 
 import PlayerStatCard from "../../components/PlayerStatCard";

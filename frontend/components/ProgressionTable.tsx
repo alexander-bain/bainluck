@@ -8,7 +8,7 @@
  * probability, source, and optional status indicators.
  */
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
 
 interface ProgressionOutcome {

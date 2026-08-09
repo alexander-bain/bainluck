@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";

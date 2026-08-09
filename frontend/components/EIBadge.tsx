@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import type { EIData } from "@/lib/types";
 import { getEIClasses, getEIRingClass } from "@/lib/eiColors";
 import { eiBreathingTransition } from "@/lib/animations";

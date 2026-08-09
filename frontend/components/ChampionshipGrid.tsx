@@ -13,7 +13,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import type { ChampionshipGridData, PlayoffTeam, LeagueTab, PlayoffStage } from "@/lib/playoff-types";
 import TeamNameLink from "./TeamNameLink";
 

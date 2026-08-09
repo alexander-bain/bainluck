@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { motion, useSpring, useTransform } from "framer-motion";
+import { useSpring, useTransform } from "framer-motion";
+import { motion } from "@/components/motion";
 import type { Event } from "@/lib/types";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";

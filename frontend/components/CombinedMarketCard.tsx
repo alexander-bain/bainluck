@@ -9,7 +9,7 @@
  * Shows cross-source probability comparison and merged outcome list.
  */
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
 import { sourceHex } from "@/lib/sourceColors";
 

@@ -9,7 +9,7 @@
  * probability bars and color coding.
  */
 
-import { motion } from "framer-motion";
+import { motion } from "@/components/motion";
 import { staggerContainer, staggerItem } from "@/lib/animations";
 import { probabilityHeat } from "@/lib/probabilityColors";
 
