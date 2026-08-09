@@ -33,6 +33,23 @@ router = APIRouter(tags=["event-concept"])
 _ENVELOPE_TTL = 60
 _STALE_TTL = 86400
 
+# LAT-P014/#1107: a MISS used to cost what a hit costs, every single time.
+#
+# Only successful envelopes were cached, so a key that resolves to nothing re-ran
+# the adapter's full build on every request. Measured in production 2026-08-09
+# against a cycling control on the same route: a bad golf key 404'd in
+# 6,931-14,518ms and a bad tennis key in 7,923ms, where a bad CYCLING key — whose
+# adapter proves absence from an in-memory config — 404'd in 290ms.
+#
+# Deliberately SHORT. The consequence of caching a negative is that a key which
+# becomes valid inside the window keeps 404ing for up to that long, so the window
+# is kept to the same 60s the envelope itself uses: a tournament that appears
+# mid-window is at most 60s late, which is well inside the polling cadence that
+# would have created it. Domain-agnostic on purpose — it protects tennis and the
+# unknown-domain path too, not just the golf case that exposed it.
+_NEGATIVE_TTL = 60
+_NEGATIVE_SENTINEL = "404"
+
 
 @router.get("/{key}")
 async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
@@ -48,6 +65,7 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     # through to the live build; the stale key only rescues a build that errors.
     _cache_key = f"bainluck:event_concept:{key}"
     _stale_key = f"{_cache_key}:stale"
+    _negative_key = f"{_cache_key}:404"
     _rc = None
     try:
         from app.tasks.redis_state import get_redis_client
@@ -56,6 +74,13 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
         cached = _rc.get(_cache_key)
         if cached:
             return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
+        # LAT-P014: a known-absent key short-circuits before the adapter runs. Read
+        # AFTER the positive key so a value written since cannot be shadowed by a
+        # still-live negative.
+        if _rc.get(_negative_key):
+            raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
+    except HTTPException:
+        raise
     except Exception:
         _rc = None
 
@@ -76,6 +101,14 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
         raise
 
     if envelope is None:
+        # LAT-P014: record the absence, so the next request for this key does not
+        # re-run the build. Best-effort — a dead Redis must never turn a 404 into
+        # a 500, which is why this mirrors the write below rather than sharing it.
+        try:
+            if _rc is not None:
+                _rc.setex(_negative_key, _NEGATIVE_TTL, _NEGATIVE_SENTINEL)
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
 
     # L2-48/L2-118: probability-only product — strip odds from the wire.
@@ -86,6 +119,11 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
             payload = _json.dumps(result, default=str)
             _rc.setex(_cache_key, _ENVELOPE_TTL, payload)
             _rc.setex(_stale_key, _STALE_TTL, payload)
+            # LAT-P014: a key that now resolves must not keep a negative entry
+            # behind it. The positive key is read first so it already wins, but
+            # dropping it removes the question entirely rather than leaving it to
+            # a TTL-ordering argument.
+            _rc.delete(_negative_key)
     except Exception:
         pass
 

@@ -2105,24 +2105,57 @@ async def _build_completed_tournament(
     Called when the main golf listing doesn't include the tournament (markets closed).
     Returns a tournament dict compatible with get_golf_tournament's expectations, or None.
     """
-    # Find golf markets (any status) whose name matches the slug
-    query = (
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(
-            or_(
-                FuturesMarket.external_id.ilike("golf_%"),
-                FuturesMarket.llm_sport_category == "golf",
-            ),
+    # LAT-P014/#1107: match on a NARROW projection, then hydrate only the matches.
+    #
+    # This used to be `select(FuturesMarket).options(selectinload(outcomes))` with
+    # no status, date or row bound — i.e. it loaded EVERY golf market that has ever
+    # existed, with every outcome eager-loaded (`futures_outcomes` is 3.2M rows and
+    # a golf winner market carries the entire field), and then matched the slug in
+    # Python. It runs on every miss of the live listing and its result is never
+    # cached, so each request paid the whole corpus.
+    #
+    # MEASURED in production 2026-08-09, paired against an `event:ufc:26aug12`
+    # control on the same route 4-5s away. All four golf majors resolve through
+    # this function, and all four were failing:
+    #     event:golf:the-open-championship   503 @ 30,286 / 30,268 / 30,279 ms
+    #     event:golf:pga-championship        503 @ 30,263 ms
+    #     event:golf:u-s-open                503 @ 30,269 ms
+    #     event:golf:the-masters             200 @ 17,598 ms, then 503 @ 30,279 ms
+    #     control                            290-1,783 ms throughout
+    # 30.3s is Heroku's H12 boundary, not a coincidence. Search offers these pages
+    # (`/api/events/search?q=the open` returns the concept key) and #1063 documents
+    # golf majors as "guaranteed never-dead", so this was a live broken promise.
+    #
+    # Isolation, via an internal control on the same route: a bad CYCLING key 404s
+    # in 290ms because `CyclingEventAdapter` proves absence with an in-memory config
+    # parse, while a bad GOLF key took 6,931-14,518ms. Same route, same outcome —
+    # the difference is only how much work runs before giving up.
+    #
+    # Phase 1 selects exactly the columns the match reads (`_is_golf_market` uses
+    # source/external_id/name; the slug test uses name) and NO outcomes. Phase 2
+    # re-selects the matched ids WITH outcomes. Set-identical by construction: the
+    # same rows are chosen by the same Python predicate, and phase 2 is a subset
+    # keyed by id.
+    ident_rows = (
+        await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                FuturesMarket.name,
+            ).where(
+                or_(
+                    FuturesMarket.external_id.ilike("golf_%"),
+                    FuturesMarket.llm_sport_category == "golf",
+                ),
+            )
         )
-    )
-    result = await db.execute(query)
-    all_markets = result.scalars().unique().all()
+    ).all()
 
     # Group by normalized tournament key using existing logic
-    tournament_markets: list[FuturesMarket] = []
+    matched_ids: list[int] = []
     matched_key = None
-    for m in all_markets:
+    for m in ident_rows:
         if not _is_golf_market(m):
             continue
         market_name = m.name or ""
@@ -2132,9 +2165,30 @@ async def _build_completed_tournament(
         display_slug = _clean_slug(display)
         key_slug = _clean_slug(key.replace("_", " "))
         if display_slug == slug or key_slug == slug:
-            tournament_markets.append(m)
+            matched_ids.append(m.id)
             if not matched_key:
                 matched_key = key
+
+    if not matched_ids:
+        return None
+
+    hydrated = {
+        m.id: m
+        for m in (
+            await db.execute(
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(FuturesMarket.id.in_(matched_ids))
+            )
+        ).scalars().unique().all()
+    }
+    # Preserve the order phase 1 matched in, so `_assemble_completed_winner_field`
+    # sees exactly the sequence the single-query version handed it. Neither query
+    # carries an ORDER BY, so re-ordering by the id list is the only way the two
+    # phases are guaranteed to agree.
+    tournament_markets: list[FuturesMarket] = [
+        hydrated[i] for i in matched_ids if i in hydrated
+    ]
 
     if not tournament_markets:
         return None
