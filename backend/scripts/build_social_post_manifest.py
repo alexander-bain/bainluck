@@ -1,8 +1,8 @@
-"""Build approved social-post manifests for Manus ground-truth extraction.
+"""Build approved social-post manifests for social ground-truth extraction.
 
 This is the capture/export bridge for social ground truth. It normalizes local
 CSV/JSON/JSONL exports or copied text files into the manifest shape consumed by
-``extract_social_ground_truth_with_manus.py``. It does not scrape Instagram or
+``extract_social_ground_truth.py``. It does not scrape Instagram or
 make network requests.
 
 Usage:
@@ -23,7 +23,7 @@ from typing import Any, Iterable, TextIO
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.extract_social_ground_truth_with_manus import TARGET_HANDLES  # noqa: E402
+from app.utils.social_ground_truth_extraction import TARGET_HANDLES  # noqa: E402
 
 MANIFEST_FIELDS = [
     "handle",

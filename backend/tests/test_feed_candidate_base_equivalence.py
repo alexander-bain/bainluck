@@ -142,7 +142,10 @@ _LANE_ORDER = [
 async def _run_helper(monkeypatch, lanes):
     curator_ids = lanes["external_curator_recall"]
 
-    async def _fake_curator(db, base_filters, *, row_limit, market_limit):
+    async def _fake_curator(db, base_filters, *, row_limit, market_limit, now=None):
+        # `now` added by UX-P028: the recall lane is age-bounded and must be aged
+        # on the caller's clock, not one of its own.
+        assert now is not None, "the builder must pass its own `now` to the lane"
         return list(curator_ids)
 
     monkeypatch.setattr(feed_mod, "_external_curator_recall_market_ids", _fake_curator)

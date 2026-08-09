@@ -1,8 +1,9 @@
 """Run the offline social ground-truth pipeline.
 
 This convenience wrapper chains the reviewed social workflow:
-capture export -> Manus manifest -> Manus prompt/extraction -> review export.
-It performs no scraping. Manus network calls happen only with ``--extract``.
+capture export -> post manifest -> LLM extraction -> review export.
+It performs no scraping. Provider network calls happen only with ``--extract``.
+UX-P028: the extraction step is provider-independent (Manus is retired).
 
 Typical safe dry run:
     python3 scripts/run_social_ground_truth_pipeline.py captures.csv \
@@ -10,7 +11,7 @@ Typical safe dry run:
         --prompt-output /tmp/social.prompt.md \
         --dry-run
 
-Full extraction when MANUS_API_KEY is configured:
+Full extraction when OPENAI_API_KEY is configured:
     python3 scripts/run_social_ground_truth_pipeline.py captures.csv \
         --manifest-output /tmp/social.posts.jsonl \
         --review-output /tmp/social.review.jsonl \
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -35,13 +35,11 @@ from scripts.build_social_post_manifest import (  # noqa: E402
     load_capture_rows,
     write_manifest,
 )
-from scripts.extract_social_ground_truth_with_manus import (  # noqa: E402
-    build_prompt,
-    parse_extraction_report,
-    poll_manus_task,
-    submit_manus_task,
-    write_review_jsonl,
+from app.utils.social_ground_truth_extraction import (  # noqa: E402
+    ExtractionUnavailable,
+    build_extraction_prompt,
 )
+from scripts.extract_social_ground_truth import extract_rows  # noqa: E402
 from scripts.review_social_ground_truth import (  # noqa: E402
     accepted_rows,
     apply_review_decisions,
@@ -77,22 +75,16 @@ def build_pipeline_manifest(
 def run_extraction(
     manifest_rows: list[dict[str, str]],
     *,
-    api_key: str,
-    task_id: str | None = None,
-    timeout_seconds: int = 900,
+    model: str | None = None,
 ) -> list[dict[str, str]]:
-    prompt = build_prompt(manifest_rows)
-    resolved_task_id = task_id or submit_manus_task(
-        prompt,
-        api_key=api_key,
-        title="Bain Luck social ground truth extraction",
-    )
-    report = poll_manus_task(
-        resolved_task_id,
-        api_key=api_key,
-        timeout_seconds=timeout_seconds,
-    )
-    return parse_extraction_report(report)
+    """Extract review rows from an approved manifest.
+
+    UX-P028: provider-independent. The vendor task-create/poll dance is gone —
+    `extract_rows` raises `ExtractionUnavailable` when no provider is configured,
+    so a missing key surfaces as a failure instead of an empty success.
+    """
+    result = extract_rows(manifest_rows, **({"model": model} if model else {}))
+    return list(result["rows"])
 
 
 def apply_optional_review(
@@ -136,13 +128,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--default-handle", default="", help="Default handle for rows without one")
     parser.add_argument("--allow-non-target-handles", action="store_true")
     parser.add_argument("--include-unapproved", action="store_true")
-    parser.add_argument("--manifest-output", default=None, help="Write normalized Manus manifest JSONL/CSV")
+    parser.add_argument("--manifest-output", default=None, help="Write normalized post manifest JSONL/CSV")
     parser.add_argument("--manifest-format", choices=("jsonl", "csv"), default="jsonl")
-    parser.add_argument("--prompt-output", default=None, help="Write Manus prompt for review")
+    parser.add_argument("--prompt-output", default=None, help="Write the extraction prompt for review")
     parser.add_argument("--dry-run", action="store_true", help="Stop after manifest/prompt generation")
-    parser.add_argument("--extract", action="store_true", help="Call Manus and write review rows")
-    parser.add_argument("--task-id", default=None, help="Poll an existing Manus task instead of creating one")
-    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--extract", action="store_true", help="Call the extraction provider and write review rows")
+    parser.add_argument("--model", default=None, help="Override the extraction model")
     parser.add_argument("--review-input", default=None, help="Existing review JSONL to apply decisions to")
     parser.add_argument("--review-output", default=None, help="Pending/reviewed JSONL output path")
     parser.add_argument("--accepted-output", default=None, help="Accepted-only JSONL output path")
@@ -167,23 +158,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.manifest_output:
             _write_manifest_file(manifest_rows, args.manifest_output, args.manifest_format)
         if args.prompt_output:
-            Path(args.prompt_output).write_text(build_prompt(manifest_rows))
+            Path(args.prompt_output).write_text(build_extraction_prompt(manifest_rows))
 
     review_rows: list[dict[str, Any]] = []
     if args.review_input:
         review_rows = load_review_rows(args.review_input)
     elif args.extract:
-        api_key = os.getenv("MANUS_API_KEY")
-        if not api_key:
-            raise SystemExit("MANUS_API_KEY is required with --extract")
         if not manifest_rows:
             raise SystemExit("Capture inputs are required with --extract unless --review-input is used")
-        review_rows = run_extraction(
-            manifest_rows,
-            api_key=api_key,
-            task_id=args.task_id,
-            timeout_seconds=args.timeout_seconds,
-        )
+        try:
+            review_rows = run_extraction(manifest_rows, model=args.model)
+        except ExtractionUnavailable as exc:
+            # Fail closed and LOUD: a missing provider is not an empty harvest.
+            raise SystemExit(str(exc))
 
     if review_rows:
         reviewed = apply_optional_review(

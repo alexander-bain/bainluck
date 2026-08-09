@@ -32,6 +32,9 @@ from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
+from app.utils.external_curator_freshness import (
+    recall_cutoff as _curator_recall_cutoff,
+)
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import (
     DiscoverInteraction,
@@ -709,19 +712,32 @@ async def _external_curator_recall_market_ids(
     *,
     row_limit: int = 80,
     market_limit: int = 80,
+    now: datetime | None = None,
 ) -> list[int]:
-    """Find feed-eligible markets matching accepted external-curator rows.
+    """Find feed-eligible markets matching RECENT accepted external-curator rows.
 
-    This is intentionally only a candidate-pool recall lane. Matched markets
-    still pass through normal scoring, quality caps, personalization, and final
-    diversity; social rows do not directly boost rank.
+    This seeds the candidate pool, and membership in the returned id set ALSO
+    grants ``_EXTERNAL_CURATOR_RECALL_SCORE_BONUS`` (+25) on the ranking score
+    (see ``_apply_external_curator_recall_score`` and the ``rank_score`` bump in
+    the scoring loop). It is therefore a recall AND rank lane — the older
+    docstring here claimed "social rows do not directly boost rank", which was
+    not true of the code and is corrected rather than re-copied (UX-P028).
+
+    Rows are bounded by ``external_curator_freshness.RECALL_MAX_AGE_DAYS``. Left
+    unbounded, a producer that dies leaves the lane boosting today's landing page
+    from a corpus that stopped aging months ago, with nothing surfacing that it is
+    stale — exactly what the UX-P027 census found in production. A stale, empty or
+    unknown corpus fails CLOSED: no rows, hence no recall and no bonus.
     """
+    now = now or datetime.now(timezone.utc)
     curator_result = await db.execute(
         select(ExternalCuratorGroundTruthItem.name)
         .where(
             ExternalCuratorGroundTruthItem.review_status.in_(
                 ("accepted", "approved", "reviewed")
-            )
+            ),
+            ExternalCuratorGroundTruthItem.imported_at.is_not(None),
+            ExternalCuratorGroundTruthItem.imported_at >= _curator_recall_cutoff(now),
         )
         .order_by(ExternalCuratorGroundTruthItem.imported_at.desc())
         .limit(row_limit)
@@ -3261,6 +3277,7 @@ async def _discover_candidate_pool_trace(
         id_filters,
         row_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
         market_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
+        now=now,
     )
     candidate_ids.extend(external_curator_ids)
     pools.append(
@@ -5627,6 +5644,7 @@ async def _compute_ordered_candidate_ids(
         id_filters,
         row_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
         market_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
+        now=now,
     )
     _mark("pool_external_curator_recall")
 

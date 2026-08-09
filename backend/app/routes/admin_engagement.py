@@ -32,6 +32,9 @@ from app.routes.admin_utils import _check_admin_secret, _check_admin_auth, _safe
 from app.utils.external_curator_ground_truth import (
     load_external_curator_ground_truth_report_from_env,
 )
+from app.utils.external_curator_freshness import (
+    classify_corpus as classify_external_curator_corpus,
+)
 from app.utils.feed_quality_debug import stale_root_cause_for_reason
 from app.utils.ground_truth_health import (
     assess_ground_truth_report_health,
@@ -913,9 +916,34 @@ async def get_discover_external_curator_ground_truth_status(
         for row in status_result.all()
     }
 
+    # UX-P028: the corpus feeds a LIVE Discover recall+rank lane, so "how many
+    # rows" is only half the answer — an operator also has to be able to see that
+    # the lane is running on a fossil. Report the same freshness verdict the feed
+    # enforces, from the same policy module, so the two can never disagree.
+    recall_result = await db.execute(
+        select(
+            func.count(ExternalCuratorGroundTruthItem.id),
+            func.max(ExternalCuratorGroundTruthItem.imported_at),
+        ).where(
+            ExternalCuratorGroundTruthItem.review_status.in_(
+                ("accepted", "approved", "reviewed")
+            )
+        )
+    )
+    recall_row_count, recall_latest_import = recall_result.one()
+    recall_corpus = classify_external_curator_corpus(
+        recall_latest_import,
+        datetime.now(timezone.utc),
+        row_count=int(recall_row_count or 0),
+    )
+
     return {
         "metadata": report["metadata"],
         "status_counts": status_counts,
+        "recall_corpus": {
+            "recall_eligible_rows": int(recall_row_count or 0),
+            **recall_corpus,
+        },
         "items": report["items"][:item_limit],
     }
 

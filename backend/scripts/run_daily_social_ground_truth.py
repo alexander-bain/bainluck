@@ -1,14 +1,14 @@
 """Run the daily social ground-truth operator workflow.
 
 This is the high-level wrapper for the current no-scraping loop:
-capture export -> Manus manifest/prompt -> Manus extraction -> reviewed rows
+capture export -> post manifest/prompt -> LLM extraction -> reviewed rows
 -> accepted rows -> optional admin upload.
 
 It intentionally does not scrape Instagram. Feed it local capture exports or a
 pre-approved export URL that returns CSV/JSON/JSONL.
 
 Typical review-gated run:
-    MANUS_API_KEY=... python3 scripts/run_daily_social_ground_truth.py captures.csv --extract
+    OPENAI_API_KEY=... python3 scripts/run_daily_social_ground_truth.py captures.csv --extract
 
 After reviewing the generated JSONL:
     python3 scripts/run_daily_social_ground_truth.py \
@@ -43,13 +43,16 @@ from scripts.run_social_ground_truth_pipeline import (  # noqa: E402
     apply_optional_review,
     build_manifest_summary,
     build_pipeline_manifest,
-    build_prompt,
     load_review_rows,
     run_extraction,
     write_review_decision_jsonl,
     _write_manifest_file,
 )
 from scripts.upload_external_curator_ground_truth import upload_rows  # noqa: E402
+from app.utils.social_ground_truth_extraction import (  # noqa: E402
+    ExtractionUnavailable,
+    build_extraction_prompt,
+)
 
 DEFAULT_OUTPUT_ROOT = Path("/tmp/bainluck_social_ground_truth")
 DEFAULT_API_URL = "https://api.bainluck.com"
@@ -168,14 +171,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-non-target-handles", action="store_true")
     parser.add_argument("--include-unapproved", action="store_true")
     parser.add_argument(
-        "--extract", action="store_true", help="Call Manus and write review rows"
+        "--extract",
+        action="store_true",
+        help="Call the extraction provider and write review rows",
     )
-    parser.add_argument(
-        "--task-id",
-        default=None,
-        help="Poll an existing Manus task instead of creating one",
-    )
-    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--model", default=None, help="Override the extraction model")
     parser.add_argument(
         "--review-input", default=None, help="Existing review JSONL to review/upload"
     )
@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             include_unapproved=args.include_unapproved,
         )
         _write_manifest_file(manifest_rows, str(paths["manifest"]), "jsonl")
-        paths["prompt"].write_text(build_prompt(manifest_rows))
+        paths["prompt"].write_text(build_extraction_prompt(manifest_rows))
 
     review_rows: list[dict[str, Any]] = []
     if args.review_input:
@@ -238,15 +238,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 "Capture inputs or --capture-url are required with --extract"
             )
-        api_key = os.getenv("MANUS_API_KEY")
-        if not api_key:
-            raise SystemExit("MANUS_API_KEY is required with --extract")
-        review_rows = run_extraction(
-            manifest_rows,
-            api_key=api_key,
-            task_id=args.task_id,
-            timeout_seconds=args.timeout_seconds,
-        )
+        try:
+            review_rows = run_extraction(manifest_rows, model=args.model)
+        except ExtractionUnavailable as exc:
+            # Fail closed and LOUD (UX-P028): a missing provider must not be
+            # reported as a successful run that simply found nothing.
+            raise SystemExit(str(exc))
         write_jsonl(review_rows, paths["review"])
 
     reviewed_rows: list[dict[str, str]] = []
