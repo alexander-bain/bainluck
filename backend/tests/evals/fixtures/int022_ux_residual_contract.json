@@ -1,0 +1,14 @@
+{"schema_version":"int022-ux-residual/v1","cases":[
+{"id":"marquee-then-game-current-bug","source_queue":"UX-P025","input":{"claim":"ordering","marquee_in_progress":true,"game_prepended_after_marquee":true,"items_dropped":false,"scores_changed":false},"expected":{"verdict":"FAIL","reason_codes":["MARQUEE_TOP_SLOT_DISPLACED"]}},
+{"id":"marquee-remains-first-fixed","source_queue":"UX-P025","input":{"claim":"ordering","marquee_in_progress":true,"game_prepended_after_marquee":false,"items_dropped":false,"scores_changed":false},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"no-marquee-game-leads","source_queue":"UX-P025","input":{"claim":"ordering","marquee_in_progress":false,"game_prepended_after_marquee":true,"items_dropped":false,"scores_changed":false},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"pure-reorder-decoy","source_queue":"UX-P025","input":{"claim":"ordering","items_dropped":false,"scores_changed":false},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"drop-refused","source_queue":"UX-P025","input":{"claim":"ordering","items_dropped":true,"scores_changed":false},"expected":{"verdict":"FAIL","reason_codes":["REORDER_NOT_PURE"]}},
+{"id":"fresh-beats-stale","source_queue":"UX-P024","input":{"claim":"freshness","fresh_candidate":true,"stale_candidate":true,"winner":"fresh"},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"stale-beats-fresh-refused","source_queue":"UX-P024","input":{"claim":"freshness","fresh_candidate":true,"stale_candidate":true,"winner":"stale"},"expected":{"verdict":"FAIL","reason_codes":["STALE_WINS_OVER_FRESH"]}},
+{"id":"all-stale-retains-best","source_queue":"UX-P024","input":{"claim":"freshness","all_stale":true,"winner":"liquid"},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"all-stale-blank-refused","source_queue":"UX-P024","input":{"claim":"freshness","all_stale":true,"winner":null},"expected":{"verdict":"FAIL","reason_codes":["ALL_STALE_BLANKED"]}},
+{"id":"dead-sweep-removed","source_queue":"UX-P026","input":{"claim":"retirement","dead_required_workflow_present":false,"health_reads_dead_manifest":false,"historical_deleted":false},"expected":{"verdict":"PASS","reason_codes":[]}},
+{"id":"dead-health-remains-refused","source_queue":"UX-P026","input":{"claim":"retirement","dead_required_workflow_present":false,"health_reads_dead_manifest":true,"historical_deleted":false},"expected":{"verdict":"FAIL","reason_codes":["DEAD_HEALTH_REMAINS"]}},
+{"id":"historical-evidence-retained","source_queue":"UX-P026","input":{"claim":"retirement","dead_required_workflow_present":false,"health_reads_dead_manifest":false,"historical_deleted":false},"expected":{"verdict":"PASS","reason_codes":[]}}
+]}

@@ -1,0 +1,15 @@
+import copy,json
+from pathlib import Path
+import pytest
+from scripts.evals.int022_ux_residual_contract import evaluate_case,evaluate_corpus,load_corpus
+F=Path(__file__).parent/"fixtures/int022_ux_residual_contract.json"
+def case(i): return copy.deepcopy(next(x for x in load_corpus(F)["cases"] if x["id"]==i))
+def test_corpus_and_sources():
+ c=load_corpus(F); r=evaluate_corpus(c); assert r["total"]>=12 and r["passed"]==r["total"]
+ assert {x["source_queue"] for x in c["cases"]}=={"UX-P024","UX-P025","UX-P026"}
+def test_marquee_displacement_fails(): assert evaluate_case(case("marquee-then-game-current-bug"))["verdict"]=="FAIL"
+def test_no_marquee_game_leads(): assert evaluate_case(case("no-marquee-game-leads"))["verdict"]=="PASS"
+def test_all_stale_retained(): assert evaluate_case(case("all-stale-retains-best"))["verdict"]=="PASS"
+def test_loader(tmp_path):
+ c=load_corpus(F); c["schema_version"]="x"; p=tmp_path/"x"; p.write_text(json.dumps(c))
+ with pytest.raises(ValueError,match="SCHEMA_VERSION_INVALID"): load_corpus(p)
