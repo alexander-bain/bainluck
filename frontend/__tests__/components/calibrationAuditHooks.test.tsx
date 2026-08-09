@@ -26,6 +26,7 @@
 // break more (the same call `discoverAuditHooks.test.tsx` makes for the
 // Discover page body).
 
+import { MATCHED_BUCKET_MIN_SIDE_N } from "@/lib/calibrationMath";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -77,11 +78,25 @@ const SINGLETON_HOOKS = [
   "calibration-activity-moved",
   "calibration-activity-unchanged",
   "calibration-activity-sentence",
+  // CAL-P025 / exit-exam item 2. The matched-bucket comparison is the claim the
+  // section now leads with, so the rail has to be able to read it directly —
+  // its numbers are the ones a regression would silently change.
+  "calibration-matched-buckets",
+  "calibration-matched-sentence",
+  "calibration-matched-unavailable",
+  // CAL-P025 / exit-exam item 4.
+  "calibration-source-panels",
   "calibration-category-breakdown",
   "calibration-niche-section",
 ] as const;
 
-const COLLECTION_HOOKS = ["calibration-category-row", "calibration-parked-category"] as const;
+const COLLECTION_HOOKS = [
+  "calibration-category-row",
+  "calibration-parked-category",
+  // One per matched bucket / per source — lists, rendered in a `.map()`.
+  "calibration-matched-row",
+  "calibration-source-panel",
+] as const;
 
 describe("the calibration page renders the hooks the audit selects", () => {
   test.each(SINGLETON_HOOKS)("%s is declared exactly once", (hook) => {
@@ -167,6 +182,60 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
   test("the activity section publishes its computed direction", () => {
     // This is what lets the rail check prose-vs-numbers without parsing prose.
     expect(SOURCE).toContain("data-activity-direction={activity.direction}");
+  });
+
+  test("the matched-bucket comparison LEADS the section, ahead of the tiles", () => {
+    // CAL-P025 / exit-exam item 2 is an ordering requirement, not an addition:
+    // "led by the matched-bucket comparison; the raw cross-cohort tiles are
+    // demoted". Rendering the table somewhere below the tiles would satisfy
+    // every other assertion in this file and fail the exam item, so the order
+    // is asserted rather than left to whoever next edits the JSX.
+    const section = SOURCE.indexOf('data-testid="calibration-activity-section"');
+    const matched = SOURCE.indexOf('data-testid="calibration-matched-buckets"');
+    const tiles = SOURCE.indexOf('testId="calibration-activity-moved"');
+    expect(section).toBeGreaterThan(-1);
+    expect(matched).toBeGreaterThan(section);
+    expect(tiles).toBeGreaterThan(matched);
+  });
+
+  test("the matched comparison publishes its finding as data, not only as prose", () => {
+    // Same reason `data-activity-direction` exists: the rail must be able to
+    // grade the number without parsing a sentence that anyone may reword.
+    const i = SOURCE.indexOf('data-testid="calibration-matched-sentence"');
+    const block = SOURCE.slice(i, i + 400);
+    expect(block).toContain("data-widest-bucket=");
+    expect(block).toContain("data-widest-gap-pp=");
+    expect(block).toContain("data-compared-n=");
+  });
+
+  test("a matched row publishes whether it is comparable, and its gap", () => {
+    // A greyed thin row and a real one are visually similar and mean different
+    // things. `data-comparable` is what stops a rail grading the wrong one.
+    const i = SOURCE.indexOf('data-testid="calibration-matched-row"');
+    const block = SOURCE.slice(i, i + 260);
+    expect(block).toContain("data-comparable={row.comparable}");
+    expect(block).toContain("data-gap-pp=");
+  });
+
+  test("each source panel publishes its own n and ECE", () => {
+    // Exit-exam item 4's whole point: equal-area panels erase the 28x size
+    // difference unless every frame carries its own weight.
+    const i = SOURCE.indexOf('data-testid="calibration-source-panel"');
+    const block = SOURCE.slice(i, i + 240);
+    expect(block).toContain("data-source={p.source}");
+    expect(block).toContain("data-panel-n={p.n}");
+    expect(block).toContain("data-panel-ece={p.ece}");
+  });
+
+  test("the matched table's thin floor is the SAME number its caption cites", () => {
+    // The caption under the table says rows below `MIN_CHART_BUCKET_N` are
+    // greyed, but the greying is decided by `MATCHED_BUCKET_MIN_SIDE_N` in
+    // `calibrationMath`. They are equal today and nothing enforced it, so
+    // changing either one alone would leave the page describing a floor it
+    // does not apply — a caption that lies about the rows beside it.
+    const pageFloor = SOURCE.match(/const MIN_CHART_BUCKET_N = (\d+);/);
+    expect(pageFloor).not.toBeNull();
+    expect(Number(pageFloor![1])).toBe(MATCHED_BUCKET_MIN_SIDE_N);
   });
 
   test("the failure state names itself, and is never the loaded-page hook", () => {

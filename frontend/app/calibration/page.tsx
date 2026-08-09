@@ -9,7 +9,15 @@ import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
-import { describeActivityComparison, ece, mce, monthYear } from "@/lib/calibrationMath";
+import {
+  buildSourcePanels,
+  compareMatchedBuckets,
+  describeActivityComparison,
+  ece,
+  mce,
+  monthYear,
+  MatchedBucketRow,
+} from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
   decideCalibrationContract,
@@ -249,6 +257,19 @@ export default function CalibrationPage() {
     [movedECE, movedN, unchangedECE, unchangedN]
   );
 
+  // CAL-P025 / exit-exam item 2: the comparison the section now LEADS with.
+  // The two cohorts differ in predicted-probability mix, so the gap between
+  // their headline ECEs is part composition — `describeActivityComparison`'s
+  // own comment says so and then correctly declines to claim more. Compared
+  // bucket for bucket the mix is held fixed, and the picture is both narrower
+  // and more specific. Computed off the RAW payload buckets, not `normalized`,
+  // because the category rewrite above is irrelevant here and reading the
+  // payload directly keeps this on exactly the rows the server published.
+  const matched = useMemo(
+    () => compareMatchedBuckets(data?.buckets ?? null),
+    [data]
+  );
+
   // L2-74 §C: the main chart/table exclude never-moved outcomes
   // (price_moved===false) by default; they keep real trades (true) AND sportsbook
   // consensus (null, always a live line, where "did trading move the price" is
@@ -410,6 +431,34 @@ export default function CalibrationPage() {
     data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
     color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(src)]?.hex || COLORS[i % COLORS.length],
     label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
+  }));
+
+  // CAL-P025 / exit-exam item 4: the same per-source data, as small multiples.
+  //
+  // Overlaid, the five sources span 28x in n and 3.3x in ECE, so the two large
+  // ones own every pixel and kalshi-vs-polymarket — the comparison a reader
+  // most wants — is the hardest to see. Panels fix that, and `CalibrationChart`
+  // fixes both axes at 0-100% structurally, so the axis is shared for free.
+  //
+  // What panels DON'T give for free is the size difference: equal-area frames
+  // make a 12K curve look as authoritative as a 420K one. `buildSourcePanels`
+  // is what puts n, share and ECE back on each frame.
+  // Ruling 003: the panel's ECE is the SERVER's `by_source` number, rendered.
+  // A client that recomputed it here would be the ruling's own named failure —
+  // the same calibration number derived twice, guaranteed to drift.
+  const publishedSourceEce = new Map(
+    (data.by_source ?? []).map(m => [m.source, m.ece])
+  );
+  const sourcePanelBuckets = sources.map(src => ({
+    source: src,
+    buckets: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
+    publishedEce: publishedSourceEce.get(src) ?? null,
+  }));
+  const sourcePanels = buildSourcePanels(sourcePanelBuckets);
+  const sourcePanelData = sourcePanels.map(p => ({
+    ...p,
+    data: sourcePanelBuckets.find(s => s.source === p.source)?.buckets ?? [],
+    color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(p.source)]?.hex || COLORS[0],
   }));
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
@@ -660,11 +709,75 @@ export default function CalibrationPage() {
         >
           <h2 className="text-title-3 text-text-primary mb-1">Does Trading Activity Matter?</h2>
           <p className="text-xs text-text-muted mb-4">
-            The calibration curve, split by whether real trading moved the price. Points on the
-            diagonal = perfect calibration; above = outcomes happened <em>more</em> than predicted,
-            below = <em>less</em>. Shaded band = &plusmn;5pp and point size reflects sample count.
-            The two cohorts differ in source, category and market-shape mix, so whichever side
-            lands lower here is an observed ordering &mdash; not evidence that trading caused it.
+            Compared <strong>bucket for bucket</strong>, so both cohorts are judged on outcomes we
+            priced the same. That matters: the two cohorts have different predicted-probability
+            mixes, so any gap between their overall figures is partly a difference in what they
+            contain rather than in how they behaved.
+          </p>
+
+          {/* CAL-P025 / exit-exam item 2. The section used to lead with two
+              cross-cohort ECE tiles, and the prose beneath them had to spend a
+              sentence warning the reader not to read them as an effect. This
+              table is that warning, discharged: same-bucket rows, so the
+              composition difference is held fixed and only the residual is
+              left. The tiles are kept below as supporting detail — demoted,
+              not deleted; they are still the honest aggregate. */}
+          {matched.widest ? (
+            <div className="mb-5" data-testid="calibration-matched-buckets">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-text-muted border-b border-surface-border">
+                      <th className="py-2 pr-4 font-medium">Predicted</th>
+                      <th className="py-2 pr-4 font-medium text-right">Price moved</th>
+                      <th className="py-2 pr-4 font-medium text-right">Price unchanged</th>
+                      <th className="py-2 font-medium text-right">Difference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {matched.rows.map(row => (
+                      <MatchedBucketTableRow
+                        key={row.bucketIdx}
+                        row={row}
+                        widest={row.bucketIdx === matched.widest?.bucketIdx}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p
+                className="text-sm text-text-secondary mt-3"
+                data-testid="calibration-matched-sentence"
+                data-widest-bucket={matched.widest.bucketIdx}
+                data-widest-gap-pp={matched.widest.gapPp ?? ""}
+                data-compared-n={matched.comparedN}
+                data-close-count={matched.closeCount}
+              >
+                {matched.sentence}
+              </p>
+              <p className="text-xs text-text-muted mt-2">
+                Error is actual minus predicted, in percentage points: negative = the outcome
+                happened <em>less</em> often than the price implied. Rows where either side is
+                below {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are shown but greyed &mdash;
+                too thin to carry a comparison. A dash means only one cohort reaches that bucket,
+                so there is no matched pair to compare.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-text-muted mb-5" data-testid="calibration-matched-unavailable">
+              No bucket has enough outcomes on both sides of the split to compare like with like,
+              so only the overall figures are shown below.
+            </p>
+          )}
+
+          <h3 className="text-sm font-semibold text-text-primary mb-1">The overall split</h3>
+          <p className="text-xs text-text-muted mb-4">
+            The same data as two whole cohorts, which is how this section used to lead. Points on
+            the diagonal = perfect calibration; above = outcomes happened <em>more</em> than
+            predicted, below = <em>less</em>. Shaded band = &plusmn;5pp and point size reflects
+            sample count. Because the two cohorts differ in source, category and market-shape mix,
+            whichever side lands lower here is an observed ordering &mdash; not evidence that
+            trading caused it. The table above is the version that controls for that.
           </p>
           <CalibrationChart
             series={[
@@ -782,12 +895,14 @@ export default function CalibrationPage() {
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
         <p className="text-xs text-text-muted mb-4">
-          Every source gets the same treatment: error bars are the 95% CI (wider = less
-          certain). Every bucket is shown &mdash; well-sampled buckets are solid dots,
-          small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are faded
-          hollow dots with wide error bars, so you can see exactly how much data stands
-          behind each point rather than having any hidden. Select a source
-          tab to see per-bucket sample counts{activeSource ? " and click a point for examples" : ""}.
+          One panel per source, all on the same 0&ndash;100% axis so the shapes are directly
+          comparable &mdash; and each panel states its own sample size, because the sources
+          differ by more than 28x in how much of the curve they carry. Error bars are the 95%
+          CI (wider = less certain). Every bucket is shown &mdash; well-sampled buckets are
+          solid dots, small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are
+          faded hollow dots with wide error bars, so you can see exactly how much data stands
+          behind each point rather than having any hidden. Click any point for example outcomes,
+          or select a source tab for the full-width view.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="All" active={!activeSource} onClick={() => { setActiveSource(null); setDrillIn(null); }} />
@@ -795,14 +910,61 @@ export default function CalibrationPage() {
             <TabButton key={s} label={sourceLabel(s)} active={activeSource === s} onClick={() => { setActiveSource(s); setDrillIn(null); }} />
           ))}
         </div>
-        <CalibrationChart
-          series={sourceChartData}
-          width={700}
-          height={340}
-          thinFloor={MIN_CHART_BUCKET_N}
-          showAllN
-          onPointClick={activeSource ? (_, pt) => openDrillIn(activeSource, pt.bucket, Math.floor(pt.midpoint / 10)) : undefined}
-        />
+        {/* CAL-P025 / exit-exam item 4: on the "All" tab this used to be five
+            curves on one axis. Measured on the published payload the sources
+            span 28x in n and 3.3x in ECE, so the two large ones dominated and
+            the three sportsbook curves were unreadable — including the one
+            comparison that matters most, kalshi vs polymarket. Small multiples
+            on the shared 0-100% axis `CalibrationChart` fixes structurally.
+            Selecting a source tab still gives the full-width chart, because
+            that is the view the per-bucket drill-in belongs to. */}
+        {activeSource ? (
+          <CalibrationChart
+            series={sourceChartData}
+            width={700}
+            height={340}
+            thinFloor={MIN_CHART_BUCKET_N}
+            showAllN
+            onPointClick={(_, pt) => openDrillIn(activeSource, pt.bucket, Math.floor(pt.midpoint / 10))}
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="calibration-source-panels">
+            {sourcePanelData.map(p => (
+              <div
+                key={p.source}
+                className="border border-surface-border rounded-lg p-3"
+                data-testid="calibration-source-panel"
+                data-source={p.source}
+                data-panel-n={p.n}
+                data-panel-ece={p.ece}
+              >
+                {/* Equal-area frames erase the size difference the overlay
+                    carried by accident, so every panel states its own weight. */}
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-sm font-semibold text-text-primary">{sourceLabel(p.source)}</span>
+                  {/* Absent when the payload published no ECE for this source.
+                      Nothing is better than a number we made up to fill it. */}
+                  {p.ece !== null && (
+                    <span className="text-xs text-text-muted tabular-nums">
+                      {p.ece.toFixed(1)}pp ECE
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-text-muted mb-2 tabular-nums">
+                  {p.n.toLocaleString()} outcomes &middot; {(p.share * 100).toFixed(1)}% of the curve
+                </div>
+                <CalibrationChart
+                  series={[{ data: p.data, color: p.color, label: sourceLabel(p.source) }]}
+                  width={330}
+                  height={260}
+                  thinFloor={MIN_CHART_BUCKET_N}
+                  showLegend={false}
+                  onPointClick={(_, pt) => openDrillIn(p.source, pt.bucket, Math.floor(pt.midpoint / 10))}
+                />
+              </div>
+            ))}
+          </div>
+        )}
         <BucketExamples
           state={drillIn}
           onClose={() => setDrillIn(null)}
@@ -1127,6 +1289,48 @@ function CalibrationUnavailable({
 // editorial reword ("Resolved Outcomes" -> "Graded Outcomes") broke the evidence
 // and a markup reshuffle silently moved the read onto a different number. The
 // hook names the card; `-value` names the number inside it. Neither is prose.
+/**
+ * CAL-P025 — one matched bucket.
+ *
+ * The rule this component exists to hold: an ABSENT side renders as an em dash,
+ * never as 0.0pp. `compareMatchedBuckets` already returns `null` for it and
+ * `null` for the gap, so the only way to reintroduce the bug is here, by
+ * defaulting. Nothing below defaults.
+ */
+function MatchedBucketTableRow({ row, widest }: {
+  row: MatchedBucketRow;
+  widest: boolean;
+}) {
+  const fmt = (pp: number) => `${pp > 0 ? "+" : pp < 0 ? "−" : ""}${Math.abs(pp).toFixed(1)}pp`;
+  const thin = !row.comparable;
+  return (
+    <tr
+      className={`border-b border-surface-border last:border-0 ${thin ? "text-text-muted" : "text-text-primary"} ${widest ? "bg-amber-50" : ""}`}
+      data-testid="calibration-matched-row"
+      data-bucket={row.bucketIdx}
+      data-comparable={row.comparable}
+      data-gap-pp={row.gapPp ?? ""}
+    >
+      <td className="py-2 pr-4 font-medium">{row.label}</td>
+      <td className="py-2 pr-4 text-right tabular-nums">
+        {row.moved
+          ? <>{fmt(row.moved.errorPp)}<span className="block text-xs text-text-muted">{row.moved.n.toLocaleString()}</span></>
+          : <span aria-label="no outcomes in this bucket">&mdash;</span>}
+      </td>
+      <td className="py-2 pr-4 text-right tabular-nums">
+        {row.unchanged
+          ? <>{fmt(row.unchanged.errorPp)}<span className="block text-xs text-text-muted">{row.unchanged.n.toLocaleString()}</span></>
+          : <span aria-label="no outcomes in this bucket">&mdash;</span>}
+      </td>
+      <td className={`py-2 text-right tabular-nums ${widest ? "font-semibold" : ""}`}>
+        {row.gapPp === null
+          ? <span aria-label="no matched pair to compare">&mdash;</span>
+          : fmt(row.gapPp)}
+      </td>
+    </tr>
+  );
+}
+
 function StatCard({ label, value, detail, valueClass, testId }: {
   label: string; value: string; detail: string; valueClass?: string; testId?: string;
 }) {

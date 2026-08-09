@@ -16,15 +16,38 @@ so no cycle can finish and then discover its evidence was unobtainable.
 | # | Item | Status | Blocked on |
 |---|---|---|---|
 | 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🟡 **RULED 2026-08-09** — definition settled, unbuilt; **tier-2 census is not hand-measurable, needs a rail** | a census rail (CAL-P024), then a healthy publish |
-| 2 | Trading-activity section led by matched-bucket comparison | 🔴 not started | — (ready to stage) |
+| 2 | Trading-activity section led by matched-bucket comparison | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23`, pinned by test to the real payload | rendered proof; needs the merge + the browser rail |
 | 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 measured, undiagnosed | a census rail — the distinguishing query times out in `db-query` |
-| 4 | Source graph redesigned — per-source panels | 🔴 not started | — (ready to stage) |
+| 4 | Source graph redesigned — per-source panels | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23` | rendered proof; needs the merge + the browser rail |
 | 5 | Native calibration surface consistent with web | 🔴 unassessed | — (ready to stage, needs no prod) |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
 | 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **BASELINE ESTABLISHED 2026-08-09** — 797,871 recoverable, measured to exhaustion | a second dated measurement; ~Aug 15 |
 
 **One item is green** (6, watchdog half). Item 7 has its first datapoint for the first time.
-Items 2, 4 and 5 are unblocked and stageable today; **5 needs no production access at all.**
+Items **2 and 4 are built** (CAL-P025) and now wait only on being merged and photographed.
+Item **5 is the last one that is unblocked and unstarted**, and it needs no production access.
+
+### Why items 2 and 4 were taken while the build is dark — the reason generalises
+
+Every other unblocked item on this exam is waiting for `/api/calibration` to publish again, and
+CAL-P020's report already named the pattern that creates: **deploying is not publishing.** Three
+shipped read-side improvements (CAL-P011's reachability tier, CAL-P012's purged count, CAL-P014's
+denominator) each recorded a payoff "owed post-deploy" that could not arrive, because a payload
+change is invisible until a build succeeds.
+
+Items 2 and 4 are the two items that escape that, and it is a property of the data rather than of
+the work: **both are computable from the payload that is already published.** `buckets` is a
+1,606-row array carrying `source`, `category`, `bucket_idx`, `price_moved`, `n`, `winners` and
+`sum_prob` on every row, so the matched comparison and the per-source panels are re-groupings of
+bytes production has already served since 2026-08-02. No backend change, no population-version
+bump, no publish, and — the part that matters most right now — **no edit to
+`precompute_calibration.py`**, whose hashed functions reset the staged cursor on every touch.
+
+That last point is a lane-wide constraint CAL-P024's rate-mismatch finding implies and nobody had
+written down: the build needs ~13 consecutive uninterrupted beats to converge, and the file has
+taken ~1.8 commits/day for two weeks. **Until the curve publishes, work that touches the
+precompute is work that prevents it from publishing.** Items 2 and 4 were the right work partly
+because they are the right work, and partly because they are off that critical path.
 
 ### The one scheduling fact that governs the exam
 
@@ -235,8 +258,51 @@ Within a bucket the two are mostly within ~1–2pp of each other. The one real s
 **mid-band 35–50%**, where traded outcomes over-predict noticeably more than untraded ones. That
 is a genuine, specific, publishable finding — and it is exactly what the cross-cohort tiles bury.
 
-**This is the answer the section should lead with.** The work is to compute it server-side and
-render it, not to discover it.
+**This is the answer the section should lead with.** The work is to compute it and render it, not
+to discover it.
+
+### ✅ BUILT — CAL-P025, 2026-08-09, `program/calibration-23`
+
+**Correction to this item's own staging note, worth stating because it changed the plan.** The
+line above said "compute it server-side". That is wrong, and wrong in a way that would have been
+costly: server-side means editing `precompute_calibration.py`, which resets the staged cursor
+(CAL-P024) and would have pushed the publish further away in order to render a section about
+honesty. The whole comparison is derivable **client-side from the published payload**, because
+every bucket row already carries `bucket_idx`, `price_moved`, `n`, `winners` and `sum_prob`.
+
+What shipped:
+
+- `compareMatchedBuckets()` in `frontend/lib/calibrationMath.ts` — the matched roll-up, living
+  beside `describeActivityComparison`, whose own comment diagnosed the composition problem
+  ("C111 [P2] showed this aggregate is composition sensitive") and then correctly declined to act
+  on it. This is that diagnosis treated.
+- The `/calibration` trading section now **leads** with the per-bucket table; the two cross-cohort
+  ECE tiles are **demoted to supporting detail under "The overall split"**, not deleted — they
+  are still the honest aggregate, they were just never the headline.
+- New rail hooks: `calibration-matched-buckets`, `calibration-matched-sentence`,
+  `calibration-matched-row` (with `data-comparable` and `data-gap-pp` per row),
+  `calibration-matched-unavailable`.
+
+**The finding is now pinned by test against the frozen production payload**
+(`__tests__/lib/calibrationMatchedBuckets.test.ts`, 23 tests), so a regression changes a number in
+CI rather than quietly on the page: bucket 4 = **−5.7pp moved vs −1.4pp unchanged, a 4.3pp gap on
+75,583 outcomes**, and **9 of 10 matched buckets land within 2pp of each other**. The partition
+reconciles exactly — 349,310 moved + 263,022 unchanged + 40,075 not-applicable = 652,407.
+
+Three rules the tests enforce, each proven non-vacuous by mutation:
+
+1. **An absent side is a dash, never 0.0pp.** A bucket only one cohort reaches has no gap; showing
+   "0.0" would manufacture an agreement out of missing data — gotcha #53's shape, in a table cell.
+2. **Thin sides are shown but cannot carry the finding.** A 40-outcome bucket with a huge gap must
+   not become the headline; the floor is the same 1,000 the curve fades dots at, and a test now
+   pins the two to the same constant so the caption cannot drift from the behaviour.
+3. **The sentence never claims a cause.** Same rule the aggregate comparison already holds itself
+   to, asserted by regex.
+
+**Still owed for GREEN: the rendered screenshot.** The required proof is browser evidence, and
+local Chromium does not launch in an agent sandbox (confirmed again this window). The remote
+`browser-audit.yml` rail grades **production**, which does not carry this branch, so the evidence
+is genuinely obtainable only after the merge deploys.
 
 ---
 
@@ -288,6 +354,61 @@ large sources dominate and the three sportsbook curves are unreadable — and th
 that matters most (kalshi vs polymarket) is the hardest to see.
 
 Per-source panels with a shared axis let a reader see both the shape and the size difference.
+
+### ✅ BUILT — CAL-P025, 2026-08-09, `program/calibration-23`
+
+The "All" tab of the By Source section is now small multiples: one panel per source, each drawn by
+`CalibrationChart`, which fixes both axes at 0–100% **structurally** — so the shared axis is not a
+convention anyone has to maintain. Selecting a source tab still gives the full-width chart, since
+that is the view the per-bucket drill-in belongs to; the drill-in also works from any panel.
+
+**The non-obvious half, and the reason this went through a tested function rather than inline JSX:
+small multiples equalise panel AREA, which erases exactly the size difference the overlay conveyed
+by accident.** A 12,410-outcome curve and a 420,594-outcome curve get identical frames and read as
+equally authoritative. So `buildSourcePanels()` gives every panel its own **n, share of the curve,
+and ECE**, and the panels are ordered largest-first.
+
+#### Ruling 003 caught this mid-build, and it was right to
+
+The panel ECE was first written as a client-side derivation from the same buckets. **Ruling 003
+("clients format, never adjudicate", banked 2026-08-09 while this queue was being built) names
+that exact thing as a failure**: *"dual ECE derivations — the same calibration number computed
+twice, in two languages, which guarantees they drift."* The panels now render the server's
+published `by_source[].ece` and print **nothing** where the payload published none, rather than
+backfilling a client number into the gap.
+
+**The drift is not hypothetical — it is already live on the payload production is serving:**
+
+| source | published `by_source` | client-derived from the same buckets |
+|---|---|---|
+| kalshi | 0.8pp | 0.8pp |
+| polymarket | 2.7pp | 2.7pp |
+| odds_api | 1.4pp | 1.4pp |
+| odds_api_totals | 1.1pp | 1.1pp |
+| **odds_api_spreads** | **0.7pp** | **0.6pp** |
+
+Four of five agree, which is precisely how a dual derivation survives review — it looks fine until
+it doesn't, on one source, at one moment. Pinned by test.
+
+**A pre-existing instance this surfaced, reported not fixed.** The *Source Comparison* table above
+the panels still derives `srcECE` / `srcMCE` / `srcBrier` client-side, so on today's payload it is
+showing **0.6pp for odds_api_spreads while `by_source` says 0.67pp**. That is the same violation,
+older and wider (MCE and Brier are not published per source at all, so it cannot simply be
+rewired). Fixing it means publishing those as typed backend decisions — which means editing the
+precompute, which is frozen until the curve publishes. **Named here as owed, deliberately out of
+this branch's scope.**
+
+Pinned by test on the frozen payload: the five panels in order (kalshi 420,594 · polymarket
+191,738 · odds_api 14,960 · odds_api_totals 12,705 · odds_api_spreads 12,410), reconciling to
+652,407; shares summing to 1; the 28x span asserted directly; and kalshi's ECE below polymarket's
+by more than 2x. A source with no outcomes is **dropped rather than drawn as an empty frame** —
+an empty panel asserts "we measured this and found nothing", which is not what missing means.
+
+New rail hooks: `calibration-source-panels`, and per panel `calibration-source-panel` carrying
+`data-source`, `data-panel-n`, `data-panel-ece`.
+
+**Still owed for GREEN: the rendered screenshot**, for the same reason as item 2 — the proof is
+visual, and the rail that can take it grades production.
 
 ---
 
@@ -452,6 +573,12 @@ Every claim above traces to a dated measurement. Add rows; never edit one.
 | 2026-08-09 10:53 | b2e4 | winner-field-coherence dry run, first 50K markets: 811 defects (`incoherent_field` 701 · `multi_winner` 142); politics 606 total but only **8** multi_winner | specimens above |
 | 2026-08-09 11:15 | b2e4 | native DOES implement the stale banner in source (`isStale`, `staleBannerDetail`, `populationVersionState.mismatched`) — item 5's flagged honesty risk is likely a FALSE ALARM; rendered proof still owed | item 5 |
 | 2026-08-09 11:20 | b2e4 | **the beat is NOT firing hourly** — watched 16:27Z→18:20Z: `failures_24h` stuck at 10, ledger generation stuck at 16:15:00Z, cursor stuck at 10 units @ 16:26:24Z. NEITHER the 17:15Z nor the 18:15Z beat ran | CAL-P016 convergence |
+| 2026-08-09 13:07 | cae1 | `/api/calibration` **200 in 0.97s**, `cache.status="stale"`, `age_s=664868` (**7.70 d**) — publish still `2026-08-02T03:23:54Z`, census still `payload_predates_census`. Age is climbing monotonically (7.53 → 7.59 → 7.70 d across three windows today) exactly as CAL-P024 projected | items 1/3/7 blocked |
+| 2026-08-09 13:07 | cae1 | deployed `30d10863` (INT-027); `git cherry` shows CAL-P024's three commits still outstanding ⇒ production still runs the census ON at ~632 s/unit | CAL-P024 |
+| 2026-08-09 13:12 | cae1 | matched-bucket table **re-derived live from `/api/calibration`** and reproduces this document's 2026-08-02 figures to 0.1pp (b3 −0.9/−2.7 · b4 −1.4/−5.7 · b5 −1.6/−1.1) ⇒ items 2 and 4 need no publish | item 2 |
+| 2026-08-09 13:40 | cae1 | **items 2 and 4 BUILT** — `compareMatchedBuckets` + `buildSourcePanels`; frontend suite **1,843 passed / 0 failed** (was 1,832), build clean, typecheck 84 = baseline. 7 mutations confirm every load-bearing rule | items 2, 4 |
+| 2026-08-09 13:45 | cae1 | local Chromium **fails to launch** in the agent sandbox (`playwright-core` → "Target page, context or browser has been closed"), re-confirming that rendered evidence needs the remote rail against a deployed build | items 2, 4, 5 |
+| 2026-08-09 14:05 | cae1 | **live dual-ECE drift**, published `by_source` vs client derivation on the same buckets: 4 of 5 sources agree at display precision, **`odds_api_spreads` 0.7pp published vs 0.6pp derived**. Panels rewired to render the published value (ruling 003); the pre-existing Source Comparison table still derives and is reported as owed | item 4 |
 
 ## Open questions for Alex
 
