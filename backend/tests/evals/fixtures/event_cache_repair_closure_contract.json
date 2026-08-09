@@ -1,0 +1,17 @@
+{
+  "policy":{"contract_version":"event-cache-repair-closure/v1"},
+  "cases":[
+    {"id":"warm-positive-beats-negative","input":{"positive":true,"negative":true,"stale":true,"build":"none"},"expected":{"verdict":"accept","response":"positive","errors":[],"warnings":[]}},
+    {"id":"known-negative-short-circuits","input":{"negative":true,"build":"success"},"expected":{"verdict":"accept","response":"404","errors":[],"warnings":[]}},
+    {"id":"genuine-first-miss-writes-negative","input":{"build":"none","none_reads_stale":true,"negative_rechecks_positive_and_stale":true},"expected":{"verdict":"accept","response":"404","errors":[],"warnings":[]}},
+    {"id":"exception-serves-last-good","input":{"stale":true,"build":"exception"},"expected":{"verdict":"accept","response":"stale","errors":[],"warnings":[]}},
+    {"id":"none-must-serve-last-good","input":{"stale":true,"build":"none","none_reads_stale":false,"negative_rechecks_positive_and_stale":false},"expected":{"verdict":"refuse","response":"404","errors":["NEGATIVE_PUBLISHED_OVER_POSITIVE_EVIDENCE","NONE_BYPASSES_LAST_GOOD"],"warnings":[]}},
+    {"id":"repaired-none-serves-last-good","input":{"stale":true,"build":"none","none_reads_stale":true,"negative_rechecks_positive_and_stale":true},"expected":{"verdict":"accept","response":"stale","errors":[],"warnings":[]}},
+    {"id":"negative-then-success-is-cleared","input":{"build":"success","concurrent_negative_before_success":true,"success_clears_negative":true},"expected":{"verdict":"accept","response":"live","errors":[],"warnings":[]}},
+    {"id":"success-then-negative-current-race","input":{"build":"none","concurrent_positive_before_negative":true,"negative_rechecks_positive_and_stale":false},"expected":{"verdict":"refuse","response":"404","errors":["NEGATIVE_PUBLISHED_OVER_POSITIVE_EVIDENCE"],"warnings":[]}},
+    {"id":"success-then-negative-rechecked","input":{"build":"none","concurrent_positive_before_negative":true,"negative_rechecks_positive_and_stale":true},"expected":{"verdict":"accept","response":"404","errors":[],"warnings":[]}},
+    {"id":"partial-cache-write-positive-read-first","input":{"positive":true,"negative":true,"build":"success","cache_write_partial":true,"positive_precedes_negative_on_read":true},"expected":{"verdict":"accept","response":"positive","errors":[],"warnings":[]}},
+    {"id":"negative-must-not-outlive-positive","input":{"build":"none","none_reads_stale":true,"negative_rechecks_positive_and_stale":true,"negative_ttl_s":300,"positive_ttl_s":60},"expected":{"verdict":"watch","response":"404","errors":[],"warnings":["NEGATIVE_OUTLIVES_POSITIVE"]}},
+    {"id":"dead-cache-genuine-miss-still-404","input":{"build":"none","none_reads_stale":true,"negative_rechecks_positive_and_stale":true,"cache_unavailable":true},"expected":{"verdict":"accept","response":"404","errors":[],"warnings":[]}}
+  ]
+}
