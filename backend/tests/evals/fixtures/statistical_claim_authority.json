@@ -1,0 +1,18 @@
+{
+  "valid": {
+    "analysis_id": "cal-cricket-read-fix", "outcome": "ece_pp_delta", "independent_unit": "question_id", "independent_units": 250,
+    "raw_rows": 3000, "clustered_uncertainty": true, "estimate": -2.1, "ci_low": -3.0, "ci_high": -1.2,
+    "practical_effect_floor": 0.5, "direction": "decrease", "analysis_plan_created_at": "2026-08-01", "data_window_started_at": "2026-08-02",
+    "comparison_family": 3, "p_values": [0.002, 0.4, 0.03], "target_index": 0, "uncertainty_method": "question_cluster_bootstrap", "model_selected_on_same_data": false
+  },
+  "adversaries": [
+    {"id": "rows-not-questions", "set": {"independent_units": 3000, "raw_rows": 3000, "independent_unit": "outcome_row", "clustered_uncertainty": false}, "extra": {"raw_rows": 90000}, "reason": "PSEUDOREPLICATION_UNCORRECTED"},
+    {"id": "tiny-independent-n", "set": {"independent_units": 12}, "reason": "INDEPENDENT_SAMPLE_TOO_SMALL"},
+    {"id": "ci-crosses-zero", "set": {"ci_high": 0.2}, "reason": "INTERVAL_CROSSES_NULL"},
+    {"id": "effect-too-small", "set": {"estimate": -0.3, "ci_low": -0.5, "ci_high": -0.1}, "reason": "PRACTICAL_EFFECT_NOT_ESTABLISHED"},
+    {"id": "analysis-after-data", "set": {"analysis_plan_created_at": "2026-08-03"}, "reason": "ANALYSIS_NOT_PROSPECTIVE"},
+    {"id": "subgroup-fishing", "set": {"p_values": [0.04, 0.04, 0.04], "target_index": 0}, "reason": "MULTIPLE_COMPARISON_NOT_SIGNIFICANT"},
+    {"id": "hidden-comparisons", "set": {"comparison_family": 8}, "reason": "COMPARISON_FAMILY_INCOMPLETE"},
+    {"id": "same-data-model-selection", "set": {"model_selected_on_same_data": true}, "reason": "MODEL_SELECTION_LEAKAGE"}
+  ]
+}
