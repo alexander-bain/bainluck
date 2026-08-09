@@ -18,6 +18,7 @@
 
 const { redactText, redactUrl } = require("./redaction");
 const { classifyMainRegion } = require("./contentState");
+const { classifyErrorVolume } = require("./errorVolume");
 
 /** Terminal results. Anything else is a bug in the caller. */
 const RESULTS = Object.freeze({
@@ -34,8 +35,39 @@ const TERMINAL_RESULTS = Object.freeze([
   RESULTS.SUPERSEDED,
 ]);
 
-function assertion(id, ok, detail) {
-  return { assertion_id: id, ok: Boolean(ok), detail: detail == null ? null : String(detail) };
+function assertion(id, ok, detail, reasonCode) {
+  const record = {
+    assertion_id: id,
+    ok: Boolean(ok),
+    detail: detail == null ? null : String(detail),
+  };
+  // Only present when a stable code exists. The filer fingerprints on this, so
+  // it deliberately carries NO counts — a fingerprint containing "2036" would
+  // file a fresh issue every run as the number drifted.
+  if (reasonCode) record.reason_code = String(reasonCode);
+  return record;
+}
+
+/**
+ * Record one error-volume channel (UX-P029 Item 3).
+ *
+ * Under the threshold this is not a pass to be celebrated, it is evidence
+ * retained — so it lands in `checked_clean` with its numbers rather than adding
+ * another green assertion to every journey.
+ */
+function volumeAssertion(assertions, checkedClean, id, channel, detail) {
+  if (channel.exceeded) {
+    assertions.push(
+      assertion(
+        id,
+        false,
+        `${detail}; over the ${channel.threshold} threshold (${channel.reason_code})`,
+        channel.reason_code
+      )
+    );
+    return;
+  }
+  checkedClean.push(`${id} (${detail}, threshold ${channel.threshold})`);
 }
 
 function isNonEmptyString(value) {
@@ -394,6 +426,36 @@ function evaluateJourney(observation) {
             .map((f) => `${redactUrl(f.url)} ${f.status ?? f.failure ?? ""}`.trim())
             .join("; ")}`
     )
+  );
+
+  // --- Error VOLUME (UX-P029 Item 3 / #1600). ---
+  //
+  // Computed from the RAW observations, before `allowedFailures` /
+  // `allowedConsoleErrors`, and therefore UNWAIVABLE. That is the whole point:
+  // the per-error assertions above can be declared away one string at a time,
+  // and #1600 — ~2,036 failed requests in a single load — could otherwise be
+  // silenced by declaring `en.wikipedia.org` once. An allowance is for a known
+  // benign error; it is not a licence to issue two thousand requests.
+  //
+  // Below the threshold nothing fails here and the counts still ride in the
+  // manifest: a small number of errors is evidence, not a verdict.
+  const errorVolume = classifyErrorVolume(o);
+  volumeAssertion(
+    assertions,
+    checkedClean,
+    "console.error_volume_within_policy",
+    errorVolume.console,
+    `${errorVolume.console.total} console error(s) (${errorVolume.console.distinct} distinct)`
+  );
+  volumeAssertion(
+    assertions,
+    checkedClean,
+    "network.failure_volume_within_policy",
+    errorVolume.requests,
+    `${errorVolume.requests.total} failed request(s) (${errorVolume.requests.distinct} distinct)` +
+      (errorVolume.requests.by_origin.length
+        ? ` — top origin ${errorVolume.requests.by_origin[0].origin} x${errorVolume.requests.by_origin[0].count}`
+        : "")
   );
 
   // --- Telemetry ledger (L2-222 Item 3 / #1453). ---

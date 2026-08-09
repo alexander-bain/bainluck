@@ -1,10 +1,18 @@
-name: Browser audit (manual)
+name: Browser audit
 
-# L2-221 Item 2 — phase 1 of the replacement browser-QA rail (#1497).
+# L2-221 Item 2 — the replacement browser-QA rail (#1497).
+# UX-P029 Item 1 (#1598) — phase 2: this rail now runs on a SCHEDULE.
 #
-# DELIBERATELY manual-only. No `schedule:`, no issue filing, no auth, no
-# production write credential. Those are later phases (C96's migration plan
-# steps 3-5) and must not be switched on by editing this file casually.
+# Why the schedule had to come before any product fix: the rail was correct and
+# nobody was listening. It caught a blank F1 tournament page (#1599) and a
+# ~2,000-request Wikipedia fan-out (#1600) on 2026-08-04, and both sat unread for
+# five days because the only way to see a result was to dispatch a run by hand
+# and open it. A rail that fails honestly into an empty room is barely better
+# than one that lies — the mechanism is healthy and there is nothing to notice.
+#
+# This file STILL holds `contents: read` and files nothing. The privileged
+# consumer is a separate workflow (`browser-audit-filer.yml`) triggered by this
+# one's completion, so browser execution never holds `issues: write`.
 #
 # The one thing this workflow must never do is report GREEN without evidence.
 # The retired provider's sweep concluded `success` with 0 of 3 modules
@@ -21,6 +29,10 @@ name: Browser audit (manual)
 # the retired provider.
 
 on:
+  # UX-P029: 07:40 UTC daily — after the nightly sentinels (07:10 flow, 07:25
+  # grid) so a red morning has one story rather than three racing ones.
+  schedule:
+    - cron: "40 7 * * *"
   workflow_dispatch:
     inputs:
       frontend_sha:
@@ -64,24 +76,45 @@ permissions:
   contents: read
 
 concurrency:
-  group: browser-audit-${{ inputs.frontend_sha }}
+  # UX-P029: `inputs.frontend_sha` is EMPTY on a scheduled run, which would put
+  # every cron run in one nameless group. Named explicitly so a stuck scheduled
+  # run is superseded by the next one, while dispatched runs stay keyed by the
+  # commit they are proving.
+  group: browser-audit-${{ inputs.frontend_sha || 'scheduled' }}
   cancel-in-progress: true
 
 jobs:
   audit:
-    name: Anonymous Discover smoke + web consent pack
+    name: Browser audit (${{ matrix.pack }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    # UX-P029: a dispatched run proves the ONE pack it was asked for; a scheduled
+    # run sweeps a fixed set. Each pack is its own JOB, never a second playwright
+    # invocation inside one job — the reporter writes a single
+    # `$AUDIT_OUT_DIR/manifest.json`, so two invocations in one job would leave
+    # the second silently overwriting the first's evidence.
+    #
+    # `fail-fast: false` because a red smoke pack must not cancel the tournament
+    # pack; each leg's manifest is separate evidence and all of it is wanted.
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: ${{ fromJSON(inputs.pack && format('["{0}"]', inputs.pack) || '["deploy-smoke+consent","tournament-inventory"]') }}
+
     defaults:
       run:
         working-directory: frontend/e2e
 
     env:
-      AUDIT_PACK: ${{ inputs.pack }}
-      AUDIT_TRIGGER: workflow_dispatch
+      AUDIT_PACK: ${{ matrix.pack }}
+      AUDIT_TRIGGER: ${{ github.event_name }}
       AUDIT_REQUESTED_SHA: ${{ inputs.frontend_sha }}
-      TRACE_BASE_URL: ${{ inputs.base_url }}
-      AUDIT_API_BASE_URL: ${{ inputs.api_base_url }}
+      # UX-P029: `inputs.*` are ALL empty on a scheduled run, and the validation
+      # step below rejects an empty origin (rightly — it allowlists exact hosts).
+      # The defaults are repeated here rather than loosening that check.
+      TRACE_BASE_URL: ${{ inputs.base_url || 'https://www.bainluck.com' }}
+      AUDIT_API_BASE_URL: ${{ inputs.api_base_url || 'https://api.bainluck.com' }}
       AUDIT_OUT_DIR: ${{ github.workspace }}/frontend/e2e/audit-out
 
     steps:
@@ -92,6 +125,12 @@ jobs:
           # the default depth-1 clone `git merge-base` cannot see the audited
           # commit, and "cannot prove" would collapse into "assume fine".
           fetch-depth: 0
+
+      - name: Resolve the commit this run grades
+        # Dispatched: use the requested sha untouched. Scheduled: read the live
+        # build marker and BIND to it, or fail. Exports AUDIT_SHA_SOURCE so a
+        # reader can always tell a requested green from a discovered one.
+        run: node scripts/resolve-scheduled-sha.js
 
       - name: Validate every dispatch input
         # L2-223. Every value here is attacker-choosable by anyone who can
@@ -104,7 +143,7 @@ jobs:
         # before the shell ever sees the line, so quoting it would not have
         # helped. Gotcha #9: the checks live inside the run block.
         env:
-          RAW_TIMEOUT: ${{ inputs.sha_timeout_seconds }}
+          RAW_TIMEOUT: ${{ inputs.sha_timeout_seconds || '600' }}
         run: |
           set -euo pipefail
 
@@ -307,7 +346,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-audit-${{ inputs.frontend_sha }}-${{ github.run_id }}
+          # Pack-scoped: matrix legs share a run id, and upload-artifact v4
+          # rejects duplicate names. `inputs.frontend_sha` is also empty on a
+          # scheduled run, so the RESOLVED sha is used instead.
+          name: browser-audit-${{ matrix.pack }}-${{ env.AUDIT_REQUESTED_SHA }}-${{ github.run_id }}
           path: frontend/e2e/audit-out/
           retention-days: 90
           if-no-files-found: error
@@ -322,6 +364,9 @@ jobs:
             echo "| field | value |"
             echo "|---|---|"
             echo "| requested frontend sha (audited) | \`${AUDIT_REQUESTED_SHA}\` |"
+            echo "| sha source | ${AUDIT_SHA_SOURCE:-unrecorded} |"
+            echo "| pack | ${AUDIT_PACK} |"
+            echo "| trigger | ${AUDIT_TRIGGER} |"
             echo "| observed frontend sha | \`${AUDIT_OBSERVED_FRONTEND_SHA:-unresolved}\` |"
             echo "| checkout sha (grading code) | \`${AUDIT_CHECKOUT_SHA:-unresolved}\` |"
             echo "| checkout ancestry | ${AUDIT_CHECKOUT_ANCESTRY:-unproven} |"

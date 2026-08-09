@@ -1,0 +1,95 @@
+name: Browser audit filer
+
+# UX-P029 Item 2 (#1598) — give the browser audit an audience.
+#
+# The runner (`browser-audit.yml`) is deliberately powerless: `contents: read`,
+# no token, no filing. This workflow is the ONLY privileged half, and it is
+# separate for one reason — a job that drives a browser against the live site
+# must never also hold `issues: write`. Splitting them means a compromised or
+# merely buggy browser run cannot write to the board.
+#
+# `workflow_run` runs THIS file from the default branch regardless of what the
+# triggering run checked out, which is what makes the split meaningful: the
+# privileged half is always the reviewed version.
+#
+# What it will not do, and why:
+#
+#   * It never files on UNKNOWN or on infrastructure failure. A dead runner or an
+#     untrusted manifest says nothing about the product, and filing "the site is
+#     broken" off a broken runner is exactly how a rail loses its audience —
+#     which is the failure #1598 is about in the first place.
+#   * It never files twice for one fingerprint. The shared sentinel lifecycle
+#     dedupes by declaration, and the decision layer comments instead of filing
+#     whenever an issue is already open or a concurrent claim was lost.
+#   * It never closes on one clean run. Recovery requires the standing
+#     continuous-GREEN duration; one green after a red is a flake as often as a fix.
+
+on:
+  workflow_run:
+    workflows: ["Browser audit"]
+    types: [completed]
+
+# The privileged half, still as narrow as it can be:
+#   issues: write  — file/comment/close the one deduped issue per fingerprint
+#   actions: read  — download the triggering run's manifest artifact
+#   contents: read — check out the decision layer this repo reviewed
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  # Serialized per triggering run so a re-run cannot race itself. Deliberately
+  # NOT cancel-in-progress: cancelling a filer mid-write is how a half-filed
+  # issue happens.
+  group: browser-audit-filer-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  file:
+    name: File verified findings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Download the triggering run's evidence
+        # `if-no-files-found` has no equivalent on download; the consumer below
+        # treats a missing manifest as ARTIFACT_UNAVAILABLE and refuses, rather
+        # than reading silence as "nothing was wrong".
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-artifacts
+          merge-multiple: false
+
+      - name: Decide, then act
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUDIT_ARTIFACT_ROOT: audit-artifacts
+          AUDIT_RUN_ID: ${{ github.event.workflow_run.id }}
+          AUDIT_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          AUDIT_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          AUDIT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node frontend/e2e/scripts/file-sweep-findings.js
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Browser audit filer"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| triggering run | ${{ github.event.workflow_run.html_url }} |"
+            echo "| conclusion | ${{ github.event.workflow_run.conclusion }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f filer-summary.md ]; then cat filer-summary.md >> "$GITHUB_STEP_SUMMARY"; fi

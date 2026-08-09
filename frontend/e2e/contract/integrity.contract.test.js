@@ -606,12 +606,27 @@ describe("workflow dispatch input safety", () => {
   });
 
   it("passes every dispatch input through the job env instead", () => {
-    for (const name of ["pack", "frontend_sha", "base_url", "api_base_url"]) {
+    // UX-P029: a scheduled run supplies NO inputs, so `base_url` / `api_base_url`
+    // / `sha_timeout_seconds` now carry `|| '<default>'` and `pack` comes from the
+    // matrix. The security property is unchanged and is what this asserts: each
+    // value is bound to a job env var, never interpolated into a `run:` block
+    // (pinned separately by "never expands a dispatch input inside a run block").
+    for (const name of ["frontend_sha", "base_url", "api_base_url"]) {
       assert.ok(
-        new RegExp(`:\\s*\\$\\{\\{\\s*inputs\\.${name}\\s*\\}\\}`).test(workflow),
+        new RegExp(`:\\s*\\$\\{\\{\\s*inputs\\.${name}\\s*(\\|\\|[^}]*)?\\}\\}`).test(workflow),
         `${name} must be bound to an env var`
       );
     }
+    assert.match(
+      workflow,
+      /AUDIT_PACK:\s*\$\{\{\s*matrix\.pack\s*\}\}/,
+      "the pack must reach the job as a matrix value bound to env, not inline in a run block"
+    );
+    assert.match(
+      workflow,
+      /pack:\s*\$\{\{\s*fromJSON\(inputs\.pack/,
+      "the matrix must still derive a dispatched pack from the validated input"
+    );
   });
 
   it("validates the timeout as bounded digits before using it", () => {

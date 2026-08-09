@@ -148,9 +148,41 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
     assert.ok(config.length > 500, `stripped config is suspiciously short (${config.length})`);
   });
 
-  it("is dispatch-only — no schedule in phase 1", () => {
-    assert.ok(config.includes("workflow_dispatch:"));
-    assert.ok(!/^\s{2}schedule:/m.test(config), "phase 1 must not carry a schedule trigger");
+  it("is SCHEDULED and still dispatchable (UX-P029 phase 2)", () => {
+    // Phase 1 asserted the opposite — `!schedule` — and that was right at the
+    // time. #1598 is what changed it: the rail caught #1599 and #1600 on
+    // 2026-08-04 and nobody saw either for five days, because the only way to
+    // get a result was to dispatch a run by hand. An unheard rail is the failure
+    // mode, so the schedule is now the property worth pinning.
+    assert.ok(config.includes("workflow_dispatch:"), "manual dispatch must survive the schedule");
+    assert.ok(/^\s{2}schedule:/m.test(config), "the rail must run on a cron, not only by hand");
+    assert.match(config, /cron:\s*"[^"]+"/, "the cron expression must be explicit");
+  });
+
+  it("a scheduled run can still name the commit it graded", () => {
+    // The whole rail rests on binding a result to a deployment. A cron run has
+    // no `frontend_sha` input, so it MUST resolve one — and fail if it cannot.
+    // Without this, "scheduled" would quietly mean "unbound".
+    assert.ok(
+      config.includes("resolve-scheduled-sha.js"),
+      "a scheduled run must resolve the deployed commit before grading"
+    );
+    const resolver = path.join(e2eRoot, "scripts", "resolve-scheduled-sha.js");
+    assert.ok(fs.existsSync(resolver), "the resolver the workflow calls must exist");
+    const src = fs.readFileSync(resolver, "utf8");
+    assert.match(src, /AUDIT_SHA_SOURCE/, "how the commit was chosen must be recorded");
+    assert.match(src, /return 1/, "an unreadable build marker must fail, not proceed unbound");
+  });
+
+  it("every matrix leg gets its own artifact name", () => {
+    // upload-artifact v4 errors on duplicate names, and matrix legs share a run
+    // id — so a pack-less name would either collide or, worse, overwrite one
+    // leg's evidence with another's.
+    assert.match(
+      config,
+      /name:\s*browser-audit-\$\{\{\s*matrix\.pack\s*\}\}/,
+      "artifact names must be pack-scoped"
+    );
   });
 
   it("installs a browser with its OS dependencies", () => {
