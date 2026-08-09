@@ -1,0 +1,16 @@
+{"schema_version":"curator-market-match/v1","cases":[
+{"id":"source-item-id-exact","input":{"item_id_match":true,"confidence":1.0,"candidate_ids":[42]},"expected":{"verdict":"BOOST","boost":20,"reason_codes":[]}},
+{"id":"entity-title-high-confidence","input":{"entity_match":true,"title_match":true,"confidence":0.95,"candidate_ids":[43]},"expected":{"verdict":"BOOST","boost":20,"reason_codes":[]}},
+{"id":"case-punctuation-normalized","input":{"entity_match":true,"title_match":true,"confidence":0.92,"candidate_ids":[44]},"expected":{"verdict":"BOOST","boost":20,"reason_codes":[]}},
+{"id":"percent-literal-unescaped","input":{"entity_match":true,"title_match":true,"confidence":0.95,"raw_wildcard_interpolated":true,"candidate_ids":[45]},"expected":{"verdict":"REFUSE","boost":0,"reason_codes":["WILDCARD_UNESCAPED"]}},
+{"id":"underscore-literal-unescaped","input":{"entity_match":true,"title_match":true,"confidence":0.95,"raw_wildcard_interpolated":true,"candidate_ids":[46]},"expected":{"verdict":"REFUSE","boost":0,"reason_codes":["WILDCARD_UNESCAPED"]}},
+{"id":"weak-common-tokens","input":{"entity_match":false,"title_match":true,"confidence":0.4,"candidate_ids":[47,48]},"expected":{"verdict":"NO_MATCH","boost":0,"reason_codes":["IDENTITY_UNPROVED","MATCH_CONFIDENCE_LOW"]}},
+{"id":"cross-entity-same-title","input":{"entity_match":true,"title_match":true,"cross_entity":true,"confidence":0.94,"candidate_ids":[49]},"expected":{"verdict":"REFUSE","boost":0,"reason_codes":["ENTITY_COLLISION"]}},
+{"id":"title-only-high-score","input":{"entity_match":false,"title_match":true,"confidence":0.96,"candidate_ids":[50]},"expected":{"verdict":"NO_MATCH","boost":0,"reason_codes":["IDENTITY_UNPROVED"]}},
+{"id":"entity-only-no-title","input":{"entity_match":true,"title_match":false,"confidence":0.96,"candidate_ids":[51]},"expected":{"verdict":"NO_MATCH","boost":0,"reason_codes":["IDENTITY_UNPROVED"]}},
+{"id":"below-threshold","input":{"entity_match":true,"title_match":true,"confidence":0.89,"threshold":0.9,"candidate_ids":[52]},"expected":{"verdict":"REFUSE","boost":0,"reason_codes":["MATCH_CONFIDENCE_LOW"]}},
+{"id":"threshold-boundary","input":{"entity_match":true,"title_match":true,"confidence":0.9,"threshold":0.9,"candidate_ids":[53]},"expected":{"verdict":"BOOST","boost":20,"reason_codes":[]}},
+{"id":"no-match","input":{"confidence":0,"candidate_ids":[]},"expected":{"verdict":"NO_MATCH","boost":0,"reason_codes":["IDENTITY_UNPROVED","MATCH_CONFIDENCE_LOW"]}},
+{"id":"duplicate-candidate-refused","input":{"item_id_match":true,"confidence":1,"candidate_ids":[54,54]},"expected":{"verdict":"REFUSE","boost":0,"reason_codes":["DUPLICATE_CANDIDATE"]}},
+{"id":"multiple-distinct-item-matches","input":{"item_id_match":true,"confidence":1,"candidate_ids":[55,56]},"expected":{"verdict":"BOOST","boost":20,"reason_codes":[]}}
+]}
