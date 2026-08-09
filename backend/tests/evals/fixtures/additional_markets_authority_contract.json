@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "id": "clean-live-row",
+      "input": {"event_status": "live", "rows": [{"probability": 0.42, "rendered_probability": 0.42}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "missing-probability-withheld",
+      "input": {"event_status": "live", "rows": [{"probability": null, "rendered_probability": null}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "missing-probability-becomes-zero",
+      "input": {"event_status": "live", "rows": [{"probability": null, "rendered_probability": 0}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["MISSING_PROBABILITY_FABRICATED"]}
+    },
+    {
+      "id": "negative-probability",
+      "input": {"event_status": "live", "rows": [{"probability": -0.01, "rendered_probability": -0.01}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PROBABILITY_OUT_OF_RANGE"]}
+    },
+    {
+      "id": "probability-over-one",
+      "input": {"event_status": "live", "rows": [{"probability": 1.01, "rendered_probability": 1.01}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PROBABILITY_OUT_OF_RANGE"]}
+    },
+    {
+      "id": "settled-event-shows-result",
+      "input": {"event_status": "completed", "rows": [{"probability": 0.72, "rendered_probability": null, "graded_result": "hit"}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "settled-event-still-quotes-price",
+      "input": {"event_status": "completed", "rows": [{"probability": 0.72, "rendered_probability": 0.72}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["SETTLED_ROW_RENDERED_AS_LIVE_PRICE"]}
+    },
+    {
+      "id": "two-distinct-sources",
+      "input": {"duplicate_groups": [{"sources": ["kalshi", "polymarket"], "probabilities": [0.50, 0.51], "rendered_probability": 0.50, "badge_count": 2}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "same-provider-triplicate",
+      "input": {"duplicate_groups": [{"sources": ["polymarket", "polymarket", "polymarket"], "probabilities": [0.50, 0.50, 0.50], "rendered_probability": 0.50, "badge_count": 3}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["SOURCE_BADGE_COUNTS_ROWS_NOT_SOURCES"]}
+    },
+    {
+      "id": "conflicting-duplicate-withheld",
+      "input": {"duplicate_groups": [{"sources": ["polymarket", "polymarket"], "probabilities": [0.10, 0.90], "rendered_probability": null, "badge_count": 1}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "conflicting-duplicate-picked",
+      "input": {"duplicate_groups": [{"sources": ["polymarket", "polymarket"], "probabilities": [0.10, 0.90], "rendered_probability": 0.90, "badge_count": 1}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["CONFLICTING_DUPLICATE_ADJUDICATED"]}
+    },
+    {
+      "id": "null-plus-priced-duplicate",
+      "input": {"duplicate_groups": [{"sources": ["kalshi", "polymarket"], "probabilities": [null, 0.01], "rendered_probability": 0, "badge_count": 2}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["PARTIAL_NULL_DUPLICATE_ADJUDICATED"]}
+    },
+    {
+      "id": "proven-hero-market-filtered",
+      "input": {"two_sided_candidates": [{"filtered_as_hero": true, "hero_identity_proven": true}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "unrelated-two-row-market-filtered",
+      "input": {"two_sided_candidates": [{"filtered_as_hero": true, "hero_identity_proven": false}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["UNRELATED_TWO_ROW_MARKET_FILTERED"]}
+    },
+    {
+      "id": "large-card-all-rows-reachable",
+      "input": {"expected_reachable_rows": 40, "reachable_rows": 40},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "large-card-overflow-dropped",
+      "input": {"expected_reachable_rows": 40, "reachable_rows": 8},
+      "expected": {"verdict": "REFUSE", "reasons": ["ROW_RETENTION_MISMATCH"]}
+    }
+  ]
+}
