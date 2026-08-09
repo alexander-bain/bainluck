@@ -207,8 +207,23 @@ async def test_durable_tier_is_consulted_and_nothing_computes(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_an_ancient_durable_copy_is_refused(monkeypatch):
-    """Beyond the serve age bound it is not "the calibration curve" any more."""
+async def test_an_ancient_durable_copy_is_SERVED_dated_not_refused(monkeypatch):
+    """CAL-P017 (Alex, 2026-08-08) — the deliberate reversal of this test.
+
+    It used to read: *"Beyond the serve age bound it is not 'the calibration
+    curve' any more"* and assert a 503. That was the rule in force when
+    /api/calibration went fully dark at 2026-08-09 03:23Z, exactly
+    SERVE_MAX_AGE_S after the last successful publish, and it is the rule Alex
+    overturned: **the page degrades to a dated last-known snapshot behind its
+    banner rather than 503-ing**, per the standing honest-service ruling.
+
+    The distinction that makes this honest rather than sloppy: the age is
+    DISCLOSED. ``_degraded`` stamps ``cache.status = "stale"`` with ``age_s`` and
+    ``generated_at``, and the page renders "as of <time> (N ago)", so a reader
+    can see a week-old curve is a week old. What is never relaxed is the VERSION
+    check — see ``test_a_wrong_version_durable_copy_is_refused`` immediately
+    below, which still asserts a 503 and is the boundary of this change.
+    """
     from app.routes import calibration
     from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S
 
@@ -217,10 +232,20 @@ async def test_an_ancient_durable_copy_is_refused(monkeypatch):
     _use(monkeypatch, _DeadRedis())
     _compute_fails(monkeypatch)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(
-            db=_durable_db(payload, generated_at=ancient))
-    assert exc.value.status_code == 503
+    out = await calibration.public_calibration(
+        db=_durable_db(payload, generated_at=ancient))
+
+    # Served, not raised.
+    assert isinstance(out, dict)
+    # ... and never dressed up as current.
+    assert out["cache"]["status"] == "stale"
+    assert out["cache"]["age_s"] > SERVE_MAX_AGE_S
+    assert out["cache"]["generated_at"]
+    assert out["cache"]["reason"] == "durable_over_age"
+    assert out["provenance"]["source"] == "durable"
+    # `dated` must be TRUE for the most dated copy we ever serve. It is derived
+    # from served_from, so passing a bespoke tier name here would invert it.
+    assert out["provenance"]["dated"] is True
 
 
 async def test_a_wrong_version_durable_copy_is_refused(monkeypatch):
