@@ -2,7 +2,7 @@ import copy
 import json
 from pathlib import Path
 
-from backend.scripts.evals.product_measurement_claim_gate import evaluate_claim
+from scripts.evals.product_measurement_claim_gate import evaluate_claim
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "product_measurement_claim_gate.json"

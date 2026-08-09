@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.trading_activity_authority_contract import classify
+from scripts.evals.trading_activity_authority_contract import classify
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "trading_activity_authority_contract.json"

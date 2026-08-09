@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.search_enrichment_failure_contract import OPTIONAL_STAGES, outcome
+from scripts.evals.search_enrichment_failure_contract import OPTIONAL_STAGES, outcome
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "search_enrichment_failure_contract.json"

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.admin_surface_truth_contract import (
+from scripts.evals.admin_surface_truth_contract import (
     aggregate_headline,
     classification_tone,
     labeling_sufficiency,

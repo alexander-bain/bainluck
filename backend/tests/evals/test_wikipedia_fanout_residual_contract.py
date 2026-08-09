@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.wikipedia_fanout_residual_contract import admitted_requests
+from scripts.evals.wikipedia_fanout_residual_contract import admitted_requests
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "wikipedia_fanout_residual_contract.json"

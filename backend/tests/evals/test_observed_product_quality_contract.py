@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.observed_product_quality_contract import (
+from scripts.evals.observed_product_quality_contract import (
     observed_staleness,
     temporal_interestingness_split,
 )

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.continuous_integrator_distribution_contract import verdict
+from scripts.evals.continuous_integrator_distribution_contract import verdict
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "continuous_integrator_distribution_contract.json"

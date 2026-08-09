@@ -2,7 +2,7 @@ import copy
 import json
 from pathlib import Path
 
-from backend.scripts.evals.paired_latency_experiment_contract import evaluate_pairs, percentile
+from scripts.evals.paired_latency_experiment_contract import evaluate_pairs, percentile
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "paired_latency_experiment_contract.json"

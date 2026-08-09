@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from backend.scripts.evals.ruling_authority_contract import verdict
+from scripts.evals.ruling_authority_contract import verdict
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ruling_authority_contract.json"
