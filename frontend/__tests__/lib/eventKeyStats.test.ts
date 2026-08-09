@@ -329,3 +329,120 @@ describe("computeLastChartPoint — moments readout scaffold (L2-163 Item 3)", (
     expect(pt!.scoringPlay ?? null).toBeNull();
   });
 });
+
+// UX-P022 — the x-axis of a short live window.
+//
+// Alex's 2026-08-08 dogfood, Athletics @ Red Sox: a full-width chart carrying a
+// 21-minute live window rendered exactly TWO timestamps, 1:10 PM and 1:31 PM.
+// You cannot tell from that whether a move happened two minutes ago or twenty,
+// which is the whole job of the "understand what moved" surface.
+//
+// Two separate causes, both fixed and both pinned here:
+//   1. the interval only ever COARSENED — it floored at 30 minutes, so any
+//      window under an hour got no interior tick at all;
+//   2. a boundary tick landing a minute from the end label collided with it,
+//      and Recharts silently drops one of a colliding pair — so even the
+//      3-tick case rendered as 2.
+describe("computeSharedChartDomain — x-axis ticks (UX-P022)", () => {
+  /** "1:31 PM" -> minutes since midnight, so gaps can be asserted in TIME. */
+  const toMinutes = (label: string): number => {
+    const m = /^(\d{1,2}):(\d{2}) ([AP]M)$/.exec(label);
+    if (!m) throw new Error(`unparseable tick label: ${label}`);
+    let h = Number(m[1]) % 12;
+    if (m[3] === "PM") h += 12;
+    return h * 60 + Number(m[2]);
+  };
+
+  const ticksFor = (startIso: string, endIso: string): string[] => {
+    const domain = computeSharedChartDomain(
+      hist({
+        // `commence_time` / `status` are separate arguments below, so they are
+        // deliberately NOT stuffed into the history payload — that is what the
+        // three pre-existing baseline type errors in this file do.
+        win_prob_history: {
+          espn: [
+            { timestamp: startIso, home_probability: 0.5 },
+            { timestamp: endIso, home_probability: 0.87 },
+          ],
+        } as never,
+        history: [],
+      }),
+      "live",
+      "live",
+      startIso,
+      "baseball_mlb",
+    );
+    expect(domain).not.toBeNull();
+    return domain!.ticks;
+  };
+
+  /** Smallest gap between consecutive ticks, in minutes. */
+  const minGapMin = (ticks: string[]): number => {
+    const mins = ticks.map(toMinutes);
+    let smallest = Infinity;
+    for (let i = 1; i < mins.length; i++) {
+      smallest = Math.min(smallest, Math.abs(mins[i] - mins[i - 1]));
+    }
+    return smallest;
+  };
+
+  // The reported case, to the minute: 1:10 PM -> 1:31 PM on a full-width chart.
+  const SHORT_START = "2026-08-08T20:10:00Z";
+  const SHORT_END = "2026-08-08T20:31:00Z";
+
+  test("no two ticks crowd each other — the collision that made 3 ticks render as 2", () => {
+    // THIS is the assertion that fails on the old code. The old ladder emitted
+    // ["1:10 PM", "1:30 PM", "1:31 PM"] — three DISTINCT strings, so a
+    // uniqueness check passes happily. The defect is that two of them are one
+    // minute apart, Recharts drops one of a colliding pair, and the reader sees
+    // two. Gaps have to be measured in time, not in string identity.
+    const ticks = ticksFor(SHORT_START, SHORT_END);
+    expect(minGapMin(ticks)).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a 21-minute window is divided, not just bracketed", () => {
+    // Interior ticks must actually subdivide the window: at least one lands
+    // clear of both endpoints.
+    const ticks = ticksFor(SHORT_START, SHORT_END);
+    const mins = ticks.map(toMinutes);
+    const first = mins[0];
+    const last = mins[mins.length - 1];
+    const interior = mins.filter(
+      (m) => m - first >= 2 && last - m >= 2,
+    );
+    expect(interior.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("the window's start and end are always labelled", () => {
+    const ticks = ticksFor(SHORT_START, SHORT_END);
+    expect(toMinutes(ticks[0])).toBe(13 * 60 + 10);
+    expect(toMinutes(ticks[ticks.length - 1])).toBe(13 * 60 + 31);
+  });
+
+  test("tick count stays bounded on a long window — refining must not flood the axis", () => {
+    // Both-direction guard (gotcha #43): the fix ADDS smaller intervals, so the
+    // regression it could introduce is an unreadable axis on a 3-hour game.
+    const ticks = ticksFor("2026-08-08T17:00:00Z", "2026-08-08T20:15:00Z");
+    expect(ticks.length).toBeLessThanOrEqual(10);
+    expect(minGapMin(ticks)).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a long window is still subdivided, not bracketed", () => {
+    const ticks = ticksFor("2026-08-08T17:00:00Z", "2026-08-08T20:15:00Z");
+    expect(ticks.length).toBeGreaterThan(2);
+  });
+
+  test("a 2-minute window degrades to endpoints rather than emitting junk", () => {
+    const ticks = ticksFor(SHORT_START, "2026-08-08T20:12:00Z");
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(ticks.length).toBeLessThanOrEqual(4);
+    expect(minGapMin(ticks)).toBeGreaterThanOrEqual(1);
+  });
+
+  test("interior ticks sit on clean clock boundaries", () => {
+    const ticks = ticksFor("2026-08-08T17:00:00Z", "2026-08-08T20:15:00Z");
+    for (const t of ticks.slice(1, -1)) {
+      expect(t).toMatch(/:(00|05|10|15|20|25|30|35|40|45|50|55) [AP]M$/);
+    }
+  });
+});

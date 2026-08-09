@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
 import { fetchUserPreferences, updateSportAffinities } from "@/lib/api";
 import { resolveScope, type ClientScope } from "@/lib/clientPrincipal";
-import { bucketKeyFor, reconcileLegacyBucket } from "@/lib/principalStorage";
+import { bucketKeyFor, reconcileLegacyBucket, browserStore } from "@/lib/principalStorage";
 import {
   INTERESTS_POLICY,
   parseInterests,
@@ -108,7 +108,7 @@ export function useCategoryInterests() {
       return;
     }
 
-    const store = typeof window === "undefined" ? null : window.localStorage;
+    const store = browserStore();
     if (store) reconcileLegacyBucket(INTERESTS_POLICY, scope, store);
 
     const key = bucketKeyFor(INTERESTS_POLICY, scope);
@@ -159,8 +159,8 @@ export function useCategoryInterests() {
             console.warn("Failed to save interests:", err);
           });
         });
-      } else if (typeof window !== "undefined") {
-        window.localStorage.setItem(bucket, serializeInterests(updated));
+      } else {
+        browserStore()?.setItem(bucket, serializeInterests(updated));
       }
     },
     [bucket, scope, publish]

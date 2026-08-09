@@ -20,6 +20,7 @@ from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, 
 from app.dependencies.auth import get_optional_user
 from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.prop_window import prop_window_closed
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -5687,6 +5688,40 @@ async def get_game_markets(
                             break
                     if "player_team" in prop:
                         break
+
+    # #1588 — a window-bounded prop must not quote a probability once its window
+    # has closed. Alex saw "Will there be a run scored in the first inning?" at
+    # 52% "No" with the first-inning run already on the scoreboard: not a stale
+    # number, but the product asserting uncertainty about something the reader
+    # just watched. That violates the standing "settled means settled" ruling.
+    #
+    # Suppression, not grading: grading needs the resolution input and belongs
+    # with the resolver, whereas a read path can stop publishing a false number
+    # right now — and against a false number, an absent card is strictly better.
+    #
+    # `prop_window_closed` is fail-safe by construction (see its module docstring):
+    # it returns False for anything it cannot positively prove, so an unparsed
+    # period or an unclassifiable market keeps its card. Lazy-loading
+    # `event.sport` here would risk an async ORM crash, so the league comes off
+    # the row itself via __dict__.
+    _league = (event.__dict__.get("llm_league") or "").strip().upper()
+    _period_now = event.__dict__.get("period")
+    _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
+
+    def _window_open(item: dict) -> bool:
+        return not prop_window_closed(
+            item.get("market_name"),
+            None,
+            _sport_hint,
+            _period_now,
+            event.status,
+        )
+
+    game_totals = [m for m in game_totals if _window_open(m)]
+    player_props = [m for m in player_props if _window_open(m)]
+    team_total_items = [m for m in team_total_items if _window_open(m)]
+    period_markets = [m for m in period_markets if _window_open(m)]
+    other_markets = [m for m in other_markets if _window_open(m)]
 
     response = {
         "event_id": event_id,

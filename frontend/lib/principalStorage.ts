@@ -29,6 +29,67 @@ export interface KeyValueStore {
 }
 
 /**
+ * Wrap a store so no storage failure can ever reach React.
+ *
+ * `localStorage` is not a safe API. It throws on a full quota, and in some
+ * privacy modes and embedded/automated browsers even *reading* throws. The pin
+ * hooks this module replaced knew that — `savePinnedIds` carried an explicit
+ * `try/catch` with a "localStorage might be full or disabled" comment — and the
+ * UX-P017 refactor dropped it while moving the logic here.
+ *
+ * That regression is worse than the original gap, because these calls now run
+ * inside a `useEffect` on pages that merely *read* preferences (`/sports` mounts
+ * `useCategoryInterests`). An effect that throws unmounts its subtree, so a
+ * storage failure stops being "pins didn't persist" and becomes "the page is
+ * blank". Personalization is an enhancement; it must never be able to take a
+ * page down with it.
+ *
+ * Reads degrade to `null` (indistinguishable from "nothing stored", which every
+ * caller already handles) and writes degrade to a no-op.
+ */
+export function safeStore(store: KeyValueStore): KeyValueStore {
+  return {
+    getItem(key) {
+      try {
+        return store.getItem(key);
+      } catch {
+        return null;
+      }
+    },
+    setItem(key, value) {
+      try {
+        store.setItem(key, value);
+      } catch {
+        // Full, disabled, or partitioned — the feature degrades, the page lives.
+      }
+    },
+    removeItem(key) {
+      try {
+        store.removeItem(key);
+      } catch {
+        // As above.
+      }
+    },
+  };
+}
+
+/**
+ * The browser store, already made safe — or `null` during SSR.
+ *
+ * Hooks should reach for THIS rather than `window.localStorage`, so the guard
+ * cannot be forgotten at a new call site.
+ */
+export function browserStore(): KeyValueStore | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return safeStore(window.localStorage);
+  } catch {
+    // Accessing the property itself can throw when storage is blocked outright.
+    return null;
+  }
+}
+
+/**
  * One partitioned slice of client state.
  *
  * `legacyDoneKey` names a pre-existing "already migrated" flag that must keep
