@@ -1,0 +1,18 @@
+{"schema_version":"browser-sweep-filing/v1","cases":[
+{"id":"first-failure","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:42"},"expected":{"action":"file","reason_codes":[],"new_episode":false}},
+{"id":"repeat-failure","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:42","open_issue":true},"expected":{"action":"comment","reason_codes":[],"new_episode":false}},
+{"id":"changed-identity","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:43"},"expected":{"action":"file","reason_codes":[],"new_episode":false}},
+{"id":"duplicate-run","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:42","open_issue":true},"expected":{"action":"comment","reason_codes":[],"new_episode":false}},
+{"id":"unknown-noop","input":{"verdict":"UNKNOWN","manifest_valid":true,"sha_bound":true,"fingerprint":"shape:/discover:9"},"expected":{"action":"no_op","reason_codes":[],"new_episode":false}},
+{"id":"infra-noop","input":{"verdict":"INFRA","manifest_valid":true,"sha_bound":true,"fingerprint":"runner:/"},"expected":{"action":"no_op","reason_codes":[],"new_episode":false}},
+{"id":"first-clean-pending","input":{"verdict":"PASS","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:42","open_issue":true,"consecutive_clean":1},"expected":{"action":"comment_recovery_pending","reason_codes":[],"new_episode":false}},
+{"id":"second-clean-closes","input":{"verdict":"PASS","manifest_valid":true,"sha_bound":true,"fingerprint":"past_event:/sports:42","open_issue":true,"consecutive_clean":2},"expected":{"action":"comment_close","reason_codes":[],"new_episode":false}},
+{"id":"flaky-pass-does-not-close","input":{"verdict":"PASS","manifest_valid":true,"sha_bound":true,"fingerprint":"loading:/discover","open_issue":true,"consecutive_clean":1},"expected":{"action":"comment_recovery_pending","reason_codes":[],"new_episode":false}},
+{"id":"closed-recurrence","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"loading:/discover","closed_prior":true},"expected":{"action":"file","reason_codes":[],"new_episode":true}},
+{"id":"artifact-expired","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"loading:/discover","artifact_expired":true},"expected":{"action":"refuse","reason_codes":["ARTIFACT_UNAVAILABLE"],"new_episode":false}},
+{"id":"manifest-missing","input":{"verdict":"FAIL","manifest_valid":false,"sha_bound":true,"fingerprint":"loading:/discover"},"expected":{"action":"refuse","reason_codes":["MANIFEST_UNTRUSTED"],"new_episode":false}},
+{"id":"sha-mismatch","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":false,"fingerprint":"loading:/discover"},"expected":{"action":"refuse","reason_codes":["SHA_UNBOUND"],"new_episode":false}},
+{"id":"injection-fingerprint","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"x\n``` malicious"},"expected":{"action":"refuse","reason_codes":["FINGERPRINT_UNSAFE"],"new_episode":false}},
+{"id":"concurrent-loser","input":{"verdict":"FAIL","manifest_valid":true,"sha_bound":true,"fingerprint":"loading:/discover","concurrent_claim_lost":true},"expected":{"action":"comment","reason_codes":[],"new_episode":false}},
+{"id":"clean-no-open","input":{"verdict":"PASS","manifest_valid":true,"sha_bound":true,"fingerprint":"loading:/discover","consecutive_clean":3},"expected":{"action":"no_op","reason_codes":[],"new_episode":false}}
+]}
