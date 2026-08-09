@@ -1,0 +1,48 @@
+{
+  "valid": {
+    "calibration": {
+      "claim_id": "cal-v3-improves-ece", "domain": "calibration", "surface": "/calibration", "generated_at": "2026-08-09T18:00:00Z", "deployed_sha": "12345678", "method_version": "cal-claim-v1",
+      "baseline": {"build_complete": true, "population_version": "v3", "population_count": 1000000, "categories": ["sports", "politics"], "metric": "weighted_ece"},
+      "candidate": {"build_complete": true, "population_version": "v3", "population_count": 990000, "categories": ["sports", "politics"], "metric": "weighted_ece", "unknown_reported_separately": true}
+    },
+    "latency": {
+      "claim_id": "discover-p95-faster", "domain": "latency", "surface": "/discover", "generated_at": "2026-08-09T18:00:00Z", "deployed_sha": "12345678", "method_version": "latency-claim-v1", "paired_control": true,
+      "baseline": {"attempts": 40, "successes": 39, "failures": 1, "failures_in_percentile": true, "cache_state": "cold", "request_shape": "anon-limit20"},
+      "candidate": {"attempts": 40, "successes": 40, "failures": 0, "failures_in_percentile": true, "cache_state": "cold", "request_shape": "anon-limit20"}
+    },
+    "staleness": {
+      "claim_id": "discover-less-stale", "domain": "staleness", "surface": "/discover", "generated_at": "2026-08-09T18:00:00Z", "deployed_sha": "12345678", "method_version": "stale-claim-v1",
+      "baseline": {"rendered_items": 20, "audited_items": 20, "lifecycle_authority": true, "viewport": "desktop", "feed_mode": "discover", "limit": 20},
+      "candidate": {"rendered_items": 20, "audited_items": 20, "lifecycle_authority": true, "viewport": "desktop", "feed_mode": "discover", "limit": 20}
+    },
+    "interestingness": {
+      "claim_id": "ranking-more-interesting", "domain": "interestingness", "surface": "/discover", "generated_at": "2026-08-09T18:00:00Z", "deployed_sha": "12345678", "method_version": "interesting-claim-v1",
+      "baseline": {"rows": 200, "positives": 80, "label_policy_version": "labels-v2", "row_ids_hash": "holdout-a", "auc": 0.61, "precision_at_20": 0.55},
+      "candidate": {"rows": 200, "positives": 80, "label_policy_version": "labels-v2", "row_ids_hash": "holdout-a", "auc": 0.70, "precision_at_20": 0.65, "evaluation_split": "holdout", "trained_row_ids_hash": "train-z", "evaluated_row_ids_hash": "holdout-a", "temporal_cutoff": "2026-08-01"}
+    }
+  },
+  "adversaries": [
+    {"id": "cal-partial-build", "base": "calibration", "set": {"candidate.build_complete": false}, "reason": "CALIBRATION_BUILD_INCOMPLETE"},
+    {"id": "cal-version-without-bridge", "base": "calibration", "set": {"candidate.population_version": "v4"}, "reason": "CALIBRATION_POPULATION_UNBRIDGED"},
+    {"id": "cal-silent-population-collapse", "base": "calibration", "set": {"candidate.population_count": 650000}, "reason": "CALIBRATION_POPULATION_DRIFT"},
+    {"id": "cal-category-disappears", "base": "calibration", "set": {"candidate.categories": ["sports"]}, "reason": "CALIBRATION_CATEGORY_SET_CHANGED"},
+    {"id": "cal-unknown-folded", "base": "calibration", "set": {"candidate.unknown_reported_separately": false}, "reason": "CALIBRATION_UNKNOWN_COLLAPSED"},
+    {"id": "latency-five-samples", "base": "latency", "set": {"candidate.attempts": 5, "candidate.successes": 5}, "reason": "LATENCY_CANDIDATE_SAMPLE_TOO_SMALL"},
+    {"id": "latency-drops-timeouts", "base": "latency", "set": {"candidate.successes": 38, "candidate.failures": 2, "candidate.failures_in_percentile": false}, "reason": "LATENCY_CANDIDATE_FAILURES_CENSORED"},
+    {"id": "latency-missing-attempts", "base": "latency", "set": {"candidate.successes": 39}, "reason": "LATENCY_CANDIDATE_ACCOUNTING_INCOMPLETE"},
+    {"id": "latency-cold-vs-warm", "base": "latency", "set": {"candidate.cache_state": "warm"}, "reason": "LATENCY_CACHE_STATE_CHANGED"},
+    {"id": "latency-different-payload", "base": "latency", "set": {"candidate.request_shape": "anon-limit5"}, "reason": "LATENCY_REQUEST_SHAPE_CHANGED"},
+    {"id": "latency-no-control", "base": "latency", "set": {"paired_control": false}, "reason": "LATENCY_PAIRED_CONTROL_MISSING"},
+    {"id": "stale-admin-inventory-not-rendered", "base": "staleness", "set": {"candidate.audited_items": 200}, "reason": "STALENESS_CANDIDATE_INVENTORY_NOT_RENDERED"},
+    {"id": "stale-no-lifecycle-authority", "base": "staleness", "set": {"candidate.lifecycle_authority": false}, "reason": "STALENESS_CANDIDATE_NO_LIFECYCLE_AUTHORITY"},
+    {"id": "stale-feed-mode-changed", "base": "staleness", "set": {"candidate.feed_mode": "sports"}, "reason": "STALENESS_FEED_MODE_CHANGED"},
+    {"id": "stale-limit-shrunk", "base": "staleness", "set": {"candidate.limit": 5, "candidate.rendered_items": 5, "candidate.audited_items": 5}, "reason": "STALENESS_LIMIT_CHANGED"},
+    {"id": "interesting-training-score", "base": "interestingness", "set": {"candidate.evaluation_split": "training"}, "reason": "INTERESTINGNESS_NO_HOLDOUT"},
+    {"id": "interesting-identical-train-eval", "base": "interestingness", "set": {"candidate.trained_row_ids_hash": "holdout-a"}, "reason": "INTERESTINGNESS_TRAIN_EVAL_OVERLAP"},
+    {"id": "interesting-no-time-cut", "base": "interestingness", "set": {"candidate.temporal_cutoff": null}, "reason": "INTERESTINGNESS_TEMPORAL_CUTOFF_MISSING"},
+    {"id": "interesting-one-class", "base": "interestingness", "set": {"candidate.positives": 200}, "reason": "INTERESTINGNESS_CANDIDATE_ONE_CLASS"},
+    {"id": "interesting-different-holdout", "base": "interestingness", "set": {"candidate.row_ids_hash": "holdout-b"}, "reason": "INTERESTINGNESS_EVALUATION_POPULATION_CHANGED"},
+    {"id": "common-method-changed", "base": "latency", "set": {"baseline_method_version": "latency-old"}, "reason": "METHOD_VERSION_CHANGED"},
+    {"id": "common-surface-changed", "base": "staleness", "set": {"baseline_surface": "/sports"}, "reason": "SURFACE_CHANGED"}
+  ]
+}
