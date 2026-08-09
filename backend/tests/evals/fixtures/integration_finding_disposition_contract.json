@@ -1,0 +1,8 @@
+[
+  {"id": "fixed-and-wired", "input": {"finding_severity": "P1", "applies_to_head": true, "repaired": true, "explicitly_overruled": false, "overruling_authority": null, "regression_test_wired": true}, "expected": {"verdict": "ALLOW", "reason": "repaired_and_guarded"}},
+  {"id": "merged-corpus-not-repair", "input": {"finding_severity": "P1", "applies_to_head": true, "repaired": false, "explicitly_overruled": false, "overruling_authority": null, "regression_test_wired": true}, "expected": {"verdict": "REFUSE", "reason": "blocking_finding_unresolved"}},
+  {"id": "silent-review-disagreement", "input": {"finding_severity": "P1", "applies_to_head": true, "repaired": false, "explicitly_overruled": true, "overruling_authority": "integrator", "regression_test_wired": false}, "expected": {"verdict": "REFUSE", "reason": "blocking_finding_unresolved"}},
+  {"id": "explicit-product-risk-acceptance", "input": {"finding_severity": "P1", "applies_to_head": true, "repaired": false, "explicitly_overruled": true, "overruling_authority": "Alex", "regression_test_wired": false}, "expected": {"verdict": "ALLOW_WITH_DEBT", "reason": "explicit_risk_acceptance"}},
+  {"id": "repair-without-guard", "input": {"finding_severity": "P2", "applies_to_head": true, "repaired": true, "explicitly_overruled": false, "overruling_authority": null, "regression_test_wired": false}, "expected": {"verdict": "REFUSE", "reason": "repair_unguarded"}},
+  {"id": "finding-on-old-head", "input": {"finding_severity": "P1", "applies_to_head": false, "repaired": false, "explicitly_overruled": false, "overruling_authority": null, "regression_test_wired": false}, "expected": {"verdict": "ALLOW", "reason": "nonblocking_or_inapplicable"}}
+]
