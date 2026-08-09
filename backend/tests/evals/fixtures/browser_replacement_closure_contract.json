@@ -1,0 +1,14 @@
+{"schema_version":"browser-replacement-closure/v1","implementation_matrix":{
+"retire":[".github/workflows/manus-sweep.yml",".claude/commands/health.md","Manus historical notice"],
+"runner":[".github/workflows/browser-audit.yml","frontend/e2e/specs/product-sweep.spec.ts","frontend/e2e/reporters/auditReporter.ts"],
+"filer":["manifest-only job","backend/app/tasks/sentinel_filing.py"],
+"tests":["frontend/e2e/contract","backend/tests/evals"]},"cases":[
+{"id":"healthy-scheduled-sweep","refs":{"retirement":"required-red-workflow","evidence":"discover-real-card-pass","jank":"real-card-before-window","filing":"clean-no-open"},"owners":["runner","classifier","filer"],"gates":["sha","manifest","artifact"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"real-stale-defect-files","refs":{"retirement":"historical-audit-files","evidence":"past-dated-upcoming-market","jank":"europa-past-still-live","filing":"first-failure"},"owners":["runner","filer"],"gates":["authority","evidence"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"ambiguous-never-files","refs":{"retirement":"historical-prompts","evidence":"unnamed-failure","jank":"date-from-title-only","filing":"unknown-noop"},"owners":["classifier"],"gates":["unknown_noop"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"infra-never-files-product","refs":{"retirement":"health-command-current-status","evidence":"zero-observations","jank":"skeleton-at-5s","filing":"infra-noop"},"owners":["runner"],"gates":["infra_separate"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"repeat-comments-canonical","refs":{"retirement":"issue-980-reproduction","evidence":"stuck-spinner","jank":"spinner-stuck-20s","filing":"repeat-failure"},"owners":["filer"],"gates":["fingerprint"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"recovery-closes-after-proof","refs":{"retirement":"replacement-grid-sentinel","evidence":"responsive-desktop","jank":"resolved-past-hidden","filing":"second-clean-closes"},"owners":["filer"],"gates":["continuous_green"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"recurrence-new-episode","refs":{"retirement":"issue-1101-workflow-failure","evidence":"console-error","jank":"nfl-halftime-cross-market","filing":"closed-recurrence"},"owners":["filer"],"gates":["episode_identity"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}},
+{"id":"historical-evidence-retained","refs":{"retirement":"historical-audit-files","evidence":"failure-without-repro","jank":"shape-not-in-dom","filing":"artifact-expired"},"owners":["retirement"],"gates":["unavailable_notice"],"expected":{"verdict":"ready","reason_codes":[],"missing_refs":[]}}
+]}
