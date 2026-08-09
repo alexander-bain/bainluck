@@ -1,7 +1,7 @@
 # PRODUCT BRAIN — the load-bearing judgment for staging Bain Luck lanes
 # Purpose: everything an agent (Codex / Fable / Opus) needs to stage work WELL — the rulings AND the WHY behind them.
 # This externalizes Fable's private memory into the repo so the sharpest available reasoner can stage. Read this + CLAUDE.md + docs/PRD.md.
-# Owner: whoever stages. APPEND-ONLY: add each new ruling as a NEW dated `## RULINGS — <date>` section at the bottom. NEVER regenerate, "consolidate", rewrite, or trim this file wholesale — doing so silently dropped ratified rulings TWICE (see the RE-RESTORED markers below). If you are staging a "docs task", it does not authorize touching this file's existing sections. CI-guarded: backend/tests/test_product_brain_integrity.py turns master red if any ruling section disappears or the doc shrinks below its banked section count.
+# Owner: whoever stages. A NEW RULING IS A NEW FILE: write `docs/rulings/NNN-<slug>.md` and add ONE line to the `## RULINGS INDEX` section at the bottom of this file. Do NOT append ruling prose into this file's body any more — that shared append region is what detached three commits' patch-ids permanently and made `git cherry` lie to the Integrator (ruling 001, #1621). See `docs/rulings/README.md` for the exact shape. Everything already below stays where it is: NEVER regenerate, "consolidate", rewrite, or trim this file wholesale — doing so silently dropped ratified rulings TWICE (see the RE-RESTORED markers below). If you are staging a "docs task", it does not authorize touching this file's existing sections. CI-guarded: backend/tests/test_product_brain_integrity.py turns master red if any ruling section disappears, the doc shrinks below its banked section count, or the ruling index and `docs/rulings/` fall out of sync in either direction.
 
 ## HOW TO USE THIS
 The queue-file mechanics live in `.claude/handoff/README.md` + `FABLE-STANDIN.md`. THIS doc is the judgment layer: the standing rulings, the reasoning behind them, and the failure modes to avoid. The ordered backlog is `plan_next_10_queues.md`; pre-written specs are in `READY-FIXES.md`; deep strategy in `.claude/handoff/strategy_*.md`.
@@ -1271,3 +1271,21 @@ structurally enforced**, not merely gated by specimens. `repair_winner_field` fa
 writes only where the CLOB returns exactly one winner across the legs, so a genuinely multi-winner
 market returns several and is SKIPPED with a recorded reason. It cannot convert correct data into
 incorrect data. The pause is for Alex's own eyes on the evidence, not because the rail is unsafe.
+
+---
+
+## RULINGS INDEX — `docs/rulings/`
+
+**DO NOT REMOVE (CI-guarded).** Every ruling from 2026-08-09 onward lives in its own file under
+`docs/rulings/`. This section is the index, and `backend/tests/test_product_brain_integrity.py`
+asserts it matches the directory **in both directions** — a file with no line here fails CI, and
+a line here with no file fails CI.
+
+To bank a ruling: add the file, add one line below in ascending number order, run the test. The
+exact shape and the two collision cases are in `docs/rulings/README.md`.
+
+Everything ABOVE this section is the pre-migration archive and stays exactly where it is. It was
+not migrated on purpose: rewriting the file whose whole job is to survive rewrites would be the
+failure this document already records happening twice.
+
+- [001](rulings/001-ruling-files-replace-product-brain-appends.md) — 2026-08-09 — Ruling appends become one file per ruling (Fable)

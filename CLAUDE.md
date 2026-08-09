@@ -46,7 +46,8 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
-| `docs/PRODUCT-BRAIN.md` | The staging JUDGMENT layer: standing rulings + the WHY + how Alex works + lane split (for whoever stages queues) | When Alex issues a new ruling (append + date) |
+| `docs/PRODUCT-BRAIN.md` | The staging JUDGMENT layer: standing rulings + the WHY + how Alex works + lane split (for whoever stages queues). Rulings before 2026-08-09 are in the body; from 001 onward each is its own file. | Never append ruling prose to the body. A new ruling = a new `docs/rulings/NNN-<slug>.md` + ONE index line in the `## RULINGS INDEX` section |
+| `docs/rulings/NNN-<slug>.md` | One file per ruling, from 2026-08-09 (ruling 001, #1621). Separate files share no append region, so two lanes banking rulings the same day cannot conflict — which is what kept detaching commits' patch-ids and making `git cherry` report merged work as new. `docs/rulings/README.md` has the file shape and the collision protocol. | Whenever a ruling is issued. CI asserts index ↔ files in BOTH directions |
 | `docs/PRD.md` | The product's voice: vision, reliability bar, journeys, principles (rev 2026-07-14) | When product theses change (Alex rulings) |
 | [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The ONLY source of priority and status — docs hold judgment and reference, never ordering | Continuously, as work is triaged and shipped |
 | `docs/github-workflow.md` | GitHub Issues/Project operating model and backlog sync rules | When issue labels, templates, project columns, or agent handoff rules change |
