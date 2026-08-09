@@ -86,17 +86,11 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #:
 #: False: one statement, as before.
 #:
-#: SWITCHED ON AND ROLLED BACK IN ONE SESSION (Queue 300E, 2026-08-03). Back to
-#: ``False`` — but for a completely different reason than 300D's, and the new
-#: reason is the useful one.
+#: **ON since CAL-P016 (2026-08-08), after the cursor was made convergent.** The
+#: history below is kept in full, because it is the reason the switch alone was
+#: never the fix and the reason a third flip should not be attempted on a hunch.
 #:
-#: 300D shipped this off because the staged statement had never executed against
-#: PostgreSQL. That is no longer the unknown: it HAS now run, twice, against
-#: production, and both runs are recorded below. What the flip proved is that the
-#: machinery works exactly as designed and still cannot deliver a fresh curve,
-#: because of something no unit test could have shown.
-#:
-#: WHAT THE TWO WATCHED BEATS MEASURED (release v3687):
+#: SWITCHED ON AND ROLLED BACK IN ONE SESSION (Queue 300E, 2026-08-03):
 #:
 #: * 19:15Z, generation 1785784500088, terminal ``cancelled`` after 627,446 ms.
 #:   ``read:futures_generation`` = **18,784 ms**, ``read:futures_unit`` =
@@ -109,31 +103,42 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #:   and — the finding — ``staged:cursor_invalidate``. The unit banked at 19:15
 #:   was DISCARDED.
 #:
-#: WHY IT CANNOT CONVERGE. The generation fingerprint is a digest over the WHOLE
-#: roster — every ``(market_id, source, vm_id, is_grouped)`` in the population.
-#: The population is ``futures_markets WHERE status = 'resolved'``, and markets
-#: resolve continuously, so the roster is different at 20:15 than it was at
-#: 19:15. The cursor then does precisely what
-#: ``test_a_moved_roster_invalidates_every_banked_unit`` says it must: it refuses
-#: to mix two rosters and throws the banked unit away. Correct, and fatal —
-#: units can only accumulate ACROSS beats if the roster holds still between them,
-#: and it never will. A beat that banks ~1-2 units of ~44+ can therefore never
-#: reach the end of a generation, no matter how many beats run.
+#: WHY IT COULD NOT CONVERGE. The generation fingerprint is a digest over the
+#: WHOLE roster — every ``(market_id, source, vm_id, is_grouped)`` in the
+#: population. The population is ``futures_markets WHERE status = 'resolved'``,
+#: and markets resolve continuously, so the roster differed at 20:15 from 19:15,
+#: and the cursor threw the banked unit away rather than mix two rosters. Correct
+#: given its contract, and fatal: units can only accumulate ACROSS beats if the
+#: roster holds still between them, and it never will.
 #:
-#: So the resumability is real per-beat and worthless across beats, which is the
-#: opposite of what it was built for. Off, until the cursor's identity is
-#: per-unit rather than whole-roster: a unit's banked rows are still valid if the
-#: markets IN THAT UNIT are unchanged, regardless of what arrived elsewhere in
-#: the population. That is a design change to
-#: ``app/utils/calibration_staged_futures.py`` (fingerprint per chunk, not per
-#: generation), not a switch, and it is the actual fix.
+#: WHAT LEAVING IT OFF THEN COST. Nothing replaced the monolith, the monolith
+#: kept timing out at ~22.5 min every hour (10 of 10 recorded phase floors are
+#: timeouts), and nothing was published after 2026-08-02 03:23Z. ``/api/calibration``
+#: served a progressively staler curve for a week and then went **fully dark** on
+#: 2026-08-09 ~03:23Z, when the last-good copy crossed ``SERVE_MAX_AGE_S``.
 #:
-#: WHAT THE FLIP ALSO SETTLED, and what makes the next attempt cheaper: the
-#: generation read — the unchunked pre-``virtual_market`` prefix that was the
-#: feared blocker, carrying 3 of the statement's 7 correlated scans of the
-#: 179M-row ``futures_odds_snapshots`` — costs only **19-26 seconds**. The whole
-#: ~22-minute cost is in the post-``virtual_market`` half, which is the half that
-#: chunks. The premise of staging is sound; only the cursor's identity is wrong.
+#: WHAT CAL-P016 CHANGED, and why the switch is safe now. Two things, together —
+#: 300E named the first and it is necessary but NOT sufficient on its own:
+#:
+#: 1. **The cursor validates per UNIT, not per generation.** A moved roster no
+#:    longer discards the cursor; ``retain_planned_units`` drops only the units
+#:    the new plan no longer asks for. ``UnitChunk.key`` digests that unit's full
+#:    roster membership, so "still planned" means the identical set of questions,
+#:    markets, sources and grouping flags.
+#: 2. **The partition is content-addressed.** ``plan_units`` used a positional
+#:    accumulator over sorted ``vm_id``s, so one new ``vm_id`` early in sort order
+#:    shifted every later boundary and re-keyed every later unit — which would
+#:    have invalidated the whole cursor again by a second route, and made fix 1
+#:    look like it had failed. A ``vm_id``'s unit is now a hash of the ``vm_id``
+#:    alone, so an arrival can only ever disturb its own unit.
+#:
+#: The flip is the LAST line of that change, not a substitute for it.
+#:
+#: ALSO SETTLED by the 300E flip, and still true: the unchunked Stage-A prefix —
+#: the pre-``virtual_market`` half carrying 3 of the statement's 7 correlated
+#: scans of the 179M-row ``futures_odds_snapshots``, and the feared blocker —
+#: costs only **19-26 seconds**. The whole ~22-minute cost is in the
+#: post-``virtual_market`` half, which is the half that chunks.
 #:
 #: OFF remains a proven no-op: the monolith text is byte-identical to the
 #: pre-300D statement (pinned by
@@ -146,14 +151,35 @@ STAGED_FUTURES_IDENTITY = "calibration:main:staged_futures"
 #: committed underneath the caller. That is a class attribute on
 #: :class:`NullPhaseRunner`, not a read of this constant, so it holds whatever
 #: an operator sets here.
-STAGED_FUTURES_ENABLED = False
+STAGED_FUTURES_ENABLED = True
 
-#: Markets per chunk. A budget, not a row count: the unit is a whole virtual
-#: question, so a chunk overshoots rather than split one (see
-#: ``plan_units``). Sized so a chunk is small enough that losing one to a
-#: timeout costs little, and large enough that per-chunk planning overhead
-#: stays a rounding error against the population read it replaces.
-STAGED_FUTURES_CHUNK_MARKETS = 2_500
+#: How many units the futures population is cut into (CAL-P016).
+#:
+#: A FIXED count, not a target size, and that is the point: a ``vm_id``'s unit is
+#: ``bucket_of(vm_id, STAGED_FUTURES_BUCKETS)``, so the partition is identical
+#: across beats and an arriving market can only disturb its own unit. Deriving
+#: this from the population size would re-partition everything each time the
+#: population crossed a boundary — the exact thrash the fix exists to end.
+#:
+#: SIZING, and the one thing production has to settle. Convergence needs
+#: ``units completed per beat > units invalidated per beat``. Invalidation
+#: saturates at the number of markets that resolve during a beat (each can
+#: disturb at most its own unit), while completions scale UP with the bucket
+#: count, because a bucket's cost falls as it holds fewer markets. So a larger
+#: count is the safer direction, until per-unit fixed overhead starts to
+#: dominate. 128 puts roughly 860 of the ~110K roster markets in each unit —
+#: about a third of the 2,500-market chunks the positional planner produced,
+#: whose measured cost was 51s against a ~23 min beat.
+#:
+#: That is a REASONED size, not a measured one: the arrival rate could not be
+#: measured from here (``resolution_date`` is a scheduled date, not a transition
+#: timestamp, and a bare ``COUNT(*)`` over the population exceeds the query
+#: timeout). The first beats after deploy settle it, and they say so out loud —
+#: ``_run_staged_futures`` records a ``staged:units_dropped`` stage. If that
+#: number rivals the units completed per beat, the build is thrashing rather
+#: than converging and this constant is the dial: raise it. Doing so re-keys
+#: every unit and costs exactly one generation of banked work — safe, not free.
+STAGED_FUTURES_BUCKETS = 128
 
 #: A ledger or checkpoint older than this is a fossil, not state in progress.
 STATE_MAX_AGE_S = 14 * 86400

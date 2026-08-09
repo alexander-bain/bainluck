@@ -47,6 +47,7 @@ from app.utils.calibration_staged_futures import (
     merge_futures_rows,
     new_staged_cursor,
     plan_units,
+    retain_planned_units,
     unit_key,
 )
 
@@ -108,7 +109,7 @@ def test_a_vm_id_is_never_split_across_chunks():
     rows = _roster(
         *[(i, "kalshi", f"g:{i // 3}", True) for i in range(12)],
     )
-    chunks = plan_units(rows, max_markets_per_chunk=4)
+    chunks = plan_units(rows, buckets=4)
     placement: dict[str, int] = {}
     for chunk in chunks:
         for vm_id in chunk.vm_ids:
@@ -129,30 +130,38 @@ def test_cross_source_peers_of_one_virtual_question_land_in_the_same_chunk():
         (4, "polymarket", "e:123", True),
         (5, "kalshi", "m:5", False),
     )
-    # A cap small enough that a naive (vm_id, source) split would separate them.
-    chunks = plan_units(rows, max_markets_per_chunk=2)
+    # Few enough buckets that a naive (vm_id, source) split would separate them.
+    chunks = plan_units(rows, buckets=2)
     holder = [chunk for chunk in chunks if "e:123" in chunk.vm_ids]
     assert len(holder) == 1
-    assert set(holder[0].market_ids) == {1, 2, 3, 4}
+    # Containment, not equality: a neighbouring question may share the bucket.
+    assert {1, 2, 3, 4} <= set(holder[0].market_ids)
 
 
-def test_an_oversized_virtual_question_gets_its_own_whole_chunk():
-    """Never truncated, never merged with a neighbour."""
+def test_an_oversized_virtual_question_is_never_truncated():
+    """Never truncated, never split.
+
+    CAL-P016 narrowed what this can promise, deliberately. Under the positional
+    planner an oversized ``vm_id`` got a chunk to ITSELF; under content-addressed
+    bucketing it may share a bucket with whatever else hashes there, because unit
+    size is a distribution and stability is what is being bought. The invariant
+    that actually matters is unchanged and is what is asserted: all ten of the
+    oversized question's markets are in ONE unit, whole.
+    """
     rows = _roster(
         *[(i, "polymarket", "g:huge", True) for i in range(10)],
         (100, "kalshi", "m:100", False),
         (101, "kalshi", "m:101", False),
     )
-    chunks = plan_units(rows, max_markets_per_chunk=3)
+    chunks = plan_units(rows, buckets=3)
     huge = [chunk for chunk in chunks if "g:huge" in chunk.vm_ids]
     assert len(huge) == 1
-    assert huge[0].vm_ids == ("g:huge",)
-    assert huge[0].market_count == 10  # > the cap, and whole
+    assert set(range(10)) <= set(huge[0].market_ids)
 
 
 def test_every_market_appears_exactly_once_across_the_plan():
     rows = _roster(*[(i, "kalshi", f"g:{i % 5}", True) for i in range(23)])
-    chunks = plan_units(rows, max_markets_per_chunk=6)
+    chunks = plan_units(rows, buckets=6)
     seen = [m for chunk in chunks for m in chunk.market_ids]
     assert sorted(seen) == list(range(23))
     assert len(seen) == len(set(seen))
@@ -160,30 +169,35 @@ def test_every_market_appears_exactly_once_across_the_plan():
 
 def test_chunking_is_deterministic_and_the_keys_are_stable():
     rows = _roster(*[(i, "kalshi", f"g:{i % 7}", True) for i in range(20)])
-    first = plan_units(rows, max_markets_per_chunk=5)
-    second = plan_units(list(reversed(rows)), max_markets_per_chunk=5)
+    first = plan_units(rows, buckets=5)
+    second = plan_units(list(reversed(rows)), buckets=5)
     assert [c.vm_ids for c in first] == [c.vm_ids for c in second]
     assert [c.key for c in first] == [c.key for c in second]
-    assert [c.index for c in first] == list(range(len(first)))
+    # Unit index is now the BUCKET index, so it is strictly increasing and inside
+    # the bucket range — but not contiguous, because an empty bucket plans no
+    # unit at all rather than an empty one.
+    indices = [c.index for c in first]
+    assert indices == sorted(set(indices))
+    assert all(0 <= i < 5 for i in indices)
     # Keys identify the CONTENT, so a different cut yields different keys.
-    recut = plan_units(rows, max_markets_per_chunk=2)
+    recut = plan_units(rows, buckets=2)
     assert {c.key for c in first} != {c.key for c in recut}
 
 
 def test_a_duplicate_roster_row_does_not_double_count_a_market():
     rows = _roster((1, "kalshi", "e:1", True), (1, "kalshi", "e:1", True))
-    chunks = plan_units(rows, max_markets_per_chunk=10)
+    chunks = plan_units(rows, buckets=10)
     assert chunks[0].market_ids == (1,)
 
 
 def test_an_empty_roster_plans_no_units():
-    assert plan_units([], max_markets_per_chunk=10) == ()
+    assert plan_units([], buckets=10) == ()
 
 
 @pytest.mark.parametrize("cap", [0, -1])
 def test_a_nonsense_chunk_size_is_refused(cap):
     with pytest.raises(ValueError):
-        plan_units(_roster((1, "k", "m:1", False)), max_markets_per_chunk=cap)
+        plan_units(_roster((1, "k", "m:1", False)), buckets=cap)
 
 
 @pytest.mark.parametrize(
@@ -197,15 +211,36 @@ def test_a_nonsense_chunk_size_is_refused(cap):
 def test_an_unplaceable_roster_row_is_refused_not_skipped(row):
     """Skipping it would drop real markets while every count looked plausible."""
     with pytest.raises(ValueError):
-        plan_units([row], max_markets_per_chunk=10)
+        plan_units([row], buckets=10)
 
 
 def test_a_chunk_key_is_short_and_reproducible():
     chunk = UnitChunk(index=0, vm_ids=("e:1", "e:2"), market_ids=(1, 2))
     assert len(chunk.key) == 16
-    assert chunk.key == UnitChunk(index=9, vm_ids=("e:1", "e:2"), market_ids=(7,)).key
+    # Independent of the unit's position in the plan...
+    assert chunk.key == UnitChunk(index=9, vm_ids=("e:1", "e:2"), market_ids=(1, 2)).key
     assert unit_key(chunk) == chunk.key
     assert unit_key("abc") == "abc"
+
+
+def test_a_chunk_key_moves_when_the_units_contents_move():
+    """CAL-P016. The key used to digest ``vm_ids`` ALONE, which left the exact
+    hole per-unit resumption cannot tolerate: a market resolving INTO an existing
+    question left the key unchanged, so a unit computed WITHOUT that market would
+    have been resumed as though it were current. Membership is in the digest now.
+    """
+    base = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1,))
+    gained_a_market = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1, 2))
+    assert base.key != gained_a_market.key
+
+    planned = plan_units(_roster((1, "kalshi", "e:1", True)), buckets=4)
+    gained_a_source = plan_units(
+        _roster((1, "kalshi", "e:1", True), (1, "polymarket", "e:1", True)), buckets=4
+    )
+    regrouped = plan_units(_roster((1, "kalshi", "e:1", False)), buckets=4)
+    # Same single market, same single question, same bucket — and three distinct
+    # keys, because source and is_grouped are part of what the unit IS.
+    assert len({planned[0].key, gained_a_source[0].key, regrouped[0].key}) == 3
 
 
 # =============================================================================
@@ -579,7 +614,7 @@ def test_the_split_matches_the_plan_the_planner_would_actually_produce():
     roster = _roster(
         *sorted({(row[1], row[2], row[0], row[0].startswith(("e:", "g:"))) for row in POPULATION})
     )
-    chunks = plan_units(roster, max_markets_per_chunk=3)
+    chunks = plan_units(roster, buckets=3)
     monolith = _aggregate(POPULATION)
     merged = _merge(
         [_aggregate([row for row in POPULATION if row[0] in chunk.vm_ids]) for chunk in chunks]
@@ -627,9 +662,10 @@ def _chunks() -> tuple[UnitChunk, ...]:
             (3, "kalshi", "m:3", False),
             (4, "kalshi", "m:4", False),
         ),
-        # One market per chunk, so ``e:1`` (two markets, two sources, one
-        # question) is the oversized-unit case AND the peer case at once.
-        max_markets_per_chunk=1,
+        # Enough buckets to separate all three questions, so ``e:1`` (two
+        # markets, two sources, one question) is the multi-market-unit case AND
+        # the cross-source peer case at once, in a plan of three real units.
+        buckets=4,
     )
 
 
@@ -710,13 +746,99 @@ def test_a_non_dict_cursor_is_invalidated():
     assert action == INVALIDATE
 
 
-def test_a_moved_roster_invalidates_every_banked_unit():
-    """LATE_ARRIVAL_NOT_INVALIDATED: half the buckets against yesterday's roster
-    and half against today's is not a population."""
+def test_a_moved_roster_no_longer_discards_the_whole_cursor():
+    """CAL-P016 — the deliberate semantic change, and the reason the build can
+    finish at all.
+
+    This test previously asserted the OPPOSITE (``test_a_moved_roster_
+    invalidates_every_banked_unit``): a changed generation fingerprint threw away
+    every banked unit. That reading of ``LATE_ARRIVAL_NOT_INVALIDATED`` was
+    correct in isolation and fatal in production. The roster is
+    ``futures_markets WHERE status='resolved'`` and markets resolve continuously,
+    so the digest moved between EVERY pair of hourly beats: the 2026-08-03 flip
+    banked one unit at 19:15Z and discarded it at 20:15Z, no generation could
+    ever complete, nothing was published after 2026-08-02, and /api/calibration
+    went dark on 2026-08-09.
+
+    The guarantee is not dropped — it moves to :func:`retain_planned_units`, one
+    level finer, and the test below pins it there.
+    """
     cursor, action = _decode(_raw_cursor(), gen_fp="fp-a-market-arrived-late")
-    assert action == INVALIDATE
-    assert cursor.committed_units == ()
+    assert action == RESUME
+    assert cursor.committed_units == (_chunks()[0].key,)
     assert cursor.generation_fingerprint == "fp-a-market-arrived-late"
+
+
+def test_late_arrival_is_enforced_per_unit_not_per_generation():
+    """The finer guarantee: a unit survives a moved roster iff IT did not move.
+
+    This is ``LATE_ARRIVAL_NOT_INVALIDATED`` as it now holds. Rows computed
+    against two different definitions of the SAME unit still cannot be mixed —
+    that unit re-keys and is recomputed — while a unit the arrival never touched
+    stays banked, which is what lets successive beats accumulate.
+    """
+    before = _roster(
+        (1, "kalshi", "e:1", True),
+        (2, "polymarket", "e:1", True),
+        (3, "kalshi", "m:3", False),
+        (4, "kalshi", "m:4", False),
+    )
+    # A market resolves INTO the existing question e:1. Nothing else changes.
+    after = before + _roster((5, "kalshi", "e:1", True))
+    assert generation_fingerprint(before) != generation_fingerprint(after)
+
+    planned_before = plan_units(before, buckets=8)
+    planned_after = plan_units(after, buckets=8)
+
+    # Bank every unit against the OLD roster.
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=generation_fingerprint(before),
+        owner=OWNER,
+        generation=1,
+    )
+    for chunk in planned_before:
+        cursor = advance(cursor, chunk.key, [{"unit": chunk.index}], owner=OWNER, lease_expires_at=0.0)
+    assert is_complete(cursor, planned_before)
+
+    kept, dropped = retain_planned_units(cursor, planned_after)
+
+    # EXACTLY the touched unit is dropped — not the whole cursor, and not none.
+    touched = [c for c in planned_before if "e:1" in c.vm_ids]
+    assert len(touched) == 1
+    assert dropped == (touched[0].key,)
+    assert len(kept.committed_units) == len(planned_before) - 1
+    # Every surviving unit is one the new plan still asks for, unchanged.
+    planned_keys = {c.key for c in planned_after}
+    assert set(kept.committed_units) <= planned_keys
+    # And the generation is honestly not finished: the moved unit must be re-run.
+    assert not is_complete(kept, planned_after)
+
+
+def test_the_partition_is_stable_so_an_arrival_cannot_disturb_its_neighbours():
+    """CAL-P016's second half, and the one 300E's note did not name.
+
+    Per-unit keys alone would NOT have converged: ``plan_units`` cut chunks with
+    a positional accumulator over sorted ``vm_id``s, so one new ``vm_id`` early
+    in sort order pushed every later boundary along and re-keyed every later
+    unit. The cursor would then have discarded everything again, by a second
+    route, and the fix would have looked like it failed.
+
+    Content-addressed bucketing is what closes that: a question's unit depends on
+    the question and nothing else.
+    """
+    before = _roster(*[(i, "kalshi", f"m:{i:03d}", False) for i in range(40)])
+    # A new question that sorts FIRST — worst case for a positional accumulator.
+    after = _roster((999, "kalshi", "m:000a", False)) + before
+
+    planned_before = {c.key for c in plan_units(before, buckets=8)}
+    planned_after = {c.key for c in plan_units(after, buckets=8)}
+
+    survivors = planned_before & planned_after
+    assert len(survivors) >= len(planned_before) - 1, (
+        "an arrival disturbed more than its own unit — the partition is not stable"
+    )
 
 
 def test_a_population_version_change_invalidates_every_banked_unit():
@@ -901,3 +1023,59 @@ def test_progress_is_monotonic_across_three_beats_and_only_the_last_publishes():
     assert banked_over_time == sorted(banked_over_time)
     assert banked_over_time == list(range(1, len(chunks) + 1))
     assert len(published) == 1
+
+
+def test_the_build_converges_when_the_roster_moves_between_every_beat():
+    """CAL-P016's whole reason for existing, and the test that would have caught
+    the 2026-08-09 outage.
+
+    ``test_progress_is_monotonic_across_three_beats_and_only_the_last_publishes``
+    proves the design works against a roster that HOLDS STILL. Production's
+    roster never does: it is ``futures_markets WHERE status='resolved'`` and
+    markets resolve continuously, so something arrives between every pair of
+    hourly beats. Under the pre-CAL-P016 cursor that moved the generation
+    fingerprint and discarded every banked unit, so the build banked 1-2 units of
+    40+ per beat forever, published nothing after 2026-08-02, and the public page
+    went dark a week later when the last-good copy aged out.
+
+    Here a market arrives DURING every beat and each beat does one unit's work.
+    The property under test is simply that it finishes — and that publication
+    still waits for a plan every unit of which is banked against the current
+    roster.
+    """
+    roster = _roster(*[(i, "kalshi", f"m:{i:03d}", False) for i in range(12)])
+    next_market_id = 100
+    raw = None
+    published = []
+    progress = []
+
+    for beat in range(40):
+        chunks = plan_units(roster, buckets=6)
+        cursor, action = _decode(
+            raw, gen_fp=generation_fingerprint(roster)
+        )
+        assert action in (FRESH, RESUME)
+        cursor, _dropped = retain_planned_units(cursor, chunks)
+
+        # One unit of work per beat — the deadline-bound case.
+        todo = [c for c in chunks if not cursor.has(c.key)]
+        if todo:
+            cursor = advance(
+                cursor, todo[0].key, [{"beat": beat}], owner=OWNER, lease_expires_at=0.0
+            )
+        progress.append(len(cursor.committed_units))
+
+        if is_complete(cursor, chunks):
+            published.append(beat)
+            break
+        raw = cursor.as_payload()
+
+        # A market resolves into the population mid-build, every single beat.
+        roster = roster + _roster((next_market_id, "kalshi", f"m:{next_market_id}", False))
+        next_market_id += 1
+
+    assert published, (
+        f"the build never converged in 40 beats; units banked per beat: {progress}"
+    )
+    # It finished, and it finished by ACCUMULATING rather than by luck.
+    assert max(progress) > 1

@@ -2703,7 +2703,7 @@ async def _run_staged_futures(db, runner, sql_builder):
     that it made progress and the next one will finish.
     """
     from app.tasks.calibration_main_build import (
-        STAGED_FUTURES_CHUNK_MARKETS,
+        STAGED_FUTURES_BUCKETS,
         load_staged_cursor,
         save_staged_cursor,
         staged_lease,
@@ -2716,6 +2716,7 @@ async def _run_staged_futures(db, runner, sql_builder):
         is_complete,
         merge_futures_rows,
         plan_units,
+        retain_planned_units,
     )
 
     # The merge refuses a column it was not told the KIND of, on purpose — a
@@ -2743,7 +2744,7 @@ async def _run_staged_futures(db, runner, sql_builder):
     await runner.commit(db)
 
     gen_digest = generation_fingerprint(roster)
-    chunks = plan_units(roster, max_markets_per_chunk=STAGED_FUTURES_CHUNK_MARKETS)
+    chunks = plan_units(roster, buckets=STAGED_FUTURES_BUCKETS)
     # market_id -> its FROZEN assignment. The chunk knows which markets it owns;
     # this is what each one was assigned to when the generation was taken, and
     # it is what gets replayed into the chunk statement instead of re-derived.
@@ -2774,6 +2775,20 @@ async def _run_staged_futures(db, runner, sql_builder):
         logger.info("calibration staged futures: cursor held by another run — standing down")
         return None
     runner.ledger.record_stage(f"staged:cursor_{action}", 0)
+
+    # CAL-P016: the roster moves between every pair of hourly beats, so a cursor
+    # is now kept and pruned per unit instead of discarded whole. Only units the
+    # new plan still asks for survive; the rest are recomputed. ``dropped`` is
+    # the drift cost of this beat and is recorded, because "how many units did
+    # the arrival cost us" is exactly the number that says whether the build is
+    # converging or thrashing.
+    cursor, dropped = retain_planned_units(cursor, chunks)
+    if dropped:
+        runner.ledger.record_stage("staged:units_dropped", len(dropped))
+        logger.info(
+            "calibration staged futures: roster drift dropped %d/%d banked units",
+            len(dropped), len(dropped) + len(cursor.committed_units),
+        )
 
     # -- Stage 2: process whole units -----------------------------------------
     chunk_sql = text(sql_builder(frozen=True))

@@ -1061,7 +1061,77 @@ async def public_calibration(
     if isinstance(stale, dict):
         return _degraded(stale, "redis_unavailable" if _redis_failed else "cache_miss")
 
-    # 5. Nothing trustworthy anywhere. There is deliberately no build tier below
+    # 5. LAST RESORT: the newest durable snapshot at ANY age, dated and labelled.
+    #
+    #    CAL-P017 (Alex, 2026-08-08). Every tier above is bounded by the SAME
+    #    constant — the durable read passes SERVE_MAX_AGE_S, snapshot_verdict
+    #    re-checks it, and the process/Redis tier passes it again — so all four
+    #    refuse in the same instant and the page went from "dated, disclosed and
+    #    useful" straight to 503 with nothing in between. That is precisely what
+    #    happened at 2026-08-09 03:23Z, seven days after the last publish, and it
+    #    is the gap Alex named: SERVE_MAX_AGE_S alone decided when the page went
+    #    dark.
+    #
+    #    The honest-service ruling says degrade to a dated last-known snapshot
+    #    behind a banner rather than 503, and the banner already exists —
+    #    ``_degraded`` stamps ``cache.status = "stale"`` with ``age_s`` and
+    #    ``generated_at``, and the page renders "as of <time> (N ago)". It worked
+    #    for the whole week. It just had nothing left to render.
+    #
+    #    WHAT IS AND IS NOT RELAXED. Only the AGE bound, and only because the age
+    #    is disclosed in the same payload: a reader can see a month-old curve is a
+    #    month old. The VERSION check stays — a payload built under a different
+    #    population contract is not servable at any age, because its numbers do
+    #    not mean what the current page says they mean, and no banner fixes that.
+    #    Nor does this touch the publish gate: #1517's "a bad build must never
+    #    replace a good one" governs what gets WRITTEN, and is untouched here.
+    if _remaining_ms() > 0:
+        try:
+            from app.services.durable_snapshots import read_snapshot
+            from app.utils.durable_state import SOURCE_DURABLE
+
+            aged = await read_snapshot(
+                db,
+                "calibration:main",
+                expected_version=_expected_version(),
+                # NOT None: both read_snapshot and snapshot_verdict compare
+                # ``age_s > max_age_s`` numerically, so None would raise a
+                # TypeError, get swallowed by the except below, and quietly
+                # reproduce the very 503 this tier exists to prevent. Infinity
+                # lifts ONLY the ceiling — the ``age_s < 0`` / future-dated guard
+                # and the version check both still bite.
+                max_age_s=float("inf"),
+            )
+            if aged.ok and isinstance(aged.envelope.payload, dict):
+                payload = aged.envelope.payload
+                verdict = snapshot_verdict(
+                    payload,
+                    expected_version=_expected_version(),
+                    max_age_s=float("inf"),
+                )
+                if verdict.is_servable:
+                    degraded = _degraded(payload, "durable_over_age", verdict)
+                    # served_from stays the canonical "durable", NOT a bespoke
+                    # tier name: provenance() derives ``dated`` from it
+                    # (``served_from in (SOURCE_DURABLE, SOURCE_PROCESS)``), so a
+                    # custom value would publish ``dated: False`` for the most
+                    # dated copy we ever serve — precisely inverted. The tier is
+                    # distinguished where every other tier distinguishes itself,
+                    # in the ``cache.reason`` above.
+                    degraded["provenance"] = aged.envelope.provenance(
+                        served_from=SOURCE_DURABLE
+                    )
+                    return degraded
+                logger.warning(
+                    "calibration: over-age durable snapshot still not servable (%s: %s)",
+                    verdict.status, verdict.reason,
+                )
+        except Exception:
+            logger.warning(
+                "calibration: over-age durable read failed", exc_info=True
+            )
+
+    # 6. Nothing anywhere, at any age. There is deliberately no build tier below
     #    this line: the honest 503 IS the answer, and the hourly beat is what
     #    fixes it. See the docstring for why a request may not start the CTE.
     if _remaining_ms() <= 0:

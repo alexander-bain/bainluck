@@ -90,12 +90,28 @@ RULINGS_2026_08_08 = [
     "THREE-WINNER REPAIR",
 ]
 
+# CAL-P015 (2026-08-08). The re-issued batch. Alex ruled these, they were lost
+# with the window that heard them, and he had to issue them a THIRD time. That
+# is this file's failure mode arriving from a new direction: not a consolidation
+# rewrite dropping a banked section, but a ruling that never got banked at all,
+# so there was nothing for the guard to protect. Pinning them the moment they
+# land is what makes the next re-ask unnecessary.
+RULINGS_2026_08_08_REISSUED = [
+    "re-issued batch",
+    "PROP-THRESHOLD BANDS",
+    "COVERAGE DENOMINATOR: PUBLISH BOTH",
+    "RETIRE OR REWRITE THE CAL-P010 BRANCH",
+    "PREDECESSOR'S QUEUE-ID",
+    "FRESH-WINDOW MEASUREMENT PASS",
+]
+
 ALL_MARKERS = (
     REQUIRED_MARKERS
     + STRUCTURAL_MARKERS
     + PROGRAM_ERA_MARKERS
     + DEFERRED_NOW_GUARDED
     + RULINGS_2026_08_08
+    + RULINGS_2026_08_08_REISSUED
 )
 
 
@@ -143,9 +159,10 @@ def test_product_brain_is_not_a_wholesale_regeneration() -> None:
     # (new rulings append), never silent collapse. Raised to 31 by LAT-P008b:
     # a floor that never tracks the real count stops guarding the sections added
     # since it was written — the same gap PROGRAM_ERA_MARKERS was created to fix.
-    assert len(ruling_sections) >= 31, (
+    # Raised to 36 by CAL-P015 (master carried 35; the re-issued batch adds one).
+    assert len(ruling_sections) >= 36, (
         f"docs/PRODUCT-BRAIN.md has only {len(ruling_sections)} '## ' sections; "
-        f"the guarded floor is 31. A wholesale "
+        f"the guarded floor is 36. A wholesale "
         f"'consolidation' rewrite has collapsed the accreted ruling history. "
         f"Restore from git and append the new ruling instead of regenerating."
     )

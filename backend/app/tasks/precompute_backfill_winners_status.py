@@ -198,12 +198,35 @@ async def _precompute_backfill_winners_status() -> dict:
             # ── Build full response ─────────────────────────────────────
             response = {
                 "sources": sources,
+                # CAL-P014: this block's denominator is the PRICED resolved
+                # population, not all resolved outcomes — the query filters
+                # ``opening_probability IS NOT NULL AND > 0 AND < 1`` (the same
+                # coverage_universe predicate the curve uses). The old key was
+                # named ``total_resolved_outcomes``, which reads as "everything
+                # resolved" and is roughly 1.6M against ~2.6M actually resolved.
+                # Anything unpriced — the provably-purged and still-recoverable
+                # cohorts CAL-P011/P012 named — is outside this denominator
+                # entirely, so ``pct_covered`` answers a narrower question than
+                # its name suggests. Alex's 2026-08-08 ruling makes publishing
+                # the denominator the house rule; this states it in the payload
+                # instead of requiring a reader to go find the WHERE clause.
                 "calibration_probability_coverage": {
+                    "priced_resolved_outcomes": cal_row.total_resolved,
+                    # Deprecated alias, kept so existing consumers/dashboards do
+                    # not break on rename. Remove once nothing reads it.
                     "total_resolved_outcomes": cal_row.total_resolved,
                     "has_calibration_probability": cal_row.has_cal_prob,
                     "needs_cal_with_commence": cal_row.needs_cal_with_commence,
                     "needs_cal_without_commence": cal_row.needs_cal_without_commence,
                     "pct_covered": round(100 * cal_row.has_cal_prob / max(cal_row.total_resolved, 1), 1),
+                    "pct_covered_denominator": "priced_resolved_outcomes",
+                    "denominator_rule": (
+                        "Resolved futures outcomes carrying a usable opening price "
+                        "(opening_probability strictly between 0 and 1). Outcomes with NO "
+                        "captured price are NOT in this denominator — see "
+                        "calibration_coverage_census.reachability_bridge in /api/calibration "
+                        "for the provably-purged vs still-recoverable split."
+                    ),
                     "avg_price_shift": round(float(cal_row.avg_price_shift or 0), 4),
                 },
                 "polymarket_group_id_health": {
