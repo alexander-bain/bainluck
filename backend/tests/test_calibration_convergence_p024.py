@@ -358,3 +358,130 @@ class TestTheBuildProjectsItsOwnConvergence:
         assert source.index("_record_convergence_projection(") < source.index(
             "if not is_complete("
         )
+
+
+# =============================================================================
+# 4. Where the memory goes (CAL-P024c) — the P0's instrument
+# =============================================================================
+class TestTheBuildReportsItsOwnMemory:
+    """The build is hard-killed on a 512MB dyno and a SIGKILL leaves no traceback.
+
+    Alex's diagnosis (2026-08-09) is that the hourly beat fires on schedule and
+    dies ~16 min in to a memory kill. What no artifact says is WHERE — and the
+    payload build turns out to hold nothing that scales with the 652K-outcome
+    population: every read in ``compute_calibration_payload`` is a ``GROUP BY``
+    aggregate, the largest bounded by
+    ``bucket_idx x source x category x price_moved x is_nonexclusive_bundle``
+    at a few thousand rows. So the streaming rewrite has no obvious target in
+    that function, and picking one by guess on a P0 is how the wrong thing gets
+    rewritten.
+
+    Hence: sample RSS at every stage boundary, so the next beat names the stage
+    it died in and the level it reached.
+    """
+
+    def test_the_probe_returns_a_plausible_live_reading(self):
+        from app.tasks.calibration_main_build import _process_rss_mb
+
+        rss = _process_rss_mb()
+        assert rss is not None
+        # A pytest process is tens of MB; anything outside this is a units bug,
+        # which is the specific failure mode worth guarding (ru_maxrss is bytes
+        # on Darwin and kilobytes on Linux — off by 1024 in one direction).
+        assert 5 < rss < 5000, f"implausible RSS {rss} MB — check the units"
+
+    def test_an_unavailable_reading_is_none_never_zero(self, monkeypatch):
+        """A missing measurement must not be recorded as a comfortable one."""
+        import builtins
+
+        import app.tasks.calibration_main_build as mb
+
+        monkeypatch.setattr(
+            builtins, "open", lambda *a, **k: (_ for _ in ()).throw(OSError())
+        )
+        monkeypatch.setitem(__import__("sys").modules, "resource", None)
+        assert mb._process_rss_mb() is None
+
+    def test_a_gauge_replaces_and_a_counter_accumulates(self):
+        """The distinction the RSS reading depends on.
+
+        ``record_stage`` is a counter — right for durations, and silently wrong
+        for a level. An RSS of 400 recorded through it on 128 unit stages would
+        publish 51,200.
+        """
+        from app.utils.calibration_phase_ledger import PhaseLedger
+
+        ledger = PhaseLedger.__new__(PhaseLedger)
+        ledger.stages = {}
+        for _ in range(128):
+            ledger.record_stage("read:futures_unit", 100)
+            ledger.record_gauge("rss:at:read:futures_unit", 400)
+        assert ledger.stages["read:futures_unit"] == 12_800
+        assert ledger.stages["rss:at:read:futures_unit"] == 400
+
+    def test_the_peak_only_ever_climbs(self, monkeypatch):
+        import app.tasks.calibration_main_build as mb
+
+        runner, ledger = _rss_runner()
+        for reading in (120, 480, 300):
+            monkeypatch.setattr(mb, "_process_rss_mb", lambda r=reading: r)
+            runner._sample_rss("read:futures_unit")
+        assert ledger.stages["rss:peak_mb"] == 480
+        # …while the per-stage reading is the LAST one, not the peak: the two
+        # answer different questions and collapsing them loses the trajectory.
+        assert ledger.stages["rss:at:read:futures_unit"] == 300
+
+    def test_sampling_never_raises_when_the_probe_fails(self, monkeypatch):
+        import app.tasks.calibration_main_build as mb
+
+        runner, ledger = _rss_runner()
+
+        def _boom():
+            raise RuntimeError("no /proc here")
+
+        monkeypatch.setattr(mb, "_process_rss_mb", _boom)
+        runner._sample_rss("read:futures_unit")  # must not raise
+        assert "rss:peak_mb" not in ledger.stages
+
+    def test_an_unobtainable_reading_records_nothing_rather_than_zero(self, monkeypatch):
+        """None must not become a comfortable 0 MB in the ledger."""
+        import app.tasks.calibration_main_build as mb
+
+        runner, ledger = _rss_runner()
+        monkeypatch.setattr(mb, "_process_rss_mb", lambda: None)
+        runner._sample_rss("read:futures_unit")
+        assert ledger.stages == {}
+
+    def test_every_stage_boundary_samples(self):
+        """Wiring: the sample must be in the ``finally``, so a stage that RAISES
+        — the one most worth knowing the memory of — still reports."""
+        import inspect
+
+        from app.tasks.calibration_main_build import PhaseRunner
+
+        source = inspect.getsource(PhaseRunner.stage)
+        assert "_sample_rss" in source
+        assert source.index("finally:") < source.index("_sample_rss")
+
+
+class _RssRunner:
+    """Just enough PhaseRunner to exercise ``_sample_rss`` in isolation.
+
+    The real method is bound onto this object rather than reimplemented, so the
+    tests exercise production code; the probe itself is monkeypatched at module
+    level, which is where ``_sample_rss`` actually reads it from.
+    """
+
+    def __init__(self, ledger):
+        from app.tasks.calibration_main_build import PhaseRunner
+
+        self.ledger = ledger
+        self._sample_rss = PhaseRunner._sample_rss.__get__(self)
+
+
+def _rss_runner():
+    from app.utils.calibration_phase_ledger import PhaseLedger
+
+    ledger = PhaseLedger.__new__(PhaseLedger)
+    ledger.stages = {}
+    return _RssRunner(ledger), ledger

@@ -181,6 +181,41 @@ STAGED_FUTURES_ENABLED = True
 #: every unit and costs exactly one generation of banked work — safe, not free.
 STAGED_FUTURES_BUCKETS = 128
 
+def _process_rss_mb() -> float | None:
+    """This process's resident set size in MB, or ``None`` if unobtainable.
+
+    CAL-P024c. Deliberately dependency-free — ``psutil`` is not installed and a
+    memory probe that needs a new package on a dyno that is already dying of
+    memory is the wrong trade.
+
+    Linux (the dyno) is read from ``/proc/self/statm``, whose second field is
+    resident pages. macOS (the dev sandbox) has no ``/proc``, so it falls back
+    to ``resource.getrusage``, where ``ru_maxrss`` is BYTES on Darwin and
+    KILOBYTES on Linux — a units trap worth naming, since getting it wrong on
+    the platform that matters would report 1/1024th of the real figure and make
+    a dying build look comfortable.
+
+    Returns ``None`` rather than raising or guessing: an unavailable measurement
+    must not be recorded as a small one.
+    """
+    try:
+        with open("/proc/self/statm", "rb") as fh:
+            resident_pages = int(fh.read().split()[1])
+        return resident_pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        import resource
+        import sys
+
+        max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # ru_maxrss: bytes on Darwin, kilobytes on Linux.
+        divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+        return max_rss / divisor
+    except Exception:  # noqa: BLE001 — instrumentation never raises
+        return None
+
+
 #: A ledger or checkpoint older than this is a fossil, not state in progress.
 STATE_MAX_AGE_S = 14 * 86400
 
@@ -447,6 +482,30 @@ class PhaseRunner:
             yield
         finally:
             self.ledger.record_stage(name, int((time.monotonic() - started) * 1000))
+            # CAL-P024c: the build is being hard-killed on a 512MB dyno, and a
+            # SIGKILL leaves no traceback naming where the memory went. Sampled
+            # here because a stage boundary is the only place in the build that
+            # is both frequent and cheap: `rss:peak_mb` is the high-water mark
+            # for the whole run, `rss:at:<stage>` the reading after the stage
+            # that most recently ran. A kill therefore leaves the last stage it
+            # survived and the RSS it had reached, which is the difference
+            # between "dies of memory" and "dies of memory in read:futures_unit
+            # at 480MB".
+            self._sample_rss(name)
+
+    def _sample_rss(self, stage_name: str) -> None:
+        """Record RSS now, best-effort. Never the reason a build fails."""
+        try:
+            rss_mb = _process_rss_mb()
+        except Exception:  # noqa: BLE001 — instrumentation must not raise
+            return
+        if rss_mb is None:
+            return
+        # Gauges, not counters: an RSS level summed over 128 unit stages would
+        # publish tens of thousands of "MB" (see PhaseLedger.record_gauge).
+        self.ledger.record_gauge(f"rss:at:{stage_name}", int(rss_mb))
+        if int(rss_mb) > int(self.ledger.stages.get("rss:peak_mb", 0)):
+            self.ledger.record_gauge("rss:peak_mb", int(rss_mb))
 
     def classify_failure(self, exc: BaseException) -> str:
         """timeout | cancelled | failed — the three ways a phase can end badly."""

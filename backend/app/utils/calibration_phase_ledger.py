@@ -522,6 +522,22 @@ class PhaseLedger:
         """Add a stage observation. Repeats accumulate (7 diagnostic reads)."""
         self.stages[name] = self.stages.get(name, 0) + max(0, int(duration_ms))
 
+    def record_gauge(self, name: str, value: int) -> None:
+        """Set a LEVEL, replacing any prior reading — CAL-P024c.
+
+        :meth:`record_stage` is a counter: repeats accumulate, which is right
+        for durations (the futures unit read is timed 128 times and the total is
+        the number you want) and silently wrong for anything that is a level
+        rather than an amount. An RSS reading of 400 MB recorded through
+        ``record_stage`` on 128 units publishes 51,200 — a number that looks
+        like a catastrophe, is not one, and is not even in megabytes any more.
+
+        Same store, so everything that already reads ``stages`` keeps working;
+        different write rule, so a gauge cannot be summed into fiction. Names
+        are prefixed (``rss:``) to keep the two kinds legible side by side.
+        """
+        self.stages[name] = int(value)
+
     # -- lifecycle ------------------------------------------------------------
 
     def begin(self, name: str, *, now_ms: int) -> None:
