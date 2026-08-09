@@ -1,0 +1,7 @@
+[
+  {"id": "explicit-alex-approval", "input": {"decision_state": "explicit_approval", "attributed_to_alex": true, "ci_guarded": true}, "expected": {"verdict": "ACCEPT", "reason": "explicit_authority"}},
+  {"id": "open-ab-cannot-be-inferred", "input": {"decision_state": "open", "attributed_to_alex": false, "ci_guarded": true}, "expected": {"verdict": "REFUSE", "reason": "needs_alex_ruling"}},
+  {"id": "labelled-inference-still-not-ruling", "input": {"decision_state": "inferred", "attributed_to_alex": false, "ci_guarded": true}, "expected": {"verdict": "REFUSE", "reason": "needs_alex_ruling"}},
+  {"id": "ambiguous-wording-needs-question", "input": {"decision_state": "ambiguous", "attributed_to_alex": true, "ci_guarded": false}, "expected": {"verdict": "REFUSE", "reason": "needs_alex_ruling"}},
+  {"id": "agent-proposal-may-remain-unratified", "input": {"decision_state": "proposal", "attributed_to_alex": false, "ci_guarded": false}, "expected": {"verdict": "HOLD", "reason": "not_a_standing_ruling"}}
+]
