@@ -1,0 +1,24 @@
+{
+  "schema_version":1,
+  "render_specs":[
+    {"module":"alpha_contract","symbols":["evaluate"]},
+    {"module":"multi_symbol_contract","symbols":["evaluate","load_corpus","report"]},
+    {"module":"fixture_contract","symbols":["evaluate"],"fixture":"fixture_contract.json"}
+  ],
+  "cases":[
+    {"id":"canonical-single","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"ALLOW","reasons":[]}},
+    {"id":"canonical-multiline","input":{"source":"from scripts.evals.alpha import (\n    evaluate,\n    report,\n)\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"ALLOW","reasons":[]}},
+    {"id":"forbidden-prefix","input":{"source":"from backend.scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["BACKEND_PREFIX_GENERATED","MODULE_IDENTITY_DRIFT","NONCANONICAL_EVAL_IMPORT"]}},
+    {"id":"relative-import","input":{"source":"from .alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["EVAL_IMPORT_MISSING","MODULE_IDENTITY_DRIFT"]}},
+    {"id":"wrong-module","input":{"source":"from scripts.evals.beta import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["MODULE_IDENTITY_DRIFT"]}},
+    {"id":"backend-only-verified","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["PYTEST_CONTEXTS_UNVERIFIED"]}},
+    {"id":"repo-only-verified","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest"]},"expected":{"verdict":"REFUSE","reasons":["PYTEST_CONTEXTS_UNVERIFIED"]}},
+    {"id":"direct-required-unverified","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"],"direct_execution":true},"expected":{"verdict":"REFUSE","reasons":["DIRECT_CONTEXT_UNVERIFIED"]}},
+    {"id":"fixture-local","input":{"source":"from pathlib import Path\nfrom scripts.evals.alpha import evaluate\nFIXTURE = Path(__file__).parent / \"fixtures\" / \"alpha.json\"\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","fixture":"alpha.json","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"ALLOW","reasons":[]}},
+    {"id":"fixture-cwd-relative","input":{"source":"from pathlib import Path\nfrom scripts.evals.alpha import evaluate\nFIXTURE = Path(\"backend/tests/evals/fixtures/alpha.json\")\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","fixture":"alpha.json","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["FIXTURE_PATH_NOT_LOCAL"]}},
+    {"id":"wrong-test-directory","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["GENERATED_TEST_PATH_INVALID"]}},
+    {"id":"syntax-error","input":{"source":"from scripts.evals.alpha import (\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"REFUSE","reasons":["GENERATED_SYNTAX_ERROR"]}},
+    {"id":"duplicate-module-identity","input":{"source":"from scripts.evals.alpha import evaluate\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"],"same_file_loaded_twice":true},"expected":{"verdict":"REFUSE","reasons":["DUPLICATE_MODULE_IDENTITY"]}},
+    {"id":"alias-import","input":{"source":"from scripts.evals.alpha import evaluate as oracle\n","path":"backend/tests/evals/test_alpha.py","module":"alpha","verified_contexts":["repo_root_pytest","backend_pytest"]},"expected":{"verdict":"ALLOW","reasons":[]}}
+  ]
+}
