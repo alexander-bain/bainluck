@@ -1,0 +1,24 @@
+{
+  "schema_version":1,
+  "base":{"trace_id":"perf-a1b2","surface":"discover","request_started_ms":1000,"response_received_ms":3000,"first_content_ms":3400,"content_kind":"discover_card","mounted":true,"stable_content_id":"future:42","cache_status":"miss","backend_elapsed_ms":1600,"attempts":1,"timeout_ms":30000,"timed_out":false,"retry_durations_ms":[],"server_stages":{"concepts":600,"futures":700,"events":200}},
+  "cases":[
+    {"id":"clean-miss","expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"clean-hit","set":{"cache_status":"hit","backend_elapsed_ms":12,"server_stages":{"cache_read":3},"response_received_ms":1200,"first_content_ms":1350},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"clean-stale","set":{"cache_status":"stale_hit","backend_elapsed_ms":8,"server_stages":{},"response_received_ms":1150,"first_content_ms":1300},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"backend-fast-client-slow","set":{"backend_elapsed_ms":20,"server_stages":{"cache_read":5},"response_received_ms":1100,"first_content_ms":5000},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"backend-slow-client-fast","set":{"backend_elapsed_ms":1950,"server_stages":{"query":1800},"response_received_ms":3000,"first_content_ms":3050},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"skeleton-false-success","set":{"content_kind":"skeleton","mounted":true,"stable_content_id":"skeleton-1"},"expected_verdict":"REFUSE","expected_reasons":["FIRST_CONTENT_NOT_PROVEN"]},
+    {"id":"unmounted-card","set":{"mounted":false},"expected_verdict":"REFUSE","expected_reasons":["FIRST_CONTENT_NOT_PROVEN"]},
+    {"id":"missing-correlation","set":{"trace_id":""},"expected_verdict":"REFUSE","expected_reasons":["TRACE_ID_INVALID"]},
+    {"id":"missing-backend-header","delete":["backend_elapsed_ms"],"expected_verdict":"REFUSE","expected_reasons":["FIELDS_MISSING"]},
+    {"id":"malformed-stage","set":{"server_stages":{"query":"slow"}},"expected_verdict":"REFUSE","expected_reasons":["SERVER_STAGES_INVALID"]},
+    {"id":"stage-total-impossible","set":{"backend_elapsed_ms":100,"server_stages":{"a":80,"b":80}},"expected_verdict":"REFUSE","expected_reasons":["SERVER_STAGES_EXCEED_BACKEND"]},
+    {"id":"retry-hidden","set":{"attempts":2,"retry_durations_ms":[]},"expected_verdict":"REFUSE","expected_reasons":["RETRY_ACCOUNTING_MISSING"]},
+    {"id":"retry-accounted","set":{"attempts":2,"retry_durations_ms":[30000],"response_received_ms":33000,"first_content_ms":33400},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"timeout-without-bound","set":{"timed_out":true,"timeout_ms":null},"expected_verdict":"REFUSE","expected_reasons":["TIMEOUT_BOUND_MISSING"]},
+    {"id":"timeline-reversed","set":{"response_received_ms":3500,"first_content_ms":3400},"expected_verdict":"REFUSE","expected_reasons":["TIMELINE_INVALID"]},
+    {"id":"privacy-leak","set":{"session_id":"kid:123"},"expected_verdict":"REFUSE","expected_reasons":["PRIVACY_FIELD_PRESENT"]},
+    {"id":"politics-real-content","set":{"surface":"politics","content_kind":"politics_market","stable_content_id":"market:7","cache_status":"hit","backend_elapsed_ms":15,"server_stages":{"cache_read":2},"response_received_ms":1200,"first_content_ms":1500},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]},
+    {"id":"search-real-result","set":{"surface":"search","content_kind":"search_result","stable_content_id":"result:9","cache_status":"disabled","backend_elapsed_ms":900,"server_stages":{"futures":500,"events":300},"response_received_ms":2100,"first_content_ms":2200},"expected_verdict":"ATTRIBUTABLE","expected_reasons":[]}
+  ]
+}
