@@ -413,10 +413,27 @@ describe("computeSharedChartDomain — x-axis ticks (UX-P022)", () => {
     expect(interior.length).toBeGreaterThanOrEqual(1);
   });
 
+  // Tick labels render in the VIEWER'S local timezone, which is correct product
+  // behaviour — a reader in New York should see New York time. So the expected
+  // label must be derived from the same clock the renderer uses, never written
+  // out as a literal.
+  //
+  // INT-021: this assertion originally read `13 * 60 + 10` — 1:10 PM, which is
+  // 20:10Z rendered in the author's PDT. It passed locally and failed in CI on
+  // exactly the 420-minute UTC-7 offset, red-ing master and skipping the deploy.
+  // The sibling tests above survived because they measure GAPS between ticks,
+  // and a gap is timezone-invariant; only an absolute wall-clock assertion is
+  // not. Same family as gotcha #44 (never seed a test against the local clock),
+  // on the frontend rather than in pytest.
+  const localMinutes = (iso: string): number => {
+    const d = new Date(iso);
+    return d.getHours() * 60 + d.getMinutes();
+  };
+
   test("the window's start and end are always labelled", () => {
     const ticks = ticksFor(SHORT_START, SHORT_END);
-    expect(toMinutes(ticks[0])).toBe(13 * 60 + 10);
-    expect(toMinutes(ticks[ticks.length - 1])).toBe(13 * 60 + 31);
+    expect(toMinutes(ticks[0])).toBe(localMinutes(SHORT_START));
+    expect(toMinutes(ticks[ticks.length - 1])).toBe(localMinutes(SHORT_END));
   });
 
   test("tick count stays bounded on a long window — refining must not flood the axis", () => {
