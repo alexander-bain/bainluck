@@ -62,6 +62,19 @@ _REPAIRS = {
     # ?offset=<next_offset> until ``exhausted``. Accepts ?limit=&offset=.
     # Never writes: ``apply`` is accepted and ignored.
     "reachability-census": ("app.tasks.census_reachability", "census"),
+    # CAL-P018 (#1089): dry-run-ONLY per-series cliff census for Kalshi
+    # prop-threshold outcomes — predicted vs actual by decile, per series, plus
+    # how many rows the CURRENT global bands already exclude. Feeds Alex's
+    # "tighten per measured cliff, per series" ruling and its published
+    # exclusion counts. Walks a bounded outcome-ROW window per call (the full
+    # scan, a single-series scan, and even a bare COUNT(*) all exceed the
+    # statement timeout — measured twice, 12h apart); re-invoke with
+    # ?offset=<next_offset> until ``exhausted``. Accepts ?limit=&offset=.
+    # Never writes: ``apply`` is accepted and ignored.
+    "prop-threshold-cliff-census": (
+        "app.tasks.census_prop_threshold_cliff",
+        "census",
+    ),
     # CAL-P007 (#1527), approved by Alex 2026-08-07 under attended capped-batch
     # discipline: the WRITE half. Re-resolves an incoherent single-winner field
     # from CLOB per-leg authority (each leg is its own condition_id), then nulls
