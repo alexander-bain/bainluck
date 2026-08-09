@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "id": "backend-published-comparison",
+      "input": {"claim_rendered": true, "backend_decision_present": true, "outcome_n": 75583, "independent_question_n": 12000, "exact_common_support": true, "claims_mix_fixed": true, "selected_extreme_from": 10, "selection_disclosed": true},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "client-selects-widest-gap",
+      "input": {"claim_rendered": true, "backend_decision_present": false, "client_computed_metric": true, "client_selected_finding": true, "outcome_n": 75583, "independent_question_n": 12000},
+      "expected": {"verdict": "REFUSE", "reasons": ["CLAIM_LACKS_BACKEND_AUTHORITY", "CLIENT_ADJUDICATED_CALIBRATION"]}
+    },
+    {
+      "id": "outcomes-only-disclosure",
+      "input": {"claim_rendered": true, "backend_decision_present": true, "outcome_n": 75583},
+      "expected": {"verdict": "REFUSE", "reasons": ["INDEPENDENT_COUNT_MISSING"]}
+    },
+    {
+      "id": "no-outcome-count",
+      "input": {"claim_rendered": true, "backend_decision_present": true, "independent_question_n": 300},
+      "expected": {"verdict": "REFUSE", "reasons": ["OUTCOME_COUNT_MISSING"]}
+    },
+    {
+      "id": "broad-bin-called-fixed-mix",
+      "input": {"claims_mix_fixed": true, "exact_common_support": false},
+      "expected": {"verdict": "REFUSE", "reasons": ["MIX_CONTROL_OVERCLAIMED"]}
+    },
+    {
+      "id": "broad-bin-described-honestly",
+      "input": {"claims_mix_fixed": false, "exact_common_support": false},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "widest-of-ten-undisclosed",
+      "input": {"selected_extreme_from": 10, "selection_disclosed": false},
+      "expected": {"verdict": "REFUSE", "reasons": ["EXTREME_SELECTION_UNDISCLOSED"]}
+    },
+    {
+      "id": "valid-bucket-row",
+      "input": {"rows": [{"bucket_idx": 4, "n": 1000, "winners": 440, "sum_prob": 470.5}]},
+      "expected": {"verdict": "ALLOW", "reasons": []}
+    },
+    {
+      "id": "fractional-bucket-index",
+      "input": {"rows": [{"bucket_idx": 4.5, "n": 1000, "winners": 440, "sum_prob": 470}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_BUCKET_INDEX"]}
+    },
+    {
+      "id": "bucket-outside-canonical-range",
+      "input": {"rows": [{"bucket_idx": 10, "n": 1000, "winners": 440, "sum_prob": 470}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_BUCKET_INDEX"]}
+    },
+    {
+      "id": "winners-exceed-n",
+      "input": {"rows": [{"bucket_idx": 4, "n": 100, "winners": 101, "sum_prob": 47}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_WINNER_COUNT"]}
+    },
+    {
+      "id": "negative-winners",
+      "input": {"rows": [{"bucket_idx": 4, "n": 100, "winners": -1, "sum_prob": 47}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_WINNER_COUNT"]}
+    },
+    {
+      "id": "probability-sum-exceeds-n",
+      "input": {"rows": [{"bucket_idx": 4, "n": 100, "winners": 44, "sum_prob": 101}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_PROBABILITY_SUM"]}
+    },
+    {
+      "id": "zero-sample-row",
+      "input": {"rows": [{"bucket_idx": 4, "n": 0, "winners": 0, "sum_prob": 0}]},
+      "expected": {"verdict": "REFUSE", "reasons": ["INVALID_SAMPLE_COUNT"]}
+    }
+  ]
+}
