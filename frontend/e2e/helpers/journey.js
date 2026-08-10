@@ -18,7 +18,13 @@
 
 const { redactText, redactUrl } = require("./redaction");
 const { classifyMainRegion } = require("./contentState");
-const { classifyErrorVolume, isNavigationCancellation } = require("./errorVolume");
+const { classifyErrorVolume } = require("./errorVolume");
+const {
+  abortAllowanceMatches,
+  firedAllowances,
+  allowanceMatch,
+  allowanceIsIntermittent,
+} = require("./navigationAborts");
 
 /** Terminal results. Anything else is a bug in the caller. */
 const RESULTS = Object.freeze({
@@ -465,19 +471,14 @@ function evaluateJourney(observation) {
    * stays attributable, and L2-235's rule is untouched for every strict
    * allowance in the suite (event-page's `_rsc=` is deterministic at 7-12 per
    * journey and stays strict).
+   *
+   * UX-P047 (#1648 P1, Fable ruling): the three helpers this block used to
+   * define locally — `allowanceMatch`, `allowanceIsIntermittent` and
+   * `abortAllowanceMatches` — are now IMPORTED from `helpers/navigationAborts`,
+   * which the volume grader imports too. #1649 had already shared the predicate
+   * and the two graders drifted apart anyway, because each still owned its own
+   * DECISION built from it. Sharing an ingredient is not sharing a policy.
    */
-  const allowanceMatch = (a) => (typeof a === "string" ? a : String((a && a.match) || ""));
-  const allowanceIsIntermittent = (a) => typeof a === "object" && a !== null && a.intermittent === true;
-
-  /** A declared teardown allowance covers f only if f really is one. */
-  const abortAllowanceMatches = (f, allowance) => {
-    if (!isNavigationCancellation(f)) return false;
-    if (f && f.abort && f.abort.is_feed_request === true) return false;
-    if (f && f.isFeedRequest === true) return false;
-    const needle = allowanceMatch(allowance);
-    if (!needle) return false;
-    return String((f && f.url) || "").includes(needle);
-  };
 
   const unexpected = failedRequests.filter(
     (f) =>
@@ -497,24 +498,27 @@ function evaluateJourney(observation) {
     )
   );
 
-  // An allowance nobody can see expire is one that outlives its reason and
-  // quietly covers the next failure that happens to match. Same rule the
-  // console channel already carries, and the same rule L2-233 put on the
-  // lockfile check.
+  // UX-P047 (#1648 P1, Fable ruling) — STRICT EXPIRY MOVED TO THE RUN.
+  //
+  // An allowance nobody can see expire outlives its reason and quietly covers
+  // the next failure that happens to match (#1525, L2-235). That property is
+  // kept; only its SCOPE moves. A strict allowance may legitimately fire in one
+  // journey of a run and not another, so the journey now REPORTS what it
+  // declared and what fired, and `unfiredAllowances` grades the union at run
+  // level — an allowance that fires NOWHERE in the run is still red.
+  //
+  // INTERMITTENT allowances are exempt from expiry entirely, as INT-034
+  // established with a measurement this lane could not argue with: at one fixed
+  // SHA, 2 of 3 runs carried the abort and 1 of 3 carried NONE ANYWHERE. Under a
+  // mandatory run-level fire that clean run would go red, so run-level alone is
+  // not sufficient for a racy phenomenon — it is only sufficient for a
+  // deterministic one that happens to land in a different journey.
   const strictAborts = allowedAborts.filter((a) => !allowanceIsIntermittent(a));
+  const fired = firedAllowances(failedRequests, strictAborts).map(allowanceMatch);
   if (strictAborts.length > 0) {
-    const staleAborts = strictAborts.filter(
-      (allowance) => !failedRequests.some((f) => abortAllowanceMatches(f, allowance))
-    );
-    assertions.push(
-      assertion(
-        "network.declared_allowances_fired",
-        staleAborts.length === 0,
-        staleAborts.length === 0
-          ? null
-          : `${staleAborts.length} declared navigation-abort allowance(s) matched nothing: ` +
-              staleAborts.map(allowanceMatch).join("; ")
-      )
+    checkedClean.push(
+      `network.declared_allowances_fired (run-level: ${fired.length}/${strictAborts.length} ` +
+        `strict allowance(s) fired in this journey; expiry is graded across the run)`
     );
   } else if (allowedAborts.length > 0) {
     // Every declared allowance is intermittent, so "it did not fire" is not a
@@ -575,7 +579,18 @@ function evaluateJourney(observation) {
   );
 
   const result = assertions.every((a) => a.ok) ? RESULTS.PASS : RESULTS.FAIL;
-  return { result, assertions, checked_clean: checkedClean };
+  return {
+    result,
+    assertions,
+    checked_clean: checkedClean,
+    // UX-P047 (#1648 P1): reported, not graded, HERE. The run grades the union —
+    // an allowance that fires in no journey at all is still red.
+    // STRICT allowances only. An intermittent one is exempt from expiry by
+    // definition, so recording it here would ask the run to grade a thing the
+    // declaration explicitly says is not gradeable.
+    declared_navigation_allowances: strictAborts.map(allowanceMatch),
+    fired_navigation_allowances: fired,
+  };
 }
 
 module.exports = {

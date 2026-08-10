@@ -290,6 +290,64 @@ describe("run result derivation", () => {
   });
 });
 
+/**
+ * UX-P047 (#1648 P1, Fable ruling) — allowance expiry, at its new home.
+ *
+ * #1525's property is preserved exactly: an allowance that excuses nothing must
+ * expire. Only the SCOPE moved, from the journey to the run, because a Next
+ * viewport prefetch is racy — `discover-smoke` never clicks, and on 2026-08-10
+ * desktop saw the cancelled prefetch while mobile saw none in the same run.
+ */
+describe("run-level navigation-abort allowance expiry", () => {
+  const withAllowance = (declared, fired, extra = {}) =>
+    journey({
+      declared_navigation_allowances: declared,
+      fired_navigation_allowances: fired,
+      ...extra,
+    });
+
+  it("an allowance that fired in NO journey turns the RUN red, even when every journey passed", () => {
+    const journeys = [
+      withAllowance(["_rsc="], []),
+      withAllowance(["_rsc="], [], { project: "mobile" }),
+    ];
+    assert.equal(journeys.every((j) => j.result === "pass"), true);
+    assert.equal(deriveRunResult(journeys), "fail");
+  });
+
+  it("THE RACY CASE: firing in ONE journey is enough — the other viewport need not see it", () => {
+    // Exactly the production shape this ruling exists for.
+    const journeys = [
+      withAllowance(["_rsc="], ["_rsc="]),
+      withAllowance(["_rsc="], [], { project: "mobile" }),
+    ];
+    assert.equal(deriveRunResult(journeys), "pass");
+  });
+
+  it("declaring nothing is unaffected", () => {
+    assert.equal(deriveRunResult([journey(), journey({ project: "mobile" })]), "pass");
+  });
+
+  it("a real journey failure still outranks it — expiry never masks a red", () => {
+    const journeys = [withAllowance(["_rsc="], ["_rsc="], { result: "fail", assertions: [{ assertion_id: "x", ok: false }] })];
+    assert.equal(deriveRunResult(journeys), "fail");
+  });
+
+  it("the unfired set is RECORDED on the run, so a reader is told which excuse died", () => {
+    const m = manifest({ selectedCount: 2, journeys: [withAllowance(["_rsc=", "/dead/"], ["_rsc="])] });
+    assert.deepEqual(m.run.unfired_navigation_allowances, ["/dead/"]);
+  });
+
+  it("a manifest claiming pass with an unfired allowance is REJECTED, not just derived away", () => {
+    // Belt and braces: `deriveRunResult` can be bypassed by an explicit result,
+    // and a silent excuse is precisely what #1525 forbids.
+    rejects(
+      manifest({ selectedCount: 1, result: "pass", journeys: [withAllowance(["_rsc="], [])] }),
+      "must expire"
+    );
+  });
+});
+
 describe("published schema and enforcing validator agree", () => {
   const schemaPath = path.join(__dirname, "..", "schema", "audit-manifest.schema.json");
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));

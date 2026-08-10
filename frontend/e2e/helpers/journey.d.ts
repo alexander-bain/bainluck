@@ -117,4 +117,7 @@ export declare function evaluateJourney(observation: JourneyObservation): {
   result: JourneyResult;
   assertions: JourneyAssertion[];
   checked_clean: string[];
+  /** UX-P047 (#1648 P1): reported per journey, graded across the run. */
+  declared_navigation_allowances: string[];
+  fired_navigation_allowances: string[];
 };

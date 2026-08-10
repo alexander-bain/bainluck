@@ -21,6 +21,7 @@ const {
   classifyErrorVolume,
   isNavigationCancellation,
 } = require("../helpers/errorVolume");
+const { isFeedRequest } = require("../helpers/navigationAborts");
 const { evaluateJourney } = require("../helpers/journey");
 
 const repeat = (n, make) => Array.from({ length: n }, (_, i) => make(i));
@@ -227,3 +228,44 @@ test("the policy is versioned so a threshold change cannot silently re-grade his
     assert.ok(t < 2000, "must catch #1600");
   }
 });
+
+/**
+ * UX-P047 (#1648 P1, Fable ruling) — Shape A is never excusable in EITHER grader.
+ *
+ * This grader used to exclude every navigation cancellation from its count with
+ * no feed guard at all, while the per-error grader guarded it. That is the same
+ * 0-vs-1 drift in its other direction: an aborted `/api/feed` — the one abort
+ * that is a real open defect (#1525) — vanished from the volume count entirely.
+ */
+  const feedAbort = {
+    url: "https://api.bainluck.com/api/feed?limit=[redacted-value]",
+    failure: "net::ERR_ABORTED",
+    abort: { aborted: true, is_feed_request: true },
+  };
+  const prefetchAbort = {
+    url: "https://www.bainluck.com/futures/108445?_rsc=[redacted-value]",
+    failure: "net::ERR_ABORTED",
+    abort: { aborted: true, is_feed_request: false },
+  };
+
+test("Shape A: an aborted /api/feed COUNTS in the volume grader too", () => {
+    const v = classifyErrorVolume({ consoleErrors: [], failedRequests: [feedAbort] });
+    assert.equal(v.requests.total, 1);
+    assert.equal(v.requests.navigation_cancelled_excluded, 0);
+  });
+
+test("Shape A: an aborted RSC prefetch is still excluded, and still visible", () => {
+    const v = classifyErrorVolume({ consoleErrors: [], failedRequests: [prefetchAbort] });
+    assert.equal(v.requests.total, 0);
+    assert.equal(v.requests.navigation_cancelled_excluded, 1);
+  });
+
+test("Shape A: the two graders cannot disagree — one input, one exclusion rule", () => {
+    // The named failure — run 31428469455 reported 0 here and 1 there, on this
+    // exact payload shape.
+    const both = [feedAbort, prefetchAbort];
+    const v = classifyErrorVolume({ consoleErrors: [], failedRequests: both });
+    const excusedByVolume = both.filter((f) => !isNavigationCancellation(f) || isFeedRequest(f));
+    assert.equal(v.requests.total, excusedByVolume.length);
+    assert.equal(v.requests.total, 1, "the feed abort, and only the feed abort");
+  });

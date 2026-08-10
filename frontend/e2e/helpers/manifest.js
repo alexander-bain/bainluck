@@ -22,6 +22,7 @@ const path = require("node:path");
 const { TERMINAL_RESULTS } = require("./journey");
 const { normalizeSha } = require("./buildAuthority");
 const { assertRedacted } = require("./redaction");
+const { unfiredAllowances } = require("./navigationAborts");
 
 const SCHEMA_VERSION = "browser-audit/v1";
 
@@ -135,6 +136,14 @@ function deriveRunResult(journeys, options) {
   if (list.some((j) => j && j.result === "infra_error")) return "infra_error";
   if (list.some((j) => j && j.result === "superseded")) return "superseded";
   if (list.some((j) => !j || j.result !== "pass")) return "fail";
+  // UX-P047 (#1648 P1, Fable ruling) — RUN-LEVEL ALLOWANCE EXPIRY.
+  //
+  // A declared navigation-abort allowance that fired in NO journey is an excuse
+  // that has outlived its reason, and #1525 is right that it must not survive
+  // unnoticed. It is graded here rather than per journey because a Next viewport
+  // prefetch is racy: the same run can see the abort on desktop and not on
+  // mobile. An allowance must fire somewhere; firing nowhere is red.
+  if (unfiredAllowances(list).length > 0) return "fail";
   return "pass";
 }
 
@@ -184,6 +193,10 @@ function buildRunManifest(input) {
       selected_count: Number.isFinite(input.selectedCount) ? input.selectedCount : 0,
       completed_count: journeys.length,
       failed_count: failed,
+      // UX-P047 (#1648 P1): the declared allowances that fired in NO journey.
+      // Recorded so a run-level expiry red says WHICH excuse died, instead of
+      // making a reader diff two journeys to find out.
+      unfired_navigation_allowances: unfiredAllowances(journeys),
       result: input.result || deriveRunResult(journeys, { superseded: input.superseded }),
       superseded_by: input.supersededBy || null,
       notes: Array.isArray(input.notes) ? input.notes : [],
@@ -396,6 +409,18 @@ function validateManifest(manifest) {
 
   if (!TERMINAL_RESULTS.includes(run.result)) {
     errors.push(`run.result must be one of ${TERMINAL_RESULTS.join("|")} (got ${JSON.stringify(run.result)})`);
+  }
+
+  // UX-P047 (#1648 P1): the run-level expiry check, enforced on the manifest and
+  // not only in `deriveRunResult` — otherwise a hand-built or edited manifest
+  // could claim `pass` while carrying an allowance that excused nothing, which is
+  // exactly the silent-excuse state #1525 exists to prevent.
+  const unfired = unfiredAllowances(Array.isArray(manifest.journeys) ? manifest.journeys : []);
+  if (unfired.length > 0 && run.result === "pass") {
+    errors.push(
+      `run reports pass while ${unfired.length} declared navigation-abort allowance(s) fired ` +
+        `in no journey: ${unfired.join("; ")} — an allowance that excuses nothing must expire`
+    );
   }
 
   // --- Invariant 1: a run that selected nothing is never valid evidence. ---

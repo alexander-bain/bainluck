@@ -358,13 +358,52 @@ describe("declared navigation-abort allowances (UX-P043 / #1649)", () => {
     assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
   });
 
-  it("a declared allowance that matches nothing FAILS — it cannot outlive its reason", () => {
+  /**
+   * UX-P047 (#1648 P1, Fable ruling) — expiry MOVED from the journey to the run.
+   *
+   * It did not go away. An allowance that fires nowhere in the run is still red;
+   * see manifest.contract.test.js, which grades the union. What changed is the
+   * scope, because a Next viewport prefetch is racy: `discover-smoke` never
+   * clicks, and desktop saw the abort while mobile saw none IN THE SAME RUN.
+   * Failing the journey that happened not to see one converts a flaky red into a
+   * different flaky red.
+   */
+  it("a declared allowance matching nothing no longer fails the JOURNEY — the run grades expiry", () => {
     const observation = healthy({
       failedRequests: [],
       allowedNavigationAborts: ["_rsc="],
     });
-    assert.equal(evaluateJourney(observation).result, "fail");
-    assert.ok(failedIds(observation).includes("network.declared_allowances_fired"));
+    const verdict = evaluateJourney(observation);
+    assert.equal(verdict.result, "pass", JSON.stringify(failedIds(observation)));
+    assert.deepEqual(verdict.declared_navigation_allowances, ["_rsc="]);
+    assert.deepEqual(verdict.fired_navigation_allowances, [], "nothing fired here, and it says so");
+  });
+
+  it("a journey that DID see the abort reports it as fired, so the run can tell", () => {
+    const verdict = evaluateJourney(
+      healthy({ failedRequests: RSC_TEARDOWN, allowedNavigationAborts: ["_rsc="] })
+    );
+    assert.deepEqual(verdict.declared_navigation_allowances, ["_rsc="]);
+    assert.deepEqual(verdict.fired_navigation_allowances, ["_rsc="]);
+  });
+
+  it("an aborted /api/feed does NOT count as firing an allowance", () => {
+    // Otherwise Shape A could keep an expiring allowance alive — the one abort
+    // that must never be excused would be the thing preserving the excuse.
+    const verdict = evaluateJourney(
+      healthy({
+        failedRequests: [
+          {
+            url: "https://api.bainluck.com/api/feed?_rsc=[redacted-value]",
+            failure: "net::ERR_ABORTED",
+            abort: { aborted: true, is_feed_request: true },
+          },
+        ],
+        allowedNavigationAborts: ["_rsc="],
+      })
+    );
+    assert.deepEqual(verdict.fired_navigation_allowances, []);
+    assert.equal(verdict.result, "fail");
   });
 
   it("declaring nothing records the check as clean rather than silently skipping it", () => {
@@ -406,15 +445,38 @@ describe("declared navigation-abort allowances (UX-P043 / #1649)", () => {
       );
     });
 
-    it("a STRICT allowance that matches nothing STILL fails — L2-235 intact", () => {
+    it("a STRICT allowance that matches nothing is graded at RUN level — L2-235 intact, relocated", () => {
       // The rule this relaxes for one declaration must be unchanged for the
       // rest. event-page's `_rsc=` is deterministic and stays strict.
+      //
+      // UX-P047 (#1648 P1, Fable ruling): a strict allowance may legitimately
+      // fire in ONE journey of a run and not another, so the journey no longer
+      // fails on its own — it REPORTS, and `deriveRunResult` reds the run when
+      // the allowance fired nowhere. See manifest.contract.test.js, which owns
+      // the red. Nothing is excused: firing nowhere is still a failure, one
+      // scope up.
       const observation = healthy({
         failedRequests: [],
         allowedNavigationAborts: ["_rsc="],
       });
-      assert.equal(evaluateJourney(observation).result, "fail");
-      assert.ok(failedIds(observation).includes("network.declared_allowances_fired"));
+      const verdict = evaluateJourney(observation);
+      assert.equal(verdict.result, "pass", JSON.stringify(failedIds(observation)));
+      assert.deepEqual(verdict.declared_navigation_allowances, ["_rsc="]);
+      assert.deepEqual(verdict.fired_navigation_allowances, []);
+    });
+
+    it("an INTERMITTENT allowance is exempt from expiry entirely — the run must not grade it", () => {
+      // INT-034 measured 1 run in 3 with NO abort anywhere, so a mandatory
+      // run-level fire would red that clean run. Recording it as declared would
+      // ask the run to grade exactly the thing the declaration says is racy.
+      const verdict = evaluateJourney(
+        healthy({
+          failedRequests: [],
+          allowedNavigationAborts: [{ match: "_rsc=", issue: 1525, intermittent: true }],
+        })
+      );
+      assert.equal(verdict.result, "pass");
+      assert.deepEqual(verdict.declared_navigation_allowances, []);
     });
 
     it("stays VISIBLE — a relaxed allowance is recorded, never silent", () => {

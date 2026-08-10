@@ -1,5 +1,6 @@
 import { test, expect, measureMainRegion } from "../fixtures/audit";
 import { classifyMainRegion } from "../helpers/contentState";
+import { RSC_PREFETCH } from "../helpers/navigationAborts";
 
 /**
  * UX-P041 Item 2 — the EVENT-PAGE pack.
@@ -54,7 +55,9 @@ const HERO_ANY = `${HERO_PROBABILITY}, ${HERO_SETTLED}`;
  * Measured base rate before declaring: 7-12 per journey, 8 of 8 journeys across
  * two dispatches (31355571532 @ abdcf410, 31356326468 @ f78b8a6d).
  */
-const RSC_PREFETCH = "_rsc=";
+// UX-P047 (#1648 P1): imported from the shared module rather than restated —
+// `discover-smoke` now declares the same allowance, and two specs owning two
+// copies of one token is the drift this cycle exists to end.
 
 /**
  * C229's P1, now enforceable in a real browser.

@@ -842,8 +842,23 @@ describe("event-page pack can prove both hero states", () => {
   it("declares its navigation-abort allowance rather than relying on a widened filter", () => {
     // #1525: "never a widened filter". The declaration must be present AND
     // scoped to the RSC prefetch shape.
+    //
+    // UX-P047 (#1648 P1): the scope is now proven through the SHARED constant
+    // rather than a literal in this file. `discover-smoke` declares the same
+    // allowance, and two specs owning two copies of one token would be the same
+    // drift the shared module exists to end — so "there is exactly one copy" is
+    // now part of what this test protects, not a weakening of it.
     const raw = specRaw();
     assert.ok(raw.includes("allowedNavigationAborts"), "the teardown allowance must be DECLARED");
-    assert.ok(raw.includes('"_rsc="'), "the allowance must be scoped to RSC prefetches");
+    assert.ok(
+      /import\s*\{[^}]*\bRSC_PREFETCH\b[^}]*\}\s*from\s*"\.\.\/helpers\/navigationAborts"/.test(raw),
+      "the allowance must come from the shared navigationAborts module, not a local literal"
+    );
+    assert.ok(raw.includes("RSC_PREFETCH"), "the allowance must be scoped to RSC prefetches");
+    assert.equal(
+      require("../helpers/navigationAborts").RSC_PREFETCH,
+      "_rsc=",
+      "and that shared constant must still be the RSC prefetch marker"
+    );
   });
 });

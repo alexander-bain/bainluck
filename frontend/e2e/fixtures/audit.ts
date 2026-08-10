@@ -369,6 +369,10 @@ export class JourneyRecorder {
       duration_ms: finishedAt.getTime() - this.startedAt.getTime(),
       assertions: verdict.assertions,
       checked_clean: verdict.checked_clean,
+      // UX-P047 (#1648 P1): carried onto the record so run-level expiry has
+      // something to grade. Reported per journey, graded across the run.
+      declared_navigation_allowances: verdict.declared_navigation_allowances ?? [],
+      fired_navigation_allowances: verdict.fired_navigation_allowances ?? [],
       console_errors: this.consoleErrors,
       page_errors: this.pageErrors,
       failed_requests: this.failedRequests,

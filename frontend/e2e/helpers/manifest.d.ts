@@ -18,6 +18,9 @@ export interface JourneyRecord {
   duration_ms: number;
   assertions: JourneyAssertion[];
   checked_clean?: string[];
+  /** UX-P047 (#1648 P1): run-level allowance expiry is graded from these. */
+  declared_navigation_allowances?: string[];
+  fired_navigation_allowances?: string[];
   console_errors: string[];
   page_errors: string[];
   failed_requests: FailedRequestSummary[];

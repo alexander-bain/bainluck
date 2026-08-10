@@ -61,29 +61,19 @@ const REASON_CONSOLE_VOLUME = "CONSOLE_ERROR_VOLUME_EXCEEDED";
 const REASON_REQUEST_VOLUME = "REQUEST_FAILURE_VOLUME_EXCEEDED";
 
 /**
- * Failures caused by tearing down a navigation are not product defects: the
- * browser cancels in-flight requests when the page navigates away, and a spec
- * that clicks through pages will always see some. Counting them would make the
- * threshold a function of how much the spec navigates.
+ * UX-P047 (#1648 P1) — the navigation-abort predicate MOVED to
+ * `helpers/navigationAborts.js` and is re-exported here for existing callers.
  *
- * Matched narrowly and case-insensitively — an abort code, not a substring of
- * an arbitrary message.
+ * It used to live in this file, and `journey.js` imported it — which was not
+ * enough: the two graders still owned separate DECISIONS built from one
+ * predicate, and they disagreed 0 vs 1 on the same input. The shared unit is
+ * now the whole decision, in one module both graders import.
  */
-const NAVIGATION_CANCEL_FAILURES = new Set([
-  "net::err_aborted",
-  "net::err_blocked_by_client",
-  "aborted",
-  "interrupted",
-  "context or browser has been closed",
-]);
-
-function isNavigationCancellation(failure) {
-  if (!failure) return false;
-  if (failure.navigationCancelled === true) return true;
-  const text = String(failure.failure || "").trim().toLowerCase();
-  if (!text) return false;
-  return NAVIGATION_CANCEL_FAILURES.has(text);
-}
+const {
+  NAVIGATION_CANCEL_FAILURES,
+  isNavigationCancellation,
+  isFeedRequest,
+} = require("./navigationAborts");
 
 /** Origin of a redacted URL, or "unknown" when it cannot be parsed. */
 function originOf(url) {
@@ -119,8 +109,16 @@ function classifyErrorVolume(observation) {
 
   // Navigation teardown is excluded from the COUNT but kept visible, so an
   // exclusion can never be mistaken for an absence.
-  const cancelled = rawFailures.filter(isNavigationCancellation);
-  const failures = rawFailures.filter((f) => !isNavigationCancellation(f));
+  //
+  // UX-P047 (#1648 P1, Fable ruling): Shape A is never excusable HERE EITHER.
+  // This grader previously excluded every navigation cancellation with no feed
+  // guard at all, so an aborted `/api/feed` — the one abort that is a real
+  // defect — was silently dropped from the volume count. The per-error grader
+  // guarded it and this one did not, which is the same drift in its other
+  // direction. One rule, both graders.
+  const excusable = (f) => isNavigationCancellation(f) && !isFeedRequest(f);
+  const cancelled = rawFailures.filter(excusable);
+  const failures = rawFailures.filter((f) => !excusable(f));
 
   const consoleTotal = consoleErrors.length;
   const requestTotal = failures.length;
