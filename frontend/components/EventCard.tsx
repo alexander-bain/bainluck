@@ -17,6 +17,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -146,17 +147,16 @@ export default function EventCard({
       ? `Tomorrow ${timeStr}`
       : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
   
-  // For finished: show just the date. Guard the impossible state (L2-112 Item 2):
-  // a FINAL game can't be in the future — when commence_time actually holds a
-  // Kalshi close/resolution timestamp (gotcha #14) it can be, so never render a
-  // future date beside the "Final" badge.
-  const finishedDateStr = gameTime.getTime() > now.getTime()
-    ? ""
-    : gameTime.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: gameTime.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-      });
+  // For finished: show just the date. The impossible-state guard (L2-112 Item 2 /
+  // gotcha #14 — a FINAL game can't be in the future when commence_time actually
+  // holds a Kalshi close/resolution timestamp) now lives in one place for all
+  // three surfaces. UX-P045: the "compact" style preserves this card's existing
+  // month/day output exactly, so adopting the shared module is not a restyle.
+  const finishedDateStr = formatFinishedGameLabel(
+    event.commence_time,
+    now.getTime(),
+    "compact",
+  );
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(event.sport);

@@ -10,6 +10,7 @@ import { feedContextSnippet, feedExpandedContext } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -35,6 +36,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const sportCat = data.sport?.split("_")[0] || "sports";
 
   const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
+  // UX-P045 — a settled card used to collapse to the bare word "Final", so a game
+  // that ended 20 minutes ago and one that ended 19 hours ago read identically.
+  // Measured 2026-08-10 07:04 PT: 15 of 15 event cards were finished games and 14
+  // were over 12 hours old. Empty string means "render no date" (an unparseable
+  // time, or the impossible future-dated final the shared guard rejects).
+  const finishedLabel = isDone ? formatFinishedGameLabel(data.commence_time) : "";
   const contextSnippet = feedContextSnippet(item) || headline;
   const expandedContext = feedExpandedContext(item);
   const timeLabel = isLive ? (data.espn?.period || "Live") : isDone ? "Final" : (() => {
@@ -125,13 +132,28 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
           </div>
         )}
 
-        {/* Settled winner treatment — score is shown on the crest above (L2-112 Item 2). */}
-        {isDone && data.home_score != null && data.away_score != null && data.home_score !== data.away_score && (
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-sm font-semibold text-text-primary">
-              {(data.home_score > data.away_score ? data.home_team : data.away_team).split(" ").pop()} won
-            </span>
+        {/* Settled treatment — score is shown on the crest above (L2-112 Item 2).
+            UX-P045: the row now renders for EVERY settled card, not only the
+            decisive-score ones, because the finished-at date has to be readable on
+            a draw and on a card whose scores never arrived. The winner line stays
+            conditional; the "Final" badge matches the crest label, which already
+            said "Final" for all of these. */}
+        {isDone && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            {data.home_score != null && data.away_score != null && data.home_score !== data.away_score && (
+              <span className="text-sm font-semibold text-text-primary">
+                {(data.home_score > data.away_score ? data.home_team : data.away_team).split(" ").pop()} won
+              </span>
+            )}
             <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">Final</span>
+            {finishedLabel && (
+              <span
+                className="text-[11px] text-text-muted"
+                data-testid="event-card-finished-at"
+              >
+                {finishedLabel}
+              </span>
+            )}
           </div>
         )}
 

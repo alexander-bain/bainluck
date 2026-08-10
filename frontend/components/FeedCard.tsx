@@ -14,6 +14,7 @@ import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
+import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -130,34 +131,15 @@ function formatGameTime(commenceTime: string): string {
   return `${dateStr} ${timeStr}`;
 }
 
-/** Format a finished game's date for staleness context. */
+/**
+ * Format a finished game's date for staleness context.
+ *
+ * UX-P045: the body moved to `@/lib/gameTimeLabel` unchanged. It used to live
+ * here as a module-private function, which is precisely why the Discover card —
+ * the default landing page, and the surface that needed it most — never got it.
+ */
 function formatFinishedDate(commenceTime: string): string {
-  const game = new Date(commenceTime);
-  const now = new Date();
-
-  // L2-112 Item 2: a FINAL game can never be in the future. When commence_time
-  // actually holds a Kalshi close/resolution timestamp (gotcha #14), it can be a
-  // future date — never render that beside a FINAL badge (an impossible state).
-  if (game.getTime() > now.getTime()) return "";
-
-  const isToday =
-    game.getDate() === now.getDate() &&
-    game.getMonth() === now.getMonth() &&
-    game.getFullYear() === now.getFullYear();
-
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday =
-    game.getDate() === yesterday.getDate() &&
-    game.getMonth() === yesterday.getMonth() &&
-    game.getFullYear() === yesterday.getFullYear();
-
-  const timeStr = game.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
-  if (isToday) return `Today ${timeStr}`;
-  if (isYesterday) return `Yesterday ${timeStr}`;
-
-  return game.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return formatFinishedGameLabel(commenceTime, Date.now(), "relative");
 }
 
 /** Format resolution date as a short string. */

@@ -220,12 +220,32 @@ export function isTrending(item: FeedItem): boolean {
   return false;
 }
 
+/** A settled game — the state whose caption must read in the past tense. */
+function eventIsSettled(item: FeedItem): boolean {
+  if (item?.type !== "event") return false;
+  const status = (item.data as FeedEventData)?.status;
+  return status === "completed" || status === "closed";
+}
+
 export function feedContextSnippet(item: FeedItem): string {
   if (item.context_summary) return item.context_summary;
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
     return item.headline || item.reason || data.hook_description || "";
   }
+  // UX-P045 — on a SETTLED event card, prefer `reason` over `headline`.
+  //
+  // `headline` is a BUCKET LABEL tensed for a live market; `reason` is the
+  // specific sentence the backend already wrote for the settled state. Measured
+  // 2026-08-10, five of fifteen finished games were captioned "Line moving" —
+  // present progressive, over a game that ended 13-19 hours earlier — while the
+  // wire carried "San Diego Padres odds shifted 49% during the game" in `reason`
+  // and this `||` chain threw it away (`context_summary` was null on 15 of 15).
+  //
+  // This is a preference order, not an inference: both strings come from the
+  // backend and neither is derived here (ruling 003). Unsettled cards are
+  // untouched.
+  if (eventIsSettled(item)) return item.reason || item.headline || "";
   return item.headline || item.reason || "";
 }
 
