@@ -44,6 +44,45 @@ minutes and turned two items green.
 
 ---
 
+### 🟢 THE BUILD IS CONVERGING — first confirmed forward motion since 2026-08-02 (CAL-P030, 22:31 UTC)
+
+**This supersedes everything below it, including this document's own "it is diverging" section.**
+Two consecutive beats, read from `durable_state_snapshots`:
+
+| beat | cursor written | banked / 128 | dropped | drift |
+|---|---|---|---|---|
+| 14:15Z (pre-CAL-P028) | — | 20 → **19** | **16** | (the mechanism) |
+| 20:15Z (CAL-P028 live) | 20:37:47Z | **19** | **1** | 0 |
+| 22:15Z (INT-034 live) | 22:29:25Z | **36** | **0** | **0** |
+
+**19 → 36 in one beat, with zero drops.** At ~17 units/beat the build reaches 128 in roughly five
+to six more beats — which is CAL-P028's own "~6-7 beats" prediction, now observed rather than
+projected. The lane's standing model that the publish was *waiting*, then that it was *going
+backwards*, is replaced by a measured rate.
+
+**And it is legible for the first time.** INT-034's repair of `_record_staged_convergence` is
+confirmed working in production — the 22:15Z ledger carries, on a **`cancelled`** terminal (exactly
+the path CAL-P028 built it for and the path that never recorded anything):
+
+    "staged:units_banked":    36
+    "staged:units_partition": 128
+    "staged:units_drifted":   0
+
+This is the first ledger in **187 consecutive failed beats** to state where the build actually is.
+The prediction handed to INT-034 while its fix was in flight (`units_banked` 19+, `partition` 128,
+`drifted` 0) is met.
+
+**What is still true and must not be rounded off:** the beat is still `cancelled` at its deadline,
+`plan_status` is still `infeasible`, `consecutive_failures` is **187**, and `/api/calibration` is
+still serving the 2026-08-02 payload at **8.73 days**. Convergence is a rate, not a publish. **The
+SLO stays RED until a beat completes all 128 units and publishes** — expected in ~5-6 beats if the
+rate holds, which is the thing to check next and the first check this lane has that is worth making.
+
+**One residual the fix cannot reach:** a **SIGKILLed** beat writes no ledger at all, because
+`save_phase_ledger()` is never reached. `starts_24h 17 · failures_24h 10 · hard_kills_24h 7-8`. So
+roughly 41% of beats remain invisible, and consecutive banked readings may be separated by an
+unrecorded beat — **key the trend off the cursor's `generated_at`, never off beat counts.**
+
 ### ✅ UPDATE 2026-08-10 (CAL-P030) — CAL-P028's fix landed, and the divergence STOPPED
 
 CAL-P028 merged (`9bdbfe36`), deployed at 20:04 UTC, and its first beat ran at 20:15 UTC. Measured
