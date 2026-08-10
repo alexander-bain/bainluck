@@ -19,6 +19,14 @@ from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Event, Sport
 from app.services import get_db
+from app.utils.golf_evolution_market import (
+    NON_CONTENDER_WINNER_RE,
+    SETTLED_RESOLVE_MIN,
+    contender_candidates,
+    eligible_candidates,
+    select_by_settled_resolution,
+    select_by_snapshot_richness,
+)
 from app.utils.odds_math import probability_to_american
 
 logger = logging.getLogger(__name__)
@@ -323,27 +331,14 @@ _NON_WINNER_MARKET_RE = re.compile(
 # excludes props like "Nationality of Winner") to detect a true winner field.
 _WINNER_MARKET_RE = re.compile(r"\b(?:winner|to\s+win)\b", re.I)
 
-# #225 Item 3: minimum resolved-winner snapshot probability for a settled winner
-# market to be preferred as the evolution (path-to-resolution) chart source. A
-# real-money market converges to ~1.0 for the champion; a stale futures market
-# that stopped before the finish never crosses this, so it stays a fallback.
-_SETTLED_RESOLVE_MIN = 0.5
-
-# Chart-specific exclusion for the contenders Win chart (#955): drop winner-PROP
-# markets (nationality / country-of-winner / tour-of-winner / winning margin)
-# that classify as type "winner" but hold no golfers. Unlike _NON_WINNER_MARKET_RE,
-# this must NOT match a real field like "PGA Tour: U.S. Open Winner", so it uses
-# the "X of (the) winner" prop phrasing and explicit prop nouns rather than a
-# broad "tour .* winner".
-_NON_CONTENDER_WINNER_RE = re.compile(
-    r"\bnationality\b"
-    r"|\bcontinent\b"
-    r"|\b(?:country|tour|region|state)\s+of\s+(?:the\s+)?winner\b"
-    r"|\bwinning\s+(?:country|nationality|tour|score|margin)\b"
-    r"|\bwinner'?s?\s+(?:tour|nationality|country)\b"
-    r"|\bmargin\s+of\s+victory\b",
-    re.I,
-)
+# The evolution-chart pick (which winner market draws the path-to-resolution
+# line) moved to `app.utils.golf_evolution_market` as a pure module, alongside the
+# LAT-P020/#1107 fix that batched its inputs — ruling 005, extract-on-touch.
+# Re-exported under the original private names because `_NON_CONTENDER_WINNER_RE`
+# is also read by `_golf_winner_renorm_factor` below and imported by
+# `tests/test_golf_tournament_render.py`.
+_SETTLED_RESOLVE_MIN = SETTLED_RESOLVE_MIN
+_NON_CONTENDER_WINNER_RE = NON_CONTENDER_WINNER_RE
 
 
 def _golf_winner_renorm_factor(
@@ -2314,79 +2309,137 @@ async def get_golf_tournament(
         key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
     )
 
-    # Find winner market for evolution chart — pick the one with the most
-    # snapshot data (richest time coverage). Filter out non-golfer markets
-    # like "League of Winner" or "Winner Nationality" by requiring >5 outcomes.
+    # Find the winner market for the evolution chart. The RANKING is policy and
+    # lives in `app.utils.golf_evolution_market` (pure, no session — ruling 005);
+    # what stays here is fetching the three facts it ranks on.
     evolution_market_id = None
-    # #225 Item 3 — for a SETTLED tournament, the "Path to resolution" chart must
-    # show the winner converging to ~100%. The snapshot-richest winner market for a
-    # settled major is the long-lived odds_api futures market, which stops updating
-    # before the finish (its winner line fizzles at ~18% and never resolves); a
-    # real-money Kalshi market converges to 99.9%. So prefer the winner market whose
-    # graded winner actually RESOLVED high; fall back to snapshot-richest when no
-    # market carries a resolved winner (live/upcoming — no is_winner exists yet).
-    resolved_best_id = None
-    resolved_best_val = _SETTLED_RESOLVE_MIN
     for g in sorted_groups:
         if g["type"] == "winner" and g["market_ids"]:
-            best_id = None
-            best_count = -1
-            for mid in g["market_ids"]:
-                # #955: "Winner Nationality"/"Tour of Winner"/"Country of Winner"
-                # classify as type "winner" (they contain "Winner") but are PROPS,
-                # not golfer winner fields. The 26-outcome nationality market
-                # passes the >5 filter and was plotted as the contenders chart
-                # (US/England/Spain/Other). Exclude any non-winner prop by name.
-                mname = id_to_name.get(mid, "")
-                if _NON_CONTENDER_WINNER_RE.search(mname):
-                    continue
-                # Check outcome count to filter non-golfer markets
-                outcome_count = await db.execute(
-                    select(sqlfunc.count(FuturesOutcome.id))
-                    .where(FuturesOutcome.market_id == mid)
-                )
-                n_outcomes = outcome_count.scalar() or 0
-                if n_outcomes < 5:
-                    continue  # Skip "League of Winner" (3 outcomes), Yes/No binaries, etc.
-                snap_count = await db.execute(
-                    select(sqlfunc.count(FuturesOddsSnapshot.id))
-                    .where(FuturesOddsSnapshot.outcome_id.in_(
-                        select(FuturesOutcome.id).where(FuturesOutcome.market_id == mid)
-                    ))
-                )
-                total = snap_count.scalar() or 0
-                if total > best_count:
-                    best_count = total
-                    best_id = mid
-                # Settled preference: the graded winner's LATEST snapshot value —
-                # i.e. did this market END with the winner resolved high and STAY
-                # there. A real-money Kalshi market closes at ~0.999 for the
-                # champion; the odds_api futures market fizzled (~18%) and the
-                # DataGolf model RESETS to ~0.5% post-event (its momentary in-play
-                # 1.0 spike would win a max()-based rank but leaves an ugly end-drop
-                # on the chart). Ranking by the final value picks the market whose
-                # completed journey actually stays at the top. Live/upcoming
-                # tournaments carry no is_winner, so this stays None and the
-                # snapshot-richest pick is used unchanged.
-                gw = await db.execute(
-                    select(FuturesOddsSnapshot.probability)
-                    .where(
-                        FuturesOddsSnapshot.outcome_id.in_(
-                            select(FuturesOutcome.id).where(
-                                FuturesOutcome.market_id == mid,
+            # LAT-P020/#1107: this ranking used to issue THREE queries PER candidate
+            # market from inside the loop — an outcome count, a snapshot count, and a
+            # graded-winner lookup. Two of the three are semi-joins against
+            # `futures_odds_snapshots`, so the cost scaled with the number of winner
+            # markets a major carries, and majors carry the most.
+            #
+            # MEASURED in production 2026-08-09 by diffing `pg_stat_statements` around
+            # a single cold request (`event:golf:pga-championship`, 18.77s wall, 200):
+            #     count(futures_odds_snapshots) semi-join   6,951 ms / 7 calls  <- here
+            #     futures_markets golf scan (phase 1)       4,839 ms / 1 call
+            #     futures_markets full-column selects       3,926 ms / 2 calls
+            #
+            # TWO separate defects hide in that 6,951 ms, and batching alone fixes
+            # only the smaller one. Timing the two shapes against each other on real
+            # market ids showed the per-market cost is NOT evenly spread: five Open
+            # winner markets cost 4,803 ms cold, of which 4,721 ms was ONE market
+            # (datagolf, 193,981 snapshot rows). Collapsing N round trips into one
+            # grouped query does not avoid that scan — both shapes read the same rows.
+            #
+            # What avoids it is ORDER. See the note below the outcome-count fetch:
+            # the count only breaks ties among UNGRADED markets, and every completed
+            # major is graded, so the expensive input was being computed and then
+            # discarded. Batching is kept because it removes the per-market scaling
+            # (a guard asserts it), but the laziness is the part that pays.
+            #
+            # Set-identical by construction: the same candidates are filtered by the
+            # same predicates in the same order, and the ranking itself is untouched —
+            # it moved to `app.utils.golf_evolution_market` and now reads its facts
+            # from dicts. Ties still resolve as before (`>` keeps the FIRST richest,
+            # `>=` lets the LAST qualifying resolve win), and an equivalence test pins
+            # the split policy against a transcription of the loop it replaced.
+            candidate_ids = contender_candidates(g["market_ids"], id_to_name)
+
+            # Outcome counts filter out non-golfer markets ("League of Winner" with 3
+            # outcomes, Yes/No binaries, etc.) before the snapshot work is paid for.
+            outcome_counts: dict[int, int] = {}
+            if candidate_ids:
+                outcome_counts = {
+                    mid: n
+                    for mid, n in (
+                        await db.execute(
+                            select(
+                                FuturesOutcome.market_id,
+                                sqlfunc.count(FuturesOutcome.id),
+                            )
+                            .where(FuturesOutcome.market_id.in_(candidate_ids))
+                            .group_by(FuturesOutcome.market_id)
+                        )
+                    ).all()
+                }
+            eligible_ids = eligible_candidates(candidate_ids, outcome_counts)
+
+            # ORDER MATTERS, and it is the second half of the fix. Resolution
+            # DECIDES whenever it produces an answer, and its input is one price per
+            # market; richness only breaks a tie among ungraded markets, and its
+            # input is a count over every snapshot of every outcome. Measured in
+            # production 2026-08-09 on the same eleven golf winner markets:
+            #     graded-winner last price, all 11 markets   613 ms   (one query)
+            #     snapshot count, ONE fat market             4,721 ms (cold)
+            # `futures_odds_snapshots` holds 193,981 rows for a single long-lived
+            # golf winner market, and both majors' markets grade at 0.895-0.9995 —
+            # so the old code paid the 4.7s count on every completed major and then
+            # threw the answer away, because `resolved_best_id or best_id` had
+            # already been decided by the cheap half.
+            winner_last: dict[int, object] = {}
+            if eligible_ids:
+                # DISTINCT ON is the batched form of the old per-market
+                # `ORDER BY captured_at DESC LIMIT 1`, and it keeps the same
+                # "latest snapshot across the market's winner outcomes" semantics.
+                winner_last = {
+                    mid: prob
+                    for mid, prob in (
+                        await db.execute(
+                            select(
+                                FuturesOutcome.market_id,
+                                FuturesOddsSnapshot.probability,
+                            )
+                            .select_from(FuturesOutcome)
+                            .join(
+                                FuturesOddsSnapshot,
+                                FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
+                            )
+                            .where(
+                                FuturesOutcome.market_id.in_(eligible_ids),
                                 FuturesOutcome.is_winner.is_(True),
                             )
+                            .order_by(
+                                FuturesOutcome.market_id,
+                                FuturesOddsSnapshot.captured_at.desc(),
+                            )
+                            .distinct(FuturesOutcome.market_id)
                         )
-                    )
-                    .order_by(FuturesOddsSnapshot.captured_at.desc())
-                    .limit(1)
+                    ).all()
+                }
+
+            evolution_market_id = select_by_settled_resolution(
+                eligible_ids, winner_last
+            )
+            if evolution_market_id is None and eligible_ids:
+                # Nothing is graded — a live or upcoming tournament. Only now is the
+                # expensive count worth its cost, and only here does it change an
+                # answer. A market with zero snapshots does not come back from the
+                # join and defaults to 0, exactly as the per-market `scalar() or 0`
+                # did.
+                snap_counts = {
+                    mid: n
+                    for mid, n in (
+                        await db.execute(
+                            select(
+                                FuturesOutcome.market_id,
+                                sqlfunc.count(FuturesOddsSnapshot.id),
+                            )
+                            .select_from(FuturesOutcome)
+                            .join(
+                                FuturesOddsSnapshot,
+                                FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
+                            )
+                            .where(FuturesOutcome.market_id.in_(eligible_ids))
+                            .group_by(FuturesOutcome.market_id)
+                        )
+                    ).all()
+                }
+                evolution_market_id = select_by_snapshot_richness(
+                    eligible_ids, snap_counts
                 )
-                winner_resolve = gw.scalar()
-                if winner_resolve is not None and float(winner_resolve) >= resolved_best_val:
-                    resolved_best_val = float(winner_resolve)
-                    resolved_best_id = mid
-            # A resolved-winner market (settled) wins over snapshot-richness.
-            evolution_market_id = resolved_best_id or best_id
             break
     if not evolution_market_id and market_ids:
         evolution_market_id = market_ids[0]
