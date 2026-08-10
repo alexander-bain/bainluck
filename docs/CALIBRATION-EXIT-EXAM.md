@@ -15,22 +15,52 @@ so no cycle can finish and then discover its evidence was unobtainable.
 
 | # | Item | Status | Blocked on |
 |---|---|---|---|
-| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🟡 **RULED 2026-08-09** — definition settled, unbuilt; **tier-2 census is not hand-measurable, needs a rail** | a census rail (CAL-P024), then a healthy publish |
+| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🟡 **RAIL BUILT 2026-08-09 (CAL-P027)** — the overlap census this item named as *owed before staging* exists on `program/calibration-25`; **N is still unmeasured** because the rail runs in the web dyno and has not been walked | the merge, then one walk; then a healthy publish for the bump |
 | 2 | Trading-activity section led by matched-bucket comparison | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23`, pinned by test to the real payload | rendered proof; needs the merge + the browser rail |
-| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 measured, undiagnosed | a census rail — the distinguishing query times out in `db-query` |
+| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **CRICKET DIAGNOSED 2026-08-09** — cause identified and it confirms this document's own hypothesis; the FIX is an exclusion extension, blocked behind the version bump. Entertainment still has a live rival | cricket: the publish (bump). entertainment: one walk of CAL-P027's rail |
 | 4 | Source graph redesigned — per-source panels | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23` | rendered proof; needs the merge + the browser rail |
 | 5 | Native calibration surface consistent with web | 🟢 **PASSED 2026-08-09 (CAL-P026)** — rendered on both, every headline figure identical, both banner the staleness | — |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
 | 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **BASELINE ESTABLISHED 2026-08-09** — 797,871 recoverable, measured to exhaustion | a second dated measurement; ~Aug 15 |
 
 **Two items are green** (5, and 6's watchdog half). Item 7 has its first datapoint. Items **2 and
-4 are built** (CAL-P025) and wait only on being merged and photographed.
+4 are built** (CAL-P025) and wait only on being merged and photographed. **Item 1's rail is built**
+(CAL-P027) and item **3's cricket half is diagnosed**.
 
 **Nothing on this exam is now unblocked and unstarted.** Every remaining item waits on the publish
 converging (1, 3, 7), on a merge plus a capture (2, 4), on elapsed time (7), or on another lane
 (6's sentinel half, #1548). That is a different state from every previous cycle, and it means the
 lane's throughput is no longer the binding constraint — **`calibration:main` publishing again is**,
 which is CAL-P024's payoff and is sitting unmerged in the Integrator's queue.
+
+**Updated 2026-08-09 by CAL-P027 — and the state CHANGED mid-queue, in the good direction.** Both
+readings are kept, because the second one is only interpretable against the first.
+
+At **21:39 PT** the publish was **8.05 days** stale (a sixth consecutive rising reading) and
+CAL-P024 was *still unmerged*, confirmed by content rather than by a handoff file: `origin/master`
+carried `COVERAGE_CENSUS_ENABLED = True`, the exact line CAL-P024 flips.
+
+At **22:45 PT**, while this queue was in its gates, **CAL-P024 merged and deployed** — master
+`ff627a39` (as CAL-P024a/b/c against #1479), `/api/health` reports `ff627a39`, and
+`COVERAGE_CENSUS_ENABLED = False` is live. **So ruling 009's baseline has now landed and the
+~13-beat convergence count can start for the first time.** A unit should cost ~62.6 s again rather
+than ~632 s.
+
+**What that does and does not mean.** It does not make the publish fresh — as of this writing
+`generated_at` is still `2026-08-02T03:23:54Z`, and it stays that way until the build actually walks
+128 units. **The lane's one product-visible SLO — `/api/calibration` serving a payload under 24h old
+— is still RED**, and the next window's first job is to read whether `staged:cursor_resume` appears
+with `committed_units` climbing, and whether `staged:beats_to_publish` (new in CAL-P024) names a
+finite number. Ruling 009 lifts on two recorded observations, not on this merge.
+
+**The freeze is still on.** Its lift condition is a fresh post-CAL-P024 publish *plus* ~13 clean
+beats, recorded. Nothing above satisfies either half yet.
+
+Three of the seven items still reduce to one sentence: **merge the queue.** Items 2 and 4 need the
+merge plus a photograph; item 1 needs the merge plus one walk of the rail below. Item 3's cricket
+fix now needs only the publish to converge. The lane has run out of work that does not route
+through the Integrator or through the beat — which is the correct place for it to run out, and
+worth saying plainly rather than letting a fifth diagnostic rail be invented to fill the time.
 
 ### Why items 2 and 4 were taken while the build is dark — the reason generalises
 
@@ -234,6 +264,51 @@ covers very little on its own and the ladder's weight falls almost entirely on t
 makes measuring N *more* load-bearing, not less. One 5M-id window out of ~44 is not a population
 estimate; the rail must produce the real number.
 
+### ✅ RAIL BUILT — CAL-P027, 2026-08-09, `program/calibration-25`
+
+`backend/app/tasks/census_overlap_trading.py`, registered as `overlap-trading-census` on the repair
+rail. Bounded outcome-row walk, `next_offset`/`exhausted`, never writes. Per
+`(source, category, volume_state, density band, move band)` it returns outcome counts, snapshot
+rows, observations and distinct price moves; `precision_for_threshold()` then scores `>= N moves`
+as a predictor of `volume > 0` on the overlap population. 95 tests, 12 mutations.
+
+**Why this was the one item-1 move available.** Ruling 011 is staged as ruling 009's freeze-lift
+successor *specifically so no days are lost when the freeze lifts* — but it cannot execute without
+N, and N is measured, not chosen. Had the rail not existed when the freeze lifted, the lane would
+have started the measurement on that day, which is the exact outcome that staging was meant to
+prevent. The rail is off the frozen file entirely (it imports the truth allowlist from
+`app/utils/resolution_authority.py`, its real home, not from `precompute_calibration.py`).
+
+**Three design findings that would each have produced a plausible, publishable, wrong N.** Recorded
+because the failure mode here is not a crash, it is a number that looks fine:
+
+1. **Snapshots are per-bookmaker.** Ordering an outcome's snapshots by `captured_at` across books
+   and counting changes fabricates a move at every cross-book quote difference. Counted
+   `PARTITION BY (outcome_id, bookmaker)`, folded across books with **`MAX`, not `SUM`** — ruling
+   011's own "strongest evidence available"; summing multiplies a market's evidence by its book
+   count. (Mitigating, measured: `odds_api` holds **12** futures markets against polymarket's
+   553,876 and kalshi's 191,114, so the multi-book case is rare — but rare is not absent.)
+2. **DataGolf dedups at write time; nobody else does.** It increments `reading_count` on a repeated
+   reading. So `COUNT(*)` is not observation density: an outcome with one row and fifty readings is
+   not sparse — we looked fifty times and it never moved, which is *evidence of no trading*, the
+   opposite of the unknown ruling 011 forbids reading as thinness. Density is `SUM(reading_count)`.
+3. **`volume = 0` did not occur once** across three sampled windows (8,509 / 2,759 / 2,560 eligible
+   outcomes) — every row carrying volume carried `volume > 0`. If that holds at population scale it
+   is a finding about **ruling 011 itself**: tier 1 never classifies anything as *untraded*, only as
+   proven-traded or unknown, and the ladder's entire negative side rests on tier 2. The rail counts
+   the three states separately so this is published rather than assumed.
+
+**Volume coverage is not one number** — 14.2% (recent 550K ids) · 4.5% (mid) · 4.2% (old tail, from
+the row above). The exam's own "one window is not a population estimate" caveat is upheld, and the
+spread is already visible at n=3.
+
+**N IS STILL UNMEASURED, and that is the honest state.** The rail runs in the web dyno, so its first
+walk is owed post-merge — the same shape as CAL-P018, whose rail shipped in one cycle and was walked
+in the next. `precision_for_threshold` returns `supported: False` with a reason rather than a number
+when the overlap is too thin or the threshold splits a band; per this item's pre-declared
+PREMISE-BROKEN handling, that outcome returns N to Alex as a real choice. **Do not let a later
+window read a refusal as a zero.**
+
 ---
 
 ## 2. Trading-activity section led by the matched-bucket comparison
@@ -388,8 +463,64 @@ The bidirectional mid-band shape — a ~25% leg resolving ~10% and a ~52% leg re
 what a **3-outcome market read as if it were 2-outcome** looks like: cricket carries draws /
 ties / no-results, and a field whose third leg is systematically over-priced makes the other two
 under-priced by the mirror amount. That is a concrete, falsifiable hypothesis and it is the first
-one this exam has had for cricket. **Untested** — confirming it needs outcome-count and leg
-composition per market, which is a rail, not a `db-query`.
+one this exam has had for cricket. ~~**Untested**~~ — **TESTED AND CONFIRMED**, see below.
+
+### ✅ CRICKET DIAGNOSED — 2026-08-09, window `7b21`; recorded here 2026-08-09 by CAL-P027
+
+**The hypothesis directly above was right, and the confirming measurement already existed.** It was
+taken by the window that exported the codex diagnosis bundle and, until now, lived only in
+`.claude/handoff/CAL-DIAGNOSIS-BUNDLE-READY.md`. **Alex reads this document, not the handoff
+directory** — so a confirmed diagnosis was sitting one directory away from the exam that calls it
+untested. Recording it is the point of this entry; the measurement is not CAL-P027's.
+
+| finding | figure |
+|---|---|
+| multi-winner 3-outcome cricket markets carrying a draw member | **0** of 556 markets (1,668 outcomes) |
+| coherently-graded cricket markets carrying a draw member | **7,025** of 7,700 |
+| independent questions behind the cohort (`vm_id` clusters) | 4,283 behind 15,812 outcomes (~3.7×) |
+
+Draw-member capture predicts coherent grading almost perfectly. The cricket cohort reaching the
+curve is precisely the set of markets **whose third leg we never captured** — so the field is
+scored as if it were two-outcome, which is the shape the payload split predicted from the other
+end. Both halves agree, and they were derived independently.
+
+**Why they reach the curve at all:** the multi-winner exclusion (`nonexclusive_bundle_markets`) is
+**census-only outside esports** — it counts these markets, it does not drop them.
+
+**Verdict: `exclusion`, not `fix` and not "genuinely bad".** Per gotcha #21 this is read-side —
+extend the exclusion, never re-grade a resolved population. Per the standing house rule the
+extension ships **with its published count**.
+
+**BLOCKED, and on the one thing everything else is blocked on:** an exclusion change alters what the
+curve plots, so it carries a `CALIBRATION_POPULATION_VERSION` bump, which takes `/calibration` dark
+until the next successful beat. No bump until the build publishes. This is diagnosis-complete and
+fix-blocked, which is a different state from undiagnosed and should not be read as the same one.
+
+⚠️ **Two caveats that will change conclusions if skipped**, from the bundle's own README: the
+extract is **95.8% complete** (6,058 of 6,387 markets; one id window timed out even when split), and
+the per-cell counts are the **RAW cohort, not the published cell** — cricket poly b5 is 1,947 raw
+against 415 published, 48.9% vs 79.3% winrate. The published exclusions are strongly selective, so
+the design effects transfer as an order-of-magnitude correction, not an exact one. **The published
+count owed by the house rule must be computed on the published population, not from these rows.**
+
+### Entertainment — still TWO live rivals, and CAL-P027's rail is what separates them
+
+Unchanged in substance: the structural half is evidenced, the timing half is not. Zero of the 1,107
+bucket-9 rows are mex-normalized (`win_count` is 0 or 6–11, never 1), and the specimens are Kalshi
+cumulative scalar-range ladders — market `6549959` carries **21 numeric bands each priced 0.99**
+with `win_count = 0`, i.e. gotcha #17 surviving into `calibration_probability`.
+
+**What is still not testable, and must not be reported as settled:** whether the close was captured
+*after* settlement. There is no settlement timestamp in the schema — `resolution_date` is a
+*scheduled* date — and quote chronology lives in `futures_odds_snapshots`, which the bundle did not
+export.
+
+**CAL-P027's rail supplies the discriminator without needing a settlement timestamp.** Its density
+bands separate a single captured quote (`density_band = "1"`) from a long observation history, per
+`(source, category)`. A near-certain price with **one** captured quote is the stamped-settlement
+signature; a near-certain price with a long move history is not. That is a proxy — it narrows the
+rival, it does not close it — and one walk of `overlap-trading-census` scoped to
+`kalshi × entertainment` answers it.
 
 ---
 
@@ -727,6 +858,16 @@ Every claim above traces to a dated measurement. Add rows; never edit one.
 | 2026-08-09 14:11 | 8f3d | **the native gate RUNS in a program worktree** — `xcodebuild` fails resolving Firebase/gRPC binary artifacts (`dl.google.com` egress blocked), but `-clonedSourcePackagesDirPath <existing DerivedData>/SourcePackages -disableAutomaticPackageResolution` reuses the cached artifacts: `** BUILD SUCCEEDED **` | gotcha, below |
 | 2026-08-09 14:22 | 8f3d | native suite **530 passed / 0 failed** (was 521); contract suite **311 / 0** (was 308); both new gates non-vacuous by mutation | item 5 |
 | 2026-08-09 14:26 | 8f3d | **item 5 side-by-side PASSED** — browser-audit run [31336823181](https://github.com/alexander-bain/bainluck/actions/runs/31336823181) `result: pass`, frontend SHA requested == observed `2a9f42b5`; native `ImageRenderer` render of the same payload. 389,385 · 263,022 · 652,407 · ECE 1.5pp · MCE 1.4pp · Brier 0.165 identical on both; both banner staleness | item 5 |
+
+| 2026-08-09 15:10 | 7b21 | **cricket identified** — every multi-winner 3-outcome cricket market has `draw_member_count = 0` (1,668 outcomes / 556 markets); coherently-graded ones carry a draw member 7,025 of 7,700. Reaches the curve because `nonexclusive_bundle_markets` is census-only outside esports. Extract 95.8% complete; per-cell counts are RAW not published | item 3 (recorded here by CAL-P027) |
+| 2026-08-09 21:39 | e5b2 | `/api/calibration` **200 in 0.62s**, `cache.status="stale"`, `age_s=695807` (**8.05 d**) — publish still `2026-08-02T03:23:54Z`, census still `payload_predates_census`. **Sixth** rising reading (7.53 → 7.59 → 7.70 → 7.74 → 7.76 → 8.05) | items 1/3/7 blocked |
+| 2026-08-09 21:41 | e5b2 | deployed `f78b8a6d` == `origin/master`, single-valued (the 7b21 two-dyno skew has cleared). **CAL-P024 still unmerged, verified by CONTENT** — `origin/master` still reads `COVERAGE_CENSUS_ENABLED = True` ⇒ production still builds at ~632 s/unit and ruling 009's baseline has not landed | CAL-P024 |
+| 2026-08-09 21:45 | e5b2 | `futures_outcomes` = **3,237,030 rows across a 218,050,432-wide id space**; the bare `COUNT(*)` took **9.93 s against a 10 s timeout**. An 8M-id window at the dense head TIMED OUT; a 550K-id window returned in 0.47 s ⇒ row-bounded windows, re-confirmed | item 1 |
+| 2026-08-09 21:50 | e5b2 | volume coverage is **not one number**: 14.2% (recent 550K ids, n=8,509) · 4.5% (mid, n=2,759) · 4.2% (old tail, from 10:52 above). **`volume = 0` did not occur once** in any window — every volume-bearing row was `> 0` | item 1 |
+| 2026-08-09 21:52 | e5b2 | futures market population by source: polymarket **553,876** · kalshi **191,114** · datagolf 300 · **odds_api 12** ⇒ the multi-bookmaker case is rare, but DataGolf's write-time `reading_count` dedup means `COUNT(*)` is not observation density | item 1 |
+| 2026-08-09 22:30 | e5b2 | **item 1's rail BUILT** — `census_overlap_trading.py` + `overlap-trading-census`; full backend **12,154 passed / 0 failed** (was 11,785), ruff clean, **12 mutations** each caught. N still UNMEASURED: first walk owed post-merge | item 1 |
+| 2026-08-09 22:45 | e5b2 | **CAL-P024 MERGED AND DEPLOYED mid-queue** — master `ff627a39` (CAL-P024a/b/c, #1479), `/api/health` = `ff627a39`, and `COVERAGE_CENSUS_ENABLED = False` confirmed by content on `origin/master`. Supersedes the 21:41 reading in this log. **Ruling 009's baseline has landed; the ~13-beat count can start.** Publish still `2026-08-02T03:23:54Z` — the SLO stays RED until the build walks 128 units | ruling 009; SLO |
+| 2026-08-09 22:47 | e5b2 | `git merge-tree origin/master program/calibration-25` = **clean**, no conflict, despite master's CAL-P024 also editing this document — its edits land in the convergence section, between this queue's | CAL-P027 hand-off |
 
 ## A gotcha this window measured — the native gate is NOT unavailable in a program worktree
 

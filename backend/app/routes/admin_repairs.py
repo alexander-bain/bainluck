@@ -13,7 +13,13 @@ transactional session and RETURNS its own before/after census in the response bo
 
     name ∈ { season-series | inverted-events | tt-retag | team-identity-merge
              | event-final-scores | resolved-shape-census
-             | winner-field-coherence | winner-field-repair }
+             | winner-field-coherence | reachability-census
+             | prop-threshold-cliff-census | overlap-trading-census
+             | winner-field-repair }
+    (the registry below is authoritative; this list had already drifted two
+     censuses behind it, so a reader who trusted it would have concluded a
+     deployed rail did not exist — the same class of error as trusting a
+     handoff file over the ref)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` also accept those as query params; the dispatcher passes through only
@@ -75,6 +81,17 @@ _REPAIRS = {
         "app.tasks.census_prop_threshold_cliff",
         "census",
     ),
+    # CAL-P027 (#1544): dry-run-ONLY overlap census for ruling 011's ladder —
+    # per (source, category, volume_state, density band, move band), how many
+    # outcomes, and their snapshot rows / observations / distinct price moves.
+    # It measures N ("N is measured, not chosen") rather than applying it;
+    # applying the ladder needs a population-version bump and is blocked behind
+    # the publish. Walks a bounded outcome-ROW window per call — and this is the
+    # only census doing correlated snapshot scans, so its window is a FIFTH of
+    # the cliff census's; re-invoke with ?offset=<next_offset> until
+    # ``exhausted``. Accepts ?limit=&offset=. Never writes: ``apply`` is
+    # accepted and ignored.
+    "overlap-trading-census": ("app.tasks.census_overlap_trading", "census"),
     # CAL-P007 (#1527), approved by Alex 2026-08-07 under attended capped-batch
     # discipline: the WRITE half. Re-resolves an incoherent single-winner field
     # from CLOB per-leg authority (each leg is its own condition_id), then nulls
