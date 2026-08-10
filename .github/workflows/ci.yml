@@ -7,7 +7,74 @@ on:
     branches: [master]
 
 jobs:
+  # Queue 312 — sharded because this job WAS the merge-to-deploy path: 8m23s of a
+  # 9m31s run (measured, run 31436687919), with every other job finishing minutes
+  # earlier. Four legs of ~113s each make frontend-build the long pole instead.
+  #
+  # The split is computed, not configured. `scripts/ci_shard.py` enumerates the
+  # collected test files and assigns each to exactly one shard; there are no path
+  # globs to maintain and no way for a new test file to match none of them. The
+  # `shard-completeness` job below proves that claim on every run against pytest's
+  # own collection — read its header for why that check is not optional.
   backend-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard runs even when one fails. With fail-fast the first red
+      # cancels its siblings, so a run that broke three shards reports one and
+      # you re-discover the others one push at a time.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        # `strategy.job-total` rather than a literal 4: the matrix list is then
+        # the single place the shard count is written, so growing it to 5 cannot
+        # leave a stale divisor here silently running the wrong partition.
+        #
+        # -q against pytest.ini's `addopts = -v`: verbosity is summed, so the
+        # old `tests/ -v` here actually ran at verbosity 2. This lands at 0 —
+        # progress dots, with --tb=short preserved for real failures.
+        run: |
+          set -o pipefail
+          FILES="$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})"
+          if [ -z "$FILES" ]; then
+            echo "::error::shard ${{ matrix.shard }} resolved to ZERO test files — the"
+            echo "::error::partition is broken and this leg would pass without testing anything."
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: $(echo $FILES | wc -w) test files"
+          python -m pytest $FILES -q
+
+  # Item 1.4 — the assertion that makes sharding safe to trust.
+  #
+  # A sharded suite has one failure mode that no red can announce: a test file
+  # that no shard owns is never run, and CI reports green having tested less
+  # than it did yesterday. The green is indistinguishable from a healthy one,
+  # which is why this cannot be left to code review of a glob list.
+  #
+  # So: ask pytest what it collects, ask ci_shard.py what it assigns, and require
+  # the two sets to be equal — plus pairwise-disjoint shards, so nothing is
+  # double-run either. Fails loudly and blocks deploy.
+  #
+  # Its own job, deliberately: it needs only a collection (~2s) rather than a
+  # test run, so it finishes long before the shards and never joins the critical
+  # path. Cheap enough that there is no argument for sampling it.
+  shard-completeness:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,8 +92,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run tests
-        run: python -m pytest tests/ -v
+      - name: The shards must cover the whole suite, exactly once each
+        # Keep --of in step with the matrix above. A mismatch is not a
+        # correctness hole (the partition is total for any N) but it would
+        # report balance for a split nobody runs.
+        run: python scripts/ci_shard.py --verify --of 4
 
   # #1494 — the search RECALL gate.
   #
@@ -148,6 +218,27 @@ jobs:
         # deleted.
         run: npm run test:ci
 
+      # Item 2 — the ONLY uncached artifact in this workflow. pip is cached by
+      # setup-python in both python jobs and npm by setup-node above, so `.next`
+      # is what was left. Sequenced after the sharding deliberately: while
+      # backend-tests was 8m23s, shaving the 2m12s frontend job bought nothing.
+      #
+      # `path` is workspace-relative — actions/cache does not inherit
+      # defaults.run.working-directory, so `frontend/` is not redundant here.
+      #
+      # Restore-keys give a partial hit: a source-only change still restores the
+      # previous build's cache and Next.js reuses what it can. Never key on the
+      # lockfile alone, or the cache goes stale the moment sources change while
+      # still reporting a hit.
+      - name: Cache the Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/.next/cache
+          key: next-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/app/**', 'frontend/components/**', 'frontend/lib/**') }}
+          restore-keys: |
+            next-${{ hashFiles('frontend/package-lock.json') }}-
+            next-
+
       - name: Build (ESLint gate — NOT a TypeScript gate, see the step below)
         run: npm run build
 
@@ -219,7 +310,14 @@ jobs:
   deploy:
     # search-recall added for #1494: the recall gate is deploy-blocking, so the
     # reverted search speed-up cannot re-land without it going green.
-    needs: [backend-tests, search-recall, frontend-build, e2e-contract]
+    # `backend-tests` stays a BARE job name even though it is now a 4-leg matrix:
+    # a matrix dependency is satisfied only when EVERY leg succeeds, so one red
+    # shard still blocks the release. Enumerating shard names here would have to
+    # be edited every time the matrix changes, and forgetting would silently drop
+    # a shard from the deploy gate.
+    # shard-completeness is required too — without it a partition that skips
+    # files could deploy on a green built from a smaller suite.
+    needs: [backend-tests, shard-completeness, search-recall, frontend-build, e2e-contract]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     concurrency:
