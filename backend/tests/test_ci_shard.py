@@ -110,3 +110,11 @@ def test_every_shard_is_nonempty_at_the_configured_count():
     assert len(real) > 100, "test discovery found almost nothing"
     for i, b in enumerate(ci_shard.partition(real, 4), start=1):
         assert b, f"shard {i} of 4 is empty"
+
+
+def test_q312_seeded_failure_shard_3():
+    """TEMPORARY — Queue 312 acceptance #2: prove shard 3 can report red.
+
+    Deliberate failure on a throwaway branch. Never merged to master.
+    """
+    assert False, "Q312 seeded failure: shard 3 must go red"
