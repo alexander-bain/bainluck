@@ -28,6 +28,7 @@ from app.utils.golf_evolution_market import (
     select_by_snapshot_richness,
 )
 from app.utils.odds_math import probability_to_american
+from app.utils.golf_membership import is_foreign_domain, is_prop_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -2017,13 +2018,22 @@ def _assemble_completed_winner_field(
         gmap: dict[str, dict] = {}
         for market in tournament_markets:
             src = market.source or "sportsbook"
+            # #1625: a market naming a non-golf domain never contributes a golfer,
+            # however well its title overlaps the tournament name. "Norway Chess
+            # Masters" and "PBA Basketball Masters" both matched `masters`.
+            if is_foreign_domain(market.name):
+                continue
             if winner_only and _tournament_market_type(market.name or "")[0] != "winner":
                 continue
             for outcome in market.outcomes:
                 if not outcome.name:
                     continue
                 name = outcome.name.strip()
-                if name.lower() in ("yes", "no", "over", "under", "draw"):
+                # #1625: the old guard listed only yes/no/over/under/draw, so a
+                # tour or a country could be crowned CHAMPION — the observed
+                # "The Masters winner: PGA Tour". `is_prop_outcome` is the same
+                # set the membership corpus grades against.
+                if is_prop_outcome(name) or is_foreign_domain(name):
                     continue
                 prob = _settled_outcome_signal(outcome)
                 if not winner_only and prob is None:
@@ -2055,12 +2065,18 @@ def _assemble_completed_winner_field(
         golfer_map = _collect(winner_only=False)
 
     # Restrict to the authoritative DataGolf field when present (mirrors the live
-    # invitee filter). The graded champion is always kept even if a key misses.
+    # invitee filter).
+    #
+    # #1625 — THE GRADE NO LONGER BYPASSES THE FIELD. This read
+    # `if k in dg_field or v.get("won")`, so a graded winner was kept even when it
+    # sat outside the authoritative field. That is the inversion the membership
+    # corpus names `GRADE_CANNOT_OVERRIDE_MEMBERSHIP`: `is_winner` says who won a
+    # market, never that the market belongs to this tournament, so it cannot clear
+    # a membership failure. A champion outside the field means the field or the
+    # linkage is wrong, and crowning them hides exactly that.
     dg_field = {k for k, v in golfer_map.items() if "datagolf" in v.get("sources", {})}
     if len(dg_field) >= 20:
-        golfer_map = {
-            k: v for k, v in golfer_map.items() if k in dg_field or v.get("won")
-        }
+        golfer_map = {k: v for k, v in golfer_map.items() if k in dg_field}
 
     # Champion(s) first, then pre-settlement probability desc, then name — a
     # longshot winner is crowned above the field's higher-priced favorites. The

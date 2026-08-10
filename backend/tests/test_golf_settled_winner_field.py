@@ -128,9 +128,30 @@ def test_out_of_field_kalshi_name_dropped():
     assert "Golfer 01" in names
 
 
-def test_graded_winner_kept_even_if_outside_datagolf_field():
-    # Champion graded only on the Kalshi market, absent from DataGolf's field —
-    # must never be dropped by the field filter.
+def test_graded_winner_outside_datagolf_field_is_dropped():
+    """REVERSED by #1625 — a grade is not a membership proof.
+
+    This test previously asserted the opposite: a champion graded only on the
+    Kalshi market and absent from DataGolf's field "must never be dropped by the
+    field filter". That `or v.get("won")` clause is the door #1625 was filed
+    about. `is_winner` says who won a MARKET; it says nothing about whether that
+    market belongs to this tournament, so letting it clear a membership failure
+    inverts the check — and the observed production symptoms were The Masters
+    crowning "PGA Tour" and ranking a chess player #1.
+
+    The Codex corpus `golf_event_membership_contract` settles it explicitly: case
+    `graded-foreign-winner-exception` is same-tournament, event-id-confirmed, and
+    graded, and still expects DROP with `GRADE_CANNOT_OVERRIDE_MEMBERSHIP` +
+    `OUTSIDE_AUTHORITATIVE_FIELD`.
+
+    The old test's concern was real and is NOT dismissed: a legitimate champion
+    missing from DataGolf (a late entrant, an alternate, a field gap) will now be
+    dropped, and the page will show no champion. That is the intended, louder
+    failure — the fix is to repair the field or the linkage, which a visibly
+    absent champion prompts and a silently-crowned foreign name buries. Note the
+    blast radius is bounded: the filter only engages when an authoritative field
+    of 20+ actually exists.
+    """
     dg = _Market(1, "The Open Championship - Winner", "datagolf", _open_field(FIELD))
     kalshi = _Market(
         2,
@@ -139,8 +160,10 @@ def test_graded_winner_kept_even_if_outside_datagolf_field():
         [_Outcome("Surprise Winner", opening=0.01, is_winner=True)],
     )
     golfers, *_ = _assemble_completed_winner_field([dg, kalshi])
-    champ = next(g for g in golfers if g["won"])
-    assert champ["name"] == "Surprise Winner"
+
+    assert "Surprise Winner" not in {g["name"] for g in golfers}
+    # The authoritative field itself is untouched — this drops one row, not the page.
+    assert len(golfers) == len(FIELD)
 
 
 def test_market_sources_collected_for_field_filter():
