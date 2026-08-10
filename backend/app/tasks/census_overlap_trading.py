@@ -469,6 +469,47 @@ def is_complete_walk(windows: list[dict]) -> bool:
     return bool(windows) and bool(windows[-1].get("exhausted"))
 
 
+#: Adaptive-scan bounds for :func:`next_scan`. The floor is not decoration: a
+#: walk that shrinks without limit stops making progress while still looking
+#: busy, which is the same class of silent non-answer this census exists to end.
+WALK_SCAN_START = 5_000
+WALK_SCAN_MIN = 250
+WALK_SCAN_MAX = 20_000
+
+#: Seconds. Under FAST the region is sparse and the next window can afford more;
+#: over SLOW it is dense and the next one must ask for less. Both sit well inside
+#: the rail's own 20 s per-window statement timeout so the policy steers BEFORE
+#: the window dies rather than only reacting after it has.
+WALK_FAST_S = 3.0
+WALK_SLOW_S = 12.0
+
+
+def next_scan(scan: int, *, seconds: float, timed_out: bool) -> int:
+    """Choose the next window's row budget from how the last one went.
+
+    CAL-P030. The rail is bounded PER WINDOW by design, so reaching exhaustion
+    needs a driver, and a fixed row budget cannot work: CAL-P027 measured
+    density varying by two orders of magnitude across the id space, and this
+    walk confirmed it — 5,000 rows returned in 2.3 s at the head and timed out
+    repeatedly in the middle. A constant is wrong at one end whichever end it is
+    tuned for.
+
+    **A timeout halves and the caller must retry the SAME cursor.** Skipping the
+    window instead would be the cheaper-looking bug: the walk would complete,
+    report ``exhausted``, and quietly omit exactly the dense regions where most
+    of the population lives. An N fixed against a walk that skipped its hot
+    cohorts is biased in an invisible direction, so the only honest responses to
+    a hot window are a smaller bite or an abort — never a step over it.
+    """
+    if timed_out:
+        return max(WALK_SCAN_MIN, scan // 2)
+    if seconds < WALK_FAST_S:
+        return min(WALK_SCAN_MAX, int(scan * 1.5))
+    if seconds > WALK_SLOW_S:
+        return max(WALK_SCAN_MIN, int(scan * 0.6))
+    return scan
+
+
 async def census(
     session,
     apply: bool = False,

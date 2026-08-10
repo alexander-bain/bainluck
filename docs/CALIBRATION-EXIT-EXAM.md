@@ -15,17 +15,64 @@ so no cycle can finish and then discover its evidence was unobtainable.
 
 | # | Item | Status | Blocked on |
 |---|---|---|---|
-| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🟡 **RAIL BUILT 2026-08-09 (CAL-P027)** — the overlap census this item named as *owed before staging* exists on `program/calibration-25`; **N is still unmeasured** because the rail runs in the web dyno and has not been walked | the merge, then one walk; then a healthy publish for the bump |
-| 2 | Trading-activity section led by matched-bucket comparison | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23`, pinned by test to the real payload | rendered proof; needs the merge + the browser rail |
-| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **CRICKET DIAGNOSED 2026-08-09** — cause identified and it confirms this document's own hypothesis; the FIX is an exclusion extension, blocked behind the version bump. Entertainment still has a live rival | cricket: the publish (bump). entertainment: one walk of CAL-P027's rail |
-| 4 | Source graph redesigned — per-source panels | 🟡 **BUILT 2026-08-09 (CAL-P025)** — shipped on `program/calibration-23` | rendered proof; needs the merge + the browser rail |
+| 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🛑 **WALKED TO EXHAUSTION 2026-08-10 (CAL-P030) — PREMISE-BROKEN.** 381 windows, 3,275,813 rows, complete. **N must not be published: at density ≥ 10 every threshold scores BELOW the base rate** (best lift anywhere +4.0%); the overlap population is 88–96% already-traded, and polymarket has *zero* negatives. Ruling 011's tier 2 has no measured basis | **an Alex ruling** — drop tier 2, keep it as declared-unvalidated, or publish volume-proven-only (25.19%) |
+| 2 | Trading-activity section led by matched-bucket comparison | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: browser-audit run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342), manifest `result: pass`, `observed_frontend_sha` = the audited commit | — |
+| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **BOTH HALVES NOW DIAGNOSED.** Cricket 2026-08-09 (confirms this document's own hypothesis). **Entertainment 2026-08-10 (CAL-P030): the stamped-settlement rival is REFUTED** — entertainment carries single-quote outcomes at 6.58% vs a 15.76% kalshi baseline, lift **0.42x**, so the structural (gotcha #17 ladder) rival is the only one left standing | the publish (bump) — for cricket's exclusion fix. No diagnosis work remains |
+| 4 | Source graph redesigned — per-source panels | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: five per-source panels on a shared 0–100 axis, each labelled n · % of curve · ECE, same run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342) | — |
 | 5 | Native calibration surface consistent with web | 🟢 **PASSED 2026-08-09 (CAL-P026)** — rendered on both, every headline figure identical, both banner the staleness | — |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
 | 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **BASELINE ESTABLISHED 2026-08-09** — 797,871 recoverable, measured to exhaustion | a second dated measurement; ~Aug 15 |
 
-**Two items are green** (5, and 6's watchdog half). Item 7 has its first datapoint. Items **2 and
-4 are built** (CAL-P025) and wait only on being merged and photographed. **Item 1's rail is built**
-(CAL-P027) and item **3's cricket half is diagnosed**.
+**Four items are green** (2, 4, 5, and 6's watchdog half) — up from two, because INT-031 merged
+CAL-P025/26/27 and CAL-P030 photographed the result. Item 7 has its first datapoint and needs a
+second, dated ~Aug 15. Item **3 is now diagnosed on both halves** and holds only for the publish.
+
+**Item 1 is the one that changed shape.** Its rail was walked to exhaustion and returned a
+PREMISE-BROKEN answer: the move-count predictor underlying ruling 011's tier 2 does not work, so
+there is no N to ship. That is a finished measurement, not an unfinished task — but **it converts
+item 1 from work into a decision, and the decision is Alex's.** It is the one item that can no
+longer be closed by this lane doing anything.
+
+**The generalisable lesson, since this lane paid for it four times over.** Items 2 and 4 sat 🟡 for a
+day reading *"blocked on: rendered proof; needs the merge + the browser rail"*, and every cycle in
+between re-derived that they were blocked. Both blockers had in fact cleared at INT-031 — **the
+work was done and the evidence was one dispatch away.** A "blocked on" column is a claim with a
+timestamp, not a standing fact; nothing recomputes it, so it decays exactly the way this program's
+queue header kept decaying (five corrections, both directions). **Re-test the blocker before
+believing it.** Dispatching the browser rail and reading the two screenshots cost about four
+minutes and turned two items green.
+
+---
+
+### ✅ UPDATE 2026-08-10 (CAL-P030) — CAL-P028's fix landed, and the divergence STOPPED
+
+CAL-P028 merged (`9bdbfe36`), deployed at 20:04 UTC, and its first beat ran at 20:15 UTC. Measured
+on that beat, **read directly from `durable_state_snapshots` rather than from the ledger**:
+
+| | pre-fix beat (14:15Z) | first post-fix beat (20:15Z) |
+|---|---|---|
+| units dropped by `retain_planned_units` | **16** of 20 | **1** |
+| roster drift units | (the mechanism) | **0** |
+| banked at terminal | 19 | **19** |
+
+**The churn is gone.** The section below says the build was going backwards; as of this beat it is
+no longer. It is not yet going meaningfully *forwards* either — the beat still exhausts its 1,380 s
+window, `plan_status` is still `infeasible`, `consecutive_failures` is **186**, and
+`/api/calibration` is **8.73 days stale**. But the mechanism that made 128 units unreachable in
+principle has been removed, which is the precondition for every "blocked on the publish" item above.
+
+**⚠️ And the instrument that should have said all this is blind.** CAL-P028's own
+`_record_staged_convergence` — added precisely so a dying beat reports its position — calls
+`.get("payload")` on the frozen `EnvelopeRead` dataclass returned by `read_snapshot_standalone`.
+That raises `AttributeError` on every call, its deliberate best-effort `except` swallows it, and
+**none of its three stages has ever been recorded**; all eight of its tests pass because every one
+mocks a plain dict. The numbers above had to be read out of the durable table by hand — the exact
+labour CAL-P028 existed to end, and gotcha #53 for the third time in this document.
+
+The fix is **owned by INT-034 and in flight**, not by this lane (found independently ~15 minutes
+apart; the queue lock decided it). Post-deploy, the next ledger must show
+`staged:units_banked: 19`+, `staged:units_partition: 128`, `staged:units_drifted: 0`. If it shows
+nothing, the fix did not take.
 
 ---
 
@@ -330,6 +377,77 @@ covers very little on its own and the ladder's weight falls almost entirely on t
 makes measuring N *more* load-bearing, not less. One 5M-id window out of ~44 is not a population
 estimate; the rail must produce the real number.
 
+### 🛑 WALKED TO EXHAUSTION 2026-08-10 (CAL-P030) — and the answer is PREMISE-BROKEN
+
+**N is not a number this lane may publish. The measurement says the predictor does not work.**
+
+The rail merged at INT-031, deployed at `f6a40849`, and was walked to exhaustion for the first
+time: **381 windows · 3,275,813 outcome rows · 939,570 eligible · 41 hot windows · 45 minutes**,
+terminating `exhausted: true`. This is a COMPLETE walk, not a sample — `is_complete_walk()` is
+true, so the figures below are the population.
+
+CAL-P027 pre-declared the handling for this exact outcome and it is now in force: *"if too few rows
+carry both volume and adequate density, N is unmeasurable, tier 2 has no basis, and exam item 1
+returns to Alex as a real choice. Report and stop — **do not invent N**."* The premise broke, though
+**not in the way that sentence anticipated** — and the difference matters, so it is stated plainly.
+
+#### What actually broke
+
+Not scarcity. **242,423** outcomes carry both a volume reading and density ≥ 2; 81,223 carry both at
+density ≥ 10. There is plenty to measure with. What is missing is a **negative class**: the overlap
+population is already **88.2%** `volume > 0` at density ≥ 2 and **96.2%** at density ≥ 10. There is
+almost nothing for a move-count threshold to discriminate.
+
+Scored against that base rate — the comparison that decides whether a predictor is a predictor:
+
+| population | floor | base rate | N=1 | N=2 | N=3 | N=5 |
+|---|---|---|---|---|---|---|
+| all | density ≥ 2 | 0.8819 | 0.964x | **1.039x** | 1.031x | 1.052x |
+| all | density ≥ 10 | 0.9619 | 0.989x | 0.992x | 0.977x | 0.967x |
+| kalshi | density ≥ 2 | 0.8780 | 0.963x | **1.040x** | 1.029x | 1.049x |
+| kalshi | density ≥ 10 | 0.9583 | 0.989x | 0.992x | 0.974x | 0.962x |
+
+(lift = precision ÷ base rate; **below 1.0 means the threshold selects a set that is *less* likely
+to be traded than the population it was drawn from**.)
+
+**At density ≥ 10 — the floor where capture is most reliable — every threshold scores BELOW the base
+rate.** The best lift available anywhere in the population is **+4.0%**, at kalshi/density ≥ 2/N=2,
+bought at recall 0.442. A ladder rung worth +4% precision on a 12%-negative class, and negative
+value on the cleaner half of the data, is not a mechanism to ship.
+
+#### Polymarket cannot inform N at all, and that is a finding in itself
+
+At **every** floor and **every** threshold, polymarket reads precision exactly `1.0000`. The
+confusion matrix says why: at density ≥ 10, `true_negative = 0` and `false_positive = 0`. **Its
+overlap population contains zero `volume = 0` rows.** A precision of 1.0 with no negatives is not a
+measurement, it is an absence — gotcha #53's shape a third time in this document. Any future reader
+who quotes "polymarket N=1, precision 1.0" will be quoting a vacancy.
+
+Volume coverage at population scale, which is the underlying cause and the widest spread this exam
+has recorded: **kalshi 47.33%** (n=583,408) · **polymarket 3.16%** (n=331,377) · **datagolf 0.00%**
+(n=24,785). CAL-P027's caution that "one window is not a population estimate" was right; its three
+sampled windows read 14.2% / 4.5% / 4.2%.
+
+#### One CAL-P027 hypothesis confirmed dead, in the useful direction
+
+Item 0b.3 recorded that `volume = 0` "did not appear once" across three sampled windows, and
+flagged that if it held at population scale, tier 1 would never classify anything as untraded. **It
+does not hold: `volume = 0` occurs 49,976 times (5.32%).** The three-valued `volume_state` the rail
+insisted on — `absent` 69.49% / `zero` 5.32% / `positive` 25.19% — is what made this visible;
+folding `absent` into `zero`, the error ruling 011 was written to prevent, would have reported ~75%
+untraded and inverted the whole result.
+
+#### What this returns to Alex
+
+Ruling 011's **tier 2 (infer trading from price movement) has no measured basis** and should not be
+built. Tiers 1 and 3 are untouched by this finding. The options are Alex's, not this lane's: drop
+tier 2; keep it as an explicitly-unvalidated heuristic with the +4% figure published beside it; or
+accept that the published count covers only volume-proven trading, which is **25.19%** of eligible
+outcomes and **47.33%** of kalshi's.
+
+**Reproduce with:** `python3 backend/scripts/walk_overlap_census.py` (CAL-P030 — read-only, adaptive
+window, refuses to publish an N from a partial walk).
+
 ### ✅ RAIL BUILT — CAL-P027, 2026-08-09, `program/calibration-25`
 
 `backend/app/tasks/census_overlap_trading.py`, registered as `overlap-trading-census` on the repair
@@ -407,7 +525,48 @@ is a genuine, specific, publishable finding — and it is exactly what the cross
 **This is the answer the section should lead with.** The work is to compute it and render it, not
 to discover it.
 
-### ✅ BUILT — CAL-P025, 2026-08-09, `program/calibration-23`
+### 🟢 PASSED — photographed in production 2026-08-10 (CAL-P030)
+
+Merged at INT-031, deployed at `f6a40849`, and rendered. Evidence: browser-audit run
+**`31431286342`**, pack `calibration`, `base_url https://www.bainluck.com`, manifest
+`result: pass`, `requested_frontend_sha` == `observed_frontend_sha` == `checkout_sha` ==
+`f6a40849cc47dbcdce6a717c9ff7a86d8d5199e4`, `observed_backend_sha f6a40849`, 2 journeys selected /
+2 completed / 0 failed. Artifacts: `calibration.anonymous.{desktop,mobile}.terminal.png`.
+
+**This item asked for a rendered screenshot rather than source, so here is what the screenshot
+actually says** — the matched-bucket table now LEADS the section, above the two cross-cohort tiles:
+
+| predicted | price moved | price unchanged | difference |
+|---|---|---|---|
+| 0–10% | −0.7pp (71,753) | −0.1pp (50,954) | −0.6pp |
+| 10–20% | −0.4pp (44,860) | +0.8pp (34,042) | −1.2pp |
+| 20–30% | −1.3pp (41,668) | −0.8pp (32,655) | −0.5pp |
+| 30–40% | −2.7pp (37,774) | −0.9pp (28,529) | −1.8pp |
+| **40–50%** | **−5.7pp** (42,067) | **−1.4pp** (33,516) | **−4.3pp** |
+| 50–60% | −1.1pp (36,546) | −1.6pp (32,749) | +0.5pp |
+| 60–70% | +1.4pp (23,762) | +2.3pp (17,002) | −0.9pp |
+| 70–80% | +2.1pp (21,759) | +2.3pp (13,575) | −0.2pp |
+| 80–90% | −0.2pp (16,121) | −1.4pp (7,784) | +1.2pp |
+| 90–100% | −1.0pp (13,000) | +0.6pp (12,216) | −1.6pp |
+
+The page states the finding in its own words: *"In 9 of 10 matched buckets the two cohorts land
+within 2pp of each other. The widest matched gap is the 40-50% band … a 4.3pp difference on 75,583
+outcomes. Comparing inside a bucket holds the predicted-probability mix fixed, which the two
+headline figures above cannot do."*
+
+**The demotion is real, not cosmetic.** The two whole-cohort ECE tiles (1.7pp moved / 1.0pp
+unchanged) now sit BELOW under a heading "The overall split", captioned *"Because the two cohorts
+differ in source, category and market-shape mix, whichever side lands lower here is an observed
+ordering — not evidence that trading caused it. The table above is the version that controls for
+that."* That is the exact sentence this exam item was opened to obtain.
+
+Two honesty affordances shipped that the item did not ask for and should keep: rows where either
+side is under 1,000 outcomes render greyed rather than hidden, and an unmatched bucket renders a
+dash instead of silently reading as zero error.
+
+### Superseded — the pre-photograph assessment, kept for the record
+
+**BUILT — CAL-P025, 2026-08-09, `program/calibration-23`**
 
 **Correction to this item's own staging note, worth stating because it changed the plan.** The
 line above said "compute it server-side". That is wrong, and wrong in a way that would have been
@@ -569,7 +728,39 @@ against 415 published, 48.9% vs 79.3% winrate. The published exclusions are stro
 the design effects transfer as an order-of-magnitude correction, not an exact one. **The published
 count owed by the house rule must be computed on the published population, not from these rows.**
 
-### Entertainment — still TWO live rivals, and CAL-P027's rail is what separates them
+### 🟢 Entertainment — the rail ran, and it KILLED the stamped-settlement rival (CAL-P030, 2026-08-10)
+
+The discriminator this section says it needs was walked on 2026-08-10 as part of item 1's
+exhaustive census, and it answers **against** the hypothesis it was built to test.
+
+The stamped-settlement signature is *a near-certain price carried by a single captured quote* — one
+look, taken after the fact. If that were what makes kalshi entertainment miscalibrated, entertainment
+would be **enriched** in `density_band = "1"` relative to kalshi's other categories. Measured on the
+complete walk:
+
+| cohort | eligible n | density_band `1` | share |
+|---|---|---|---|
+| kalshi · entertainment | 15,624 | 1,028 | **6.58%** |
+| kalshi · all other categories | 567,784 | 89,499 | **15.76%** |
+
+**Lift 0.42x.** Entertainment carries single-quote outcomes at *two-fifths* the rate of its own
+source's baseline — it is one of the better-observed kalshi cohorts, not a worse-observed one. And
+`density_band = "0"` is **empty** (0 of 15,624): every eligible entertainment outcome was observed at
+least once.
+
+**So the two rivals are no longer symmetric.** The structural rival — gotcha #17 threshold ladders
+reaching `calibration_probability` un-normalized, evidenced above by market `6549959`'s 21 bands each
+priced 0.99 — stands, and is now the only one with evidence behind it. The timing rival is not merely
+untested any more; the one proxy available to test it points the wrong way.
+
+**Do not overclaim this, for the reason the section already gives.** Sparse capture remains a *proxy*
+for late capture: there is still no settlement timestamp in the schema, so this narrows the rival
+rather than closing it. What changed is the direction of the evidence — a cohort cannot be
+predominantly stamped-after-the-fact while being observed more densely than its own baseline.
+
+### Superseded — the pre-walk assessment, kept for the record
+
+**Entertainment — still TWO live rivals, and CAL-P027's rail is what separates them**
 
 Unchanged in substance: the structural half is evidenced, the timing half is not. Zero of the 1,107
 bucket-9 rows are mex-normalized (`win_count` is 0 or 6–11, never 1), and the specimens are Kalshi
@@ -604,7 +795,36 @@ that matters most (kalshi vs polymarket) is the hardest to see.
 
 Per-source panels with a shared axis let a reader see both the shape and the size difference.
 
-### ✅ BUILT — CAL-P025, 2026-08-09, `program/calibration-23`
+### 🟢 PASSED — photographed in production 2026-08-10 (CAL-P030)
+
+Same run as item 2 (**`31431286342`**, manifest `result: pass` at `f6a40849`) — one dispatch
+evidenced both items, because both live on `/calibration`.
+
+**What the screenshot shows.** Five per-source panels, laid out as small multiples on a shared
+0–100% axis, each captioned with its own sample size, its share of the curve, and its ECE:
+
+| panel | outcomes | share of curve | ECE |
+|---|---|---|---|
+| Kalshi | 247,121 | — | 1.2pp |
+| Polymarket | 81,199 | — | 4.4pp |
+| Odds API | 14,960 | 3.8% | 1.4pp |
+| Totals (Odds API) | 12,705 | 3.3% | 1.1pp |
+| Spreads (Odds API) | 12,410 | 3.2% | 0.7pp |
+
+The redesign does the thing the item wanted: the **28x spread in n** and the **~6x spread in ECE**
+are both legible at a glance, where the overlaid version made five lines fight over one axis and
+hid the fact that three of the five sources are ~3% of the curve each. Every panel carries 95% CI
+error bars and renders thin buckets (n<1,000) as faded hollow dots — shown, never dropped.
+
+**One detail worth recording, because ruling 003 predicted it.** The Spreads panel reads **0.7pp
+ECE**, which is the *published* `by_source[].ece` — not a client re-derivation, which reads 0.6pp.
+CAL-P025 was caught mid-build deriving this client-side and rewired to render the published figure.
+The drift ruling 003 warns about is therefore live and visible on exactly one of five sources; the
+page is on the correct side of it.
+
+### Superseded — the pre-photograph assessment, kept for the record
+
+**BUILT — CAL-P025, 2026-08-09, `program/calibration-23`**
 
 The "All" tab of the By Source section is now small multiples: one panel per source, each drawn by
 `CalibrationChart`, which fixes both axes at 0–100% **structurally** — so the shared axis is not a
