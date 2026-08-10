@@ -382,9 +382,54 @@ def _bump_window_counter(pipe, key: str):
     stamps the window once, at the first increment; the key then dies on
     schedule and the next increment opens a fresh 24h window. Gotcha #49 in
     task-counter form: a lifetime total must never be read as a recent rate.
+
+    LAT-P022 (#1609): the window is now STAMPED, under the same ``NX`` as the
+    counter it belongs to, because rolling the window fixed the lifetime-total
+    bug and left a subtler one behind — the count became recent but its AGE
+    stayed unknowable. ``successes_24h`` names 24 hours and holds anywhere from
+    0 to 24 of them, and nothing in the payload said which. Measured on
+    2026-08-09: six fixed-cadence tasks whose counters read 52-63 all had
+    windows about ONE hour old, so a 30-second task running perfectly at 0.99x
+    its cadence (confirmed differentially) presented as missing 96% of its
+    fires. A count without its window is not a rate, and every reader that
+    treated it as one — including two windows debugging #1609 — got an answer
+    off by the ratio of the true window to 24 hours.
+
+    ``:since`` shares the counter's key prefix, its NX, and its TTL, so the two
+    are created and expire together and can never describe different windows.
     """
     pipe.set(key, 0, ex=86400, nx=True)
+    pipe.set(f"{key}:since", _utc_now_iso(), ex=86400, nx=True)
     pipe.incr(key)
+
+
+#: How many recent run durations to keep per task. A p95 needs a tail, and one
+#: sample has none: `last_duration_ms` recorded `refresh_open_commentary` at 8ms
+#: — a real number, from the run that took the cheap off-tournament skip — while
+#: the same task carried a Sentry issue for exceeding a 90s hard limit (#1609).
+#: Both are true of that task; only the history shows the second one. Fifty is
+#: enough to place a p95 and small enough (~50 short strings per task) that the
+#: whole history for ~200 tasks is a rounding error against a 100MB instance.
+DURATION_HISTORY_LEN = 50
+
+
+def _push_duration(pipe, task_name: str, duration_ms: float):
+    """Append one run's duration to the task's bounded rolling history.
+
+    LTRIM keeps it bounded on every write rather than by TTL, so the list cannot
+    grow without limit if a task suddenly runs hot — the memory cost is fixed by
+    construction, which matters on an ``allkeys-lru`` instance where an
+    unbounded key does not just cost memory, it evicts other people's keys.
+
+    Written for EVERY terminal — success, incomplete and failure alike — because
+    a lapping task's expensive runs are frequently the ones that end badly, and
+    a history of only the happy path would systematically under-report the tail
+    this exists to measure.
+    """
+    hist_key = f"{TASK_METRICS_PREFIX}:{task_name}:durations"
+    pipe.lpush(hist_key, str(round(duration_ms)))
+    pipe.ltrim(hist_key, 0, DURATION_HISTORY_LEN - 1)
+    pipe.expire(hist_key, TASK_METRICS_TTL)
 
 
 def record_task_started(task_name: str):
@@ -431,6 +476,56 @@ def record_task_started(task_name: str):
         pass
 
 
+#: `app.tasks.<name>` -> the short `_tracked_run` label. One hash, so a reader
+#: joins the beat schedule to the metrics in a single round trip.
+TASK_LABEL_MAP_KEY = f"{TASK_METRICS_PREFIX}:label_map"
+
+
+def record_task_label(task_name: str):
+    """Remember that this metric label belongs to the celery task now running.
+
+    The beat schedule is keyed by the fully-qualified celery name and every
+    counter here is keyed by the short label, and until now nothing joined
+    them — so "is this beat firing as often as it is scheduled to?" could not be
+    asked programmatically at all, only transcribed by hand for two beats.
+
+    The full name comes from the live celery request rather than from a
+    registry, so it records what ACTUALLY ran. A registry can list a task the
+    beat never fires; this cannot. Outside a worker (unit tests, an admin
+    invocation) there is no request and nothing is written, which is correct —
+    an ad-hoc invocation says nothing about a schedule.
+    """
+    try:
+        from celery import current_task
+
+        request = getattr(current_task, "request", None)
+        full_name = getattr(request, "task", None)
+        if not full_name:
+            return
+        r = get_redis_client()
+        pipe = r.pipeline()
+        pipe.hset(TASK_LABEL_MAP_KEY, full_name, task_name)
+        pipe.expire(TASK_LABEL_MAP_KEY, TASK_METRICS_TTL)
+        pipe.execute()
+    except Exception:
+        # Same contract as every other recorder here: observability must never
+        # be the reason a task fails to start.
+        pass
+
+
+def get_task_label_map() -> dict:
+    """``{celery task name: metric label}`` as recorded by real runs."""
+    try:
+        raw = get_redis_client().hgetall(TASK_LABEL_MAP_KEY) or {}
+        return {
+            (k.decode() if isinstance(k, bytes) else k):
+            (v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }
+    except Exception:
+        return {}
+
+
 def record_task_success(
     task_name: str,
     duration_ms: float,
@@ -473,6 +568,7 @@ def record_task_success(
         })
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, success_key)
+        _push_duration(pipe, task_name, duration_ms)
         pipe.execute()
     except Exception as e:
         # Never let metrics recording break a task
@@ -516,6 +612,7 @@ def record_task_incomplete(
         })
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, incomplete_key)
+        _push_duration(pipe, task_name, duration_ms)
         pipe.execute()
     except Exception:
         pass
@@ -562,9 +659,33 @@ def record_task_failure(
         })
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, failure_key)
+        _push_duration(pipe, task_name, duration_ms)
         pipe.execute()
     except Exception:
         pass
+
+
+def _window_age_s(r, counter_key: str):
+    """Seconds since this counter's 24h window opened, or ``None``.
+
+    ``None`` means "the window start was not recorded", which is a genuinely
+    different thing from "the window is new" and must not be flattened into 0:
+    a zero age reads as an infinitely fast rate and would make every counter
+    written before this stamp existed look like a task firing thousands of times
+    a second. Callers treat ``None`` as unmeasurable — see
+    ``app/utils/schedule_adherence.py``, which refuses to grade without it.
+    """
+    try:
+        raw = r.get(f"{counter_key}:since")
+        if not raw:
+            return None
+        from datetime import datetime, timezone
+        started = datetime.fromisoformat(
+            raw.decode() if isinstance(raw, bytes) else raw
+        )
+        return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+    except Exception:
+        return None
 
 
 def get_task_metrics(task_name: str) -> dict:
@@ -590,6 +711,37 @@ def get_task_metrics(task_name: str) -> dict:
         # finish in the next.
         hard_kills_24h = max(0, starts_24h - (successes_24h + failures_24h + incompletes_24h))
 
+        # LAT-P022 (#1609): the counters' own window ages. Every count above is
+        # named `_24h` and holds between 0 and 24 hours; without these a reader
+        # cannot turn any of them into a rate, which is why "is this beat
+        # running as often as it should?" was unanswerable from this payload.
+        # `starts_window_s` is the one adherence needs — it ages the numerator
+        # that counts fires — but all four are returned so nothing has to guess
+        # that they share a window (they do not: each opens at its own first
+        # increment, so a task with no failures for a day has no failure window
+        # at all).
+        windows = {}
+        for label, ckey in (
+            ("successes", success_key), ("failures", failure_key),
+            ("incompletes", incomplete_key), ("starts", start_key),
+        ):
+            windows[f"{label}_window_s"] = _window_age_s(r, ckey)
+
+        # A bounded rolling history, newest first. p95 lives here rather than
+        # being precomputed so the reader can pick its own percentile and so a
+        # stored aggregate can never drift from the samples behind it.
+        try:
+            raw_durations = r.lrange(
+                f"{TASK_METRICS_PREFIX}:{task_name}:durations", 0,
+                DURATION_HISTORY_LEN - 1,
+            ) or []
+            durations = [
+                int(d.decode() if isinstance(d, bytes) else d)
+                for d in raw_durations
+            ]
+        except Exception:
+            durations = []
+
         result = {
             "task": task_name,
             "successes_24h": successes_24h,
@@ -597,6 +749,8 @@ def get_task_metrics(task_name: str) -> dict:
             "incompletes_24h": incompletes_24h,
             "starts_24h": starts_24h,
             "hard_kills_24h": hard_kills_24h,
+            "recent_durations_ms": durations,
+            **windows,
         }
 
         for k, v in data.items():
@@ -682,8 +836,15 @@ def get_all_task_metrics() -> list[dict]:
         for key in keys:
             key_str = key.decode() if isinstance(key, bytes) else key
             parts = key_str.split(":")
-            if len(parts) == 3:
+            if len(parts) == 3 and key_str != TASK_LABEL_MAP_KEY:
                 # bainluck:task_metrics:task_name
+                #
+                # The label map sits under the same prefix and is also 3 parts
+                # deep, so without excluding it by name it would be read back as
+                # a task called "label_map" — and since it is a non-empty hash,
+                # `get_task_metrics` would not even return `no_data` for it. It
+                # would emit a phantom task on the health surface, which is the
+                # exact class of thing this queue exists to stop inventing.
                 task_names.add(parts[2])
 
         return [get_task_metrics(name) for name in sorted(task_names)]

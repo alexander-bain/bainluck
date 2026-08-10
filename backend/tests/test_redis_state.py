@@ -641,9 +641,20 @@ class TestWindowCounterDoesNotSlide:
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
         redis_state.record_task_success("poll_odds", 1.0, {})
         sets = [c for c in fake.calls if c[0] == "set"]
-        assert sets == [(
-            "set", f"{TASK_METRICS_PREFIX}:poll_odds:successes", 0, 86400, True,
-        )]
+        # LAT-P022 (#1609) widened this deliberately: the counter is stamped as
+        # before, AND its window start is recorded beside it. Asserted as two
+        # entries rather than loosened to a subset, so a future change that
+        # drops either one still fails here.
+        assert [(c[1], c[2], c[3], c[4]) for c in sets if ":since" not in c[1]] == [
+            (f"{TASK_METRICS_PREFIX}:poll_odds:successes", 0, 86400, True),
+        ]
+        since = [c for c in sets if c[1].endswith(":since")]
+        assert len(since) == 1
+        assert since[0][1] == f"{TASK_METRICS_PREFIX}:poll_odds:successes:since"
+        # Same TTL and same NX as the counter it dates: if the two could expire
+        # independently, a live counter could end up paired with a window start
+        # from a previous day and report a rate ~24x too low.
+        assert since[0][3] == 86400 and since[0][4] is True
 
     def test_later_increments_never_re_expire_the_counter(self, monkeypatch):
         fake = _FakeMetricsRedis({})

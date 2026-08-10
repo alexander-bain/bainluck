@@ -83,6 +83,7 @@ def _tracked_run(task_name: str, async_fn):
     """
     from app.tasks.redis_state import (
         record_task_incomplete,
+        record_task_label,
         record_task_started,
         record_task_success,
         record_task_failure,
@@ -101,6 +102,17 @@ def _tracked_run(task_name: str, async_fn):
     # scheduled" are the same observation — which is how a memory kill was read
     # as a scheduling fault for a week. Fix the instrument before the patient.
     record_task_started(task_name)
+    # LAT-P022 (#1609): remember which celery task name this metric label
+    # belongs to. The beat schedule speaks `app.tasks.foo`; every counter in
+    # this module is keyed by the short label passed to `_tracked_run`, and
+    # nothing anywhere joined the two — which is why the only cadence-aware
+    # health surface in the app (`_AUTOPILOT_BEATS`) is a hand-written list of
+    # TWO of the 125 beat entries, with their cadences transcribed by hand and
+    # free to drift from the schedule they describe. Recorded here, from the
+    # live request, because this is the one place both names are known at once,
+    # and a mapping observed from real runs cannot go stale the way a
+    # transcribed one does.
+    record_task_label(task_name)
     start = _time.monotonic()
     try:
         result = run_async(async_fn)
