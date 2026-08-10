@@ -1,0 +1,60 @@
+{
+  "contract_version": "settlement-authority-ladder/v1",
+  "cases": [
+    {
+      "id": "seeded-guess-cannot-overwrite-tier3",
+      "attack": "overwrite",
+      "existing_source": "api_settlement",
+      "incoming_source": "pass2_guess",
+      "expected": {"guard_bites": true, "verdict": "refuse_downgrade"}
+    },
+    {
+      "id": "tier3-may-replace-seeded-guess",
+      "attack": "overwrite",
+      "existing_source": "pass2_guess",
+      "incoming_source": "api_settlement",
+      "expected": {"guard_bites": false, "verdict": "allow_write"}
+    },
+    {
+      "id": "settlement-sync-does-not-shield-malformed-ladder",
+      "attack": "repair_shield",
+      "winner_source": "settlement_sync",
+      "should_shield_repair": false,
+      "expected": {"guard_bites": true, "verdict": "repair_eligible"}
+    },
+    {
+      "id": "independent-api-settlement-shields-repair",
+      "attack": "repair_shield",
+      "winner_source": "api_settlement",
+      "should_shield_repair": true,
+      "expected": {"guard_bites": true, "verdict": "shield"}
+    },
+    {
+      "id": "winner-write-path-calls-central-authority-guard",
+      "attack": "write_path",
+      "calls_authority_guard": true,
+      "expected": {"guard_bites": true, "verdict": "guarded"}
+    },
+    {
+      "id": "open-guess-winner-is-premature",
+      "attack": "market_status",
+      "market_status": "open",
+      "winner_source": "pass2_guess",
+      "expected": {"guard_bites": true, "verdict": "clear_premature"}
+    },
+    {
+      "id": "open-deterministic-winner-is-premature",
+      "attack": "market_status",
+      "market_status": "open",
+      "winner_source": "box_score",
+      "expected": {"guard_bites": true, "verdict": "clear_premature"}
+    },
+    {
+      "id": "open-external-settlement-may-stand",
+      "attack": "market_status",
+      "market_status": "open",
+      "winner_source": "api_settlement",
+      "expected": {"guard_bites": false, "verdict": "winner_may_stand"}
+    }
+  ]
+}
