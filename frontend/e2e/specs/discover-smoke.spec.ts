@@ -83,9 +83,34 @@ const SKELETON = '[data-testid="discover-skeleton"]';
  * `network.declared_allowances_fired` — trading a 2-in-3 false red for a 1-in-3
  * false red, which is not a fix. Hence the measured-intermittent form.
  *
- * It is scoped to `discover.route` for the same reason: `/` and mobile measured
- * ZERO across all three runs, so declaring there would be an allowance with no
- * phenomenon behind it.
+ * It was scoped to `discover.route` for the same reason: `/` and mobile measured
+ * ZERO across all three runs, so declaring there would have been an allowance
+ * with no phenomenon behind it.
+ *
+ * UX-P049 (2026-08-10) — THAT PREMISE IS NOW FALSIFIED, by the run dispatched to
+ * verify this very fix:
+ *
+ *   | run        | sha      | where it fired                                  |
+ *   |------------|----------|-------------------------------------------------|
+ *   | 31439829728| 705a5dd1 | **discover.landing [mobile]** — 1 abort, RED     |
+ *
+ *   ✗ network.no_unexpected_failures: 1 failed request(s):
+ *     .../event/golf/fedex-st-jude-championship?_rsc=... net::ERR_ABORTED
+ *
+ * `/` IS the Discover page, so a prefetch it never cancels was always the odd
+ * claim; three runs that happened not to see a RACY event are weak evidence of
+ * absence, which is the trap gotcha #53 names. The phenomenon is the same one,
+ * on the same card class, cancelled the same way.
+ *
+ * DECLARING IT ON BOTH IS SAFE BY CONSTRUCTION, which is why one observation is
+ * enough here and would not be for a strict allowance: an `intermittent`
+ * declaration is EXEMPT from run-level expiry, so declaring it where it rarely
+ * fires cannot manufacture a red. The cost of NOT declaring it is a daily
+ * scheduled pack that reds on a non-defect — the crying-wolf state #1648 exists
+ * to end, and one that blocks other lanes' evidence runs too.
+ *
+ * Shape A is untouched: `abortAllowanceMatches` refuses any feed request before
+ * it consults the token, so an aborted `/api/feed` still fails on both journeys.
  *
  * RETIRE THIS when Next stops aborting the prefetch, or when a measurement
  * shows it fires on every run — at which point it should become a bare string
@@ -98,7 +123,7 @@ const RSC_PREFETCH_ABORT = {
 } as const;
 
 const PATHS = [
-  { journeyId: "discover.landing", path: "/", allowRscAbort: false },
+  { journeyId: "discover.landing", path: "/", allowRscAbort: true },
   { journeyId: "discover.route", path: "/discover", allowRscAbort: true },
 ] as const;
 
