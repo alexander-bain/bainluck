@@ -62,3 +62,11 @@ class TestAlembicMigrationCount:
             f"Orphaned migration files not reachable from head: {orphaned}. "
             f"These may cause alembic errors."
         )
+
+
+def test_q312_seeded_failure_shard_1():
+    """TEMPORARY — Queue 312 acceptance #2: prove shard 1 can report red.
+
+    Deliberate failure on a throwaway branch. Never merged to master.
+    """
+    assert False, "Q312 seeded failure: shard 1 must go red"
