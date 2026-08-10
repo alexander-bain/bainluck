@@ -38,6 +38,7 @@
       {"name": "golf_event_membership_contract", "relation": "extends", "target": "feed_card_trust_contract"},
       {"name": "prop_divergence_grouping_contract", "relation": "extends", "target": "feed_card_trust_contract"},
       {"name": "settled_event_result_authority", "relation": "extends", "target": "feed_card_trust_contract"},
+      {"name": "settled_prop_grade_authority_contract", "relation": "extends", "target": "feed_card_trust_contract"},
       {"name": "tournament_ux_closure_contract", "relation": "extends", "target": "feed_card_trust_contract"}
     ]},
     {"domain": "frontend-performance", "canonical": "first_card_client_contract", "members": [

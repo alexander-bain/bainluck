@@ -1,0 +1,16 @@
+{
+  "schema_version": "settled-prop-grade-authority/v1",
+  "extends": "feed_card_trust_contract",
+  "cases": [
+    {"id":"ungraded_default_false","rows":[{"actual":null,"hit":null,"is_winner":false,"resolution_source":null}],"expected":{"state":"WITHHOLD","reason":"no_typed_grade"}},
+    {"id":"generic_source_default_false","rows":[{"actual":null,"hit":null,"is_winner":false,"resolution_source":"api_settlement"}],"expected":{"state":"WITHHOLD","reason":"no_typed_grade"}},
+    {"id":"void_source","rows":[{"actual":null,"hit":null,"is_winner":false,"resolution_source":"void"}],"expected":{"state":"WITHHOLD","reason":"no_typed_grade"}},
+    {"id":"explicit_hit","rows":[{"actual":2,"hit":true,"is_winner":true,"resolution_source":"box_score"}],"expected":{"state":"HIT","reason":"explicit_hit"}},
+    {"id":"explicit_miss","rows":[{"actual":0,"hit":false,"is_winner":false,"resolution_source":"box_score"}],"expected":{"state":"MISS","reason":"explicit_hit"}},
+    {"id":"actual_zero_only","rows":[{"actual":0,"hit":null,"is_winner":false,"resolution_source":null}],"expected":{"state":"ACTUAL_ONLY","reason":"no_explicit_verdict"}},
+    {"id":"partial_ladder_one_explicit","rows":[{"actual":2,"hit":true},{"actual":2,"hit":null}],"expected":{"state":"HIT","reason":"explicit_hit"}},
+    {"id":"ladder_thresholds_disagree","rows":[{"actual":2,"hit":true},{"actual":2,"hit":false}],"expected":{"state":"WITHHOLD","reason":"conflicting_rung_verdicts"}},
+    {"id":"mixed_players_one_graded","same_player_stat":false,"rows":[{"actual":1,"hit":true},{"actual":null,"hit":null}],"expected":{"state":"WITHHOLD","reason":"mixed_entity_group"}},
+    {"id":"empty_group","rows":[],"expected":{"state":"WITHHOLD","reason":"no_typed_grade"}}
+  ]
+}
