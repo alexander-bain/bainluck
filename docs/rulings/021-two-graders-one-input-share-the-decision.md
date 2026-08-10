@@ -1,4 +1,4 @@
-# RULING 020 — Two graders reading one input must share the DECISION, not just the predicate
+# RULING 021 — Two graders reading one input must share the DECISION, not just the predicate
 
 date: 2026-08-10
 author: Fable
