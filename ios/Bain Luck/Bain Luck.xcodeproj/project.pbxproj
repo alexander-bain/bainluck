@@ -11,6 +11,7 @@
 		A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E392F525C6D000542D3 /* GoogleSignIn */; };
 		A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */; };
 		A7C839010001000000000001 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7C839020001000000000001 /* FirebaseCrashlytics */; };
+		A7C839030001000000000003 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = A7C839040001000000000004 /* FirebaseMessaging */; };
 		A7C0000000000000000000FD /* BainLuckWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000F2 /* BainLuckWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A7C0000000000000000000DD /* BainLuckComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000D2 /* BainLuckComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -204,6 +205,7 @@
 			files = (
 				A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */,
 				A7C839010001000000000001 /* FirebaseCrashlytics in Frameworks */,
+				A7C839030001000000000003 /* FirebaseMessaging in Frameworks */,
 				A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -325,6 +327,7 @@
 				A7869E392F525C6D000542D3 /* GoogleSignIn */,
 				A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */,
 				A7C839020001000000000001 /* FirebaseCrashlytics */,
+				A7C839040001000000000004 /* FirebaseMessaging */,
 			);
 			productName = "Bain Luck";
 			productReference = A7869E2A2F525C6A000542D3 /* Bain Luck.app */;
@@ -1178,6 +1181,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		A7C839040001000000000004 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,20 +1,42 @@
 import FirebaseAnalytics
+import FirebaseCrashlytics
 import Foundation
 
 /// Thin wrapper around Firebase Analytics matching the web GA4 taxonomy.
 enum AnalyticsService {
     // MARK: - Emission Boundary
 
-    /// The ONE place this app hands an event to Firebase (L2-219 Item 2 /
+    /// The ONE place this app hands an EVENT to Firebase (L2-219 Item 2 /
     /// #1453). Every `track*` helper routes through here, so the privacy
     /// allowlist in `AnalyticsPrivacy` cannot be bypassed by a new call site —
     /// including one that forgets the boundary exists. An unregistered event is
     /// dropped rather than emitted unfiltered.
+    ///
+    /// It is NOT the only door to Firebase, and the older comment claiming so
+    /// was wrong in a way that mattered: `setUserId` / `setUserProperty` called
+    /// `Analytics` directly, so a gate here alone still shipped a user
+    /// identifier before any consent choice (Queue 311 A3 / #1632). Those two
+    /// now go through `identify` below. The honest statement is: this is the
+    /// one place an EVENT is emitted, `identify` is the one place an IDENTITY
+    /// is set, and both consult `TelemetryConsent` first.
     nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil) {
+        guard TelemetryConsent.shared.isGranted else { return }
         guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
             return
         }
         Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+    }
+
+    /// The ONE place this app hands an IDENTITY to Firebase — the second door
+    /// that the "one boundary" comment used to miss.
+    ///
+    /// Consent is checked here rather than at each call site because the call
+    /// sites are exactly the code that forgot last time: three
+    /// `setUserProperty` calls run from `Bain_LuckApp.init()`, before a user
+    /// has seen anything at all, let alone answered a question.
+    private nonisolated static func identify(_ body: () -> Void) {
+        guard TelemetryConsent.shared.isGranted else { return }
+        body()
     }
 
     // MARK: - Screen Tracking
@@ -350,6 +372,20 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - Push
+
+    /// A notification tap (Queue 311 A4 / #1159). `payloadId` is the campaign id
+    /// the server stamped on the send (`digest-YYYYMMDD`), and is what joins
+    /// this open to the server-side `push_sent` — without it the funnel has two
+    /// unrelated counts instead of a rate. Carries no user, device, or market
+    /// content.
+    nonisolated static func trackPushOpened(payloadId: String, surface: String = "digest") {
+        log("push_opened", [
+            "payload_id": payloadId,
+            "surface": surface,
+        ])
+    }
+
     // MARK: - Predictions
 
     nonisolated static func trackPredictionSubmit(
@@ -424,10 +460,22 @@ enum AnalyticsService {
     // MARK: - User Identity
 
     nonisolated static func setUserId(_ userId: String?) {
-        Analytics.setUserID(userId)
+        identify { Analytics.setUserID(userId) }
     }
 
     nonisolated static func setUserProperty(_ value: String?, forName name: String) {
-        Analytics.setUserProperty(value, forName: name)
+        identify { Analytics.setUserProperty(value, forName: name) }
+    }
+
+    /// The Crashlytics user id, gated on the same grant.
+    ///
+    /// A THIRD direct-to-Firebase identity call, beyond the two P5 named: the
+    /// app entry point called `Crashlytics.crashlytics().setUserID(...)` on
+    /// every auth change. Crashlytics collection is now off by default, so this
+    /// was the smallest of the three leaks — but "the SDK is probably disabled"
+    /// is not a consent gate, and leaving one identity call ungated is how the
+    /// "one boundary" comment became untrue the first time.
+    nonisolated static func setCrashReportingUserId(_ userId: String) {
+        identify { Crashlytics.crashlytics().setUserID(userId) }
     }
 }

@@ -1121,11 +1121,21 @@ actor APIClient {
     // MARK: - Notifications
 
     /// Registers an APNs device token for push notifications.
-    func registerDeviceToken(deviceToken: String, platform: String, userId: Int?) async throws -> NotificationRegisterResponse {
+    /// Register a push token. `tokenKind` distinguishes the raw APNS hex (which
+    /// FCM cannot send to) from the FCM registration token (which it can) —
+    /// the backend's broadcast selects on it (#1159). Defaulted so existing
+    /// call sites keep meaning what they meant.
+    func registerDeviceToken(
+        deviceToken: String,
+        platform: String,
+        userId: Int?,
+        tokenKind: String = "apns"
+    ) async throws -> NotificationRegisterResponse {
         var body: [String: String?] = [
             "device_token": deviceToken,
             "platform": platform,
             "session_id": sessionId,
+            "token_kind": tokenKind,
         ]
         if let userId {
             body["user_id"] = String(userId)

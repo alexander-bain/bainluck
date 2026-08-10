@@ -25,11 +25,23 @@ struct Bain_LuckApp: App {
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
     @StateObject private var pinManager = PinManager()
+    /// Whether the consent ask is showing. Seeded from the authority: `true`
+    /// only when no choice has ever been recorded.
+    @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
 
 
     init() {
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
+        // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /
+        // ruling 007, #1632). Collection is off by default in the plist, so
+        // this either leaves it off (no choice yet, or a refusal) or restores a
+        // previous grant. Everything after this line is gated; nothing before
+        // it may touch Firebase.
+        TelemetryConsent.shared.initialize()
+        // Subscribe to FCM registration tokens. After `configure()`, by
+        // requirement — the delegate is ignored before it (#1159).
+        NotificationManager.shared.startMessaging()
         #if os(macOS)
         AnalyticsService.setUserProperty("macos", forName: "platform")
         #else
@@ -74,6 +86,16 @@ struct Bain_LuckApp: App {
                     PinFeedbackToast()
                         .environmentObject(pinManager)
                 }
+                // The consent ask (Queue 311 A3 / #1632). Presented when no
+                // choice has been recorded — and only then, so it never
+                // re-nags someone who declined. Nothing is collected while it
+                // is up: no-choice IS a denial, so an ignored prompt is the
+                // safe state rather than a leak with a timer on it.
+                .sheet(isPresented: $showTelemetryConsent) {
+                    TelemetryConsentPrompt { _ in
+                        showTelemetryConsent = false
+                    }
+                }
                 #if os(macOS)
                 .navigationTitle(navCoordinator.liveGameTitle)
                 .task { await pollLiveGames() }
@@ -81,7 +103,9 @@ struct Bain_LuckApp: App {
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
                     pinManager.setAuthenticated(isAuth)
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
-                    Crashlytics.crashlytics().setUserID(isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : "")
+                    AnalyticsService.setCrashReportingUserId(
+                        isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
+                    )
                     Task {
                         if isAuth {
                             await pinManager.syncLocalToServer()
@@ -97,7 +121,7 @@ struct Bain_LuckApp: App {
                     NotificationManager.shared.requestPermissionAfterDelay()
                     if let userId = authManager.user?.id {
                         NotificationManager.shared.setUser(id: userId)
-                        Crashlytics.crashlytics().setUserID(String(userId))
+                        AnalyticsService.setCrashReportingUserId(String(userId))
                     }
                 }
                 #if os(iOS)

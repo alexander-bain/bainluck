@@ -33,6 +33,11 @@ struct PreferencesView: View {
     @State private var showOnboarding = false
     @State private var showDeleteConfirmation = false
     @State private var isDeletingAccount = false
+    /// Mirrors `TelemetryConsent` so the toggle re-renders on change. The
+    /// authority remains the source of truth — this is a view cache, seeded in
+    /// `onAppear`, never the thing that decides.
+    @State private var analyticsConsentGranted = TelemetryConsent.shared.isGranted
+    @State private var telemetryPersistence = TelemetryConsent.shared.persistence
 
     var body: some View {
         Group {
@@ -85,11 +90,18 @@ struct PreferencesView: View {
                 teamsSection
                 interestsSection
                 notificationsSection
+                privacySection
                 actionsSection
             }
             .padding(.vertical)
         }
         .background(Color.groupedBackground)
+        .onAppear {
+            // Re-read the authority: it can have changed since this view was
+            // constructed (the first-run prompt, or a previous visit).
+            analyticsConsentGranted = TelemetryConsent.shared.isGranted
+            telemetryPersistence = TelemetryConsent.shared.persistence
+        }
     }
 
     // MARK: - Account Hero
@@ -737,6 +749,71 @@ struct PreferencesView: View {
                     Text(morningDigestSubtitle)
                         .font(.caption2)
                         .foregroundStyle(viewModel.morningDigestError == nil ? Color.secondary.opacity(0.7) : Color.red)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(Color.accentColor)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+    }
+
+    // MARK: - Privacy
+
+    /// Analytics consent, always visible — signed in or not (Queue 311 A3 /
+    /// #1632). Deliberately NOT behind authentication like the notifications
+    /// section above: telemetry is collected from anonymous users too, so
+    /// gating the control on sign-in would leave exactly the people with no
+    /// account unable to revoke.
+    private var privacySection: some View {
+        VStack(spacing: 10) {
+            sectionHeader(emoji: "\u{1F512}", title: "Privacy", count: nil)
+            analyticsConsentRow
+                .padding(.horizontal)
+        }
+    }
+
+    private var analyticsConsentSubtitle: String {
+        switch telemetryPersistence {
+        case .unavailable:
+            // The choice is in force now but will not survive a relaunch. Say
+            // so rather than claiming it was saved.
+            return "In effect for now \u{2014} this device wouldn\u{2019}t save the choice"
+        case .unknown, .saved:
+            return analyticsConsentGranted
+                ? "Anonymous usage stats help us find what\u{2019}s broken"
+                : "Off \u{2014} no usage analytics or crash reports are sent"
+        }
+    }
+
+    private var analyticsConsentRow: some View {
+        Toggle(isOn: Binding(
+            get: { analyticsConsentGranted },
+            set: { granted in
+                telemetryPersistence = TelemetryConsent.shared.set(granted ? .analytics : .none)
+                analyticsConsentGranted = TelemetryConsent.shared.isGranted
+            }
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: "chart.bar.doc.horizontal")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Share usage analytics")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                    Text(analyticsConsentSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(
+                            telemetryPersistence == .unavailable
+                                ? Color.orange
+                                : Color.secondary.opacity(0.7)
+                        )
                 }
             }
         }

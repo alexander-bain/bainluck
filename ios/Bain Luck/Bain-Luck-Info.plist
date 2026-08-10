@@ -21,6 +21,21 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Deny-by-default telemetry (Queue 311 Item A3, ruling 007 / #1632).
+
+	     FirebaseAnalytics auto-collects first_open, session_start and
+	     screen_view from SDK initialization — BEFORE any Swift we write gets to
+	     run. So a code-level consent gate, however careful, is a gate with the
+	     front door already open. These two keys are the front door.
+
+	     Collection is switched ON at runtime only by TelemetryConsent, and only
+	     on an explicit grant. Removing either key silently restores collection
+	     for every user who has never answered, with no compile error and no
+	     failing test to notice. -->
+	<key>FIREBASE_ANALYTICS_COLLECTION_ENABLED</key>
+	<false/>
+	<key>FirebaseCrashlyticsCollectionEnabled</key>
+	<false/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIBackgroundModes</key>

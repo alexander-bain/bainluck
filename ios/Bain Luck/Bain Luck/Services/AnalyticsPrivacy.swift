@@ -88,6 +88,9 @@ enum AnalyticsPrivacy {
         "discover_feed_cache", "discover_feed_first_render", "discover_feed_network",
         "sports_feed_stage", "sports_feed_first_render",
         "my_stuff_load", "my_stuff_first_render",
+        // Push (Queue 311 A4 / #1159) — the client half of the digest funnel.
+        // The server emits `push_sent`; this is the open that joins to it.
+        "push_opened",
     ]
 
     /// Keys that must NEVER reach Firebase, even if some caller adds them. Raw
@@ -126,6 +129,13 @@ enum AnalyticsPrivacy {
         "auth_ready_ms", "backend_elapsed_ms", "cache_store_ms", "cache_status",
         "cache_age_seconds", "cache_outcome", "required_data_ready_ms",
         "first_render_ms", "from_cache", "response_bytes", "app_build",
+        // Push funnel join key (Queue 311 A4 / #1159). `payload_id` is a
+        // CAMPAIGN id of the form `digest-YYYYMMDD` — a date and a surface
+        // name. It identifies which send this open belongs to, not who opened
+        // it: no user id, no device id, no market text. It passes the privacy
+        // contract on its merits, which is worth stating rather than assuming,
+        // because "id" in a key name is normally the reason to refuse.
+        "payload_id",
     ]
 
     // MARK: - Value scrubbing
@@ -147,6 +157,30 @@ enum AnalyticsPrivacy {
     /// Minimum count of ACTUAL digits before a run is treated as an identifier.
     /// A phone is 7+, a card 16, an SSN 9; a version string is not.
     private static let minRedactableDigits = 7
+
+    /// A push campaign id: a lowercase surface name and a date, e.g.
+    /// `digest-20260810`. Used to let `payload_id` through VERBATIM.
+    ///
+    /// It needs an exemption because a `YYYYMMDD` date is eight consecutive
+    /// digits, which `scrub` correctly reads as identifier-shaped and rewrites
+    /// to `[number]` — destroying the only thing that joins a client open to
+    /// the server's `push_sent`. This is the `app_build` incident's exact shape
+    /// (`1.4.2 (231)` once became `[number]`), caught this time by a test that
+    /// asserted the value arrives intact rather than merely arrives.
+    ///
+    /// It is a SHAPE guard, not a trust exemption: a value that does not match
+    /// this pattern is dropped rather than passed through unscrubbed, so a
+    /// future caller cannot smuggle free text out under this key.
+    private static let campaignIdPattern = try? NSRegularExpression(
+        pattern: "^[a-z][a-z0-9_]{0,31}-\\d{8}$", options: []
+    )
+
+    /// Whether a string is a well-formed campaign id.
+    static func isCampaignId(_ value: String) -> Bool {
+        guard let campaignIdPattern else { return false }
+        let range = NSRange(value.startIndex..., in: value)
+        return campaignIdPattern.firstMatch(in: value, options: [], range: range) != nil
+    }
     private static let tokenPattern = try? NSRegularExpression(
         pattern: "[A-Za-z0-9_\\-]{24,}", options: []
     )
@@ -218,6 +252,16 @@ enum AnalyticsPrivacy {
         for (key, value) in input {
             if hardDropKeys.contains(key) { continue }
             guard allowedParameterKeys.contains(key) else { continue }
+            if key == "payload_id" {
+                // Shape-checked rather than scrubbed: the campaign id must
+                // arrive byte-identical to the server's or it joins nothing,
+                // and `scrub` would rewrite its date to `[number]`. Anything
+                // not matching the campaign shape is dropped outright.
+                if let string = value as? String, isCampaignId(string) {
+                    out[key] = string
+                }
+                continue
+            }
             if let string = value as? String {
                 out[key] = scrub(string)
             } else {

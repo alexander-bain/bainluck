@@ -6,6 +6,7 @@
 //
 
 import Combine
+import FirebaseMessaging
 import Foundation
 import os
 import UserNotifications
@@ -23,19 +24,40 @@ private let logger = Logger(subsystem: "com.bainluck", category: "notifications"
 /// `requestPermissionAfterDelay()` once the app has loaded. When the user
 /// is authenticated, call `setUser(id:)` so the token registration
 /// includes the user identity.
-final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate, MessagingDelegate {
     static let shared = NotificationManager()
+
+    /// The kinds of push token this app registers. Both are sent to the backend:
+    /// the APNS hex is the historical path and the fallback if messaging init
+    /// fails, and the FCM registration token is the only one the digest sender
+    /// can actually deliver to (#1159).
+    enum TokenKind: String {
+        case apns
+        case fcm
+    }
 
     @Published var isPermissionGranted = false
 
-    /// The raw APNS device token, hex-encoded.
+    /// The raw APNS device token, hex-encoded. FCM CANNOT send to this.
     private(set) var deviceToken: String?
+
+    /// The Firebase registration token. The digest CAN send to this.
+    private(set) var fcmToken: String?
 
     /// The authenticated user's ID (set after sign-in).
     private var userId: Int?
 
-    /// Whether we've already sent the token to the backend this session.
-    private var tokenRegistered = false
+    /// The token value last successfully registered, PER KIND.
+    ///
+    /// This used to be a single `tokenRegistered` Bool for a single token, and
+    /// leaving it that way would have been the quiet way to lose this whole
+    /// item: the second registration would hit the `guard` and return, so the
+    /// FCM token — the entire point of the change — would never reach the
+    /// backend, while the logs happily reported a successful registration.
+    ///
+    /// Keyed by value rather than a per-kind Bool so a ROTATED token
+    /// re-registers instead of being mistaken for one already sent.
+    private var registeredTokenByKind: [TokenKind: String] = [:]
 
     /// Reference to the nav coordinator for deep linking from notifications.
     weak var navCoordinator: NavigationCoordinator?
@@ -43,6 +65,24 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Attach to Firebase Messaging. Must be called AFTER `FirebaseApp.configure()`
+    /// — setting the delegate earlier silently does nothing, which would look
+    /// exactly like Firebase never issuing a token.
+    func startMessaging() {
+        Messaging.messaging().delegate = self
+        // Ask for the current token as well as subscribing to rotations: the
+        // delegate callback fires on issue/refresh, and on a launch where the
+        // token is already cached there is nothing to fire.
+        Messaging.messaging().token { [weak self] token, error in
+            if let error {
+                logger.warning("FCM token fetch failed: \(error.localizedDescription)")
+                return
+            }
+            guard let token else { return }
+            self?.handleFCMToken(token)
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -63,6 +103,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+
+        // Digest funnel step 2 (Queue 311 A4 / #1159): emitted BEFORE the
+        // deep-link dispatch, so an open is recorded even if navigation fails
+        // or the target no longer resolves. `payload_id` is what joins this to
+        // the server's `push_sent`; an open without one is not attributable to
+        // a send, so it is not reported as one.
+        if let payloadId = userInfo["payload_id"] as? String {
+            AnalyticsService.trackPushOpened(payloadId: payloadId)
+        }
 
         // If the notification payload includes a deep link URL, navigate to it.
         if let urlString = userInfo["url"] as? String,
@@ -101,19 +150,40 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     func setUser(id: Int?) {
         let changed = userId != id
         userId = id
-        if changed && deviceToken != nil {
-            tokenRegistered = false
-            Task { await registerTokenWithBackend() }
-        }
+        guard changed else { return }
+        // Every kind we hold must be re-linked to the new identity, not just
+        // the APNS one.
+        registeredTokenByKind.removeAll()
+        Task { await registerAllTokens() }
     }
 
     /// Called from the AppDelegate when APNS returns a device token.
     func didRegisterForRemoteNotifications(deviceToken data: Data) {
         let hex = data.map { String(format: "%02x", $0) }.joined()
         self.deviceToken = hex
-        self.tokenRegistered = false
+        registeredTokenByKind[.apns] = nil
         logger.info("APNS device token received (\(hex.prefix(8))...)")
-        Task { await registerTokenWithBackend() }
+        // Hand the raw token to Messaging so it can mint the FCM registration
+        // token. Without this the SDK has no APNS token to pair and the fetch
+        // in `startMessaging` can hang unresolved.
+        Messaging.messaging().apnsToken = data
+        Task { await registerAllTokens() }
+    }
+
+    /// A new or rotated FCM registration token.
+    private func handleFCMToken(_ token: String) {
+        guard fcmToken != token else { return }
+        fcmToken = token
+        registeredTokenByKind[.fcm] = nil
+        logger.info("FCM registration token received (\(token.prefix(8))...)")
+        Task { await registerAllTokens() }
+    }
+
+    // MARK: - MessagingDelegate
+
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        guard let fcmToken else { return }
+        handleFCMToken(fcmToken)
     }
 
     /// Called from the AppDelegate when APNS registration fails.
@@ -147,8 +217,23 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         #endif
     }
 
-    private func registerTokenWithBackend() async {
-        guard let token = deviceToken, !tokenRegistered else { return }
+    /// Register every token we currently hold, one call per kind.
+    ///
+    /// Additive by design: the APNS registration is kept exactly as it was.
+    /// It is the fallback if messaging init fails, and keeping it is what makes
+    /// a partial rollout observable — if the FCM half silently never works,
+    /// the backend still shows an `apns` row rather than nothing at all.
+    private func registerAllTokens() async {
+        if let deviceToken {
+            await register(token: deviceToken, kind: .apns)
+        }
+        if let fcmToken {
+            await register(token: fcmToken, kind: .fcm)
+        }
+    }
+
+    private func register(token: String, kind: TokenKind) async {
+        guard registeredTokenByKind[kind] != token else { return }
 
         #if os(iOS)
         let platform = "ios"
@@ -162,12 +247,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             let _: NotificationRegisterResponse = try await APIClient.shared.registerDeviceToken(
                 deviceToken: token,
                 platform: platform,
-                userId: userId
+                userId: userId,
+                tokenKind: kind.rawValue
             )
-            tokenRegistered = true
-            logger.info("Device token registered with backend")
+            registeredTokenByKind[kind] = token
+            logger.info("Device token registered with backend (kind=\(kind.rawValue))")
         } catch {
-            logger.warning("Failed to register device token: \(error.localizedDescription)")
+            logger.warning(
+                "Failed to register \(kind.rawValue) device token: \(error.localizedDescription)"
+            )
             // Will retry on next app launch or user change
         }
     }
