@@ -1307,3 +1307,4 @@ failure this document already records happening twice.
 - [017](rulings/017-any-master-push-holds-the-lock.md) — 2026-08-10 — Any session that pushes master holds the integrator lock (Alex)
 - [018](rulings/018-barred-files-integrator-is-the-lanes-hands.md) — 2026-08-10 — A barred file makes the Integrator the lane's HANDS, never a second author (Alex)
 - [019](rulings/019-interestingness-tuning-global-until-stratum-gate.md) — 2026-08-10 — Interestingness tuning is global-only until a stratum clears the gate on both sides (Alex)
+- [020](rulings/020-lock-and-base-sha-both-gate-a-master-push.md) — 2026-08-10 — A master push needs BOTH the lock and base-SHA equality; a HELD lock never yields to a claim (Alex)

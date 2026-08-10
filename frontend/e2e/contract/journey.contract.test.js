@@ -375,6 +375,95 @@ describe("declared navigation-abort allowances (UX-P043 / #1649)", () => {
     );
   });
 
+  describe("a MEASURED-intermittent allowance (INT-034) — relaxes one thing, only one", () => {
+    // Measured on discover.route [desktop] at one fixed SHA: 2 of 3 runs
+    // carried the abort, 1 of 3 did not. A strict declaration reds the clean
+    // run; no declaration reds the other two. Both are the same false alarm.
+    const INTERMITTENT = { match: "_rsc=", issue: 1525, intermittent: true };
+
+    it("excuses the abort when it FIRES, exactly like the strict form", () => {
+      const observation = healthy({
+        failedRequests: RSC_TEARDOWN,
+        allowedNavigationAborts: [INTERMITTENT],
+      });
+      assert.equal(
+        evaluateJourney(observation).result,
+        "pass",
+        JSON.stringify(failedIds(observation))
+      );
+    });
+
+    it("does NOT fail when it matches nothing — the whole point", () => {
+      const observation = healthy({
+        failedRequests: [],
+        allowedNavigationAborts: [INTERMITTENT],
+      });
+      const verdict = evaluateJourney(observation);
+      assert.equal(verdict.result, "pass", JSON.stringify(failedIds(observation)));
+      assert.ok(
+        !failedIds(observation).includes("network.declared_allowances_fired"),
+        "an intermittent allowance that did not fire is not a finding"
+      );
+    });
+
+    it("a STRICT allowance that matches nothing STILL fails — L2-235 intact", () => {
+      // The rule this relaxes for one declaration must be unchanged for the
+      // rest. event-page's `_rsc=` is deterministic and stays strict.
+      const observation = healthy({
+        failedRequests: [],
+        allowedNavigationAborts: ["_rsc="],
+      });
+      assert.equal(evaluateJourney(observation).result, "fail");
+      assert.ok(failedIds(observation).includes("network.declared_allowances_fired"));
+    });
+
+    it("stays VISIBLE — a relaxed allowance is recorded, never silent", () => {
+      const verdict = evaluateJourney(
+        healthy({ failedRequests: [], allowedNavigationAborts: [INTERMITTENT] })
+      );
+      assert.ok(
+        verdict.checked_clean.some(
+          (c) => c.includes("intermittent") && c.includes("#1525")
+        ),
+        JSON.stringify(verdict.checked_clean)
+      );
+    });
+
+    it("an aborted /api/feed is STILL never excused by the relaxed form", () => {
+      // Shape A stays graded. `intermittent` relaxes staleness and nothing else.
+      const observation = healthy({
+        failedRequests: [
+          {
+            url: "https://api.bainluck.com/api/feed?limit=20&_rsc=x",
+            method: "GET",
+            status: null,
+            failure: "net::ERR_ABORTED",
+            abort: { aborted: true, is_feed_request: true },
+          },
+        ],
+        allowedNavigationAborts: [INTERMITTENT],
+      });
+      assert.equal(evaluateJourney(observation).result, "fail");
+      assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+    });
+
+    it("a 5xx on the same URL is STILL not an abort and still fails", () => {
+      const observation = healthy({
+        failedRequests: [
+          {
+            url: "https://www.bainluck.com/futures/108445?_rsc=x",
+            method: "GET",
+            status: 503,
+            failure: null,
+          },
+        ],
+        allowedNavigationAborts: [INTERMITTENT],
+      });
+      assert.equal(evaluateJourney(observation).result, "fail");
+      assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+    });
+  });
+
   it("the two graders now agree on the same input", () => {
     // The actual bug: one predicate, read by one grader. If these ever disagree
     // again the rail is back to being red on a healthy page.

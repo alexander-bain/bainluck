@@ -59,9 +59,47 @@ const ERROR_STATE =
  */
 const SKELETON = '[data-testid="discover-skeleton"]';
 
+/**
+ * #1525 — Next cancels its in-flight RSC prefetch of a card's detail route when
+ * this spec tears down. First-party, orthogonal to everything this journey
+ * grades, and a deploy signal it is not: the prefetch is cancelled by the
+ * browser closing, not by anything the deploy did.
+ *
+ * DECLARED, never filtered, per #1525. The evaluator excuses it only if it is
+ * genuinely an abort and not a feed request, so Shape A stays graded.
+ *
+ * MEASURED BEFORE DECLARING (INT-034, 2026-08-10), and the measurement is the
+ * reason this one is `intermittent` where event-page's is strict — all four at
+ * the same frontend SHA `f6a40849`, pack `deploy-smoke`, against production:
+ *
+ *   | run        | discover.route [desktop] | [mobile] | discover.landing |
+ *   |------------|--------------------------|----------|------------------|
+ *   | 31428469455| 1 abort                  | 0        | 0 both viewports |
+ *   | 31431570162| 1 abort                  | 0        | 0 both viewports |
+ *   | 31431775245| 0 aborts (run PASSED)    | 0        | 0 both viewports |
+ *
+ * So: desktop `/discover` only, and 2 of 3 rather than 3 of 3. A strict
+ * declaration would have turned the 1-in-3 clean run RED on
+ * `network.declared_allowances_fired` — trading a 2-in-3 false red for a 1-in-3
+ * false red, which is not a fix. Hence the measured-intermittent form.
+ *
+ * It is scoped to `discover.route` for the same reason: `/` and mobile measured
+ * ZERO across all three runs, so declaring there would be an allowance with no
+ * phenomenon behind it.
+ *
+ * RETIRE THIS when Next stops aborting the prefetch, or when a measurement
+ * shows it fires on every run — at which point it should become a bare string
+ * and be held to the strict staleness rule.
+ */
+const RSC_PREFETCH_ABORT = {
+  match: "_rsc=",
+  issue: 1525,
+  intermittent: true,
+} as const;
+
 const PATHS = [
-  { journeyId: "discover.landing", path: "/" },
-  { journeyId: "discover.route", path: "/discover" },
+  { journeyId: "discover.landing", path: "/", allowRscAbort: false },
+  { journeyId: "discover.route", path: "/discover", allowRscAbort: true },
 ] as const;
 
 for (const target of PATHS) {
@@ -127,6 +165,7 @@ for (const target of PATHS) {
       firstCardMs,
       emptyState,
       mainRegion,
+      allowedNavigationAborts: target.allowRscAbort ? [RSC_PREFETCH_ABORT] : [],
     });
 
     // Redundant with the evaluator, but keeps the failure legible in the

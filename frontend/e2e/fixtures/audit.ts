@@ -46,6 +46,24 @@ const TELEMETRY_HOSTS = [
 ];
 const TELEMETRY_PATHS = ["/_vercel/insights", "/_vercel/speed-insights"];
 
+/**
+ * A navigation-abort allowance for a phenomenon MEASURED to be racy.
+ *
+ * A bare string stays STRICT: it must fire, or the run fails (L2-235). Use this
+ * object form only with a measurement showing the abort is intermittent, and
+ * record that measurement at the declaration site. It relaxes exactly one
+ * thing — whether the allowance is required to fire. Abort-only, non-feed and
+ * substring-scoped still apply, so a 4xx/5xx on the same URL still fails.
+ */
+export interface NavigationAbortAllowance {
+  /** Substring the aborted URL must contain. */
+  match: string;
+  /** Required. An unattributable allowance is one nobody can retire. */
+  issue: number;
+  /** Measured-racy. Absence stops being a finding; nothing else changes. */
+  intermittent: true;
+}
+
 export interface FinishInput {
   /** Stable, machine-readable id — this is half of the defect fingerprint. */
   journeyId: string;
@@ -84,7 +102,7 @@ export interface FinishInput {
    * itself a failure. A 4xx/5xx on the same URL is not an abort and still
    * fails.
    */
-  allowedNavigationAborts?: string[];
+  allowedNavigationAborts?: Array<string | NavigationAbortAllowance>;
   /** `"none"` for journeys whose subject is not the feed (the consent pack). */
   contentMode?: "card" | "none";
   /**

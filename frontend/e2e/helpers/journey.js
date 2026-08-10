@@ -442,12 +442,41 @@ function evaluateJourney(observation) {
   const allowed = new Set(Array.isArray(o.allowedFailures) ? o.allowedFailures : []);
   const allowedAborts = Array.isArray(o.allowedNavigationAborts) ? o.allowedNavigationAborts : [];
 
+  /**
+   * An allowance is either a bare substring (STRICT — it must fire, see the
+   * staleness check below) or `{ match, intermittent: true, issue }` for a
+   * phenomenon MEASURED to be racy.
+   *
+   * Why the second form exists (INT-034, 2026-08-10). Next cancels an in-flight
+   * RSC prefetch when a spec tears down, and whether one is in flight at that
+   * instant is a race. Measured on `discover.route [desktop]` at one fixed SHA
+   * against production: **2 of 3 runs carried exactly one abort, 1 of 3 carried
+   * none** (31428469455 and 31431570162 fired; 31431775245 passed clean).
+   *
+   * For a racy abort the strict form has no correct setting. Undeclared, the
+   * rail reds on the 2-in-3 where it fires; declared-and-strict, the staleness
+   * check reds on the 1-in-3 where it does not. That is the same cry-wolf
+   * moved to a different third of the runs, not a fix.
+   *
+   * So `intermittent` relaxes EXACTLY ONE thing — whether the allowance is
+   * required to fire — and nothing else. It is still an abort-only, non-feed,
+   * substring-scoped allowance, so a 4xx, a 5xx, or a feed request on the same
+   * URL fails exactly as before. The declaration must carry an `issue`, so it
+   * stays attributable, and L2-235's rule is untouched for every strict
+   * allowance in the suite (event-page's `_rsc=` is deterministic at 7-12 per
+   * journey and stays strict).
+   */
+  const allowanceMatch = (a) => (typeof a === "string" ? a : String((a && a.match) || ""));
+  const allowanceIsIntermittent = (a) => typeof a === "object" && a !== null && a.intermittent === true;
+
   /** A declared teardown allowance covers f only if f really is one. */
   const abortAllowanceMatches = (f, allowance) => {
     if (!isNavigationCancellation(f)) return false;
     if (f && f.abort && f.abort.is_feed_request === true) return false;
     if (f && f.isFeedRequest === true) return false;
-    return String((f && f.url) || "").includes(allowance);
+    const needle = allowanceMatch(allowance);
+    if (!needle) return false;
+    return String((f && f.url) || "").includes(needle);
   };
 
   const unexpected = failedRequests.filter(
@@ -472,8 +501,9 @@ function evaluateJourney(observation) {
   // quietly covers the next failure that happens to match. Same rule the
   // console channel already carries, and the same rule L2-233 put on the
   // lockfile check.
-  if (allowedAborts.length > 0) {
-    const staleAborts = allowedAborts.filter(
+  const strictAborts = allowedAborts.filter((a) => !allowanceIsIntermittent(a));
+  if (strictAborts.length > 0) {
+    const staleAborts = strictAborts.filter(
       (allowance) => !failedRequests.some((f) => abortAllowanceMatches(f, allowance))
     );
     assertions.push(
@@ -483,8 +513,17 @@ function evaluateJourney(observation) {
         staleAborts.length === 0
           ? null
           : `${staleAborts.length} declared navigation-abort allowance(s) matched nothing: ` +
-              staleAborts.join("; ")
+              staleAborts.map(allowanceMatch).join("; ")
       )
+    );
+  } else if (allowedAborts.length > 0) {
+    // Every declared allowance is intermittent, so "it did not fire" is not a
+    // finding. Recorded rather than silent: an operator must still be able to
+    // see that this journey is carrying a relaxed allowance and which one.
+    checkedClean.push(
+      "network.declared_allowances_fired (all declared allowances are intermittent: " +
+        allowedAborts.map((a) => `${allowanceMatch(a)}${a.issue ? ` #${a.issue}` : ""}`).join("; ") +
+        ")"
     );
   } else {
     checkedClean.push(

@@ -994,29 +994,60 @@ async def _record_staged_convergence(runner: PhaseRunner) -> None:
     was cancelled.
 
     Read-only and best-effort by construction: this runs on the failure path, so
-    it must never be the reason a ledger write is lost. A read that throws
-    records nothing and says nothing — the surrounding ledger still persists.
+    it must never be the reason a ledger write is lost. A read that throws still
+    persists the surrounding ledger.
+
+    INT-034 repairs two defects in the paragraph above's first implementation,
+    both of which reproduced the exact failure this function was written to end:
+
+    1. :func:`read_snapshot_standalone` returns a frozen :class:`EnvelopeRead`
+       dataclass, not a dict. ``(read or {}).get("payload")`` therefore raised
+       ``AttributeError`` on EVERY beat, the best-effort ``except`` swallowed it,
+       and the three stages below were never recorded once. The observable built
+       to end an eight-day darkness was itself dark, in the same shape and for
+       the same reason (gotcha #53: an absent stage reads as fine). Every sibling
+       caller in this module already used ``read.ok`` / ``read.envelope.payload``.
+    2. These are LEVELS, not amounts, so they are gauges. ``record_stage``
+       accumulates repeats — CAL-P024c's named failure, where a 400 MB RSS
+       reading published as 51,200 — and ``save_phase_ledger`` can run more than
+       once in a build.
+
+    And the failure path now SAYS SO. A cursor that cannot be read records a
+    typed ``staged:convergence_reason:<status>`` marker, so a missing
+    ``units_banked`` always distinguishes "nothing to report" from "the reader
+    broke" — which is the whole distinction defect 1 collapsed.
     """
     from app.services.durable_snapshots import read_snapshot_standalone
     from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
 
     try:
         read = await read_snapshot_standalone(
-            STAGED_FUTURES_IDENTITY, expected_version=STAGED_FUTURES_SCHEMA
+            STAGED_FUTURES_IDENTITY,
+            expected_version=STAGED_FUTURES_SCHEMA,
+            max_age_s=STATE_MAX_AGE_S,
         )
-        payload = (read or {}).get("payload")
+        if not read.ok or read.envelope is None:
+            runner.ledger.record_gauge(f"staged:convergence_reason:{read.status}", 1)
+            return
+        payload = read.envelope.payload
         if not isinstance(payload, dict):
+            runner.ledger.record_gauge("staged:convergence_reason:payload_shape", 1)
             return
         committed = payload.get("committed_units")
         if not isinstance(committed, list):
+            runner.ledger.record_gauge("staged:convergence_reason:no_committed_units", 1)
             return
-        runner.ledger.record_stage("staged:units_banked", len(committed))
-        runner.ledger.record_stage("staged:units_partition", STAGED_FUTURES_BUCKETS)
+        runner.ledger.record_gauge("staged:units_banked", len(committed))
+        runner.ledger.record_gauge("staged:units_partition", STAGED_FUTURES_BUCKETS)
         drift = payload.get("roster_drift_units")
         if isinstance(drift, int) and not isinstance(drift, bool) and drift >= 0:
-            runner.ledger.record_stage("staged:units_drifted", drift)
+            runner.ledger.record_gauge("staged:units_drifted", drift)
     except Exception as exc:  # noqa: BLE001 — an unreadable cursor is not a lost ledger
         logger.warning("calibration staged convergence read failed: %s", exc)
+        try:
+            runner.ledger.record_gauge("staged:convergence_reason:read_raised", 1)
+        except Exception:  # noqa: BLE001 — the ledger write is what matters
+            pass
 
 
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:
