@@ -1,0 +1,546 @@
+{
+  "covered_by_value": [
+    "CALIBRATION_POPULATION_VERSION",
+    "COVERAGE_CENSUS_ENABLED",
+    "REPRESENTATIVE_TIE_AUTHORITY"
+  ],
+  "hashed_roots": [
+    "_calibration_population_ctes",
+    "_main_futures_sql",
+    "_virtual_market_ctes",
+    "compute_calibration_payload"
+  ],
+  "input_count": 46,
+  "inputs": [
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "CALIBRATION_CORRECTIONS",
+      "origin": "app.tasks.precompute_calibration:CALIBRATION_CORRECTIONS",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "CALIBRATION_POPULATION_VERSION",
+      "origin": "app.tasks.precompute_calibration:CALIBRATION_POPULATION_VERSION",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "6d76244158f8ece6",
+      "impact": "sql_shaping",
+      "name": "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
+      "origin": "app.utils.resolution_authority:CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "5160a8a72ad34aea",
+      "impact": "sql_shaping",
+      "name": "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
+      "origin": "app.utils.resolution_authority:CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "COVERAGE_CENSUS_DISABLED_REASON",
+      "origin": "app.tasks.precompute_calibration:COVERAGE_CENSUS_DISABLED_REASON",
+      "sql_interpolated": false,
+      "used_in": [
+        "_coverage_census_or_disabled"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "COVERAGE_CENSUS_ENABLED",
+      "origin": "app.tasks.precompute_calibration:COVERAGE_CENSUS_ENABLED",
+      "sql_interpolated": false,
+      "used_in": [
+        "_coverage_bridge_ctes",
+        "_coverage_bridge_join",
+        "_coverage_bridge_select_columns",
+        "_coverage_census_or_disabled",
+        "_main_futures_sql",
+        "_run_staged_futures"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "DRAW_AUTHORITY_OUTCOME_NAMES",
+      "origin": "app.tasks.precompute_calibration:DRAW_AUTHORITY_OUTCOME_NAMES",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "DRAW_AUTHORITY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:DRAW_AUTHORITY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "DRAW_CAPABLE_CATEGORIES",
+      "origin": "app.tasks.precompute_calibration:DRAW_CAPABLE_CATEGORIES",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "ESPORTS_MULTI_BUNDLE_CATEGORY",
+      "origin": "app.tasks.precompute_calibration:ESPORTS_MULTI_BUNDLE_CATEGORY",
+      "sql_interpolated": true,
+      "used_in": [
+        "_build_nonexclusive_bundle_census",
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "ESPORTS_MULTI_BUNDLE_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:ESPORTS_MULTI_BUNDLE_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "EXCLUSIVITY_EVIDENCE_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:EXCLUSIVITY_EVIDENCE_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "EXCLUSIVITY_PROVED_RELATIONS",
+      "origin": "app.tasks.precompute_calibration:EXCLUSIVITY_PROVED_RELATIONS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "FIELD_COMPLETENESS_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:FIELD_COMPLETENESS_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "GOLF_PLACEHOLDER_HIGH_BAND",
+      "origin": "app.tasks.precompute_calibration:GOLF_PLACEHOLDER_HIGH_BAND",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "GOLF_PLACEHOLDER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:GOLF_PLACEHOLDER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "KALSHI_HOCKEY_HONEST_BAND_MAX",
+      "origin": "app.tasks.precompute_calibration:KALSHI_HOCKEY_HONEST_BAND_MAX",
+      "sql_interpolated": true,
+      "used_in": [
+        "kalshi_prop_threshold_exclude_sql"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "KALSHI_LIQUIDITY_EXISTS",
+      "origin": "app.tasks.precompute_calibration:KALSHI_LIQUIDITY_EXISTS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "KALSHI_LIQUIDITY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:KALSHI_LIQUIDITY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "KALSHI_PROP_THRESHOLD_DEGENERATE_BAND",
+      "origin": "app.tasks.precompute_calibration:KALSHI_PROP_THRESHOLD_DEGENERATE_BAND",
+      "sql_interpolated": true,
+      "used_in": [
+        "kalshi_prop_threshold_exclude_sql"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "KALSHI_PROP_THRESHOLD_NAME_RE",
+      "origin": "app.tasks.precompute_calibration:KALSHI_PROP_THRESHOLD_NAME_RE",
+      "sql_interpolated": true,
+      "used_in": [
+        "kalshi_prop_threshold_exclude_sql"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "KALSHI_PROP_THRESHOLD_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:KALSHI_PROP_THRESHOLD_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "MALFORMED_BINARY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:MALFORMED_BINARY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "MEX_NORMALIZE_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:MEX_NORMALIZE_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "MEX_NORMALIZE_THRESHOLD",
+      "origin": "app.tasks.precompute_calibration:MEX_NORMALIZE_THRESHOLD",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_nonexclusive_bundle_census"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "NO_WINNER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:NO_WINNER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "ORPHAN_PARTITION_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:ORPHAN_PARTITION_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "POLY_NEVER_TRADED",
+      "origin": "app.tasks.precompute_calibration:POLY_NEVER_TRADED",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "POLY_PLACEHOLDER_EXCLUDE",
+      "origin": "app.tasks.precompute_calibration:POLY_PLACEHOLDER_EXCLUDE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "POLY_PLACEHOLDER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:POLY_PLACEHOLDER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "32f94286545f48f6",
+      "impact": "sql_shaping",
+      "name": "PRICE_DERIVED_SOURCES_SQL",
+      "origin": "app.utils.resolution_authority:PRICE_DERIVED_SOURCES_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "REPRESENTATIVE_TIE_AUTHORITY",
+      "origin": "app.tasks.precompute_calibration:REPRESENTATIVE_TIE_AUTHORITY",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_2WAY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:SOCCER_2WAY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SOURCE_LIQUIDITY_EXCLUSIONS",
+      "origin": "app.tasks.precompute_calibration:SOURCE_LIQUIDITY_EXCLUSIONS",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "VM_ROSTER_IS_GROUPED_PARAM",
+      "origin": "app.tasks.precompute_calibration:VM_ROSTER_IS_GROUPED_PARAM",
+      "sql_interpolated": true,
+      "used_in": [
+        "_run_staged_futures",
+        "_virtual_market_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "VM_ROSTER_MARKET_IDS_PARAM",
+      "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_IDS_PARAM",
+      "sql_interpolated": true,
+      "used_in": [
+        "_run_staged_futures",
+        "_virtual_market_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "VM_ROSTER_MARKET_INFO_EXTRA",
+      "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_INFO_EXTRA",
+      "sql_interpolated": false,
+      "used_in": [
+        "_main_futures_sql"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "VM_ROSTER_VM_IDS_PARAM",
+      "origin": "app.tasks.precompute_calibration:VM_ROSTER_VM_IDS_PARAM",
+      "sql_interpolated": true,
+      "used_in": [
+        "_run_staged_futures",
+        "_virtual_market_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "VOID_FILTER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:VOID_FILTER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "WEATHER_WIDE_SPREAD_EXCLUDE",
+      "origin": "app.tasks.precompute_calibration:WEATHER_WIDE_SPREAD_EXCLUDE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "WEATHER_WIDE_SPREAD_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:WEATHER_WIDE_SPREAD_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "6d3548c2ffd1eba9",
+      "impact": "sql_shaping",
+      "name": "_COVERAGE_RUNG_KEYS",
+      "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_coverage_bridge_ctes",
+        "_coverage_bridge_select_columns",
+        "_run_staged_futures",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_COVERAGE_RUNG_PREDICATES",
+      "origin": "app.tasks.precompute_calibration:_COVERAGE_RUNG_PREDICATES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_coverage_bridge_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_DEFAULT_MIN_CATEGORY_OUTCOMES",
+      "origin": "app.tasks.precompute_calibration:_DEFAULT_MIN_CATEGORY_OUTCOMES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_nonexclusive_bundle_census",
+        "_get_min_category_outcomes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "4cc1d3aa840a061b",
+      "impact": "behavior_or_evidence",
+      "name": "_build_coverage_census",
+      "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
+      "sql_interpolated": false,
+      "used_in": [
+        "_coverage_census_or_disabled"
+      ]
+    }
+  ],
+  "schema": "calibration-fingerprint-derived/v1",
+  "source": "backend/app/tasks/precompute_calibration.py",
+  "source_sha256": "39695eb27f60451d1d2857aca3c42df31b3b988615cbf7f8dc88ada0c291054b",
+  "uncovered_behavior_or_evidence": 23,
+  "uncovered_count": 43,
+  "uncovered_sql_shaping": 20
+}
