@@ -244,3 +244,150 @@ describe("declared console allowances", () => {
     assert.ok(ids.includes("console.declared_allowances_fired"));
   });
 });
+
+/**
+ * UX-P043 (#1649) — declared navigation-abort allowances.
+ *
+ * The event-page pack failed 4/4 on its first dispatch (runs 31355571532 and
+ * 31356326468) against a page whose own screenshot is healthy, entirely on
+ * `?_rsc=` prefetches that the spec's own click cancelled. The same manifest
+ * graded the same list twice and disagreed: `classifyErrorVolume` excluded
+ * teardown and reported 0, this assertion counted everything and reported 7.
+ *
+ * The fixture below IS that payload, copied from run 31356326468's manifest
+ * (`event.page.probability` / desktop), so the before/after is measured rather
+ * than imagined.
+ *
+ * #1525 forbids the shortcut — "never a widened filter" — so the allowance is
+ * declared, scoped, and expiring. Each half is pinned below, in both
+ * directions.
+ */
+const RSC_TEARDOWN = [
+  {
+    url: "https://www.bainluck.com/sport/soccer/mls?_rsc=[redacted-value]",
+    method: "GET",
+    status: null,
+    failure: "net::ERR_ABORTED",
+    abort: {
+      aborted: true,
+      resource_type: "fetch",
+      elapsed_before_abort_ms: 78,
+      is_feed_request: false,
+      frame_url: "https://www.bainluck.com/sports",
+    },
+  },
+  {
+    url: "https://www.bainluck.com/events/15191121?_rsc=[redacted-value]",
+    method: "GET",
+    status: null,
+    failure: "net::ERR_ABORTED",
+    abort: {
+      aborted: true,
+      resource_type: "fetch",
+      elapsed_before_abort_ms: 159,
+      is_feed_request: false,
+      frame_url: "https://www.bainluck.com/sports",
+    },
+  },
+];
+
+describe("declared navigation-abort allowances (UX-P043 / #1649)", () => {
+  it("BEFORE: teardown aborts fail when nothing is declared", () => {
+    const observation = healthy({ failedRequests: RSC_TEARDOWN });
+    assert.equal(evaluateJourney(observation).result, "fail");
+    assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+  });
+
+  it("AFTER: the same payload passes once the journey declares it", () => {
+    const observation = healthy({
+      failedRequests: RSC_TEARDOWN,
+      allowedNavigationAborts: ["_rsc="],
+    });
+    const verdict = evaluateJourney(observation);
+    assert.equal(verdict.result, "pass", JSON.stringify(failedIds(observation)));
+  });
+
+  it("an aborted /api/feed is NEVER excused — #1525 Shape A stays graded", () => {
+    // The trap this clause exists to avoid: a blanket abort filter would have
+    // silently swallowed the one abort that is a real open defect, and one the
+    // backend's own metrics cannot see.
+    const observation = healthy({
+      failedRequests: [
+        {
+          url: "https://api.bainluck.com/api/feed?limit=[redacted-value]&_rsc=[redacted-value]",
+          method: "GET",
+          status: null,
+          failure: "net::ERR_ABORTED",
+          abort: {
+            aborted: true,
+            resource_type: "fetch",
+            elapsed_before_abort_ms: 12,
+            is_feed_request: true,
+            frame_url: "https://www.bainluck.com/",
+          },
+        },
+      ],
+      allowedNavigationAborts: ["_rsc="],
+    });
+    assert.equal(evaluateJourney(observation).result, "fail");
+    assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+  });
+
+  it("a 5xx on a declared URL still fails — the allowance covers aborts only", () => {
+    const observation = healthy({
+      failedRequests: [
+        {
+          url: "https://www.bainluck.com/events/15191121?_rsc=[redacted-value]",
+          method: "GET",
+          status: 500,
+          failure: null,
+        },
+      ],
+      allowedNavigationAborts: ["_rsc="],
+    });
+    assert.equal(evaluateJourney(observation).result, "fail");
+    assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+  });
+
+  it("an UNDECLARED teardown abort still fails", () => {
+    const observation = healthy({
+      failedRequests: RSC_TEARDOWN,
+      allowedNavigationAborts: ["/some/other/path"],
+    });
+    assert.equal(evaluateJourney(observation).result, "fail");
+    assert.ok(failedIds(observation).includes("network.no_unexpected_failures"));
+  });
+
+  it("a declared allowance that matches nothing FAILS — it cannot outlive its reason", () => {
+    const observation = healthy({
+      failedRequests: [],
+      allowedNavigationAborts: ["_rsc="],
+    });
+    assert.equal(evaluateJourney(observation).result, "fail");
+    assert.ok(failedIds(observation).includes("network.declared_allowances_fired"));
+  });
+
+  it("declaring nothing records the check as clean rather than silently skipping it", () => {
+    const verdict = evaluateJourney(healthy());
+    assert.ok(
+      verdict.checked_clean.some((c) => c.startsWith("network.declared_allowances_fired")),
+      JSON.stringify(verdict.checked_clean)
+    );
+  });
+
+  it("the two graders now agree on the same input", () => {
+    // The actual bug: one predicate, read by one grader. If these ever disagree
+    // again the rail is back to being red on a healthy page.
+    const observation = healthy({
+      failedRequests: RSC_TEARDOWN,
+      allowedNavigationAborts: ["_rsc="],
+    });
+    const verdict = evaluateJourney(observation);
+    const network = verdict.assertions.find((a) => a.assertion_id === "network.no_unexpected_failures");
+    assert.equal(network.ok, true);
+    assert.ok(
+      verdict.checked_clean.some((c) => c.includes("network.failure_volume_within_policy")),
+      JSON.stringify(verdict.checked_clean)
+    );
+  });
+});

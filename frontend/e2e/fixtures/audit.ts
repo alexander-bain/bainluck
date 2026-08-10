@@ -71,6 +71,20 @@ export interface FinishInput {
    * nothing fails too — see `helpers/journey.js` for why both halves matter.
    */
   allowedConsoleErrors?: string[];
+  /**
+   * URL substrings whose NAVIGATION-TEARDOWN aborts this journey expects
+   * (UX-P043 / #1649). A spec that clicks through pages cancels the RSC
+   * prefetches Next.js issued for the links it left behind; those are not
+   * product defects, and `helpers/errorVolume.js` has always said so while the
+   * per-error network assertion counted them anyway.
+   *
+   * Narrow on three axes, all enforced in the shared evaluator rather than
+   * here: the failure must be an abort, it must NOT be a feed request (#1525
+   * Shape A stays graded), and a declared substring that matches nothing is
+   * itself a failure. A 4xx/5xx on the same URL is not an abort and still
+   * fails.
+   */
+  allowedNavigationAborts?: string[];
   /** `"none"` for journeys whose subject is not the feed (the consent pack). */
   contentMode?: "card" | "none";
   /**
@@ -314,6 +328,7 @@ export class JourneyRecorder {
       failedRequests: this.failedRequests,
       allowedFailures: input.allowedFailures ?? [],
       allowedConsoleErrors: input.allowedConsoleErrors ?? [],
+      allowedNavigationAborts: input.allowedNavigationAborts ?? [],
       artifacts,
       contentMode: input.contentMode ?? "card",
       telemetry: this.telemetrySeen(),

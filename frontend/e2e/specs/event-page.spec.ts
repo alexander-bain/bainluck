@@ -27,6 +27,34 @@ const SPORTS_CARD = '[data-testid="sports-card"]';
 const EVENT_LINK = 'main a[href^="/events/"]';
 /** The hero number — "read the probability" is the whole point of the page. */
 const HERO_PROBABILITY = '[data-testid="event-hero-probability"]';
+/**
+ * The settled hero (UX-P043 / #1649).
+ *
+ * A finished game shows a winner, not a big number — "settled means settled" is
+ * a standing ruling, and the probability testid deliberately does not exist on
+ * that branch. The pack's first dispatch (run 31356326468) opened the first
+ * game on /sports at 04:43 UTC, got a FINAL, and failed 4/4 on a hero that was
+ * working correctly.
+ *
+ * Evening is exactly when people open this page, so the fix is to prove the
+ * settled hero too rather than to hunt for a game that is still in progress.
+ * Either hero counts as "the page answered"; which one it was is recorded.
+ */
+const HERO_SETTLED = '[data-testid="event-hero-settled"]';
+const HERO_ANY = `${HERO_PROBABILITY}, ${HERO_SETTLED}`;
+
+/**
+ * Next.js prefetches the RSC payload of every `<Link>` on /sports and cancels
+ * those prefetches when this spec clicks through. Declared rather than
+ * filtered: #1525 rules out widening the rail's network checks and prescribes
+ * "a declared, named allowance that fails when it stops firing". The shared
+ * evaluator excuses one only if it is genuinely an abort AND not a feed
+ * request, so #1525 Shape A stays graded.
+ *
+ * Measured base rate before declaring: 7-12 per journey, 8 of 8 journeys across
+ * two dispatches (31355571532 @ abdcf410, 31356326468 @ f78b8a6d).
+ */
+const RSC_PREFETCH = "_rsc=";
 
 /**
  * C229's P1, now enforceable in a real browser.
@@ -90,10 +118,14 @@ test("event page opens from the sports feed and shows a probability", async ({ p
     await page.waitForURL(/\/events\//, { timeout: 45_000 }).catch(() => null);
   }
 
-  const heroLocator = page.locator(HERO_PROBABILITY).first();
+  const heroLocator = page.locator(HERO_ANY).first();
   await heroLocator.waitFor({ state: "visible", timeout: 45_000 }).catch(() => null);
   const heroVisible = await heroLocator.isVisible().catch(() => false);
   const heroText = heroVisible ? ((await heroLocator.textContent()) ?? "").trim() : null;
+
+  // Which hero answered is evidence, not a detail: a run that only ever sees
+  // settled games has not proven the live path, and vice versa.
+  const settledHero = await page.locator(HERO_SETTLED).first().isVisible().catch(() => false);
 
   const realCardFound = heroVisible && !!heroText;
   const firstCardMs = realCardFound ? Date.now() - startedAt : null;
@@ -105,6 +137,7 @@ test("event page opens from the sports feed and shows a probability", async ({ p
     realCardFound,
     firstCardMs,
     mainRegion,
+    allowedNavigationAborts: [RSC_PREFETCH],
   });
 
   const region = classifyMainRegion(mainRegion);
@@ -114,7 +147,12 @@ test("event page opens from the sports feed and shows a probability", async ({ p
   ).toBe(true);
   expect(linkFound, "the sports feed must offer at least one event link to open").toBe(true);
   expect(page.url(), `expected an event detail URL after clicking ${href}`).toMatch(/\/events\//);
-  expect(realCardFound, "the event page must show its hero probability").toBe(true);
+  expect(
+    realCardFound,
+    settledHero
+      ? "the event page must show its settled hero (winner treatment)"
+      : "the event page must show its hero probability",
+  ).toBe(true);
 });
 
 test("event page content is never painted invisible", async ({ page, journey }) => {
@@ -129,7 +167,7 @@ test("event page content is never painted invisible", async ({ page, journey }) 
     await page.waitForURL(/\/events\//, { timeout: 45_000 }).catch(() => null);
   }
 
-  const heroLocator = page.locator(HERO_PROBABILITY).first();
+  const heroLocator = page.locator(HERO_ANY).first();
   await heroLocator.waitFor({ state: "visible", timeout: 45_000 }).catch(() => null);
   const heroVisible = await heroLocator.isVisible().catch(() => false);
 
@@ -141,6 +179,7 @@ test("event page content is never painted invisible", async ({ page, journey }) 
     realCardFound: heroVisible,
     firstCardMs: heroVisible ? Date.now() - startedAt : null,
     mainRegion,
+    allowedNavigationAborts: [RSC_PREFETCH],
   });
 
   expect(linkFound, "the sports feed must offer at least one event link to open").toBe(true);

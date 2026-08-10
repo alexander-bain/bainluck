@@ -789,3 +789,61 @@ describe("Sports latency audit hooks are state-based", () => {
     assert.ok(empty.includes("data-empty-state-name"), "the state name must be data, not scraped prose");
   });
 });
+
+// ---------------------------------------------------------------------------
+// UX-P043 (#1649) — the event page has TWO heroes, and the pack must be able to
+// prove both. `event-hero-probability` lives on the `!isFinished` branch only;
+// a finished game shows the winner treatment instead, because "settled means
+// settled: heroes show winners" is a standing ruling. The pack's first-ever
+// dispatch opened the first game on /sports in the evening, got a FINAL, and
+// failed 4/4 on a hero that was working exactly as designed.
+//
+// Deleting either hook silently re-reds the pack against a healthy page, which
+// is the failure this whole cycle was spent on. So both are pinned here, in
+// both directions: the page ships them and the spec looks for them.
+// ---------------------------------------------------------------------------
+
+describe("event-page pack can prove both hero states", () => {
+  const repoRoot = path.join(__dirname, "..", "..", "..");
+  const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
+  const specRaw = () => read("frontend", "e2e", "specs", "event-page.spec.ts");
+  const pageRaw = () => read("frontend", "app", "events", "[id]", "page.tsx");
+
+  it("the page ships a stable hook for the LIVE/PREGAME hero", () => {
+    assert.ok(pageRaw().includes('data-testid="event-hero-probability"'));
+  });
+
+  it("the page ships a stable hook for the SETTLED hero", () => {
+    const page = pageRaw();
+    assert.ok(
+      page.includes('data-testid="event-hero-settled"'),
+      "a finished game must be provable, not just a scheduled one"
+    );
+    assert.ok(
+      page.includes("data-winner="),
+      "the winner must be readable as data, never scraped from prose"
+    );
+  });
+
+  it("the spec accepts EITHER hero — otherwise an evening slate is unphotographable", () => {
+    const raw = specRaw();
+    assert.ok(raw.includes('[data-testid="event-hero-settled"]'), "spec must know the settled hook");
+    assert.ok(raw.includes("HERO_ANY"), "spec must wait on the either-hero locator");
+  });
+
+  it("does not smooth a missing hero into a first-card time (the C96 [P1] shape)", () => {
+    const raw = specRaw().replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    assert.ok(
+      !/firstCardMs:\s*Date\.now\(\) - startedAt\s*[,}]/.test(raw),
+      "an absent hero must yield null, never an unconditional elapsed number"
+    );
+  });
+
+  it("declares its navigation-abort allowance rather than relying on a widened filter", () => {
+    // #1525: "never a widened filter". The declaration must be present AND
+    // scoped to the RSC prefetch shape.
+    const raw = specRaw();
+    assert.ok(raw.includes("allowedNavigationAborts"), "the teardown allowance must be DECLARED");
+    assert.ok(raw.includes('"_rsc="'), "the allowance must be scoped to RSC prefetches");
+  });
+});

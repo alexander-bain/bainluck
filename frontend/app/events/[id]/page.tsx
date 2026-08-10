@@ -612,7 +612,19 @@ export default function EventPage({ params }: EventPageProps) {
                 /* Settled: winner name + chip, no big number (mirrors FuturesHero's
                    resolved rule). The score is shown under each team; the win-prob
                    journey stays in the chart below. */
-                <div className="flex flex-col items-center gap-1.5">
+                /* UX-P043 (#1649): the settled hero's stable hook. The browser
+                   pack read `event-hero-probability` as "the hero rendered",
+                   but that testid lives on the !isFinished branch only — by
+                   design, since "settled means settled: heroes show winners".
+                   In the evening the first game on /sports IS final, so the
+                   pack failed 4/4 on a hero working exactly as intended. This
+                   makes the settled treatment provable in its own right rather
+                   than something the pack has to route around. */
+                <div
+                  className="flex flex-col items-center gap-1.5"
+                  data-testid="event-hero-settled"
+                  data-winner={settledWinnerName ?? ""}
+                >
                   {settledWinnerName ? (
                     <>
                       <span className="text-base sm:text-lg font-semibold text-text-primary tracking-tight text-center">

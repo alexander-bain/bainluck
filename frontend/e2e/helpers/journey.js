@@ -18,7 +18,7 @@
 
 const { redactText, redactUrl } = require("./redaction");
 const { classifyMainRegion } = require("./contentState");
-const { classifyErrorVolume } = require("./errorVolume");
+const { classifyErrorVolume, isNavigationCancellation } = require("./errorVolume");
 
 /** Terminal results. Anything else is a bug in the caller. */
 const RESULTS = Object.freeze({
@@ -412,9 +412,49 @@ function evaluateJourney(observation) {
   );
 
   // --- Network. Same-origin 4xx/5xx and outright request failures. ---
+  //
+  // UX-P043 (#1649). Two graders read this same list and disagreed 7 vs 0 in
+  // one manifest: `classifyErrorVolume` excludes navigation teardown and said
+  // 0, this assertion counted everything and said 7. The event-page pack was
+  // red 4/4 on a page whose own screenshot is healthy, entirely on `?_rsc=`
+  // prefetches cancelled by the click the spec itself performs.
+  //
+  // The correct fix is NOT to widen the filter — #1525 rules that out by name
+  // ("never a widened filter") and prescribes the L2-235 shape instead: a
+  // DECLARED, named allowance that fails when it stops firing. So a teardown
+  // abort is excused only when the journey said in advance that it expected
+  // one, and a declaration that matches nothing is itself a failure.
+  //
+  // Two clauses keep this from becoming the mute button #1525 feared:
+  //
+  //   - `isNavigationCancellation` is IMPORTED from errorVolume, not re-stated.
+  //     One predicate, so the two graders cannot drift apart again — which is
+  //     the actual bug being fixed here, not the red.
+  //   - A feed request is NEVER excusable. #1525 Shape A is an aborted
+  //     `/api/feed` on the landing route, it is a real open defect, and it is
+  //     invisible to the backend's own metrics — this rail is the only place it
+  //     shows up. A blanket abort filter would have swallowed it silently,
+  //     which is the trap this clause exists to avoid.
+  //
+  // Anything that is not an abort — a 4xx, a 5xx, a DNS failure — is untouched
+  // by the declaration and still fails on a declared URL.
   const failedRequests = Array.isArray(o.failedRequests) ? o.failedRequests : [];
   const allowed = new Set(Array.isArray(o.allowedFailures) ? o.allowedFailures : []);
-  const unexpected = failedRequests.filter((f) => !allowed.has(f && f.url ? f.url : ""));
+  const allowedAborts = Array.isArray(o.allowedNavigationAborts) ? o.allowedNavigationAborts : [];
+
+  /** A declared teardown allowance covers f only if f really is one. */
+  const abortAllowanceMatches = (f, allowance) => {
+    if (!isNavigationCancellation(f)) return false;
+    if (f && f.abort && f.abort.is_feed_request === true) return false;
+    if (f && f.isFeedRequest === true) return false;
+    return String((f && f.url) || "").includes(allowance);
+  };
+
+  const unexpected = failedRequests.filter(
+    (f) =>
+      !allowed.has(f && f.url ? f.url : "") &&
+      !allowedAborts.some((allowance) => abortAllowanceMatches(f, allowance))
+  );
   assertions.push(
     assertion(
       "network.no_unexpected_failures",
@@ -427,6 +467,30 @@ function evaluateJourney(observation) {
             .join("; ")}`
     )
   );
+
+  // An allowance nobody can see expire is one that outlives its reason and
+  // quietly covers the next failure that happens to match. Same rule the
+  // console channel already carries, and the same rule L2-233 put on the
+  // lockfile check.
+  if (allowedAborts.length > 0) {
+    const staleAborts = allowedAborts.filter(
+      (allowance) => !failedRequests.some((f) => abortAllowanceMatches(f, allowance))
+    );
+    assertions.push(
+      assertion(
+        "network.declared_allowances_fired",
+        staleAborts.length === 0,
+        staleAborts.length === 0
+          ? null
+          : `${staleAborts.length} declared navigation-abort allowance(s) matched nothing: ` +
+              staleAborts.join("; ")
+      )
+    );
+  } else {
+    checkedClean.push(
+      "network.declared_allowances_fired (journey declares no navigation-abort allowances)"
+    );
+  }
 
   // --- Error VOLUME (UX-P029 Item 3 / #1600). ---
   //
