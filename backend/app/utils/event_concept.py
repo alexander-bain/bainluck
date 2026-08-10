@@ -46,6 +46,16 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 
+# Build-loss vocabulary. Safe at module level and deliberately not deferred:
+# `event_concept_cache` imports THIS module only lazily, inside `build_and_cache`,
+# so the dependency runs one way at import time and there is no cycle.
+from app.utils.event_concept_cache import (
+    LOSS_COSMETIC,
+    LOSS_DEGRADED,
+    LOSS_PARTIAL,
+    note_build_loss,
+)
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -1119,11 +1129,23 @@ class GolfEventAdapter:
                                 envelope["primary"]["competitors"], baseline_by_name
                             )
                         except Exception:
-                            pass
+                            # The live probabilities survived; only the "who's
+                            # charging" delta against the start-of-day baseline is
+                            # missing. Real content loss, but not the headline.
+                            note_build_loss(
+                                envelope, "golf_live_deltas_failed", LOSS_PARTIAL
+                            )
                 except Exception:
                     # Live fusion is best-effort — a failure must not 500 the page;
                     # it just renders probability-only (honest degrade).
-                    pass
+                    #
+                    # It is only an HONEST degrade if we say so. Until #1678 this
+                    # `pass` was silent and the payload was still stamped
+                    # `quality: "full"`, so a page that failed to fuse its live
+                    # leaderboard claimed a complete build — and the 24h mirror
+                    # kept claiming it. This is the headline capability of a live
+                    # golf page, so its loss is DEGRADED, not partial.
+                    note_build_loss(envelope, "golf_live_fusion_failed", LOSS_DEGRADED)
 
         # L2-71: attach compact per-competitor history to the top competitors so
         # the leaderboard sparklines + RaceToTitleChart read from the envelope in
@@ -1136,7 +1158,10 @@ class GolfEventAdapter:
                 envelope["primary"]["competitors"],
             )
         except Exception:
-            pass
+            # Sparklines and the RaceToTitleChart lose their series. The
+            # probabilities themselves are intact, so the page still answers the
+            # question it exists to answer.
+            note_build_loss(envelope, "competitor_history_failed", LOSS_PARTIAL)
 
         # Live AI commentary box — THE OPEN CHAMPIONSHIP only, LIVE only (same-day
         # feature 2026-07-19). The request path NEVER calls OpenAI: the background
@@ -1171,7 +1196,11 @@ class GolfEventAdapter:
                             "as_of": parsed.get("as_of"),
                         }
         except Exception:
-            pass
+            # COSMETIC on purpose: this box is The-Open-only and live-only, so its
+            # absence is the normal state for essentially every key this tier
+            # caches. Grading it `partial` would mark almost every payload partial
+            # and drain the word of meaning.
+            note_build_loss(envelope, "commentary_unavailable", LOSS_COSMETIC)
 
         return envelope
 

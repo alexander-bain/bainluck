@@ -39,6 +39,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,14 @@ REFRESH_LOCK_TTL = 120
 # refused on read and rebuilt, which is also what makes the very first deploy of
 # this module self-healing — every pre-envelope payload already in Redis reads as
 # a miss rather than being served without disclosure.
-GENERATION = 2
+#
+# 2 -> 3 (#1678 finding 3): `quality` changed MEANING, not just shape. Every
+# generation-2 payload was stamped `full` unconditionally, including the degraded
+# ones — so the mirror can hold a 24h-lived payload that claims a live fusion it
+# never managed. Those are exactly the lying payloads this queue exists to stop
+# serving, and a bump is what retires them AT DEPLOY instead of up to 24h later.
+# Cost is one cold rebuild per key, which is what the warmer is for.
+GENERATION = 3
 
 CACHE_PREFIX = "bainluck:event_concept:"
 
@@ -85,6 +93,90 @@ AVAILABILITY_UNAVAILABLE = "unavailable"
 QUALITY_FULL = "full"
 QUALITY_PARTIAL = "partial"
 QUALITY_DEGRADED = "degraded"
+
+# ---------------------------------------------------------------------------
+# Build losses — how an adapter tells the tier that it could not build everything
+# ---------------------------------------------------------------------------
+#
+# #1678 finding 3: the golf adapter wraps live fusion, competitor history and the
+# commentary box in bare `except Exception: pass`. One of them even calls itself
+# "honest degrade" in a comment — but nothing was recorded anywhere, `build_event`
+# returned an envelope indistinguishable from a complete one, and `build_and_cache`
+# took `stamp_envelope`'s `full` default. A page that could not fuse its live
+# leaderboard published `quality: "full"` and served it for 24h.
+#
+# The producer is the only party that knows, so the producer records it. Severity
+# is declared AT THE SWALLOW POINT, next to the thing that failed, because that is
+# the only place where what-was-lost is actually known.
+
+#: A headline capability of the page failed. The page still renders, but the
+#: number a reader came for is missing or unfused.
+LOSS_DEGRADED = "degraded"
+
+#: Real content is missing, but the headline answer survived.
+LOSS_PARTIAL = "partial"
+
+#: An optional garnish is absent. Not a quality change — for most keys its absence
+#: is the NORMAL state, so letting it set `partial` would make "partial" meaningless.
+LOSS_COSMETIC = "cosmetic"
+
+#: Private, build-scoped. Adapters append here; `build_and_cache` pops it before
+#: stamping, so it never reaches Redis or the wire.
+BUILD_LOSS_FIELD = "_build_losses"
+
+_LOSS_TO_QUALITY = {
+    LOSS_DEGRADED: QUALITY_DEGRADED,
+    LOSS_PARTIAL: QUALITY_PARTIAL,
+}
+
+
+def note_build_loss(envelope: Any, reason: str, severity: str) -> None:
+    """Record, at the point of failure, that this build lost something.
+
+    Total by construction: this is called from inside `except` handlers on a page
+    that is already the subject of a p0, so it must never be the thing that raises.
+    """
+    if not isinstance(envelope, dict):
+        return
+    losses = envelope.get(BUILD_LOSS_FIELD)
+    if not isinstance(losses, list):
+        losses = []
+        envelope[BUILD_LOSS_FIELD] = losses
+    losses.append({"reason": reason, "severity": severity})
+
+
+def take_build_quality(result: Any) -> tuple[str, list[str]]:
+    """Pop the recorded losses and reduce them to `(quality, reasons)`.
+
+    Worst severity wins: any `degraded` loss makes the payload `degraded`.
+
+    `reasons` lists ONLY the losses that drove the quality down. A cosmetic loss is
+    deliberately not published — `quality_reasons` means "why this is not full",
+    and a non-empty list on a `full` payload would invite exactly the misreading
+    ("something is wrong here") that the enum is supposed to settle.
+    """
+    if not isinstance(result, dict):
+        return QUALITY_FULL, []
+
+    losses = result.pop(BUILD_LOSS_FIELD, None)
+    if not isinstance(losses, list) or not losses:
+        return QUALITY_FULL, []
+
+    quality = QUALITY_FULL
+    reasons: list[str] = []
+    for loss in losses:
+        if not isinstance(loss, dict):
+            continue
+        mapped = _LOSS_TO_QUALITY.get(loss.get("severity"))
+        if mapped is None:
+            continue
+        reasons.append(str(loss.get("reason") or "unknown"))
+        if mapped == QUALITY_DEGRADED:
+            quality = QUALITY_DEGRADED
+        elif quality != QUALITY_DEGRADED:
+            quality = QUALITY_PARTIAL
+
+    return quality, reasons
 
 
 @dataclass(frozen=True)
@@ -118,6 +210,7 @@ def stamp_envelope(
     created_at: datetime,
     lifecycle_watermark: datetime | None,
     quality: str = QUALITY_FULL,
+    quality_reasons: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Attach the producer half of the cache envelope to a freshly built payload.
 
@@ -138,6 +231,11 @@ def stamp_envelope(
         # Filled in at serve time; present here so the field is never absent.
         "availability": None,
         "lifecycle_watermark": _iso(lifecycle_watermark),
+        # Additive 6th field, outside the contract's five: WHICH losses pushed
+        # `quality` below `full`. The enum tells a consumer how much to trust the
+        # payload; this tells a human which adapter step to go and fix. Empty on a
+        # full payload, never absent.
+        "quality_reasons": list(quality_reasons),
     }
     return enveloped
 
@@ -165,6 +263,80 @@ def is_current_generation(payload: Any) -> bool:
     if not isinstance(envelope, dict):
         return False
     return envelope.get("generation") == GENERATION
+
+
+#: The five contract fields, by name. Presence is checked separately from value
+#: because, per the contract, "an absent field and a null field read identically
+#: to a consumer, and that ambiguity is the bug this envelope exists to remove".
+ENVELOPE_FIELDS = (
+    "generation",
+    "created_at",
+    "quality",
+    "availability",
+    "lifecycle_watermark",
+)
+
+QUALITY_VALUES = frozenset({QUALITY_FULL, QUALITY_PARTIAL, QUALITY_DEGRADED})
+AVAILABILITY_VALUES = frozenset(
+    {AVAILABILITY_LIVE, AVAILABILITY_STALE_OK, AVAILABILITY_UNAVAILABLE}
+)
+
+
+def envelope_defect(payload: Any) -> str | None:
+    """Return None if `payload` is a servable envelope, else a short reason.
+
+    `is_current_generation` answers only "was this built by code we still run".
+    That is one of five fields, and #1678 finding 2 is that it was the ONLY one
+    checked: `{"cache": {"generation": 2}}` — a single field — passed `read_slot`
+    and was served as a complete envelope. Every consumer then read `created_at`,
+    `quality` and `availability` as null and could not tell a malformed payload
+    from an honestly-unknown one, which is precisely the ambiguity the contract
+    exists to remove.
+
+    A malformed CURRENT-generation payload is refused as a miss, not repaired. We
+    cannot know what a missing `quality` should have been, and guessing `full` is
+    the fabrication this whole queue is about.
+
+    The one deliberate asymmetry: `lifecycle_watermark` may be null. It is an
+    explicit "we do not know how far into reality this payload got" — a real,
+    publishable answer (contract rule 2, and `compute_watermark` returns None by
+    design when a payload references no markets). `availability` may also be null,
+    but only at REST: it is stamped on the way out by `with_availability`, and
+    `stamp_envelope` writes the key with a null so the field is never absent.
+    """
+    if not isinstance(payload, dict):
+        return "not_a_dict"
+
+    envelope = payload.get(ENVELOPE_FIELD)
+    if not isinstance(envelope, dict):
+        return "no_envelope"
+
+    missing = [f for f in ENVELOPE_FIELDS if f not in envelope]
+    if missing:
+        return f"missing_fields:{','.join(missing)}"
+
+    if envelope.get("generation") != GENERATION:
+        return "generation_mismatch"
+
+    if _parse_iso(envelope.get("created_at")) is None:
+        return "created_at_unparseable"
+
+    if envelope.get("quality") not in QUALITY_VALUES:
+        return "quality_invalid"
+
+    availability = envelope.get("availability")
+    if availability is not None and availability not in AVAILABILITY_VALUES:
+        return "availability_invalid"
+
+    watermark = envelope.get("lifecycle_watermark")
+    if watermark is not None and _parse_iso(watermark) is None:
+        return "lifecycle_watermark_unparseable"
+
+    return None
+
+
+def is_servable_envelope(payload: Any) -> bool:
+    return envelope_defect(payload) is None
 
 
 def payload_created_at(payload: dict[str, Any]) -> datetime | None:
@@ -314,7 +486,20 @@ def read_slot(rc, key: str) -> dict[str, Any] | None:
         logger.warning("event-concept cache: read failed for %s", key)
         return None
     payload = decode_payload(raw)
-    if payload is None or not is_current_generation(payload):
+    if payload is None:
+        return None
+    defect = envelope_defect(payload)
+    if defect is not None:
+        # A pre-envelope payload has no `cache` block at all and is the ordinary,
+        # expected case on the first deploy of a generation — logged at debug so
+        # it does not drown the real signal. Anything else claiming to be current
+        # generation but failing validation is a producer bug, and stays a warning.
+        if defect in ("no_envelope", "generation_mismatch", "not_a_dict"):
+            logger.debug("event-concept cache: %s reads as a miss (%s)", key, defect)
+        else:
+            logger.warning(
+                "event-concept cache: refusing malformed payload for %s (%s)", key, defect
+            )
         return None
     return payload
 
@@ -351,23 +536,66 @@ def has_negative(rc, keys: ConceptCacheKeys) -> bool:
         return False
 
 
-def acquire_refresh_lock(rc, keys: ConceptCacheKeys) -> bool:
-    """Single-flight. True for exactly one caller per REFRESH_LOCK_TTL window."""
-    if rc is None:
-        return False
-    try:
-        return bool(rc.set(keys.refresh_lock, "1", nx=True, ex=REFRESH_LOCK_TTL))
-    except Exception:
-        return False
+# Compare-and-delete. The lock's VALUE is its owner token, so "am I the holder?"
+# and "delete it" are one atomic step — a plain GET-then-DELETE is the same
+# check-then-act race this primitive exists to close (the holder's lock can expire
+# and be re-taken by someone else between the two calls).
+#
+# The token lives IN the lock's own value rather than in a sibling key, per gotcha
+# #120: a second key with its own lifetime cannot stay in phase with the first, and
+# `SET NX` is exactly what stops it ever re-syncing. One key, one value, one TTL.
+_RELEASE_IF_OWNER_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 
-def release_refresh_lock(rc, keys: ConceptCacheKeys) -> None:
+def acquire_refresh_lock(rc, keys: ConceptCacheKeys) -> str | None:
+    """Single-flight. Returns an owner TOKEN for exactly one caller per
+    REFRESH_LOCK_TTL window, or None if somebody else already holds it.
+
+    Returns a token rather than a bool so the holder can prove ownership on
+    release. Truthiness is preserved for existing callers: a token is truthy and
+    None is falsy, so `if not acquire_refresh_lock(...)` still reads correctly.
+    """
     if rc is None:
-        return
+        return None
+    token = uuid4().hex
     try:
-        rc.delete(keys.refresh_lock)
+        if rc.set(keys.refresh_lock, token, nx=True, ex=REFRESH_LOCK_TTL):
+            return token
+        return None
     except Exception:
-        pass
+        return None
+
+
+def release_refresh_lock(rc, keys: ConceptCacheKeys, token: str | None) -> bool:
+    """Release the refresh lock, but ONLY if `token` still owns it.
+
+    Returns True when this call actually removed the lock.
+
+    `token` is required — there is no "just release it" form on purpose. The
+    defect this closes (#1678 finding 1) was an unconditional `delete` in a
+    `finally`: the scheduled warmer, which never acquired anything, deleted the
+    live lock of a route-dispatched refresh and admitted a third concurrent
+    builder. A producer that cannot name the token does not get to release.
+
+    Fails CLOSED. If the compare-and-delete cannot run, the lock is LEFT to expire
+    on its own TTL: the cost is one delayed refresh (<= REFRESH_LOCK_TTL), whereas
+    deleting on a failed check is the stampede this function exists to prevent.
+    """
+    if rc is None or not token:
+        return False
+    try:
+        return bool(rc.eval(_RELEASE_IF_OWNER_LUA, 1, keys.refresh_lock, token))
+    except Exception:
+        logger.warning(
+            "event-concept cache: could not release %s; leaving it to expire",
+            keys.refresh_lock,
+        )
+        return False
 
 
 def get_client():
@@ -422,8 +650,22 @@ async def build_and_cache(key: str, db, rc=None, adapter=None) -> dict[str, Any]
     # anything is stamped or stored.
     result = strip_competitor_wire_leaks(envelope)
 
+    # Take the adapter's own account of what it could not build BEFORE stamping.
+    # This also pops the private marker, so it never reaches Redis or the wire.
+    quality, quality_reasons = take_build_quality(result)
+    if quality != QUALITY_FULL:
+        logger.info(
+            "event-concept cache: %s built %s (%s)", key, quality, ", ".join(quality_reasons)
+        )
+
     watermark = await compute_watermark(db, result)
-    stamped = stamp_envelope(result, created_at=_utcnow(), lifecycle_watermark=watermark)
+    stamped = stamp_envelope(
+        result,
+        created_at=_utcnow(),
+        lifecycle_watermark=watermark,
+        quality=quality,
+        quality_reasons=quality_reasons,
+    )
 
     write_payload(rc, keys, stamped)
     return stamped

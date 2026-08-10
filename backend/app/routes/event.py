@@ -49,19 +49,24 @@ def _schedule_refresh(rc, keys: ConceptCacheKeys, key: str) -> None:
     Best-effort throughout — the caller has already decided to serve the mirror,
     and nothing here may turn a served page into an error.
     """
-    if not acquire_refresh_lock(rc, keys):
+    token = acquire_refresh_lock(rc, keys)
+    if not token:
         return
     try:
         from app.tasks import celery_app
 
+        # The token travels WITH the dispatch: this request acquires the lock and
+        # the background task releases it, so the task has to be able to prove it
+        # is releasing the lock this request took (#1678 finding 1). Without it the
+        # task released whatever it found, including another producer's lock.
         celery_app.send_task(
             "app.tasks.refresh_event_concept",
-            args=[key],
+            args=[key, token],
             queue="background",
         )
     except Exception:
         logger.warning("event-concept: refresh dispatch failed for %s", key, exc_info=True)
-        release_refresh_lock(rc, keys)
+        release_refresh_lock(rc, keys, token)
 
 
 @router.get("/{key}")

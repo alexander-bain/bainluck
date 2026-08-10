@@ -2207,14 +2207,20 @@ def warm_event_concepts(self):
 
 
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_event_concept")
-def refresh_event_concept(self, key: str):
+def refresh_event_concept(self, key: str, token: str | None = None):
     """Revalidate one concept key after the route served its 24h mirror.
 
     Dispatched from `routes/event.py` under a single-flight lock, so a burst of
     readers behind one TTL expiry produces one of these, not one per reader.
+
+    `token` is the refresh-lock owner token the route acquired: the acquire and
+    the release are in different processes, so ownership has to travel with the
+    message (#1678 finding 1). It is optional ONLY so that messages already in the
+    broker when this deploys still execute — a task signature that drops an
+    argument rejects every in-flight message with a TypeError.
     """
     from app.tasks.event_concept_warmer import _refresh_event_concept
-    return _tracked_run("refresh_event_concept", _refresh_event_concept(key))
+    return _tracked_run("refresh_event_concept", _refresh_event_concept(key, token))
 
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")

@@ -46,6 +46,16 @@ class _FakeRedis:
     def delete(self, k):
         return int(self.store.pop(k, None) is not None)
 
+    def eval(self, script, numkeys, *args):
+        """delete KEYS[1] only if it equals ARGV[1] — the compare-and-delete the
+        refresh lock releases through (#1678 finding 1)."""
+        key, token = args[0], args[1]
+        expected = token.encode() if isinstance(token, str) else token
+        if self.store.get(key) == expected:
+            self.store.pop(key, None)
+            return 1
+        return 0
+
 
 @asynccontextmanager
 async def _fake_session():
@@ -205,10 +215,16 @@ async def test_the_refresh_lock_is_released_however_the_build_ends():
         _absent_build,
     ):
         rc = _FakeRedis()
-        rc.set(keys.refresh_lock, "1")
+        # The route acquires and hands the token over with the dispatch (#1678
+        # finding 1). Seeding a bare "1" here, as this test used to, encoded the
+        # old unconditional release: it passed precisely BECAUSE the worker
+        # deleted a lock it could not prove it owned.
+        token = cache_mod.acquire_refresh_lock(rc, keys)
+        assert token, "precondition: the route should have taken the lock"
+
         a, b, c = _patched(build, rc)
         with a, b, c:
-            await warmer._refresh_event_concept(key)
+            await warmer._refresh_event_concept(key, token)
         assert keys.refresh_lock not in rc.store, (
             f"{build.__name__} left the single-flight lock held"
         )

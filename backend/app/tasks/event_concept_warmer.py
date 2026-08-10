@@ -39,8 +39,19 @@ logger = logging.getLogger(__name__)
 PER_KEY_TIMEOUT_SECONDS = 55
 
 
-async def _build_one(key: str) -> dict:
-    """Rebuild and re-cache one concept key. Never raises."""
+async def _build_one(key: str, *, token: str | None) -> dict:
+    """Rebuild and re-cache one concept key. Never raises.
+
+    `token` is the refresh-lock owner token THIS producer holds, and it is
+    keyword-only and mandatory so that no caller acquires one by accident. Only
+    that token releases the lock; a producer holding nothing releases nothing.
+
+    Passing `None` is legal and means "I hold no lock" — the build still runs (a
+    caller that got here wants content) but the lock is left alone. That is the
+    transitional case for a `refresh_event_concept` message enqueued by the
+    pre-#1678 route, which is already in the broker at deploy time with no token
+    in its args; its old `"1"`-valued lock simply expires on its own TTL.
+    """
     from app.tasks.base import get_task_session
     from app.utils.event_concept_cache import cache_keys, get_client, release_refresh_lock
 
@@ -65,10 +76,17 @@ async def _build_one(key: str) -> dict:
         logger.warning("warm_event_concepts: %s failed: %s", key, exc, exc_info=True)
         return {"key": key, "ok": False, "reason": "error", "seconds": round(elapsed, 2)}
     finally:
-        # The route holds this lock while it waits for us. Release it whatever
-        # happened, or the key cannot schedule another refresh until the lock's
-        # own TTL expires.
-        release_refresh_lock(rc, keys)
+        # Release the lock THIS producer holds, whatever happened, so the key can
+        # schedule another refresh without waiting out REFRESH_LOCK_TTL.
+        #
+        # It is a compare-and-delete against our own token, and that is the whole
+        # fix for #1678 finding 1. This `finally` used to delete the key
+        # unconditionally while `_build_one` never acquired anything — so the
+        # 5-minute scheduled warmer reliably deleted the lock of an in-flight
+        # route-dispatched refresh, and the next reader past the TTL acquired the
+        # now-free lock and dispatched a SECOND rebuild alongside the running one.
+        # A single-flight primitive that admits a third builder is not one.
+        release_refresh_lock(rc, keys, token)
 
     elapsed = time.monotonic() - started
 
@@ -92,20 +110,37 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
     all four are warm must not be able to report success while one is cold.
     """
     from app.config.event_concept_warm_keys import WARM_CONCEPT_KEYS
+    from app.utils.event_concept_cache import acquire_refresh_lock, cache_keys, get_client
 
     targets = tuple(keys) if keys is not None else WARM_CONCEPT_KEYS
 
+    rc = get_client()
+
     results = []
     for key in targets:
-        results.append(await _build_one(key))
+        # ACQUIRE FIRST, and skip the key if we cannot. This loop is the producer
+        # that used to barge in: it never took the lock and then deleted whatever
+        # was there on the way out (#1678 finding 1). A key already being rebuilt
+        # by a route-dispatched refresh is a key that is being handled — the right
+        # move is to leave it alone, not to build it a second time in parallel.
+        token = acquire_refresh_lock(rc, cache_keys(key))
+        if token is None:
+            logger.info("warm_event_concepts: %s already being rebuilt, skipping", key)
+            results.append({"key": key, "ok": False, "reason": "locked", "seconds": 0.0})
+            continue
+        results.append(await _build_one(key, token=token))
 
     built = [r for r in results if r["ok"]]
     absent = [r for r in results if r["reason"] == "absent"]
+    locked = [r for r in results if r["reason"] == "locked"]
     errors = [r for r in results if r["reason"] in ("timeout", "error")]
 
-    # `absent` keys are counted as accounted-for, not as failures: the run did
-    # everything it could for them. Only real damage lands in `errors`.
-    completed = len(built) + len(absent)
+    # `absent` and `locked` are accounted-for, not failures: the run did everything
+    # it could for them — one genuinely resolves to nothing, the other is mid-build
+    # in another producer. Only real damage lands in `errors`. `locked` is reported
+    # as its own list rather than folded into a count, because a key that is locked
+    # on run after run is a wedged lock, and that must stay visible.
+    completed = len(built) + len(absent) + len(locked)
 
     summary = {
         "terminal": "complete" if not errors else "partial",
@@ -113,23 +148,32 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
         "total": len(targets),
         "built": len(built),
         "absent": [r["key"] for r in absent],
+        "locked": [r["key"] for r in locked],
         "errors": [{"key": r["key"], "reason": r["reason"]} for r in errors],
         "seconds": {r["key"]: r["seconds"] for r in results},
     }
     logger.info(
-        "warm_event_concepts: %d/%d accounted (%d built, %d absent, %d errors)",
+        "warm_event_concepts: %d/%d accounted (%d built, %d absent, %d locked, %d errors)",
         completed,
         len(targets),
         len(built),
         len(absent),
+        len(locked),
         len(errors),
     )
     return summary
 
 
-async def _refresh_event_concept(key: str) -> dict:
-    """Revalidate one key after the route served its mirror."""
-    result = await _build_one(key)
+async def _refresh_event_concept(key: str, token: str | None = None) -> dict:
+    """Revalidate one key after the route served its mirror.
+
+    The route acquired the refresh lock before dispatching us and hands the owner
+    token across in the message, because the acquire and the release live in
+    different processes here. `token` defaults to None so a message enqueued by
+    the pre-#1678 route still runs after deploy — it rebuilds and lets that old
+    lock lapse on its TTL rather than deleting a lock it cannot prove it owns.
+    """
+    result = await _build_one(key, token=token)
     return {
         "terminal": "complete" if result["ok"] or result["reason"] == "absent" else "failed",
         "completed": 1 if result["ok"] or result["reason"] == "absent" else 0,

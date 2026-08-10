@@ -52,6 +52,23 @@ class _FakeRedis:
         self.ttls.pop(k, None)
         return int(self.store.pop(k, None) is not None)
 
+    def eval(self, script, numkeys, *args):
+        """The one Lua this tier runs: delete KEYS[1] only if it equals ARGV[1].
+
+        The double implements the SEMANTICS so the guards can exercise who-releases-
+        what; real Redis provides the ATOMICITY. That split is deliberate — the
+        defect in #1678 was never a torn compare-and-delete, it was a caller that
+        released a lock it had never acquired, and that is a caller-contract bug
+        these tests can actually catch.
+        """
+        key, token = args[0], args[1]
+        expected = token.encode() if isinstance(token, str) else token
+        if self.store.get(key) == expected:
+            self.store.pop(key, None)
+            self.ttls.pop(key, None)
+            return 1
+        return 0
+
 
 class _StubAdapter:
     def __init__(self, envelope=None, *, raises=False):
@@ -124,7 +141,16 @@ async def test_the_mirror_serve_schedules_exactly_one_revalidation():
         "cold-build stampede Codex C224 found, moved to the background rather than fixed"
     )
     assert send.call_args.args[0] == "app.tasks.refresh_event_concept"
-    assert send.call_args.kwargs["args"] == [KEY]
+
+    # #1678 finding 1: the OWNER TOKEN travels with the dispatch. The acquire and
+    # the release happen in different processes, so a task that cannot name the
+    # token it is releasing is a task that releases whatever it finds.
+    dispatched_key, dispatched_token = send.call_args.kwargs["args"]
+    assert dispatched_key == KEY
+    assert dispatched_token == rc.store[KEYS.refresh_lock].decode(), (
+        "the dispatched token is not the one holding the lock, so the worker "
+        "cannot prove ownership and the release will silently no-op"
+    )
 
 
 @pytest.mark.asyncio
