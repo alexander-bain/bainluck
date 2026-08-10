@@ -83,6 +83,83 @@ rate holds, which is the thing to check next and the first check this lane has t
 roughly 41% of beats remain invisible, and consecutive banked readings may be separated by an
 unrecorded beat — **key the trend off the cursor's `generated_at`, never off beat counts.**
 
+> **CORRECTION (CAL-P031, 2026-08-10) — "invisible" is not "lost", and the paragraph above reads as
+> though it were.** `save_staged_cursor` is called **per unit**, inside the unit loop, immediately
+> after that unit's own commit (`precompute_calibration.py:2995`), and the caller treats a unit as
+> banked only when that durable write returns `True`. **A SIGKILLed beat therefore loses at most one
+> in-flight unit, never its banked ones.** The 21:15Z beat that wrote no cursor row banked *zero* —
+> it died before completing a single unit, i.e. before ever reaching the unit loop.
+>
+> So the remaining gap is one of **attribution** (where did a killed beat spend its 1,560 s?), not of
+> **destruction**. Both are worth fixing; they imply completely different work, and the trend-read
+> guidance above is unaffected and still correct.
+
+### 🛑 THE DIGEST THAT PROTECTS THIS CONVERGENCE HAS A HOLE, IN A FILE THE FREEZE DOES NOT COVER (CAL-P031, 2026-08-10)
+
+**Read this before touching `app/utils/resolution_authority.py`.** The build is now hours from a
+publish with 36 units banked, and there is a one-line edit in an unfrozen file that silently
+destroys it — or worse, silently publishes a wrong curve.
+
+`_main_input_fingerprint` is a **wholesale cursor invalidator**: CAL-P016 removed the *roster*
+digest from that role but deliberately kept the population version and the input fingerprint,
+because those "change what a unit MEANS rather than which markets are in it". So the digest is the
+single guarantee that a resumed generation's units were all computed against the same population.
+
+It is built from `inspect.getsource()` over four functions. Its own docstring already records that
+construction leaking twice, and states the rule: **"hashing a function's source covers that
+function, never what it calls."** It leaks a third time, and this one crosses a file boundary.
+
+`_calibration_population_ctes` interpolates `{CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}` into the
+population predicate at four sites (`:1865`, `:1932`, `:1957`, `:2125`). That value is imported from
+**`app/utils/resolution_authority.py`** — which **ruling 009 does not freeze.** `getsource` returns
+the literal brace-name, never the expanded value.
+
+Proven by measurement, not by reading:
+
+    digest BEFORE              e0048938f513e814c72cb35aa8732d65
+    digest AFTER value change  e0048938f513e814c72cb35aa8732d65
+    MOVED?                     False
+    emitted SQL changed?       True
+
+So editing the truth-eligibility list changes which outcomes the curve is built from, the cursor is
+still judged **RESUMABLE**, and units from two different populations merge into one published
+payload. That is `LATE_ARRIVAL_NOT_INVALIDATED` — the exact failure the digest exists to prevent —
+and gotcha #53's shape for the fourth time in this document.
+
+**Coverage is 3 inputs out of 43.** Only `CALIBRATION_POPULATION_VERSION`,
+`REPRESENTATIVE_TIE_AUTHORITY` and `COVERAGE_CENSUS_ENABLED` are hashed by value. The other 40
+module-level names the hashed closure reads are invisible to it, in two tiers:
+
+| tier | count | protected by |
+|---|---|---|
+| **cross-module** (`resolution_authority`, `calibration_coverage_bridge`) | **5** | **nothing — live today** |
+| same-module (`precompute_calibration.py`) | 38 | ruling 009's freeze **only** |
+
+**The second row is the part that deserves a ruling.** Those 38 include real population predicates —
+`KALSHI_LIQUIDITY_EXISTS`, `POLY_PLACEHOLDER_EXCLUDE`, `WEATHER_WIDE_SPREAD_EXCLUDE`,
+`MEX_NORMALIZE_THRESHOLD`, `EXCLUSIVITY_PROVED_RELATIONS`, `DRAW_CAPABLE_CATEGORIES` — and they are
+safe right now **only as a side effect** of a freeze that was imposed for throughput reasons and is
+designed to lift. Ruling 009 is, accidentally, load-bearing for correctness. Nobody decided that.
+
+**What CAL-P031 shipped:** `app/utils/calibration_fingerprint_coverage.py` (pure, AST-only, reads the
+frozen module as text and never imports it) plus a fail-on-new **ratchet** in
+`tests/test_calibration_fingerprint_coverage.py`, in the same idiom as `typecheck-baseline.json`
+(gotcha #10) and binding in **both** directions — a new uncovered value fails, and so does silently
+dropping one from the allowlist without covering it. A characterization test pins the hole as it
+stands today, so the day the fix lands it goes red and forces the docs to move with it.
+
+**What CAL-P031 deliberately did NOT ship, and why the obvious instinct is wrong here:**
+
+> The fix is one line, in the idiom `_main_input_fingerprint` already uses for
+> `COVERAGE_CENSUS_ENABLED`. **Do not apply it yet.** Two independent blockers:
+> 1. ruling 009 freezes that file, and the lift condition is not met;
+> 2. **applying it wipes every banked unit** — moving the digest is *by design* a wholesale
+>    invalidation, so doing it mid-convergence destroys the exact progress it protects and restarts
+>    a multi-hour walk.
+>
+> **Apply immediately AFTER a successful publish, never during a convergence.** Full note in
+> `FIX_SEQUENCING_NOTE` in the util.
+
 ### ✅ UPDATE 2026-08-10 (CAL-P030) — CAL-P028's fix landed, and the divergence STOPPED
 
 CAL-P028 merged (`9bdbfe36`), deployed at 20:04 UTC, and its first beat ran at 20:15 UTC. Measured
