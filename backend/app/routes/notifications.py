@@ -23,6 +23,11 @@ class DeviceTokenRegistration(BaseModel):
     platform: str  # "ios" or "macos"
     session_id: Optional[str] = None
     user_id: Optional[str] = None
+    # "apns" (raw APNS hex — UNSENDABLE via FCM) or "fcm" (Firebase registration
+    # token — the only kind the digest can actually send to). Optional and
+    # defaulted so app builds shipped before Queue 311 keep registering exactly
+    # as they do today, and land as `apns`, which is what they are.
+    token_kind: Optional[str] = None
 
 
 class TestNotificationRequest(BaseModel):
@@ -64,9 +69,15 @@ async def register_device_token(
         except (ValueError, TypeError):
             pass
 
+    # Unknown/absent kinds resolve to "apns" — the conservative reading, since
+    # an APNS row is merely excluded from the broadcast while a wrongly-labelled
+    # "fcm" row would be handed to a sender that cannot use it.
+    token_kind = body.token_kind if body.token_kind in ("apns", "fcm") else "apns"
+
     logger.info(
-        "Device token registration: platform=%s session=%s user=%s token=%s...%s",
+        "Device token registration: platform=%s kind=%s session=%s user=%s token=%s...%s",
         body.platform,
+        token_kind,
         session_id,
         body.user_id,
         body.device_token[:8] if len(body.device_token) >= 8 else body.device_token,
@@ -80,6 +91,7 @@ async def register_device_token(
         user_id=user_id_int,
         session_id=session_id,
         is_active=True,
+        token_kind=token_kind,
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_device_tokens_token",
@@ -88,13 +100,14 @@ async def register_device_token(
             "user_id": user_id_int,
             "session_id": session_id,
             "is_active": True,
+            "token_kind": token_kind,
             "updated_at": func.now(),
         },
     )
     await db.execute(stmt)
     await db.commit()
 
-    return {"status": "ok"}
+    return {"status": "ok", "token_kind": token_kind}
 
 
 @router.post("/admin/send-test")
@@ -254,6 +267,10 @@ async def list_device_tokens(
             {
                 "id": t.id,
                 "platform": t.platform,
+                # Queue 311 A5 step 2 reads this to confirm an `fcm` row exists
+                # before the targeted send. Without it the listing cannot tell a
+                # sendable row from an unsendable one.
+                "token_kind": t.token_kind,
                 "user_id": t.user_id,
                 "session_id": t.session_id,
                 "token_prefix": t.device_token[:8],

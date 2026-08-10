@@ -34,6 +34,54 @@ logger = logging.getLogger(__name__)
 # markets by their cached interestingness. A once-daily bounded sort.
 CANDIDATE_POOL_SIZE = 400
 
+# The only token kind FCM can actually send to (Queue 311 A1 / #1159).
+SENDABLE_TOKEN_KIND = "fcm"
+
+
+def token_kind_of(device_token_row) -> str:
+    """The row's token kind, with absence resolved to ``"apns"``.
+
+    Absence is not ambiguity here: every row written before Queue 311 was a raw
+    APNS hex, so an unset kind has exactly one correct reading. Resolving it to
+    the UNSENDABLE value is also the safe direction — mislabelling an APNS row
+    as ``fcm`` hands garbage to the sender, while the reverse merely skips it.
+
+    Read via ``__dict__`` rather than ``getattr``: on a partially-loaded ORM row
+    ``getattr`` would trigger a lazy load, which raises in an async context
+    (the ORM-lazy-load trap this codebase has hit before).
+    """
+    return device_token_row.__dict__.get("token_kind") or "apns"
+
+
+def is_sendable_via_fcm(device_token_row) -> bool:
+    """Whether this row holds a token ``messaging.send()`` can accept."""
+    return token_kind_of(device_token_row) == SENDABLE_TOKEN_KIND
+
+
+def digest_recipients(rows) -> list[tuple[int | None, str]]:
+    """Resolve ``(device_row_id, token)`` recipients from ``(DeviceToken, User)`` rows.
+
+    Two independent gates, both required:
+
+    1. **Sendability** — the row must hold an FCM registration token. The
+       broadcast query already filters this server-side; repeating it here is
+       deliberate defense in depth, because the failure mode is not a missing
+       notification. ``_send_fcm_message`` raises ``_InvalidTokenError`` on an
+       APNS hex, and the caller's handler responds by setting ``is_active =
+       False`` — so a broadcast that leaked APNS rows would walk the table
+       deactivating real devices. That is destructive enough to be worth
+       checking twice, and this half is the half a unit test can reach.
+    2. **Opt-in** — the device's user must have explicitly opted in.
+    """
+    out: list[tuple[int | None, str]] = []
+    for device_token, user in rows:
+        if not is_sendable_via_fcm(device_token):
+            continue
+        prefs = user.push_preferences if (user and isinstance(user.push_preferences, dict)) else {}
+        if prefs.get("morning_digest", False) is True:
+            out.append((device_token.id, device_token.device_token))
+    return out
+
 
 async def _gather_digest_candidates(session, redis, *, pool_size=CANDIDATE_POOL_SIZE) -> list[DigestCandidate]:
     """Cheap read: top-volume feed-eligible markets + their cached interestingness."""
@@ -186,16 +234,20 @@ async def _run_morning_digest(
         if target_token:
             recipient_tokens = [(None, target_token)]  # (device_row_id, token)
         else:
+            # `token_kind == "fcm"` is load-bearing, not hygiene (Queue 311 A1 /
+            # #1159). Every row predating the FCM client is a raw APNS hex that
+            # `_send_fcm_message` rejects with `_InvalidTokenError` — and the
+            # handler below deactivates the row on that error. So an unfiltered
+            # broadcast would not merely be noisy: it would walk the table
+            # switching off real devices. Broadcast must never hand an APNS hex
+            # to FCM.
             rows = await db.execute(
                 select(DeviceToken, User)
                 .outerjoin(User, DeviceToken.user_id == User.id)
                 .where(DeviceToken.is_active.is_(True))
+                .where(DeviceToken.token_kind == SENDABLE_TOKEN_KIND)
             )
-            recipient_tokens = []
-            for device_token, user in rows.all():
-                prefs = user.push_preferences if (user and isinstance(user.push_preferences, dict)) else {}
-                if prefs.get("morning_digest", False) is True:
-                    recipient_tokens.append((device_token.id, device_token.device_token))
+            recipient_tokens = digest_recipients(rows.all())
 
         sent, failed = 0, 0
         from app.tasks.push_notifications import _InvalidTokenError, _send_fcm_message

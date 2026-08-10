@@ -52,7 +52,10 @@ def test_register_device_token_upserts_with_body_session_and_numeric_user():
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    # The response echoes the kind the server actually RECORDED (Queue 311 A1).
+    # A client that sends "fcm" and is silently stored as "apns" would go
+    # undiagnosed for exactly as long as #1159 already has.
+    assert response.json() == {"status": "ok", "token_kind": "apns"}
     db.execute.assert_awaited_once()
     db.commit.assert_awaited_once()
 
@@ -62,10 +65,17 @@ def test_register_device_token_upserts_with_body_session_and_numeric_user():
     assert params["session_id"] == "body-session"
     assert params["user_id"] == 42
     assert params["is_active"] is True
-    assert params["param_1"] == "ios"
-    assert params["param_2"] == 42
-    assert params["param_3"] == "body-session"
-    assert params["param_4"] is True
+    # An app build that predates Queue 311 sends no kind, and lands as `apns` —
+    # which is the truth about the token it captured.
+    assert params["token_kind"] == "apns"
+    # The ON CONFLICT SET clause, positionally. `param_N` follows TABLE COLUMN
+    # order, so inserting a column into the model renumbers these — as adding
+    # `token_kind` just did.
+    assert params["param_1"] == "ios"          # platform
+    assert params["param_2"] == "apns"         # token_kind
+    assert params["param_3"] == 42             # user_id
+    assert params["param_4"] == "body-session"  # session_id
+    assert params["param_5"] is True           # is_active
 
 
 def test_register_device_token_falls_back_to_header_and_ignores_bad_user_id():
@@ -86,7 +96,53 @@ def test_register_device_token_falls_back_to_header_and_ignores_bad_user_id():
     params = _compiled_params(db.execute.await_args.args[0])
     assert params["session_id"] == "header-session"
     assert params["user_id"] is None
-    assert params["param_2"] is None
+    assert params["param_3"] is None  # user_id in the SET clause
+
+
+def test_register_device_token_records_an_explicit_fcm_kind():
+    """The A2 client's second registration must land as `fcm`, not `apns`.
+
+    This is the row the digest broadcast selects on, so if the explicit kind
+    were dropped the client fix would ship and change nothing.
+    """
+    db = _CaptureDB()
+
+    response = _client_with_db(db).post(
+        "/api/notifications/register",
+        json={
+            "device_token": "fcm-registration-token",
+            "platform": "ios",
+            "token_kind": "fcm",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "token_kind": "fcm"}
+    params = _compiled_params(db.execute.await_args.args[0])
+    assert params["token_kind"] == "fcm"
+    assert params["param_2"] == "fcm"  # and on conflict it UPDATES to fcm
+
+
+def test_register_device_token_rejects_an_unrecognized_kind_to_apns():
+    """An unknown kind resolves to the unsendable reading, not the sendable one.
+
+    Wrong in this direction merely skips a device; wrong in the other hands a
+    token FCM cannot use to a sender that deactivates the row on rejection.
+    """
+    db = _CaptureDB()
+
+    response = _client_with_db(db).post(
+        "/api/notifications/register",
+        json={
+            "device_token": "whatever",
+            "platform": "ios",
+            "token_kind": "carrier-pigeon",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "token_kind": "apns"}
+    assert _compiled_params(db.execute.await_args.args[0])["token_kind"] == "apns"
 
 
 def test_list_device_tokens_rejects_invalid_admin_secret(monkeypatch):
@@ -130,6 +186,7 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
             SimpleNamespace(
                 id=7,
                 platform="ios",
+                token_kind="fcm",
                 user_id=123,
                 session_id="session-123",
                 device_token="abcdef1234567890",
@@ -139,6 +196,7 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
             SimpleNamespace(
                 id=8,
                 platform="macos",
+                token_kind="apns",
                 user_id=None,
                 session_id=None,
                 device_token="xyz987",
@@ -158,6 +216,7 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
             {
                 "id": 7,
                 "platform": "ios",
+                "token_kind": "fcm",
                 "user_id": 123,
                 "session_id": "session-123",
                 "token_prefix": "abcdef12",
@@ -168,6 +227,7 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
             {
                 "id": 8,
                 "platform": "macos",
+                "token_kind": "apns",
                 "user_id": None,
                 "session_id": None,
                 "token_prefix": "xyz987",

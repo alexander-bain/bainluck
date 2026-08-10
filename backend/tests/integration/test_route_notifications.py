@@ -20,10 +20,12 @@ def _make_device_token(
     user_id: int | None = None,
     session_id: str | None = "sess-001",
     device_token: str = "abc123def456ghi789jkl012",
+    token_kind: str = "fcm",
 ):
     tok = MagicMock()
     tok.id = id
     tok.platform = platform
+    tok.token_kind = token_kind
     tok.user_id = user_id
     tok.session_id = session_id
     tok.device_token = device_token
@@ -61,7 +63,9 @@ class TestNotificationRegister:
             },
         )
         body = resp.json()
-        assert body == {"status": "ok"}
+        # The echoed kind is the contract (Queue 311 A1): a build that sends no
+        # kind is recording an APNS token, and the response says so.
+        assert body == {"status": "ok", "token_kind": "apns"}
 
     async def test_accepts_user_id(self, client, mock_db):
         resp = await client.post(
@@ -115,7 +119,7 @@ class TestNotificationRegister:
             },
         )
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert resp.json() == {"status": "ok", "token_kind": "apns"}
 
     async def test_empty_body_returns_403(self, client):
         """Empty JSON body should be rejected."""
@@ -177,10 +181,13 @@ class TestNotificationAdminTokens:
         assert len(body["tokens"]) == 1
 
         tok = body["tokens"][0]
-        expected_keys = {"id", "platform", "user_id", "session_id",
+        expected_keys = {"id", "platform", "token_kind", "user_id", "session_id",
                          "token_prefix", "token_suffix", "created_at", "updated_at"}
         assert set(tok.keys()) == expected_keys
         assert tok["platform"] == "ios"
+        # A5 step 2 reads this field to confirm a sendable row exists before the
+        # targeted send; without it the listing cannot tell apns from fcm.
+        assert tok["token_kind"] == "fcm"
         assert tok["token_prefix"] == "abc123de"  # first 8 chars
         assert tok["token_suffix"] == "l012"  # last 4 chars
 

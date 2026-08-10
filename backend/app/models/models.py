@@ -1593,6 +1593,24 @@ class DeviceToken(Base):
     platform: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # "ios" or "macos"
+    # Which KIND of token this row holds (Queue 311 / #1159). "apns" is a raw
+    # APNS hex token, which FCM's messaging.send() REJECTS; "fcm" is a Firebase
+    # registration token, the only kind that can actually be sent to. The server
+    # default makes every pre-existing row self-describe correctly as the
+    # unsendable APNS token it is — no backfill script needed.
+    #
+    # Deliberately its own column rather than an overloaded platform="ios_fcm":
+    # that fits in String(10) and would work, which is what makes it tempting,
+    # but it destroys `platform` as a platform axis (gotcha #40's class of "one
+    # column means two things").
+    #
+    # NOTE: one device legitimately produces TWO rows here — an apns row and an
+    # fcm row — because they are two different tokens and the unique constraint
+    # is on the token. Anything counting DEVICES must count distinct
+    # (user_id, platform), never rows.
+    token_kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="apns", default="apns"
+    )  # "apns" or "fcm"
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id"), index=True
     )
