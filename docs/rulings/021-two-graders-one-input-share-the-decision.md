@@ -58,3 +58,38 @@ to the backend's own metrics — was silently dropped from its count. Hence clau
 A rail that fails falsely on its daily sweep is worse than a rail nobody reads: it teaches its
 readers that red means nothing. `deploy-smoke` was red on production at three commits on
 2026-08-10, including the 07:40 UTC scheduled run, against a completely healthy page.
+
+## Implementation note — clause 1 holds for STRICT allowances only, and why
+
+Recorded here because a future reader must not take "expiry moves to the run" as unconditional.
+
+While this was being built, **INT-034 landed an independent fix for the same red** (`a4275e07`),
+introducing a measured `{ match, intermittent: true, issue }` allowance form. Its measurement is
+the reason clause 1 could not be applied literally — all at frontend SHA `f6a40849`,
+pack `deploy-smoke`, against production:
+
+| run | `discover.route` desktop | mobile | `discover.landing` |
+|---|---|---|---|
+| 31428469455 | 1 abort | 0 | 0 both viewports |
+| 31431570162 | 1 abort | 0 | 0 both viewports |
+| 31431775245 | **0 aborts (run PASSED)** | 0 | 0 both viewports |
+
+**One run in three carried no abort ANYWHERE.** A mandatory run-level fire would have turned
+that clean run red — so run-level expiry alone does not fix a racy phenomenon. It fixes a
+*deterministic* one that happens to land in a different journey of the same run, which is a real
+but different problem.
+
+So the shipped shape is:
+
+- **Strict allowances** — expiry moves to the RUN, exactly as ruled. Firing in one journey is
+  enough; firing nowhere is red.
+- **Intermittent allowances** — exempt from expiry, as INT-034 established, and required to
+  carry an `issue` so they stay attributable and retirable.
+- **Clauses 2 and 3 applied in full**, and both were genuinely missing: master still defined the
+  allowance decision locally in `journey.js`, and its volume grader still had **no feed guard at
+  all**, so an aborted `/api/feed` was silently dropped from that count.
+
+The general lesson survives intact, and is really the point of this ruling: **the scope at which
+a fact is stable is the scope at which it should be graded.** For a deterministic abort that is
+the run; for a racy one, no scope makes "it must fire" true, and the honest move is to say so in
+the declaration rather than to pick a threshold.
