@@ -101,6 +101,7 @@ __all__ = [
     "new_staged_cursor",
     "plan_units",
     "retain_planned_units",
+    "roster_drift",
     "unit_key",
 ]
 
@@ -389,24 +390,60 @@ class UnitChunk:
     #: globally, scoped to the unit. Defaulted so a hand-built chunk in a test
     #: stays valid; the planner always fills it.
     members: tuple[str, ...] = ()
+    #: The partition size this chunk was cut with. Part of :attr:`key` so a
+    #: cursor banked under one bucket count can never be resumed under another —
+    #: the one cross-partition confusion the old membership digest ruled out for
+    #: free and a positional key would reintroduce silently.
+    buckets: int = 0
 
     @property
     def key(self) -> str:
-        """Short stable digest of everything this chunk is ABOUT.
+        """Stable identity of this unit's SLOT in the partition.
 
-        A cursor entry names a chunk by this key rather than by index, so a
-        banked unit can be VALIDATED against the chunk it claims: change what
-        the unit contains and the key moves, and a stale unit simply stops
-        matching any planned chunk instead of being silently mapped onto
-        whatever now sits at index 3.
+        ``(buckets, index)`` and nothing else. A ``vm_id``'s bucket is
+        :func:`bucket_of` that ``vm_id`` alone, so slot ``i`` of a 128-way
+        partition means the same thing in every beat, in every dyno, and after
+        every deploy — which is precisely what lets a banked unit survive to the
+        next beat.
 
-        CAL-P016 widened this from the ``vm_id`` set to the unit's full roster
-        MEMBERSHIP. Digesting only ``vm_id``s left the inverse hole to the
-        boundary-shift one: a market resolving INTO an existing ``vm_id`` left
-        the key unchanged while making the banked rows stale, so a unit computed
-        without that market would have been resumed as though it were current.
-        ``vm_ids`` and ``market_ids`` stay in the digest so a chunk constructed
-        without ``members`` is still distinguished rather than colliding.
+        **CAL-P028 narrowed this from the unit's full roster MEMBERSHIP, and
+        that is the convergence fix.** CAL-P016 had widened it to membership to
+        close a real hole (a market resolving INTO an existing ``vm_id`` left a
+        ``vm_id``-only key unchanged while making the banked rows stale). The
+        hole was real; the remedy was fatal. Measured on 2026-08-10, one
+        fully productive beat:
+
+        * 14:15:33Z — 20 units banked
+        * 14:17:19Z — :func:`retain_planned_units` dropped **16 of 20**
+        * 14:33:48Z — 15 fresh units banked at 65.9 s each, ending at **19**
+
+        **Net across a beat that completed 15 units: minus one.** ~20 markets
+        enter the eligible roster every hour, each re-keying its whole unit, so
+        the beat destroyed 16 units to build 15. At 128 planned units and −1 per
+        beat the build cannot finish, and ``/api/calibration`` served a payload
+        8.44 days stale with 181 consecutive failed beats behind it.
+
+        Staleness is not ignored, it is DEMOTED from an invalidator to a
+        measurement: :attr:`member_digest` still digests the full membership,
+        the cursor stores it per banked unit, and :func:`roster_drift` counts
+        how many banked units the roster has moved under. A unit whose
+        membership changed after it ran contributes rows computed without that
+        market — bounded at roughly 20 arrivals/hour against a ~110K roster
+        (~0.1% for a six-beat build) and picked up whole by the next
+        generation. Late inclusion, not a wrong number, and it is published
+        rather than assumed (Alex ruling, 2026-08-10).
+        """
+        return input_fingerprint(UNIT_KEY_VM_ID, f"b={self.buckets}", f"i={self.index}")[:16]
+
+    @property
+    def member_digest(self) -> str:
+        """Digest of this unit's full roster membership.
+
+        What :attr:`key` used to be. It is still computed and still stored per
+        banked unit — it simply no longer decides whether work is thrown away.
+        Its job now is to answer "how much has the roster moved under the units
+        we are holding", which is the honest version of the question CAL-P016
+        was trying to answer by discarding them.
         """
         parts = (
             [f"vm:{vm}" for vm in self.vm_ids]
@@ -530,6 +567,7 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
                 vm_ids=tuple(vm_ids),
                 market_ids=tuple(sorted(market_ids)),
                 members=tuple(sorted(members)),
+                buckets=buckets,
             )
         )
     return tuple(chunks)
@@ -741,6 +779,18 @@ class StagedFuturesCursor:
     committed_units: tuple[str, ...] = ()
     unit_results: dict[str, Any] = field(default_factory=dict)
     terminal: str = TERMINAL_PARTIAL
+    #: unit key -> the :attr:`UnitChunk.member_digest` that unit was BANKED
+    #: against (CAL-P028). Compared against the current plan by
+    #: :func:`roster_drift` to count how many held units the roster has moved
+    #: under. Empty on a cursor written before CAL-P028, which reads as
+    #: "unknown", never as "no drift".
+    unit_digests: dict[str, str] = field(default_factory=dict)
+    #: Units the roster moved under, measured at the START of the beat that
+    #: wrote this cursor, BEFORE the digests were re-stamped. Carried on the
+    #: cursor rather than only in the ledger because the run that would report
+    #: it is exactly the run most likely to die before reporting anything
+    #: (gotcha #53) — 181 consecutive beats did.
+    roster_drift_units: int = 0
 
     def has(self, key: Any) -> bool:
         name = unit_key(key)
@@ -767,6 +817,8 @@ class StagedFuturesCursor:
             "committed_units": list(self.committed_units),
             "unit_results": self.unit_results,
             "terminal": self.terminal,
+            "unit_digests": dict(self.unit_digests),
+            "roster_drift_units": self.roster_drift_units,
         }
 
 
@@ -944,6 +996,12 @@ def decode_staged_cursor_detailed(
         for name in committed
         if isinstance(name, str) and isinstance(results.get(name), (list, tuple))
     )
+    stored_digests = raw.get("unit_digests")
+    if not isinstance(stored_digests, dict):
+        # Absent (a pre-CAL-P028 cursor) or malformed. Both mean "we cannot say
+        # what these units were banked against", which is unknown drift — the
+        # empty mapping makes roster_drift report 0 measured, never 0 actual.
+        stored_digests = {}
     return (
         StagedFuturesCursor(
             population_version=expected_population_version,
@@ -955,6 +1013,15 @@ def decode_staged_cursor_detailed(
             committed_units=resumable,
             unit_results={name: list(results[name]) for name in resumable},
             terminal=str(raw.get("terminal") or TERMINAL_PARTIAL),
+            # Only for units we are actually resuming. A digest for a unit whose
+            # rows did not survive the resumability filter describes work this
+            # cursor is not carrying, and keeping it would let a later drift
+            # count include units nobody is holding.
+            unit_digests={
+                name: str(digest)
+                for name, digest in (stored_digests or {}).items()
+                if name in set(resumable) and isinstance(digest, str)
+            },
         ),
         RESUME if resumable else FRESH,
         REASON_RESUMABLE if resumable else REASON_NOTHING_BANKED,
@@ -973,26 +1040,74 @@ def retain_planned_units(
     actually cost, which is the number that says whether the build is
     converging.
 
-    A unit is kept iff its key is in the plan. Because a chunk key digests that
-    chunk's full roster membership, "in the plan" means *this exact set of
-    questions, markets, sources and grouping flags* — so a kept unit's rows are
-    still a census of precisely what the new plan asks that unit for. A unit
-    whose contents changed re-keys, matches nothing, and is recomputed.
+    A unit is kept iff its key is in the plan. **CAL-P028 made the key the unit's
+    SLOT rather than its membership**, so in normal operation nothing is dropped:
+    slot ``i`` of a 128-way partition is still slot ``i`` after a market arrives.
+    What remains droppable is a unit that is genuinely not in the plan — a
+    changed bucket count, or a slot that emptied out — and those must still go,
+    because resuming them would merge rows for questions the plan no longer asks
+    about.
 
-    Idempotent, and a no-op in the common case where nothing drifted.
+    It also STAMPS each kept unit with the digest of what the plan now says that
+    unit contains, having first counted how many disagreed with what was banked
+    (:func:`roster_drift`). Order matters and is the whole point: measure, then
+    re-stamp. Re-stamping first would make every beat report zero drift forever,
+    which is the comfortable answer and a false one.
+
+    Idempotent in the sense that matters — running it twice against the same
+    plan drops the same units and lands on the same digests. The second run
+    reports zero drift, correctly: by then nothing is banked that the plan
+    disagrees with.
     """
-    planned = {unit_key(chunk) for chunk in chunks}
+    chunk_list = list(chunks)
+    planned = {unit_key(chunk) for chunk in chunk_list}
+    drift = roster_drift(cursor, chunk_list)
+    digests = {
+        unit_key(chunk): chunk.member_digest
+        for chunk in chunk_list
+        if isinstance(chunk, UnitChunk)
+    }
     kept = tuple(name for name in cursor.committed_units if name in planned)
     dropped = tuple(name for name in cursor.committed_units if name not in planned)
-    if not dropped:
-        return cursor, ()
     return (
         replace(
             cursor,
             committed_units=kept,
             unit_results={name: cursor.unit_results[name] for name in kept},
+            unit_digests={name: digests[name] for name in kept if name in digests},
+            roster_drift_units=drift,
         ),
         dropped,
+    )
+
+
+def roster_drift(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> int:
+    """How many BANKED units the roster has moved under since they were banked.
+
+    The number CAL-P016 was reaching for when it threw the units away instead of
+    counting them. A unit drifts when the plan's current membership digest for
+    its slot differs from the digest stored when the unit ran: some market
+    entered or left that slot afterwards, so the banked rows are a census of a
+    slightly older population.
+
+    Counts only units that are BOTH banked and carry a stored digest. A unit
+    with no stored digest (a pre-CAL-P028 cursor) is not counted, because
+    "we cannot tell" must not be published as "it did not drift" — that is the
+    empty-200 mistake of gotcha #53 one table over. A unit the plan no longer
+    contains is likewise not counted here: it is not drift, it is a drop, and
+    :func:`retain_planned_units` reports it as one.
+    """
+    current = {
+        unit_key(chunk): chunk.member_digest
+        for chunk in chunks
+        if isinstance(chunk, UnitChunk)
+    }
+    return sum(
+        1
+        for name in cursor.committed_units
+        if name in cursor.unit_digests
+        and name in current
+        and current[name] != cursor.unit_digests[name]
     )
 
 

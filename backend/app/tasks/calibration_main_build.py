@@ -977,6 +977,48 @@ async def save_staged_cursor(cursor, *, terminal: str) -> bool:
     return ok
 
 
+async def _record_staged_convergence(runner: PhaseRunner) -> None:
+    """Record where the staged build actually IS, on EVERY terminal.
+
+    CAL-P028. ``_run_staged_futures`` already records ``staged:units_done`` /
+    ``staged:beats_to_publish``, and they are excellent — but they are recorded
+    at the END of the unit loop, which is code a failing beat never reaches. The
+    futures phase has been cancelled at its deadline on essentially every beat
+    since 2026-08-02, so **the progress stages were absent from 181 consecutive
+    ledgers**, and "how many units are banked" had to be reconstructed by hand
+    out of a durable snapshot by someone who thought to look. Twice.
+
+    An absent stage reads as "fine" (gotcha #53). A build that is 20 units into
+    128 and going backwards should say so on the beat where it happens, in the
+    ledger an operator already reads, whether that beat succeeded, timed out, or
+    was cancelled.
+
+    Read-only and best-effort by construction: this runs on the failure path, so
+    it must never be the reason a ledger write is lost. A read that throws
+    records nothing and says nothing — the surrounding ledger still persists.
+    """
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
+
+    try:
+        read = await read_snapshot_standalone(
+            STAGED_FUTURES_IDENTITY, expected_version=STAGED_FUTURES_SCHEMA
+        )
+        payload = (read or {}).get("payload")
+        if not isinstance(payload, dict):
+            return
+        committed = payload.get("committed_units")
+        if not isinstance(committed, list):
+            return
+        runner.ledger.record_stage("staged:units_banked", len(committed))
+        runner.ledger.record_stage("staged:units_partition", STAGED_FUTURES_BUCKETS)
+        drift = payload.get("roster_drift_units")
+        if isinstance(drift, int) and not isinstance(drift, bool) and drift >= 0:
+            runner.ledger.record_stage("staged:units_drifted", drift)
+    except Exception as exc:  # noqa: BLE001 — an unreadable cursor is not a lost ledger
+        logger.warning("calibration staged convergence read failed: %s", exc)
+
+
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:
     """Persist the phase ledger + rolling history. Returns ``ok`` or ``error``.
 
@@ -987,6 +1029,8 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
+
+    await _record_staged_convergence(runner)
 
     payload = runner.ledger.as_payload()
     if extra:

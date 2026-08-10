@@ -27,6 +27,72 @@ so no cycle can finish and then discover its evidence was unobtainable.
 4 are built** (CAL-P025) and wait only on being merged and photographed. **Item 1's rail is built**
 (CAL-P027) and item **3's cricket half is diagnosed**.
 
+---
+
+## ⛔ THE SCOREBOARD ABOVE IS NOT THE BINDING CONSTRAINT — measured 2026-08-10 (CAL-P028)
+
+Five of the seven items are blocked on "the publish", and every cycle since 2026-08-02 has recorded
+that as *waiting*. **It was not waiting. It was diverging**, and this is the first cycle that
+measured it rather than projecting it.
+
+One fully productive beat of `calibration:main`, captured end to end at a 2-minute sample interval:
+
+| time (UTC) | committed units | event |
+|---|---|---|
+| 14:15:33 | 20 | beat starts |
+| 14:17:19 | **4** | `retain_planned_units` drops **16 of 20** |
+| 14:19 → 14:33 | 6→8→10→12→14→16→18→**19** | 15 units banked, 989 s, **65.9 s/unit** |
+
+**Net across a beat that completed 15 units: 20 → 19. Minus one.** At 128 planned units the build
+cannot finish, and no amount of waiting changes that.
+
+Supporting state, same window:
+
+- `generated_at` = `2026-08-02T03:23:54Z` — **8.44 d stale**, 7th consecutive rising reading.
+- **181 consecutive failures**, 0 successes/24h, 9 starts, 4 hard kills, `health: critical`.
+- The build's own planner reports `plan_status = **infeasible**`.
+- `futures` phase floors, last 10 beats: `[448, 1352, 1373, 1362, 921, 1369, 1368, 1375, 1377, 1363]`
+  s against a **1,380 s** deadline — every beat burns its whole window and is cancelled.
+- **CAL-P024's `COVERAGE_CENSUS_ENABLED = False` had been live ~8.5 h and changed none of it.** The
+  census was a real 10x cost and was NOT the binding constraint.
+
+### The two corrections this forces on the lane's model
+
+1. **Ruling 009's lift condition is unobservable by construction.** It asks for "~13 consecutive
+   clean beats". Every staged beat ends `failed` — the unit loop starts a unit it cannot finish in
+   the remaining window and dies on a statement timeout, or is SIGKILLed. There has been no clean
+   beat since 2026-08-02 and there cannot be one under that loop. A freeze whose lift condition
+   cannot occur is a freeze without an exit.
+2. **The bucket count is not the dial the constant's own docstring says it is.** That docstring is
+   right that convergence needs `completed/beat > invalidated/beat`, and right that it had never
+   been measured. But per-unit fixed overhead is ~52 s (128 units ≈ 8,013 s against ~1,320 s
+   unchunked), so completions cap near 26/beat while churn destroys ~16-19/beat. The arithmetic
+   optimum near B≈170 still needs ~55 beats. **Raising it does not rescue the build.**
+
+### What CAL-P028 changed, under an Alex ruling taken this window
+
+Unit identity is now the **slot** (`buckets`, `index`) rather than the unit's full roster
+membership, in `app/utils/calibration_staged_futures.py` — *not* the ruling-009-frozen file. Units
+stop being destroyed by arrivals; the build should converge in ~6-7 beats instead of never.
+
+Staleness is **demoted from an invalidator to a measurement**, not discarded: `member_digest` is
+still computed, stored per banked unit, and compared by the new pure `roster_drift`, which counts
+how many held units the roster has moved under. Bound: ~20 arrivals/hour against a ~110K roster is
+~0.1% for a six-beat build, and those markets are picked up whole by the next generation. **Late
+inclusion, not a wrong number — and published rather than assumed.**
+
+And the reason this took three cycles to find is itself fixed: `staged:units_done` and
+`staged:beats_to_publish` are recorded at the END of the unit loop, which a dying beat never
+reaches, so they were **absent from 181 consecutive ledgers** and an absent stage reads as "fine"
+(gotcha #53). `_record_staged_convergence` now writes `staged:units_banked`,
+`staged:units_partition` and `staged:units_drifted` on **every** terminal, read-only and
+best-effort, from the non-frozen build module.
+
+**Still owed, and pre-declared rather than discovered:** this cycle cannot show the build
+publishing. The fix runs in the heavy dyno, so its first real beat is post-merge — the CAL-P018
+shape. The verification is one sampled beat showing `committed_units` climbing past 20 without a
+drop, then convergence to 128.
+
 **Nothing on this exam is now unblocked and unstarted.** Every remaining item waits on the publish
 converging (1, 3, 7), on a merge plus a capture (2, 4), on elapsed time (7), or on another lane
 (6's sentinel half, #1548). That is a different state from every previous cycle, and it means the

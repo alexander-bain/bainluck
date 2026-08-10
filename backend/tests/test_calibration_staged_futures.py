@@ -215,32 +215,51 @@ def test_an_unplaceable_roster_row_is_refused_not_skipped(row):
 
 
 def test_a_chunk_key_is_short_and_reproducible():
-    chunk = UnitChunk(index=0, vm_ids=("e:1", "e:2"), market_ids=(1, 2))
+    chunk = UnitChunk(index=0, vm_ids=("e:1", "e:2"), market_ids=(1, 2), buckets=16)
     assert len(chunk.key) == 16
-    # Independent of the unit's position in the plan...
-    assert chunk.key == UnitChunk(index=9, vm_ids=("e:1", "e:2"), market_ids=(1, 2)).key
+    assert chunk.key == UnitChunk(index=0, vm_ids=(), market_ids=(), buckets=16).key
     assert unit_key(chunk) == chunk.key
     assert unit_key("abc") == "abc"
 
 
-def test_a_chunk_key_moves_when_the_units_contents_move():
-    """CAL-P016. The key used to digest ``vm_ids`` ALONE, which left the exact
-    hole per-unit resumption cannot tolerate: a market resolving INTO an existing
-    question left the key unchanged, so a unit computed WITHOUT that market would
-    have been resumed as though it were current. Membership is in the digest now.
+def test_a_chunk_key_is_its_slot_and_survives_the_units_contents_moving():
+    """REVERSED BY CAL-P028, deliberately — this used to assert the opposite.
+
+    CAL-P016 put the unit's full roster MEMBERSHIP in the key so that a market
+    resolving into a question could not be silently resumed over. The hole was
+    real. The remedy was fatal, and production measured the cost on 2026-08-10:
+    a beat that completed 15 units began by dropping 16, so the cursor went
+    20 -> 19 across a fully productive beat and the 128-unit build could never
+    finish. ``/api/calibration`` was 8.44 days stale behind 181 failed beats.
+
+    So the key is now the SLOT, and staleness is measured instead of obeyed —
+    see ``roster_drift`` and ``test_calibration_staged_convergence_p028.py``.
+    What must still be true is pinned below: membership is still digested, it
+    just no longer throws work away.
     """
-    base = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1,))
-    gained_a_market = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1, 2))
-    assert base.key != gained_a_market.key
+    base = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1,), buckets=4)
+    gained_a_market = UnitChunk(index=0, vm_ids=("e:1",), market_ids=(1, 2), buckets=4)
+    assert base.key == gained_a_market.key
 
     planned = plan_units(_roster((1, "kalshi", "e:1", True)), buckets=4)
     gained_a_source = plan_units(
         _roster((1, "kalshi", "e:1", True), (1, "polymarket", "e:1", True)), buckets=4
     )
     regrouped = plan_units(_roster((1, "kalshi", "e:1", False)), buckets=4)
-    # Same single market, same single question, same bucket — and three distinct
-    # keys, because source and is_grouped are part of what the unit IS.
-    assert len({planned[0].key, gained_a_source[0].key, regrouped[0].key}) == 3
+    # Same slot, so one key — the unit is not re-keyed by any of it...
+    assert len({planned[0].key, gained_a_source[0].key, regrouped[0].key}) == 1
+    # ...while source and is_grouped remain visible in the MEMBERSHIP digest,
+    # which is what reports the drift.
+    assert (
+        len(
+            {
+                planned[0].member_digest,
+                gained_a_source[0].member_digest,
+                regrouped[0].member_digest,
+            }
+        )
+        == 3
+    )
 
 
 # =============================================================================
@@ -802,18 +821,35 @@ def test_late_arrival_is_enforced_per_unit_not_per_generation():
         cursor = advance(cursor, chunk.key, [{"unit": chunk.index}], owner=OWNER, lease_expires_at=0.0)
     assert is_complete(cursor, planned_before)
 
-    kept, dropped = retain_planned_units(cursor, planned_after)
+    # ``advance`` banks a unit by KEY and never sees the chunk, so the digests
+    # are stamped by the first ``retain_planned_units`` of the NEXT beat. Drift
+    # is therefore unmeasurable for exactly one beat after banking, and reads 0
+    # as UNKNOWN rather than as "nothing moved" — pinned in
+    # ``test_calibration_staged_convergence_p028.py``. This is that first beat.
+    warm, dropped_warm = retain_planned_units(cursor, planned_before)
+    assert dropped_warm == ()
+    assert warm.roster_drift_units == 0
+    assert warm.unit_digests, "the warm-up beat must leave the digests stamped"
 
-    # EXACTLY the touched unit is dropped — not the whole cursor, and not none.
+    kept, dropped = retain_planned_units(warm, planned_after)
+
+    # REVERSED BY CAL-P028. This used to assert that exactly the touched unit was
+    # DROPPED. Dropping it is what made the build diverge: ~20 markets arrive
+    # every hour, each landing in its own unit, and a beat can only complete ~20
+    # units — so the drop rate met the completion rate and the cursor went
+    # backwards (measured 20 -> 19 on 2026-08-10). The touched unit is now KEPT
+    # and COUNTED, which is the same information without the work destroyed.
     touched = [c for c in planned_before if "e:1" in c.vm_ids]
     assert len(touched) == 1
-    assert dropped == (touched[0].key,)
-    assert len(kept.committed_units) == len(planned_before) - 1
-    # Every surviving unit is one the new plan still asks for, unchanged.
+    assert dropped == ()
+    assert len(kept.committed_units) == len(planned_before)
+    assert kept.roster_drift_units == 1, "the moved unit must be reported, not silently kept"
+    # Every surviving unit is one the new plan still asks for.
     planned_keys = {c.key for c in planned_after}
     assert set(kept.committed_units) <= planned_keys
-    # And the generation is honestly not finished: the moved unit must be re-run.
-    assert not is_complete(kept, planned_after)
+    # The generation IS finished, and honestly so: its rows are a census taken
+    # ~one arrival ago, and the payload says how many units that describes.
+    assert is_complete(kept, planned_after)
 
 
 def test_the_partition_is_stable_so_an_arrival_cannot_disturb_its_neighbours():
