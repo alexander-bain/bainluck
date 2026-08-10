@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from sqlalchemy import select, update, or_, text, func
 
@@ -4363,6 +4363,23 @@ from app.utils.sql_read_guard import (
 
 
 class _DbQueryRequest(BaseModel):
+    # LAT-P020: an unknown field must be a HARD ERROR, never a silent 200.
+    #
+    # Pydantic's default is extra="ignore", and that default made this endpoint
+    # lie about its own capabilities. Before the rail below existed, a caller
+    # sending `explain: true` got HTTP 200 with the field DROPPED and the query
+    # EXECUTED ANYWAY — indistinguishable, by status code, from a server that
+    # honoured the request. LAT-P020's Phase-0 gate checked the status code,
+    # read the rail as present, and sent the lane down a scope it could not run.
+    # It took discriminating with `timeout_ms`/`analyze` — which must error when
+    # the rail is live and instead returned rows — to see the truth.
+    #
+    # This is gotcha #53 in request clothing: the same response shape for "I did
+    # what you asked" and "I ignored what you asked" lets a caller infer a
+    # capability that is not there. A capability probe is only meaningful if the
+    # server refuses what it cannot do.
+    model_config = ConfigDict(extra="forbid")
+
     sql: str
     limit: int = 500
     # LAT-P019 (#1619): plan support. `explain` never appears in `sql` — the caller

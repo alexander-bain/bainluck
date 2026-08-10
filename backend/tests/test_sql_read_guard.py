@@ -345,3 +345,62 @@ async def test_plan_path_rejections_never_reach_the_database(recorder, body, fra
     # The refusal must happen before any statement is executed — including the
     # session-level SETs, so a rejected request cannot leave a transaction open.
     assert recorder.statements == []
+
+
+# ---------------------------------------------------------------------------
+# LAT-P020 — the gate signal. An unknown field must ERROR, never silently 200.
+#
+# Named failure: before the EXPLAIN rail existed, `POST /api/admin/db-query`
+# with `explain: true` returned HTTP 200 with the field dropped and the query
+# EXECUTED. By status code that is indistinguishable from a server honouring the
+# request, so LAT-P020's Phase-0 capability gate read the rail as PRESENT when it
+# was absent, and the lane spent a cycle on a scope it could not run.
+#
+# Same shape as gotcha #53: one response for "did it" and "ignored it" lets the
+# caller infer a capability that is not there.
+# ---------------------------------------------------------------------------
+import pytest
+from pydantic import ValidationError
+
+from app.routes.admin_data_quality import _DbQueryRequest
+
+
+def test_unknown_field_is_rejected_not_silently_dropped():
+    """The whole point: a field the server does not understand must be loud."""
+    with pytest.raises(ValidationError) as exc:
+        _DbQueryRequest(sql="SELECT 1", not_a_real_option=True)
+    # FastAPI turns this into a 422, which a capability probe can read.
+    assert "not_a_real_option" in str(exc.value)
+
+
+def test_known_fields_all_still_accepted():
+    """Non-vacuity: extra="forbid" must not have broken the real surface.
+
+    A guard that rejects everything would pass the test above and be useless.
+    """
+    req = _DbQueryRequest(
+        sql="SELECT 1", limit=10, explain=True, analyze=False, timeout_ms=250
+    )
+    assert req.sql == "SELECT 1"
+    assert req.limit == 10
+    assert req.explain is True
+    assert req.analyze is False
+    assert req.timeout_ms == 250
+
+
+def test_the_minimal_request_still_works():
+    req = _DbQueryRequest(sql="SELECT 1")
+    assert req.limit == 500
+    assert req.explain is False
+    assert req.analyze is False
+    assert req.timeout_ms is None
+
+
+def test_a_misspelled_known_field_is_caught_too():
+    """The realistic case -- `explain_analyze` instead of `analyze`.
+
+    Under extra="ignore" this ran a plain query and returned 200, so the caller
+    believed it had a plan and got rows.
+    """
+    with pytest.raises(ValidationError):
+        _DbQueryRequest(sql="SELECT 1", explain_analyze=True)

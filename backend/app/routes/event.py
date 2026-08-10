@@ -50,6 +50,36 @@ _STALE_TTL = 86400
 _NEGATIVE_TTL = 60
 _NEGATIVE_SENTINEL = "404"
 
+# LAT-P021/#1107: a SETTLED envelope does not change, so re-computing it every 60s
+# is pure waste — and it is the waste that was killing the four golf majors. Their
+# builds cost 12-30s, the 60s primary TTL expired before the next visitor arrived,
+# so every request paid the full cold cost and two of the four never completed at
+# all (they 503'd at Heroku's 30.3s H12 boundary, so the cache was NEVER written
+# and could never be, a loop with no exit from user traffic).
+#
+# This is "settled means settled" applied to caching: a finished tournament's
+# envelope is frozen, so it gets the same 24h life the stale copy already has.
+# Live and upcoming events keep the short TTL — their probabilities move, and
+# LAT-P014's freshness reasoning for those is unchanged.
+_SETTLED_TTL = 86400
+
+
+def _envelope_ttl(envelope: dict) -> int:
+    """Primary-cache TTL for a built envelope: long iff the event is settled.
+
+    Defensive by construction — anything that is not explicitly "settled" gets the
+    SHORT ttl. Mis-classifying a live event as settled would freeze a moving
+    probability for a day, which is a visible product lie; mis-classifying a
+    settled one as live merely costs a rebuild. The failure directions are not
+    symmetric, so the default is the cheap one.
+    """
+    try:
+        if (envelope.get("event") or {}).get("status") == "settled":
+            return _SETTLED_TTL
+    except AttributeError:
+        pass
+    return _ENVELOPE_TTL
+
 
 @router.get("/{key}")
 async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
@@ -117,7 +147,7 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     try:
         if _rc is not None:
             payload = _json.dumps(result, default=str)
-            _rc.setex(_cache_key, _ENVELOPE_TTL, payload)
+            _rc.setex(_cache_key, _envelope_ttl(envelope), payload)
             _rc.setex(_stale_key, _STALE_TTL, payload)
             # LAT-P014: a key that now resolves must not keep a negative entry
             # behind it. The positive key is read first so it already wins, but

@@ -1830,6 +1830,35 @@ def flow_sentinel(self, file_issues=True, canary=False):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=280,
+    time_limit=290,
+    name="app.tasks.warm_major_event_concepts",
+)
+def warm_major_event_concepts(self):
+    """LAT-P021 (#1107): keep the four completed golf majors' envelopes warm.
+
+    The outage this closes had no exit via user traffic: two of the four majors
+    503'd at Heroku's 30.3s H12 boundary on EVERY request, and a request that
+    never completes never writes the cache, so every visitor paid the full cold
+    build forever. A worker has no 30s router bound, so it pays that cost once,
+    off the request path.
+
+    Paired with `routes/event.py::_envelope_ttl`, which gives a SETTLED envelope
+    a 24h life instead of 60s. Without that half this task would be theatre — no
+    beat cadence keeps a 60s key warm, so it would run, report success, and leave
+    the page cold for 59 of every 60 seconds.
+
+    Bounded by the 300s global limit (#966): 280s soft / 290s hard, four keys.
+    """
+    from app.tasks.warm_event_concepts import _run_warm_major_event_concepts
+    return _tracked_run(
+        "warm_major_event_concepts",
+        _run_warm_major_event_concepts(),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grid_sentinel")
 def grid_sentinel(self, file_issues=True):
     """Grid Sentinel (Queue #196): audit each championship grid (MLB/NBA/NHL),
@@ -2675,6 +2704,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.flow_sentinel",
         "schedule": crontab(minute=10, hour=7),  # Daily 07:10 UTC
         "options": {"queue": "heavy"},
+    },
+    "warm-major-event-concepts": {
+        # LAT-P021 (#1107): hourly warm of the four completed golf majors.
+        # Hourly, not more often, BECAUSE of the settled TTL: a settled envelope
+        # caches for 24h, so hourly is already 24x more often than strictly
+        # needed and buys a fast recovery from an eviction or a Redis restart.
+        # At :47 to sit clear of the :00 and :30 clusters.
+        # background queue -- it is a short cache write, not heavy compute, and
+        # putting it on `heavy` would contend with the calibration warmers the
+        # heavy dyno exists to protect (#233).
+        "task": "app.tasks.warm_major_event_concepts",
+        "schedule": crontab(minute=47),
+        "options": {"queue": "background"},
     },
     "grid-sentinel-daily": {
         # Queue #196: championship grid reliability sentinel. Daily (07:25 UTC,

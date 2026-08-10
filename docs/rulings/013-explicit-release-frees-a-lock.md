@@ -37,10 +37,30 @@ because the owner is the only party that knows.
 |---|---|---|
 | `RELEASED` | alive | **FREE** — the owner said it is done, and it is the authority on that |
 | `RELEASED` | dead | **FREE** |
+| `free` | alive | **FREE** — same as `RELEASED` (see below) |
+| `free` | dead | **FREE** |
 | `HELD` | alive | **HELD** — do not proceed |
 | `HELD` | dead | **FREE** — abandoned; record the takeover and claim |
 
-Only the `HELD` row consults `ps`. That is the whole amendment.
+Only the `HELD` rows consult `ps`. That is the whole amendment.
+
+### `status: free` with a live pid — the case LAT-P020 found undefined
+
+Real lock files in this repo say **`status: free`**, not `RELEASED` — `LANE-ux.lock` used `free`
+for its entire history. So the table as first written did not cover the most common state in the
+directory, and a lane meeting `free` beside a live pid had to guess: is `free` a release, or is it
+a stale default from before the owner claimed?
+
+**Ruled: `free` carries RELEASED semantics.** It is an explicit written value, the same deliberate
+act by the same authority, differing only in spelling. The lane is free.
+
+Prefer `RELEASED` in new writes — it says *someone decided this* where `free` could be read as
+*nobody set this* — but **never treat `free` as ambiguous.** An undefined case in a lock protocol
+resolves to whatever the reader guesses, and half of them will guess the blocking direction, which
+is the four-hour stall this ruling exists to prevent.
+
+**A state a real file is actually in is not an edge case.** It only looked like one because the
+table was written from the vocabulary of the ruling rather than from the vocabulary of the files.
 
 ## Why this does not reopen the door 008 closed
 
