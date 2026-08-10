@@ -1,0 +1,17 @@
+{
+  "schema_version":"native-surface-authority/v1",
+  "cases":[
+    {"id":"finished-complete-score-winner","input":{"home_score":3,"away_score":1,"winner_emphasized":true,"score_rendered":true},"expected_refusals":[]},
+    {"id":"finished-one-score-missing","input":{"home_score":3,"away_score":null,"winner_emphasized":true,"score_rendered":true},"expected_refusals":["MISSING_SCORE_RENDERED_AS_ZERO","WINNER_WITH_INCOMPLETE_SCORE"]},
+    {"id":"widget-live-score-missing","input":{"home_score":null,"away_score":null,"winner_emphasized":false,"score_rendered":true},"expected_refusals":["MISSING_SCORE_RENDERED_AS_ZERO"]},
+    {"id":"watch-live-score-missing","input":{"home_score":2,"away_score":null,"winner_emphasized":false,"score_rendered":true},"expected_refusals":["MISSING_SCORE_RENDERED_AS_ZERO"]},
+    {"id":"analytics-denied","input":{"analytics_emitted":false,"consent_granted":false},"expected_refusals":[]},
+    {"id":"current-native-analytics","input":{"analytics_emitted":true,"consent_granted":false},"expected_refusals":["ANALYTICS_WITHOUT_CONSENT"]},
+    {"id":"fcm-registration-token","input":{"push_transport":"fcm","registered_token_kind":"fcm"},"expected_refusals":[]},
+    {"id":"current-raw-apns-token","input":{"push_transport":"fcm","registered_token_kind":"apns"},"expected_refusals":["PUSH_TOKEN_KIND_MISMATCH"]},
+    {"id":"futures-push-link","input":{"notification_url":"/futures/42","deep_link_handled":true},"expected_refusals":[]},
+    {"id":"current-discover-push-link","input":{"notification_url":"/discover","deep_link_handled":false},"expected_refusals":["NOTIFICATION_DEEP_LINK_DROPPED"]},
+    {"id":"settled-widget-withholds-live-line","input":{"settled":true,"live_probability_rendered":false},"expected_refusals":[]},
+    {"id":"settled-watch-live-line","input":{"settled":true,"live_probability_rendered":true},"expected_refusals":["SETTLED_SURFACE_RENDERS_LIVE_PROBABILITY"]}
+  ]
+}

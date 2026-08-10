@@ -46,6 +46,9 @@
       {"name": "settled_prop_grade_authority_contract", "relation": "extends", "target": "feed_card_trust_contract"},
       {"name": "tournament_ux_closure_contract", "relation": "extends", "target": "feed_card_trust_contract"}
     ]},
+    {"domain": "native-trust", "canonical": "native_parity_inventory", "members": [
+      {"name": "native_surface_authority_contract", "relation": "extends", "target": "native_parity_inventory"}
+    ]},
     {"domain": "frontend-performance", "canonical": "first_card_client_contract", "members": [
       {"name": "animation_dependency_equivalence_contract", "relation": "extends", "target": "first_card_client_contract"},
       {"name": "first_content_latency_attribution_contract", "relation": "extends", "target": "first_card_client_contract"}
