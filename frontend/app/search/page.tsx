@@ -274,12 +274,28 @@ function SearchContent() {
         if (ignore) return;
         setResults(data);
         setIsLoading(false);
+        const eventCount = data.results?.length ?? 0;
+        const futuresCount = data.futures?.length ?? 0;
         track('search_submit', {
           query,
-          results_count: data.results?.length ?? 0,
-          futures_count: data.futures?.length ?? 0,
+          results_count: eventCount,
+          futures_count: futuresCount,
           surface: 'search',
         });
+        // Queue 310 Item 3 — separates "search failed the reader" from "the
+        // reader wandered off". Gated on BOTH counts: `results_count` alone is
+        // events only, so a query answered entirely by futures would otherwise
+        // be reported as a miss.
+        // `query` is passed RAW on purpose — the sanitation boundary turns it
+        // into query_hash/length/word_count and hard-drops the text, and that
+        // hash is what joins this to search_submit / search_result_click.
+        if (eventCount === 0 && futuresCount === 0) {
+          track('search_no_results', {
+            query,
+            results_count: 0,
+            surface: 'search',
+          });
+        }
       })
       .catch((err) => {
         if (ignore) return;

@@ -921,6 +921,10 @@ export interface FeedFuturesData {
   top_outcomes: FeedFuturesOutcome[];
   outcome_count: number;
   canonical_market_key: string | null;
+  /** Canonical market shape (`FuturesMarket.market_type`) — Queue 310. */
+  market_type?: string | null;
+  /** Cross-source grouping key; a shape signal for container members. */
+  group_id?: string | null;
   image_url?: string | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;

@@ -60,6 +60,9 @@ async def _export_engagement_impl() -> dict:
                 DiscoverInteraction.item_id,
                 func.max(DiscoverInteraction.item_name).label("item_name"),
                 func.max(DiscoverInteraction.category).label("category"),
+                # Queue 310 — carried the same way category is. A market's shape
+                # is stable across its rows, so max() is a picker, not a stat.
+                func.max(DiscoverInteraction.market_type).label("market_type"),
                 func.max(DiscoverInteraction.score).label("score"),
                 func.count(
                     case(
@@ -111,6 +114,9 @@ async def _export_engagement_impl() -> dict:
                 "item_id": str(row.item_id),
                 "item_name": row.item_name,
                 "category": row.category or "other",
+                # NULL stays None: "not recorded" (a row predating the column)
+                # is not the same fact as "unshaped".
+                "market_type": row.market_type,
                 "score": int(row.score) if row.score is not None else None,
                 "impression_count": impressions,
                 "open_count": opens,

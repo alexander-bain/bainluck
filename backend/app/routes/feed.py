@@ -232,6 +232,18 @@ _DISCOVER_ACTIONS = {
 }
 _DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
 _DISCOVER_SURFACES = {"web", "native", "unknown"}
+# Queue 310 — canonical market shapes, mirroring app/utils/market_shape.py and
+# frontend/lib/marketShape.ts. Validated on ingest for the same reason actions
+# and surfaces are: discover_interactions is append-only, so an unvalidated
+# passthrough turns one client typo into permanent cardinality in the rollup.
+_DISCOVER_MARKET_TYPES = {
+    "claim",
+    "quantity",
+    "duel",
+    "field",
+    "container_member",
+    "unshaped",
+}
 
 
 class DiscoverInteractionIn(BaseModel):
@@ -244,6 +256,7 @@ class DiscoverInteractionIn(BaseModel):
     rank: int | None = None
     surface: str = Field("unknown", max_length=20)
     source: str | None = Field(None, max_length=50)
+    market_type: str | None = Field(None, max_length=20)
 
 
 class DiscoverInteractionBatch(BaseModel):
@@ -560,6 +573,17 @@ async def record_discover_interactions(
             event.surface, _DISCOVER_SURFACES, "unknown"
         )
         category = (event.category or "other").strip().lower()[:80] or "other"
+        # Queue 310. Absent stays NULL ("not recorded" — e.g. a native client
+        # that predates the field); present-but-unrecognized normalizes to
+        # "unshaped". Collapsing absent to "unshaped" would make old and
+        # unclassifiable rows indistinguishable in the rollup.
+        market_type = (
+            _normalize_discover_value(
+                event.market_type, _DISCOVER_MARKET_TYPES, "unshaped"
+            )
+            if event.market_type is not None
+            else None
+        )
         rows.append(
             DiscoverInteraction(
                 user_id=user_id,
@@ -573,6 +597,7 @@ async def record_discover_interactions(
                 score=event.score,
                 rank=event.rank,
                 source=event.source[:50] if event.source else None,
+                market_type=market_type,
             )
         )
 
@@ -5512,6 +5537,9 @@ async def _score_sports_mode_futures(
             "source_count": source_count,
             "sources": source_names,
             "market_tier": market.market_tier,
+            # Queue 310 — canonical market shape, so Discover engagement can be
+            # sliced by shape. Previously exposed only on the debug trace.
+            "market_type": market.market_type,
             "status": market.status,
             "resolution_date": (
                 market.resolution_date.isoformat() if market.resolution_date else None
@@ -6826,6 +6854,8 @@ async def _score_futures(
                 "source_count": source_count,
                 "sources": source_names,
                 "market_tier": market.market_tier,
+                # Queue 310 — canonical market shape (see the sibling serializer).
+                "market_type": market.market_type,
                 "status": market.status,
                 "resolution_date": (
                     market.resolution_date.isoformat() if market.resolution_date else None

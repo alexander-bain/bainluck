@@ -1312,6 +1312,12 @@ class DiscoverInteraction(Base):
     score: Mapped[Optional[int]] = mapped_column(Integer)
     rank: Mapped[Optional[int]] = mapped_column(Integer)
     source: Mapped[Optional[str]] = mapped_column(String(50))
+    # Queue 310 — canonical market shape at interaction time, mirroring
+    # FuturesMarket.market_type (claim | quantity | duel | field |
+    # container_member | unshaped). Nullable: every row written before this
+    # column existed predates the signal, and there is no backfill — a null
+    # here means "not recorded", never "unshaped".
+    market_type: Mapped[Optional[str]] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

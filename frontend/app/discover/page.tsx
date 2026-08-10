@@ -24,6 +24,7 @@ import {
   sendDiscoverInteraction,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
+import { SHAPE_UNSHAPED } from "@/lib/marketShape";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
@@ -566,6 +567,14 @@ export default function DiscoverPage() {
   const [cardsSeen, setCardsSeen] = useState(0);
   const [hasScrolled, setHasScrolled] = useState(false);
   const seenPositionsRef = useRef<Set<number>>(new Set());
+  // Queue 310 Item 2 — `feed_exit` state. Declared here, above the action
+  // handlers that write them, so the handlers reference initialized bindings
+  // rather than relying on closure/TDZ ordering.
+  const feedExitFiredRef = useRef(false);
+  const feedEnteredAtRef = useRef<number | null>(null);
+  const maxScrollDepthRef = useRef(0);
+  const lastActionWasDismissRef = useRef(false);
+  const exitSnapshotRef = useRef({ itemCount: 0, hasError: false, isLoading: true });
 
   useEffect(() => {
     setDismissed(getDismissed());
@@ -771,6 +780,10 @@ export default function DiscoverPage() {
     // a later request this mount (the durable dismiss set also proves this on
     // reload).
     sharedAnonEligibleRef.current = false;
+    // Queue 310 Item 2 — the reader's most recent act was a dismiss. Cleared by
+    // any subsequent card open, so this reflects the FINAL action, not "a
+    // dismiss happened at some point".
+    lastActionWasDismissRef.current = true;
     // Persist local dismissals so anonymous users do not see the same card
     // again after refresh while the server downrank catches up.
     setDismissed((prev) => {
@@ -784,6 +797,11 @@ export default function DiscoverPage() {
   // card scrolled past twice cannot inflate the count toward the unlock.
   const handleCardSeen = useCallback((position: number) => {
     if (seenPositionsRef.current.has(position)) return;
+    // Queue 310 Item 2 — meeting a NEW card means the reader kept going, so a
+    // dismiss is no longer their last act. This is what makes `dismissed_last`
+    // mean "dismissed, then stopped" rather than "dismissed at some point",
+    // which would swallow most of the mid_scroll bucket.
+    lastActionWasDismissRef.current = false;
     seenPositionsRef.current.add(position);
     setCardsSeen(seenPositionsRef.current.size);
   }, []);
@@ -793,6 +811,8 @@ export default function DiscoverPage() {
     // orientation UI permanently, exactly as a tap or a like does.
     setEngagedThisSession(true);
     markFirstRunEngaged();
+    // Queue 310 Item 2 — playing the challenge is a later act than any dismiss.
+    lastActionWasDismissRef.current = false;
     setChallengeIndex(0);
     setChallengeComplete(false);
     setChallengeOpen(true);
@@ -810,6 +830,8 @@ export default function DiscoverPage() {
       category: "challenge",
       item_name: "Today’s Challenge",
       score: 0,
+      // The daily challenge is a synthetic card, not a market — it has no shape.
+      market_type: SHAPE_UNSHAPED,
     }, "challenge_start", undefined, "challenge");
   }, []);
 
@@ -892,6 +914,100 @@ export default function DiscoverPage() {
     if (isFirstRunAnon && gamesUnlocked) markGamesUnlocked();
   }, [isFirstRunAnon, gamesUnlocked]);
 
+  // ==========================================================================
+  // Queue 310 Item 2 — `feed_exit`, the session-death event.
+  //
+  // Content-free by construction: positions, counts, a duration, one enum. No
+  // item id, market text or category may be added here.
+  //
+  // Everything the handler reads comes from a REF, never from state captured in
+  // the listener's closure — a listener registered once would otherwise report
+  // the counts as they were at mount (0 cards seen, still loading) for every
+  // session. The snapshot ref is refreshed by its own effect each render.
+  // ==========================================================================
+  useEffect(() => {
+    exitSnapshotRef.current = {
+      itemCount: processedItems.length,
+      hasError: !!feedError,
+      isLoading,
+    };
+  }, [processedItems.length, feedError, isLoading]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    feedEnteredAtRef.current = Date.now();
+
+    const trackScroll = () => {
+      const doc = document.documentElement;
+      const scrollable = doc.scrollHeight - window.innerHeight;
+      // A feed shorter than the viewport is fully seen, not 0% seen. The feed is
+      // a CSS multi-column masonry, so on a wide screen this is the common case.
+      const pct =
+        scrollable <= 0
+          ? 100
+          : Math.min(100, Math.round(((window.scrollY || doc.scrollTop) / scrollable) * 100));
+      if (pct > maxScrollDepthRef.current) maxScrollDepthRef.current = pct;
+    };
+    trackScroll();
+
+    const fireFeedExit = () => {
+      // Fires at most once per page life. `visibilitychange` and `beforeunload`
+      // both fire on a real tab close, and mobile Safari commonly fires only the
+      // former — so both are registered and the guard is what keeps it to one.
+      // Without it, every tab-switch would re-report the session as dead.
+      if (feedExitFiredRef.current) return;
+      feedExitFiredRef.current = true;
+
+      const seen = seenPositionsRef.current;
+      const { itemCount, hasError, isLoading: loading } = exitSnapshotRef.current;
+      const lastPosition = seen.size > 0 ? Math.max(...seen) : -1;
+
+      let terminalState: "end_of_feed" | "unavailable" | "mid_scroll" | "dismissed_last";
+      if (hasError || (!loading && itemCount === 0)) {
+        // The reader was shown nothing — an empty or failed feed. Checked first:
+        // "they left without reaching the end" is technically true here too, and
+        // would hide the outage inside the ordinary mid_scroll bucket.
+        terminalState = "unavailable";
+      } else if (lastActionWasDismissRef.current) {
+        // Their FINAL act was a dismiss (not necessarily on the final card).
+        terminalState = "dismissed_last";
+      } else if (itemCount > 0 && lastPosition >= itemCount - 1) {
+        terminalState = "end_of_feed";
+      } else {
+        terminalState = "mid_scroll";
+      }
+
+      trackEvent(
+        "feed_exit",
+        {
+          last_position: lastPosition,
+          visible_count: seen.size,
+          max_scroll_depth: maxScrollDepthRef.current,
+          dwell_ms: feedEnteredAtRef.current ? Date.now() - feedEnteredAtRef.current : 0,
+          terminal_state: terminalState,
+        },
+        // MANDATORY. `trackEvent` defers to requestIdleCallback by default, and
+        // an idle callback never runs during unload — the default-options form
+        // of this event would fire exactly zero times in production.
+        { immediate: true }
+      );
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") fireFeedExit();
+    };
+
+    window.addEventListener("scroll", trackScroll, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", fireFeedExit);
+
+    return () => {
+      window.removeEventListener("scroll", trackScroll);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", fireFeedExit);
+    };
+  }, []);
+
   const challengeItems = useMemo(() => {
     return processedItems
       .filter((gi): gi is { type: "single"; item: FeedItem } => {
@@ -939,6 +1055,8 @@ export default function DiscoverPage() {
       category: "challenge",
       item_name: "Today’s Challenge",
       score: 0,
+      // The daily challenge is a synthetic card, not a market — it has no shape.
+      market_type: SHAPE_UNSHAPED,
     }, "challenge_complete", undefined, "challenge");
   }, []);
 

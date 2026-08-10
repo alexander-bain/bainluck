@@ -526,6 +526,80 @@ class TestDiscoverInteractions:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok", "recorded": 2}
 
+    async def test_market_type_is_validated_against_the_canonical_vocabulary(self):
+        """Queue 310 — discover_interactions is append-only, so an unvalidated
+        passthrough turns one client typo into permanent rollup cardinality.
+
+        Absent must stay NULL and NOT collapse to "unshaped": a row written
+        before the column existed ("not recorded") is a different fact from a
+        market we classified and could not shape.
+        """
+        from app.routes.feed import _DISCOVER_MARKET_TYPES, _normalize_discover_value
+
+        # Mirrors app/utils/market_shape.py and frontend/lib/marketShape.ts.
+        assert _DISCOVER_MARKET_TYPES == {
+            "claim",
+            "quantity",
+            "duel",
+            "field",
+            "container_member",
+            "unshaped",
+        }
+
+        for shape in _DISCOVER_MARKET_TYPES:
+            assert (
+                _normalize_discover_value(shape, _DISCOVER_MARKET_TYPES, "unshaped")
+                == shape
+            )
+
+        # Out-of-vocabulary normalizes rather than persisting.
+        assert (
+            _normalize_discover_value("LADDER", _DISCOVER_MARKET_TYPES, "unshaped")
+            == "unshaped"
+        )
+        # Casing is tolerated, not rejected.
+        assert (
+            _normalize_discover_value("Quantity", _DISCOVER_MARKET_TYPES, "unshaped")
+            == "quantity"
+        )
+
+    async def test_records_market_type_and_leaves_it_null_when_absent(self, client):
+        resp = await client.post(
+            "/api/feed/interactions",
+            json={
+                "interactions": [
+                    {
+                        "action": "impression",
+                        "item_type": "futures",
+                        "item_id": "555",
+                        "category": "economics",
+                        "surface": "web",
+                        "market_type": "quantity",
+                    },
+                    {
+                        "action": "detail_click",
+                        "item_type": "futures",
+                        "item_id": "556",
+                        "category": "economics",
+                        "surface": "web",
+                        "market_type": "not-a-shape",
+                    },
+                    # No market_type at all — e.g. a native client predating it.
+                    {
+                        "action": "impression",
+                        "item_type": "event",
+                        "item_id": "557",
+                        "category": "basketball",
+                        "surface": "native",
+                    },
+                ]
+            },
+            headers={"x-session-id": "test-session"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok", "recorded": 3}
+
     async def test_discover_engagement_summary_requires_admin_secret(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
 

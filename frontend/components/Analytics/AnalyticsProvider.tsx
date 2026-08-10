@@ -122,6 +122,26 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       const sessionCount = parseInt(localStorage.getItem('bainluck_session_count') || '0', 10) + 1;
       localStorage.setItem('bainluck_session_count', String(sessionCount));
       const now = new Date().toISOString().split('T')[0];
+
+      // Queue 310 Item 1 — `session_open`, the first-session depth cut.
+      // Deliberately folded into THIS effect rather than a new one: it is the
+      // effect that already owns the session counter, and two effects both
+      // incrementing it would double-count on any remount (StrictMode, a
+      // provider re-mount) and silently corrupt `session_number` for everyone.
+      // Read `bainluck_last_visit` BEFORE the write below, or every session
+      // looks like a first session.
+      const isFirstSession = !lastVisit && sessionCount === 1;
+      let firstSeen = localStorage.getItem('bainluck_first_seen');
+      if (!firstSeen) {
+        firstSeen = now;
+        localStorage.setItem('bainluck_first_seen', firstSeen);
+      }
+      trackEvent('session_open', {
+        is_first_session: isFirstSession,
+        session_number: sessionCount,
+        first_seen_date: firstSeen,
+      }, { immediate: true });
+
       localStorage.setItem('bainluck_last_visit', now);
       if (lastVisit && lastVisit !== now) {
         const daysSince = Math.round(

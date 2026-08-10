@@ -9,6 +9,8 @@
  * @see https://developers.google.com/analytics/devguides/collection/ga4/reference/events
  */
 
+import type { MarketShape } from '@/lib/marketShape';
+
 // ============================================================================
 // User Properties (set once per session/user change)
 // ============================================================================
@@ -562,6 +564,8 @@ export interface FeedCardImpressionParams extends FunnelDimensions {
   headline?: string;
   personalized?: boolean;
   surface: 'discover';
+  /** Market shape (Queue 310). See the note on FeedCardActionParams.market_type. */
+  market_type?: MarketShape;
 }
 
 export interface FeedCardActionParams {
@@ -575,6 +579,19 @@ export interface FeedCardActionParams {
   headline?: string;
   personalized?: boolean;
   surface: 'discover' | 'discover_guess';
+  /**
+   * Market shape (Queue 310) — makes "do quantity ladders out-tap fields?"
+   * answerable, which needs the shape on BOTH the tap and the impression.
+   *
+   * Deliberately NOT `FunnelDimensions.shape`, and this is not a style choice:
+   * that union is `claim|quantity|duel|field|container` while the canonical
+   * `MarketShape` is `claim|quantity|duel|field|container_member|unshaped`.
+   * `container` is not a real shape and `unshaped` is missing, so assigning a
+   * genuine shape into `shape` is a type error today. Typed against the one
+   * canonical union in `lib/marketShape.ts` instead — the same vocabulary the
+   * backend classifier and `FuturesMarket.market_type` already use.
+   */
+  market_type?: MarketShape;
 }
 
 export interface FeedRefreshParams {
@@ -786,6 +803,73 @@ export interface FriendChallengeShareParams {
 }
 
 // ============================================================================
+// Launch instrumentation (Queue 310) — four events, content-free by construction
+// ============================================================================
+
+/**
+ * First packet of a browsing session — the first-session depth cut.
+ *
+ * ⚠️ NOT NAMED `session_start`. That name is RESERVED by GA4 (it is an
+ * automatically-collected event), so a custom send under it is rejected — and it
+ * is already load-bearing in our own code under its automatic meaning:
+ * `routes/admin_analytics.py:316` counts `session_start` as a funnel "visit"
+ * stage, and `scripts/setup_ga4.py:169` defines the **Power Users audience** on
+ * it. A custom emission that GA4 *did* accept would double-count visits and
+ * inflate that audience. `session_open` is ours; leave the reserved name alone.
+ *
+ * Identity-free: a boolean, a counter, and a coarse date.
+ */
+export interface SessionOpenParams {
+  /** True only on a reader's very first session (no prior visit recorded). */
+  is_first_session: boolean;
+  /** 1-indexed count of sessions this browser has opened. */
+  session_number: number;
+  /** Date this browser was first seen, `YYYY-MM-DD`. Never a timestamp. */
+  first_seen_date: string;
+}
+
+/**
+ * The session-death event: how a Discover session ended.
+ *
+ * Content-free by construction — positions, counts, a duration and one enum. No
+ * item id, market text, category or headline may be added here; the whole point
+ * is that "how sessions die" is answerable without describing what the reader
+ * was looking at.
+ *
+ * Emitted on `visibilitychange`→hidden / `beforeunload`, at most once per page
+ * life, and always with `{ immediate: true }` — a deferred send would be dropped,
+ * because `requestIdleCallback` never runs during unload.
+ */
+export interface FeedExitParams {
+  /** 0-indexed position of the deepest card the reader actually saw. */
+  last_position: number;
+  /** How many distinct cards were seen this session. */
+  visible_count: number;
+  /** Deepest scroll reached, whole percent 0-100. */
+  max_scroll_depth: number;
+  /** Time on the feed in ms. */
+  dwell_ms: number;
+  /** How the session ended. */
+  terminal_state: 'end_of_feed' | 'unavailable' | 'mid_scroll' | 'dismissed_last';
+}
+
+/**
+ * A search that returned nothing — distinguishes "search failed the reader"
+ * from "the reader wandered off".
+ *
+ * Emit with the RAW `query`: the sanitation boundary replaces it with
+ * `query_hash`/`query_length`/`query_word_count` and hard-drops the raw text.
+ * Hashing at the call site instead would produce a hash that does not join to
+ * `search_submit` / `search_result_click`, which is the only reason the hash
+ * exists.
+ */
+export interface SearchNoResultsParams extends FunnelDimensions {
+  query: string;
+  /** Always 0 — carried so the event is self-describing in GA4. */
+  results_count: 0;
+}
+
+// ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
 
@@ -894,6 +978,11 @@ export interface AnalyticsEventMap {
 
   // My Stuff first-card attribution (L2-217 / C88)
   my_stuff_load: MyStuffLoadParams;
+
+  // Launch instrumentation (Queue 310)
+  session_open: SessionOpenParams;
+  feed_exit: FeedExitParams;
+  search_no_results: SearchNoResultsParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

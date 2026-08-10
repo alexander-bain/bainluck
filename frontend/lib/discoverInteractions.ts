@@ -5,6 +5,7 @@ import type {
   FeedTournamentData,
   FeedConceptData,
 } from "@/lib/types";
+import { resolveShape, SHAPE_UNSHAPED, type MarketShape } from "@/lib/marketShape";
 
 // Concept feed items (UFC/F1/cycling event concepts) carry a `domain`, not an
 // `llm_sport_category`. Map the domain to the canonical sport category so concept
@@ -42,6 +43,14 @@ export interface DiscoverItemAnalytics {
   score: number;
   headline?: string;
   personalized?: boolean;
+  /**
+   * Canonical market shape (Queue 310). Set here, on the ONE object that feeds
+   * all three engagement rails — the `feed_card_impression` GA4 event, the
+   * `feed_card_action` GA4 event, and the first-party `DiscoverInteraction`
+   * row — so the tap RATE by shape is computable instead of just the tap count.
+   * A numerator without its denominator would not have answered the question.
+   */
+  market_type: MarketShape;
 }
 
 export interface ProfileBucket {
@@ -85,6 +94,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+/** Never throw and never guess loudly: an unresolvable shape is `unshaped`. */
+function shapeOf(signal: Parameters<typeof resolveShape>[0]): MarketShape {
+  return resolveShape(signal) ?? SHAPE_UNSHAPED;
+}
+
 export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics {
   if (item.type === "event") {
     const data = item.data as FeedEventData;
@@ -96,6 +110,11 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
       score: item.score,
       headline: item.headline || item.reason || undefined,
       personalized: item.personalized,
+      // Two named sides + an event id — a duel by construction.
+      market_type: shapeOf({
+        eventId: data.id,
+        outcomeNames: [data.away_team, data.home_team],
+      }),
     };
   }
 
@@ -109,6 +128,20 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
       score: item.score,
       headline: item.headline || data.hook_description || item.reason || undefined,
       personalized: item.personalized,
+      // Stored `market_type` is authoritative; the structural fallback only
+      // covers markets the #194 backfill hasn't reached.
+      // NOTE: `groupSize` is deliberately NOT passed. It means "how many
+      // markets are in this decomposed group", which the feed payload does not
+      // carry — `outcome_count` is outcomes in THIS market and is a different
+      // number. Passing it would drive the container-member branch off a value
+      // that does not mean what the branch thinks it means. The stored
+      // `market_type` comes from the backend classifier, which has the real
+      // group context, so the fallback rarely runs at all.
+      market_type: shapeOf({
+        market_type: data.market_type,
+        outcomeNames: (data.top_outcomes || []).map((o) => o.name),
+        groupId: data.group_id,
+      }),
     };
   }
 
@@ -122,6 +155,11 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
       score: item.score,
       headline: item.headline || item.reason || undefined,
       personalized: item.personalized,
+      // A concept/tournament card is a container of markets, not a market. It
+      // has no outcome structure of its own, so it has no shape — `unshaped` is
+      // the honest answer, not `container_member` (which means a member OF a
+      // container, the opposite of what these cards are).
+      market_type: SHAPE_UNSHAPED,
     };
   }
 
@@ -134,6 +172,7 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
     score: item.score,
     headline: item.headline || item.reason || undefined,
     personalized: item.personalized,
+    market_type: SHAPE_UNSHAPED,
   };
 }
 
@@ -223,6 +262,7 @@ export function sendDiscoverInteraction(
           rank: typeof positionIndex === "number" ? positionIndex + 1 : undefined,
           surface: "web",
           source,
+          market_type: analytics.market_type,
         }],
       }),
       keepalive: true,

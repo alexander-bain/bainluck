@@ -110,6 +110,9 @@ const EVENT_NAME_REGISTRY: Record<AnalyticsEventName, true> = {
   feed_telemetry: true,
   web_vital: true,
   my_stuff_load: true,
+  session_open: true,
+  feed_exit: true,
+  search_no_results: true,
 };
 
 /**
@@ -318,12 +321,42 @@ export const ALLOWED_PARAM_KEYS: ReadonlySet<string> = new Set<string>([
   'metric_value',
   'rating',
   'navigation_type',
+  // ==========================================================================
+  // Launch instrumentation (Queue 310).
+  //
+  // ⚠️ READ THIS BEFORE ADDING AN EVENT ANYWHERE. The event-NAME registry above
+  // is type-derived (`Record<AnalyticsEventName, true>`), so a name that is in
+  // the taxonomy but not registered fails `tsc`. THIS SET IS NOT. It is a plain
+  // hand-maintained `Set<string>` with no link to `types.ts`, so a parameter
+  // that is declared, emitted, and never added here is dropped silently right
+  // here — the exact L2-217 failure mode, one level down, still unguarded.
+  // Every new param needs a line below AND a fixture asserting it survives.
+  // ==========================================================================
+  // session_open (`session_number` is already allowlisted above, under return-visit)
+  'is_first_session',
+  'first_seen_date',
+  // feed_exit (`dwell_ms` is already allowlisted above, under search/funnel).
+  // `max_scroll_depth` is a free integer and distinct from `depth_percent`,
+  // which is the scroll-MILESTONE enum (25/50/75/90/100).
+  'last_position',
+  'visible_count',
+  'max_scroll_depth',
+  'terminal_state',
+  // feed_card_action / feed_card_impression — canonical market shape.
+  'market_type',
+  // search_no_results carries only `query` (→ query_hash, above) + results_count.
 ]);
 
 /**
- * Performance events get an EXACT key allowlist — no enrichment (session id,
- * timestamp, platform) and no other field may ride along. This is what
- * guarantees "no user/session/token/market payload enters performance events".
+ * Events with an EXACT key allowlist — nothing outside the listed keys may ride
+ * along, including keys that are globally allowlisted for other events.
+ *
+ * The global `ALLOWED_PARAM_KEYS` is a UNION across the whole taxonomy, so it
+ * can only answer "is this key legitimate SOMEWHERE". For an event whose
+ * contract is "carries no content", that is not enough: `item_name`,
+ * `headline` and `category` are all perfectly legal keys elsewhere, so a caller
+ * adding one to a content-free event would sail through. This map is how a
+ * per-event contract is actually enforced rather than merely documented.
  */
 const PERF_EVENT_KEYS: Record<string, ReadonlySet<string>> = {
   feed_telemetry: new Set([
@@ -359,6 +392,22 @@ const PERF_EVENT_KEYS: Record<string, ReadonlySet<string>> = {
     'app_build',
     'surface',
     'outcome_class',
+  ]),
+  // Queue 310 — `feed_exit` is declared content-free BY CONSTRUCTION, so it is
+  // enforced here rather than trusted to callers. Positions, counts, a
+  // duration, one enum. No item id, market text, headline or category, ever.
+  //
+  // Unlike the perf events above this one KEEPS the enrichment keys: the
+  // session-death packet is only useful joined to the session that died, and
+  // `session_id` here is the coarse client session-start marker, never a
+  // server/anon session id or a user id.
+  feed_exit: new Set([
+    ...ENRICHMENT_KEYS,
+    'last_position',
+    'visible_count',
+    'max_scroll_depth',
+    'dwell_ms',
+    'terminal_state',
   ]),
 };
 
