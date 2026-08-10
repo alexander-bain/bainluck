@@ -428,3 +428,296 @@ def test_swings_ignores_non_futures_and_below_threshold():
     ]
     out = assemble_swings_theme_bundles(items)
     assert all(i["type"] != "bundle" for i in out)  # event ignored, futures below threshold
+
+
+# ── Generalized story theme bundles (Queue 307) ───────────────────────────────
+#
+# Slice 1 gated theme bundles to a two-key geopolitics allowlist. Queue 307
+# replaced that with an eligibility predicate over ANY story_key. These tests
+# pin the generalized behaviour, the title resolution, and the cap invariants.
+
+import logging
+
+from app.utils.discover_bundles import (
+    AUTHORED_STORY_TITLES,
+    GEOPOLITICS_STORY_KEYS,
+    _derive_story_title,
+    _theme_story_key,
+    assemble_story_theme_bundles,
+)
+
+
+def _story_item(
+    market_id: int,
+    name: str,
+    *,
+    category: str = "politics",
+    score: float | None = None,
+    story_key: str | None = None,
+    quality_class: str | None = None,
+    disagreement: bool = False,
+) -> dict:
+    data: dict = {
+        "id": market_id,
+        "name": name,
+        "llm_sport_category": category,
+        "source": "kalshi",
+    }
+    if disagreement:
+        data["discover_card"] = {"public_source_disagreement": True}
+    item: dict = {
+        "type": "futures",
+        "score": 95 - market_id if score is None else score,
+        "reason": "reason",
+        "headline": name,
+        "data": data,
+        "_sort_time": 1000 + market_id,
+    }
+    if story_key is not None:
+        item["_quality_story_key"] = story_key
+    if quality_class is not None:
+        item["_quality_class"] = quality_class
+    return item
+
+
+def test_non_geopolitics_story_now_folds_2028_election():
+    """The headline generalization: a key outside the old allowlist folds."""
+    items = [
+        _story_item(1, "Who will win the 2028 presidential election?"),
+        _story_item(2, "Will a Democrat win the 2028 presidential election?"),
+        {"type": "event", "score": 50, "data": {"id": 9}},
+    ]
+
+    result = assemble_story_theme_bundles(items)
+
+    assert [it["type"] for it in result] == ["bundle", "event"]
+    bundle = result[0]
+    assert bundle["data"]["story_key"] == "story:us_2028_election"
+    assert bundle["data"]["kind"] == "theme"
+    assert bundle["data"]["title"] == "2028 Election"
+    assert bundle["data"]["item_count"] == 2
+    assert sorted(bundle["data"]["member_ids"]) == [1, 2]
+
+
+def test_macro_rates_and_oil_fold_independently():
+    items = [
+        _story_item(1, "Will the Fed cut interest rates in December?", category="economics"),
+        _story_item(2, "Will CPI inflation come in above 3%?", category="economics"),
+        _story_item(3, "Will WTI crude oil close above $80?", category="economics"),
+        _story_item(4, "Will brent oil fall below $60?", category="economics"),
+    ]
+
+    result = assemble_story_theme_bundles(items)
+
+    bundles = [it for it in result if it["type"] == "bundle"]
+    keys = {b["data"]["story_key"] for b in bundles}
+    assert keys == {"story:macro_rates", "story:oil"}
+    assert {b["data"]["title"] for b in bundles} == {"Fed & Rates", "Oil"}
+
+
+def test_slice1_geopolitics_behaviour_is_preserved():
+    """The two original keys keep folding, with their original labels."""
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?"),
+        _story_item(2, "Iran agrees to end enrichment of uranium by June?"),
+        _story_item(3, "Will Russia capture Pokrovsk in Ukraine?"),
+        _story_item(4, "Russia Ukraine ceasefire by year end?"),
+    ]
+
+    bundles = [
+        it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"
+    ]
+
+    by_key = {b["data"]["story_key"]: b for b in bundles}
+    assert by_key["story:middle_east_conflict"]["data"]["title"] == "Middle East"
+    assert by_key["story:russia_ukraine"]["data"]["title"] == "Russia–Ukraine"
+    assert GEOPOLITICS_STORY_KEYS == {
+        "story:middle_east_conflict": "Middle East",
+        "story:russia_ukraine": "Russia–Ukraine",
+    }
+
+
+def test_min_items_default_two_matches_upstream_caps():
+    """A 2-member cluster folds by default.
+
+    Queue 307 asked for min_items=3; the upstream per-story diversity caps
+    (feed.py:6972-6977) cap story:us_2028_election and story:russia_ukraine at
+    TWO, so a 3-pack can never form for them and a default of 3 would delete the
+    russia_ukraine bundle that ships today. Default stays 2; the knob still works.
+    """
+    items = [
+        _story_item(1, "Who will win the 2028 presidential election?"),
+        _story_item(2, "Will a Democrat win the 2028 presidential election?"),
+    ]
+
+    assert any(
+        it["type"] == "bundle" for it in assemble_story_theme_bundles(items)
+    )
+    # ...and the knob is honoured when a caller does want 3.
+    assert assemble_story_theme_bundles(items, min_items=3) == items
+
+
+def test_max_six_members_per_theme_bundle():
+    items = [
+        _story_item(i, f"Will Iran close checkpoint {i}? uranium enrichment", score=90 - i)
+        for i in range(1, 9)
+    ]
+
+    bundle = [
+        it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"
+    ][0]
+
+    assert bundle["data"]["item_count"] == 6
+    assert len(bundle["data"]["member_ids"]) == 6
+
+
+def test_persisted_story_key_override_is_respected():
+    """A carried _quality_story_key wins over recomputation from the name."""
+    items = [
+        _story_item(1, "Some totally unmatched market title", story_key="story:custom_topic"),
+        _story_item(2, "Another unmatched market title", story_key="story:custom_topic"),
+    ]
+
+    bundle = [
+        it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"
+    ][0]
+
+    assert bundle["data"]["story_key"] == "story:custom_topic"
+
+
+def test_non_story_carried_value_falls_back_to_recompute():
+    """A sentinel that is not a real key must not be trusted as one."""
+    item = _story_item(
+        1, "Will Iran close the Strait of Hormuz?", story_key="internal-should-not-leak"
+    )
+    assert _theme_story_key(item) == "story:middle_east_conflict"
+
+
+def test_source_disagreement_members_are_excluded():
+    """'The blend is the product' — divergence is a data bug, never a bundle."""
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?", disagreement=True),
+        _story_item(2, "Iran uranium enrichment deal?", disagreement=True),
+    ]
+
+    assert assemble_story_theme_bundles(items) == items
+
+
+def test_low_quality_members_are_not_promoted_into_a_bundle():
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?", quality_class="low_quality"),
+        _story_item(2, "Iran uranium enrichment deal?", quality_class="low_quality"),
+    ]
+
+    assert assemble_story_theme_bundles(items) == items
+
+
+def test_unknown_story_key_uses_derived_title_and_logs_once(caplog):
+    from app.utils import discover_bundles as db_mod
+
+    db_mod._UNKNOWN_STORY_KEYS_LOGGED.discard("story:some_new_topic")
+    items = [
+        _story_item(1, "Alpha market", story_key="story:some_new_topic"),
+        _story_item(2, "Beta market", story_key="story:some_new_topic"),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.utils.discover_bundles"):
+        first = assemble_story_theme_bundles(items)
+        second = assemble_story_theme_bundles(items)
+
+    bundle = [it for it in first if it["type"] == "bundle"][0]
+    assert bundle["data"]["title"] == "Some New Topic"
+    assert bundle["data"]["debug_bundles"]["title_source"] == "fallback"
+    # Logged exactly once per process lifetime, not once per feed request.
+    fallback_logs = [
+        r for r in caplog.records if "unknown story_key fallback" in r.getMessage()
+    ]
+    assert len(fallback_logs) == 1
+    assert [it["type"] for it in second] == [it["type"] for it in first]
+
+
+def test_authored_title_records_its_source():
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?"),
+        _story_item(2, "Iran uranium enrichment deal?"),
+    ]
+
+    bundle = [
+        it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"
+    ][0]
+
+    assert bundle["data"]["debug_bundles"]["title_source"] == "authored"
+
+
+def test_derived_title_is_acronym_safe():
+    assert _derive_story_title("story:us_2028_election") == "US 2028 Election"
+    assert _derive_story_title("story:ai") == "AI"
+    assert _derive_story_title("story:macro_rates") == "Macro Rates"
+    assert _derive_story_title("story:ufc_events") == "UFC Events"
+
+
+def test_authored_titles_cover_every_real_story_key():
+    """Every key _story_key can emit either has a label or is a suppression key."""
+    from app.utils import feed_market_quality as fmq
+    import re as _re
+
+    src = open(fmq.__file__).read()
+    emitted = set(_re.findall(r'return "(story:[a-z0-9_]+)"', src))
+    # Suppression families are capped to 1 upstream and can never bundle.
+    suppression = {
+        "story:daily_equity_direction",
+        "story:niche_low_signal_sports",
+        "story:minor_soccer_leagues",
+    }
+    missing = emitted - suppression - set(AUTHORED_STORY_TITLES)
+    assert not missing, f"story keys with no authored title: {sorted(missing)}"
+
+
+def test_debug_bundles_shape_preserved():
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?"),
+        _story_item(2, "Iran uranium enrichment deal?"),
+    ]
+
+    bundle = [
+        it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"
+    ][0]
+    dbg = bundle["data"]["debug_bundles"]
+
+    assert dbg["grouped_by"] == "story_key"
+    assert dbg["story_key"] == "story:middle_east_conflict"
+    assert dbg["member_ids"] == [1, 2]
+    assert dbg["member_names"] == [
+        "Will Iran close the Strait of Hormuz?",
+        "Iran uranium enrichment deal?",
+    ]
+
+
+def test_slot_count_invariant_folded_members_replaced_not_added():
+    """N in -> N - folded + bundles out. Bundles replace, never add slots."""
+    items = [
+        _story_item(1, "Will Iran close the Strait of Hormuz?"),
+        _story_item(2, "Iran uranium enrichment deal?"),
+        _story_item(3, "Will Russia capture Pokrovsk in Ukraine?"),
+        _story_item(4, "Russia Ukraine ceasefire by year end?"),
+        _story_item(5, "Will the Lakers make the playoffs?", category="basketball"),
+        {"type": "event", "score": 50, "data": {"id": 9}},
+    ]
+
+    result = assemble_story_theme_bundles(items)
+    bundles = [it for it in result if it["type"] == "bundle"]
+    folded = sum(b["data"]["item_count"] for b in bundles)
+
+    assert len(result) == len(items) - folded + len(bundles)
+
+
+def test_caps_constants_not_mutated_by_bundling():
+    """Bundling must not touch the upstream diversity caps."""
+    from app.utils.feed_market_quality import diversify_quality_families
+    import inspect
+
+    src = inspect.getsource(diversify_quality_families)
+    assert '"story:middle_east_conflict": 4' in src
+    assert '"story:russia_ukraine": 2' in src
+    assert '"story:us_2028_election": 2' in src
+    assert "story_family_cap: int = 5" in src

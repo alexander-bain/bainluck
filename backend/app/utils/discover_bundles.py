@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from app.utils.feed_market_quality import _story_key as compute_story_key
+
+logger = logging.getLogger(__name__)
 
 PUBLIC_COMPARISON_BUNDLE_THEMES = {
     "ipo_valuation",
@@ -14,14 +17,94 @@ PUBLIC_COMPARISON_BUNDLE_THEMES = {
     "weather_distributions",
 }
 
-# Theme-grouping Phase 1, slice 1 (geopolitics archetype). These are the
-# existing geopolitics story_keys (see feed_market_quality._story_key); a feed
-# that scatters N same-conflict markets across separate cards is folded into ONE
-# expandable theme bundle instead. Clean display labels per key.
-GEOPOLITICS_STORY_KEYS = {
+# Theme-grouping: authored display labels per story_key (see
+# feed_market_quality._story_key for the full key vocabulary). A feed that
+# scatters N same-story markets across separate cards is folded into ONE
+# expandable theme bundle instead.
+#
+# Queue 307 generalized this from a two-key geopolitics ALLOWLIST to an
+# eligibility predicate over ANY story_key. This map is now presentation only:
+# an unlisted key still bundles, it just renders a derived title (and logs once
+# so the unnamed key surfaces in ops). Adding a label here is never required to
+# make a story fold — it only makes it read better.
+AUTHORED_STORY_TITLES = {
+    # Geopolitics (the original slice-1 pair — labels intentionally unchanged).
     "story:middle_east_conflict": "Middle East",
     "story:russia_ukraine": "Russia–Ukraine",
+    # Politics / government
+    "story:us_2028_election": "2028 Election",
+    "story:regional_us_elections": "US Local Elections",
+    "story:us_federal_power": "Washington Power",
+    "story:us_government_stakes": "Government Stakes",
+    # Economics / markets
+    "story:macro_rates": "Fed & Rates",
+    "story:oil": "Oil",
+    "story:single_stock_earnings": "Earnings",
+    "story:ipo_markets": "IPOs",
+    "story:spacex_ipo": "SpaceX IPO",
+    # Tech / science
+    "story:ai": "AI",
+    "story:spacex_launches": "SpaceX Launches",
+    "story:aliens_disclosure": "Aliens & UFOs",
+    # Culture / entertainment
+    "story:major_entertainment_events": "Awards Season",
+    "story:music_charts": "Music Charts",
+    "story:drake_iceman": "Drake",
+    # Sport
+    "story:fifa_world_cup": "World Cup",
+    "story:basketball_finals_path": "NBA Finals",
+    "story:ufc_events": "UFC",
+    "story:grand_slam_tennis": "Grand Slam Tennis",
+    "story:golf_truist_championship": "Truist Championship",
 }
+
+# Back-compat alias: slice 1 shipped this name and it is the geopolitics subset.
+GEOPOLITICS_STORY_KEYS = {
+    key: AUTHORED_STORY_TITLES[key]
+    for key in ("story:middle_east_conflict", "story:russia_ukraine")
+}
+
+# Tokens that must render upper-case in a derived title ("us_2028_election" ->
+# "2028 Election", "ai" -> "AI"). Keep lower-cased keys.
+_TITLE_ACRONYMS = {
+    "ai", "us", "usa", "uk", "eu", "un", "ipo", "ufo", "ufc", "nba", "wnba",
+    "nfl", "mlb", "nhl", "cpi", "ppi", "wti", "ecb", "fbi", "gdp", "tv",
+}
+
+# One structured log line per unknown story_key per PROCESS lifetime, so a newly
+# minted key surfaces in ops without spamming every feed request.
+_UNKNOWN_STORY_KEYS_LOGGED: set[str] = set()
+
+
+def _derive_story_title(story_key: str) -> str:
+    """Human title for an unauthored story_key (``story:macro_rates`` -> ``Macro Rates``)."""
+    slug = story_key.split(":", 1)[-1]
+    words = [w for w in slug.replace("-", "_").split("_") if w]
+    if not words:
+        return "Related markets"
+    out: list[str] = []
+    for word in words:
+        if word.lower() in _TITLE_ACRONYMS:
+            out.append(word.upper())
+        elif word.isdigit():
+            out.append(word)
+        else:
+            out.append(word[:1].upper() + word[1:])
+    return " ".join(out)
+
+
+def _resolve_story_title(story_key: str) -> tuple[str, str]:
+    """``(label, title_source)`` where ``title_source`` is ``authored``/``fallback``."""
+    authored = AUTHORED_STORY_TITLES.get(story_key)
+    if authored:
+        return authored, "authored"
+    if story_key not in _UNKNOWN_STORY_KEYS_LOGGED:
+        _UNKNOWN_STORY_KEYS_LOGGED.add(story_key)
+        logger.info(
+            "discover_bundle: unknown story_key fallback",
+            extra={"story_key": story_key},
+        )
+    return _derive_story_title(story_key), "fallback"
 
 _THEME_TITLES = {
     "ipo_valuation": "IPO valuation ranges",
@@ -224,24 +307,52 @@ def assemble_discover_comparison_bundles(
 # ── Theme bundles (geopolitics archetype — Phase 1, slice 1) ──────────────────
 
 
-def _geopolitics_story_key(item: dict[str, Any]) -> str | None:
-    """Story key for a feed item if it belongs to a geopolitics cluster.
+def _theme_story_key(item: dict[str, Any]) -> str | None:
+    """Story key for a feed item, or None if it is not foldable into a theme.
 
-    Recomputed from the public market name/category (not the internal
-    ``_quality_story_key``, which is popped later in the serving path) so this
-    stays decoupled from feed-pipeline field lifecycle.
+    Prefers the ``_quality_story_key`` the scoring pass already attached, because
+    that is the key the upstream diversity caps grouped on AND the one that
+    honours a ``persisted_story_key`` override (``classify_market_quality`` ->
+    ``enrich_markets``). Falling out of step with the caps would let the bundler
+    group on a different key than the one that decided how many members survived.
+
+    Falls back to recomputing from the public name/category when the field is
+    absent or not a real key — the serving path pops ``_quality_story_key``
+    later, so this keeps the bundler decoupled from field lifecycle (and makes
+    the function safe to call on already-cleaned items).
     """
     data = _futures_data(item)
     if not data:
         return None
+    carried = item.get("_quality_story_key")
+    if isinstance(carried, str) and carried.startswith("story:"):
+        return carried
     name = str(data.get("name") or "")
     if not name:
         return None
     category = data.get("llm_sport_category") or data.get("sport") or ""
-    key = compute_story_key(name, str(category))
-    if key in GEOPOLITICS_STORY_KEYS:
-        return key
-    return None
+    return compute_story_key(name, str(category))
+
+
+def _theme_member_eligible(item: dict[str, Any]) -> bool:
+    """Whether a candidate may be folded into a theme bundle.
+
+    Theme bundles carry no threshold points (unlike comparison bundles), so the
+    gates that apply are the two that decide whether a card is publishable at
+    all: source disagreement is a data bug we never surface as a feature ("the
+    blend is the product"), and a low-quality family is suppressed rather than
+    promoted into a bundle.
+    """
+    if item.get("_quality_class") == "low_quality":
+        return False
+    card = _discover_card(_futures_data(item))
+    if card.get("public_source_disagreement"):
+        return False
+    return True
+
+
+# Back-compat alias for slice-1 callers/tests.
+_geopolitics_story_key = _theme_story_key
 
 
 def _theme_bundle_id(story_key: str, items: list[dict[str, Any]]) -> str:
@@ -257,7 +368,7 @@ def _make_theme_bundle_item(
     ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
     score = max(float(item.get("score") or 0) for item in ranked)
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
-    label = GEOPOLITICS_STORY_KEYS[story_key]
+    label, title_source = _resolve_story_title(story_key)
     member_ids = [_futures_data(item).get("id") for item in ranked]
     return {
         "type": "bundle",
@@ -275,6 +386,7 @@ def _make_theme_bundle_item(
             "debug_bundles": {
                 "grouped_by": "story_key",
                 "story_key": story_key,
+                "title_source": title_source,
                 "member_ids": member_ids,
                 "member_names": [
                     _futures_data(item).get("name") for item in ranked
@@ -285,25 +397,52 @@ def _make_theme_bundle_item(
     }
 
 
-def assemble_geopolitics_theme_bundles(
+def assemble_story_theme_bundles(
     items: list[dict[str, Any]],
     *,
     min_items: int = 2,
     max_items_per_bundle: int = 6,
 ) -> list[dict[str, Any]]:
-    """Cap-and-FOLD geopolitics story clusters into one expandable theme bundle.
+    """Cap-and-FOLD ANY eligible story cluster into one expandable theme bundle.
 
-    Replaces the scatter (N separate same-conflict cards) with ONE ``type:bundle``
+    Replaces the scatter (N separate same-story cards) with ONE ``type:bundle``
     item (``kind="theme"``) that carries the members ranked for a mini-ranked-peek
     and full expansion. The bundle takes a single feed slot scored by its best
-    member. A cluster with fewer than ``min_items`` members is left untouched.
+    member. A cluster with fewer than ``min_items`` eligible members is left
+    untouched.
 
-    Geopolitics-only this slice. Other archetypes (awards, prop breakdown, …) are
-    separate follow-on slices. Orthogonal to the comparison-theme bundler.
+    Queue 307 generalized this from a two-key geopolitics allowlist to an
+    eligibility predicate: a cluster folds iff its ``story_key`` is non-null
+    (:func:`_theme_story_key`) and its members pass :func:`_theme_member_eligible`.
+    Orthogonal to the comparison bundler and to the awards/``group_id`` bundler;
+    a market belongs to at most one.
+
+    On ``min_items`` — WHY THE DEFAULT IS 2, NOT 3
+    ----------------------------------------------
+    Queue 307 specified ``min_items=3``. That is not reachable for most stories,
+    because this bundler runs at ``feed.py:2168``, i.e. AFTER the per-story
+    diversity caps have already thinned the tail at ``feed.py:6972-6977``
+    (``diversify_quality_families``). Those caps are the binding constraint, and
+    several are BELOW 3::
+
+        story:us_2028_election    cap 2  -> a 3-pack can never form
+        story:russia_ukraine      cap 2  -> a 3-pack can never form
+        story:ai                  cap 2  -> a 3-pack can never form
+        story:macro_rates         cap 3
+        story:middle_east_conflict cap 4
+        (unlisted keys)           cap 5  (story_family_cap default)
+
+    So ``min_items=3`` would BREAK the existing ``story:russia_ukraine`` bundle
+    (which folds at 2 today) and would never produce the ``story:us_2028_election``
+    pack the queue named as its headline payoff. Keeping the default at 2
+    preserves current behaviour exactly and lets every newly-eligible key fold.
+    Raising it is a one-argument change once the upstream caps are revisited.
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for item in items:
-        story_key = _geopolitics_story_key(item)
+        if not _theme_member_eligible(item):
+            continue
+        story_key = _theme_story_key(item)
         if story_key is None:
             continue
         groups.setdefault(story_key, []).append(item)
@@ -328,13 +467,24 @@ def assemble_geopolitics_theme_bundles(
         if _item_id(item) not in represented_ids:
             output.append(item)
             continue
-        story_key = _geopolitics_story_key(item)
-        if story_key is None or story_key in emitted:
+        story_key = _theme_story_key(item)
+        bundle = bundle_by_story.get(story_key) if story_key else None
+        if bundle is None:
+            # Defensive (gotcha #42): a member we can no longer resolve to its
+            # bundle is emitted as its own card rather than silently dropped.
+            output.append(item)
+            continue
+        if story_key in emitted:
             continue
         emitted.add(story_key)
-        output.append(bundle_by_story[story_key])
+        output.append(bundle)
 
     return output
+
+
+# Back-compat alias: slice 1 shipped this name and ``feed.py`` imports it.
+# Kept so the generalization needs no import churn at the call site.
+assemble_geopolitics_theme_bundles = assemble_story_theme_bundles
 
 
 # ── Theme bundles (awards / competition archetype — Phase 1, slice 3) ──────────
