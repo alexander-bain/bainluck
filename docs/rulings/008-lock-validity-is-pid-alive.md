@@ -55,6 +55,29 @@ a report reconstructing a cycle. It is diagnostics, not a gate.
    dead pid, which the rule reads correctly as free — releasing is courtesy that makes the
    directory readable, not the safety mechanism.
 
+## ⚠️ AMENDED BY RULING 013 (same day) — `RELEASED` frees a lock regardless of pid
+
+Read as written, this ruling answers only *"is the owner still there?"*. It cannot answer *"is the
+owner still WORKING?"* — a live process that has finished, or gone idle, or is waiting on a human
+is indistinguishable from one mid-merge. The cycle-39 UX window sat **alive but idle for four
+hours**, and under a literal reading of the rule above its lock would have held **permanently**.
+
+Ruling 013 adds the missing state: **an explicit `RELEASED` frees the lock regardless of pid
+liveness; `ps` governs only locks claiming `HELD`.**
+
+| lock says | pid | verdict |
+|---|---|---|
+| `RELEASED` | alive | FREE |
+| `RELEASED` | dead | FREE |
+| `HELD` | alive | HELD — do not proceed |
+| `HELD` | dead | FREE — abandoned, record the takeover |
+
+This does not reopen what 008 closed: the thing 008 killed was a *derived, drifting* signal (a
+timestamp). `RELEASED` is a deliberate written act by the only party with standing to make it.
+**Consequence: releasing is now load-bearing, not courtesy** — step 3 above calls it courtesy on
+the grounds that a dead pid already reads as free. Under 013 that is no longer sufficient: an
+alive-but-finished lane that forgets to release blocks its own successor.
+
 ## The one thing this rule cannot see
 
 A pid alive on **another machine**, or a lane whose process has hung rather than exited. Both are

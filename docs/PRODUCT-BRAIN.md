@@ -1300,3 +1300,6 @@ failure this document already records happening twice.
 - [010](rulings/010-sentry-keep-sdk-modular-init.md) — 2026-08-09 — Sentry: keep the SDK, spike a modular init (Alex)
 - [011](rulings/011-well-traded-is-volume-when-present.md) — 2026-08-09 — Well-traded means volume evidence WHEN PRESENT (Alex)
 - [012](rulings/012-measured-ux-attention-satisfies-the-tier.md) — 2026-08-09 — Measured UX attention satisfies the every-cycle UX tier (Alex)
+- [013](rulings/013-explicit-release-frees-a-lock.md) — 2026-08-09 — An explicit RELEASED frees a lock, regardless of pid liveness (Alex)
+- [014](rulings/014-verification-infrastructure-inherits-usage-weight.md) — 2026-08-09 — Verification infrastructure inherits the usage weight of what it verifies (Alex)
+- [015](rulings/015-holds-must-reach-the-lane.md) — 2026-08-09 — A hold must be written where the lane actually reads (Alex)
