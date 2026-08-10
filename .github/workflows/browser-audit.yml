@@ -81,7 +81,21 @@ concurrency:
   # every cron run in one nameless group. Named explicitly so a stuck scheduled
   # run is superseded by the next one, while dispatched runs stay keyed by the
   # commit they are proving.
-  group: browser-audit-${{ inputs.frontend_sha || 'scheduled' }}
+  #
+  # UX-P047 (#1691): the PACK is part of the key. With three program lanes all
+  # proving the same master commit, two lanes requesting DIFFERENT packs landed
+  # in one group and `cancel-in-progress` killed the earlier one — observed
+  # 2026-08-10, runs 31431276788 (event-page) and 31431286342 (calibration),
+  # dispatched 8 seconds apart at the same sha. A cancelled run reports as
+  # `cancelled` rather than a failure, so the lane that lost its evidence is not
+  # told why, and the later dispatcher always wins.
+  #
+  # Different packs are not the same work. With the pack in the key,
+  # `cancel-in-progress` keeps its intended meaning — a re-dispatch of the SAME
+  # pack at the same commit supersedes the earlier one — and stops meaning
+  # "whoever dispatched most recently wins". A scheduled run expands its matrix
+  # from one dispatch and so still shares a single group value.
+  group: browser-audit-${{ inputs.frontend_sha || 'scheduled' }}-${{ inputs.pack || 'default' }}
   cancel-in-progress: true
 
 jobs:
