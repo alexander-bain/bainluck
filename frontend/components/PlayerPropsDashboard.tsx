@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
+import { readPropGrade, type PropGrade, type PropGradeFields } from "@/lib/propGrade";
 
 interface PlayerPropsDashboardProps {
   data: GameMarketsResponse;
@@ -34,6 +35,8 @@ interface PlayerStat {
   serverActual?: number | null;
   serverHit?: boolean | null;
   serverIsWinner?: boolean | null;
+  /** UX-P040 (#1638): the backend's typed grade, or `{graded:false}`. */
+  grade?: PropGrade;
 }
 
 interface PlayerData {
@@ -142,27 +145,32 @@ function StatBox({
 
   // Settled game. Queue #190 Item 3: prefer the authoritative server-side grade
   // (actual stat + hit/miss) from the game-markets payload. Only fall back to
-  // "grading unavailable" when the server carries neither actual nor is_winner —
-  // a resolved market's over_probability collapses to ~100%/0% and would read as
-  // a fake grade (L2-112 Item 3).
+  // "grading unavailable" when the server published no grade at all — a resolved
+  // market's over_probability collapses to ~100%/0% and would read as a fake
+  // grade (L2-112 Item 3).
+  //
+  // UX-P040 (#1638): the fallback used to be UNREACHABLE, because the test was
+  // `is_winner != null` and `is_winner` is a non-nullable column defaulted to
+  // false. Every never-graded prop therefore rendered a red MISS. `readPropGrade`
+  // requires published evidence — actual, hit, or a resolution source.
   if (gameState === "settled") {
     const firstRung =
       stat.shape === "ladder" && stat.rungs && stat.rungs.length > 0
         ? stat.rungs[0]
         : null;
     const firstLine = firstRung ? firstRung.threshold : stat.threshold;
-    const gradeActual = stat.serverActual ?? stat.actual ?? null;
-    const hitBool: boolean | null =
-      (firstRung?.hit ?? null) != null
-        ? (firstRung?.hit as boolean)
-        : stat.serverHit != null
-          ? stat.serverHit
-          : stat.serverIsWinner ?? null;
-    const hasGrade = gradeActual != null || stat.serverIsWinner != null;
+    const grade = stat.grade ?? { graded: false as const };
+    const gradeActual = grade.graded
+      ? (grade.actual ?? stat.serverActual ?? stat.actual ?? null)
+      : null;
+    const hitBool: boolean | null = grade.graded
+      ? ((firstRung?.hit ?? null) != null ? (firstRung?.hit as boolean) : grade.hit)
+      : null;
 
-    if (hasGrade) {
+    if (grade.graded) {
       const didHit = hitBool === true;
-      const accentColor = didHit ? accent : "#EF4444";
+      // No stated verdict → neutral, never the red that reads as "missed".
+      const accentColor = hitBool == null ? undefined : didHit ? accent : "#EF4444";
       return (
         <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
           <div className="flex items-center justify-between mb-1">
@@ -178,12 +186,18 @@ function StatBox({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span
-              className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
-              style={didHit ? { background: `${accent}22`, color: accent } : { background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
-            >
-              {didHit ? "HIT" : "MISS"}
-            </span>
+            {/* UX-P040: a verdict only when the backend stated one. A grade that
+                carries an `actual` but no hit/miss shows the number and stops —
+                deriving the verdict from `actual >= threshold` here would be the
+                client adjudicating (ruling 003). */}
+            {hitBool != null && (
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={didHit ? { background: `${accent}22`, color: accent } : { background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
+              >
+                {didHit ? "HIT" : "MISS"}
+              </span>
+            )}
             {firstLine != null && (
               <span className="text-xs text-text-muted font-mono tabular-nums">needed {firstLine}+</span>
             )}
@@ -441,7 +455,7 @@ export default function PlayerPropsDashboard({
       name: string;
       team: "home" | "away" | "unknown";
       headshot?: string;
-      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null; serverActual?: number | null; serverIsWinner?: boolean | null }>;
+      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null; serverActual?: number | null; serverIsWinner?: boolean | null; gradeRows: PropGradeFields[] }>;
     }>();
 
     const homeLower = homeTeam?.toLowerCase() ?? "";
@@ -488,7 +502,7 @@ export default function PlayerPropsDashboard({
 
       const statKey = (parsed.stat || "prop").toLowerCase();
       if (!playerEntry.stats.has(statKey)) {
-        playerEntry.stats.set(statKey, { rungs: [], sources: new Set(), movement: null });
+        playerEntry.stats.set(statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [] });
       }
 
       const statEntry = playerEntry.stats.get(statKey)!;
@@ -511,6 +525,15 @@ export default function PlayerPropsDashboard({
       // is_winner) at the player+stat level (same actual across all thresholds).
       if (p.actual != null) statEntry.serverActual = p.actual;
       if (p.is_winner != null && statEntry.serverIsWinner == null) statEntry.serverIsWinner = p.is_winner;
+      // UX-P040 (#1638): keep the raw grading fields so `readPropGrade` can tell
+      // "graded a loser" from "never graded" — `is_winner` alone cannot, being a
+      // non-nullable column defaulted to false.
+      statEntry.gradeRows.push({
+        actual: p.actual ?? null,
+        hit: p.hit ?? null,
+        is_winner: p.is_winner ?? null,
+        resolution_source: p.resolution_source ?? null,
+      });
       statEntry.sources.add(p.source);
       if (p.movement != null && (statEntry.movement == null || Math.abs(p.movement) > Math.abs(statEntry.movement))) {
         statEntry.movement = p.movement;
@@ -534,7 +557,7 @@ export default function PlayerPropsDashboard({
       }
       const playerEntry = playerMap.get(playerKey)!;
       if (!playerEntry.stats.has(statLower)) {
-        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null });
+        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null, gradeRows: [] });
       }
       const statEntry = playerEntry.stats.get(statLower)!;
       if (o.probability != null) {
@@ -584,6 +607,7 @@ export default function PlayerPropsDashboard({
             serverActual: statData.serverActual ?? null,
             serverHit: sortedRungs[0]?.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
+            grade: readPropGrade(statData.gradeRows),
           });
         } else {
           const best = sortedRungs[0];
@@ -598,6 +622,7 @@ export default function PlayerPropsDashboard({
             serverActual: statData.serverActual ?? null,
             serverHit: best.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
+            grade: readPropGrade(statData.gradeRows),
           });
         }
       }
@@ -636,7 +661,9 @@ export default function PlayerPropsDashboard({
   const totalProps = players.reduce((a, p) => a + p.stats.length, 0);
   // Queue #190 Item 3: is any settled prop graded server-side? If so, drop the
   // blanket "grading unavailable" subtitle.
-  const anyGraded = players.some((p) => p.stats.some((s) => s.serverActual != null || s.serverIsWinner != null));
+  // UX-P040 (#1638): this asked `serverIsWinner != null` too, so a game with zero
+  // published grades advertised "Final · graded results" over a grid of red MISSes.
+  const anyGraded = players.some((p) => p.stats.some((s) => s.grade?.graded === true));
   // L2-52: source-name attribution removed (blend-only).
 
   const homeShortCode = homeTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "HOME";
