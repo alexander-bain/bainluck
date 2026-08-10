@@ -651,3 +651,11 @@ class TestGroupMarketsByGroupId:
         ]
         result = group_markets_by_group_id(markets)
         assert len(result) == 2
+
+
+def test_q312_seeded_failure_shard_4():
+    """TEMPORARY — Queue 312 acceptance #2: prove shard 4 can report red.
+
+    Deliberate failure on a throwaway branch. Never merged to master.
+    """
+    assert False, "Q312 seeded failure: shard 4 must go red"
