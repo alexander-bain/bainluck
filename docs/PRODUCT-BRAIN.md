@@ -1311,3 +1311,4 @@ failure this document already records happening twice.
 - [021](rulings/021-two-graders-one-input-share-the-decision.md) — 2026-08-10 — Two graders reading one input must share the DECISION, not just the predicate (Fable)
 - [022](rulings/022-one-shared-lock-claim-primitive.md) — 2026-08-10 — One shared lock-claim primitive; hand-rolled claim logic is deleted (Alex)
 - [023](rulings/023-codex-gets-its-own-branch-and-worktree.md) — 2026-08-10 — Codex gets a dedicated branch and worktree; shared-tree passengers become unrepresentable (Alex)
+- [024](rulings/024-one-combined-invalidation-window.md) — 2026-08-10 — The post-publish window is ONE combined invalidation event (Alex)
