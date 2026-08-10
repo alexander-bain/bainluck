@@ -117,6 +117,18 @@ describe("FuturesCard A/B hydration stability", () => {
     expect(render(dataFor(bId))).toContain('data-card-variant="B"');
   });
 
+  // Queue 309 Item 4 — this fixture already carries a 1.4M `volume_24h`, which
+  // used to render as "$1.4M vol" on both variants. Dollar volume as social
+  // proof is banned (docs/design-system.md); the field still flows, and prints
+  // nothing.
+  it("prints no dollar volume on either variant", () => {
+    for (const id of [idWithAnon(true), idWithAnon(false)]) {
+      const html = render(dataFor(id));
+      expect(html).not.toContain("$");
+      expect(html).not.toContain("vol");
+    }
+  });
+
   it("is deterministic across renders for the same market", () => {
     const id = idWithAnon(true);
     const first = render(dataFor(id));

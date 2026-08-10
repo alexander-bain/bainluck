@@ -30,11 +30,18 @@ interface DiscoverCardProps {
   groupedItem: DiscoverGroupedItem;
   onDismiss?: () => void;
   positionIndex?: number;
+  /**
+   * Queue 309 Item 2 — the page sets this on the first card for a first-run
+   * anonymous reader, so an otherwise-bare hero percentage says what it is.
+   * Cards stay presentational: the cohort decision and its persistence live in
+   * lib/discoverFirstRun.ts, never behind a storage read in here.
+   */
+  showProbabilityHint?: boolean;
 }
 
 // ── Main Export ──
 
-export default function DiscoverCard({ groupedItem, onDismiss, positionIndex }: DiscoverCardProps) {
+export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
     return (
       <GroupCard
@@ -47,12 +54,12 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex }: 
     );
   }
   const item = groupedItem.item!;
-  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} />;
+  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} />;
 }
 
 // ── Single Card Wrapper (handles swipe + analytics delegation) ──
 
-function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number }) {
+function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean }) {
   const router = useRouter();
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
@@ -148,7 +155,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
         {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
           <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : item.type === "futures" ? (
-          <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
+          <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} showProbabilityHint={showProbabilityHint} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : null}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
         {/* L2-166: a `concept` item (UFC card / F1 GP / cycling grand tour) reaches

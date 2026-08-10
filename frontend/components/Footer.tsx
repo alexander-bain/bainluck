@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { BRAND_TAGLINE } from "@/lib/brandCopy";
 
 const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] }[] = [
   {
@@ -58,8 +59,10 @@ export default function Footer() {
               <span className="text-xl">🍀</span>
               <span className="text-body-strong text-text-primary">Bain Luck</span>
             </Link>
+            {/* Queue 309: shared with the Discover first-run orientation line so
+                the two cannot drift. */}
             <p className="text-micro text-text-muted leading-relaxed max-w-[16rem]">
-              Probability, not betting. The world&rsquo;s honest guess at what happens next.
+              {BRAND_TAGLINE}
             </p>
           </div>
 

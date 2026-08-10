@@ -29,6 +29,16 @@ import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
+import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
+import {
+  areGamesUnlocked,
+  isFirstRunAnonymous,
+  markFirstRunEngaged,
+  markGamesUnlocked,
+  readFirstRunStorage,
+  GAMES_UNLOCK_CARDS_SEEN,
+  type FirstRunStorage,
+} from "@/lib/discoverFirstRun";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -359,11 +369,21 @@ function FeedItemShell({
   groupedItem,
   positionIndex,
   personalizationTrace,
+  onSeen,
   children,
 }: {
   groupedItem: DiscoverGroupedItem;
   positionIndex: number;
   personalizationTrace?: string;
+  /**
+   * Queue 309 Item 3 — fires once, the first time this card is genuinely in
+   * view. The page counts distinct positions to decide when a first-run reader
+   * has met enough content to unlock the games. Reusing the impression observer
+   * rather than a pixel offset is deliberate: the feed is a CSS multi-column
+   * masonry, so on a wide screen 8 cards can be above the fold with no
+   * scrolling at all, and a scroll-distance threshold would never fire.
+   */
+  onSeen?: (positionIndex: number) => void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -371,7 +391,7 @@ function FeedItemShell({
   const analytics = useMemo(() => getGroupedAnalytics(groupedItem), [groupedItem]);
 
   useEffect(() => {
-    if (!analytics || tracked.current) return;
+    if (tracked.current) return;
     const node = ref.current;
     if (!node) return;
 
@@ -379,20 +399,25 @@ function FeedItemShell({
       ([entry]) => {
         if (!entry.isIntersecting || tracked.current) return;
         tracked.current = true;
-        trackEvent("feed_card_impression", {
-          ...analytics,
-          position: positionIndex,
-          surface: "discover",
-        });
-        recordDiscoverInteraction(analytics.category, "impression");
-        sendDiscoverInteraction(analytics, "impression", positionIndex, "viewport");
+        // Analytics is absent for a few grouped shapes; the "seen" signal is
+        // not, because a card without analytics is still content the reader met.
+        if (analytics) {
+          trackEvent("feed_card_impression", {
+            ...analytics,
+            position: positionIndex,
+            surface: "discover",
+          });
+          recordDiscoverInteraction(analytics.category, "impression");
+          sendDiscoverInteraction(analytics, "impression", positionIndex, "viewport");
+        }
+        onSeen?.(positionIndex);
         observer.disconnect();
       },
       { threshold: 0.55 }
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [analytics, positionIndex]);
+  }, [analytics, positionIndex, onSeen]);
 
   return (
     <div ref={ref} data-personalization-trace={personalizationTrace}>
@@ -533,6 +558,13 @@ export default function DiscoverPage() {
   const [challengeIndex, setChallengeIndex] = useState(0);
   const [challengeComplete, setChallengeComplete] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // Queue 309 — first-run orientation state. `null` means "storage not read
+  // yet": the pre-mount render is deliberately today's Discover exactly, so no
+  // first-run UI can appear in SSR markup and diverge from first hydration.
+  const [firstRunStorage, setFirstRunStorage] = useState<FirstRunStorage | null>(null);
+  const [engagedThisSession, setEngagedThisSession] = useState(false);
+  const [cardsSeen, setCardsSeen] = useState(0);
+  const seenPositionsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     setDismissed(getDismissed());
@@ -540,13 +572,26 @@ export default function DiscoverPage() {
     if (typeof window !== "undefined" && !localStorage.getItem("discover_has_swiped")) {
       setShowSwipeHint(true);
     }
+    // Queue 309: every first-run storage read happens HERE, in the one mount
+    // effect that already reads `discover_has_swiped` — a second storage-reading
+    // mount effect would invite an ordering bug between the two flags.
+    setFirstRunStorage(readFirstRunStorage());
     const today = new Date().toISOString().slice(0, 10);
     const stored = localStorage.getItem(`daily_guesses_${today}`);
     if (stored) setDailyGuesses(parseInt(stored, 10));
   }, []);
 
   useEffect(() => {
-    const refreshProfile = () => setInteractionProfile(readDiscoverInteractionProfile());
+    const refreshProfile = () => {
+      setInteractionProfile(readDiscoverInteractionProfile());
+      // Queue 309 Items 1-3: `discover-profile-updated` is dispatched for every
+      // non-impression interaction — tap (detail_click), like, unlike, dismiss,
+      // share. That is exactly the "first engagement" this orientation UI is
+      // spent on, and exactly the tap that unlocks the games, so it is wired
+      // once here rather than through a second invented signal path.
+      setEngagedThisSession(true);
+      markFirstRunEngaged();
+    };
     window.addEventListener("discover-profile-updated", refreshProfile);
     return () => window.removeEventListener("discover-profile-updated", refreshProfile);
   }, []);
@@ -721,7 +766,21 @@ export default function DiscoverPage() {
     });
   }, []);
 
+  // Queue 309 Item 3 — one card genuinely in view. Distinct positions only, so a
+  // card scrolled past twice cannot inflate the count toward the unlock.
+  const handleCardSeen = useCallback((position: number) => {
+    if (seenPositionsRef.current.has(position)) return;
+    seenPositionsRef.current.add(position);
+    const seen = seenPositionsRef.current.size;
+    setCardsSeen(seen);
+    if (seen >= GAMES_UNLOCK_CARDS_SEEN) markGamesUnlocked();
+  }, []);
+
   const startChallenge = useCallback(() => {
+    // Queue 309 Item 1 — playing the challenge is engagement: it spends the
+    // orientation UI permanently, exactly as a tap or a like does.
+    setEngagedThisSession(true);
+    markFirstRunEngaged();
     setChallengeIndex(0);
     setChallengeComplete(false);
     setChallengeOpen(true);
@@ -796,6 +855,23 @@ export default function DiscoverPage() {
   }, [suppressedEnvelopes]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
+
+  // Queue 309 — the whole first-run decision, in two lines. Both delegate to
+  // pure functions that take no time input, so neither can expire on a timer
+  // the way the swipe hint does (that 5s dismissal is the trap this copies the
+  // persistence of, and not the timing of).
+  const isFirstRunAnon = isFirstRunAnonymous({
+    authenticated: !!user,
+    storage: firstRunStorage,
+    engagedThisSession,
+  });
+  const gamesUnlocked = areGamesUnlocked({
+    firstRun: isFirstRunAnon,
+    storage: firstRunStorage,
+    cardsSeen,
+    engagedThisSession,
+  });
+
   const challengeItems = useMemo(() => {
     return processedItems
       .filter((gi): gi is { type: "single"; item: FeedItem } => {
@@ -888,6 +964,12 @@ export default function DiscoverPage() {
         </div>
       </header>
 
+      {/* Queue 309 Item 1 — one quiet line between the header and the feed, so a
+          first-time reader learns what the numbers ARE inside one viewport. It
+          can coexist with the swipe-hint toast below: they say different things
+          and sit in different places. */}
+      <FirstRunOrientation visible={isFirstRunAnon} />
+
       {/* Swipe hint toast for first-time visitors */}
       {showSwipeHint && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 animate-fade-in">
@@ -966,8 +1048,12 @@ export default function DiscoverPage() {
           )
         )}
 
-        {/* Daily Challenge — passive progress tracker, counts guesses from feed */}
-        {!isLoading && processedItems.length > 0 && (
+        {/* Daily Challenge — passive progress tracker, counts guesses from feed.
+            Queue 309 Item 3: content before the game. A first-run anonymous
+            reader meets ~8 cards (or taps one) before this appears; everyone
+            else — signed in, returning, previously engaged — sees it exactly as
+            before, on the first paint. */}
+        {!isLoading && gamesUnlocked && processedItems.length > 0 && (
           <div className="mb-4">
             <DailyChallengeCard guessesToday={dailyGuesses} onStart={startChallenge} />
           </div>
@@ -976,7 +1062,10 @@ export default function DiscoverPage() {
         <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
-            const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
+            // Queue 309 Item 3: a locked slot falls through to the normal
+            // DiscoverCard rather than rendering nothing — suppressing the quiz
+            // must never leave a hole in the masonry grid.
+            const isGuessSlot = gamesUnlocked && gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
             const analytics = getGroupedAnalytics(gi);
             const personalizationTrace = analytics
               ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
@@ -988,7 +1077,10 @@ export default function DiscoverPage() {
                 }
               : undefined;
 
-            const isFirstCard = idx === 0 && showSwipeHint;
+            // One first-card concept, two consumers: the existing peek animation
+            // (swipe-hint cohort) and Queue 309's hero label (first-run cohort).
+            const isFirstPosition = idx === 0;
+            const isFirstCard = isFirstPosition && showSwipeHint;
 
             return (
               // `data-testid="discover-card"` is the browser-audit rail's
@@ -1003,7 +1095,7 @@ export default function DiscoverPage() {
                 data-testid="discover-card"
                 className={`break-inside-avoid mb-4${isFirstCard ? " animate-peek-right" : ""}`}
               >
-                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace}>
+                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
                   ) : (
@@ -1011,6 +1103,7 @@ export default function DiscoverPage() {
                       groupedItem={gi}
                       positionIndex={idx}
                       onDismiss={handleLessLike}
+                      showProbabilityHint={isFirstPosition && isFirstRunAnon}
                     />
                   )}
                 </FeedItemShell>

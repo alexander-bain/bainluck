@@ -64,6 +64,14 @@ describe("ComparisonCard confidence glyph (multi-candidate)", () => {
     expect(html).toContain("markets");
   });
 
+  // Queue 309 Item 4 — the " · $N.NM vol" clause is gone; "N markets" stays.
+  it("prints no dollar volume beside the market count", () => {
+    const html = render("high");
+    expect(html).not.toContain("$");
+    expect(html).not.toContain("vol");
+    expect(html).toContain("markets");
+  });
+
   it("renders nothing extra (no glyph) when the tier is absent", () => {
     const html = render(null);
     expect(html).not.toContain('role="img"');

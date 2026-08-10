@@ -97,6 +97,14 @@ describe("FuturesCard Variant B confidence glyph", () => {
     expectGlyph("low", "Low confidence");
   });
 
+  // Queue 309 Item 4 — the glyph's old row-mate. Volume still arrives in the
+  // fixture and must still print nothing.
+  it("prints no dollar volume beside the glyph", () => {
+    const html = render("high");
+    expect(html).not.toContain("$");
+    expect(html).not.toContain("vol");
+  });
+
   it("renders nothing extra (no glyph) when the tier is absent", () => {
     const html = render(null);
     expect(html).not.toContain('role="img"');

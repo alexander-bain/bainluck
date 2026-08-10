@@ -12,6 +12,7 @@ import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils"
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
 import type { CardActionCallbacks } from "./types";
+import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
 
 // Deterministic exposure hash — the same char-fold the card has always used,
 // factored out so the SSR/first-render seed and the post-mount session
@@ -49,9 +50,15 @@ interface FuturesCardProps extends CardActionCallbacks {
   setLiked: (v: boolean) => void;
   onDismiss?: () => void;
   trending: boolean;
+  /**
+   * Queue 309 Item 2 — label the hero percentage for a first-run reader who has
+   * never been told what these numbers are. The page owns the cohort decision;
+   * the card stays presentational and just renders what it is handed.
+   */
+  showProbabilityHint?: boolean;
 }
 
-export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: FuturesCardProps) {
+export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, showProbabilityHint, onDetailClick, onShare, onContextExpand, onContextCollapse }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
   const [showHeatmapContext, setShowHeatmapContext] = useState(false);
   // A/B variant: exposure-level assignment — hash(session + market) so each
@@ -95,11 +102,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
   const heatmapRows = buildHeatmapRows(data);
-  const volumeStr = data.volume_24h != null && data.volume_24h > 0
-    ? data.volume_24h >= 1_000_000 ? `$${(data.volume_24h / 1_000_000).toFixed(1)}M vol`
-    : data.volume_24h >= 1_000 ? `$${(data.volume_24h / 1_000).toFixed(0)}K vol`
-    : `$${data.volume_24h} vol`
-    : null;
+  // Queue 309 Item 4 — no dollar volume on a feed card. Standing rule,
+  // docs/design-system.md: "Dollar volume as social proof is banned too"
+  // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
+  // stops being printed as money. `SignalBars` remains the confidence signal.
 
   if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= 2) {
     const shownCells = heatmapRows.slice(0, 8);
@@ -146,10 +152,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           />
 
           {/* Summary footer — orphan-free: "All below 50%" is dropped (it read as
-              a context-less phrase); when nothing clears 50% we show only volume.
-              L2-183: the confidence glyph joins the right cluster so this
-              multi-candidate kernel matches its ComparisonCard sibling. */}
-          {(lastAbove50Label || volumeStr || data.confidence_tier) && (
+              a context-less phrase). L2-183: the confidence glyph joins the right
+              cluster so this multi-candidate kernel matches its ComparisonCard
+              sibling. Queue 309: the volume figure that used to sit beside the
+              glyph is gone, so the row renders only when something is left in it. */}
+          {(lastAbove50Label || data.confidence_tier) && (
             <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
               {lastAbove50Label && (
                 <>
@@ -158,8 +165,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 </>
               )}
               <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
-                {volumeStr && <span>{volumeStr}</span>}
-                {volumeStr && data.confidence_tier && <span>·</span>}
                 <SignalBars tier={data.confidence_tier} />
               </span>
             </div>
@@ -310,6 +315,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           {pctDisplay && (
             <div className="flex items-end gap-3 mb-3">
               <span className="font-mono font-bold text-4xl tracking-tight leading-none text-text-primary tabular-nums">{pctDisplay}</span>
+              {showProbabilityHint && (
+                <span className="pb-1 text-[11px] leading-none text-text-muted" data-testid="hero-probability-hint">
+                  {HERO_PROBABILITY_HINT}
+                </span>
+              )}
               {movementStr && (
                 <div className="pb-1">
                   <div className={`font-mono font-bold text-[15px] whitespace-nowrap ${movementUp ? "text-accent-live" : "text-accent-danger"}`} title={movementTitle}>{movementStr}</div>
@@ -342,11 +352,15 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
 
           {/* Meta footer — L2-184: confidence glyph joins the same semantic
               footer as Variant A. SignalBars renders nothing when the tier is
-              absent; existing volume/resolve copy is preserved exactly. */}
-          {(volumeStr || data.confidence_tier) && (
+              absent.
+              Queue 309 Item 4: the dollar volume is gone. `resolveText` went
+              with it here, and ONLY here, because this variant already prints
+              it in its own header block above — it was rendered twice on every
+              volume-bearing Variant B card, and dropping the volume would have
+              made that duplication unconditional. Variant A, whose header does
+              NOT carry it, keeps its footer copy. */}
+          {data.confidence_tier && (
             <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
-              {volumeStr && <span>{volumeStr}{resolveText ? ` · ${resolveText}` : ""}</span>}
-              {volumeStr && data.confidence_tier && <span>·</span>}
               <SignalBars tier={data.confidence_tier} />
             </div>
           )}
@@ -388,6 +402,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               )}
             </div>
             <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1">{leader.name}</div>
+            {/* Queue 309 Item 2 — this hero sits on a photo scrim, so it uses the
+                same white/opacity treatment as the leader name above rather than
+                a surface token. */}
+            {showProbabilityHint && (
+              <div className="text-[11px] text-white/70 mt-0.5" data-testid="hero-probability-hint">
+                {HERO_PROBABILITY_HINT}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -407,13 +429,15 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           />
         )}
 
-        <div className="flex items-center gap-2 text-[11px] text-text-muted">
-          {volumeStr && <span className="whitespace-nowrap">{volumeStr}</span>}
-          {volumeStr && resolveText && <span>·</span>}
-          {resolveText && <span className="whitespace-nowrap">{resolveText}</span>}
-          {data.confidence_tier && (volumeStr || resolveText) && <span>·</span>}
-          <SignalBars tier={data.confidence_tier} />
-        </div>
+        {/* Queue 309 Item 4: volume removed; `resolveText` survives as the row's
+            only text, so the separator now hangs off it alone. */}
+        {(resolveText || data.confidence_tier) && (
+          <div className="flex items-center gap-2 text-[11px] text-text-muted">
+            {resolveText && <span className="whitespace-nowrap">{resolveText}</span>}
+            {data.confidence_tier && resolveText && <span>·</span>}
+            <SignalBars tier={data.confidence_tier} />
+          </div>
+        )}
 
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
       </div>

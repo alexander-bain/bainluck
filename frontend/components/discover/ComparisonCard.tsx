@@ -115,17 +115,11 @@ export function ComparisonCard({
               Show more
             </Link>
           )}
+          {/* Queue 309 Item 4 — the trailing " · $N.NM vol" clause is gone
+              (docs/design-system.md: dollar volume as social proof is banned).
+              The market count stays; SignalBars stays. */}
           <span className="ml-auto flex items-center gap-2 text-[11px] text-text-muted">
-            <span>
-              {data.outcome_count} markets
-              {data.volume_24h != null && data.volume_24h > 0
-                ? ` · $${data.volume_24h >= 1_000_000
-                    ? `${(data.volume_24h / 1_000_000).toFixed(1)}M`
-                    : data.volume_24h >= 1_000
-                    ? `${(data.volume_24h / 1_000).toFixed(0)}K`
-                    : data.volume_24h} vol`
-                : ""}
-            </span>
+            <span>{data.outcome_count} markets</span>
             {data.confidence_tier && <span>·</span>}
             <SignalBars tier={data.confidence_tier} />
           </span>

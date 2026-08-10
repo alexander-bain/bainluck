@@ -70,6 +70,14 @@ describe("FuturesCard threshold_heatmap confidence glyph", () => {
     expect(html).toContain("Sep 2026");
   });
 
+  // Queue 309 Item 4 — the heatmap footer used to fall back to volume when
+  // nothing cleared 50%. It prints no dollar figure now.
+  it("prints no dollar volume in the summary footer", () => {
+    const html = render("moderate");
+    expect(html).not.toContain("$");
+    expect(html).not.toContain(" vol");
+  });
+
   it("renders nothing extra (no glyph) when the tier is absent", () => {
     const html = render(null);
     expect(html).not.toContain('role="img"');
