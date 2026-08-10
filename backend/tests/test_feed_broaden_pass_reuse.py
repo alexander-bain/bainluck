@@ -90,6 +90,7 @@ class _Market:
         self.category = category
         self.llm_sport_category = category
         self.market_tier = 1
+        self.market_type = "field"
         # None short-circuits canonical source counts -> no extra SQL, so the only
         # SQL a fresh pass issues is the single market-load SELECT.
         self.canonical_market_key = None

@@ -5539,7 +5539,13 @@ async def _score_sports_mode_futures(
             "market_tier": market.market_tier,
             # Queue 310 — canonical market shape, so Discover engagement can be
             # sliced by shape. Previously exposed only on the debug trace.
-            "market_type": market.market_type,
+            # getattr-with-default, NOT a bare attribute read: this serializer
+            # runs inside a per-item try/except that downgrades any exception to
+            # "skip this market". A hard read therefore does not fail loudly, it
+            # silently empties the entire futures pool for every duck-typed
+            # market object in the pipeline (gotcha #42 — caught by
+            # test_feed_broaden_pass_reuse before it shipped).
+            "market_type": getattr(market, "market_type", None),
             "status": market.status,
             "resolution_date": (
                 market.resolution_date.isoformat() if market.resolution_date else None
@@ -6854,8 +6860,9 @@ async def _score_futures(
                 "source_count": source_count,
                 "sources": source_names,
                 "market_tier": market.market_tier,
-                # Queue 310 — canonical market shape (see the sibling serializer).
-                "market_type": market.market_type,
+                # Queue 310 — canonical market shape (see the sibling serializer,
+                # including why this is a defensive read).
+                "market_type": getattr(market, "market_type", None),
                 "status": market.status,
                 "resolution_date": (
                     market.resolution_date.isoformat() if market.resolution_date else None
