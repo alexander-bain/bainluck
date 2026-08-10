@@ -1,0 +1,106 @@
+{
+  "schema_version": "query-plan-rail-authority/v1",
+  "extends": "admin_surface_truth_contract",
+  "cases": [
+    {
+      "id": "safe_estimated_plan",
+      "authenticated": true, "read_prefix": true, "analyze": false,
+      "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "ACCEPT", "reasons": []}
+    },
+    {
+      "id": "safe_analyzed_select_with_function_policy",
+      "authenticated": true, "read_prefix": true, "analyze": true,
+      "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 5000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "ACCEPT", "reasons": []}
+    },
+    {
+      "id": "select_pg_cancel_backend",
+      "authenticated": true, "read_prefix": true, "analyze": true,
+      "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": false,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["executable_select_functions_uncontrolled"]}
+    },
+    {
+      "id": "select_session_advisory_lock",
+      "authenticated": true, "read_prefix": true, "analyze": true,
+      "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": false,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["executable_select_functions_uncontrolled"]}
+    },
+    {
+      "id": "caller_supplies_explain", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": true, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["caller_controls_explain"]}
+    },
+    {
+      "id": "multiple_statements", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": true,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["multiple_statements"]}
+    },
+    {
+      "id": "missing_auth", "authenticated": false, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["unauthenticated"]}
+    },
+    {
+      "id": "timeout_above_request_boundary", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 30000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["timeout_unbounded"]}
+    },
+    {
+      "id": "raw_database_error", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": false, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["error_disclosure"]}
+    },
+    {
+      "id": "echoes_sql_literals", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": false,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["query_disclosure"]}
+    },
+    {
+      "id": "unbounded_plan_tree", "authenticated": true, "read_prefix": true,
+      "analyze": false, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": null, "postgres_semantics_tested": true,
+      "expected": {"verdict": "REFUSE", "reasons": ["response_unbounded"]}
+    },
+    {
+      "id": "recording_double_only", "authenticated": true, "read_prefix": true,
+      "analyze": true, "caller_supplied_explain": false, "multiple_statements": false,
+      "read_only_transaction": true, "executable_function_policy": true,
+      "timeout_ms": 10000, "error_redacted": true, "query_redacted": true,
+      "response_cap_bytes": 262144, "postgres_semantics_tested": false,
+      "expected": {"verdict": "REFUSE", "reasons": ["database_semantics_unproven"]}
+    }
+  ]
+}

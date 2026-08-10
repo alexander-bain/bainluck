@@ -8,6 +8,8 @@
       {"name": "admin_health_closure_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
       {"name": "admin_verdict_parity_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
       {"name": "measurement_surface_truth_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
+      ,{"name": "grid_freshness_query_authority_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
+      ,{"name": "query_plan_rail_authority_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
     ]},
     {"domain": "browser-audit", "canonical": "browser_audit_replacement_contract", "members": [
       {"name": "browser_edge_failure_contract", "relation": "extends", "target": "browser_audit_replacement_contract"},
