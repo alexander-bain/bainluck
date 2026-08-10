@@ -120,6 +120,7 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.precompute_category_pages",
         "app.tasks.recategorize_other",
         "app.tasks.recover_datagolf_participation",
+        "app.tasks.refresh_event_concept",
         "app.tasks.regenerate_tags",
         "app.tasks.regrade_polymarket_under_signflip",
         "app.tasks.seed_entity_registry",

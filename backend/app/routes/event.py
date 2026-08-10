@@ -5,80 +5,63 @@ and — future slices — tennis slam / UFC card / F1 GP / awards) through one
 domain-parameterized aggregator. The key is `event:<domain>:<slug>`
 (e.g. `event:golf:2026-masters`). Golf delegates to the existing golf aggregation
 (parity bar); other domains add an adapter in `utils/event_concept.py`.
+
+Cache policy lives in `utils/event_concept_cache.py` (ruling 005, extract-on-touch)
+and this tier carries the cache envelope (`docs/contracts/cache-envelope.md`), which
+names it as the contract's first customer. The route is the serve decision and
+nothing else.
 """
 
-import json as _json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
-from app.utils.event_concept import (
-    parse_event_key,
-    get_adapter,
-    strip_competitor_wire_leaks,
+from app.utils.event_concept import get_adapter, parse_event_key
+from app.utils.event_concept_cache import (
+    AVAILABILITY_LIVE,
+    AVAILABILITY_STALE_OK,
+    ConceptCacheKeys,
+    acquire_refresh_lock,
+    build_and_cache,
+    cache_keys,
+    get_client,
+    has_negative,
+    read_slot,
+    release_refresh_lock,
+    with_availability,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["event-concept"])
 
-# Whole-envelope cache TTL (#1107). The golf event-detail path recomputes the
-# full UNCACHED get_golf aggregation on every request (a selectinload over every
-# open golf market, a cold-dyno-synchronous DataGolf schedule HTTP call, and a
-# 2×N winner-market probe loop) — measured ~4-16s cold and it never warms. A
-# short primary TTL keeps live-play probabilities fresh (underlying live polling
-# runs every ~2 min) while serving warm reads well under the 2s reliability bar.
-_ENVELOPE_TTL = 60
-_STALE_TTL = 86400
 
-# LAT-P014/#1107: a MISS used to cost what a hit costs, every single time.
-#
-# Only successful envelopes were cached, so a key that resolves to nothing re-ran
-# the adapter's full build on every request. Measured in production 2026-08-09
-# against a cycling control on the same route: a bad golf key 404'd in
-# 6,931-14,518ms and a bad tennis key in 7,923ms, where a bad CYCLING key — whose
-# adapter proves absence from an in-memory config — 404'd in 290ms.
-#
-# Deliberately SHORT. The consequence of caching a negative is that a key which
-# becomes valid inside the window keeps 404ing for up to that long, so the window
-# is kept to the same 60s the envelope itself uses: a tournament that appears
-# mid-window is at most 60s late, which is well inside the polling cadence that
-# would have created it. Domain-agnostic on purpose — it protects tennis and the
-# unknown-domain path too, not just the golf case that exposed it.
-_NEGATIVE_TTL = 60
-_NEGATIVE_SENTINEL = "404"
+def _schedule_refresh(rc, keys: ConceptCacheKeys, key: str) -> None:
+    """Kick exactly one background rebuild for `key` and return immediately.
 
-# LAT-P021/#1107: a SETTLED envelope does not change, so re-computing it every 60s
-# is pure waste — and it is the waste that was killing the four golf majors. Their
-# builds cost 12-30s, the 60s primary TTL expired before the next visitor arrived,
-# so every request paid the full cold cost and two of the four never completed at
-# all (they 503'd at Heroku's 30.3s H12 boundary, so the cache was NEVER written
-# and could never be, a loop with no exit from user traffic).
-#
-# This is "settled means settled" applied to caching: a finished tournament's
-# envelope is frozen, so it gets the same 24h life the stale copy already has.
-# Live and upcoming events keep the short TTL — their probabilities move, and
-# LAT-P014's freshness reasoning for those is unchanged.
-_SETTLED_TTL = 86400
+    Single-flight: a burst of readers arriving behind one TTL expiry produces one
+    rebuild, not one per reader (the stampede Codex C224 found on this tier). The
+    lock is released if the dispatch itself fails, so a dead broker costs the next
+    reader a retry rather than wedging the key for REFRESH_LOCK_TTL.
 
-
-def _envelope_ttl(envelope: dict) -> int:
-    """Primary-cache TTL for a built envelope: long iff the event is settled.
-
-    Defensive by construction — anything that is not explicitly "settled" gets the
-    SHORT ttl. Mis-classifying a live event as settled would freeze a moving
-    probability for a day, which is a visible product lie; mis-classifying a
-    settled one as live merely costs a rebuild. The failure directions are not
-    symmetric, so the default is the cheap one.
+    Best-effort throughout — the caller has already decided to serve the mirror,
+    and nothing here may turn a served page into an error.
     """
+    if not acquire_refresh_lock(rc, keys):
+        return
     try:
-        if (envelope.get("event") or {}).get("status") == "settled":
-            return _SETTLED_TTL
-    except AttributeError:
-        pass
-    return _ENVELOPE_TTL
+        from app.tasks import celery_app
+
+        celery_app.send_task(
+            "app.tasks.refresh_event_concept",
+            args=[key],
+            queue="background",
+        )
+    except Exception:
+        logger.warning("event-concept: refresh dispatch failed for %s", key, exc_info=True)
+        release_refresh_lock(rc, keys)
 
 
 @router.get("/{key}")
@@ -89,72 +72,43 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     if adapter is None:
         raise HTTPException(status_code=404, detail=f"No event adapter for domain '{domain}'")
 
-    # Whole-envelope Redis cache (#1107), mirroring the hub pattern
-    # (routes/hub.py): short primary TTL + 24h stale fallback. This can never do
-    # worse than the pre-cache path — a miss (or a dead Redis) falls straight
-    # through to the live build; the stale key only rescues a build that errors.
-    _cache_key = f"bainluck:event_concept:{key}"
-    _stale_key = f"{_cache_key}:stale"
-    _negative_key = f"{_cache_key}:404"
-    _rc = None
-    try:
-        from app.tasks.redis_state import get_redis_client
+    keys = cache_keys(key)
+    rc = get_client()
 
-        _rc = get_redis_client()
-        cached = _rc.get(_cache_key)
-        if cached:
-            return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
-        # LAT-P014: a known-absent key short-circuits before the adapter runs. Read
-        # AFTER the positive key so a value written since cannot be shadowed by a
-        # still-live negative.
-        if _rc.get(_negative_key):
-            raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
-    except HTTPException:
-        raise
-    except Exception:
-        _rc = None
+    # 1. A live hit inside the primary TTL.
+    primary = read_slot(rc, keys.primary)
+    if primary is not None:
+        return with_availability(primary, AVAILABILITY_LIVE)
 
-    try:
-        envelope = await adapter.build_event(slug, db)
-    except Exception:
-        # Live build failed — serve the last good snapshot rather than 500-ing on
-        # the year's biggest golf day. If there is no stale snapshot, re-raise
-        # (identical to the pre-cache behavior).
-        if _rc is not None:
-            try:
-                stale = _rc.get(_stale_key)
-                if stale:
-                    logger.warning("event-concept build failed for %s — serving stale", key)
-                    return _json.loads(stale.decode() if isinstance(stale, bytes) else stale)
-            except Exception:
-                pass
-        raise
-
-    if envelope is None:
-        # LAT-P014: record the absence, so the next request for this key does not
-        # re-run the build. Best-effort — a dead Redis must never turn a 404 into
-        # a 500, which is why this mirrors the write below rather than sharing it.
-        try:
-            if _rc is not None:
-                _rc.setex(_negative_key, _NEGATIVE_TTL, _NEGATIVE_SENTINEL)
-        except Exception:
-            pass
+    # 2. LAT-P014: a known-absent key short-circuits before the adapter runs.
+    #    Read AFTER the positive slot so a value written since cannot be shadowed
+    #    by a still-live negative, and BEFORE the mirror so a key that has since
+    #    stopped resolving 404s instead of serving a day-old tournament.
+    if has_negative(rc, keys):
         raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
 
-    # L2-48/L2-118: probability-only product — strip odds from the wire.
-    result = strip_competitor_wire_leaks(envelope)
+    # 3. LAT-P021: the miss serves the mirror. This is the fix — measured in
+    #    production, a TTL expiry used to walk past a 96-second-old healthy
+    #    snapshot into an 18.5s rebuild, and The Open past a 30s H12 503.
+    stale = read_slot(rc, keys.stale)
+    if stale is not None:
+        _schedule_refresh(rc, keys, key)
+        return with_availability(stale, AVAILABILITY_STALE_OK)
 
+    # 4. Nothing usable cached — build inline. A cold miss must still SERVE, so
+    #    this path stays synchronous and is never gated on the warmer.
     try:
-        if _rc is not None:
-            payload = _json.dumps(result, default=str)
-            _rc.setex(_cache_key, _envelope_ttl(envelope), payload)
-            _rc.setex(_stale_key, _STALE_TTL, payload)
-            # LAT-P014: a key that now resolves must not keep a negative entry
-            # behind it. The positive key is read first so it already wins, but
-            # dropping it removes the question entirely rather than leaving it to
-            # a TTL-ordering argument.
-            _rc.delete(_negative_key)
+        built = await build_and_cache(key, db, rc, adapter=adapter)
     except Exception:
-        pass
+        # Live build failed. Re-read the mirror rather than trusting the check
+        # above: a concurrent refresh may have landed one while we were building.
+        rescued = read_slot(rc, keys.stale)
+        if rescued is not None:
+            logger.warning("event-concept build failed for %s — serving stale", key)
+            return with_availability(rescued, AVAILABILITY_STALE_OK)
+        raise
 
-    return result
+    if built is None:
+        raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
+
+    return with_availability(built, AVAILABILITY_LIVE)

@@ -264,6 +264,7 @@ class TestBeatScheduleCompleteness:
         "compute-fair-fight-comparison",
         "precompute-source-intelligence",
         "precompute-category-pages",
+        "warm-event-concepts",
         "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
@@ -275,11 +276,6 @@ class TestBeatScheduleCompleteness:
         "calibration-sentinel-weekly",
         "mlb-schedule-coverage-daily",
         "flow-sentinel-daily",
-        # LAT-P021 (#1107): hourly warm of the four completed golf majors, so a
-        # visitor never pays the cold build that was 503-ing two of them on every
-        # single request. Background queue, :47, paired with the settled-envelope
-        # TTL in routes/event.py -- neither half works alone.
-        "warm-major-event-concepts",
         "grid-sentinel-daily",
         "grid-register-sentinel-daily",
         "horizon-sentinel-daily",
