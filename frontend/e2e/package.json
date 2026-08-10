@@ -18,7 +18,8 @@
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js",
-    "blend-parity": "playwright test --project=desktop --project=mobile blend-surface-parity"
+    "blend-parity": "playwright test --project=desktop --project=mobile blend-surface-parity",
+    "event-page": "playwright test --project=desktop --project=mobile event-page"
   },
   "devDependencies": {
     "@playwright/test": "1.48.2"
