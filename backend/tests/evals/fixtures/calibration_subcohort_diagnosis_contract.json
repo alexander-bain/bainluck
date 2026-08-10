@@ -1,0 +1,51 @@
+{
+  "schema_version": "calibration-subcohort-diagnosis/v1",
+  "source_bundle": "cal-diagnosis-2026-08-09",
+  "cases": [
+    {
+      "id": "published-grid-cluster-counts-approximate",
+      "input": {"kind": "anomaly", "published_population_correspondence": false, "exact_independent_question_count": false, "comparison_family_complete": true, "multiplicity_adjusted_p": 1.2e-13},
+      "expected": {"verdict": "UNKNOWN", "reasons": ["INDEPENDENCE_APPROXIMATE", "PUBLISHED_POPULATION_MISMATCH"]}
+    },
+    {
+      "id": "cricket-missing-third-outcome-both-sides",
+      "input": {"kind": "mechanism", "draw_absent_on_every_multiwinner": true, "sides": [{"price_moved": false, "multiwinner_markets": 241, "multiwinner_gap_pp": 27.61, "coherent_gap_pp": -12.77}, {"price_moved": true, "multiwinner_markets": 154, "multiwinner_gap_pp": 32.47, "coherent_gap_pp": -0.84}]},
+      "expected": {"verdict": "CONFIRMED", "reasons": []}
+    },
+    {
+      "id": "cricket-only-moved-side-is-insufficient",
+      "input": {"kind": "mechanism", "draw_absent_on_every_multiwinner": true, "sides": [{"price_moved": true, "multiwinner_markets": 154, "multiwinner_gap_pp": 32.47, "coherent_gap_pp": -0.84}]},
+      "expected": {"verdict": "REFUTED", "reasons": ["MOVED_SIDE_CONTROL_MISSING"]}
+    },
+    {
+      "id": "cricket-draw-capture-not-proven",
+      "input": {"kind": "mechanism", "draw_absent_on_every_multiwinner": false, "sides": [{"price_moved": false, "multiwinner_markets": 241, "multiwinner_gap_pp": 27.61, "coherent_gap_pp": -12.77}, {"price_moved": true, "multiwinner_markets": 154, "multiwinner_gap_pp": 32.47, "coherent_gap_pp": -0.84}]},
+      "expected": {"verdict": "REFUTED", "reasons": ["MISSING_THIRD_OUTCOME_NOT_IDENTIFIED"]}
+    },
+    {
+      "id": "entertainment-structural-defect-survives-liquidity",
+      "input": {"kind": "rival", "structural_relation_invalid": true, "liquidity_strata_gap_pp": {"null": -24.10, "zero": -26.34, "positive": -19.44}, "claims_timing_mechanism": false, "quote_chronology_present": false},
+      "expected": {"verdict": "CONFIRMED", "reasons": []}
+    },
+    {
+      "id": "entertainment-settlement-collapse-still-unknown",
+      "input": {"kind": "rival", "structural_relation_invalid": true, "liquidity_strata_gap_pp": {"null": -24.10, "zero": -26.34, "positive": -19.44}, "claims_timing_mechanism": true, "quote_chronology_present": false},
+      "expected": {"verdict": "UNKNOWN", "reasons": ["TIMING_RIVAL_UNTESTABLE"]}
+    },
+    {
+      "id": "entertainment-without-positive-volume-control",
+      "input": {"kind": "rival", "structural_relation_invalid": true, "liquidity_strata_gap_pp": {"null": -24.10, "zero": -26.34}, "claims_timing_mechanism": false, "quote_chronology_present": false},
+      "expected": {"verdict": "UNKNOWN", "reasons": ["LIQUIDITY_RIVAL_INCOMPLETE"]}
+    },
+    {
+      "id": "category-backfill-ranking-refused",
+      "input": {"kind": "backfill_priority", "reachability_status": "incomplete", "recoverable_n_by_category": false, "independent_questions_by_category": false},
+      "expected": {"verdict": "UNKNOWN", "reasons": ["CATEGORY_INDEPENDENCE_MISSING", "CATEGORY_REACHABILITY_INCOMPLETE", "RECOVERABLE_VALUE_MISSING"]}
+    },
+    {
+      "id": "category-backfill-ranking-complete",
+      "input": {"kind": "backfill_priority", "reachability_status": "complete", "recoverable_n_by_category": true, "independent_questions_by_category": true},
+      "expected": {"verdict": "RANK", "reasons": []}
+    }
+  ]
+}
