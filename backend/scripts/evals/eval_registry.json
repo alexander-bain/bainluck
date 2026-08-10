@@ -32,6 +32,7 @@
       {"name": "calibration_surface_population_authority", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "calibration_subcohort_diagnosis_contract", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "matched_calibration_evidence_contract", "relation": "extends", "target": "calibration_population_integrity"},
+      {"name": "nonexclusive_bundle_contract", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "trading_activity_authority_contract", "relation": "extends", "target": "calibration_population_integrity"}
     ]},
     {"domain": "event-page-trust", "canonical": "feed_card_trust_contract", "members": [

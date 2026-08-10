@@ -19,14 +19,20 @@ def classify(r:dict[str,Any])->dict[str,Any]:
     e=r["evidence"]; reason=None; shape="unknown"; normalize=False; publish=False
     if e["duplicate_ids"] or e["contradictory"]: reason="conflicting_shape_evidence"
     elif e["outcome_count"]==1: shape="orphan"; reason="orphan_half_market"
-    elif e["independent_binary_questions"] or e["winner_count"]>1: shape="independent_bundle"; reason="nonexclusive_bundle"
+    elif e["independent_binary_questions"] or e["winner_count"]>1:
+        shape="independent_bundle"; normalize=False
+        if r["category"] == "esports" or r.get("approved_narrow_exclusion"):
+            reason="nonexclusive_bundle"; publish=False
+        else:
+            reason="nonexclusive_bundle_measured"; publish=True
     elif e["parent_condition_missing"]: reason="parent_condition_unknown"
     elif e["exclusive_proved"] and e["outcome_count"]>=3 and e["winner_count"]==1:
         shape="mex_field"; publish=True; normalize=e["probability_sum"]>r["threshold"]+r["tolerance"]
     elif e["outcome_count"]==2 and not e["independent_binary_questions"]: shape="binary"; publish=True
     else: reason="shape_unknown"
-    disposition="published" if publish else "excluded_unknown" if reason in {"conflicting_shape_evidence","parent_condition_unknown","shape_unknown"} else "excluded_structural"
-    if r["cohort_after_n"] is not None: disposition="parked_below_publish_bar" if r["cohort_after_n"]<r["publish_bar"] else "published_cohort"
+    if reason == "nonexclusive_bundle_measured": disposition="measured_only"
+    else: disposition="published" if publish else "excluded_unknown" if reason in {"conflicting_shape_evidence","parent_condition_unknown","shape_unknown"} else "excluded_structural"
+    if r["cohort_after_n"] is not None and not publish: disposition="parked_below_publish_bar" if r["cohort_after_n"]<r["publish_bar"] else "published_cohort"
     return {"shape":shape,"normalize":normalize,"publish":publish,"reason":reason,"disposition":disposition}
 def evaluate_corpus(p):
     d=[]
