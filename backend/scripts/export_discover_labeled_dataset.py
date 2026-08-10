@@ -126,10 +126,19 @@ def build_labeled_dataset_statement(
     surface: str | None = None,
     reviewer: str | None = None,
     labels: tuple[str, ...] | None = None,
+    before: datetime | None = None,
 ) -> Select:
-    """Build the read-only statement for explicit Discover labels."""
+    """Build the read-only statement for explicit Discover labels.
+
+    ``before`` is the temporal-holdout upper bound: it selects the TRAIN side of a
+    cutoff (``created_at < before``), so a fitter can pull its training population
+    without ever seeing the holdout. Without it an export is unbounded above and
+    any fit on the result is in-sample (Codex C216).
+    """
 
     judgment_filters = [RankingJudgment.created_at >= since]
+    if before is not None:
+        judgment_filters.append(RankingJudgment.created_at < before)
     if surface:
         judgment_filters.append(RankingJudgment.surface == surface)
     if reviewer:
@@ -322,6 +331,7 @@ async def export_rows(
     surface: str | None,
     reviewer: str | None,
     labels: tuple[str, ...] | None,
+    before: datetime | None = None,
 ) -> list[dict[str, Any]]:
     statement = build_labeled_dataset_statement(
         since=since,
@@ -329,6 +339,7 @@ async def export_rows(
         surface=surface,
         reviewer=reviewer,
         labels=labels,
+        before=before,
     )
     result = await session.execute(statement)
     return [format_labeled_row(row) for row in result.all()]
@@ -370,6 +381,14 @@ def main() -> int:
     parser.add_argument("--output", help="Output path. Defaults to stdout.")
     parser.add_argument("--format", choices=("csv", "jsonl"), default="csv")
     parser.add_argument("--days", type=int, default=30)
+    parser.add_argument(
+        "--before",
+        help=(
+            "ISO-8601 upper bound on label observation time (created_at < before). "
+            "This is the TRAIN side of a temporal holdout; without it the export is "
+            "unbounded above and any fit on it is in-sample."
+        ),
+    )
     parser.add_argument("--limit", type=int, default=5000)
     parser.add_argument("--surface")
     parser.add_argument("--reviewer")
@@ -381,6 +400,12 @@ def main() -> int:
 
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     labels = tuple(args.label) if args.label else None
+    before = None
+    if args.before:
+        try:
+            before = datetime.fromisoformat(args.before.replace("Z", "+00:00"))
+        except ValueError:
+            parser.error(f"--before must be ISO-8601, got {args.before!r}")
     if args.print_sql:
         statement = build_labeled_dataset_statement(
             since=since,
@@ -388,6 +413,7 @@ def main() -> int:
             surface=args.surface,
             reviewer=args.reviewer,
             labels=labels,
+            before=before,
         )
         print(
             statement.compile(
@@ -397,7 +423,7 @@ def main() -> int:
         )
         return 0
 
-    return asyncio.run(_run_cli(args=args, since=since, labels=labels))
+    return asyncio.run(_run_cli(args=args, since=since, labels=labels, before=before))
 
 
 async def _run_cli(
@@ -405,6 +431,7 @@ async def _run_cli(
     args: argparse.Namespace,
     since: datetime,
     labels: tuple[str, ...] | None,
+    before: datetime | None = None,
 ) -> int:
     from app.services.database import async_session_maker
 
@@ -416,6 +443,7 @@ async def _run_cli(
             surface=args.surface,
             reviewer=args.reviewer,
             labels=labels,
+            before=before,
         )
 
     if args.summary:

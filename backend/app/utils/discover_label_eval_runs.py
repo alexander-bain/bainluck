@@ -79,6 +79,7 @@ async def snapshot_discover_label_eval_run(
             "days": days,
             "limit": limit,
             "stratum_coverage": stratum_coverage,
+            "holdout_readiness": build_holdout_readiness(rows, top_k=top_k),
         },
         **scalar_metric_values(metric_summary, top_k=top_k),
     )
@@ -156,6 +157,68 @@ def build_category_breakdowns(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "fixable_interest": metrics["fixable_interest"],
         }
     return dict(sorted(breakdowns.items()))
+
+
+def build_holdout_readiness(
+    rows: list[dict[str, Any]],
+    *,
+    top_k: int = 20,
+    gate: int = LABEL_STRATUM_GATE,
+) -> dict[str, Any]:
+    """Can this population support a temporal holdout at all? (Queue 308.)
+
+    Ruling 016 makes the temporal holdout the entry ticket for any interestingness
+    claim, so every persisted run records whether one was even constructible. The
+    failure this catches is not a wrong number — it is a confident number computed
+    on a population that could never have validated it.
+
+    A holdout needs (a) enough labels, (b) both classes present, and (c) labels
+    observed across more than one day. (c) is the one that actually bites: a corpus
+    labelled in a single sitting has no cutoff that yields two usable partitions,
+    however many rows it has.
+    """
+
+    def _day(row: dict[str, Any]) -> str | None:
+        value = row.get("created_at") or row.get("labeled_at") or row.get("timestamp")
+        return str(value)[:10] if value else None
+
+    days = sorted({d for d in (_day(row) for row in rows) if d})
+    positives = sum(1 for row in rows if _norm_label(row) == 1)
+    negatives = sum(1 for row in rows if _norm_label(row) == 0)
+
+    blockers = []
+    if len(rows) < top_k * 2:
+        blockers.append("CORPUS_TOO_SMALL")
+    if positives == 0 or negatives == 0:
+        blockers.append("SINGLE_CLASS_CORPUS")
+    if len(days) < 2:
+        blockers.append("SINGLE_LABELLING_SESSION")
+    if positives < 2:
+        blockers.append("TOO_FEW_POSITIVES_TO_SPLIT")
+
+    return {
+        "constructible": not blockers,
+        "blockers": blockers,
+        "rows": len(rows),
+        "positives": positives,
+        "negatives": negatives,
+        "distinct_label_days": len(days),
+        "label_day_range": [days[0], days[-1]] if days else None,
+        "stratum_gate": gate,
+        "note": (
+            "Entry ticket for any interestingness claim (ruling 016). "
+            "Not constructible => no claim, at any weight vector."
+        ),
+    }
+
+
+def _norm_label(row: dict[str, Any]) -> int | None:
+    value = str(row.get("label") or "").strip().lower()
+    if value in {"love", "interesting", "positive", "1", "true"}:
+        return 1
+    if value in {"bad", "kill", "boring", "negative", "0", "false"}:
+        return 0
+    return None
 
 
 def build_stratum_coverage(

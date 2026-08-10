@@ -91,7 +91,10 @@ def score_rows(
                 "row": row,
             }
         )
-    scored.sort(key=lambda item: item["score"], reverse=True)
+    # Score DESC, then stable id ASC. Sorting on score alone is a stable sort,
+    # so ties silently inherit input order and the metric moves when the input
+    # is shuffled. The label must never enter the key (Codex C216).
+    scored.sort(key=lambda item: (-item["score"], str(item["id"])))
     return scored
 
 

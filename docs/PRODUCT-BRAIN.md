@@ -1306,3 +1306,4 @@ failure this document already records happening twice.
 - [016](rulings/016-discover-charter-first-queue.md) — 2026-08-10 — Discover charter addendum: the first queue is one arc (Alex)
 - [017](rulings/017-any-master-push-holds-the-lock.md) — 2026-08-10 — Any session that pushes master holds the integrator lock (Alex)
 - [018](rulings/018-barred-files-integrator-is-the-lanes-hands.md) — 2026-08-10 — A barred file makes the Integrator the lane's HANDS, never a second author (Alex)
+- [019](rulings/019-interestingness-tuning-global-until-stratum-gate.md) — 2026-08-10 — Interestingness tuning is global-only until a stratum clears the gate on both sides (Alex)

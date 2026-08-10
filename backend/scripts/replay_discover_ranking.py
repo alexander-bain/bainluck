@@ -32,6 +32,7 @@ import asyncio
 import hashlib
 import json
 import sys
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,8 +51,45 @@ from scripts.evaluate_discover_label_gold_set import evaluate_gold_set  # noqa: 
 _SPLIT_SALT = "bainluck-discover-labels-v1"
 
 
+def label_time(label: dict[str, Any]) -> "datetime | None":
+    """Label OBSERVATION time — the only valid split authority for a claim."""
+    for key in ("labeled_at", "created_at", "timestamp"):
+        value = label.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def partition_labels(
+    labels_by_market: dict[int, dict[str, Any]], cutoff: "datetime"
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]], int]:
+    """``labeled_at < cutoff`` -> train; ``>= cutoff`` -> holdout (exact cutoff is holdout).
+
+    Labels with no parseable observation time go to NEITHER side and are counted.
+    """
+    train: dict[int, dict[str, Any]] = {}
+    holdout: dict[int, dict[str, Any]] = {}
+    dropped = 0
+    for market_id, label in labels_by_market.items():
+        observed = label_time(label)
+        if observed is None:
+            dropped += 1
+            continue
+        (train if observed < cutoff else holdout)[market_id] = label
+    return train, holdout, dropped
+
+
 def dataset_split(market_id: int | None, event_id: int | None = None) -> str:
-    """Deterministic 80/10/10 split — mirror of admin_judgments._dataset_split.
+    """Deterministic 80/10/10 MD5 split — mirror of admin_judgments._dataset_split.
+
+    ⚠️ DEVELOPMENT CONVENIENCE ONLY — never a valid basis for a claim. A hash
+    split assigns future labels to train, so it leaks exactly the information a
+    holdout exists to withhold. Use ``--cutoff`` for anything anyone will cite
+    (ruling 016; Codex C216).
 
     Kept in sync by hand (same salt/algorithm) to avoid importing the FastAPI
     route module into an offline script.
@@ -298,18 +336,32 @@ def compare_configs(
     *,
     top_k: int,
     split: str | None,
+    cutoff: "datetime | None" = None,
 ) -> dict[str, Any]:
+    train_labels, holdout_labels, dropped_labels = (
+        partition_labels(labels_by_market, cutoff) if cutoff else ({}, {}, 0)
+    )
     results = []
     for config in configs:
         reranked = rerank(rows, config)
+        entry_gold: dict[str, Any] = {
+            "config": config.name,
+            "blend_weight": config.blend_weight,
+            "vs_served": diff_vs_served(reranked, top_k=top_k),
+            "gold_set": gold_set_diff(
+                reranked, labels_by_market, top_k=top_k, split=split
+            ),
+        }
+        if cutoff:
+            entry_gold["gold_set_train"] = gold_set_diff(
+                reranked, train_labels, top_k=top_k, split=None
+            )
+            entry_gold["gold_set_holdout"] = gold_set_diff(
+                reranked, holdout_labels, top_k=top_k, split=None
+            )
         results.append(
             {
-                "config": config.name,
-                "blend_weight": config.blend_weight,
-                "vs_served": diff_vs_served(reranked, top_k=top_k),
-                "gold_set": gold_set_diff(
-                    reranked, labels_by_market, top_k=top_k, split=split
-                ),
+                **entry_gold,
                 "classifier": classifier_metrics(reranked, top_k=top_k),
                 "top": [
                     {
@@ -327,6 +379,11 @@ def compare_configs(
         "candidate_count": len(rows),
         "top_k": top_k,
         "split": split or "all",
+        "cutoff": cutoff.isoformat() if cutoff else None,
+        "split_authority": "labeled_at cutoff" if cutoff else "md5 hash (DEV ONLY — no claim)",
+        "train_labels": len(train_labels) if cutoff else None,
+        "holdout_labels": len(holdout_labels) if cutoff else None,
+        "dropped_no_label_time": dropped_labels if cutoff else None,
         "configs": results,
     }
 
@@ -553,7 +610,19 @@ def main() -> int:
     parser.add_argument("--snapshot-file", help="Load snapshot rows from JSON/JSONL")
     parser.add_argument("--labels-file", help="Load gold-set rows from JSON/JSONL")
     parser.add_argument("--config-file", help="JSON list of config dicts")
-    parser.add_argument("--split", choices=("train", "dev", "test"))
+    parser.add_argument(
+        "--split",
+        choices=("train", "dev", "test"),
+        help="MD5 hash split. DEV ONLY — leaks the future; use --cutoff for any claim.",
+    )
+    parser.add_argument(
+        "--cutoff",
+        help=(
+            "ISO-8601 label-observation cutoff. Partitions the gold set into train "
+            "(<cutoff) and holdout (>=cutoff) and reports both. This is the only "
+            "split that supports a claim; it governs over --split."
+        ),
+    )
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--label-days", type=int, default=120)
     parser.add_argument("--demo", action="store_true", help="Offline synthetic snapshot")
@@ -584,8 +653,21 @@ def main() -> int:
             else asyncio.run(load_labels_from_db(args.label_days))
         )
 
+    cutoff = None
+    if args.cutoff:
+        try:
+            cutoff = datetime.fromisoformat(args.cutoff.replace("Z", "+00:00"))
+        except ValueError:
+            parser.error(f"--cutoff must be ISO-8601, got {args.cutoff!r}")
+        if args.split:
+            print(
+                "note: --cutoff governs; --split is a dev-only hash split and is "
+                "reported alongside but supports no claim.",
+                file=sys.stderr,
+            )
+
     comparison = compare_configs(
-        rows, configs, labels, top_k=args.top_k, split=args.split
+        rows, configs, labels, top_k=args.top_k, split=args.split, cutoff=cutoff
     )
     comparison["run_id"] = run_id
 
