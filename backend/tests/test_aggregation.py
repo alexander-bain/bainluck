@@ -375,3 +375,11 @@ class TestHeroMatchesBlendSeriesLatestPoint:
         agg_line = compute_aggregated_probability(series, bucket_seconds=60)
         assert agg_line, "series should produce points"
         assert hero == pytest.approx(agg_line[-1].home_probability, abs=1e-6)
+
+
+def test_q312_seeded_failure_shard_2():
+    """TEMPORARY — Queue 312 acceptance #2: prove shard 2 can report red.
+
+    Deliberate failure on a throwaway branch. Never merged to master.
+    """
+    assert False, "Q312 seeded failure: shard 2 must go red"
