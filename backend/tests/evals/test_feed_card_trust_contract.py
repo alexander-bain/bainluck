@@ -11,7 +11,7 @@ def _case(case_id: str) -> dict:
 
 def test_committed_corpus_matches_oracles() -> None:
     report = evaluate_corpus(load_corpus())
-    assert report["total"] == 23
+    assert report["total"] == 24
     assert report["passed"] == report["total"], report["cases"]
 
 

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts.evals.observed_product_quality_contract import (
+    member_conservation,
     observed_staleness,
     temporal_interestingness_split,
 )
@@ -78,3 +79,9 @@ def test_invalid_timestamp_and_missing_label_fail_closed():
     rows[-2].pop("label")
     result = temporal_interestingness_split(rows, cutoff="2026-08-01T00:00:00Z")
     assert set(result["reasons"]) == {"HOLDOUT_LABELS_INCOMPLETE", "INVALID_LABEL_TIMESTAMPS"}
+
+
+def test_awards_members_are_conserved_or_explicitly_refused():
+    pack = json.loads(FIXTURES.read_text())
+    case = next(row for row in pack["cases"] if row["id"] == "awards-member-conservation")
+    assert member_conservation(case["input"]) == case["expected"]

@@ -1,0 +1,63 @@
+{
+  "schema_version": "eval-bite-rate-audit/v1",
+  "sampling_rule": "first four stable committed cases from ten stratified contracts spanning C218-C248; mutations frozen before execution",
+  "samples": [
+    {"queue":"C218","contract":"calibration_exit_exam_bundle_contract","case_id":"clean-entertainment-inference","mutation":{"path":["consequential_claim"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C218","contract":"calibration_exit_exam_bundle_contract","case_id":"small-cricket-forensic","mutation":{"path":["claimed_population_inference"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C218","contract":"calibration_exit_exam_bundle_contract","case_id":"small-cricket-population-claim","mutation":{"path":["consequential_claim"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C218","contract":"calibration_exit_exam_bundle_contract","case_id":"rows-without-independent-questions","mutation":{"path":["after","independent_questions"],"value":40},"boundary":"dict_standin"},
+
+    {"queue":"C219","contract":"first_content_latency_attribution_contract","case_id":"clean-miss","mutation":{"path":["stable_content_id"],"value":null},"boundary":"dict_standin"},
+    {"queue":"C219","contract":"first_content_latency_attribution_contract","case_id":"clean-hit","mutation":{"path":["trace_id"],"value":""},"boundary":"dict_standin"},
+    {"queue":"C219","contract":"first_content_latency_attribution_contract","case_id":"clean-stale","mutation":{"path":["server_stages","concepts"],"value":99999},"boundary":"dict_standin"},
+    {"queue":"C219","contract":"first_content_latency_attribution_contract","case_id":"backend-fast-client-slow","mutation":{"path":["mounted"],"value":false},"boundary":"dict_standin"},
+
+    {"queue":"C220","contract":"rendered_lifecycle_coverage_contract","case_id":"fresh-event","mutation":{"path":["recorded_type"],"value":"futures"},"boundary":"dict_standin"},
+    {"queue":"C220","contract":"rendered_lifecycle_coverage_contract","case_id":"fresh-futures","mutation":{"path":["authority","generation"],"value":"wrong"},"boundary":"dict_standin"},
+    {"queue":"C220","contract":"rendered_lifecycle_coverage_contract","case_id":"fresh-concept","mutation":{"path":["authority","status"],"value":"settled"},"boundary":"dict_standin"},
+    {"queue":"C220","contract":"rendered_lifecycle_coverage_contract","case_id":"fresh-tournament","mutation":{"path":["recorded_id"],"value":"wrong"},"boundary":"dict_standin"},
+
+    {"queue":"C221","contract":"golf_event_membership_contract","case_id":"masters-golfer","mutation":{"path":["market_tournament_key"],"value":"pga-championship"},"boundary":"dict_standin"},
+    {"queue":"C221","contract":"golf_event_membership_contract","case_id":"pga-golfer","mutation":{"path":["market_gender"],"value":"women"},"boundary":"dict_standin"},
+    {"queue":"C221","contract":"golf_event_membership_contract","case_id":"womens-pga-golfer","mutation":{"path":["outcome_name"],"value":"PGA Tour"},"boundary":"dict_standin"},
+    {"queue":"C221","contract":"golf_event_membership_contract","case_id":"confirmed-fuzzy-sponsor-name","mutation":{"path":["authoritative_event_id_match"],"value":false},"boundary":"dict_standin"},
+
+    {"queue":"C224","contract":"politics_cache_tier_contract","case_id":"clean-primary","mutation":{"path":["primary","valid"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C224","contract":"politics_cache_tier_contract","case_id":"clean-stale","mutation":{"path":["cache_status_exposed"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C224","contract":"politics_cache_tier_contract","case_id":"current-undated-stale","mutation":{"path":["generated_at_exposed"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C224","contract":"politics_cache_tier_contract","case_id":"stale-age-unknown","mutation":{"path":["stale","age_seconds"],"value":10},"boundary":"dict_standin"},
+
+    {"queue":"C227","contract":"matched_calibration_evidence_contract","case_id":"backend-published-comparison","mutation":{"path":["backend_decision_present"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C227","contract":"matched_calibration_evidence_contract","case_id":"client-selects-widest-gap","mutation":{"path":["backend_decision_present"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C227","contract":"matched_calibration_evidence_contract","case_id":"outcomes-only-disclosure","mutation":{"path":["independent_question_n"],"value":100},"boundary":"dict_standin"},
+    {"queue":"C227","contract":"matched_calibration_evidence_contract","case_id":"no-outcome-count","mutation":{"path":["outcome_n"],"value":100},"boundary":"dict_standin"},
+
+    {"queue":"C235","contract":"query_plan_rail_authority_contract","case_id":"safe_estimated_plan","mutation":{"path":["authenticated"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C235","contract":"query_plan_rail_authority_contract","case_id":"safe_analyzed_select_with_function_policy","mutation":{"path":["read_only_transaction"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C235","contract":"query_plan_rail_authority_contract","case_id":"select_pg_cancel_backend","mutation":{"path":["executable_function_policy"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C235","contract":"query_plan_rail_authority_contract","case_id":"select_session_advisory_lock","mutation":{"path":["executable_function_policy"],"value":true},"boundary":"dict_standin"},
+
+    {"queue":"C236","contract":"settled_prop_grade_authority_contract","case_id":"ungraded_default_false","mutation":{"path":["rows",0,"actual"],"value":0},"boundary":"dict_standin"},
+    {"queue":"C236","contract":"settled_prop_grade_authority_contract","case_id":"generic_source_default_false","mutation":{"path":["rows",0,"hit"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C236","contract":"settled_prop_grade_authority_contract","case_id":"void_source","mutation":{"path":["rows",0,"hit"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C236","contract":"settled_prop_grade_authority_contract","case_id":"explicit_hit","mutation":{"path":["rows",0,"hit"],"value":false},"boundary":"dict_standin"},
+
+    {"queue":"C247","contract":"first_card_client_contract","case_id":"first-run-steady-state-safe","mutation":{"path":["orientation","real_content_usable"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C247","contract":"first_card_client_contract","case_id":"unresolved-storage-shows-games","mutation":{"path":["orientation","cohort_ui_visible"],"value":false},"boundary":"dict_standin"},
+    {"queue":"C247","contract":"first_card_client_contract","case_id":"blocked-storage-aborts-mount-effect","mutation":{"path":["orientation","initialization_completed"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C247","contract":"first_card_client_contract","case_id":"position-zero-is-not-a-probability-card","mutation":{"path":["orientation","probability_hint_index"],"value":2},"boundary":"dict_standin"},
+
+    {"queue":"C248","contract":"nonexclusive_bundle_contract","case_id":"esports-same-shape","mutation":{"path":["category"],"value":"hockey"},"boundary":"dict_standin"},
+    {"queue":"C248","contract":"nonexclusive_bundle_contract","case_id":"hockey-multiwinner-counterclass","mutation":{"path":["category"],"value":"esports"},"boundary":"dict_standin"},
+    {"queue":"C248","contract":"nonexclusive_bundle_contract","case_id":"tennis-multiwinner-counterclass","mutation":{"path":["approved_narrow_exclusion"],"value":true},"boundary":"dict_standin"},
+    {"queue":"C248","contract":"nonexclusive_bundle_contract","case_id":"mex-above-threshold","mutation":{"path":["evidence","winner_count"],"value":2},"boundary":"dict_standin"}
+  ],
+  "escaped_defect_retro": [
+    {"id":"calibration-publish-went-backwards","production_evidence":"INT-034: CAL-P028 shipped the darkness it was written to end","canonical_catcher":"staged_calibration_convergence_contract","case_id":"partial-cannot-publish"},
+    {"id":"discover-games-first-viewport","production_evidence":"Queue 309 repair f6a40849: gate was a no-op on desktop","canonical_catcher":"first_card_client_contract","case_id":"desktop-above-fold-does-not-prove-scroll"},
+    {"id":"settled-prop-fabricated-verdict","production_evidence":"UX-P044/C245: backend manufactured HIT/MISS when typed hit absent","canonical_catcher":"settled_prop_grade_authority_contract","case_id":"ungraded_default_false"},
+    {"id":"event-probability-defaulted-50-50","production_evidence":"UX-P042/C241: missing singleton midpoint rendered and ranked as 0.5","canonical_catcher":"feed_card_trust_contract","case_id":"missing-probability-withheld"},
+    {"id":"event-cache-warmer-lock-bypass","production_evidence":"LAT-P021/C243: scheduled warmer bypassed single-flight and released foreign lock","canonical_catcher":"cache_failure_resilience_fixtures","case_id":"foreign-lock-release-refused"},
+    {"id":"awards-members-truncated-after-eight","production_evidence":"C246: production assembler slices awards members after dedupe","canonical_catcher":"observed_product_quality_contract","case_id":"awards-member-conservation"}
+  ]
+}

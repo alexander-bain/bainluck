@@ -1,6 +1,7 @@
 {
   "schema_version":"feed-card-trust-contract/v1",
   "cases":[
+    {"id":"missing-probability-withheld","market_id":"game-unknown","lifecycle":{},"actual_action":"include","outcomes":[],"probability_authority_known":false,"probability_presented":false,"expected_refusals":[]},
     {"id":"terminal-europa-hidden","market_id":"europa","lifecycle":{"authoritative_terminal":true},"actual_action":"settle_or_hide","outcomes":[],"expected_refusals":[]},
     {"id":"past-world-cup-resolution-hidden","market_id":"wc","lifecycle":{"resolution_date_past":true},"actual_action":"settle_or_hide","outcomes":[],"expected_refusals":[]},
     {"id":"past-golf-major-linked-calendar","market_id":"golf","lifecycle":{"title_date_past":true,"linked_event_past":true},"actual_action":"settle_or_hide","outcomes":[],"expected_refusals":[]},

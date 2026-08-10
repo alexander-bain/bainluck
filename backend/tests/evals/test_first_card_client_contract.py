@@ -15,7 +15,7 @@ def _case(case_id: str) -> dict:
 
 def test_committed_corpus_matches_all_oracles() -> None:
     report = evaluate_corpus(load_corpus())
-    assert report["total"] == 24
+    assert report["total"] == 29
     assert report["passed"] == report["total"], report["cases"]
 
 
@@ -79,3 +79,20 @@ def test_product_semantics_are_frozen() -> None:
     assert evaluate_case(_case("product-semantics-drift-refused")) == [
         "PRODUCT_SEMANTICS_DRIFT"
     ]
+
+
+def test_first_run_transitions_and_desktop_gate() -> None:
+    assert evaluate_case(_case("first-run-steady-state-safe")) == []
+    assert evaluate_case(_case("unresolved-storage-shows-games")) == [
+        "UNRESOLVED_STORAGE_COHORT_FLASH"
+    ]
+    assert evaluate_case(_case("blocked-storage-aborts-mount-effect")) == [
+        "BLOCKED_STORAGE_ABORTS_INITIALIZATION"
+    ]
+    assert evaluate_case(_case("position-zero-is-not-a-probability-card")) == [
+        "PROBABILITY_HINT_MISASSIGNED"
+    ]
+    safe = _case("desktop-above-fold-does-not-prove-scroll")
+    assert evaluate_case(safe) == []
+    safe["orientation"]["games_visible"] = True
+    assert evaluate_case(safe) == ["ABOVE_FOLD_COUNT_UNLOCKS_GAMES"]

@@ -108,6 +108,17 @@ def evaluate_scenario(
             )
         )
 
+    lock = scenario.get("refresh_lock") or {}
+    if lock.get("release_attempted") and lock.get("owner_nonce") != lock.get("release_nonce"):
+        findings.append(
+            _finding(
+                "FOREIGN_LOCK_RELEASE",
+                sid,
+                "refresh_lock",
+                "only the owner token may release a refresh lock",
+            )
+        )
+
     db = scenario.get("db") or {}
     if (
         db.get("checkout_result") == "timeout"

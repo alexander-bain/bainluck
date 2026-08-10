@@ -86,3 +86,14 @@ def temporal_interestingness_split(
         "holdout_negatives": len(labels) - sum(labels),
         "cutoff": cutoff,
     }
+
+
+def member_conservation(case: dict[str, Any]) -> dict[str, Any]:
+    input_ids = set(case.get("input_member_ids") or [])
+    rendered_ids = set(case.get("rendered_member_ids") or [])
+    explicitly_refused = set(case.get("explicitly_refused_ids") or [])
+    missing = sorted(input_ids - rendered_ids - explicitly_refused)
+    return {
+        "verdict": "ALLOW" if not missing else "REFUSE",
+        "missing_member_ids": missing,
+    }

@@ -3,6 +3,9 @@
   "ratified_at": "2026-08-09",
   "legacy_policy": "Artifacts committed before ratification may remain unregistered until touched. Every artifact added or materially changed after ratification must be a canonical or name extends/supersedes.",
   "domains": [
+    {"domain": "eval-governance", "canonical": "eval_registry_contract", "members": [
+      {"name": "eval_bite_rate_audit", "relation": "extends", "target": "eval_registry_contract"}
+    ]},
     {"domain": "admin-health", "canonical": "admin_surface_truth_contract", "members": [
       {"name": "admin_health_evidence_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
       {"name": "admin_health_closure_contract", "relation": "extends", "target": "admin_surface_truth_contract"},

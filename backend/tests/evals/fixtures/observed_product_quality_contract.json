@@ -14,5 +14,8 @@
     "stale_rate_known": 0.6666666666666666, "unknown_rate": 0.25,
     "reasons": {"missing_authority": 1, "status_terminal": 2},
     "surfaces": {"native": 2, "web": 2}
-  }
+  },
+  "cases": [
+    {"id":"awards-member-conservation","input":{"input_member_ids":["award-1","award-2","award-3","award-4","award-5","award-6","award-7","award-8","award-9"],"rendered_member_ids":["award-1","award-2","award-3","award-4","award-5","award-6","award-7","award-8"],"explicitly_refused_ids":[]},"expected":{"verdict":"REFUSE","missing_member_ids":["award-9"]}}
+  ]
 }

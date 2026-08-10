@@ -123,6 +123,25 @@ def evaluate_case(row: dict[str, Any]) -> list[str]:
     ):
         errors.append("PRODUCT_SEMANTICS_DRIFT")
 
+    orientation = row.get("orientation") or {}
+    if orientation:
+        if not orientation.get("storage_resolved") and orientation.get("cohort_ui_visible"):
+            errors.append("UNRESOLVED_STORAGE_COHORT_FLASH")
+        if orientation.get("storage_read_throws") and not orientation.get("initialization_completed"):
+            errors.append("BLOCKED_STORAGE_ABORTS_INITIALIZATION")
+        if orientation.get("real_content_usable") is not True:
+            errors.append("ORIENTATION_BLOCKS_REAL_CONTENT")
+        hint_index = orientation.get("probability_hint_index")
+        first_explainable = orientation.get("first_explainable_probability_index")
+        if hint_index is not None and hint_index != first_explainable:
+            errors.append("PROBABILITY_HINT_MISASSIGNED")
+        if (
+            orientation.get("cards_seen", 0) >= orientation.get("unlock_cards", 8)
+            and not orientation.get("has_scrolled")
+            and orientation.get("games_visible")
+        ):
+            errors.append("ABOVE_FOLD_COUNT_UNLOCKS_GAMES")
+
     return sorted(set(errors))
 
 

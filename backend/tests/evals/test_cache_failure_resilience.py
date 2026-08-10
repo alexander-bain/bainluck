@@ -44,7 +44,16 @@ def test_fixture_has_every_required_scenario(pack: dict) -> None:
         "cache-write-stall",
         "malformed-cache-json",
         "metrics-sink-unavailable",
+        "foreign-lock-release-refused",
     } == ids
+
+
+def test_foreign_refresh_lock_release_is_refused(pack: dict) -> None:
+    result = evaluate_scenario(
+        next(row for row in pack["scenarios"] if row["id"] == "foreign-lock-release-refused"),
+        pack["policy"],
+    )
+    assert "FOREIGN_LOCK_RELEASE" in result["codes"]
 
 
 def test_clean_stale_hit_is_valid(pack: dict) -> None:

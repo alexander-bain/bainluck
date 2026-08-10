@@ -193,6 +193,31 @@
       "flow": {"public_surface": true, "initial_request_at_ms": 10, "auth_terminal_at_ms": null},
       "render": {"verdict": "real_card", "kind": "card", "stable_id": "card-z", "mounted": true},
       "expected_refusals": ["PHASE_ORDER_INVALID"]
+    },
+    {
+      "id": "first-run-steady-state-safe",
+      "orientation": {"storage_resolved": true, "cohort_ui_visible": true, "initialization_completed": true, "real_content_usable": true, "probability_hint_index": 2, "first_explainable_probability_index": 2, "cards_seen": 8, "unlock_cards": 8, "has_scrolled": true, "games_visible": true},
+      "expected_refusals": []
+    },
+    {
+      "id": "unresolved-storage-shows-games",
+      "orientation": {"storage_resolved": false, "cohort_ui_visible": true, "initialization_completed": false, "real_content_usable": true, "games_visible": true},
+      "expected_refusals": ["UNRESOLVED_STORAGE_COHORT_FLASH"]
+    },
+    {
+      "id": "blocked-storage-aborts-mount-effect",
+      "orientation": {"storage_resolved": false, "cohort_ui_visible": false, "storage_read_throws": true, "initialization_completed": false, "real_content_usable": true, "games_visible": false},
+      "expected_refusals": ["BLOCKED_STORAGE_ABORTS_INITIALIZATION"]
+    },
+    {
+      "id": "position-zero-is-not-a-probability-card",
+      "orientation": {"storage_resolved": true, "cohort_ui_visible": true, "initialization_completed": true, "real_content_usable": true, "probability_hint_index": 0, "first_explainable_probability_index": 2, "games_visible": false},
+      "expected_refusals": ["PROBABILITY_HINT_MISASSIGNED"]
+    },
+    {
+      "id": "desktop-above-fold-does-not-prove-scroll",
+      "orientation": {"storage_resolved": true, "cohort_ui_visible": true, "initialization_completed": true, "real_content_usable": true, "cards_seen": 10, "unlock_cards": 8, "has_scrolled": false, "games_visible": false},
+      "expected_refusals": []
     }
   ]
 }

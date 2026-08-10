@@ -49,6 +49,8 @@ def evaluate_case(row: dict[str, Any]) -> list[str]:
     if any(o.get("market_id") != market_id for o in outcomes):
         errors.append("CROSS_MARKET_OUTCOME")
     priced = [o for o in outcomes if isinstance(o.get("probability"), (int, float))]
+    if row.get("probability_authority_known") is False and row.get("probability_presented"):
+        errors.append("MISSING_PROBABILITY_PRESENTED")
     if priced and row.get("expected_leader_id"):
         actual_leader = max(priced, key=lambda o: o["probability"]).get("id")
         if actual_leader != row["expected_leader_id"]:
