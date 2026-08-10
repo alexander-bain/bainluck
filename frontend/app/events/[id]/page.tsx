@@ -21,6 +21,7 @@ const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), 
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
+import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1105,17 +1106,23 @@ export default function EventPage({ params }: EventPageProps) {
       {(() => {
         const propsScript = gameMarkets?.props_script;
         if (!Array.isArray(propsScript) || propsScript.length === 0) return null;
+        // #1650: hold the WHAT HIT row to the same authority as the Player
+        // Props card above it, using the raw typed rows on this same payload.
+        const rawPropRowsByKey = indexPropRowsByScriptKey(gameMarkets?.player_props);
         return (
           <PropsSection
             eventStatus={event.status}
-            items={propsScript.map((p, i): PropMark => ({
-              key: p.key ?? i,
-              label: p.label,
-              pregame_mark: p.pregame_mark ?? null,
-              current: p.current ?? null,
-              graded_result: p.graded_result ?? null,
-              graded_label: p.graded_label ?? null,
-            }))}
+            items={propsScript.map((p, i): PropMark => {
+              const verified = verifyScriptGrade(p, rawPropRowsByKey);
+              return {
+                key: p.key ?? i,
+                label: p.label,
+                pregame_mark: p.pregame_mark ?? null,
+                current: p.current ?? null,
+                graded_result: verified.graded_result,
+                graded_label: verified.graded_label,
+              };
+            })}
           />
         );
       })()}

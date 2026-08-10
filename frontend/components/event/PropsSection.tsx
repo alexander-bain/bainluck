@@ -41,6 +41,7 @@ import { probabilityHeat } from "@/lib/probabilityColors";
 import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
 import { groupByPropFamily, type PropFamilyGroup } from "@/lib/propFamily";
+import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -127,6 +128,17 @@ const STATE_META: Record<PropsState, { eyebrow: string; blurb: string }> = {
     blurb: "The pregame script, graded.",
   },
 };
+
+/**
+ * #1650: the graded blurb ASSERTS the list is graded. On a settled game whose
+ * props the backend never graded, it said "The pregame script, graded." over a
+ * list where every single row read "grading unavailable" — the header claiming
+ * a fourth thing about the same state.
+ *
+ * The eyebrow ("What hit") is the section's name and stays; only the sentence
+ * that makes a claim about the data changes.
+ */
+const GRADED_BLURB_UNGRADED = "The pregame script. No grades published for these props.";
 
 export function deriveState(eventStatus?: string | null): PropsState {
   const s = (eventStatus ?? "").toLowerCase();
@@ -219,7 +231,13 @@ export default function PropsSection({
   if (!items || items.length === 0) return null;
 
   const activeState = state ?? deriveState(eventStatus);
-  const meta = STATE_META[activeState];
+  const baseMeta = STATE_META[activeState];
+  // #1650: never claim "graded" over a list on which nothing is.
+  const anyGraded = items.some((i) => i.graded_result != null);
+  const meta =
+    activeState === "graded" && !anyGraded
+      ? { ...baseMeta, blurb: GRADED_BLURB_UNGRADED }
+      : baseMeta;
   // L2-147 Item 2: the field cards name real competitors → give them headshots
   // for a person-field domain (golf today). Ladders ("Under 63.5") never do.
   const withAvatars = isPersonFieldDomain(domain);
@@ -415,8 +433,13 @@ function DivergenceValue({ item }: { item: PropMark }) {
 
 function GradedValue({ item }: { item: PropMark }) {
   if (item.graded_result == null) {
-    // #195 seam: grading hasn't landed for this prop yet.
-    return <Pending note="grading pending" />;
+    // #1650: this used to say "grading pending" while the Player Props card
+    // above it said "Resolved · grading unavailable" about the SAME prop, under
+    // a header asserting the list was graded. Those say opposite things to a
+    // reader — one means "we are done and could not grade it", the other means
+    // "wait, it is coming". One backend state now gets one phrase, imported
+    // from the module that decides it rather than restated here.
+    return <Pending note={SETTLED_NO_GRADE_LABEL} />;
   }
   const isHit = item.graded_result === "hit";
   const isPush = item.graded_result === "push";

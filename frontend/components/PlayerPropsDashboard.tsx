@@ -2,7 +2,13 @@
 
 import { useMemo, useState } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
-import { readPropGrade, type PropGrade, type PropGradeFields } from "@/lib/propGrade";
+import {
+  isGraded,
+  readPropGrade,
+  SETTLED_NO_GRADE_LABEL,
+  type PropGrade,
+  type PropGradeFields,
+} from "@/lib/propGrade";
 import { parsePropLabel } from "@/lib/otherMarketGroups";
 
 interface PlayerPropsDashboardProps {
@@ -100,7 +106,21 @@ const STAT_TO_BOX_SCORE: Record<string, string> = {
   "tds": "touchdowns",
 };
 
-function parsePlayerName(marketName: string, outcomeName: string): { player: string; stat: string; team: string } | null {
+/**
+ * The player, statistic and team a prop row is about.
+ *
+ * `identified` (UX-P044, #1642 P1b) is false when the parse never found a
+ * person: `market_name` carries no colon AND no statistic matched, so `player`
+ * falls back to the ENTIRE market name — which for MLB/Polymarket is the
+ * matchup ("Tampa Bay Rays vs. Seattle Mariners - Player Props"). Every such
+ * row hashes to one bucket, and a grade published on any one of them would be
+ * attached to all the others. A wrong name against a real stat is worse than a
+ * blank, so the caller refuses the group's verdict rather than borrowing it.
+ */
+function parsePlayerName(
+  marketName: string,
+  outcomeName: string,
+): { player: string; stat: string; team: string; identified: boolean } | null {
   const colonIdx = marketName.indexOf(":");
   const afterColon = colonIdx >= 0 ? marketName.slice(colonIdx + 1).trim() : marketName;
   const beforeColon = colonIdx >= 0 ? marketName.slice(0, colonIdx) : "";
@@ -141,12 +161,20 @@ function parsePlayerName(marketName: string, outcomeName: string): { player: str
   if (!stat) {
     const fromOutcome = parsePropLabel(outcomeName);
     if (fromOutcome) {
-      return { player: fromOutcome.player, stat: fromOutcome.statistic, team: beforeColon };
+      return {
+        player: fromOutcome.player,
+        stat: fromOutcome.statistic,
+        team: beforeColon,
+        identified: true,
+      };
     }
   }
 
   if (!player) return null;
-  return { player, stat, team: beforeColon };
+  // No colon to split on AND no statistic found → `player` is the whole market
+  // name, i.e. a matchup, not a person. See the docblock.
+  const identified = colonIdx >= 0 || stat !== "";
+  return { player, stat, team: beforeColon, identified };
 }
 
 function StatBox({
@@ -169,23 +197,28 @@ function StatBox({
   //
   // UX-P040 (#1638): the fallback used to be UNREACHABLE, because the test was
   // `is_winner != null` and `is_winner` is a non-nullable column defaulted to
-  // false. Every never-graded prop therefore rendered a red MISS. `readPropGrade`
-  // requires published evidence — actual, hit, or a resolution source.
+  // false. Every never-graded prop therefore rendered a red MISS.
+  //
+  // UX-P044 (#1642): `readPropGrade` is now the ONLY thing that decides. Two
+  // routes around it were removed here:
+  //   - `firstRung?.hit` used to override the group verdict, which is what made
+  //     a ladder whose rungs DISAGREE render whichever rung sorted first (7 of
+  //     358 measured production cards). The group badge is now the module's.
+  //   - `serverActual` / `stat.actual` no longer top up a withheld grade;
+  //     `stat.actual` is the BOX-SCORE number, and pairing it with a verdict the
+  //     backend never typed is the client adjudicating (ruling 003).
   if (gameState === "settled") {
     const firstRung =
       stat.shape === "ladder" && stat.rungs && stat.rungs.length > 0
         ? stat.rungs[0]
         : null;
     const firstLine = firstRung ? firstRung.threshold : stat.threshold;
-    const grade = stat.grade ?? { graded: false as const };
-    const gradeActual = grade.graded
-      ? (grade.actual ?? stat.serverActual ?? stat.actual ?? null)
-      : null;
-    const hitBool: boolean | null = grade.graded
-      ? ((firstRung?.hit ?? null) != null ? (firstRung?.hit as boolean) : grade.hit)
-      : null;
+    const grade = stat.grade ?? { state: "WITHHOLD" as const, reason: "no_typed_grade" as const, hit: null, actual: null };
+    const graded = grade.state !== "WITHHOLD";
+    const gradeActual = graded ? grade.actual : null;
+    const hitBool: boolean | null = graded ? grade.hit : null;
 
-    if (grade.graded) {
+    if (graded) {
       const didHit = hitBool === true;
       // No stated verdict → neutral, never the red that reads as "missed".
       const accentColor = hitBool == null ? undefined : didHit ? accent : "#EF4444";
@@ -236,8 +269,10 @@ function StatBox({
           </div>
           <div className="text-xs text-text-muted">line</div>
         </div>
+        {/* #1650: ONE settled-state phrase, imported rather than restated, so
+            this chip and the WHAT HIT row cannot describe one state two ways. */}
         <span className="text-[10px] font-medium text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
-          Resolved &middot; grading unavailable
+          {SETTLED_NO_GRADE_LABEL}
         </span>
       </div>
     );
@@ -473,7 +508,7 @@ export default function PlayerPropsDashboard({
       name: string;
       team: "home" | "away" | "unknown";
       headshot?: string;
-      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null; serverActual?: number | null; serverIsWinner?: boolean | null; gradeRows: PropGradeFields[] }>;
+      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null; serverActual?: number | null; serverIsWinner?: boolean | null; gradeRows: PropGradeFields[]; identified: boolean }>;
     }>();
 
     const homeLower = homeTeam?.toLowerCase() ?? "";
@@ -520,10 +555,13 @@ export default function PlayerPropsDashboard({
 
       const statKey = (parsed.stat || "prop").toLowerCase();
       if (!playerEntry.stats.has(statKey)) {
-        playerEntry.stats.set(statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [] });
+        playerEntry.stats.set(statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
       }
 
       const statEntry = playerEntry.stats.get(statKey)!;
+      // #1642 P1b: one unidentified row poisons the bucket for all of them —
+      // the bucket is only a person if every row that landed in it named one.
+      if (!parsed.identified) statEntry.identified = false;
       const existingRung = statEntry.rungs.find((r) => r.threshold === p.threshold);
       if (existingRung) {
         if (p.over_probability != null && (existingRung.overProb == null || p.over_probability > existingRung.overProb)) {
@@ -575,7 +613,7 @@ export default function PlayerPropsDashboard({
       }
       const playerEntry = playerMap.get(playerKey)!;
       if (!playerEntry.stats.has(statLower)) {
-        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null, gradeRows: [] });
+        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
       }
       const statEntry = playerEntry.stats.get(statLower)!;
       if (o.probability != null) {
@@ -625,7 +663,7 @@ export default function PlayerPropsDashboard({
             serverActual: statData.serverActual ?? null,
             serverHit: sortedRungs[0]?.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
-            grade: readPropGrade(statData.gradeRows),
+            grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
           });
         } else {
           const best = sortedRungs[0];
@@ -640,7 +678,7 @@ export default function PlayerPropsDashboard({
             serverActual: statData.serverActual ?? null,
             serverHit: best.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
-            grade: readPropGrade(statData.gradeRows),
+            grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
           });
         }
       }
@@ -681,7 +719,9 @@ export default function PlayerPropsDashboard({
   // blanket "grading unavailable" subtitle.
   // UX-P040 (#1638): this asked `serverIsWinner != null` too, so a game with zero
   // published grades advertised "Final · graded results" over a grid of red MISSes.
-  const anyGraded = players.some((p) => p.stats.some((s) => s.grade?.graded === true));
+  const anyGraded = players.some((p) =>
+    p.stats.some((s) => s.grade != null && isGraded(s.grade)),
+  );
   // L2-52: source-name attribution removed (blend-only).
 
   const homeShortCode = homeTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "HOME";

@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import PropsSection, { deriveState } from "../../components/event/PropsSection";
 import type { PropMark } from "../../components/event/PropsSection";
+import { SETTLED_NO_GRADE_LABEL } from "../../lib/propGrade";
 
 const ITEMS: PropMark[] = [
   { key: 1, label: "LeBron 25+ points", pregame_mark: 0.6, current: 0.72, graded_result: "hit" },
@@ -60,7 +61,29 @@ describe("PropsSection rendering", () => {
     const script = renderToStaticMarkup(<PropsSection items={pending} state="script" />);
     expect(script).toContain("pregame mark pending");
     const graded = renderToStaticMarkup(<PropsSection items={pending} state="graded" />);
-    expect(graded).toContain("grading pending");
+    // UX-P044 (#1650): this asserted "grading pending" — the SECOND of the three
+    // vocabularies one settled state wore on one screen. It is now the same
+    // phrase the Player Props card uses, imported from the module that decides.
+    expect(graded).toContain(SETTLED_NO_GRADE_LABEL);
+    expect(graded).not.toContain("grading pending");
+  });
+
+  // #1650: the header claimed a fourth thing — "The pregame script, graded." over
+  // a list where nothing was graded.
+  test("the graded blurb does not claim 'graded' over an ungraded list", () => {
+    const ungraded: PropMark[] = [
+      { key: 9, label: "Anytime TD", pregame_mark: null, current: 0.44, graded_result: null },
+    ];
+    const html = renderToStaticMarkup(<PropsSection items={ungraded} state="graded" />);
+    expect(html).toContain("What hit"); // the section keeps its name
+    expect(html).not.toContain("The pregame script, graded.");
+    expect(html).toContain("No grades published");
+  });
+
+  // Both directions (gotcha #43): one real grade and the claim is true again.
+  test("the graded blurb DOES claim graded when something on the list is", () => {
+    const html = renderToStaticMarkup(<PropsSection items={ITEMS} state="graded" />);
+    expect(html).toContain("The pregame script, graded.");
   });
 
   test("L2-123: pending_label renders the honest state, never a fabricated flat", () => {
