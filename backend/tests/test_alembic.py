@@ -62,3 +62,13 @@ class TestAlembicMigrationCount:
             f"Orphaned migration files not reachable from head: {orphaned}. "
             f"These may cause alembic errors."
         )
+
+
+def test_q312_p4_deploy_gate_proof():
+    """TEMPORARY — Queue 312 acceptance #2(b) / premise P4.
+
+    Proves that a red MATRIX LEG blocks `deploy`, which cannot be shown on a PR
+    (deploy's `if` skips it there regardless of `needs`). Reverted in the very
+    next commit; deploy is expected to be SKIPPED, so production is untouched.
+    """
+    assert False, "Q312 P4 proof: shard 1 red must keep deploy from running"
