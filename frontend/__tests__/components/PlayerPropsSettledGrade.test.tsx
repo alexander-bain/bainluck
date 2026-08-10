@@ -109,15 +109,18 @@ describe("settled props the backend DID grade", () => {
   });
 
   /**
-   * These four rows collapse into ONE stat group, because `parsePlayerName`
-   * reads the player from `market_name` — and MLB's market_name is the matchup,
-   * with the player sitting in `outcome_name`. Evidence on any rung therefore
-   * grades the group, which is correct for a ladder's rungs. The collapse
-   * itself is a separate defect, filed apart from this one; asserted here so
-   * the grouping is documented rather than assumed.
+   * UPDATED by #1639, in the same cycle that wrote it.
+   *
+   * When this was written these four rows collapsed into ONE stat group, because
+   * `parsePlayerName` read the player from `market_name` — so evidence on any
+   * rung graded everything. #1639 fixed that collapse, and each player is now
+   * its own card. So the graded player shows its verdict and the ungraded
+   * players stay honest, side by side — which is what this test wanted in the
+   * first place and could not have while the collapse existed.
    */
-  it("grades the group from evidence on one rung", () => {
-    expect(html).not.toContain("grading unavailable");
+  it("grades the graded player and leaves the ungraded ones honest", () => {
+    expect(html).toContain("HIT");
+    expect(html).toContain("grading unavailable");
   });
 });
 

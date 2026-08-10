@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
 import { readPropGrade, type PropGrade, type PropGradeFields } from "@/lib/propGrade";
+import { parsePropLabel } from "@/lib/otherMarketGroups";
 
 interface PlayerPropsDashboardProps {
   data: GameMarketsResponse;
@@ -124,6 +125,23 @@ function parsePlayerName(marketName: string, outcomeName: string): { player: str
         stat = st;
         break;
       }
+    }
+  }
+
+  // #1639: MLB/Polymarket rows encode the player in `outcome_name`, not
+  // `market_name`. `market_name` is the MATCHUP ("Tampa Bay Rays vs. Seattle
+  // Mariners - Player Props"), which has no colon and matches no STAT_TYPE — so
+  // every row hashed to the same key and 17 distinct players collapsed into ONE
+  // card, titled with the matchup and wearing whichever headshot arrived first.
+  //
+  // Only consulted when the logic above found NO statistic, so this is strictly
+  // additive: any row that parses today keeps its existing parse (gotcha #43).
+  // The parser is the one #1627 already shipped for the section next door, so
+  // the event page has one definition of `Player: Statistic O/U Threshold`.
+  if (!stat) {
+    const fromOutcome = parsePropLabel(outcomeName);
+    if (fromOutcome) {
+      return { player: fromOutcome.player, stat: fromOutcome.statistic, team: beforeColon };
     }
   }
 
