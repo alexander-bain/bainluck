@@ -21,6 +21,7 @@ from app.services import get_db, get_db_rw
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
 from app.utils.labeling_queue import load_reviewed_ranking_keys
+from app.utils.reviewer_tier import TIER_ALEX, with_tier
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
@@ -747,9 +748,16 @@ async def create_judgment(
         ),
         headline_at_review=_merged_value(body, "headline_at_review", headline_at_review),
         feed_request_id=_merged_value(body, "feed_request_id", feed_request_id),
-        label_metadata=_structured_label_metadata(
-            body,
-            _merged_value(body, "label_metadata", None),
+        # Every write carries a tier (Queue 311 B1 / #1170). This admin surface
+        # is Alex's, so it writes `alex` — the kid surface gets its own route
+        # with no code path that can write anything but `kid`, rather than a
+        # flag on this one that a caller has to remember to set.
+        label_metadata=with_tier(
+            _structured_label_metadata(
+                body,
+                _merged_value(body, "label_metadata", None),
+            ),
+            TIER_ALEX,
         ),
         fixable_interesting=bool(
             _merged_value(body, "fixable_interesting", fixable_interesting, False)

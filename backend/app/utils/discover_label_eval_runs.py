@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import DiscoverLabelEvalRun, RankingJudgment
 from app.utils.discover_reason_tags import canonical_reason_tags
+from app.utils.reviewer_tier import resolve_tiers, tier_filter
 from scripts.evaluate_discover_label_gold_set import evaluate_gold_set
 
 SCALAR_METRIC_KEYS = [
@@ -96,10 +97,19 @@ async def load_label_eval_rows(
     limit: int,
     surface: str | None = None,
     reviewer: str | None = None,
+    tiers: frozenset[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    """Load judgment rows for the eval metrics.
+
+    ``tiers=None`` means GOLD ONLY (Queue 311 B1 / #1170). These rows compute
+    the published `tapworthy_at_k` / `boring_rate_at_k` / `bad_image_rate_at_k`
+    numbers, so the default has to be the safe set rather than everything — a
+    caller that wants the kid pool has to name it.
+    """
     query = (
         select(RankingJudgment)
         .where(RankingJudgment.created_at >= window_start)
+        .where(tier_filter(resolve_tiers(tiers)))
         .order_by(desc(RankingJudgment.created_at), RankingJudgment.id.desc())
         .limit(limit)
     )

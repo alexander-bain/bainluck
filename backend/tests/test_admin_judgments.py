@@ -178,6 +178,7 @@ def test_create_judgment_accepts_json_body(monkeypatch):
             "current_entity_or_variant": "#2 Netflix movie",
             "create_issue_candidate": True,
         },
+        "reviewer_tier": "alex",
     }
 
 
@@ -235,7 +236,10 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
         "fixable_interest": {
             "would_be_interesting_if": "It were not stale",
             "fix_type": "staleness",
-        }
+        },
+        # Queue 311 B1: every write through this admin surface is Alex's, and
+        # is stamped as such by the route rather than by the caller.
+        "reviewer_tier": "alex",
     }
 
 
@@ -526,7 +530,8 @@ def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
             "name": "Snapshot name",
             "top_outcomes": [{"name": "Yes", "probability": 0.72}],
             "reasons": ["compelling_topic"],
-        }
+        },
+        "reviewer_tier": "alex",
     }
 
 

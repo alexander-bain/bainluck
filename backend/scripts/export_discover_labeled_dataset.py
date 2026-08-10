@@ -38,6 +38,7 @@ from app.models.models import (  # noqa: E402
     RankingJudgment,
 )
 from app.utils.discover_reason_tags import canonical_reason_tags  # noqa: E402
+from app.utils.reviewer_tier import resolve_tiers, tier_filter  # noqa: E402
 
 
 EXPORT_FIELDS = [
@@ -127,6 +128,7 @@ def build_labeled_dataset_statement(
     reviewer: str | None = None,
     labels: tuple[str, ...] | None = None,
     before: datetime | None = None,
+    tiers: frozenset[str] | set[str] | None = None,
 ) -> Select:
     """Build the read-only statement for explicit Discover labels.
 
@@ -136,7 +138,13 @@ def build_labeled_dataset_statement(
     any fit on the result is in-sample (Codex C216).
     """
 
-    judgment_filters = [RankingJudgment.created_at >= since]
+    # ``tiers=None`` means GOLD ONLY (Queue 311 B1 / #1170). A holdout export is
+    # training data: a kid row that slipped in here would not merely skew a
+    # dashboard, it would be fitted on.
+    judgment_filters = [
+        RankingJudgment.created_at >= since,
+        tier_filter(resolve_tiers(tiers)),
+    ]
     if before is not None:
         judgment_filters.append(RankingJudgment.created_at < before)
     if surface:
