@@ -6,6 +6,7 @@ import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -224,7 +225,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           <div className="space-y-1.5 border-y border-surface-border py-2">
               {shownRows.map((row, index) => {
                 const probability = row.probability ?? 0;
-                const pct = Math.round(probability * 100);
+                // UX-P046: a nonzero probability must never print as "0%".
+                const pct = formatProbabilityPercent(probability);
                 // #1574 acceptance (c): the fill IS the printed number. This was
                 // previously divided by the leader's probability, which renders
                 // the top bar full regardless of its actual value — a 12% leader
@@ -250,7 +252,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                         />
                       </div>
                     </div>
-                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? `${pct}%` : "—"}</span>
+                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? pct : "—"}</span>
                   </div>
                 );
               })}
@@ -280,7 +282,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  const pctDisplay = prob != null ? `${Math.round(prob * 100)}%` : null;
+  const pctDisplay = prob != null ? formatProbabilityPercent(prob) : null;
   const movementVal = leader?.movement;
   const movementUp = movementVal != null && movementVal > 0;
   // L2-160 — respect the 5% placeholder floor: suppress the hero movement delta
@@ -536,7 +538,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
           <MovementBadge m={leader.movement} prob={leader.probability} />
-          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? `${Math.round(leader.probability * 100)}%` : "—"}</span>
+          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability) : "—"}</span>
         </div>
       )}
     </Link>

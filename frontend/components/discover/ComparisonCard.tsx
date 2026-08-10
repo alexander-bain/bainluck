@@ -7,6 +7,7 @@ import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils"
 import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 interface ComparisonCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -70,7 +71,8 @@ export function ComparisonCard({
         <div>
           {outcomes.slice(0, 4).map((o, i) => {
             const prob = o.probability ?? 0;
-            const pct = Math.round(prob * 100);
+            // UX-P046: a nonzero probability must never print as "0%".
+            const pct = formatProbabilityPercent(prob);
             const barWidth = Math.max(5, Math.round((prob / maxProb) * 100));
             const isLeader = i === 0;
 
@@ -97,7 +99,7 @@ export function ComparisonCard({
                   />
                 </div>
                 <span className="font-mono font-bold text-sm tabular-nums w-9 text-right shrink-0">
-                  {prob > 0 ? `${pct}%` : "—"}
+                  {prob > 0 ? pct : "—"}
                 </span>
               </div>
             );

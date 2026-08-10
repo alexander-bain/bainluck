@@ -44,6 +44,7 @@ import type {
   GolfLeaderboardResponse,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
+import { formatProbabilityPercent } from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
 
@@ -565,7 +566,10 @@ export async function fetchEventConcept(key: string): Promise<EventConceptRespon
 
 export function formatProbability(prob: number | null | undefined): string {
   if (prob === null || prob === undefined) return "-";
-  return `${Math.round(prob * 100)}%`;
+  // UX-P046: delegate the rounding so a small-but-real probability never prints
+  // as "0%" (which reads as impossible). The "-" for absent data is unchanged,
+  // and every value that already rounded inside 1%-99% prints identically.
+  return formatProbabilityPercent(prob);
 }
 
 /**
