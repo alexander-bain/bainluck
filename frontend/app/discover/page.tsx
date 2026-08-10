@@ -564,6 +564,7 @@ export default function DiscoverPage() {
   const [firstRunStorage, setFirstRunStorage] = useState<FirstRunStorage | null>(null);
   const [engagedThisSession, setEngagedThisSession] = useState(false);
   const [cardsSeen, setCardsSeen] = useState(0);
+  const [hasScrolled, setHasScrolled] = useState(false);
   const seenPositionsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -595,6 +596,19 @@ export default function DiscoverPage() {
     window.addEventListener("discover-profile-updated", refreshProfile);
     return () => window.removeEventListener("discover-profile-updated", refreshProfile);
   }, []);
+
+  // Queue 309 Item 3 — "the reader has moved at all". Not a distance threshold:
+  // the card count is what measures how much content was met, and this only
+  // stops a wide desktop masonry from satisfying that count on first paint
+  // without the reader doing anything.
+  useEffect(() => {
+    if (hasScrolled) return;
+    const onScroll = () => {
+      if (window.scrollY > 0) setHasScrolled(true);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [hasScrolled]);
 
   useEffect(() => {
     if (!showSwipeHint) return;
@@ -771,9 +785,7 @@ export default function DiscoverPage() {
   const handleCardSeen = useCallback((position: number) => {
     if (seenPositionsRef.current.has(position)) return;
     seenPositionsRef.current.add(position);
-    const seen = seenPositionsRef.current.size;
-    setCardsSeen(seen);
-    if (seen >= GAMES_UNLOCK_CARDS_SEEN) markGamesUnlocked();
+    setCardsSeen(seenPositionsRef.current.size);
   }, []);
 
   const startChallenge = useCallback(() => {
@@ -869,8 +881,16 @@ export default function DiscoverPage() {
     firstRun: isFirstRunAnon,
     storage: firstRunStorage,
     cardsSeen,
+    hasScrolled,
     engagedThisSession,
   });
+
+  // Persist the unlock the moment it is earned, so games do not re-lock on a
+  // remount mid-session. Only for the cohort that was ever locked — nobody
+  // else's storage is touched.
+  useEffect(() => {
+    if (isFirstRunAnon && gamesUnlocked) markGamesUnlocked();
+  }, [isFirstRunAnon, gamesUnlocked]);
 
   const challengeItems = useMemo(() => {
     return processedItems

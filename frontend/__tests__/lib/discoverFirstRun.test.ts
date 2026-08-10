@@ -125,28 +125,66 @@ describe("the orientation line cannot expire on a timer (the P3 trap)", () => {
 });
 
 describe("areGamesUnlocked", () => {
+  const SCROLLED = { hasScrolled: true, engagedThisSession: false };
+
   it("is TRUE immediately for anyone who is not a first-run reader", () => {
     expect(
-      areGamesUnlocked({ firstRun: false, storage: FRESH, cardsSeen: 0, engagedThisSession: false }),
+      areGamesUnlocked({ firstRun: false, storage: FRESH, cardsSeen: 0, hasScrolled: false, engagedThisSession: false }),
     ).toBe(true);
   });
 
   it("is FALSE for a first-run reader who has met nothing yet", () => {
     expect(
-      areGamesUnlocked({ firstRun: true, storage: FRESH, cardsSeen: 0, engagedThisSession: false }),
+      areGamesUnlocked({ firstRun: true, storage: FRESH, cardsSeen: 0, hasScrolled: false, engagedThisSession: false }),
     ).toBe(false);
   });
 
   it(`stays FALSE right up to ${GAMES_UNLOCK_CARDS_SEEN} cards, then unlocks`, () => {
-    const base = { firstRun: true, storage: FRESH, engagedThisSession: false };
+    const base = { firstRun: true, storage: FRESH, ...SCROLLED };
     expect(areGamesUnlocked({ ...base, cardsSeen: GAMES_UNLOCK_CARDS_SEEN - 1 })).toBe(false);
     expect(areGamesUnlocked({ ...base, cardsSeen: GAMES_UNLOCK_CARDS_SEEN })).toBe(true);
     expect(areGamesUnlocked({ ...base, cardsSeen: GAMES_UNLOCK_CARDS_SEEN + 40 })).toBe(true);
   });
 
-  it("unlocks on a tap (engagement) long before the card threshold", () => {
+  // The defect the browser rail caught at d9c526ad, before the scroll term
+  // existed: a 4-column desktop masonry paints 10+ cards above the fold, so the
+  // card count alone was satisfied on first paint and the daily challenge and a
+  // quiz card sat in a cold anonymous first viewport. Both directions asserted —
+  // the wide screen no longer unlocks for free, and a reader who does scroll
+  // still gets their games.
+  it("does NOT unlock on a wide screen that paints the whole threshold at once", () => {
     expect(
-      areGamesUnlocked({ firstRun: true, storage: FRESH, cardsSeen: 1, engagedThisSession: true }),
+      areGamesUnlocked({
+        firstRun: true,
+        storage: FRESH,
+        cardsSeen: GAMES_UNLOCK_CARDS_SEEN + 8,
+        hasScrolled: false,
+        engagedThisSession: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("unlocks as soon as that same reader scrolls", () => {
+    expect(
+      areGamesUnlocked({
+        firstRun: true,
+        storage: FRESH,
+        cardsSeen: GAMES_UNLOCK_CARDS_SEEN + 8,
+        hasScrolled: true,
+        engagedThisSession: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("scrolling alone is not enough — the reader must actually meet the cards", () => {
+    expect(
+      areGamesUnlocked({ firstRun: true, storage: FRESH, cardsSeen: 2, hasScrolled: true, engagedThisSession: false }),
+    ).toBe(false);
+  });
+
+  it("unlocks on a tap (engagement) with no scroll and no card threshold", () => {
+    expect(
+      areGamesUnlocked({ firstRun: true, storage: FRESH, cardsSeen: 1, hasScrolled: false, engagedThisSession: true }),
     ).toBe(true);
   });
 
@@ -156,6 +194,7 @@ describe("areGamesUnlocked", () => {
         firstRun: true,
         storage: { ...FRESH, gamesUnlocked: true },
         cardsSeen: 0,
+        hasScrolled: false,
         engagedThisSession: false,
       }),
     ).toBe(true);

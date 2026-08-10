@@ -86,20 +86,39 @@ export function isFirstRunAnonymous(input: {
 
 /**
  * Games (the daily challenge card and the inline quiz slots) are visible to
- * everyone except a first-run anonymous reader who has neither seen ~8 cards
- * nor tapped anything yet. Content before the game.
+ * everyone except a first-run anonymous reader who has neither met ~8 cards nor
+ * tapped anything yet. Content before the game.
+ *
+ * "Met 8 cards" is TWO conditions, and the second one is not redundant:
+ *
+ *   * 8 DISTINCT cards seen, counted off the existing impression observer
+ *     rather than a pixel offset — the feed is a CSS multi-column masonry, so
+ *     a scroll-distance threshold would never fire on a wide screen and would
+ *     lock games forever for desktop first-timers.
+ *   * the reader has actually SCROLLED. Measured on production at d9c526ad:
+ *     the desktop masonry paints 4 columns and puts 10+ cards above the fold,
+ *     so the card count alone is satisfied within milliseconds of first paint
+ *     and the gate degrades into a no-op — the browser rail caught the daily
+ *     challenge and a quiz card sitting in a cold anonymous first viewport.
+ *     This is the same trap as the pixel offset, inverted: one measure never
+ *     fires on desktop, the other fires instantly. Requiring both is what makes
+ *     the gate mean "the reader has moved through some content" on every width.
+ *
+ * `hasScrolled` is a plain "did the reader move at all" boolean, NOT a distance
+ * threshold — no pixel count decides how many cards were met.
  */
 export function areGamesUnlocked(input: {
   firstRun: boolean;
   storage: FirstRunStorage | null;
   cardsSeen: number;
+  hasScrolled: boolean;
   engagedThisSession: boolean;
 }): boolean {
-  const { firstRun, storage, cardsSeen, engagedThisSession } = input;
+  const { firstRun, storage, cardsSeen, hasScrolled, engagedThisSession } = input;
   if (!firstRun) return true;
   if (engagedThisSession) return true;
   if (storage?.gamesUnlocked) return true;
-  return cardsSeen >= GAMES_UNLOCK_CARDS_SEEN;
+  return cardsSeen >= GAMES_UNLOCK_CARDS_SEEN && hasScrolled;
 }
 
 function writeFlag(key: string): void {
