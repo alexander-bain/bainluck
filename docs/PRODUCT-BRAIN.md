@@ -1303,3 +1303,4 @@ failure this document already records happening twice.
 - [013](rulings/013-explicit-release-frees-a-lock.md) — 2026-08-09 — An explicit RELEASED frees a lock, regardless of pid liveness (Alex)
 - [014](rulings/014-verification-infrastructure-inherits-usage-weight.md) — 2026-08-09 — Verification infrastructure inherits the usage weight of what it verifies (Alex)
 - [015](rulings/015-holds-must-reach-the-lane.md) — 2026-08-09 — A hold must be written where the lane actually reads (Alex)
+- [016](rulings/016-discover-charter-first-queue.md) — 2026-08-10 — Discover charter addendum: the first queue is one arc (Alex)
