@@ -16,6 +16,7 @@ import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images"
 import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
 import TeamNameLink from "./TeamNameLink";
+import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -104,6 +105,11 @@ export default function EventCard({
   if ((event.status === "completed" || event.status === "closed") && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
+  } else if (shouldWithholdProbability(event)) {
+    // UX-P042 (#1640) — the only evidence is an untraded Polymarket midpoint, so
+    // `current_odds` reads a confident 0.5/0.5 built from nothing. Show no number.
+    homeProb = null;
+    awayProb = null;
   } else {
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;

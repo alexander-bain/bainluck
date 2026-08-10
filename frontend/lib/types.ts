@@ -855,6 +855,15 @@ export interface FeedEventData {
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
   };
+  /**
+   * UX-P042 (#1640) — the feed has always sent this; the type simply omitted it,
+   * which hid the evidence behind `current_odds` from every client-side check.
+   *
+   * NOTE THE SHAPE DIFFERENCE, it is load-bearing: `/api/feed` sends BARE NUMBERS
+   * (`{"mlb": 0.629}`) while `/api/events/*` and `/search` send decorated objects
+   * (`{"polymarket": {"value": 0.5, ...}}`). `lib/probabilityEvidence.ts` reads both.
+   */
+  win_probability_sources?: Record<string, number | { value?: number | null }>;
   opening_odds?: {
     home_probability: number;
     away_probability: number | null;

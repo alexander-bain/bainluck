@@ -9,6 +9,7 @@ import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
+import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -25,8 +26,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
   const isLive = data.status === "live";
   const isDone = data.status === "completed" || data.status === "closed";
-  const homeProb = data.current_odds?.home_probability;
-  const awayProb = data.current_odds?.away_probability;
+  // UX-P042 (#1640) — withhold a probability manufactured from an untraded
+  // Polymarket midpoint; `current_odds` presents it as a confident 0.5/0.5.
+  const probWithheld = shouldWithholdProbability(data);
+  const homeProb = probWithheld ? null : data.current_odds?.home_probability;
+  const awayProb = probWithheld ? null : data.current_odds?.away_probability;
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 

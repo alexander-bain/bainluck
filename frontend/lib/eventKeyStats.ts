@@ -13,6 +13,7 @@ import type {
   ActiveChartPoint,
   ScoringPlay,
 } from "@/lib/types";
+import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -346,6 +347,10 @@ export function resolveProbability(
   const openingHomeProb = opening?.home_probability ?? null;
   const openingAwayProb = opening?.away_probability ?? null;
 
+  // UX-P042 (#1640). Decided ONCE, up front, so the win_prob_history fallback below
+  // cannot quietly re-introduce the number this branch declined to assert.
+  const withheld = shouldWithholdProbability(event);
+
   if (isFinished) {
     // Completed/closed: show opening odds
     homeProb = openingHomeProb;
@@ -444,6 +449,14 @@ export function resolveProbability(
     if (!probSourceLabel && homeProb !== null && odds?.source === "aggregate") {
       probSourceLabel = "Live · Aggregate";
     }
+  } else if (withheld) {
+    // UX-P042 (#1640) — scheduled, but there is no probability to show. The event's
+    // entire evidence base is an untraded Polymarket book at its default midpoint, and
+    // `current_odds` still presents that as a confident 0.5/0.5 "aggregate" with
+    // bookmaker_count 0. Assert nothing rather than invent a coin flip; the callers
+    // already render a no-probability state.
+    homeProb = null;
+    awayProb = null;
   } else {
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
@@ -457,7 +470,11 @@ export function resolveProbability(
   }
 
   // Fallback: use win_prob_history (ESPN/stat_model/Kalshi)
+  // `!withheld` (UX-P042): when the only source is an untraded placeholder, its
+  // history is that same placeholder. Note this fallback ALREADY refuses an exact
+  // 0.5 chart point — the guard below is the same judgment, decided at the source.
   if (
+    !withheld &&
     homeProb === null &&
     lastChartPoint &&
     lastChartPoint.homeProb !== 0.5 &&
