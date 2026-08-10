@@ -52,10 +52,16 @@ export default class AuditReporter implements Reporter {
     // A timeout, a crash, or a throw in setup all land here. This must not be
     // invisible — synthesise a terminal infra_error so the run cannot be green.
     const journeyId = test.title.replace(/\s+/g, "-").toLowerCase().slice(0, 80) || "unknown-journey";
+    const project = test.parent.project();
+    // UX-P046 (#1648 P2): the viewport is a property of the PROJECT, so it is
+    // still knowable after the page has died — which is precisely when this
+    // branch runs. Emitting `null` here made a required field absent and turned
+    // an honest infra_error into a schema violation.
+    const configuredViewport = project?.use?.viewport ?? null;
     this.journeys.push({
       journey_id: journeyId,
-      project: test.parent.project()?.name ?? "unknown",
-      viewport: null,
+      project: project?.name ?? "unknown",
+      viewport: configuredViewport,
       url_path: "",
       redirect_chain: [],
       selected_fixture_ids: [],

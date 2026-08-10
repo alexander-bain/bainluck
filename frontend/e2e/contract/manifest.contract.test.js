@@ -74,6 +74,16 @@ function manifest(overrides = {}) {
   });
 }
 
+const schemaDoc = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "schema", "audit-manifest.schema.json"), "utf8")
+);
+
+function accepts(m) {
+  const result = validateManifest(m);
+  assert.deepEqual(result.errors, [], "expected the manifest to validate");
+  assert.equal(result.ok, true);
+}
+
 function rejects(m, needle) {
   const result = validateManifest(m);
   assert.equal(result.ok, false, "expected the manifest to be rejected");
@@ -119,6 +129,78 @@ describe("manifest invariants — each of these must be REJECTED", () => {
 
   it("a journey with no artifacts", () => {
     rejects(manifest({ journeys: [journey({ artifacts: [] })] }), "artifacts");
+  });
+
+  /**
+   * UX-P046 (#1648 P2) — "no evidence is not proof" is right about PROOF and a
+   * category error about an infra_error.
+   *
+   * Named failure, run 31432055476 (2026-08-10, event-page pack): two desktop
+   * journeys died with "Target page, context or browser has been closed", so the
+   * reporter's own "silence is never a pass" synthesis emitted them with no
+   * artifacts — and the validator rejected the manifest. A run carrying two
+   * healthy mobile journeys WITH screenshots reported `schema=INVALID`, the
+   * least actionable verdict available, instead of "two journeys died".
+   *
+   * Both directions, per gotcha #43: the allowance is exactly and only
+   * `infra_error`, and the run is still not green.
+   */
+  describe("#1648 P2 — a dead journey is a reported failure, not an invalid manifest", () => {
+    const dead = (overrides = {}) =>
+      journey({
+        journey_id: "event.page.probability",
+        result: "infra_error",
+        artifacts: [],
+        first_card_ms: null,
+        assertions: [
+          {
+            assertion_id: "evidence.journey_recorded",
+            ok: false,
+            detail: 'test ended "timedOut" without producing a journey record',
+          },
+        ],
+        ...overrides,
+      });
+
+    it("an infra_error journey may carry no artifacts — the absence IS the report", () => {
+      accepts(
+        manifest({ selectedCount: 2, journeys: [journey(), dead({ project: "mobile" })] })
+      );
+    });
+
+    it("the run carrying it is still NOT green", () => {
+      assert.equal(deriveRunResult([{ result: "pass" }, { result: "infra_error" }]), "infra_error");
+    });
+
+    it("a PASS with no artifacts is still rejected — the rule is untouched where it matters", () => {
+      rejects(manifest({ journeys: [dead({ result: "pass", assertions: [{ assertion_id: "x", ok: true }] })] }), "artifacts");
+    });
+
+    it("a FAIL with no artifacts is still rejected", () => {
+      rejects(manifest({ journeys: [dead({ result: "fail" })] }), "artifacts");
+    });
+
+    it("artifacts must still be an ARRAY, even on an infra_error", () => {
+      rejects(manifest({ journeys: [dead({ artifacts: null })] }), "artifacts");
+    });
+
+    it("the viewport is still required — the reporter reads it from the project, not the dead page", () => {
+      rejects(manifest({ journeys: [dead({ viewport: null })] }), "viewport");
+    });
+
+    it("the published JSON schema agrees with the validator, so a consumer cannot read a different rule", () => {
+      const rule = schemaDoc.properties.journeys.items.allOf.find(
+        (r) => r.if && r.if.properties && r.if.properties.result
+      );
+      assert.equal(rule.if.properties.result.const, "infra_error");
+      assert.equal(rule.then.properties.artifacts.minItems, 0);
+      assert.equal(rule.else.properties.artifacts.minItems, 1);
+      assert.equal(
+        schemaDoc.properties.journeys.items.properties.artifacts.minItems,
+        undefined,
+        "the unconditional minItems must be GONE, or it silently overrides the conditional rule"
+      );
+    });
   });
 
   it("an artifact with no digest", () => {

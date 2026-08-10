@@ -530,7 +530,25 @@ function validateManifest(manifest) {
         errors.push(`${where} reports fail with no failed assertion`);
       }
     }
-    if (!Array.isArray(journey.artifacts) || journey.artifacts.length === 0) {
+    // UX-P046 (#1648 P2) — "no evidence is not proof" is right about PROOF, and
+    // a category error about an `infra_error`.
+    //
+    // A journey whose page died before it could screenshot has no artifacts, and
+    // that absence IS the thing being reported. Demanding evidence of it turned
+    // the reporter's own "silence is never a pass" synthesis into a manifest its
+    // own validator rejects: run 31432055476 (2026-08-10, event-page pack) had
+    // two healthy mobile journeys with screenshots and two dead desktop ones, and
+    // reported `schema=INVALID` — the least actionable verdict available —
+    // instead of "two journeys died".
+    //
+    // This CANNOT open a false-green path, which is the only reason it is safe:
+    // `infra_error` is not `pass`, the run result is the worst of its journeys,
+    // and the workflow greens on `pass` alone. An empty-artifact `pass` or `fail`
+    // is still rejected exactly as before, and both directions are asserted.
+    const evidenceOptional = journey.result === "infra_error";
+    if (!Array.isArray(journey.artifacts)) {
+      errors.push(`${where}.artifacts must be an array`);
+    } else if (journey.artifacts.length === 0 && !evidenceOptional) {
       errors.push(`${where}.artifacts must be a non-empty array — a journey with no evidence is not proof`);
     } else {
       journey.artifacts.forEach((artifact, ai) => {

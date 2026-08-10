@@ -4,10 +4,16 @@
   "title": "Bain Luck browser-audit run manifest (v1)",
   "description": "Published contract for the browser-audit evidence manifest. The ENFORCING implementation is helpers/manifest.js validateManifest(); this document exists for interop and review, and a contract test asserts the two agree on required fields so they cannot drift.",
   "type": "object",
-  "required": ["schema_version", "run", "journeys"],
+  "required": [
+    "schema_version",
+    "run",
+    "journeys"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "browser-audit/v1" },
+    "schema_version": {
+      "const": "browser-audit/v1"
+    },
     "run": {
       "type": "object",
       "required": [
@@ -30,14 +36,37 @@
         "result"
       ],
       "properties": {
-        "run_id": { "type": "string", "minLength": 1 },
-        "run_url": { "type": "string", "minLength": 1 },
-        "pack": { "type": "string", "minLength": 1 },
-        "trigger": { "type": "string", "minLength": 1 },
-        "started_at_utc": { "type": "string", "format": "date-time" },
-        "started_at_pt": { "type": "string", "minLength": 1 },
-        "finished_at_utc": { "type": "string", "format": "date-time" },
-        "finished_at_pt": { "type": "string" },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pack": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "started_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "started_at_pt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finished_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at_pt": {
+          "type": "string"
+        },
         "requested_frontend_sha": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$",
@@ -54,47 +83,111 @@
           "description": "The commit that supplied the specs, evaluator and validator that graded this run. Distinct from the deployed commit: a dispatch from an arbitrary ref grades production with that ref's rail."
         },
         "checkout_ancestry": {
-          "type": ["string", "null"],
-          "enum": ["identical", "requested-is-ancestor-of-checkout", null],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "identical",
+            "requested-is-ancestor-of-checkout",
+            null
+          ],
           "description": "How the checkout relates to the audited commit, established by the workflow: identical when they are the same commit, or requested-is-ancestor-of-checkout when git merge-base --is-ancestor proved the deployed commit is in this history. The validator requires the ancestry proof whenever checkout_sha != requested_frontend_sha."
         },
         "runner_status": {
-          "enum": ["passed", "failed", "timedout", "interrupted"],
+          "enum": [
+            "passed",
+            "failed",
+            "timedout",
+            "interrupted"
+          ],
           "description": "Playwright's process-level verdict. A run whose runner did not pass is never green, however the individual journey records read."
         },
         "api_base_url": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "First-party backend origin. Its 4xx/5xx are graded as our defects, not third-party noise."
         },
         "observed_backend_sha": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Recorded from backend /health as a second ledger entry. Never substitutable for observed_frontend_sha."
         },
-        "base_url": { "type": "string", "minLength": 1 },
+        "base_url": {
+          "type": "string",
+          "minLength": 1
+        },
         "final_origin": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "The origin the browser actually landed on. Held to the same canonical allowlist as base_url."
         },
         "runtime": {
           "type": "object",
-          "required": ["node", "playwright", "browser", "os"],
+          "required": [
+            "node",
+            "playwright",
+            "browser",
+            "os"
+          ],
           "properties": {
-            "node": { "type": "string", "minLength": 1 },
-            "playwright": { "type": "string", "minLength": 1 },
-            "browser": { "type": "string", "minLength": 1 },
-            "os": { "type": "string", "minLength": 1 }
+            "node": {
+              "type": "string",
+              "minLength": 1
+            },
+            "playwright": {
+              "type": "string",
+              "minLength": 1
+            },
+            "browser": {
+              "type": "string",
+              "minLength": 1
+            },
+            "os": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "selected_count": {
           "type": "integer",
           "minimum": 1,
-          "description": "Journeys the runner SELECTED. Zero is an infrastructure failure, never a pass — a rail that collected nothing must not conclude success."
+          "description": "Journeys the runner SELECTED. Zero is an infrastructure failure, never a pass \u2014 a rail that collected nothing must not conclude success."
         },
-        "completed_count": { "type": "integer", "minimum": 0 },
-        "failed_count": { "type": "integer", "minimum": 0 },
-        "result": { "enum": ["pass", "fail", "infra_error", "superseded"] },
-        "superseded_by": { "type": ["string", "null"] },
-        "notes": { "type": "array", "items": { "type": "string" } }
+        "completed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "infra_error",
+            "superseded"
+          ]
+        },
+        "superseded_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "journeys": {
@@ -119,47 +212,129 @@
           "result"
         ],
         "properties": {
-          "journey_id": { "type": "string", "minLength": 1 },
-          "project": { "type": "string", "minLength": 1 },
+          "journey_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "viewport": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
-              "width": { "type": "integer" },
-              "height": { "type": "integer" }
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
             }
           },
-          "url_path": { "type": "string" },
-          "final_origin": { "type": ["string", "null"] },
-          "redirect_chain": { "type": "array", "items": { "type": "string" } },
-          "selected_fixture_ids": { "type": "array", "items": { "type": "string" } },
-          "started_at_utc": { "type": "string", "format": "date-time" },
-          "finished_at_utc": { "type": "string", "format": "date-time" },
-          "duration_ms": { "type": "integer", "minimum": 0 },
+          "url_path": {
+            "type": "string"
+          },
+          "final_origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redirect_chain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "selected_fixture_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "started_at_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
           "assertions": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["assertion_id", "ok"],
+              "required": [
+                "assertion_id",
+                "ok"
+              ],
               "properties": {
-                "assertion_id": { "type": "string", "minLength": 1 },
-                "ok": { "type": "boolean" },
-                "detail": { "type": ["string", "null"] }
+                "assertion_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           },
-          "checked_clean": { "type": "array", "items": { "type": "string" } },
-          "console_errors": { "type": "array", "items": { "type": "string" } },
-          "page_errors": { "type": "array", "items": { "type": "string" } },
+          "checked_clean": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "console_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "failed_requests": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "url": { "type": "string", "description": "Redacted: origin + path + query KEYS only." },
-                "method": { "type": "string" },
-                "status": { "type": ["integer", "null"] },
-                "failure": { "type": ["string", "null"] }
+                "url": {
+                  "type": "string",
+                  "description": "Redacted: origin + path + query KEYS only."
+                },
+                "method": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "failure": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           },
@@ -168,37 +343,98 @@
             "items": {
               "type": "object",
               "properties": {
-                "host": { "type": "string" },
-                "path": { "type": "string" },
-                "count": { "type": "integer" }
+                "host": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
               }
             }
           },
           "first_card_ms": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "MUST be null when no real card was observed. Recording a duration for an absent card is the C96 P1 false green."
           },
           "artifacts": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["name", "path", "sha256", "bytes"],
+              "required": [
+                "name",
+                "path",
+                "sha256",
+                "bytes"
+              ],
               "properties": {
-                "name": { "type": "string", "minLength": 1 },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "path": {
                   "type": "string",
                   "pattern": "^artifacts/[^/\\\\][^\\\\]*$",
                   "description": "Normalized, relative to the manifest's directory and under the artifacts/ root, so the bytes travel inside the uploaded Actions artifact and can be re-hashed by a reviewer."
                 },
-                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-                "bytes": { "type": "integer", "minimum": 1 }
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             }
           },
-          "attempt": { "type": "integer", "minimum": 1 },
-          "result": { "enum": ["pass", "fail", "infra_error", "superseded"] }
-        }
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "result": {
+            "enum": [
+              "pass",
+              "fail",
+              "infra_error",
+              "superseded"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "$comment": "UX-P046 (#1648 P2): an infra_error journey reports that its page died before it could produce evidence, so an empty artifacts array is the honest record. Every other result must still carry evidence.",
+            "if": {
+              "properties": {
+                "result": {
+                  "const": "infra_error"
+                }
+              },
+              "required": [
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "artifacts": {
+                  "minItems": 0
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "artifacts": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ]
       }
     }
   }
