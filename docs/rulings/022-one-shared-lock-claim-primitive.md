@@ -57,8 +57,24 @@ Three properties, each earned by one of the failures above:
 1. **Read before write, always.** A substitution is not a test (failure 2). A regex that does not
    match is indistinguishable from a lock that is free, and both silently proceed to the write.
 2. **`ps` decides, per ruling 008.** Not the heartbeat, which drifted in both directions.
-3. **Exact pid match for "held by me."** `owner_pid == $$`, integer-equal. Not "looks like my
+3. **Exact pid match for "held by me."** Integer-equal against the SESSION pid. Not "looks like my
    window", not "the tree suggests I am the latency lane", not a name comparison.
+
+   ⚠️ **CORRECTION, 2026-08-10, same day: this clause first said `owner_pid == $$`. That is WRONG
+   for a Claude Code window and would never have matched.** Every Bash tool call runs in a **fresh
+   subshell**, so `$$` is a different number on every invocation and never equals the long-lived
+   session process. A lane testing `owner_pid == $$` can neither confirm nor refute its own
+   identity — it would refuse its own valid lock and then "recover" by overwriting it, turning the
+   guard into precisely the failure it exists to prevent.
+
+   **Resolve identity by walking `ppid` up to the `native/claude` ancestor** — that process outlives
+   every subshell and is the thing a lock owner actually IS. Implemented as `session_pid()` in the
+   primitive.
+
+   Caught by the LAT-P026 window reviewing this ruling, which is the review working. Recorded rather
+   than quietly patched, because the failure mode is instructive: **a spec written in shell shorthand
+   smuggled in an assumption about process lifetime that was false for every caller it governs.**
+   The rule was right; the expression of it was not executable.
 
 ## The addendum, and why it is separate
 
@@ -71,6 +87,30 @@ equals `owner_pid` has proven it. **Only the second may write.**
 
 This is the same distinction the base-SHA check draws in ruling 020(a): the lock is a claim about
 the world, the `ps`/`$$` test is the world. Prefer the world.
+
+## The primitive — `scripts/claim_lane_lock.py` (INT-037, 2026-08-10)
+
+```
+python3 scripts/claim_lane_lock.py check   .claude/handoff/LANE-<lane>.lock
+python3 scripts/claim_lane_lock.py claim   .claude/handoff/LANE-<lane>.lock --queue "INT-0NN"
+python3 scripts/claim_lane_lock.py release .claude/handoff/LANE-<lane>.lock
+```
+
+Exit `0` acquired/released/free · `1` **REFUSED** (held by a live other) · `2` malformed lock.
+**A refusal is a normal outcome, not an error to retry past.**
+
+It encodes every state the rulings define, and each row is exercised by a test:
+
+| lock state | outcome | ruling |
+|---|---|---|
+| `RELEASED` / `free`, any pid | claimable | 013 (+ extension) |
+| `HELD`, owner pid **dead** | claimable, takeover recorded | 008 |
+| `HELD`, owner pid **alive**, not me | **REFUSED, exit 1** | 020(b) |
+| `HELD`, owner is me | re-claim allowed | 022 addendum |
+| malformed | exit 2, **no write** | this ruling |
+
+The last row matters as much as the third: INT-035's regex failed to match and *proceeded to write
+anyway*, so "I could not understand this lock" must be a refusal, never a fall-through.
 
 ## Deletion is part of the ruling
 

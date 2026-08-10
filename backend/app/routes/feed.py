@@ -3814,7 +3814,21 @@ async def build_discover_market_trace(
             "category": market.category,
             "llm_sport_category": market.llm_sport_category,
             "market_tier": market.market_tier,
-            "market_type": market.market_type,
+            # #1698 — belt AND braces; the braces are the `load_only` lists that
+            # now select this column.
+            #
+            # A bare `market.market_type` is an attribute access that SILENTLY
+            # becomes a lazy load when the column was not selected. Under async
+            # SQLAlchemy that raises MissingGreenlet — here, inside the per-item
+            # serializer — so one unloaded column did not drop one card, it
+            # emptied the ENTIRE futures pool and anonymous Discover served zero
+            # futures (gotcha #42: one bad item must never wipe a whole pass).
+            #
+            # `__dict__.get()` reads only what is already loaded and can never
+            # trigger the lazy load — unlike `getattr(market, "market_type", None)`,
+            # which triggers it and then raises, so the usual defensive idiom is
+            # the one thing that does NOT help here.
+            "market_type": market.__dict__.get("market_type"),
             "external_id": market.external_id,
             "canonical_market_key": market.canonical_market_key,
             "source_count": source_count,
@@ -5069,6 +5083,11 @@ async def _score_sports_mode_futures(
             FuturesMarket.category,
             FuturesMarket.llm_sport_category,
             FuturesMarket.market_tier,
+            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
+            # Omitted, the attribute access lazy-loads, and a lazy load under async
+            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
+            # WHOLE futures pool rather than dropping one card (gotcha #42).
+            FuturesMarket.market_type,
             FuturesMarket.canonical_market_key,
             FuturesMarket.group_id,
             FuturesMarket.group_type,
@@ -5977,6 +5996,11 @@ async def _score_futures(
             FuturesMarket.category,
             FuturesMarket.llm_sport_category,
             FuturesMarket.market_tier,
+            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
+            # Omitted, the attribute access lazy-loads, and a lazy load under async
+            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
+            # WHOLE futures pool rather than dropping one card (gotcha #42).
+            FuturesMarket.market_type,
             FuturesMarket.canonical_market_key,
             FuturesMarket.group_id,
             FuturesMarket.group_type,
