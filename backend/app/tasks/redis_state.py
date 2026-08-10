@@ -346,6 +346,13 @@ TASK_METRICS_PREFIX = "bainluck:task_metrics"
 # How long to keep metrics (48 hours — enough for dashboard + debugging)
 TASK_METRICS_TTL = 172800
 
+#: The width of the rolling window the ``_24h`` counters accumulate over, and
+#: the TTL each counter key is created with. LAT-P024 (#1609) named it: it was a
+#: bare ``86400`` literal at the write site, and the read site had no way to
+#: refer to the same number, which is half of why the window ended up being
+#: tracked in a second key that could disagree with the first.
+WINDOW_COUNTER_TTL = 86400
+
 # Task metric labels that were RETIRED from the beat schedule but whose celery
 # task + Redis metrics are intentionally kept dormant/registered (e.g. for a
 # cheap re-add). Their last-run metrics never refresh, so a stale
@@ -395,11 +402,44 @@ def _bump_window_counter(pipe, key: str):
     treated it as one — including two windows debugging #1609 — got an answer
     off by the ratio of the true window to 24 hours.
 
-    ``:since`` shares the counter's key prefix, its NX, and its TTL, so the two
-    are created and expire together and can never describe different windows.
+    LAT-P024 (#1609): the ``:since`` sibling key that used to carry that window
+    start is GONE, and the age is now derived from this counter's own TTL by
+    ``_window_age_s``. The sibling could not do the job it was created for.
+
+    Its contract was "``:since`` shares the counter's key prefix, its NX, and
+    its TTL, so the two are created and expire together and can never describe
+    different windows". That holds only for a pair BORN together, and ``NX`` --
+    the very thing that stops the stamp being overwritten -- is also what stops
+    it ever being corrected. Two keys with independent TTLs cannot resynchronise
+    once anything separates their birthdays, and two ordinary events separate
+    them:
+
+    * **The deploy that introduces the stamp.** Every counter already alive at
+      that moment keeps its value (``SET NX`` correctly declines to reset it)
+      and gets a stamp dated NOW. The window then reads as the age of the
+      RELEASE rather than the age of the count.
+    * **The counter's own roll.** When the counter expires at its 24h mark and
+      is recreated, a stamp created later is still alive, so ``SET NX`` declines
+      again -- and the fresh counter inherits a stamp OLDER than itself.
+
+    Measured in production 2026-08-10, both directions, on the same instance:
+    ``:starts`` counters were born with v3740 (21:56:23 PT) and their stamps
+    with v3743 (07:14:22 PT, the release that shipped the stamp), so
+    ``precompute_category_pages`` reported 16 fires in a 6.47h window. It is an
+    hourly ``crontab(minute=25)`` beat, so that reading requires **2.47
+    schedulers** -- and a non-integer number of schedulers is impossible, which
+    is what makes this a proof and not an opinion. The true window was 16.00h,
+    the stamp understated it by 2.47x, and every rate derived from it was
+    inflated by the same factor. The counter roll produces the mirror-image
+    error, so the surface cannot even be relied on to fail in one direction.
+
+    The TTL is not a second opinion about the window -- it IS the window, set
+    once here by ``SET ... EX ... NX`` and never touched again (``INCR`` does not
+    refresh an expiry). One key cannot disagree with itself. It also removes a
+    Redis write from ``record_task_started``, which runs before every task in
+    the system.
     """
-    pipe.set(key, 0, ex=86400, nx=True)
-    pipe.set(f"{key}:since", _utc_now_iso(), ex=86400, nx=True)
+    pipe.set(key, 0, ex=WINDOW_COUNTER_TTL, nx=True)
     pipe.incr(key)
 
 
@@ -668,22 +708,40 @@ def record_task_failure(
 def _window_age_s(r, counter_key: str):
     """Seconds since this counter's 24h window opened, or ``None``.
 
-    ``None`` means "the window start was not recorded", which is a genuinely
-    different thing from "the window is new" and must not be flattened into 0:
-    a zero age reads as an infinitely fast rate and would make every counter
-    written before this stamp existed look like a task firing thousands of times
-    a second. Callers treat ``None`` as unmeasurable — see
-    ``app/utils/schedule_adherence.py``, which refuses to grade without it.
+    Derived from the counter's OWN remaining TTL — ``age = WINDOW_COUNTER_TTL -
+    ttl`` — rather than from a sibling ``:since`` key, which is LAT-P024's fix
+    for a window that drifted from the count it described in both directions.
+    See ``_bump_window_counter`` for the measurement and why a second key cannot
+    be kept in phase with the first.
+
+    ``None`` means "this counter's window is not measurable", which is a
+    genuinely different thing from "the window is new" and must not be flattened
+    into 0: a zero age reads as an infinitely fast rate and would make every
+    counter look like a task firing thousands of times a second. Callers treat
+    ``None`` as unmeasurable — see ``app/utils/schedule_adherence.py``, which
+    refuses to grade without it. Three distinct cases return it:
+
+    * ``-2`` — no such key. The counter has never been incremented, or its
+      window has rolled and nothing has fired since.
+    * ``-1`` — the key exists with NO expiry. Something created this counter
+      outside ``_bump_window_counter`` (a bare ``INCR`` creates a key with no
+      TTL), so it is an unbounded lifetime total, not a 24h window. That is
+      gotcha #118's original bug and it must read as unmeasurable, never as a
+      rate.
+    * ``ttl > WINDOW_COUNTER_TTL`` — the key outlives the window it is supposed
+      to describe, so it was written under a different TTL regime. Refused
+      rather than clamped to 0, because clamping would report a brand-new
+      window for what is actually an old key and hand the caller the
+      infinitely-fast-rate reading this contract exists to prevent.
     """
     try:
-        raw = r.get(f"{counter_key}:since")
-        if not raw:
+        ttl = r.ttl(counter_key)
+        if ttl is None:
             return None
-        from datetime import datetime, timezone
-        started = datetime.fromisoformat(
-            raw.decode() if isinstance(raw, bytes) else raw
-        )
-        return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+        ttl = int(ttl)
+        if ttl < 0 or ttl > WINDOW_COUNTER_TTL:
+            return None
+        return float(WINDOW_COUNTER_TTL - ttl)
     except Exception:
         return None
 

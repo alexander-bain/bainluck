@@ -636,25 +636,26 @@ class TestWindowCounterDoesNotSlide:
     forever, so the counter accumulated for as long as the task kept
     succeeding. SET NX EX stamps the window once (gotcha #49, task form)."""
 
-    def test_first_increment_stamps_a_24h_window(self, monkeypatch):
+    def test_first_increment_opens_a_24h_window(self, monkeypatch):
         fake = _FakeMetricsRedis({})
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
         redis_state.record_task_success("poll_odds", 1.0, {})
         sets = [c for c in fake.calls if c[0] == "set"]
-        # LAT-P022 (#1609) widened this deliberately: the counter is stamped as
-        # before, AND its window start is recorded beside it. Asserted as two
-        # entries rather than loosened to a subset, so a future change that
-        # drops either one still fails here.
-        assert [(c[1], c[2], c[3], c[4]) for c in sets if ":since" not in c[1]] == [
+        # LAT-P024 (#1609) narrowed this back to ONE key. LAT-P022 had added a
+        # `:since` sibling here to date the window, and its own comment named
+        # the failure mode exactly — "if the two could expire independently, a
+        # live counter could end up paired with a window start from a previous
+        # day" — then relied on shared NX+TTL to prevent it. Shared NX+TTL only
+        # keeps a pair in phase if it is BORN in phase, and NX is precisely what
+        # blocks the correction when it is not. Production caught it in the
+        # opposite direction to the one predicted: counters born at v3740, their
+        # stamps born at v3743 nine hours later, so the rate read 2.47x too
+        # HIGH. The window is now the counter's own TTL — one key, which cannot
+        # disagree with itself.
+        assert [(c[1], c[2], c[3], c[4]) for c in sets] == [
             (f"{TASK_METRICS_PREFIX}:poll_odds:successes", 0, 86400, True),
         ]
-        since = [c for c in sets if c[1].endswith(":since")]
-        assert len(since) == 1
-        assert since[0][1] == f"{TASK_METRICS_PREFIX}:poll_odds:successes:since"
-        # Same TTL and same NX as the counter it dates: if the two could expire
-        # independently, a live counter could end up paired with a window start
-        # from a previous day and report a rate ~24x too low.
-        assert since[0][3] == 86400 and since[0][4] is True
+        assert redis_state.WINDOW_COUNTER_TTL == 86400
 
     def test_later_increments_never_re_expire_the_counter(self, monkeypatch):
         fake = _FakeMetricsRedis({})

@@ -1,18 +1,21 @@
 """LAT-P022 (#1609): the storage and the join behind the adherence verdict.
 
 ``test_schedule_adherence.py`` grades numbers. This file checks that the
-numbers exist and reach the grader: the counter window is stamped, the duration
-history is bounded and written on every terminal, the celery-name-to-label map
-is recorded from real runs, and the route joins the three without inventing a
-task that is not scheduled or dropping one that is.
-"""
+numbers exist and reach the grader: the counter window is measurable, the
+duration history is bounded and written on every terminal, the celery-name-to-
+label map is recorded from real runs, and the route joins the three without
+inventing a task that is not scheduled or dropping one that is.
 
-from datetime import datetime, timedelta, timezone
+LAT-P024 (#1609) replaced the window's storage. It was a ``:since`` sibling key
+written beside the counter; it is now the counter's own TTL. See
+``TestCounterWindowIsItsOwnTTL`` for the production measurement that forced it.
+"""
 
 import pytest
 
 from app.routes.admin_celery import build_schedule_adherence
 from app.tasks import redis_state
+from app.utils.schedule_adherence import adherence
 from app.tasks.redis_state import TASK_LABEL_MAP_KEY, TASK_METRICS_PREFIX
 
 
@@ -24,10 +27,21 @@ class _Redis:
         self.hashes = {}
         self.lists = {}
         self.calls = []
+        #: key -> remaining TTL in seconds, modelling real Redis semantics:
+        #: a key absent from here but present in the store has NO expiry, which
+        #: `ttl()` reports as -1 and which LAT-P024 must read as unmeasurable
+        #: rather than as a fresh window.
+        self.ttls = {}
 
     # --- read -------------------------------------------------------------
     def get(self, key):
         return self.strings.get(key)
+
+    def ttl(self, key):
+        """Redis TTL contract: -2 no such key, -1 key exists with no expiry."""
+        if key not in self.strings and key not in self.hashes:
+            return -2
+        return self.ttls.get(key, -1)
 
     def hgetall(self, key):
         return dict(self.hashes.get(key, {}))
@@ -66,9 +80,15 @@ class _Redis:
         if nx and key in self.strings:
             return None
         self.strings[key] = str(value).encode()
+        if ex is not None:
+            self.ttls[key] = ex
         return True
 
     def incr(self, key):
+        # Real INCR creates a missing key with NO expiry and never refreshes an
+        # existing one. Both halves matter here: the first is how a counter
+        # becomes an unbounded lifetime total, the second is what makes the TTL
+        # a trustworthy window start.
         self.strings[key] = str(int(self.strings.get(key, b"0")) + 1).encode()
 
     def lpush(self, key, value):
@@ -85,41 +105,140 @@ def fake(monkeypatch):
     return r
 
 
-class TestCounterWindowIsStamped:
-    def test_success_stamps_the_window_once(self, fake):
+class TestCounterWindowIsItsOwnTTL:
+    """LAT-P024 (#1609): the window is the counter's TTL, not a sibling key.
+
+    The previous contract stamped a ``:since`` key alongside the counter under
+    the same ``NX`` and TTL. That is correct only for a pair born together, and
+    ``NX`` is exactly what prevents the pair from ever being corrected once
+    anything separates their birthdays. Production, 2026-08-10: an hourly
+    ``crontab(minute=25)`` beat reported 16 fires in a 6.47h window, which
+    requires 2.47 schedulers to be true.
+    """
+
+    def _counter(self, task="t", kind="starts"):
+        return f"{TASK_METRICS_PREFIX}:{task}:{kind}"
+
+    def test_counter_is_created_with_the_window_ttl(self, fake):
         for _ in range(5):
             redis_state.record_task_success("t", 100.0, {})
-        key = f"{TASK_METRICS_PREFIX}:t:successes"
+        key = self._counter(kind="successes")
         assert fake.strings[key] == b"5"
-        assert f"{key}:since" in fake.strings
+        assert fake.ttls[key] == redis_state.WINDOW_COUNTER_TTL
 
-    def test_the_stamp_does_not_move_on_later_increments(self, fake):
+    def test_no_sibling_since_key_is_written(self, fake):
+        # The whole defect was a second key that could disagree with the first.
+        # If one comes back, so does the drift.
+        redis_state.record_task_started("t")
         redis_state.record_task_success("t", 100.0, {})
-        first = fake.strings[f"{TASK_METRICS_PREFIX}:t:successes:since"]
+        assert [k for k in fake.strings if k.endswith(":since")] == []
+
+    def test_later_increments_do_not_slide_the_window(self, fake):
+        redis_state.record_task_success("t", 100.0, {})
+        key = self._counter(kind="successes")
+        fake.ttls[key] = 40000  # 13.9h into the window
         for _ in range(4):
             redis_state.record_task_success("t", 100.0, {})
-        # If it slid, the window would always read ~0s old and the rate would be
-        # divided by nothing — the same class of bug as the sliding EXPIRE that
-        # made these counters lifetime totals in the first place.
-        assert fake.strings[f"{TASK_METRICS_PREFIX}:t:successes:since"] == first
-
-    def test_starts_counter_is_stamped_too(self, fake):
-        redis_state.record_task_started("t")
-        assert f"{TASK_METRICS_PREFIX}:t:starts:since" in fake.strings
+        # A refreshed expiry would make the window read ~0s old forever and the
+        # rate would be divided by nothing — gotcha #118's original shape.
+        assert fake.ttls[key] == 40000
 
     def test_window_age_is_reported_in_seconds(self, fake):
-        past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        fake.strings[f"{TASK_METRICS_PREFIX}:t:starts:since"] = past.encode()
-        fake.strings[f"{TASK_METRICS_PREFIX}:t:starts"] = b"7"
+        key = self._counter()
+        fake.strings[key] = b"7"
+        fake.ttls[key] = redis_state.WINDOW_COUNTER_TTL - 7200
         fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
-        m = redis_state.get_task_metrics("t")
-        assert m["starts_window_s"] == pytest.approx(7200, abs=60)
+        assert redis_state.get_task_metrics("t")["starts_window_s"] == 7200
 
-    def test_missing_stamp_reads_none_not_zero(self, fake):
-        # A zero age reads as an infinitely fast rate, which would make every
-        # counter written before this shipped look like thousands of fires/sec.
+    def test_absent_counter_reads_none_not_zero(self, fake):
+        # A zero age reads as an infinitely fast rate.
         fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
         assert redis_state.get_task_metrics("t")["starts_window_s"] is None
+
+    def test_counter_with_no_expiry_is_unmeasurable_not_fresh(self, fake):
+        # A bare INCR from outside `_bump_window_counter` creates a key with no
+        # TTL. That is an unbounded lifetime total, and reporting it as a fresh
+        # window is the exact reading gotcha #118 was banked to stop.
+        key = self._counter()
+        fake.strings[key] = b"4000"
+        fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
+        assert fake.ttl(key) == -1
+        assert redis_state.get_task_metrics("t")["starts_window_s"] is None
+
+    def test_ttl_longer_than_the_window_is_refused(self, fake):
+        # Written under a different TTL regime. Clamping to 0 would report a
+        # brand-new window for an old key — the infinitely-fast-rate reading.
+        key = self._counter()
+        fake.strings[key] = b"9"
+        fake.ttls[key] = redis_state.WINDOW_COUNTER_TTL + 1
+        fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
+        assert redis_state.get_task_metrics("t")["starts_window_s"] is None
+
+    def test_the_production_defect_cannot_recur(self, fake):
+        """The regression, stated as the arithmetic that exposed it.
+
+        A counter born at one release and a window born at a later one. Under
+        the old sibling-key scheme the age came from the LATER birth, so an
+        hourly beat's 16 fires landed in a 6.47h window. Reading the age off the
+        counter's own TTL makes that unrepresentable: the count and the window
+        are two views of one key.
+        """
+        key = self._counter()
+        # v3740 21:56 PT -> read 13:53 PT the next day = 16.0h of accumulation.
+        age_s = 16 * 3600
+        fake.strings[key] = b"16"
+        fake.ttls[key] = redis_state.WINDOW_COUNTER_TTL - age_s
+        fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
+
+        window_s = redis_state.get_task_metrics("t")["starts_window_s"]
+        assert window_s == age_s
+
+        schedulers_implied = 16 / (window_s / 3600.0)
+        assert schedulers_implied == pytest.approx(1.0, abs=0.01), (
+            "an hourly crontab beat cannot fire more than once per hour per "
+            "scheduler; a non-integer implied count means the window is wrong"
+        )
+
+    def test_a_rolled_counter_is_unmeasurable_not_behind(self, fake):
+        """The mirror-image error, which is the one that manufactures alarms.
+
+        The sibling scheme failed in BOTH directions and only one of them was
+        visible. A stamp younger than its counter inflates the rate, and the
+        grader has no "ahead" band, so it passed silently as ``on_schedule``.
+        A stamp OLDER than its counter — which is what a counter roll produces,
+        because the surviving stamp makes the next ``SET NX`` decline — divides
+        a near-zero count by a long window and grades a perfectly healthy beat
+        ``behind``.
+
+        That was not hypothetical on 2026-08-10: the counters were due to roll
+        at 21:56 PT while their stamps lived until 07:15 PT the next morning,
+        leaving a 9h19m window in which every graded task would have reported
+        ``ratio 0.07`` against ``BEHIND_RATIO 0.6``. A detector that cries wolf
+        across its whole population in one night is a detector that gets muted.
+
+        With the window read off the counter's own TTL, a rolled counter has a
+        SHORT window by construction, so the grader refuses to grade it — the
+        honest answer ``MIN_EXPECTED_FIRES`` exists to give.
+        """
+        key = self._counter()
+        # One fire, two minutes after the roll.
+        fake.strings[key] = b"1"
+        fake.ttls[key] = redis_state.WINDOW_COUNTER_TTL - 120
+        fake.hashes[f"{TASK_METRICS_PREFIX}:t"] = {b"consecutive_failures": b"0"}
+
+        window_s = redis_state.get_task_metrics("t")["starts_window_s"]
+        assert window_s == 120
+
+        graded = adherence(starts=1, starts_window_s=window_s, interval_s=3600)
+        assert graded["verdict"] == "unmeasurable"
+        assert "window_too_short" in graded["reason"]
+
+        # And the alarm the old scheme would have raised on the same fire.
+        stale_stamp_window_s = 14.69 * 3600
+        false_alarm = adherence(
+            starts=1, starts_window_s=stale_stamp_window_s, interval_s=3600
+        )
+        assert false_alarm["verdict"] == "behind"
 
 
 class TestDurationHistory:
