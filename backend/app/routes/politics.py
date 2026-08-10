@@ -615,7 +615,25 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         .where(
             or_(
                 FuturesMarket.llm_sport_category.in_(["politics", "geopolitics"]),
-                *[FuturesMarket.external_id.ilike(f"{prefix}%")
+                # Case-SENSITIVE prefix match, deliberately (LAT-P023, #1607).
+                # LAT-P016's own rail named `market_query` the dominant stage of
+                # the cold build: 7,332ms of 10,437ms (70%). These arms cannot use
+                # an index either way — one unindexable arm inside the top-level
+                # OR makes the planner filter every open market — but ILIKE also
+                # case-folds each of ~83K rows in a UTF-8 collation, where LIKE is
+                # a byte-prefix compare. Measured in production 2026-08-10:
+                # 1,021ms -> 188ms (5.4x) for the arms alone.
+                #
+                # Equivalence was MEASURED, not assumed, and in a SINGLE snapshot:
+                # two separate counts drift (~4K markets closed during that
+                # session, so the naive before/after looked like a 131-row
+                # regression that did not exist). One scan, four aggregates:
+                # ilike_n=563, like_n=563, only_ilike=0, only_like=0.
+                #
+                # Safe because Kalshi series tickers are uppercase by API contract
+                # and all 563 matching rows measured uppercase. The guard test
+                # `test_ticker_arm_uses_case_sensitive_like` holds us to it.
+                *[FuturesMarket.external_id.like(f"{prefix.upper()}%")
                   for prefix, _ in _THEME_BY_TICKER],
             ),
             FuturesMarket.status == "open",
@@ -673,22 +691,37 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # ── Presidential candidate history (30d, downsampled to 50pts) ──
     if outcome_id_map:
         cutoff = now - timedelta(days=30)
+        # Column select, NOT entity select (LAT-P023, #1607). Three fields are
+        # read below and the rows are immediately downsampled to <=50 points per
+        # candidate, but the entity form hydrated a full FuturesOddsSnapshot ORM
+        # object, with identity-map bookkeeping, for every row. Measured in
+        # production 2026-08-10: 15,413 rows on the two headline markets (15,183
+        # poly + 230 kalshi). Rows and output are identical.
+        #
+        # This is a MEMORY change, not a speed one, and the distinction is the
+        # point: LAT-P016's rail puts `presidential_history` at 120.8ms, so there
+        # is almost no wall time here to win. What it removes is 15K objects from
+        # a build running two-per-dyno on a 512MB Standard-1X whose warmer is
+        # being hard-killed far more often than it completes.
         hist_result = await db.execute(
-            select(FuturesOddsSnapshot)
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.captured_at,
+                FuturesOddsSnapshot.probability,
+            )
             .where(
                 FuturesOddsSnapshot.outcome_id.in_(list(outcome_id_map.keys())),
                 FuturesOddsSnapshot.captured_at >= cutoff,
             )
             .order_by(FuturesOddsSnapshot.captured_at)
         )
-        hist_snaps = hist_result.scalars().all()
 
         cand_raw: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
-        for snap in hist_snaps:
-            cand_key = outcome_id_map.get(snap.outcome_id)
-            if cand_key and snap.probability is not None:
+        for snap_outcome_id, captured_at, probability in hist_result.all():
+            cand_key = outcome_id_map.get(snap_outcome_id)
+            if cand_key and probability is not None:
                 cand_raw[cand_key].append(
-                    (snap.captured_at, round(float(snap.probability) * 100, 1))
+                    (captured_at, round(float(probability) * 100, 1))
                 )
 
         seven_days_ago = now - timedelta(days=7)

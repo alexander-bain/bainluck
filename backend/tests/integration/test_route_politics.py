@@ -38,6 +38,14 @@ class _MockResult:
     def scalars(self):
         return self._scalars
 
+    def all(self):
+        # A real SQLAlchemy Result has .all() — it is how a COLUMN select is
+        # consumed, as against .scalars().all() for an entity select. The
+        # politics snapshot query became a column select in LAT-P023 (#1607) and
+        # this mock implemented only the entity half of the interface. The
+        # sibling mock in test_route_category_pages.py already carries both.
+        return self._scalars.all()
+
 
 def _query_result(items):
     return _MockResult(items)
