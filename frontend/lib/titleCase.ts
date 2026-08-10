@@ -19,6 +19,9 @@ const ACRONYMS = new Set<string>([
   // Leagues / tours
   "NBA", "WNBA", "NFL", "MLB", "NHL", "MLS", "NCAA", "NCAAB", "NCAAF",
   "EPL", "UCL", "UEFA", "FIFA", "PGA", "LPGA", "LIV", "ATP", "WTA",
+  // UX-P050: title sponsors that reach the reader as tournament names. "AIG" is
+  // the AIG Women's Open, which the feed ships as "Aig Women S Open Womens".
+  "AIG",
   "UFC", "MMA", "F1", "NASCAR", "AFC", "NFC", "AL", "NL",
   // Awards / roles
   "MVP", "ROY", "DPOY", "OPOY", "CPOY", "GOAT", "POTY",

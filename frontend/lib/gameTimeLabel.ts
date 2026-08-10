@@ -130,11 +130,31 @@ export function formatFinishedGameLabel(
  * as not-a-start-date and suppressed. On the measured slate that is 5 of 8 cards
  * gaining a correct date and 3 correctly staying silent.
  *
+ * UX-P050 — THAT WINDOW WATCHED ONLY ONE SIDE. The trap above is real and the
+ * guard against it was backward-only, so the identical lie walked in through the
+ * future: "Golfers To Win A PGA Tour Major In 2027" carries `commence_time:
+ * 2028-01-14`, which is not a start date either, and the card printed **"Starts
+ * Fri, Jan 14, 2028"**. Suppressing a false past date while printing a false
+ * future one is the same defect, and only the past half had a bound. Hence
+ * {@link TOURNAMENT_START_TRUST_FUTURE_DAYS}: golf schedules are published at
+ * most about a year ahead, so a commence_time beyond that is not a start.
+ *
  * Reads `commence_time` and states it. It does NOT derive a status — nothing
  * here concludes that a tournament is over, because the wire does not say so
  * (`start_date`, `end_date` and `schedule_status` were null on 8 of 8).
  */
 export const TOURNAMENT_START_TRUST_DAYS = 7;
+
+/**
+ * How far ahead a `commence_time` can be and still be believed as a start date.
+ *
+ * Tour schedules are announced roughly a season ahead, so a year is generous for
+ * a real tournament and still excludes the season-long futures markets, whose
+ * timestamps sit years out. On the measured slate this suppresses exactly one
+ * card (+521d) and leaves the two genuine upcoming tournaments (+19d, +9d)
+ * untouched — a both-direction guard per gotcha #43.
+ */
+export const TOURNAMENT_START_TRUST_FUTURE_DAYS = 365;
 
 const MS_PER_DAY = 86_400_000;
 
@@ -148,6 +168,7 @@ export function formatTournamentWhenLabel(
 
   const deltaMs = start.getTime() - now;
   if (-deltaMs > TOURNAMENT_START_TRUST_DAYS * MS_PER_DAY) return "";
+  if (deltaMs > TOURNAMENT_START_TRUST_FUTURE_DAYS * MS_PER_DAY) return "";
 
   const upcoming = deltaMs >= 0;
   const verb = upcoming ? "Starts" : "Started";
@@ -173,4 +194,65 @@ export function formatTournamentWhenLabel(
     ...(start.getFullYear() !== nowDate.getFullYear() ? { year: "numeric" as const } : {}),
   });
   return `${verb} ${dateStr}`;
+}
+
+/**
+ * UX-P050 — "Resolves Dec 31, 2026", or "" when the wire cannot honestly say it.
+ *
+ * THE DISCRIMINATOR #1700 CONCLUDED DID NOT EXIST. That queue found season-long
+ * futures markets riding the tournament card and could not tell them apart from
+ * real tournaments, because `start_date`, `end_date` and `schedule_status` were
+ * null on 8 of 8 cards — so it chose silence over a guess. Correct then, and
+ * incomplete: `resolution_date` was present on 8 of 8 the whole time and the card
+ * read it in no branch at all. A market that resolves in July 2030 is not a
+ * tournament that starts this week, and it can now say so.
+ *
+ * The year is ALWAYS printed. These are multi-year questions — "Resolves Jan 14"
+ * is exactly the string a reader would misread as five months away when it is
+ * seventeen — and it matches the shape Alex ratified.
+ *
+ * A resolution date in the PAST returns "". The card must not print "Resolves
+ * <a date that has gone>", and it deliberately does NOT infer settlement from it
+ * either: `resolution_date` is the SCHEDULED resolution, not an observed one
+ * (`reference_futures_markets_no_transition_timestamp`), so concluding "this is
+ * over" from a passed date would be the same class of guess #1700 refused.
+ */
+export function formatTournamentResolvesLabel(
+  resolutionDate: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (!resolutionDate) return "";
+  const end = new Date(resolutionDate);
+  if (Number.isNaN(end.getTime())) return "";
+  if (end.getTime() <= now) return "";
+
+  return `Resolves ${end.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
+
+/**
+ * The single timing line a Discover tournament card prints — start date when the
+ * wire supports one, otherwise the resolution date.
+ *
+ * FALLBACK, NOT A SECOND LINE. A card with a good start date does not also get a
+ * resolution line: "Starts Thu, Aug 13" already answers the reader's question and
+ * "Resolves Aug 30" beside it is noise on the biggest slot of the landing page.
+ * The resolution line exists for the cards that today say NOTHING.
+ *
+ * Composed here rather than in the card so the two rules cannot drift apart — the
+ * #1620 shape this lane has now found six times, and the reason `formatTournament-
+ * WhenLabel` and this function share a module instead of a component.
+ */
+export function formatTournamentTimingLabel(
+  commenceTime: string | null | undefined,
+  resolutionDate: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  return (
+    formatTournamentWhenLabel(commenceTime, now) ||
+    formatTournamentResolvesLabel(resolutionDate, now)
+  );
 }

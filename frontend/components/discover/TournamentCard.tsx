@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
-import { formatTournamentWhenLabel } from "@/lib/gameTimeLabel";
+import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
+import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge } from "./shared";
 
@@ -17,6 +18,15 @@ interface TournamentCardProps {
 }
 
 export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick, onShare }: TournamentCardProps) {
+  // UX-P050: the feed derives this name by title-casing a snake_case tournament
+  // key, which lowercases every acronym on the way — three of the eight cards on
+  // the default landing page read "Golfers To Win A Pga Tour Major …". The
+  // acronym-safe caser already existed (`lib/titleCase.ts`, PGA and LPGA already
+  // in its allowlist) and no feed card had ever called it; the sixth instance of
+  // the #1620 shape on this lane. It repairs the CASE only — the lost apostrophe
+  // and duplicated suffix in "Aig Women S Open Womens" are damage baked into the
+  // key upstream, and guessing them back client-side is not a display fix.
+  const title = toTitleCaseAcronymSafe(data.name) || data.name;
   const leader = data.golfers?.[0];
   const leaderProbability = formatShareProbability(leader?.probability);
   // L2-159 / #235 Item 4: just-settled marquee tournament (T+36h WHAT-HIT window)
@@ -24,10 +34,10 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // settled-means-settled grammar ("cards show results").
   const whatHit = data.marquee_whathit === true;
   const shareText = leader && whatHit
-    ? `${leader.name} won ${data.name} on Bain Luck.`
+    ? `${leader.name} won ${title} on Bain Luck.`
     : leader && leaderProbability
-    ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
-    : `Track ${data.name} on Bain Luck.`;
+    ? `${leader.name} is at ${leaderProbability} in ${title} on Bain Luck.`
+    : `Track ${title} on Bain Luck.`;
   // L2-65: route into the event concept page (/event/[key]) — the richer surface
   // (race chart + leaderboard + matchups) — falling back to the sport page.
   const eventKey = tournamentEventKey(data);
@@ -37,7 +47,14 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // landing page. Suppressed ("") for a timestamp too stale to be a start date —
   // see the module for why that window exists. A settled marquee already leads
   // with its champion, so it does not also need a start date.
-  const whenLabel = whatHit ? "" : formatTournamentWhenLabel(data.commence_time);
+  //
+  // UX-P050: and when there is no honest START date, the card falls back to when
+  // the question is DECIDED. Three of the eight cards on the landing page said
+  // nothing at all, two of them season-long markets resolving in Dec 2026 and
+  // Jul 2030 — `resolution_date` was on the wire on 8 of 8 and read in no branch.
+  const whenLabel = whatHit
+    ? ""
+    : formatTournamentTimingLabel(data.commence_time, data.resolution_date);
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
@@ -65,17 +82,20 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
       </div>
       <div className="p-4">
         <Link href={href} onClick={onDetailClick} className="block group">
-          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{title}</h3>
         </Link>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
         {whenLabel && <p className="text-xs text-text-muted mt-0.5">{whenLabel}</p>}
         <ActionBar
           liked={liked}
           setLiked={setLiked}
-          shareUrl={buildDiscoverShareUrl(href, "grid", data.name)}
-          shareTitle={data.name}
+          shareUrl={buildDiscoverShareUrl(href, "grid", title)}
+          shareTitle={title}
           shareText={shareText}
           contentType="grid"
+          // Deliberately the RAW name: `itemId` is the analytics identity for this
+          // card, and re-casing it would silently split every existing GA4 series
+          // on these tournaments in two. Display is repaired; identity is not.
           itemId={data.name}
           onShare={onShare}
         />

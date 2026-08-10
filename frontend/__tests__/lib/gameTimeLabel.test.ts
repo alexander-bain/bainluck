@@ -2,9 +2,12 @@ import fs from "fs";
 import path from "path";
 import {
   formatFinishedGameLabel,
+  formatTournamentResolvesLabel,
+  formatTournamentTimingLabel,
   formatTournamentWhenLabel,
   isImpossibleFutureFinal,
   TOURNAMENT_START_TRUST_DAYS,
+  TOURNAMENT_START_TRUST_FUTURE_DAYS,
 } from "../../lib/gameTimeLabel";
 
 /**
@@ -170,6 +173,26 @@ describe("formatTournamentWhenLabel", () => {
   const MAJOR_2026 = "2026-06-22T00:57:03+00:00"; // 7 weeks ago — not a start date
   const MAJOR_2027 = "2028-01-14T15:00:00+00:00"; // another year
 
+  /**
+   * The eight cards the default landing page actually rendered at NOW_T, verbatim
+   * from `GET /api/feed?limit=20&offset=0&event_pct=0.15` — the exact params
+   * `app/discover/page.tsx` ships. Feed items were 21; the other 13 are concepts
+   * the client suppresses as empty envelopes, so these 8 ARE the landing page.
+   *
+   * UX-P050 adds `resolution_date`, which was on the wire on 8 of 8 all along and
+   * read by no branch of the card.
+   */
+  const SLATE = [
+    { name: "Danish Golf Championship", commence: DANISH, resolution: "2026-08-30T00:00:00+00:00" },
+    { name: "Golfers To Win A Pga Tour Major Before 2030", commence: "2026-07-19T18:17:17+00:00", resolution: "2030-07-07T14:00:00+00:00" },
+    { name: "Fedex St Jude Championship", commence: FEDEX, resolution: "2026-08-16T00:00:00+00:00" },
+    { name: "Golfers To Win A Pga Tour Major In 2027", commence: MAJOR_2027, resolution: "2028-01-14T15:00:00+00:00" },
+    { name: "The Standard Portland Classic", commence: "2026-08-30T00:00:00+00:00", resolution: "2026-08-30T00:00:00+00:00" },
+    { name: "Indianapolis", commence: "2026-08-20T00:00:00+00:00", resolution: "2026-08-23T00:00:00+00:00" },
+    { name: "Aig Women S Open Womens", commence: AIG, resolution: "2026-08-16T00:00:00+00:00" },
+    { name: "Golfers To Win A Pga Tour Major In 2026", commence: MAJOR_2026, resolution: "2026-12-31T15:00:00+00:00" },
+  ];
+
   test("an upcoming tournament names its start day", () => {
     expect(formatTournamentWhenLabel(DANISH, NOW_T)).toBe("Starts Thu, Aug 13");
   });
@@ -179,8 +202,12 @@ describe("formatTournamentWhenLabel", () => {
   });
 
   test("a timestamp in another year carries the year", () => {
-    // "Starts Fri, Jan 14" would read as months away when it is seventeen.
-    expect(formatTournamentWhenLabel(MAJOR_2027, NOW_T)).toBe("Starts Fri, Jan 14, 2028");
+    // "Starts Thu, Jan 14" would read as five months away when it is seventeen.
+    // UX-P050 moved this case off MAJOR_2027 (+521d), which is now suppressed as
+    // not-a-start-date; a real tournament five months out still names its year.
+    expect(formatTournamentWhenLabel("2027-01-14T15:00:00+00:00", NOW_T)).toBe(
+      "Starts Thu, Jan 14, 2027",
+    );
   });
 
   describe("the stale-timestamp window — the trap this exists for", () => {
@@ -201,9 +228,36 @@ describe("formatTournamentWhenLabel", () => {
       expect(formatTournamentWhenLabel(justOutside.toISOString(), NOW_T)).toBe("");
     });
 
-    test("no future date is ever suppressed, however distant", () => {
-      // The window is a staleness rule, not a horizon. A 2030 market still says when.
-      expect(formatTournamentWhenLabel("2030-04-11T00:00:00Z", NOW_T)).toBe("Starts Thu, Apr 11, 2030");
+  });
+
+  /**
+   * UX-P050. THIS BLOCK REPLACES AN ASSERTION THAT PINNED THE BLIND SPOT.
+   *
+   * The suite previously asserted "no future date is ever suppressed, however
+   * distant", on the reasoning that the window is a staleness rule and not a
+   * horizon. That reasoning protected the wrong thing: the trap the backward
+   * window exists for — a season-long market whose commence_time is really a
+   * resolution timestamp — is not a property of the PAST, and the identical lie
+   * walked in through the future. "Golfers To Win A PGA Tour Major In 2027"
+   * printed "Starts Fri, Jan 14, 2028" on the default landing page.
+   */
+  describe("the forward window — the same trap, entering from the other side", () => {
+    test("a season-long market dated years out no longer claims a start", () => {
+      expect(formatTournamentWhenLabel(MAJOR_2027, NOW_T)).toBe("");
+    });
+
+    test("both directions, at the boundary (gotcha #43)", () => {
+      const justInside = new Date(NOW_T + (TOURNAMENT_START_TRUST_FUTURE_DAYS * 86_400_000 - 60_000));
+      const justOutside = new Date(NOW_T + (TOURNAMENT_START_TRUST_FUTURE_DAYS * 86_400_000 + 60_000));
+      expect(formatTournamentWhenLabel(justInside.toISOString(), NOW_T)).not.toBe("");
+      expect(formatTournamentWhenLabel(justOutside.toISOString(), NOW_T)).toBe("");
+    });
+
+    test("the two genuine upcoming tournaments on the slate keep their dates", () => {
+      // The whole risk of a forward bound is silencing a real tournament. These
+      // are the only two on the measured slate that are actually scheduled.
+      expect(formatTournamentWhenLabel("2026-08-30T00:00:00+00:00", NOW_T)).not.toBe(""); // +19d
+      expect(formatTournamentWhenLabel("2026-08-20T00:00:00+00:00", NOW_T)).not.toBe(""); // +9d
     });
   });
 
@@ -228,19 +282,104 @@ describe("formatTournamentWhenLabel", () => {
     });
   });
 
-  test("the measured slate: 5 of 8 gain a date, 3 correctly stay silent", () => {
-    const SLATE = [
-      DANISH,
-      "2026-07-19T18:17:17+00:00", // Majors Before 2030 — stale
-      FEDEX,
-      MAJOR_2027,
-      "2026-08-30T00:00:00+00:00", // Portland Classic
-      "2026-08-20T00:00:00+00:00", // Indianapolis
-      AIG,
-      MAJOR_2026,
-    ];
-    const labelled = SLATE.map((t) => formatTournamentWhenLabel(t, NOW_T)).filter(Boolean);
-    // Before this change every one of the 8 rendered no date at all.
-    expect(labelled).toHaveLength(5);
+  test("the measured slate: 4 of 8 have a trustworthy START date", () => {
+    const labelled = SLATE.map((t) => formatTournamentWhenLabel(t.commence, NOW_T)).filter(Boolean);
+    // UX-P049 recorded 5 here. UX-P050 removes one of them, and removing it is the
+    // point: the fifth was MAJOR_2027's false "Starts Fri, Jan 14, 2028". Before
+    // UX-P049 all 8 rendered no date; 4 now carry a start they can stand behind,
+    // and the other 4 are picked up by the resolution fallback below.
+    expect(labelled).toHaveLength(4);
+  });
+
+  /**
+   * UX-P050 Item 2 — the discriminator #1700 concluded did not exist.
+   */
+  describe("formatTournamentResolvesLabel", () => {
+    test("a four-year question says which year decides it", () => {
+      expect(formatTournamentResolvesLabel("2030-07-07T14:00:00+00:00", NOW_T)).toBe(
+        "Resolves Jul 7, 2030",
+      );
+    });
+
+    test("the year is printed even when it is the current one", () => {
+      // "Resolves Dec 31" invites the reader to supply a year, and on a card whose
+      // siblings resolve in 2028 and 2030 that guess is worth stating for them.
+      expect(formatTournamentResolvesLabel("2026-12-31T15:00:00+00:00", NOW_T)).toBe(
+        "Resolves Dec 31, 2026",
+      );
+    });
+
+    test("a resolution date that has passed says NOTHING", () => {
+      // The card must not print "Resolves <a date that has gone>" — and must not
+      // conclude settlement from it either. `resolution_date` is the SCHEDULED
+      // resolution, not an observed one.
+      expect(formatTournamentResolvesLabel("2026-08-01T00:00:00+00:00", NOW_T)).toBe("");
+    });
+
+    test.each([null, undefined, "", "not-a-date"])(
+      "absent or unusable input renders nothing: %p",
+      (input) => {
+        expect(formatTournamentResolvesLabel(input as string | null | undefined, NOW_T)).toBe("");
+      },
+    );
+  });
+
+  describe("formatTournamentTimingLabel — fallback, never a second line", () => {
+    test("a real start date wins; the resolution date stays off the card", () => {
+      const label = formatTournamentTimingLabel(DANISH, "2026-08-30T00:00:00+00:00", NOW_T);
+      expect(label).toBe("Starts Thu, Aug 13");
+      expect(label).not.toContain("Resolves");
+    });
+
+    test("no trustworthy start date falls back to when the question is decided", () => {
+      expect(formatTournamentTimingLabel(MAJOR_2026, "2026-12-31T15:00:00+00:00", NOW_T)).toBe(
+        "Resolves Dec 31, 2026",
+      );
+    });
+
+    test("the false 'Starts Fri, Jan 14, 2028' becomes a true 'Resolves'", () => {
+      expect(formatTournamentTimingLabel(MAJOR_2027, "2028-01-14T15:00:00+00:00", NOW_T)).toBe(
+        "Resolves Jan 14, 2028",
+      );
+    });
+
+    test("neither usable renders nothing rather than a placeholder", () => {
+      expect(formatTournamentTimingLabel(MAJOR_2026, null, NOW_T)).toBe("");
+      expect(formatTournamentTimingLabel(null, "2020-01-01T00:00:00+00:00", NOW_T)).toBe("");
+    });
+
+    /**
+     * THE ACCEPTANCE. Card-by-card over the exact eight, so a future change that
+     * moves one of them has to say which one and why.
+     */
+    test("the measured slate: 8 of 8 now carry a timing line, 0 of them false", () => {
+      const rendered = SLATE.map((t) => formatTournamentTimingLabel(t.commence, t.resolution, NOW_T));
+      expect(rendered).toEqual([
+        "Starts Thu, Aug 13",   // Danish Golf Championship — unchanged
+        "Resolves Jul 7, 2030", // Majors Before 2030        — was ""
+        "Started Sat, Aug 8",   // FedEx St Jude             — unchanged
+        "Resolves Jan 14, 2028",// Majors In 2027            — was "Starts Fri, Jan 14, 2028"
+        "Starts Sun, Aug 30",   // Portland Classic          — unchanged
+        "Starts Thu, Aug 20",   // Indianapolis              — unchanged
+        "Resolves Aug 16, 2026",// AIG Women's Open          — was ""
+        "Resolves Dec 31, 2026",// Majors In 2026            — was ""
+      ]);
+      expect(rendered.filter(Boolean)).toHaveLength(8);
+    });
+
+    test("the four cards that already read correctly are untouched (both directions)", () => {
+      const unchanged = SLATE.filter((t) => formatTournamentWhenLabel(t.commence, NOW_T));
+      expect(unchanged.map((t) => t.name)).toEqual([
+        "Danish Golf Championship",
+        "Fedex St Jude Championship",
+        "The Standard Portland Classic",
+        "Indianapolis",
+      ]);
+      for (const t of unchanged) {
+        expect(formatTournamentTimingLabel(t.commence, t.resolution, NOW_T)).toBe(
+          formatTournamentWhenLabel(t.commence, NOW_T),
+        );
+      }
+    });
   });
 });
