@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import type { RelatedFuture, RelatedFuturesResponse, TeamProgressionResponse } from "@/lib/types";
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import EntityImage from "./EntityImage";
 
 interface TeamStandings {
@@ -653,9 +654,17 @@ function GameMarketsGrid({
                         color: favored ? teamColor : "var(--text-muted)",
                       }}
                     >
-                      {Math.round(prob * 100)}%
+                      {formatProbabilityPercent(prob)}
                     </span>
-                    {f.probability_change_24h &&
+                    {/* UX-P048 (#1695) Item 2 — this was a JSX truthiness chain
+                        over a NUMBER. When the field is exactly 0, `0 && …`
+                        evaluates to the number 0 and React renders it, welding a
+                        stray "0" onto the percentage ("65%0"). A null rendered
+                        nothing, so zero and missing were distinguishable on
+                        screen — accidentally, and in the one direction that is
+                        wrong. Compared explicitly against null now, so both
+                        render nothing. */}
+                    {f.probability_change_24h != null &&
                       Math.abs(f.probability_change_24h) >= 0.005 && (
                         <span
                           className={`text-[9px] font-semibold ${
@@ -1990,7 +1999,9 @@ function AwardCompactRow({
         >
           {formatProbability(future.probability)}
         </span>
-        {future.probability_change_24h && Math.abs(future.probability_change_24h) >= 0.005 && (
+        {/* UX-P048 (#1695) Item 2 — second instance of the stray-zero shape in
+            this file; see the note at the sibling site above. */}
+        {future.probability_change_24h != null && Math.abs(future.probability_change_24h) >= 0.005 && (
           <span className={`text-[8px] font-bold ${future.probability_change_24h > 0 ? "text-emerald-500" : "text-red-500"}`}>
             {future.probability_change_24h > 0 ? "+" : ""}{Math.round(future.probability_change_24h * 100)}%
           </span>

@@ -6,7 +6,7 @@ import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
-import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -36,6 +36,21 @@ function readSessionSeed(): string {
     return "anon";
   }
 }
+
+/**
+ * How big a 24h move must be, IN POINTS, before the hero slot shows it.
+ *
+ * UX-P048 (#1695): this is the pre-existing bar, unchanged in value — it was
+ * spelled `>= 0.1` against a wire fraction, which is 10 points. It is named and
+ * expressed in points here because the surrounding `toFixed(1)` made it read as
+ * a tenth of a point, and that ambiguity is what let the scale bug live.
+ *
+ * Deliberately NOT reconciled with `MovementBadge`'s 2-point floor
+ * (`shared.tsx`). Two surfaces may honestly want different bars, and the
+ * measurement that would settle it is on #1695: at 10 points, 20 of 21 cards
+ * carrying a real move show nothing. That is a design call, not this fix.
+ */
+const HERO_MIN_MOVEMENT_POINTS = 10;
 
 // One row of `discover_card.distribution_outcomes` as the card renders it.
 type DistributionRow = {
@@ -289,12 +304,28 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // when the leader probability is a placeholder (illiquid ~5% floor), where the
   // "movement" is noise rather than a real 24h shift.
   const probIsPlaceholder = prob != null && prob <= 0.05;
-  const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1 && !probIsPlaceholder
-    ? `${movementUp ? "↑" : "↓"} ${Math.abs(movementVal).toFixed(1)}`
+  // UX-P048 (#1695) — `movement` is a WIRE FRACTION; the conversion to points
+  // happens in exactly one place now (`formatMovementPoints`). This slot used to
+  // print the raw fraction under a label reading "points", so a 64.0-point swing
+  // to a new favourite rendered as `↑ 0.6` with a tooltip asserting "Up 0.6
+  // points in the last 24h".
+  //
+  // The THRESHOLD is deliberately unchanged in value — only in unit. `>= 0.1` on
+  // a fraction was always "≥ 10 points"; it is written that way now so the next
+  // reader cannot mistake it for a tenth of a point, which is what the sibling
+  // `toFixed(1)` made it look like. Whether 10 is the right bar is a live design
+  // question with its measurement recorded on #1695 (it silences 20 of 21 cards
+  // that carry a real move, including 7.0- and 5.0-point ones) — but changing it
+  // here would have moved nine more cards in the same commit that fixed the
+  // scale, and made this fix impossible to measure.
+  const movementPts = movementPoints(movementVal);
+  const movementDisplay = formatMovementPoints(movementVal);
+  const movementStr = movementPts != null && Math.abs(movementPts) >= HERO_MIN_MOVEMENT_POINTS && !probIsPlaceholder
+    ? `${movementUp ? "↑" : "↓"} ${movementDisplay}`
     : null;
   // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
-  const movementTitle = movementVal != null
-    ? `${movementUp ? "Up" : "Down"} ${Math.abs(movementVal).toFixed(1)} points in the last 24h`
+  const movementTitle = movementDisplay != null
+    ? `${movementUp ? "Up" : "Down"} ${movementDisplay} points in the last 24h`
     : undefined;
   if (variantB) {
     // ── Variant B: data-pure (no image) ──

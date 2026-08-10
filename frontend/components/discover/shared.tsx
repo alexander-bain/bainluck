@@ -12,6 +12,7 @@ import {
   normalizeTier,
   type ConfidenceTier,
 } from "@/lib/confidence";
+import { movementPoints } from "@/lib/probabilityDisplay";
 
 // ── Animated Counter ──
 
@@ -51,14 +52,27 @@ export function AnimatedProbability({ value, className, resolved }: { value: num
 
 // ── Movement Badge ──
 
+/**
+ * How big a 24h move must be, IN POINTS, before this badge shows it.
+ * UX-P048 (#1695): the pre-existing 0.02-fraction floor, unchanged in value and
+ * restated in the unit it always meant. See `HERO_MIN_MOVEMENT_POINTS` in
+ * FuturesCard for why the two bars are deliberately still different.
+ */
+const BADGE_MIN_MOVEMENT_POINTS = 2;
+
 export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?: number | null }) {
-  if (!m || Math.abs(m) < 0.02) return null;
+  // UX-P048 (#1695): the fraction -> points conversion lives in exactly one
+  // place. This badge was already correct; it delegates so that it and the hero
+  // cannot drift apart again, which is how the hero came to print a 64-point
+  // move as "0.6".
+  const points = movementPoints(m);
+  if (points == null || Math.abs(points) < BADGE_MIN_MOVEMENT_POINTS) return null;
   // L2-160 — respect the 5% placeholder floor: an illiquid outcome rendered at the
   // ~5% minimum is a placeholder, so any "movement" on it is noise, not a signal.
   // (Mirrors the isTrending / eventConcept 0.05 floor.)
   if (prob != null && prob <= 0.05) return null;
-  const up = m > 0;
-  const pts = Math.abs(Math.round(m * 100));
+  const up = points > 0;
+  const pts = Math.abs(Math.round(points));
   // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
   // fans can't tell without a label, so spell it out on hover / for screen readers.
   const label = `${up ? "Up" : "Down"} ${pts} point${pts === 1 ? "" : "s"} in the last 24h`;

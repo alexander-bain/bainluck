@@ -49,3 +49,56 @@ export function formatProbabilityPercent(prob: number): string {
 
   return `${rounded}%`;
 }
+
+/**
+ * UX-P048 — the single home for "what UNIT is a movement value in".
+ *
+ * THE DEFECT. `movement` / `movement_24h` / `probability_change_24h` are all
+ * FRACTIONS on the wire, exactly like `probability`. The backend's own prose
+ * proves it in the same payload: an outcome carrying `movement: -0.07` ships
+ * `reason: "The Odyssey moved down 7.0 points today"`.
+ *
+ * Seven of the eight renderers agreed and multiplied by 100. The Discover hero
+ * did not — it printed `Math.abs(m).toFixed(1)` under a label reading "points".
+ * Measured on production 2026-08-10 (`GET /api/feed?limit=60`, backend
+ * `a4275e07`): of 21 futures cards carrying a leader movement, ALL 21 route to
+ * that hero, 20 rendered nothing at all, and the single card that did render was
+ * the feed's most dramatic mover — a 64.0-point swing to a new favourite — which
+ * printed `↑ 0.6` above a tooltip asserting "Up 0.6 points in the last 24h".
+ *
+ * The same card contradicted itself on screen: the backend-written caption "The
+ * Odyssey down 7.0 points today" sat directly above an empty `24h` delta slot,
+ * because 0.07 failed a gate that was written as points and read as a fraction.
+ *
+ * THE RULE, stated once so it cannot drift: **a movement crosses into "points"
+ * exactly once, here.** Callers pass the wire fraction and receive points; no
+ * call site multiplies by 100 itself. Thresholds stay with the caller, because
+ * "how big must a move be before this surface shows it" is a per-surface design
+ * choice — but they are now expressed in POINTS, the unit their names claim.
+ *
+ * This is a formatting decision over a number the backend published — the client
+ * is not deriving or adjudicating anything (ruling 003).
+ *
+ * PURE: no I/O, no clock, no ambient state.
+ */
+
+/** Wire fraction -> points. `null` for anything that is not a usable number. */
+export function movementPoints(movement: number | null | undefined): number | null {
+  if (movement == null || !Number.isFinite(movement)) return null;
+  return movement * 100;
+}
+
+/**
+ * The absolute size of a move, in points, rounded for display to `decimals`.
+ *
+ * Returns `null` when there is no usable movement, so a caller's `&&` chain
+ * cannot leak a bare `0` into the DOM (see `RelatedFutures`, UX-P048 Item 2).
+ */
+export function formatMovementPoints(
+  movement: number | null | undefined,
+  decimals = 1,
+): string | null {
+  const pts = movementPoints(movement);
+  if (pts == null) return null;
+  return Math.abs(pts).toFixed(decimals);
+}
