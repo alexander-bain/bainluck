@@ -1,5 +1,6 @@
 /**
- * UX-P045 — the single home for "when did this finished game finish".
+ * UX-P045 — the single home for "when did this finished game finish", widened by
+ * UX-P049 to "when did/does this Discover card's thing happen".
  *
  * THE DRIFT THIS REPLACES. Three surfaces independently answered this question,
  * and the one that mattered most answered it worst:
@@ -101,4 +102,75 @@ export function formatFinishedGameLabel(
   if (sameCalendarDay(game, yesterday)) return `Yesterday ${timeStr}`;
 
   return game.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+/**
+ * UX-P049 — the same question for a TOURNAMENT card, which never asked it.
+ *
+ * `components/discover/TournamentCard.tsx` rendered a title, a venue and a
+ * leader probability and **no date, in any branch**. `commence_time` was on the
+ * wire the whole time and read by nothing. Measured on production 2026-08-10
+ * 15:40 PT, when tournaments were 8 of the 20 cards on the default landing page:
+ * a tournament starting in 3 days, one that teed off 2 days ago, and one whose
+ * timestamp is in 2028 all rendered identically. This is #1677's finding one
+ * card type over — there, 15 of 15 settled event cards said only "Final".
+ *
+ * WHY THIS IS NOT SIMPLY `formatFinishedGameLabel`. That function answers "when
+ * did this END" and deliberately returns "" for a future instant (the gotcha #14
+ * impossible-future-final guard). A tournament card is mostly NOT finished, so
+ * the future is the common case and suppressing it would render nothing on
+ * exactly the cards that most need a date.
+ *
+ * THE TRAP, AND IT IS THE REASON FOR THE WINDOW. Not every tournament card is a
+ * tournament. Season-long futures markets ride this card type too — "Golfers To
+ * Win A PGA Tour Major In 2026" carried `commence_time: 2026-06-22`, seven weeks
+ * stale and never a start date at all. Printing "Started Mon, Jun 22" there
+ * would state something false in order to fix a card that was merely silent, so
+ * a timestamp more than {@link TOURNAMENT_START_TRUST_DAYS} days past is treated
+ * as not-a-start-date and suppressed. On the measured slate that is 5 of 8 cards
+ * gaining a correct date and 3 correctly staying silent.
+ *
+ * Reads `commence_time` and states it. It does NOT derive a status — nothing
+ * here concludes that a tournament is over, because the wire does not say so
+ * (`start_date`, `end_date` and `schedule_status` were null on 8 of 8).
+ */
+export const TOURNAMENT_START_TRUST_DAYS = 7;
+
+const MS_PER_DAY = 86_400_000;
+
+export function formatTournamentWhenLabel(
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (!commenceTime) return "";
+  const start = new Date(commenceTime);
+  if (Number.isNaN(start.getTime())) return "";
+
+  const deltaMs = start.getTime() - now;
+  if (-deltaMs > TOURNAMENT_START_TRUST_DAYS * MS_PER_DAY) return "";
+
+  const upcoming = deltaMs >= 0;
+  const verb = upcoming ? "Starts" : "Started";
+  const nowDate = new Date(now);
+
+  if (sameCalendarDay(start, nowDate)) return `${verb} today`;
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (sameCalendarDay(start, tomorrow)) return "Starts tomorrow";
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameCalendarDay(start, yesterday)) return "Started yesterday";
+
+  const dateStr = start.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    // A card whose timestamp lands in another year is exactly the case a reader
+    // most needs the year for — "Starts Fri, Jan 14" would read as months away
+    // when it is seventeen.
+    ...(start.getFullYear() !== nowDate.getFullYear() ? { year: "numeric" as const } : {}),
+  });
+  return `${verb} ${dateStr}`;
 }

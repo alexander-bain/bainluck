@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
+import { formatTournamentWhenLabel } from "@/lib/gameTimeLabel";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge } from "./shared";
 
@@ -31,6 +32,12 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // (race chart + leaderboard + matchups) — falling back to the sport page.
   const eventKey = tournamentEventKey(data);
   const href = eventKey ? eventPath(eventKey) : "/sport/golf";
+  // UX-P049: this card carried no date in any branch, so a tournament three days
+  // out and one that teed off two days ago read identically on the default
+  // landing page. Suppressed ("") for a timestamp too stale to be a start date —
+  // see the module for why that window exists. A settled marquee already leads
+  // with its champion, so it does not also need a start date.
+  const whenLabel = whatHit ? "" : formatTournamentWhenLabel(data.commence_time);
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
@@ -61,6 +68,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
+        {whenLabel && <p className="text-xs text-text-muted mt-0.5">{whenLabel}</p>}
         <ActionBar
           liked={liked}
           setLiked={setLiked}
