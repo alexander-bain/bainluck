@@ -1299,3 +1299,4 @@ failure this document already records happening twice.
 - [009](rulings/009-precompute-calibration-freeze.md) — 2026-08-09 — precompute_calibration.py is frozen until the publish converges (Alex)
 - [010](rulings/010-sentry-keep-sdk-modular-init.md) — 2026-08-09 — Sentry: keep the SDK, spike a modular init (Alex)
 - [011](rulings/011-well-traded-is-volume-when-present.md) — 2026-08-09 — Well-traded means volume evidence WHEN PRESENT (Alex)
+- [012](rulings/012-measured-ux-attention-satisfies-the-tier.md) — 2026-08-09 — Measured UX attention satisfies the every-cycle UX tier (Alex)
