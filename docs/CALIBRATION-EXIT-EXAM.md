@@ -94,6 +94,29 @@ unrecorded beat — **key the trend off the cursor's `generated_at`, never off b
 > **destruction**. Both are worth fixing; they imply completely different work, and the trend-read
 > guidance above is unaffected and still correct.
 
+### 🟢 THIRD CONSECUTIVE FORWARD BEAT — 55/128, and drift no longer decides (CAL-P031, 2026-08-10)
+
+| beat | cursor written (FINAL) | banked / 128 | drift | net |
+|---|---|---|---|---|
+| 20:15Z | 20:37:47Z | 19 | 0 | — |
+| 22:15Z | 22:29:25Z | 36 | 0 | +17 |
+| 23:15Z | 23:37:45Z | **55** | **16** | **+19** |
+
+**About four beats from a publish** at ~+18/beat. The table above projected "~5-6 beats" from 36;
+this is consistent with it, not a revision.
+
+**Drift came back at 16 and it did not matter, which is the more durable finding than "zero
+drops".** The 23:15Z beat opened at 36, `retain_planned_units` dropped 16 to 20, then banked 35
+fresh units to 55. Before CAL-P028 a 16-unit drop against 15 banked was net **−1**; the same drop
+against 35 banked is net **+19**. CAL-P028 did not eliminate drift — it made the build faster than
+drift. "Zero drops" was only ever two samples of an intermittent quantity (0, 0, 16).
+
+⚠️ **Compare beat-final to beat-final ONLY.** The cursor is written per unit, so it advances
+continuously while a beat runs. This window first read `40 @ 23:19:57Z` (mid-beat) against
+`36 @ 22:31Z` (beat-final) and concluded the rate had collapsed 4x; watching the same beat to
+termination gave 40 → 51 → 55. The standing advice to key trends off `generated_at` rather than
+beat counts is correct but insufficient: `generated_at` says WHICH beat, never HOW FAR INTO IT.
+
 ### 🛑 THE DIGEST THAT PROTECTS THIS CONVERGENCE HAS A HOLE, IN A FILE THE FREEZE DOES NOT COVER (CAL-P031, 2026-08-10)
 
 **Read this before touching `app/utils/resolution_authority.py`.** The build is now hours from a
