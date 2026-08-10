@@ -2,6 +2,9 @@ import { test, expect, measureMainRegion } from "../fixtures/audit";
 import { classifyMainRegion } from "../helpers/contentState";
 import { RSC_PREFETCH } from "../helpers/navigationAborts";
 
+/** Backend origin, for the one journey that has to FIND its specimen. */
+const API_BASE = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").replace(/\/$/, "");
+
 /**
  * UX-P041 Item 2 — the EVENT-PAGE pack.
  *
@@ -97,6 +100,188 @@ async function invisibleTextNodes(page: { evaluate: <T>(fn: () => T) => Promise<
     });
   });
 }
+
+/**
+ * UX-P049 (#1650) — the settled-props specimen finder.
+ *
+ * WHY THIS EXISTS, and why it is not just another `.first()`.
+ *
+ * The two journeys below deliberately walk the real north-star journey: open
+ * /sports, click whatever game is first. That is the right shape for "can a
+ * reader get to a game and read the probability", and it is exactly the wrong
+ * shape for #1650, whose defect only appears on a SETTLED game that CARRIES
+ * PLAYER PROPS. Both prior dispatches of this pack landed on prop-less games
+ * and photographed a page on which the bug cannot occur — so three cycles of
+ * settled-prop fixes (#1638, #1642, #1650) still have no rendered evidence.
+ *
+ * The obvious fix — a workflow input carrying an event id — was rejected twice
+ * over. It needs `.github/workflows/browser-audit.yml`, a barred file; and a
+ * pinned id rots, which is the failure the pack's own header comment warns
+ * about ("must not depend on one event id surviving to tomorrow").
+ *
+ * So the specimen is DISCOVERED at run time and the pack stays self-maintaining:
+ * ask the API for recently completed events, take the first one that actually
+ * publishes player props, and audit that. Bounded probes so a bad slate cannot
+ * turn one journey into a crawl, and a hard failure when nothing qualifies —
+ * "no evidence collected" is not a pass on this rail, by design.
+ */
+/**
+ * Player props are a big-four phenomenon. A plain `status=completed` listing is
+ * dominated by soccer, AFL, NRL and WNBA, none of which publish them — measured
+ * 2026-08-10, the first TEN completed events returned zero props between them,
+ * while the MLB-filtered listing hit an 81-prop game third. Probing the
+ * unfiltered list deeply enough to stumble onto one costs a 77 kB payload per
+ * miss, so the leagues are tried in order first.
+ *
+ * The unfiltered list stays as the final fallback, so this keeps working in a
+ * week when none of these five are in season.
+ */
+const PROP_BEARING_SPORTS = [
+  "baseball_mlb",
+  "basketball_nba",
+  "americanfootball_nfl",
+  "icehockey_nhl",
+  "basketball_wnba",
+];
+
+interface Specimen {
+  id: number;
+  propCount: number;
+  /**
+   * Props the BACKEND typed a verdict for. Mirrors the shipped narrow-positive
+   * rule (UX-P044): only an explicit `hit` is a verdict, because a defaulted
+   * `is_winner: false` is what made 70 red MISS badges out of nothing.
+   */
+  gradedCount: number;
+}
+
+async function findSettledEventWithProps(
+  get: (url: string) => Promise<{ ok: () => boolean; json: () => Promise<any> }>,
+): Promise<Specimen | null> {
+  const listings = [
+    ...PROP_BEARING_SPORTS.map((s) => `${API_BASE}/api/events?status=completed&limit=8&sport=${s}`),
+    `${API_BASE}/api/events?status=completed&limit=8`,
+  ];
+
+  for (const listing of listings) {
+    const listRes = await get(listing);
+    if (!listRes.ok()) continue;
+    const events = (await listRes.json())?.events;
+    if (!Array.isArray(events)) continue;
+
+    for (const ev of events) {
+      const id = Number(ev?.id);
+      if (!Number.isFinite(id)) continue;
+      const res = await get(`${API_BASE}/api/events/${id}/game-markets`);
+      if (!res.ok()) continue;
+      const props = (await res.json())?.player_props;
+      if (!Array.isArray(props) || props.length === 0) continue;
+      return {
+        id,
+        propCount: props.length,
+        gradedCount: props.filter((p: { hit?: boolean | null }) => p?.hit != null).length,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * #1650's contradiction, stated as the browser sees it.
+ *
+ * The Player Props header claims one of exactly two things about a finished
+ * game: "Final · graded results", or "Final · per-player grading unavailable
+ * for this game". The bug was the first sentence printed above a list in which
+ * NOTHING was graded — every row reading "Resolved · grading unavailable" under
+ * a header asserting the opposite, with WHAT HIT adding a third phrasing
+ * ("grading pending") for the same backend state.
+ *
+ * Note what is NOT asserted: a mixed page is legitimate. "graded results" over
+ * a list where SOME rows are ungraded is honest, so the check is the narrow one
+ * — a header claiming grades must be able to point at one.
+ */
+const GRADED_HEADER = "Final · graded results";
+const NO_GRADE_HEADER = "Final · per-player grading unavailable for this game";
+const NO_GRADE_ROW = "Resolved · grading unavailable";
+
+test("settled props are described one way, not three", async ({ page, journey }) => {
+  const startedAt = Date.now();
+
+  const specimen = await findSettledEventWithProps((url) => page.request.get(url));
+
+  // Navigate first, so a failed search still produces a terminal screenshot of
+  // *something* rather than an empty artifact.
+  if (specimen) {
+    await page.goto(`/events/${specimen.id}`, { waitUntil: "domcontentloaded" });
+    await page
+      .getByText(/Player Props/i)
+      .first()
+      .waitFor({ state: "visible", timeout: 45_000 })
+      .catch(() => null);
+  } else {
+    await page.goto("/sports", { waitUntil: "domcontentloaded" });
+  }
+
+  // Explicitly bounded: an unguarded landmark read hangs for the whole
+  // actionTimeout if `main` never mounts, and the rail has already been bitten
+  // once by an unbounded wait eating the evidence it was collecting.
+  const body = specimen
+    ? ((await page.locator("main").first().textContent({ timeout: 15_000 }).catch(() => "")) ?? "")
+    : "";
+  const claimsGraded = body.includes(GRADED_HEADER);
+  const claimsNoGrade = body.includes(NO_GRADE_HEADER);
+  const ungradedRows = body.split(NO_GRADE_ROW).length - 1;
+
+  const mainRegion = await measureMainRegion(page, '[data-testid="discover-skeleton"]');
+
+  await journey.finish({
+    journeyId: "event.page.settled_props_verdict",
+    realCardFound: !!specimen && (claimsGraded || claimsNoGrade),
+    firstCardMs: specimen ? Date.now() - startedAt : null,
+    mainRegion,
+    allowedNavigationAborts: [RSC_PREFETCH],
+  });
+
+  expect(
+    specimen,
+    "no recently-completed event published any player props — the #1650 surface " +
+      "could not be reached, so this run collected no evidence about it",
+  ).not.toBeNull();
+
+  expect(
+    claimsGraded || claimsNoGrade,
+    `event ${specimen?.id} has ${specimen?.propCount} player props but rendered neither ` +
+      `settled Player Props header — the surface under test did not appear`,
+  ).toBe(true);
+
+  /**
+   * The oracle is the PAYLOAD, not a second reading of the screen.
+   *
+   * Counting verdict words in the rendered text would be scraping the same
+   * surface the header is on, so a wrong header and a wrong row would agree and
+   * pass. The backend's own `hit` field is the independent input both are
+   * supposed to be describing — which is precisely the shape of the bug: one
+   * backend state, three vocabularies.
+   *
+   * Both directions, per gotcha #43. A page with SOME graded rows is honest
+   * under the graded header, so the check is not "no ungraded rows" — it is
+   * that the header agrees with whether anything was graded at all.
+   */
+  if (specimen && specimen.gradedCount === 0) {
+    expect(
+      claimsGraded,
+      `#1650: event ${specimen.id} has ${specimen.propCount} props and the backend graded ` +
+        `NONE of them, yet the page claims "${GRADED_HEADER}" (${ungradedRows} row(s) say ` +
+        `"${NO_GRADE_ROW}" underneath it)`,
+    ).toBe(false);
+  } else if (specimen) {
+    expect(
+      claimsNoGrade,
+      `#1650 inverted: the backend graded ${specimen.gradedCount} of ${specimen.propCount} props, ` +
+        `yet the page claims "${NO_GRADE_HEADER}" — the contradiction has changed sides, not gone`,
+    ).toBe(false);
+  }
+});
 
 test("event page opens from the sports feed and shows a probability", async ({ page, journey }) => {
   const startedAt = Date.now();
