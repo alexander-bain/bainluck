@@ -1,7 +1,8 @@
 "use client";
 
 import { LazyMotion, m } from "framer-motion";
-import { forwardRef } from "react";
+import { forwardRef, useRef } from "react";
+import type { FeatureBundle } from "framer-motion";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 /**
@@ -32,7 +33,89 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
  * and `__tests__/lib/motionBundle.test.ts` fails if we ever start using those.
  */
 
-const loadDomAnimation = () => import("@/lib/motionFeatures").then((mod) => mod.default);
+/**
+ * ENHANCE FROM VISIBLE — the C229 P1 repair.
+ *
+ * `m` renders its `initial` state immediately but cannot run the animation to `animate` until
+ * the feature chunk arrives. Converted call sites declare `initial={{opacity: 0}}` /
+ * `initial="hidden"`, so before this repair a slow chunk left ready data painted at opacity 0,
+ * and a FAILED chunk left it that way permanently: a successful feed rendering as an empty
+ * page. That put the north-star "first visible card" behind an optional decoration download.
+ *
+ * The rule now: **content paints visible without features, and animation is the enhancement.**
+ * An element that mounts before the features exist is handed `initial={false}`, which tells
+ * framer-motion to start at its `animate` state — visible, untransformed, no entrance
+ * animation. Elements that mount after the chunk lands animate normally.
+ *
+ * This also fixes the server render, which is the case that mattered most: SSR always sees
+ * "not ready", so the HTML now ships visible instead of carrying an inline `opacity: 0` that
+ * only JavaScript could clear. Client and server agree on the first render, so there is no
+ * hydration mismatch.
+ *
+ * Chunk failure degrades to static, never to hidden: `featuresReady` simply never flips, and
+ * every element keeps its visible fallback.
+ */
+let featurePromise: Promise<FeatureBundle> | null = null;
+let featuresReady = false;
+let featureLoadFailed = false;
+let featureLoadCount = 0;
+
+const loadDomAnimation = (): Promise<FeatureBundle> => {
+  // Memoised at module scope, so N providers share ONE import call and ONE resolution. This is
+  // what makes per-element providers safe to fan out, and `__motionFeatureLoadCount` exists so
+  // a test can PROVE the dedup rather than asserting it from module-cache folklore (C229 P2).
+  if (!featurePromise) {
+    featureLoadCount += 1;
+    featurePromise = import("@/lib/motionFeatures")
+      .then((mod) => {
+        featuresReady = true;
+        return mod.default;
+      })
+      .catch((err) => {
+        // Leave `featuresReady` false: every element keeps painting its visible fallback.
+        featureLoadFailed = true;
+        throw err;
+      });
+  }
+  return featurePromise;
+};
+
+/** True once the optional feature chunk has resolved. False on the server, always. */
+export function motionFeaturesReady(): boolean {
+  return featuresReady;
+}
+
+/** True if the optional chunk failed. Content stays visible; animation is simply absent. */
+export function motionFeaturesFailed(): boolean {
+  return featureLoadFailed;
+}
+
+/** Test-only: how many times the dynamic import was actually initiated. */
+export function __motionFeatureLoadCount(): number {
+  return featureLoadCount;
+}
+
+/** Test-only: reset the module-scope loader state between cases. */
+export function __resetMotionFeaturesForTest(): void {
+  featurePromise = null;
+  featuresReady = false;
+  featureLoadFailed = false;
+  featureLoadCount = 0;
+}
+
+/**
+ * Freeze the enhance-from-visible decision at MOUNT.
+ *
+ * `initial` only has meaning on an element's first render, so the answer must not change
+ * underneath a mounted element — otherwise a chunk landing mid-life could re-apply a hidden
+ * initial to something already on screen. A ref, not state: no subscription, no re-render, and
+ * the server and the first client render necessarily agree.
+ */
+function useInitialPaintsVisible(): boolean {
+  const paintsVisible = useRef<boolean | null>(null);
+  if (paintsVisible.current === null) paintsVisible.current = !featuresReady;
+  return paintsVisible.current;
+}
 
 /**
  * `strict` turns a stray full-`motion` call site into a loud development error instead of a
@@ -55,17 +138,19 @@ type MotionSpanProps = ComponentPropsWithoutRef<typeof m.span>;
 type MotionButtonProps = ComponentPropsWithoutRef<typeof m.button>;
 
 const MotionDiv = forwardRef<HTMLDivElement, MotionDivProps>(function MotionDiv(props, ref) {
+  const paintsVisible = useInitialPaintsVisible();
   return (
     <MotionProvider>
-      <m.div ref={ref} {...props} />
+      <m.div ref={ref} {...props} initial={paintsVisible ? false : props.initial} />
     </MotionProvider>
   );
 });
 
 const MotionSpan = forwardRef<HTMLSpanElement, MotionSpanProps>(function MotionSpan(props, ref) {
+  const paintsVisible = useInitialPaintsVisible();
   return (
     <MotionProvider>
-      <m.span ref={ref} {...props} />
+      <m.span ref={ref} {...props} initial={paintsVisible ? false : props.initial} />
     </MotionProvider>
   );
 });
@@ -74,9 +159,10 @@ const MotionButton = forwardRef<HTMLButtonElement, MotionButtonProps>(function M
   props,
   ref,
 ) {
+  const paintsVisible = useInitialPaintsVisible();
   return (
     <MotionProvider>
-      <m.button ref={ref} {...props} />
+      <m.button ref={ref} {...props} initial={paintsVisible ? false : props.initial} />
     </MotionProvider>
   );
 });

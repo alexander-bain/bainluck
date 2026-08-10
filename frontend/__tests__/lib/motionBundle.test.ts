@@ -1,9 +1,18 @@
-// #1631: framer-motion must stay out of First Load JS.
+// #1631: framer-motion's FEATURE SET must stay out of First Load JS.
 //
-// The full `motion` component ships every animation feature to every route that renders one —
-// measured at 40.7 kB gzip on /sports, /search, /my-stuff, /preferences, /futures, /futures/[id]
-// and /sports/[key], about 31% of /sports's route-own weight. `components/motion.tsx` replaces it
-// with `m` behind a lazily-loaded `domAnimation` feature set.
+// C229 P2 correction. This file used to be titled "framer-motion must stay out of First Load
+// JS", and it asserted only that no file imports the full named `motion`. Those are not the
+// same claim, and the gap was real: `EventCard.tsx` still statically imports `useSpring` and
+// `useTransform`, and `ThresholdSparkline.tsx` still statically imports `m` and
+// `AnimatePresence`. The library is NOT absent from the route graph and this guard never
+// proved it was — so the wording now matches what is actually checked, and the residual
+// static imports are enumerated below rather than papered over.
+//
+// What DID move is the feature set. The full `motion` component ships every animation feature
+// to every route that renders one — measured at 40.7 kB gzip on /sports, /search, /my-stuff,
+// /preferences, /futures, /futures/[id] and /sports/[key]. `components/motion.tsx` replaces it
+// with `m` behind a lazily-loaded `domAnimation` set, and the measured First Load JS fall was
+// 19-25 kB per route, which is the number to quote — not the library's full size.
 //
 // This guard exists because the regression is SILENT in both directions. Re-importing the full
 // `motion` at one new call site quietly re-inflates every one of those routes and nothing fails.
@@ -56,7 +65,7 @@ function relative(file: string): string {
   return file.slice(FRONTEND_ROOT.length + 1);
 }
 
-describe("#1631 framer-motion stays out of First Load JS", () => {
+describe("#1631 the framer-motion FEATURE SET stays out of First Load JS", () => {
   test("no source file imports the full `motion` component from framer-motion", () => {
     const offenders = sourceFiles().filter((file) => {
       if (file.endsWith(PRIMITIVES_MODULE)) return false;
@@ -116,6 +125,39 @@ describe("#1631 framer-motion stays out of First Load JS", () => {
 
     expect(features).toMatch(/export\s*\{\s*domAnimation as default\s*\}\s*from\s*["']framer-motion["']/);
     expect(importCount).toBe(0);
+  });
+
+  test("the claim is scoped to the feature set, and the residual static imports are named", () => {
+    // C229 P2: "no full `motion` import" does NOT mean "framer-motion is absent". The precise,
+    // checkable claim is about the FEATURE SET — `domAnimation`/`domMax` must only ever be
+    // reachable through the dynamic import. Everything else framer-motion exports may legally
+    // sit in the static graph, and this test records exactly which files use it, so a future
+    // reader sizes the win from the import graph instead of from a slogan.
+    const staticImporters = sourceFiles()
+      .filter((file) => !file.endsWith(FEATURE_MODULE))
+      .filter((file) => /import\s*(type\s*)?\{[^}]*\}\s*from\s*["']framer-motion["']/.test(read(file)))
+      .map(relative)
+      .sort();
+
+    // The library IS still statically imported. Asserting it is non-empty keeps anyone from
+    // re-inflating the claim to "framer-motion was removed".
+    expect(staticImporters.length).toBeGreaterThan(0);
+
+    // The feature set itself must never be static — that is the whole bundle mechanism.
+    const featureLeaks = sourceFiles()
+      .filter((file) => !file.endsWith(FEATURE_MODULE))
+      .filter((file) => {
+        const importLines = read(file).match(/import\s*\{[^}]*\}\s*from\s*["']framer-motion["']/g) ?? [];
+        return importLines.some((line) =>
+          line
+            .slice(line.indexOf("{") + 1, line.indexOf("}"))
+            .split(",")
+            .some((n) => ["domAnimation", "domMax"].includes(n.trim().replace(/\s+as\s+.*$/, ""))),
+        );
+      })
+      .map(relative);
+
+    expect(featureLeaks).toEqual([]);
   });
 
   test("both directions: the primitives really are provider-bound", () => {
