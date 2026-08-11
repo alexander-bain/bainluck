@@ -29,6 +29,7 @@ from app.utils.db_session_identity import (
     KIND_UNCLASSIFIED,
     PREDEPLOY,
     SUPERSEDED,
+    TAG_SCHEMA,
     UNKNOWN_BUILD,
     build_session_tag,
     classify_activity_row,
@@ -330,3 +331,58 @@ def test_build_id_prefers_release_version_then_commit():
 
 def test_no_build_env_is_honest_rather_than_invented():
     assert current_build_id({}) == UNKNOWN_BUILD
+
+
+# ---------------------------------------------------------------------------
+# The values themselves
+# ---------------------------------------------------------------------------
+
+
+class TestWireValuesArePinnedIndependently:
+    """Every assertion above compares a classifier result to the SAME constant the
+    classifier reads, so all of them pass for any value. That is correct for what
+    they test -- branch selection -- and wrong as a way to pin the values, which
+    leave this process: the tag is written to ``pg_stat_activity`` and read by
+    operators and by C127, and the kinds are the vocabulary a containment decision
+    is made in. Renaming one is a wire break, not a refactor.
+
+    Mutation-proven (queue 331): with only the assertions above, changing any
+    constant in this class left the whole suite green. Asserted as literals on
+    purpose -- ``== db_session_identity.KIND_FOREIGN`` reads the same constant it
+    is checking. Same reason as ``test_hub_cache_swr.py:236-240`` (LAT-P026).
+
+    If you change a value here, you are changing a wire contract: update the
+    literal deliberately, and check the readers.
+    """
+
+    def test_application_name_max_is_the_postgres_limit(self):
+        # NOT ours to choose: Postgres truncates application_name at NAMEDATALEN-1
+        # = 63 bytes, SILENTLY, and the tail it drops is the owner. Widening this
+        # constant does not widen Postgres.
+        assert APPLICATION_NAME_MAX == 63
+
+    def test_tag_schema_token(self):
+        assert TAG_SCHEMA == "bl1"
+
+    def test_unknown_build_sentinel(self):
+        assert UNKNOWN_BUILD == "nobuild"
+
+    def test_generation_relation_vocabulary(self):
+        assert (CURRENT, SUPERSEDED, PREDEPLOY) == ("current", "superseded", "predeploy")
+
+    def test_kind_vocabulary(self):
+        assert KIND_CURRENT_BEAT == "current_beat"
+        assert KIND_SUPERSEDED_RUN == "superseded_run"
+        assert KIND_PREDEPLOY_RUN == "predeploy_run"
+        assert KIND_UNCLASSIFIED == "unclassified_run"
+        assert KIND_FOREIGN == "foreign"
+
+    def test_the_kinds_stay_distinct(self):
+        kinds = (
+            KIND_CURRENT_BEAT,
+            KIND_SUPERSEDED_RUN,
+            KIND_PREDEPLOY_RUN,
+            KIND_UNCLASSIFIED,
+            KIND_FOREIGN,
+        )
+        assert len(set(kinds)) == len(kinds)
