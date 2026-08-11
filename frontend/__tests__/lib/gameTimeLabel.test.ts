@@ -693,3 +693,66 @@ describe("anti-drift: one home for the live-clock trust rule", () => {
     expect(owners).toEqual(["lib/gameTimeLabel.ts"]);
   });
 });
+
+/**
+ * C270 P1 — a date-only resolution date must render its DECLARED calendar day.
+ *
+ * `new Date("2026-12-31")` parses as UTC midnight; `toLocaleDateString` then
+ * renders that instant in the browser's zone, so everyone west of UTC saw
+ * "Resolves Dec 30, 2026". Golf produces this shape live — DataGolf's semantic
+ * `end_date` string is written straight into `resolution_date`.
+ *
+ * ── HOW THIS SUITE IS BUILT, AND WHY IT LOOKS LIKE TWO TESTS OF ONE THING ──
+ *
+ * The obvious test — set `process.env.TZ = "America/Los_Angeles"` and assert —
+ * DOES NOT WORK, and it fails in the dangerous direction. Node fixes the zone
+ * at first `Date` use, so an in-test assignment is ignored and the case simply
+ * re-asserts whatever zone the runner already had. Written that way it passes
+ * in CI (UTC) forever while claiming to cover Pacific: a test that reports
+ * green for a reason unrelated to what it says it checks. That is the same
+ * species as the bug itself, which is precisely how the bug survived.
+ *
+ * So the coverage is split, deliberately:
+ *
+ *   1. BEHAVIOUR, in the ambient zone. Meaningful when a human runs the suite
+ *      in a negative-offset zone (verified: 4/4 of these fail in Pacific with
+ *      the fix reverted, printing exactly Dec 30 / Feb 28).
+ *   2. THE MECHANISM, zone-independent. Asserts the formatter *asks for* UTC on
+ *      a date-only value and does not on a timestamp. This one catches a
+ *      regression in CI's UTC, where the behavioural cases cannot.
+ */
+describe("formatResolvesLabel — semantic dates survive the timezone (C270 P1)", () => {
+  const NOW = Date.UTC(2026, 7, 11);
+
+  it.each([
+    ["2026-12-31", "Resolves Dec 31, 2026"],
+    // A leap day is the cruellest version: the off-by-one crosses a month AND
+    // lands on a date that does not exist in most years.
+    ["2028-02-29", "Resolves Feb 29, 2028"],
+  ])("%s renders as its declared day in the ambient zone", (input, expected) => {
+    expect(formatResolvesLabel(input, NOW)).toBe(expected);
+  });
+
+  it("asks for UTC on a date-only value — the guard CI can actually see", () => {
+    const spy = jest.spyOn(Date.prototype, "toLocaleDateString");
+    try {
+      formatResolvesLabel("2026-12-31", NOW);
+      expect(spy).toHaveBeenCalledWith([], expect.objectContaining({ timeZone: "UTC" }));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does NOT force UTC on a timestamp — that one really is an instant", () => {
+    // The both-directions half (gotcha #43): over-applying the fix would answer
+    // "when does this resolve, my time" in the wrong zone for real timestamps.
+    const spy = jest.spyOn(Date.prototype, "toLocaleDateString");
+    try {
+      formatResolvesLabel("2026-12-31T18:00:00Z", NOW);
+      const opts = spy.mock.calls[0]?.[1] ?? {};
+      expect(opts).not.toHaveProperty("timeZone");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

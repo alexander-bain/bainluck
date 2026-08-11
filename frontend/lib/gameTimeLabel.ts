@@ -251,6 +251,9 @@ export function formatTournamentWhenLabel(
  * file in the frontend may build this string, which is what Alex's ruling asked
  * for and what was not yet true when the ruling was banked.
  */
+/** `2026-12-31` — a CALENDAR DATE, carrying no time and no zone. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 export function formatResolvesLabel(
   resolutionDate: string | null | undefined,
   now: number = Date.now(),
@@ -260,10 +263,32 @@ export function formatResolvesLabel(
   if (Number.isNaN(end.getTime())) return "";
   if (end.getTime() <= now) return "";
 
+  // ── C270 P1: a date-only value is a calendar date, not an instant ──
+  //
+  // `new Date("2026-12-31")` parses as UTC MIDNIGHT, and `toLocaleDateString`
+  // then renders that instant in the browser's zone. West of UTC it lands on
+  // the day BEFORE, so a tournament declaring 2026-12-31 printed "Resolves
+  // Dec 30, 2026" to every user in the Americas, and 2028-02-29 printed
+  // "Feb 28, 2028". The declared day is the only thing this label exists to
+  // say, and it was the thing being lost.
+  //
+  // Invisible to CI because CI runs UTC, where the shift is exactly zero —
+  // gotcha #44 in a new hat. The logic was never wrong under the one
+  // environment anybody checked it in.
+  //
+  // Golf is a live producer of this shape, not a hypothetical: `routes/golf.py`
+  // deliberately writes DataGolf's semantic `end_date` string into
+  // `resolution_date`, and the feed passes it through unchanged.
+  //
+  // Timestamps keep local formatting — those really are instants, and "when
+  // does this resolve, my time" is the right question to answer for them.
+  const zone = DATE_ONLY.test(resolutionDate) ? { timeZone: "UTC" as const } : {};
+
   return `Resolves ${end.toLocaleDateString([], {
     month: "short",
     day: "numeric",
     year: "numeric",
+    ...zone,
   })}`;
 }
 
