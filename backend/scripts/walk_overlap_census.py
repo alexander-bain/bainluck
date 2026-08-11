@@ -37,7 +37,7 @@ from app.tasks.census_overlap_trading import (  # noqa: E402
     VOLUME_STATES,
     WALK_SCAN_MIN,
     WALK_SCAN_START,
-    is_complete_walk,
+    evaluate_closure,
     merge_windows,
     next_scan,
     precision_for_threshold,
@@ -103,6 +103,20 @@ def walk(out_path: str, start_offset: int, timeout_s: int) -> int:
                   flush=True)
             continue
 
+        # C258, checked LIVE rather than only at the fold: the rail echoes the
+        # cursor it was asked to continue from. If that ever disagrees with what
+        # we sent, the window describes a different region than the one we are
+        # about to record, and every later window inherits the skip. Stop at the
+        # first one — a walk is cheap to resume and impossible to un-fold.
+        echoed = payload.get("cursor_in")
+        if echoed != cursor:
+            print(f"FATAL cursor chain broken: asked cursor={cursor}, rail echoed "
+                  f"cursor_in={echoed!r}. Nothing written for this window.",
+                  file=sys.stderr)
+            print("ABORT — walk is INCOMPLETE. Do not fold this as a population.",
+                  file=sys.stderr)
+            return 1
+
         with open(out_path, "a") as fh:
             fh.write(json.dumps(payload) + "\n")
         windows += 1
@@ -123,12 +137,15 @@ def walk(out_path: str, start_offset: int, timeout_s: int) -> int:
         scan = next_scan(scan, seconds=dt, timed_out=False)
 
 
-def report(out_path: str) -> int:
+def report(out_path: str, start_cursor: int = 0) -> int:
     windows = [json.loads(line) for line in open(out_path) if line.strip()]
     if not windows:
         print("no windows to fold", file=sys.stderr)
         return 1
-    complete = is_complete_walk(windows)
+    # C258: the closure contract, evaluated by the SAME function the rail ships
+    # (``census_overlap_trading.evaluate_closure``) rather than re-derived here.
+    verdict = evaluate_closure(windows, start_cursor=start_cursor)
+    complete = verdict["process_exit"] == 0
     rows = sum(w["rows_walked"] for w in windows)
     merged = merge_windows(windows)
     rated = with_rates(merged)
@@ -137,10 +154,16 @@ def report(out_path: str) -> int:
     print(f"\nwindows={len(windows)} rows_walked={rows:,} "
           f"cohorts={len(rated)} eligible={total:,}")
     print(f"COMPLETE WALK: {complete}")
+    print(f"WALK EVIDENCE: {verdict['walk_evidence']}")
+    if verdict["reason_codes"]:
+        print(f"REASON CODES:  {', '.join(verdict['reason_codes'])}")
+    if verdict["walk_evidence"] == "rolling":
+        print("!! ROLLING — the source moved during the walk, so these counts are a "
+              "read of a CHANGING table, not of one state. Usable; not a snapshot.")
     if not complete:
         print("!! PARTIAL — the figures below describe a PREFIX of the id space.")
         print("!! Do not publish an N from this. Resume with --offset "
-              f"{windows[-1]['next_offset']}.")
+              f"{windows[-1].get('next_offset')}.")
 
     print("\n=== volume_state (three-valued; 'absent' is NOT 'zero') ===")
     by_vs: dict[str, int] = {}
@@ -175,7 +198,13 @@ def report(out_path: str) -> int:
     for src, s in sorted(per.items(), key=lambda kv: -kv[1]["n"]):
         print(f"  {src:22s} n={s['n']:>10,}  volume present "
               f"{(100.0 * s['vol'] / s['n'] if s['n'] else 0):5.2f}%")
-    return 0
+
+    # C258: print-partial-then-return-zero was the defect this closes. A caller
+    # that branches on the exit code was told SUCCESS by a run that had just
+    # printed "do not publish an N from this" — the banner reached a human and
+    # the shell saw 0. The banner and the exit code must not disagree, and when
+    # they do it is the exit code that gets believed by everything automated.
+    return verdict["process_exit"]
 
 
 def main() -> int:
@@ -193,8 +222,12 @@ def main() -> int:
         print("ERROR: ADMIN_TOKEN not set. Run: source ~/.claude/.env", file=sys.stderr)
         return 2
     rc = walk(args.out, args.offset, args.timeout)
-    report(args.out)
-    return rc
+    # C258: the fold's verdict is part of the process result, not decoration.
+    # ``report``'s return value was previously DISCARDED, so a walk that ended
+    # cleanly but folded to a broken chain still exited 0. Both must agree
+    # before this process claims success.
+    rc_report = report(args.out)
+    return rc or rc_report
 
 
 if __name__ == "__main__":

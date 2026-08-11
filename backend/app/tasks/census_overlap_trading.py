@@ -151,10 +151,18 @@ MOVE_BANDS: tuple[tuple[str, int, int | None], ...] = (
 )
 
 _BOUNDS_SQL = """
-    SELECT MIN(id) AS lo, MAX(id) AS hi, COUNT(*) AS n
+    SELECT MIN(id) AS lo, MAX(id) AS hi, COUNT(*) AS n,
+           (SELECT MAX(id) FROM futures_outcomes) AS watermark
     FROM (SELECT id FROM futures_outcomes WHERE id > :cursor
           ORDER BY id ASC LIMIT :scan) w
 """
+# ^ ``watermark`` is the head of the id space, read in the SAME statement as the
+# window bounds so the two cannot describe different instants. It is the C258
+# contract's ``source_watermark``: stable across every window means the walk saw
+# ONE table state (a snapshot); a move means rows arrived mid-walk and the result
+# is a ROLLING read of a table that changed underneath it. Both are usable — but
+# only if which one you have is recorded, which is the whole point. An indexed
+# MAX(id) is a cheap price for the difference between an artifact and a claim.
 
 
 def band_for(value: int, bands: tuple[tuple[str, int, int | None], ...]) -> str:
@@ -465,8 +473,139 @@ def is_complete_walk(windows: list[dict]) -> bool:
     A PARTIAL walk must never be published as an N. Its counts are real but its
     denominator is not the population, and a threshold fixed against part of the
     table is a guess wearing a measurement's clothing.
+
+    This is the TAIL rung ONLY, and on its own it is not enough: a walk can end
+    exhausted having skipped a region in the middle. :func:`evaluate_closure` is
+    the full C258 contract and calls this for its tail rung, so the two cannot
+    drift about what "the tail closed" means.
     """
     return bool(windows) and bool(windows[-1].get("exhausted"))
+
+
+#: C258 closure reason codes. Named constants rather than inline strings so a
+#: consumer greps for the code instead of matching prose, and so a typo is an
+#: ImportError instead of a rung that silently never fires.
+TAIL_NOT_EXHAUSTED = "TAIL_NOT_EXHAUSTED"
+START_CURSOR_MISMATCH = "START_CURSOR_MISMATCH"
+CURSOR_CHAIN_BROKEN = "CURSOR_CHAIN_BROKEN"
+WINDOW_BOUNDS_INVALID = "WINDOW_BOUNDS_INVALID"
+SOURCE_WATERMARK_DRIFT = "SOURCE_WATERMARK_DRIFT"
+SOURCE_WATERMARK_ABSENT = "SOURCE_WATERMARK_ABSENT"
+
+#: The rungs that make a walk NOT closed. Watermark codes are deliberately
+#: absent: a drifted or missing watermark downgrades the EVIDENCE CLASS, it does
+#: not make the walk partial. Conflating the two is what let a rolling read be
+#: reported as a snapshot.
+_CLOSURE_BLOCKING = (
+    TAIL_NOT_EXHAUSTED,
+    START_CURSOR_MISMATCH,
+    CURSOR_CHAIN_BROKEN,
+    WINDOW_BOUNDS_INVALID,
+)
+
+#: The three evidence classes, and they are three for a reason (gotcha #53's
+#: shape): "we walked one table state", "we walked a moving table", and "we did
+#: not finish". Folding the middle into either neighbour is a lie in one
+#: direction or the other.
+WALK_EVIDENCE_CLASSES = ("snapshot", "rolling", "partial")
+
+#: Timing verdicts. ``unknown`` is a first-class answer, not a failure — see
+#: :func:`evaluate_closure`.
+TIMING_VERDICTS = ("pre_settlement", "contaminated", "unknown")
+
+
+def evaluate_closure(
+    windows: list[dict],
+    *,
+    start_cursor: int = 0,
+    chronology: dict | None = None,
+) -> dict:
+    """The C258 eight-case closure contract, as the production rail implements it.
+
+    Returns ``{process_exit, walk_evidence, timing_verdict, reason_codes}``.
+
+    The rungs, and why each exists:
+
+    * **Tail** (:func:`is_complete_walk`) — the last window must report
+      ``exhausted``.
+    * **Chain** — each window's ``cursor_in`` must equal the PRIOR window's
+      ``next_offset``, and the first must equal ``start_cursor``. ``next_offset``
+      alone records where a window ended and says nothing about where the next
+      one began, so a skipped region folds in looking exactly like a clean walk.
+    * **Bounds** — ``lo > cursor_in`` and ``hi >= lo``. Note ``lo > cursor_in``,
+      NOT ``lo == cursor_in + 1``: **sparse ids are valid.** The id space has
+      two-orders-of-magnitude density variation, so demanding numeric adjacency
+      would fail every legitimate walk of a sparse region — the check is
+      monotonic non-overlap, which is the property that actually matters.
+    * **Watermark** — one stable value across every window means the walk saw a
+      single table state. This rung sets the EVIDENCE CLASS and never the exit
+      code.
+
+    ``timing_verdict`` is decided by **chronology alone**. Density, quote counts
+    and price shape are not evidence about WHEN a quote was taken; with no
+    settlement timestamp the honest answer is ``unknown``, and returning it is
+    the point rather than a shortfall (this is the C-item that downgraded the
+    entertainment rival from REFUTED to UNKNOWN).
+
+    Mirrors ``scripts/evals/calibration_census_closure_contract.evaluate`` case
+    for case; ``tests/test_overlap_census_closure_p032.py`` runs the shipped
+    eight-case pack through THIS function and asserts the two agree, so the
+    contract cannot drift away from the rail that has to satisfy it.
+    """
+    reasons: list[str] = []
+    if not is_complete_walk(windows):
+        reasons.append(TAIL_NOT_EXHAUSTED)
+
+    prior: object = None
+    watermark: object = None
+    for index, window in enumerate(windows):
+        cursor_in = window.get("cursor_in")
+        if index == 0 and cursor_in != start_cursor:
+            reasons.append(START_CURSOR_MISMATCH)
+        if prior is not None and cursor_in != prior:
+            reasons.append(CURSOR_CHAIN_BROKEN)
+
+        bounds = window.get("window")
+        # A ``None`` window is the empty tail the rail returns at the end of the
+        # id space — it has no bounds to check, and that is not a defect.
+        if bounds and isinstance(cursor_in, int):
+            if bounds["lo"] <= cursor_in or bounds["hi"] < bounds["lo"]:
+                reasons.append(WINDOW_BOUNDS_INVALID)
+
+        prior = window.get("next_offset")
+
+        mark = window.get("source_watermark")
+        if watermark is None:
+            watermark = mark
+        elif mark != watermark:
+            reasons.append(SOURCE_WATERMARK_DRIFT)
+
+    if watermark is None:
+        reasons.append(SOURCE_WATERMARK_ABSENT)
+
+    complete = not any(code in reasons for code in _CLOSURE_BLOCKING)
+    if not complete:
+        evidence = "partial"
+    elif watermark is not None and SOURCE_WATERMARK_DRIFT not in reasons:
+        evidence = "snapshot"
+    else:
+        evidence = "rolling"
+
+    settled = (chronology or {}).get("settlement_at")
+    final_quote = (chronology or {}).get("final_quote_at")
+    if settled is None or final_quote is None:
+        timing = "unknown"
+    elif final_quote >= settled:
+        timing = "contaminated"
+    else:
+        timing = "pre_settlement"
+
+    return {
+        "process_exit": 0 if complete else 1,
+        "walk_evidence": evidence,
+        "timing_verdict": timing,
+        "reason_codes": sorted(set(reasons)),
+    }
 
 
 #: Adaptive-scan bounds for :func:`next_scan`. The floor is not decoration: a
@@ -533,6 +672,8 @@ async def census(
     ).mappings().first()
 
     lo, hi, walked = bounds["lo"], bounds["hi"], int(bounds["n"] or 0)
+    watermark = bounds["watermark"]
+    watermark = None if watermark is None else str(watermark)
 
     if not walked:
         # End of the id space. Exhausted with zero rows is a COMPLETE walk of an
@@ -540,9 +681,11 @@ async def census(
         return {
             "census": CENSUS_NAME,
             "rows_walked": 0,
+            "cursor_in": cursor,
             "window": None,
             "next_offset": None,
             "exhausted": True,
+            "source_watermark": watermark,
             "cohorts": [],
         }
 
@@ -568,9 +711,15 @@ async def census(
     return {
         "census": CENSUS_NAME,
         "rows_walked": walked,
+        # ``cursor_in`` is the cursor this window was ASKED to continue from.
+        # Without it a folded walk cannot tell a clean resume from a skipped
+        # region: ``next_offset`` alone says where each window ended and nothing
+        # at all about whether the next one started there (C258).
+        "cursor_in": cursor,
         "window": {"lo": lo, "hi": hi},
         "next_offset": hi,
         "exhausted": walked < scan,
+        "source_watermark": watermark,
         "eligible_rows_in_window": sum(c["n"] for c in cohorts),
         "cohorts": cohorts,
     }

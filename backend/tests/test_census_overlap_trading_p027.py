@@ -403,7 +403,7 @@ class TestTheWalk:
                     def mappings(self_inner):
                         class _M:
                             def first(self_m):
-                                return {"lo": None, "hi": None, "n": 0}
+                                return {"lo": None, "hi": None, "n": 0, "watermark": 4242}
 
                             def all(self_m):  # pragma: no cover - not reached
                                 return []
@@ -445,7 +445,7 @@ class TestTheWalk:
                     def mappings(self_inner):
                         class _M:
                             def first(self_m):
-                                return {"lo": 1, "hi": 900, "n": outer.scan}
+                                return {"lo": 1, "hi": 900, "n": outer.scan, "watermark": 4242}
 
                             def all(self_m):
                                 return rows
@@ -475,7 +475,7 @@ class TestTheWalk:
                     def mappings(self_inner):
                         class _M:
                             def first(self_m):
-                                return {"lo": None, "hi": None, "n": 0}
+                                return {"lo": None, "hi": None, "n": 0, "watermark": 4242}
 
                             def all(self_m):  # pragma: no cover
                                 return []

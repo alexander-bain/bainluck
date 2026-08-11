@@ -17,7 +17,7 @@ so no cycle can finish and then discover its evidence was unobtainable.
 |---|---|---|---|
 | 1 | Ruling 9 shipped; published count reflects volume-proven trading, both figures named | 🛑 **WALKED TO EXHAUSTION 2026-08-10 (CAL-P030) — PREMISE-BROKEN.** 381 windows, 3,275,813 rows, complete. **N must not be published: at density ≥ 10 every threshold scores BELOW the base rate** (best lift anywhere +4.0%); the overlap population is 88–96% already-traded, and polymarket has *zero* negatives. Ruling 011's tier 2 has no measured basis | **an Alex ruling** — drop tier 2, keep it as declared-unvalidated, or publish volume-proven-only (25.19%) |
 | 2 | Trading-activity section led by matched-bucket comparison | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: browser-audit run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342), manifest `result: pass`, `observed_frontend_sha` = the audited commit | — |
-| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **BOTH HALVES NOW DIAGNOSED.** Cricket 2026-08-09 (confirms this document's own hypothesis). **Entertainment 2026-08-10 (CAL-P030): the stamped-settlement rival is REFUTED** — entertainment carries single-quote outcomes at 6.58% vs a 15.76% kalshi baseline, lift **0.42x**, so the structural (gotcha #17 ladder) rival is the only one left standing | the publish (bump) — for cricket's exclusion fix. No diagnosis work remains |
+| 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **Cricket DIAGNOSED** 2026-08-09 (confirms this document's own hypothesis). **Entertainment PARTLY diagnosed — corrected by CAL-P032:** the 0.42x single-quote lift (6.58% vs a 15.76% kalshi baseline) refutes the *single-quote-only* mechanism ONLY. **The settlement-timing rival is UNKNOWN, not refuted** — density says how many quotes, never when; adjudicating timing needs a settlement timestamp the schema does not carry | cricket: the publish (bump). entertainment: **timing is unobtainable without new capture** — it is an Alex scoping call, not pending work |
 | 4 | Source graph redesigned — per-source panels | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: five per-source panels on a shared 0–100 axis, each labelled n · % of curve · ECE, same run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342) | — |
 | 5 | Native calibration surface consistent with web | 🟢 **PASSED 2026-08-09 (CAL-P026)** — rendered on both, every headline figure identical, both banner the staleness | — |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
@@ -25,7 +25,72 @@ so no cycle can finish and then discover its evidence was unobtainable.
 
 **Four items are green** (2, 4, 5, and 6's watchdog half) — up from two, because INT-031 merged
 CAL-P025/26/27 and CAL-P030 photographed the result. Item 7 has its first datapoint and needs a
-second, dated ~Aug 15. Item **3 is now diagnosed on both halves** and holds only for the publish.
+second, dated ~Aug 15. Item **3 is diagnosed on its cricket half**; its entertainment timing rival is
+UNKNOWN and unobtainable without new capture (see the CAL-P032 correction below).
+
+## 🛑 CONVERGING IS NOT PUBLISHING — the 128th unit does not turn the page green (CAL-P032, 2026-08-10)
+
+**Five items on this scoreboard wait on "the publish", and every handover since CAL-P028 has forecast
+it as "~N beats away" from the unit count alone. That forecast is wrong, and the gap is not small.**
+
+Reaching 128 banked units does not publish anything. It hands a *candidate* to
+`calibration_publish_gate.evaluate_publish`, which refuses a population move of more than **±5%**
+against the published baseline unless `CALIBRATION_POPULATION_VERSION` is bumped. The baseline is the
+**2026-08-02** payload (`total_outcomes` 652,407, `q267`); the candidate is nine days of population
+growth later; the version is `q267` on both sides. **So the comparative rules apply in full, and the
+measurement says they will fire.**
+
+Measured 2026-08-10 23:5xZ from the 55 banked units in the live cursor (all 26,821 stored bucket rows
+parsed — `matched == total_elems`, checked, because a silently dropped row would bias every figure):
+
+| quantity | value |
+|---|---|
+| banked / planned | 55 / 128 |
+| outcomes in banked units | 281,694 (kalshi 175,879 · polymarket 105,815) |
+| per-unit n | mean 5,121.7, sd 961.1 |
+| extrapolated futures @128 | **655,578 ± 12,576** (1 SE, finite-population corrected) |
+| candidate `total_outcomes` (+ sportsbook legs carried flat) | **≈ 695,653** vs published **652,407** |
+| **drift** | **+6.63%**, 95% CI [+2.85%, +10.41%] · limit **±5%** → P(reject) ≈ **0.80** |
+
+**The extrapolation is not the weak link.** If the 55 banked units were unrepresentative, source
+composition would show it: polymarket is **37.98% of banked** (SE 0.87pp) against **31.31% of
+published** — z ≈ 7.6, which sampling noise cannot produce. Per source, kalshi is **−2.7%** and
+polymarket **+28.4%**; a biased sample moves both together, a real backfill moves one. The known
+never-graded polymarket cohort being graded into truth-eligibility is exactly that mechanism.
+
+**A second, independent rejection path is already at the line.** Rule 3 refuses any category over
+1,000 outcomes that loses more than 20% without a bump: `entertainment` is published 12,535 → est
+10,051 = **−19.8%** against a −20% limit. Entertainment carries no sportsbook legs, so unlike the
+sports categories that comparison is clean.
+
+**What happens at unit 128, traced through the code rather than assumed:** the futures phase merges
+and returns **without clearing the cursor**; `evaluate_publish` rejects; `_file_publish_gate_rejection`
+files the deduped issue; the task **raises**. The next beat resumes at 128, skips every unit, reaches
+the gate in minutes and is rejected again — **hourly, indefinitely.** Not a crash: a fast, quiet,
+permanent rejection loop that looks *healthier* than today (beats stop timing out) while the page
+stays exactly as dark.
+
+**And the escape hatch is booby-trapped in both directions**, each verified in source:
+
+1. **A bump wipes the cursor.** `resolve_staged_cursor` returns `INVALIDATE /
+   population_version_changed` on a version mismatch — every banked unit dies, the walk restarts at
+   zero. Same shape as CAL-P031's fingerprint trap, different key.
+2. **A bump takes the page DARK.** `snapshot_verdict` refuses a `wrong_version` artifact at *both*
+   serving tiers. CAL-P017's dated tier rescues `too_old`; it does not rescue `wrong_version`. This
+   is the 2026-08-02 outage, and `precompute_calibration.py` already records it being tried and
+   reverted the same hour.
+
+**None of this is broken — it is designed, and the design says so.** The build module's own comment
+sets out the intended sequence: land the population change under the current version, let the gate
+reject and *measure* the drift, "**the gate's rejection report IS the exact-SHA census**", then bump
+once reviewed. Ruling 024 now folds that bump into the single combined invalidation window. What was
+lost is that this step exists at all: nine days of handovers compressed "the build converges" into
+"the page publishes", and there is a gate between them.
+
+**So the honest path to a green SLO is not ~4 beats.** It is ~4 beats to a rejection that produces
+the census, then ruling 024's combined window (a frozen-file edit), then a fresh convergence with the
+page dark, then a publish. **Whoever takes the next queue should expect the rejection and read its
+report as the deliverable — not read it as a regression.**
 
 **Item 1 is the one that changed shape.** Its rail was walked to exhaustion and returned a
 PREMISE-BROKEN answer: the move-count predictor underlying ruling 011's tier 2 does not work, so
@@ -149,8 +214,8 @@ still judged **RESUMABLE**, and units from two different populations merge into 
 payload. That is `LATE_ARRIVAL_NOT_INVALIDATED` — the exact failure the digest exists to prevent —
 and gotcha #53's shape for the fourth time in this document.
 
-**Coverage is 3 inputs out of 43.** Only `CALIBRATION_POPULATION_VERSION`,
-`REPRESENTATIVE_TIE_AUTHORITY` and `COVERAGE_CENSUS_ENABLED` are hashed by value. The other 40
+**Coverage is 3 inputs out of 46 — so 43 are uncovered.** Only `CALIBRATION_POPULATION_VERSION`,
+`REPRESENTATIVE_TIE_AUTHORITY` and `COVERAGE_CENSUS_ENABLED` are hashed by value. The other 43
 module-level names the hashed closure reads are invisible to it, in two tiers:
 
 | tier | count | protected by |
@@ -158,18 +223,37 @@ module-level names the hashed closure reads are invisible to it, in two tiers:
 | **cross-module** (`resolution_authority`, `calibration_coverage_bridge`) | **5** | **nothing — live today** |
 | same-module (`precompute_calibration.py`) | 38 | ruling 009's freeze **only** |
 
+> **COUNT CORRECTION (CAL-P032).** CAL-P030 and CAL-P031 both wrote this as *"3 of 43"*, reading the
+> **uncovered** count as the **total**. The lists were always right (3 covered + 5 cross-module + 38
+> same-module = 46); only the sentence was wrong. The authoritative figures are now **46 total / 3
+> covered / 43 uncovered**, and they come from a generated artifact rather than from prose —
+> `backend/tests/evals/fixtures/calibration_fingerprint_derived_map.json`, produced by
+> `scripts/evals/calibration_fingerprint_derived_map.py`, which parses the hashed roots, the
+> by-value names and the whole referenced closure out of the real `_main_input_fingerprint` body.
+> A hand-copied census restated in three documents drifts in exactly this way; a derived one cannot.
+> Of the 43 uncovered, **21 are SQL-shaping** (interpolated into emitted SQL) and 22 are
+> behaviour-or-evidence.
+
 **The second row is the part that deserves a ruling.** Those 38 include real population predicates —
 `KALSHI_LIQUIDITY_EXISTS`, `POLY_PLACEHOLDER_EXCLUDE`, `WEATHER_WIDE_SPREAD_EXCLUDE`,
 `MEX_NORMALIZE_THRESHOLD`, `EXCLUSIVITY_PROVED_RELATIONS`, `DRAW_CAPABLE_CATEGORIES` — and they are
 safe right now **only as a side effect** of a freeze that was imposed for throughput reasons and is
 designed to lift. Ruling 009 is, accidentally, load-bearing for correctness. Nobody decided that.
 
-**What CAL-P031 shipped:** `app/utils/calibration_fingerprint_coverage.py` (pure, AST-only, reads the
-frozen module as text and never imports it) plus a fail-on-new **ratchet** in
-`tests/test_calibration_fingerprint_coverage.py`, in the same idiom as `typecheck-baseline.json`
-(gotcha #10) and binding in **both** directions — a new uncovered value fails, and so does silently
-dropping one from the allowlist without covering it. A characterization test pins the hole as it
-stands today, so the day the fix lands it goes red and forces the docs to move with it.
+**What CAL-P031 shipped, and what CAL-P032 replaced it with.** CAL-P031 shipped
+`app/utils/calibration_fingerprint_coverage.py` — pure and AST-only, but with the roots, the
+covered-by-value names and both uncovered tiers **typed out by hand**. CAL-P032 integrated C258's
+generated map (`scripts/evals/calibration_fingerprint_derived_map.py` + its checked-in artifact) and
+**deleted the hand map outright** rather than keeping it "for reference": two derivations of one fact
+is how they drift, which is the defect this census exists to catch, one level up.
+
+The ratchet is now the artifact itself. `derive_map() == frozen()` fails on **one more** input and on
+**one fewer** — gotcha #10's `typecheck-baseline.json` lesson (a one-directional baseline becomes
+silent headroom) obtained for free instead of hand-maintained. What survives from CAL-P031 is the
+part an artifact cannot express: the characterization test proving **by value** that the live digest
+does not move when `CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL` changes, paired with a non-vacuity test
+proving the changed value really does reach the emitted SQL. The day the fix lands, it goes red and
+forces the docs to move with it.
 
 **What CAL-P031 deliberately did NOT ship, and why the obvious instinct is wrong here:**
 
@@ -181,7 +265,16 @@ stands today, so the day the fix lands it goes red and forces the docs to move w
 >    a multi-hour walk.
 >
 > **Apply immediately AFTER a successful publish, never during a convergence.** Full note in
-> `FIX_SEQUENCING_NOTE` in the util.
+> `FIX_SEQUENCING_NOTE`, now in `scripts/evals/calibration_fingerprint_derived_map.py` beside the
+> artifact (it moved there with the census when CAL-P032 deleted the hand map).
+>
+> **Superseded in scope by ruling 024 (2026-08-10):** the fix is no longer a standalone follow-up. It
+> rides the ONE combined invalidation window that opens at the first fresh publish, together with
+> ruling 011's two-tier well-traded, the cricket/entertainment exclusions, and the population-version
+> bump plus its published before/after census. Shipped separately each invalidates the last, and the
+> before/after census only means something across a single known boundary. Ruling 024 also names the
+> reason the coverage gap survived undetected: **the freeze was accidentally load-bearing for
+> correctness**, so the fix must land in the same event as the lift rather than after it.
 
 ### ✅ UPDATE 2026-08-10 (CAL-P030) — CAL-P028's fix landed, and the divergence STOPPED
 
@@ -867,15 +960,31 @@ against 415 published, 48.9% vs 79.3% winrate. The published exclusions are stro
 the design effects transfer as an order-of-magnitude correction, not an exact one. **The published
 count owed by the house rule must be computed on the published population, not from these rows.**
 
-### 🟢 Entertainment — the rail ran, and it KILLED the stamped-settlement rival (CAL-P030, 2026-08-10)
+### 🟡 Entertainment — one MECHANISM is refuted; the timing rival is UNKNOWN (CAL-P030, corrected by CAL-P032 2026-08-10)
+
+> **CORRECTION (CAL-P032, C258 item C).** This section previously read *"the rail ran, and it KILLED
+> the stamped-settlement rival"*, and the scoreboard said **REFUTED**. That is an overclaim, and it is
+> this lane's signature error in a new place: **density measures HOW MANY quotes were captured, never
+> WHEN any of them was taken.** A cohort can be densely observed and still have its *final* quote
+> taken after settlement — dense capture and late capture are independent properties, so no share of
+> `density_band = "1"`, in either direction, is evidence about timing.
+>
+> What the measurement below genuinely establishes is narrower and still worth having: the
+> **single-quote-only mechanism** is refuted. It does not establish that the timing rival is dead.
+>
+> **Timing verdict: UNKNOWN**, and that is a first-class answer rather than a shortfall.
+> Adjudicating it needs two timestamps — a settlement time and a final-quote time — which the schema
+> does not carry (`resolution_date` is a *scheduled* date; window 7b21 established this). The C258
+> closure contract now encodes the rule directly: `evaluate_closure(...)["timing_verdict"]` is
+> decided by **chronology alone** and returns `unknown` whenever either timestamp is missing, so this
+> particular overclaim is no longer expressible in the rail.
 
 The discriminator this section says it needs was walked on 2026-08-10 as part of item 1's
-exhaustive census, and it answers **against** the hypothesis it was built to test.
+exhaustive census, and it answers against **one of the two mechanisms** it was built to test.
 
-The stamped-settlement signature is *a near-certain price carried by a single captured quote* — one
-look, taken after the fact. If that were what makes kalshi entertainment miscalibrated, entertainment
-would be **enriched** in `density_band = "1"` relative to kalshi's other categories. Measured on the
-complete walk:
+The single-quote signature is *a near-certain price carried by a single captured quote*. If that were
+what makes kalshi entertainment miscalibrated, entertainment would be **enriched** in
+`density_band = "1"` relative to kalshi's other categories. Measured on the complete walk:
 
 | cohort | eligible n | density_band `1` | share |
 |---|---|---|---|
@@ -887,15 +996,25 @@ source's baseline — it is one of the better-observed kalshi cohorts, not a wor
 `density_band = "0"` is **empty** (0 of 15,624): every eligible entertainment outcome was observed at
 least once.
 
-**So the two rivals are no longer symmetric.** The structural rival — gotcha #17 threshold ladders
-reaching `calibration_probability` un-normalized, evidenced above by market `6549959`'s 21 bands each
-priced 0.99 — stands, and is now the only one with evidence behind it. The timing rival is not merely
-untested any more; the one proxy available to test it points the wrong way.
+**So the two rivals are no longer symmetric — but not because one died.** The structural rival —
+gotcha #17 threshold ladders reaching `calibration_probability` un-normalized, evidenced above by
+market `6549959`'s 21 bands each priced 0.99 — is the only one with *positive* evidence behind it.
+The timing rival has neither positive nor negative evidence, because nothing measured so far can
+produce any.
 
-**Do not overclaim this, for the reason the section already gives.** Sparse capture remains a *proxy*
-for late capture: there is still no settlement timestamp in the schema, so this narrows the rival
-rather than closing it. What changed is the direction of the evidence — a cohort cannot be
-predominantly stamped-after-the-fact while being observed more densely than its own baseline.
+**The scope of what the 0.42x lift refutes, stated exactly:** it refutes the mechanism *"these prices
+are near-certain because each was captured exactly once, after the fact"*. It does not touch the
+mechanism *"these prices were captured many times, and the last capture landed after settlement"* —
+which is the timing rival proper. The earlier reading treated sparse capture as a proxy for late
+capture; those are different properties, and the proxy was never licensed. **A cohort absolutely can
+be observed densely and still be stamped after the fact**, which is the sentence the previous
+version of this section implicitly denied.
+
+**What would settle it, and why nobody can run it today:** a per-outcome comparison of the final
+snapshot's `captured_at` against an authoritative settlement time. The schema carries no settlement
+timestamp, so the measurement is not merely unperformed — it is unobtainable without new capture.
+Recording that is the point: an exam item may not be marked green on a measurement that cannot be
+taken, and it may not be marked red on one nobody attempted.
 
 ### Superseded — the pre-walk assessment, kept for the record
 
