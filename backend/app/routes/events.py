@@ -276,6 +276,42 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
     "grammy": "grammys",
     "oscars": "oscar",
     "tonys": "tony",
+    # LAT-P036/#1761: the English stemmer is ASYMMETRIC across this pair, so the
+    # highest-volume market on the platform was unreachable by its obvious query.
+    # Measured on production 2026-08-11:
+    #
+    #     to_tsvector('english','Presidential Election Winner 2028')
+    #                                        -> '2028':4 'elect':2 'presidenti':1 'winner':3
+    #     websearch_to_tsquery('english','president')     -> 'presid'      NO MATCH
+    #     websearch_to_tsquery('english','presidential')  -> 'presidenti'  MATCH
+    #
+    # `presid` != `presidenti`, so `ts_rank_cd` over the name vector scored market
+    # 112897 — "Presidential Election Winner 2028", **667M volume, the largest open
+    # market in the corpus** — exactly 0, while every market merely named "President"
+    # scored 0.4. It sorted below all of them and never reached the page.
+    #
+    # This is a RANK fix, and the recall side was never the problem: the substring
+    # ILIKE `%president%` always matched "Presidential". Live top-8, production SQL
+    # before/after, on THIS predicate shape:
+    #
+    #     before  1. Presidents Cup Winner  <- a GOLF market, 2,359 volume, which won
+    #                                          only because 112897 could not score
+    #             ... 112897 absent
+    #     after   1. Presidential Election Winner 2028   (667M)
+    #             2. 2028 U.S. Presidential Election winner?  (56M)
+    #
+    # It cannot shed recall: every name containing "presidential" already contains
+    # "president", so the added ILIKE arm is a strict no-op on the substring half and
+    # the expansion only ever WIDENS the rank tsquery (`_expanded_tsquery`, which
+    # LAT-P033 fixed to OR rather than substitute).
+    #
+    # ONE-DIRECTIONAL ON PURPOSE. The reverse (`presidential` -> `president`) is a
+    # different change: it would widen `presidential` to the 86 open markets named
+    # "President" but not "Presidential" (Putin/Trump/Zelenskyy "out as President"),
+    # a real recall expansion with no measured demand behind it. The asymmetry in the
+    # stemmer is one-directional, so the fix for it is too. Mirrors the oscars/tonys
+    # plural-only gate above.
+    "president": "presidential",
 }
 
 
@@ -314,6 +350,24 @@ _QUERY_PHRASE_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
     ("big", "dance"): (("college", "basketball"), ("ncaa", "tournament")),
     ("ncaa", "tournament"): (("college", "basketball"),),
     ("ncaa", "basketball"): (("college", "basketball"),),
+    # LAT-P036: `nba finals` has been carried as a sibling of #1761's stemmer bug
+    # for six cycles. It is NOT the same defect and no stemmer or synonym fix can
+    # reach it. Kalshi names the market **"2026 Pro Basketball Champion"**
+    # (id 350, ticker `KXNBA-26`, 194M volume) — neither `nba` nor `finals`
+    # appears in the name AT ALL, so there is no lexeme to stem and nothing for a
+    # one-token synonym to widen. Verified on production 2026-08-11: **zero** open
+    # markets have both `nba` and `finals` in the name.
+    #
+    # The league-ticker arm cannot reach it either, and the reason is worth
+    # recording because it looks like it should: `_build_league_ticker_match`
+    # requires `lower(external_id) LIKE 'kxnba%'` AND the NON-league terms in the
+    # name. The ticker matches; `finals` is not in "2026 Pro Basketball Champion".
+    #
+    # So it is an ALIAS problem, which is exactly the shape this table exists for.
+    # `champion` carries its own `winner` expansion through
+    # `_apply_search_synonyms`, so the three-term canonical also reaches
+    # "…Champion"/"…Winner" phrasings without a second entry.
+    ("nba", "finals"): (("pro", "basketball", "champion"),),
 }
 
 
@@ -616,7 +670,30 @@ def _demote_wrong_league(markets: list, expanded: list[tuple[str, str | None]]) 
     """Stable-demote substring-cousin leagues. If the query says "nba" (and not
     "wnba"), a market whose name contains the word-boundary token "wnba" is the
     wrong league → move it below the correctly-scoped results. Token-boundary
-    (\\bwnba\\b), so it never fires on a legitimate "nba" market."""
+    (\\bwnba\\b), so it never fires on a legitimate "nba" market.
+
+    LAT-P036: **the name test alone had gone blind to most of the corpus, and the
+    ticker is the signal that had not.** Kalshi does not name these markets
+    "WNBA" any more — it names them "Women's Pro Basketball …", which contains no
+    `wnba` token at all. Counted on production 2026-08-11 over open markets:
+
+        ticker `kxwnba%`                  75
+        name matching \\bwnba\\b           29
+        name "Women's Pro Basketball"     43
+
+    So 46 of 75 WNBA markets were invisible to a guard whose whole job is to
+    catch them, and the demotion silently stopped working as the upstream corpus
+    was renamed. It surfaced when LAT-P036's alias arm put "Women's Pro
+    Basketball Champion" on page one of `nba finals`.
+
+    The ticker is checked ALONGSIDE the name, not instead of it:
+    `_build_league_ticker_match` already treats `kx{league}%` as authoritative
+    for exactly this distinction ("naturally excludes WNBA for nba"), so this
+    reuses a signal the recall side already trusts. Keeping the name test too
+    covers any source whose external_id is not a Kalshi ticker.
+
+    Still a stable partition over an already-fetched page — it reorders, it never
+    filters, so no market becomes unreachable by being demoted."""
     query_leagues = {t.lower() for t, _ in expanded if t.lower() in _LEAGUE_TOKENS}
     if not query_leagues:
         return markets
@@ -629,10 +706,14 @@ def _demote_wrong_league(markets: list, expanded: list[tuple[str, str | None]]) 
     if not demote:
         return markets
     pats = [re.compile(rf"\b{d}\b", re.IGNORECASE) for d in demote]
+    ticker_prefixes = tuple(f"kx{d}" for d in demote)
 
     def _wrong(m) -> bool:
         n = m.name or ""
-        return any(p.search(n) for p in pats)
+        if any(p.search(n) for p in pats):
+            return True
+        ticker = (getattr(m, "external_id", None) or "").lower()
+        return ticker.startswith(ticker_prefixes)
 
     keep = [m for m in markets if not _wrong(m)]
     wrong = [m for m in markets if _wrong(m)]
@@ -2685,7 +2766,8 @@ async def search_events(
     # reach the market the corpus names differently ("…College Basketball Champion").
     # Extra UNION arms, so recall can only increase and the no-alias path is
     # unchanged. See `_QUERY_PHRASE_ALIASES`.
-    _futures_where_or.extend(_alias_futures_arms(terms))
+    _futures_alias_arms = _alias_futures_arms(terms)
+    _futures_where_or.extend(_futures_alias_arms)
 
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
@@ -2768,9 +2850,36 @@ async def search_events(
     #
     # Recall is untouched — this reorders the candidate set, it does not filter
     # it. The arms in `_futures_where_or` are exactly as they were.
+    # LAT-P036: an ALIAS hit is a name match too, so it belongs in the tier.
+    #
+    # LAT-P029 added the alias arms to recall only. That got `nba finals` from
+    # "market 350 is unreachable" to "market 350 is on the page", which sounds
+    # like the fix and is not: alias rows landed in tier 2 with the outcome-only
+    # substring collisions, and `_expanded_tsquery` ranks them against the
+    # LITERAL query (`'nba' && 'finals'`), which scores an aliased name **0**. So
+    # the ordering fell through to `market_tier` — a market-QUALITY prior, not a
+    # relevance signal — and the 194M-volume championship market sorted BELOW
+    # five "Get-in ticket price of Pro Basketball Finals Game N" rows. Measured
+    # in production SQL 2026-08-11: **position 11 of 20**, and **1st** with this.
+    #
+    # That is the same pathology `_expanded_tsquery` documents for `fed`: when
+    # the relevance signal is structurally dead, whatever sorts next decides the
+    # page, and `market_tier` is not about the query at all.
+    #
+    # Tier **1**, not 0, and the distinction is deliberate: tier 0 means the
+    # market's name matches what the user literally typed. An alias matches the
+    # canonical phrasing we substituted on their behalf — the same kind of
+    # inference the league-ticker arm makes, so it earns the same tier. A literal
+    # name match still outranks it.
+    #
+    # `_alias_futures_arms` returns [] for the overwhelming majority of queries,
+    # so this appends nothing and the compiled SQL is byte-identical on the
+    # no-alias path — the same no-cost property the recall arms already have.
     _futures_tier_whens = [(futures_name_match, 0)]
     if league_ticker_match is not None:
         _futures_tier_whens.append((league_ticker_match, 1))
+    if _futures_alias_arms:
+        _futures_tier_whens.append((or_(*_futures_alias_arms), 1))
     _futures_name_tier = case(*_futures_tier_whens, else_=2)
 
     futures_query = (
