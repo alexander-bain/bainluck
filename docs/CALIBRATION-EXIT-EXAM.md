@@ -321,11 +321,17 @@ depends on how grouped the roster is, and it was measured only at the near-uniqu
      item, so a bare digit here silently inflates the scoreboard count. CAL-P034
      hit this exact trap and recorded it; CAL-P036 hit it again anyway. -->
 
-**And production's group-size distribution cannot be measured from here.** `count(DISTINCT vm_id)`
-over the population chain exceeds the read rail's 25 s ceiling (the roster read alone is 20.4 s), the
-planner's own estimate for that node is its default guess of 200, and `EXPLAIN ANALYZE` is refused on
-this statement by a `MATERIALIZED (`/`NOT (` false positive in the function allowlist. So the draft
-would have shipped a change whose sign rested on a number nobody had.
+**And production's group-size distribution could not be measured from here — CAL-P036's reading at
+the time, since overturned.** `count(DISTINCT vm_id)` over the population chain exceeds the read
+rail's 25 s ceiling (the roster read alone is 20.4 s), the planner's own estimate for that node is
+its default guess of 200, and `EXPLAIN ANALYZE` was refused on this statement by a `MATERIALIZED (`/
+`NOT (` false positive in the function allowlist. So the draft would have shipped a change whose sign
+rested on a number nobody had.
+
+> ⚠️ **Read this paragraph as a record of what CAL-P036 believed, not as a live constraint.** The
+> distribution IS measurable and CAL-P037 measured it — the population chain was never the only
+> route to it. The sentence is kept in place rather than deleted because the inference it encodes
+> ("the expensive path is the only path") is the mistake worth seeing at the point it was made.
 
 The shipped version drops the pair set entirely and recovers `market_ids` from the members each chunk
 already carries. It is better in four of five regimes, by up to **234.7 MB**, and worse in one by
@@ -445,11 +451,24 @@ one table. Three read-only aggregates, 3.2–9.8 s each, no `EXPLAIN`, no taint:
     source-scoped groups with size <  3    242,345 groups /  242,451 markets
 
 The rule is `CASE WHEN group_size >= 3 THEN 'g:'||group_id WHEN event_size >= 3 THEN 'e:'||event_id
-ELSE 'm:'||market_id END`, **source-scoped** — so the 242,451 markets in groups of one or two fall
-through to a near-unique `m:<market_id>`. Distinct `vm_id`s ≤ **272,470**, giving a mean group size of
-**≥ 2.42** — and the shape is **bimodal**, not a uniform 2.42: a small head of 29,739 large groups
-plus a long tail of near-singletons. That distinction matters, because CAL-P036's regime table was
-built on *uniform* synthetic rosters and cannot simply be read off at 2.42.
+ELSE 'm:'||market_id END`, **source-scoped** — so a market falls through to a near-unique
+`m:<market_id>` unless it sits in a group of **three or more**. That is the line that matters, and
+it is NOT the same line as "has a `group_id`":
+
+| virtual-market shape | markets | share |
+|---|---|---|
+| **effectively grouped** (`group_size >= 3`) | 428,707 | **63.85%** |
+| **near-unique** `m:<market_id>` (groups of 1–2, plus the 280 with no group at all) | **242,731** | **36.15%** |
+| total | 671,438 | 100% |
+
+**242,451 + 280 = 242,731**, and it partitions the population exactly against the 428,707
+(`428,707 + 242,731 = 671,438`). The same split is what produces the distinct-`vm_id` figure this
+section already carried: `29,739 + 242,731 = ` **272,470**, giving a mean group size of **≥ 2.42**.
+
+The shape is therefore **bimodal**, not a uniform 2.42: a small head of 29,739 large groups plus a
+long tail of near-singletons **more than a third of the population deep**. That distinction matters,
+because CAL-P036's regime table was built on *uniform* synthetic rosters and cannot simply be read
+off at 2.42.
 
 So the shapes were re-measured on a synthetic roster reproducing the real bimodal distribution
 (659,077 rows, 272,470 distinct `vm_id`s — 1.5% under the true roster, from rounding the big-group
@@ -465,8 +484,20 @@ mean to an integer):
 **Three conclusions, and one of them is a correction to a number this document already carries.**
 
 1. **CAL-P036's headline 439.7 MB is 257.0 MB in production — overstated 1.71x.** It was measured at
-   group size 1 on the premise that *"`vm_id` is near-unique in this population"*. Production is at
-   2.42 and 99.96% of markets carry a group. The premise described 0.04% of the rows.
+   group size 1 on the premise that *"`vm_id` is near-unique in this population"*. Production's mean
+   is 2.42, so the premise overstates — but it describes **36.15% of the rows, not 0.04%**, and the
+   difference between those two readings is the whole reason this correction needed a correction of
+   its own (codex B2, 2026-08-11; see the rider below).
+
+   > ⚠️ **The 0.04% this document carried until CAL-P040 was the wrong denominator, and it was wrong
+   > in the flattering direction.** It counted only `group_id IS NULL` — 280 markets — as if *having*
+   > a `group_id` made a market an effectively grouped virtual market. It does not: the rule needs
+   > `group_size >= 3`, so all **242,731** markets in groups of one or two are near-unique too. The
+   > premise was not describing a rounding error in the population; it was describing **more than a
+   > third of it.** CAL-P036's decision and the 257.0 MB measurement both survive unchanged — the
+   > shipped form still beats the pre-P036 accumulator by 102.8 MB at the real shape, and that
+   > number was measured at the bimodal distribution, not derived from the share. **Only the framing
+   > was wrong, and only in the direction of making a stale premise look harmless.**
 2. **Its decision was nevertheless right, and is now confirmed rather than assumed.** At the real
    shape the shipped form beats the pre-P036 accumulator by 102.8 MB of peak AND beats the pair-set
    draft it rejected by 79.1 MB. The question it left open because the sign was unknowable resolves
@@ -496,9 +527,13 @@ queries, and the cause was two SQL keywords read as function calls by a `name(` 
     WITH x AS MATERIALIZED (...) ->  "`materialized()` is not on the allowlist of functions"
 
 Both messages name a function that does not exist, which is why the shape of the bug survived three
-encounters — each window read it as a missing allowlist entry, worked around it, and moved on. It is
-why the production group-size distribution above is still unmeasured: it is the number that decides
-the sign of CAL-P036's fix, and the tool that would measure it was refusing the query.
+encounters — each window read it as a missing allowlist entry, worked around it, and moved on. It
+was **why the production group-size distribution went unmeasured for three windows**: it is the
+number that decides the sign of CAL-P036's fix, and the tool that would measure it was refusing the
+query. **That is past tense as of CAL-P037** — the distribution is measured in the section above,
+and by a route that never needed this rail at all (three plain aggregates over two columns). The
+refusal delayed the measurement; it never actually prevented it, which is its own lesson and is
+recorded there.
 
 **The two fixes are deliberately different, and the difference is the whole point:**
 
@@ -2177,3 +2212,66 @@ on the publish converging, or on elapsed time.
 If N turns out unmeasurable — i.e. too few rows carry BOTH volume and adequate snapshot density to
 validate the proxy — then tier 2 has no empirical basis and item 1 comes back with a real choice
 (ship tier 1 + unknown only, or keep the old bar). Flagged now so it is not a surprise later.
+
+---
+
+## ✅ THE MEMORY CEILING MOVED, AND EVERY MEMORY NUMBER IN THIS DOCUMENT IS NOW DATED (CAL-P040, 2026-08-11)
+
+Alex upgraded `worker-heavy` from **Standard-1X (512 MB) to Standard-2X (1024 MB)** on the evening
+of 2026-08-11. Measured at CAL-P040's Phase 0, four minutes after the dyno came up:
+
+    worker-heavy (Standard-2X)   worker-heavy.1: up 2026/08/11 13:50:05 -0700
+    --concurrency=2  --max-memory-per-child=200000
+
+**This retires the wall four consecutive queues were measuring against, and it should be read as
+retiring their CONCLUSIONS, not their measurements.** CAL-P033's 505/512, CAL-P036's 507/512 and
+CAL-P039's 488/512 were all correct, and all against a ceiling that no longer exists. The 20:15Z
+beat died `SystemExit` at 488 MB with **536 MB of headroom it would now have**.
+
+What survives unchanged: the `plan_units` allocation work (CAL-P036/P037) is still worth what it
+measured — a build with headroom is not a build that should waste it, and `--concurrency=2` means
+two children share the 1 GB. What does NOT survive is any sentence in this document of the form
+*"the beat cannot complete because it runs out of memory."* That is now an open question with a
+dated answer owed from the first uninterrupted beat on the new dyno.
+
+⚠️ **And one thing did NOT move with the dyno: `--max-memory-per-child=200000` (≈195 MB).** One
+child is measured at 488 MB — **2.5× over its own per-child cap** — and that was equally true at
+512 MB. It is recorded here as a thing to check, deliberately NOT as a defect: Celery's
+`worker_max_memory_per_child` retires a child *after* a task returns, so it cannot be the mid-task
+`SystemExit`. It is the wrong shape to be the bug that has been killing beats, and the right shape
+to be the next one — a child that legitimately exceeds it is replaced between beats, which is
+invisible until it isn't.
+
+### The rule this cycle adds — STATE THE DENOMINATOR WITH EVERY SHARE
+
+Recommended by INT-045 after the second consecutive calibration cycle whose headline NUMBER was
+wrong while its DECISION was right, and adopted here because CAL-P040 then found the third instance
+in the same paragraph the rule was written about:
+
+> A percentage without its denominator is not a measurement, it is a mood. Every share published by
+> this lane names the count and the population it is over.
+
+The failure mode is specific and it is not carelessness — in all three instances the number was
+computed correctly from a denominator that answered a *slightly different question* than the
+sentence around it. `99.96% of markets carry a group` is TRUE. It is simply not the same claim as
+`99.96% of markets are effectively grouped`, because the identity rule needs `group_size >= 3`; the
+real figure is 63.85%. Stating the denominator inline is what makes the substitution visible,
+because the two questions have visibly different denominators the moment you have to write them
+down.
+
+### Sequencing fact for whoever deploys the calibration stack, MEASURED
+
+`_main_input_fingerprint` over the four `inspect.getsource()` roots, computed on each head:
+
+| head | digest | cursor |
+|---|---|---|
+| `38c0bce8` — CAL-P037 + CAL-P038 + CAL-P039 | `e0048938f513e814c72cb35aa8732d65` | **survives** |
+| CAL-P040 (the roster predicate) | `e7e439ac6ca279ffd3ee69264a0d8c61` | **reset to 0** |
+
+The base digest is **identical to the `input_fingerprint` in the live production phase ledger**,
+which is the strongest available proof that CAL-P037/P038/P039 do not touch a hashed root: three
+queues of work can merge without costing the walk a single unit. **Only CAL-P040's predicate
+resets it**, exactly as `GO-CAL-P039-EXCEPTION.md` accepted — but the grant priced that reset at
+108 banked units, and it is **123/128** as of 20:31Z. If the walk completes before the deploy, the
+publish-gate verdict it produces is ruling 024's owed census and it must be captured BEFORE the
+deploy lands, because the deploy destroys the cursor that produced it.
