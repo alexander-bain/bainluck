@@ -717,9 +717,39 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
 
-    by_vm: dict[str, list[int]] = {}
-    seen: dict[str, set[int]] = {}
-    members_by_vm: dict[str, set[str]] = {}
+    # CAL-P036: accumulate per BUCKET, never per ``vm_id``. The output is
+    # byte-identical to the per-``vm_id`` accumulator this replaces; the reason
+    # to replace it is that the intermediates dominated the beat's peak RSS.
+    #
+    # The old shape allocated one container per DISTINCT ``vm_id`` in each of
+    # three dicts, and ``vm_id`` is near-unique in this population: an ungrouped
+    # market's virtual question is ``m:<market_id>``, so a 669,383-row roster
+    # carries ~669,383 distinct ``vm_id``s, not the ~1,600 a "group" key
+    # suggests. An empty CPython ``set`` costs 216 bytes whether it holds one
+    # element or none, so ``seen`` and ``members_by_vm`` alone reserved
+    #
+    #     669,383 x 216 x 2  =  276 MB of container headers
+    #
+    # before a single byte of payload, plus ~41 MB for ``by_vm``'s one-element
+    # lists. Measured on a synthetic roster at the production cardinality, the
+    # transient peak inside this function was ~440 MB over and above the roster
+    # itself, on a worker with a 512 MB limit — i.e. THIS FUNCTION was the
+    # capacity wall, not the retained cursor and not the retained roster.
+    #
+    # ``buckets`` is fixed (128 in production), so keying the accumulators on the
+    # bucket index instead turns ~2.0M containers into ~384 and makes the
+    # overhead independent of population size. The payload is unchanged; only the
+    # boxes holding it are.
+    by_bucket_vm: dict[int, set[str]] = {}
+    by_bucket_members: dict[int, set[str]] = {}
+    # (vm_id, market_id) pairs, per bucket. This preserves the ORIGINAL dedupe
+    # semantics exactly, which are per ``vm_id`` and NOT global: the roster
+    # carries a row per (market, source) and ``vm_id`` is derived with
+    # source-scoped group/event sizes, so one ``market_id`` can legitimately
+    # appear under two different ``vm_id``s. The old code kept it once per
+    # ``vm_id`` list; deduping on ``market_id`` alone here would silently drop
+    # one of them and shrink a chunk's restriction predicate.
+    by_bucket_pairs: dict[int, set[tuple[str, int]]] = {}
     for row in rows:
         raw_vm = _get(row, UNIT_KEY_VM_ID)
         raw_market = _get(row, "market_id")
@@ -727,18 +757,16 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
             raise ValueError("roster row is missing vm_id or market_id; cannot plan units")
         vm_id = str(raw_vm)
         market_id = int(raw_market)
-        bucket = by_vm.setdefault(vm_id, [])
-        market_seen = seen.setdefault(vm_id, set())
-        # One market belongs to exactly one vm_id, but the roster carries a row
-        # per (market, source) and a defensive dedupe keeps the market_ids list
-        # a true set — the chunk restriction predicate is built from it.
-        if market_id not in market_seen:
-            market_seen.add(market_id)
-            bucket.append(market_id)
+        # Computed per ROW rather than memoised per ``vm_id``: a memo dict would
+        # reintroduce exactly the per-``vm_id`` entry this change removes. It is
+        # one short-string hash, and the beat is minutes long.
+        index = bucket_of(vm_id, buckets)
+        by_bucket_vm.setdefault(index, set()).add(vm_id)
+        by_bucket_pairs.setdefault(index, set()).add((vm_id, market_id))
         # The membership digest is per ROSTER ROW, not per market: source and
         # is_grouped are exactly what generation_fingerprint watches globally,
         # and a unit that resumes must be able to see them change.
-        members_by_vm.setdefault(vm_id, set()).add(
+        by_bucket_members.setdefault(index, set()).add(
             "\x1e".join(
                 (
                     str(market_id),
@@ -749,24 +777,17 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
             )
         )
 
-    grouped: dict[int, list[str]] = {}
-    for vm_id in sorted(by_vm):
-        grouped.setdefault(bucket_of(vm_id, buckets), []).append(vm_id)
-
     chunks: list[UnitChunk] = []
-    for index in sorted(grouped):
-        vm_ids = grouped[index]
-        market_ids: list[int] = []
-        members: set[str] = set()
-        for vm_id in vm_ids:
-            market_ids.extend(by_vm[vm_id])
-            members |= members_by_vm[vm_id]
+    for index in sorted(by_bucket_vm):
+        # ``sorted`` on each set reproduces the old ordering: the previous code
+        # appended ``vm_id``s in ``sorted(by_vm)`` order and sorted both
+        # ``market_ids`` and ``members`` on the way into the chunk.
         chunks.append(
             UnitChunk(
                 index=index,
-                vm_ids=tuple(vm_ids),
-                market_ids=tuple(sorted(market_ids)),
-                members=tuple(sorted(members)),
+                vm_ids=tuple(sorted(by_bucket_vm[index])),
+                market_ids=tuple(sorted(m for _vm, m in by_bucket_pairs[index])),
+                members=tuple(sorted(by_bucket_members[index])),
                 buckets=buckets,
             )
         )
