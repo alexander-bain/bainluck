@@ -18,8 +18,9 @@ import re
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql import operators
 
-from app.models import Event, Sport
+from app.models import Event, FuturesMarket, Sport
 from app.routes import events as events_route
 
 
@@ -162,17 +163,27 @@ def test_event_where_has_no_unindexable_fts_arm():
     )
     assert "_fts_filter(Event.away_team_name" not in where_region
 
-    sql = _compile(select(Event.id).where(events_route._event_name_match("fed", None)))
-    ilike_at = sql.index("ILIKE")
-    fts_at = sql.index("to_tsvector")
-    between = sql[ilike_at:fts_at]
-    assert " AND " in between, (
-        "the FTS arm is no longer AND-ed to the ILIKE arm. If it is OR-ed at the "
-        "top level, every search seq-scans events — that was the 20s median."
+    # LAT-P035 AMENDED THIS AGAIN, and moved it off string surgery onto the
+    # expression tree. The word arm legitimately gained a third disjunct — the
+    # `numnode(...) = 0` lexeme-less guard — which sorts BEFORE the first
+    # `to_tsvector` in the compiled text, so the old "no OR between the ILIKE and
+    # the FTS" slice began failing on a change that preserved the exact property it
+    # was defending. A guard that a legal edit trips is a guard that gets deleted.
+    #
+    # The property is structural, so assert it structurally: the top level is AND,
+    # one side is the substring arm, the other is the word arm. Internal ORs inside
+    # either side are fine and always were (home OR away); a top-level OR is what
+    # costs the seq scan.
+    expr = events_route._event_name_match("fed", None)
+    assert expr.operator is operators.and_, (
+        "the event name match is no longer a top-level AND. If the FTS arm is "
+        "OR-ed in, every search seq-scans events — that was the 20s median."
     )
-    assert " OR " not in between.split(" AND ")[-1], (
-        "an OR crossed the ILIKE/FTS boundary"
-    )
+    substring_arm, word_arm = list(expr.clauses)
+    assert substring_arm.operator is operators.or_
+    substring_sql, word_sql = _compile(substring_arm), _compile(word_arm)
+    assert "ILIKE" in substring_sql and "to_tsvector" not in substring_sql
+    assert "to_tsvector" in word_sql and "ILIKE" not in word_sql
 
 
 def test_ts_rank_cd_still_orders_results():
@@ -1347,3 +1358,147 @@ class TestDidYouMeanDoesNotSubstituteForFilteredRows:
             "the substring guard moved outside the total_count == 0 branch and "
             "now costs every search an extra EXISTS"
         )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P035 / #1758 (futures half) + the empty-tsquery hole it exposed
+# ---------------------------------------------------------------------------
+
+class TestFuturesNameArmRequiresWordAboutness:
+    """`nba champion` must stop returning nine ITF tennis set markets.
+
+    Measured live on v3775: rank 1 was the real "NBA: 2027 Champion" and ranks
+    2-10 were "Set N Winner: … vs Zhiyenbayeva" — `nba` is spelled inside the
+    surname and `champion` expands to `winner`. See `_futures_name_match_term`
+    for why this had to be the WHERE and not the tier (only THREE of the twelve
+    name-arm rows pass the word test, so sinking the rest still fills the page
+    with them).
+    """
+
+    def _sql(self, term, expansion=None):
+        return _compile(
+            select(FuturesMarket.id).where(
+                events_route._futures_name_match_term(term, expansion)
+            )
+        )
+
+    def test_both_halves_are_present_and_anded(self):
+        """AND-ed, never OR-ed — 1c's lesson, restated for futures.
+
+        One unindexable arm inside a top-level OR forces a seq scan for the whole
+        predicate. AND-ed, the trigram GIN drives and `to_tsvector` is a recheck
+        over the rows it already returned. Measured on production: blocks were
+        IDENTICAL (1,234) before and after, warm exec 9.8ms -> 4.8ms.
+        """
+        sql = self._sql("nba")
+        assert "ILIKE" in sql, (
+            "the substring arm is gone — that is the half ix_futures_markets_name_trgm "
+            "can actually serve"
+        )
+        assert "to_tsvector" in sql and "websearch_to_tsquery" in sql, (
+            "the word-boundary arm is gone; `nba champion` returns Zhiyenbayeva again"
+        )
+        ilike_at = sql.index("ILIKE")
+        fts_at = sql.index("to_tsvector")
+        assert " AND " in sql[ilike_at:fts_at], (
+            "the FTS arm is no longer AND-ed to the ILIKE arm. OR-ed at the top "
+            "level it defeats the trigram index for the whole predicate."
+        )
+
+    def test_the_arm_is_used_on_both_the_single_and_multi_term_paths(self):
+        """The two branches are easy to fix by halves — `nba champion` is
+        multi-term, so a single-term-only fix would look green on the very query
+        that motivated the change while leaving `champion` alone broken."""
+        body = _strip_comments(inspect.getsource(events_route.search_events))
+        # Anchored on the futures block specifically: `if len(terms) > 1:` also
+        # appears earlier for the EVENT team filter, and partitioning on the first
+        # one silently tested the wrong region (caught on the first run of this test).
+        region = body[body.index("def _outcome_id_match"):]
+        region = region[region.index("if len(terms) > 1:"):]
+        multi, sep, single = region.partition("\n    else:")
+        assert sep, "the futures single/multi-term branch structure changed"
+        assert region.count("_futures_name_match_term(") == 2, (
+            "the futures name arm is built somewhere other than the two known "
+            "call sites — one path is not word-tested"
+        )
+        assert "_futures_name_match_term(" in multi, "the MULTI-term path lost the word test"
+        assert "_futures_name_match_term(" in single, "the SINGLE-term path lost the word test"
+
+    def test_a_lexemeless_term_cannot_zero_the_conjunction(self):
+        """The empty-tsquery hole, which is a FALSE match and not a skipped one.
+
+        `websearch_to_tsquery('english','and')` is EMPTY and `tsvector @@ ''` is
+        FALSE, so an AND-ed word test over a stopword rejects every row. Confirmed
+        live on v3775 BEFORE the guard: `q=dodgers` returned 25 events and
+        `q=dodgers and cubs` returned 0. Without this the futures half also loses
+        gold probe `taylor swift pregnant by...?`, whose market matches only
+        through the literal term `by...?`.
+        """
+        for term in ("and", "by...?", "nba"):
+            assert "numnode" in self._sql(term), (
+                f"the lexeme-less guard is missing for {term!r}; a stopword or "
+                "punctuation-only term now rejects every row instead of abstaining"
+            )
+        assert "numnode" in _compile(
+            select(Event.id).where(events_route._event_name_match("and", None))
+        ), "the events arm lost the guard — `dodgers and cubs` returns zero events again"
+
+    def test_the_guard_abstains_rather_than_matches(self):
+        """`numnode(...) = 0` must be OR-ed IN BESIDE the FTS arms, not AND-ed.
+
+        AND-ed it would require the term to be lexeme-less, inverting the rule and
+        rejecting every real query.
+        """
+        sql = str(
+            select(FuturesMarket.id)
+            .where(events_route._futures_name_match_term("and", None))
+            .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        )
+        guard = "numnode(websearch_to_tsquery('english', 'and')) = 0"
+        assert guard in sql
+        after = sql[sql.index(guard) + len(guard):]
+        assert after.lstrip().startswith("OR"), (
+            "the lexeme-less guard is AND-ed, not OR-ed — that inverts it into a "
+            "requirement that the term be a stopword"
+        )
+
+    def test_the_outcome_arm_is_deliberately_not_word_tested(self):
+        """A DECISION, guarded so the next cycle makes it on purpose.
+
+        LAT-P035 measured that applying this rule to the outcome arm would cut its
+        candidate markets by ~95% (`fed`: 1,027 -> 47). Its page-level junk was
+        already removed by LAT-P033's tiering (verified live: `fed` returns 10/10
+        real Fed markets), so what remains is COST, not correctness — a separate
+        change needing its own before/after. If you are here because this failed,
+        you are changing recall on the arm whose emptying got LAT-P002 reverted.
+        """
+        body = _strip_comments(inspect.getsource(events_route.search_events))
+        outcome_def = body[body.index("def _outcome_id_match"):]
+        outcome_def = outcome_def[:outcome_def.index("\n    if len(terms)")]
+        # Every spelling of "word test", not just the compiled-SQL one. The first
+        # draft asserted only `to_tsvector`, and the mutation run walked straight
+        # through it: the route calls `_build_expanded_fts`, so the literal string
+        # `to_tsvector` never appears in this source at all.
+        for banned in ("_build_expanded_fts", "_fts_filter", "_term_has_no_lexemes",
+                       "_futures_name_match_term", "to_tsvector"):
+            assert banned not in outcome_def, (
+                f"the outcome arm gained a word test ({banned}). That is a ~95% "
+                "recall cut (measured on `fed`: 1,027 candidate markets -> 47) on an "
+                "arm whose contribution is already invisible at the page boundary — "
+                "measure it and give it its own gate, do not inherit this one's."
+            )
+
+
+def test_numnode_stays_readable_by_the_query_plan_rail():
+    """The plan rail must be able to EXPLAIN ANALYZE the search path's own SQL.
+
+    `db-query`'s `analyze` mode refuses any function not on the pure-function
+    allowlist BY NAME. The search predicate now calls `numnode`, so without this
+    entry the lane cannot measure the very query it just shipped — which is how a
+    latency lane goes blind. Found the hard way in this queue: the first
+    EXPLAIN ANALYZE of the new predicate was refused.
+    """
+    from app.utils import sql_read_guard
+
+    assert "numnode" in sql_read_guard._PURE_FUNCTIONS
+    assert "numnode" in sql_read_guard._ANALYZE_CALLABLE

@@ -117,6 +117,41 @@ def fetch_search(query: str, *, api: str, timeout: float) -> dict[str, Any]:
     return payload
 
 
+def _bucket_id_signature(candidates: list[dict[str, Any]]) -> list[list[str]]:
+    """The identity of a result, for stability comparison: bucket -> sorted ids.
+
+    Deliberately ignores rank WITHIN a bucket. The scorer grades membership, so a
+    reordering inside a bucket is not a change to the thing being measured, and
+    flagging it would cry wolf on every run.
+    """
+
+    by_bucket: dict[str, set[str]] = {}
+    for row in candidates:
+        by_bucket.setdefault(str(row.get("bucket")), set()).add(str(row.get("entity_id")))
+    return [[bucket, *sorted(ids)] for bucket, ids in sorted(by_bucket.items())]
+
+
+def _fetch_once(
+    query: str, *, api: str, timeout: float, sleep: float, retries: int
+) -> tuple[dict[str, Any], str | None]:
+    """One fetch with retries. Returns ``(payload, error)`` — never raises."""
+
+    error: str | None = None
+    for attempt in range(retries + 1):
+        try:
+            return fetch_search(query, api=api, timeout=timeout), None
+        except urllib.error.HTTPError as exc:
+            # Status is kept in the message: a 422 (the query the surface
+            # refuses) and a 429 (rate limit) must stay tellable apart when
+            # someone reads the unmeasured list.
+            error = f"HTTPError {exc.code}: {exc.reason}"
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        if attempt < retries:
+            time.sleep(sleep * (attempt + 2))
+    return {}, error
+
+
 def produce(
     items: list[tuple[str, str]],
     *,
@@ -124,34 +159,54 @@ def produce(
     sleep: float,
     timeout: float,
     retries: int = 2,
+    repeat: int = 1,
 ) -> dict[str, Any]:
     """Run each ``(probe_key, query)`` against /search and map every bucket.
 
     A fetch that fails after ``retries`` is recorded with ``error`` set, ``fetch_ok``
     False and NO candidates — never as an empty result (gotcha #53). The scorer
     reads both fields and reports the probe as unmeasured rather than as a miss.
+
+    ``repeat`` > 1 re-runs every probe and reports whether the answer was STABLE
+    (LAT-P035, Item 2). This exists because a score can be wrong in a way no
+    single run can show:
+
+    LAT-P034 measured bucket recall 39/44 -> 41/44 and found the 41st was not a
+    fix. ``search-gold-red-sox-001`` had flipped because the teams bucket returned
+    ``team:boston-red-sox`` on one run and ``team:boston-red-sox-mlb`` on the next
+    — the two duplicate rows of #1754, alternating, with bucket size 2 both times.
+    A +/-1 swing that no change to Search caused, reported as if it were one.
+
+    The fix has two halves and this is the general one. The registry adjudicates
+    THAT probe (both ids denote one club, so it is an ambiguity, not a coin flip);
+    this reports ANY probe whose answer moves between runs, including ones nobody
+    has noticed yet. A single run cannot distinguish "Search improved" from
+    "Search is unstable and I sampled the good side", and the difference decides
+    whether a queue's headline number means anything.
+
+    Instability is a first-class failure: ``main`` exits non-zero on it, exactly as
+    it does for a fetch failure, so a flapping gate can never read as a clean pass.
     """
 
     rows: list[dict[str, Any]] = []
-    for index, (probe_key, query) in enumerate(items):
-        error: str | None = None
-        payload: dict[str, Any] = {}
-        for attempt in range(retries + 1):
-            try:
-                payload = fetch_search(query, api=api, timeout=timeout)
-                error = None
-                break
-            except urllib.error.HTTPError as exc:
-                # Status is kept in the message: a 422 (the query the surface
-                # refuses) and a 429 (rate limit) must stay tellable apart when
-                # someone reads the unmeasured list.
-                error = f"HTTPError {exc.code}: {exc.reason}"
-                if attempt < retries:
-                    time.sleep(sleep * (attempt + 2))
-            except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-                error = f"{type(exc).__name__}: {exc}"
-                if attempt < retries:
-                    time.sleep(sleep * (attempt + 2))
+    pending = len(items) * max(1, repeat)
+    for probe_key, query in items:
+        observations: list[dict[str, Any]] = []
+        for _ in range(max(1, repeat)):
+            payload, error = _fetch_once(
+                query, api=api, timeout=timeout, sleep=sleep, retries=retries
+            )
+            observations.append({"payload": payload, "error": error})
+            pending -= 1
+            if pending > 0:
+                time.sleep(sleep)
+
+        # The FIRST observation is the graded one, so a single-run file and the
+        # first run of a repeated file are byte-identical in the fields the
+        # scorer reads. Repetition adds a verdict; it never changes the answer.
+        first = observations[0]
+        error = first["error"]
+        payload = first["payload"]
         row: dict[str, Any] = {
             "probe_key": probe_key,
             "query": query,
@@ -170,10 +225,38 @@ def produce(
             row["bucket_sizes"] = {
                 bucket: len(payload.get(bucket) or []) for bucket in BUCKET_MAP
             }
+
+        if repeat > 1:
+            # A run that FAILED to fetch is not evidence of instability — it is
+            # absence of evidence. Only successful observations are compared, and
+            # a probe with fewer than two of them is reported as unverified
+            # rather than as stable (gotcha #53: an empty answer and no answer
+            # must never read the same).
+            good = [o for o in observations if o["error"] is None]
+            variants = [_bucket_id_signature(map_response(o["payload"])) for o in good]
+            unique = [v for i, v in enumerate(variants) if v not in variants[:i]]
+            row["stability"] = {
+                "runs": len(observations),
+                "compared": len(good),
+                "verdict": (
+                    "UNVERIFIED" if len(good) < 2
+                    else "STABLE" if len(unique) == 1
+                    else "FLAPPING"
+                ),
+            }
+            if len(unique) > 1:
+                row["stability"]["observed_variants"] = unique
+
         rows.append(row)
-        if index + 1 < len(items):
-            time.sleep(sleep)
     fetched = sum(1 for row in rows if row.get("fetch_ok"))
+    flapping = [
+        row["probe_key"] for row in rows
+        if (row.get("stability") or {}).get("verdict") == "FLAPPING"
+    ]
+    unverified = [
+        row["probe_key"] for row in rows
+        if (row.get("stability") or {}).get("verdict") == "UNVERIFIED"
+    ]
     return {
         "metadata": {
             "adapter_version": ADAPTER_VERSION,
@@ -181,6 +264,10 @@ def produce(
             "probes": len(rows),
             "fetch_ok": fetched,
             "fetch_failed": len(rows) - fetched,
+            "repeat": repeat,
+            "flapping": len(flapping),
+            "flapping_probes": flapping,
+            "unverified_stability_probes": unverified,
         },
         "results": rows,
     }
@@ -214,6 +301,13 @@ def main() -> int:
              "response parses as a phantom zero-recall result",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="run every probe N times and report STABLE/FLAPPING per probe; "
+             "exits non-zero on any flap (LAT-P035 — see produce.__doc__)",
+    )
     args = parser.parse_args()
 
     if bool(args.registry) == bool(args.queries_file):
@@ -229,10 +323,19 @@ def main() -> int:
         ]
         items = [(f"explore-{index:03d}", query) for index, query in enumerate(queries, 1)]
 
-    payload = produce(items, api=args.api, sleep=args.sleep, timeout=args.timeout)
+    payload = produce(
+        items, api=args.api, sleep=args.sleep, timeout=args.timeout, repeat=args.repeat
+    )
     Path(args.out).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps(payload["metadata"], indent=2))
-    return 1 if payload["metadata"]["fetch_failed"] else 0
+    meta = payload["metadata"]
+    print(json.dumps(meta, indent=2))
+    if args.repeat > 1:
+        # Printed as its own line, not buried in the JSON: the whole point is that
+        # a reader who only skims cannot come away with a number that a flap made up.
+        print(f"SEARCH BUCKET STABILITY: {meta['flapping']} flapping over {args.repeat} runs")
+        for probe_key in meta["flapping_probes"]:
+            print(f"  FLAPPING: {probe_key}")
+    return 1 if (meta["fetch_failed"] or meta["flapping"]) else 0
 
 
 if __name__ == "__main__":

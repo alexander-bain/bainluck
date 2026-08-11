@@ -247,7 +247,7 @@ _PURE_FUNCTIONS = frozenset(
         "jsonb_path_query", "jsonb_pretty", "jsonb_strip_nulls", "jsonb_typeof",
         "to_json", "to_jsonb",
         # Full-text search and trigram — this product's search path
-        "phraseto_tsquery", "plainto_tsquery", "setweight", "similarity",
+        "numnode", "phraseto_tsquery", "plainto_tsquery", "setweight", "similarity",
         "to_tsquery", "to_tsvector", "ts_headline", "ts_rank", "ts_rank_cd",
         "websearch_to_tsquery", "word_similarity",
         # Read-only introspection: sizes are the reason a latency lane opens a plan.
