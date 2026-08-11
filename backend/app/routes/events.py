@@ -981,6 +981,94 @@ def _build_expanded_fts(column, term: str, expansion: str | None):
     return base
 
 
+def _event_name_match(term: str, expansion: str | None):
+    """One term against an event's team names: substring RECALL and word ABOUT-NESS.
+
+    LAT-P034/#1732 (the events half). The futures half of #1732 was a RANKING bug —
+    the real Fed markets were present and scored zero. The events bucket is a
+    different defect with the same symptom: there is nothing to re-rank, because
+    **no event is about the Fed at all**. `GET /api/events/search?q=fed` returned 25
+    rows on production 2026-08-11 (v3771) and all 25 were people whose names merely
+    start with those letters — Federico Aguilar Cardozo, Fedoryshyn Ivan x7,
+    Federica Trevisan, Fedorova, Federico Coria. Every row tied at `ts_rank_cd` 0.0
+    (`to_tsvector('Federico Coria')` yields `federico`, never the lexeme `fed`), so
+    `status_order` then `commence_time DESC` decided the page: a wall of settled
+    minor-tour tennis, presented as the answer.
+
+    **The product judgment, stated before it is encoded: a query is about an event
+    when it names a whole word of one of its teams, not when it happens to be
+    spelled inside one.** `fed` inside `Federico` is a coincidence of spelling;
+    `sox` in `Red Sox` is the name.
+
+    This is not a new judgment for this file — `_build_team_search_filter` made
+    exactly this call for the TEAMS bucket, one table over, citing this same query
+    class ("`IPO` -> Asteras Tripolis, `messi` -> ACR Messina"). The events bucket
+    is the same surface with the same disease and simply never got the same rule.
+
+    **Recall is the risk, so it was measured, not argued.** 59 single-term queries
+    against production 2026-08-11, counting events in the live search window both
+    ways:
+
+        42 IDENTICAL   arsenal 28, barcelona 45, boston 76, bruins 5, celtics 17,
+                       chiefs 25, cubs 32, dodgers 67, jets 35, juventus 25,
+                       lakers 6, LAKER 6, liverpool 35, miami 113, patriots 24,
+                       rangers 92, sox 46, texas 100, united 396, utah 49,
+                       yankees 17, ...
+        6  ZEROED      fed 33, re 6597, ipo 13, pats 12, apple 11, yank 17
+        11 REDUCED     la 4414->154, city 435->400, sun 213->69, mets 81->64,
+                       nets 57->3, milan 49->21, real 227->179, paris 65->50,
+                       heat 36->15, reds 23->20, messi 8->4
+
+    Note `laker` survives at 6: English stemming folds `Lakers` -> `laker`, so the
+    singular/plural class — the one people actually type — costs nothing. The
+    dropped rows were read, not assumed: `nets` shed Hornets/Kuznetsova/Donetsk,
+    `sun` shed Samsung/Sunrisers, `city` shed "Zero Tenacity" and Intercity, `pats`
+    shed Korpatsch, `real` shed Villarreal and Montreal.
+
+    **Two of those losses are real, and they are named rather than hidden:**
+
+    - `yank` no longer finds the Yankees (17 -> 0). A truncation.
+    - `milan` no longer finds "Inter Milano" / "Olimpia Milano" (it still finds the
+      21 events spelled "Milan"). Foreign-language morphology, which the English
+      stemmer does not fold.
+
+    Both are the same class — the query is a word PREFIX of the real team's word —
+    and prefix matching cannot be the rule, because `fed` is a prefix of `Federico`
+    and `apple` of `Appleton` by exactly the same construction. Separating them
+    needs the team registry ("Yankees is a team, Federico is a first name"), which
+    is the alias/identity layer, not a WHERE clause here. Progressive typing is
+    also already served by `/typeahead`, which keeps its substring ILIKE (:3187)
+    and is deliberately untouched. Filed as a follow-up; do not "fix" it with a
+    minimum-length constant, which was measured and lets `apple` -> Appleton back in.
+
+    **Shape matters as much as semantics.** The ILIKE stays in the predicate and
+    the FTS arm is AND-ed, never OR-ed. LAT-P002/#1494 (1c) established that ONE
+    unindexable arm inside a top-level OR forces a seq scan of `events` for the
+    whole predicate — that was the 20s median. AND-ed, the trigram GIN still drives
+    the scan and `to_tsvector` is a recheck on the rows it already returned.
+    Measured on production, EXPLAIN (ANALYZE, BUFFERS), warm second passes:
+
+        query   before (exec/blocks)   after (exec/blocks)
+        fed        4.5ms /   315         2.4ms /   215
+        re       150.0ms / 6,605       116.5ms / 6,371
+        la        72.3ms / 6,605        90.9ms / 6,420
+
+    `re` and `la` are two-character queries that pg_trgm cannot serve at all
+    (3+ alphanumerics — see the trigram gotcha), so both forms seq-scan and the
+    recheck is pure CPU: +18ms on `la`, to stop returning 4,414 rows of noise.
+    """
+    return and_(
+        or_(
+            _build_expanded_ilike(Event.home_team_name, term, expansion),
+            _build_expanded_ilike(Event.away_team_name, term, expansion),
+        ),
+        or_(
+            _build_expanded_fts(Event.home_team_name, term, expansion),
+            _build_expanded_fts(Event.away_team_name, term, expansion),
+        ),
+    )
+
+
 def _build_team_search_filter(q: str):
     """Gate the dedicated Teams surface on a genuine full-text match — every query
     token must appear as a whole lexeme in the team's name / abbreviation /
@@ -1955,19 +2043,10 @@ async def search_events(
     # allows them to land in different columns, where FTS required them all in one).
     # The frozen gold set is the guard.
     if len(terms) > 1:
-        ilike_conditions = []
-        for term, expansion in expanded:
-            ilike_conditions.append(or_(
-                _build_expanded_ilike(Event.home_team_name, term, expansion),
-                _build_expanded_ilike(Event.away_team_name, term, expansion),
-            ))
-        team_filter = and_(*ilike_conditions)
+        team_filter = and_(*[_event_name_match(t, e) for t, e in expanded])
     else:
         term, expansion = expanded[0]
-        team_filter = or_(
-            _build_expanded_ilike(Event.home_team_name, term, expansion),
-            _build_expanded_ilike(Event.away_team_name, term, expansion),
-        )
+        team_filter = _event_name_match(term, expansion)
 
     # LAT-P002/#1494 (1b): a league token must NOT widen the event predicate.
     # The old code OR'd `Sport.key.in_(sport_alias_keys)` in bare, so "nba champion"
@@ -1986,13 +2065,7 @@ async def search_events(
     if sport_alias_keys:
         league_scope = Sport.key.in_(sport_alias_keys)
         if non_league_expanded:
-            remaining = [
-                or_(
-                    _build_expanded_ilike(Event.home_team_name, t, e),
-                    _build_expanded_ilike(Event.away_team_name, t, e),
-                )
-                for t, e in non_league_expanded
-            ]
+            remaining = [_event_name_match(t, e) for t, e in non_league_expanded]
             league_scope = and_(league_scope, *remaining)
         # LAT-P031/#1494: the league arm is a separate UNION arm, NOT `or_()`.
         # See `_event_candidate_filter` below for the measurement and the why.
@@ -2173,6 +2246,66 @@ async def search_events(
     # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
     fuzzy_corrected: str | None = None
     if total_count == 0 and not degraded and len(terms) == 1 and not sport_alias_keys:
+        # LAT-P034: "did you mean" means YOUR QUERY MATCHED NOTHING. Since
+        # `_event_name_match` added the word-boundary arm, a query can match rows
+        # and still show zero — and firing a trigram correction there replaces one
+        # noise class with a worse one. Measured on production 2026-08-11, the
+        # correction each newly-empty query would have drawn:
+        #
+        #     ipo  -> "IPK"       (sim 0.333)     yank -> "Petr Yan"  (sim 0.273)
+        #     pats -> "Paterno"   (sim 0.300)     sox  -> "Sora"      (sim 0.286)
+        #     fed  -> none        apple -> none
+        #
+        # `yank` is the case that decides it: today it returns Yankees games, and a
+        # silent substitution to an MMA fighter's fights is strictly worse than an
+        # honest empty bucket. So the correction is offered only when the SUBSTRING
+        # recall is also empty — i.e. when the query really did match nothing,
+        # which is the condition this fallback was written for.
+        #
+        # Cost is confined to the already-empty path: one EXISTS, short-circuiting
+        # on the first row, and only when we are about to do the (more expensive)
+        # trigram team lookup anyway.
+        try:
+            substring_only = [
+                or_(
+                    _build_expanded_ilike(Event.home_team_name, t, e),
+                    _build_expanded_ilike(Event.away_team_name, t, e),
+                )
+                for t, e in expanded
+            ]
+            had_substring_match = await db.scalar(
+                select(
+                    select(Event.id)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .where(*substring_only, *event_scope_conditions)
+                    .exists()
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — never break search on the guard
+            # Recovered on ANY failure, not just a timeout. This is the one stage
+            # guard that deliberately departs from the `if not _is_query_timeout:
+            # raise` pattern the four essential stages use, for two reasons: it is
+            # best-effort instrumentation on a path that has already produced zero
+            # rows, so raising would turn "we could not decide whether to offer a
+            # correction" into a 500; and ANY error here — not only a timeout —
+            # leaves the transaction aborted, which would fail every later stage on
+            # InFailedSqlTransaction. That is the #1494 (1e) failure mode, and it
+            # does not care what aborted the transaction.
+            logger.warning("search word-boundary guard failed for %r: %s", q, exc)
+            await _recover_search_session(db, _deadline)
+            # Unknown means "do not substitute": the guard exists to prevent a
+            # correction, so failing it open would defeat it.
+            had_substring_match = True
+    else:
+        had_substring_match = False
+
+    if (
+        total_count == 0
+        and not degraded
+        and len(terms) == 1
+        and not sport_alias_keys
+        and not had_substring_match
+    ):
         try:
             # LAT-P002/#1494 (1c): the WHERE uses the `%` OPERATOR, which the
             # ix_teams_name_trgm GIN can serve; `similarity(a,b) > 0.25` is the

@@ -161,7 +161,7 @@ _FUTURES_SEEDS = [
 
 
 async def _seed(session):
-    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
 
     nba = Sport(key="basketball_nba", name="NBA")
     golf = Sport(key="golf_pga", name="PGA")
@@ -178,6 +178,47 @@ async def _seed(session):
             status="scheduled",
         )
     )
+
+    # LAT-P034/#1732: the events bucket's word-boundary rule is a RECALL change
+    # decided entirely by Postgres text semantics — `to_tsvector` tokenisation and
+    # English stemming. Neither can be mocked, and until now this gate had exactly
+    # ONE event assertion in the file (the bare-league query), so an event-recall
+    # regression had nowhere to fail. These four rows are the smallest seed that
+    # separates the classes the rule must tell apart:
+    #
+    #   Federico Coria  — the query `fed` is a word PREFIX. Must NOT match.
+    #   Boston Celtics  — `celtics` is the whole word. Must match.
+    #   LA Lakers       — `laker` matches only because English stemming folds
+    #                     Lakers -> laker. If the config ever stops being
+    #                     'english', the singular/plural class silently dies and
+    #                     this is the only test that would notice.
+    #   Sunrisers Leeds — `sun` is a prefix of Sunrisers. Must NOT match, and it
+    #                     must not take Connecticut Sun down with it.
+    # The did-you-mean fallback resolves its correction against `teams`, and this
+    # file seeded no team at all — so the fallback could never fire here and the
+    # POSITIVE direction of LAT-P034's guard ("a query that genuinely matches
+    # nothing still gets its correction") had nothing to assert against.
+    #
+    # `similarity('Boston Celtics', 'celtcs')` = **0.294**, measured on production
+    # rather than guessed, against the 0.25 threshold the route pins with
+    # `SET LOCAL pg_trgm.similarity_threshold`. The margin is real but thin: if
+    # this team's NAME changes, re-measure instead of assuming the test still
+    # exercises the path.
+    session.add(Team(sport_id=nba.id, name="Boston Celtics", abbreviation="BOS"))
+
+    for home, away in [
+        ("Federico Coria", "Vitaliy Sachko"),
+        ("Connecticut Sun", "Sunrisers Leeds"),
+    ]:
+        session.add(
+            Event(
+                sport_id=golf.id,
+                home_team_name=home,
+                away_team_name=away,
+                commence_time=datetime.now(timezone.utc) + timedelta(days=2),
+                status="scheduled",
+            )
+        )
 
     for external_id, name, outcomes in _FUTURES_SEEDS:
         market = FuturesMarket(
@@ -606,4 +647,114 @@ async def test_multi_term_short_token_still_filters_after_lat_p010(search):
     )
     assert "US Recession in 2026?" in names, (
         f"multi-term recall broke: got {names!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# LAT-P034 / #1732 (events half) — word about-ness, on a REAL Postgres
+# --------------------------------------------------------------------------
+#
+# Every other test in this file guards FUTURES recall. The events bucket had one
+# assertion (the bare-league query) and no coverage at all of the predicate that
+# decides which events a query returns — so LAT-P034 changed event recall with
+# nothing in CI able to fail. These tests close that, and they belong HERE rather
+# than in the mocked unit suite for a specific reason: the rule is `to_tsvector`
+# tokenisation plus English stemming, which is Postgres behaviour. A mocked
+# session compiles the SQL and never runs it, so it can prove the SHAPE is right
+# and cannot prove the ANSWER is.
+
+
+def _event_pairings(payload: dict) -> list[str]:
+    return [
+        f"{e.get('home_team')} vs {e.get('away_team')}"
+        for e in (payload.get("results") or [])
+    ]
+
+
+async def test_a_word_prefix_is_not_a_match(search):
+    """The payoff, stated as a test: `fed` must not return Federico Coria.
+
+    This is #1732's events half. In production on 2026-08-11 the query returned
+    25 rows and every one was a person whose name merely starts with those
+    letters, tied at ts_rank_cd 0.0 and ordered by kickoff time.
+    """
+    payload = await search("fed")
+    assert _event_pairings(payload) == [], (
+        f"`fed` still returns events: {_event_pairings(payload)!r}. A word PREFIX "
+        "is not what the query is about."
+    )
+    assert payload["pagination"]["total_results"] == 0, (
+        "the rows are filtered out of the page but still counted, so the header "
+        "advertises results the user cannot see"
+    )
+
+
+async def test_a_whole_word_still_matches(search):
+    """The other direction, which is the half that makes the rule safe to ship.
+
+    A cap that only ever removes rows is indistinguishable from a broken filter
+    until someone searches for something real.
+    """
+    assert "Boston Celtics vs Los Angeles Lakers" in _event_pairings(
+        await search("celtics")
+    ), "whole-word event recall is gone — the rule is filtering everything"
+
+
+async def test_english_stemming_keeps_the_singular_plural_class(search):
+    """`laker` -> `Lakers` survives ONLY because the FTS config is 'english'.
+
+    This is the load-bearing assumption behind accepting the rule's known
+    truncation loss: the truncations people actually type are plurals, and the
+    stemmer folds them for free. Switch the config to 'simple' and this dies
+    silently while every shape assertion still passes.
+    """
+    assert "Boston Celtics vs Los Angeles Lakers" in _event_pairings(
+        await search("laker")
+    ), (
+        "singular/plural recall is gone. If the FTS config is no longer "
+        "'english', the word rule is far more destructive than it was measured "
+        "to be and must be reconsidered, not patched."
+    )
+
+
+async def test_the_rule_does_not_take_the_real_team_with_the_noise(search):
+    """`sun`: Sunrisers Leeds is a prefix collision, Connecticut Sun is the team.
+
+    They are seeded on the SAME event on purpose. A rule that dropped the row
+    would look correct on a noise-only fixture and would be wrong.
+    """
+    pairings = _event_pairings(await search("sun"))
+    assert "Connecticut Sun vs Sunrisers Leeds" in pairings, (
+        f"the whole-word team was dropped along with the prefix noise: {pairings!r}"
+    )
+
+
+async def test_a_filtered_bucket_does_not_trigger_a_did_you_mean(search):
+    """A correction is for "matched nothing", not "matched things we filtered".
+
+    Measured on production 2026-08-11, the corrections the newly-empty queries
+    would draw: ipo -> IPK, yank -> Petr Yan, pats -> Paterno, sox -> Sora.
+    Substituting one of those is worse than an empty bucket, because it is
+    asserted to the user as the answer.
+    """
+    payload = await search("fed")
+    assert not payload.get("did_you_mean"), (
+        f"`fed` matched rows we filtered and then offered "
+        f"{payload.get('did_you_mean')!r} as a correction anyway"
+    )
+
+
+async def test_a_genuinely_unmatched_query_still_gets_its_correction(search):
+    """The guard must not disable did-you-mean wholesale.
+
+    `celtcs` matches no event by substring at all, so the fallback SHOULD run —
+    that is the case it was written for. Asserting only the suppression direction
+    would let a change that kills the feature entirely pass.
+    """
+    payload = await search("celtcs")
+    assert payload.get("did_you_mean") == "Boston Celtics", (
+        f"expected a correction to 'Boston Celtics', got "
+        f"{payload.get('did_you_mean')!r}. `%celtcs%` matches no event by "
+        "substring, so the guard must let the fallback run — otherwise "
+        "did-you-mean is dead for every query, not just the filtered ones."
     )

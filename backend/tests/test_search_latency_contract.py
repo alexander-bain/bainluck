@@ -142,14 +142,37 @@ def test_sport_alias_split_covers_every_alias_token():
 
 def test_event_where_has_no_unindexable_fts_arm():
     """No tsvector index exists on events (only gin_trgm_ops trigram GINs), so a
-    `to_tsvector(col) @@ tsquery` arm in the WHERE forces a seq scan for the whole
-    OR — defeating the trigram index the ILIKE arm would otherwise use."""
+    `to_tsvector(col) @@ tsquery` arm OR-ED into the WHERE forces a seq scan for
+    the whole OR — defeating the trigram index the ILIKE arm would otherwise use.
+
+    LAT-P034 AMENDED THIS TEST, so read why before widening it again. The event
+    predicate now DOES contain an FTS arm (`_event_name_match`'s word-boundary
+    half), and the original assertion — a text grep for `_fts_filter(Event...` in
+    the route body — would have kept passing purely because the arm moved into a
+    module-level helper. A guard that a refactor can walk out of is not a guard, so
+    the assertion is now on the COMPILED predicate and tests the property that
+    actually costs money: **AND-ed, not OR-ed.** AND lets the trigram GIN drive the
+    scan and makes `to_tsvector` a recheck over the rows it returned (measured: fed
+    4.5ms -> 2.4ms, `re` 150ms -> 117ms). OR is what forced the seq scan.
+    """
     where_region = SEARCH_CODE.split("query = (")[0]
     assert "_fts_filter(Event.home_team_name" not in where_region, (
         "an unindexable FTS arm is back in the event WHERE; it forces a seq scan "
         "of events for every search"
     )
     assert "_fts_filter(Event.away_team_name" not in where_region
+
+    sql = _compile(select(Event.id).where(events_route._event_name_match("fed", None)))
+    ilike_at = sql.index("ILIKE")
+    fts_at = sql.index("to_tsvector")
+    between = sql[ilike_at:fts_at]
+    assert " AND " in between, (
+        "the FTS arm is no longer AND-ed to the ILIKE arm. If it is OR-ed at the "
+        "top level, every search seq-scans events — that was the 20s median."
+    )
+    assert " OR " not in between.split(" AND ")[-1], (
+        "an OR crossed the ILIKE/FTS boundary"
+    )
 
 
 def test_ts_rank_cd_still_orders_results():
@@ -1148,3 +1171,179 @@ class TestEventRecallArmsAreUnionedNotOred:
         # implementation uses UNION and not UNION ALL.
         both = arm_a & arm_b
         assert both and len(unioned) == len(arm_a) + len(arm_b) - len(both)
+
+
+# ---------------------------------------------------------------------------
+# LAT-P034 / #1732 (events half) — word about-ness in the events results bucket
+# ---------------------------------------------------------------------------
+
+class TestEventsBucketRequiresWordAboutness:
+    """`fed` must stop returning twenty-five people named Federico.
+
+    The futures half of #1732 was a ranking bug — the right rows were present and
+    scored zero. The events half is not: no event is about the Fed, so there is
+    nothing to promote, and the only honest fix is to stop calling a spelling
+    coincidence a match. See `_event_name_match` for the measured recall delta and
+    for the two losses this knowingly accepts.
+    """
+
+    def _sql(self, term, expansion=None):
+        return _compile(
+            select(Event.id).where(events_route._event_name_match(term, expansion))
+        )
+
+    def _literal_sql(self, term, expansion=None):
+        """`_compile` keeps bind params, which is right for shape assertions but
+        hides the VALUES — and the expansion bug this guards is about a value
+        reaching one half and not the other."""
+        return str(
+            select(Event.id)
+            .where(events_route._event_name_match(term, expansion))
+            .compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+
+    def test_both_halves_are_present(self):
+        sql = self._sql("fed")
+        assert "ILIKE" in sql, (
+            "the substring arm is gone — that is the trigram-indexable half, and "
+            "without it the predicate cannot use ix_events_home_trgm at all"
+        )
+        assert "to_tsvector" in sql and "websearch_to_tsquery" in sql, (
+            "the word-boundary arm is gone; `fed` matches Federico again"
+        )
+
+    def test_both_columns_are_covered_on_both_halves(self):
+        """Qualified as `events.<col>`, and counted per HALF.
+
+        A bare `sql.count("away_team_name")` does not work and the mutation run
+        proved it: with bind params the placeholder is itself named
+        `%(away_team_name_1)s`, so one arm reads as two and dropping the away FTS
+        arm sailed through.
+        """
+        sql = self._sql("fed")
+        ilike_half, _, fts_half = sql.partition("to_tsvector")
+        for half, name in ((ilike_half, "ILIKE"), ("to_tsvector" + fts_half, "FTS")):
+            for col in ("events.home_team_name", "events.away_team_name"):
+                assert col in half, (
+                    f"{col} is missing from the {name} half — a match on that "
+                    "column would be silently dropped or silently admitted"
+                )
+
+    def test_an_expansion_widens_both_halves_identically(self):
+        """Rank and recall agreeing was LAT-P033's whole finding (`exp if exp else
+        term` REPLACED a term instead of widening it). The same trap is available
+        here: an expansion that reaches the ILIKE half but not the FTS half would
+        AND itself away to nothing."""
+        sql = self._literal_sql("fed", "federal reserve")
+        ilike_half, _, fts_half = sql.partition("to_tsvector")
+        # Per-half tokens, because the two halves render the same term
+        # differently: ILIKE wraps it (`'%%fed%%'`), FTS passes it whole
+        # (`'fed'`). Both must be QUOTED and not bare — "federal reserve" contains
+        # the letters "fed", so a bare substring count reads the expansion as the
+        # term and the replacement bug passes unnoticed. Both traps were found by
+        # the mutation run, one of them after a first fix that only looked right.
+        halves = (
+            (ilike_half, "ILIKE", "'%%fed%%'", "'%%federal reserve%%'"),
+            ("to_tsvector" + fts_half, "FTS", "'fed'", "'federal reserve'"),
+        )
+        for half, name, term_tok, exp_tok in halves:
+            assert half.count(exp_tok) == 2, (
+                f"the expansion reaches {half.count(exp_tok)} of the two columns "
+                f"on the {name} half — an expansion that widens only one half "
+                "ANDs itself away to nothing"
+            )
+            assert half.count(term_tok) == 2, (
+                f"the ORIGINAL term appears {half.count(term_tok)} of the expected "
+                f"2 times on the {name} half. That is LAT-P033's exact bug "
+                "(`exp if exp else term`) arriving on a new surface."
+            )
+
+    def test_the_predicate_is_used_by_every_event_recall_arm(self):
+        """Including the league arm's remaining terms. `nba fed` must not smuggle
+        the substring match back in through the UNION's league side."""
+        assert "team_filter = _event_name_match(term, expansion)" in SEARCH_CODE
+        assert "_event_name_match(t, e) for t, e in expanded" in SEARCH_CODE
+        assert "_event_name_match(t, e) for t, e in non_league_expanded" in SEARCH_CODE
+
+    def test_no_minimum_length_constant_gates_the_rule(self):
+        """A length threshold was measured and rejected: it lets `apple` ->
+        Appleton straight back in while looking principled."""
+        src = inspect.getsource(events_route._event_name_match)
+        body = src.split('"""')[-1]
+        assert not re.search(r"len\(\s*term\s*\)", body), (
+            "a minimum-length gate is back in _event_name_match"
+        )
+
+    def test_typeahead_keeps_its_substring_recall(self):
+        """Progressive typing is the surface where a prefix SHOULD match — it is
+        the reason the truncation loss (`yank` -> Yankees) is acceptable here. If
+        typeahead ever adopts this rule too, that argument is void."""
+        ta = _strip_comments(_source_of(events_route.typeahead_search))
+        assert "_build_expanded_ilike(Event.home_team_name" in ta, (
+            "typeahead lost its substring recall; the events-bucket word rule is "
+            "no longer safe, because nothing serves partial typing"
+        )
+        assert "_event_name_match" not in ta
+
+
+class TestDidYouMeanDoesNotSubstituteForFilteredRows:
+    """A correction is for "your query matched nothing", not for "your query
+    matched things we judged irrelevant".
+
+    Measured on production 2026-08-11: the queries the word rule newly empties draw
+    corrections of `ipo` -> IPK, `yank` -> Petr Yan, `pats` -> Paterno, `sox` ->
+    Sora. Firing there would trade one noise class for a worse one — worse because
+    a substitution is asserted to the user as an answer.
+    """
+
+    def test_the_guard_runs_before_the_correction(self):
+        assert "had_substring_match" in SEARCH_CODE
+        guard_at = SEARCH_CODE.index("had_substring_match = await db.scalar")
+        use_at = SEARCH_CODE.index("and not had_substring_match")
+        assert guard_at < use_at
+
+    def test_the_correction_is_gated_on_the_guard(self):
+        """Not just computed — actually consulted."""
+        assert "and not had_substring_match" in SEARCH_CODE, (
+            "the substring guard is computed and then ignored, so did-you-mean "
+            "still substitutes a fuzzy team for rows we deliberately filtered"
+        )
+
+    def test_the_guard_tests_substring_recall_not_the_filtered_predicate(self):
+        """If the guard used `_event_name_match` it would be asking the question we
+        already know the answer to (zero) and would always fire the correction."""
+        region = SEARCH_CODE[
+            SEARCH_CODE.index("substring_only = ["):
+            SEARCH_CODE.index("had_substring_match = await db.scalar")
+        ]
+        assert "_build_expanded_ilike" in region
+        assert "_event_name_match" not in region
+        assert "to_tsvector" not in region
+
+    def test_the_guard_fails_closed(self):
+        """An unknown answer must NOT license a substitution — the guard exists to
+        prevent one. Failing open would silently restore the behaviour it removes."""
+        src = SEARCH_SRC
+        region = src[src.index("search word-boundary guard failed"):]
+        handler = region.split("if (")[0]
+        assert "had_substring_match = True" in handler, (
+            "the guard fails open on error, so a failure re-enables the very "
+            "substitution it was added to prevent"
+        )
+        assert "_recover_search_session" in handler, (
+            "the guard's handler does not roll back. ANY error here — not only a "
+            "timeout — leaves the transaction aborted, and every later stage then "
+            "fails on InFailedSqlTransaction (#1494 1e)."
+        )
+
+    def test_the_guard_is_confined_to_the_already_empty_path(self):
+        """It must never run on the hot path — it is an extra query."""
+        guard_at = SEARCH_CODE.index("substring_only = [")
+        trigger_at = SEARCH_CODE.index("if total_count == 0 and not degraded")
+        assert trigger_at < guard_at, (
+            "the substring guard moved outside the total_count == 0 branch and "
+            "now costs every search an extra EXISTS"
+        )
