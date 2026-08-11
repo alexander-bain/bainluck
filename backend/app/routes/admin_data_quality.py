@@ -4354,8 +4354,13 @@ from app.utils.sql_read_guard import MUTATING_RE as _MUTATING_RE  # still used b
 from app.utils.sql_read_guard import (
     SqlGuardError,
     assert_executable_for_analyze,
+    assert_no_operational_functions,
     assert_read_only,
     build_explain_sql,
+    cap_plan_payload,
+    classify_db_error,
+    explain_mode_label,
+    fingerprint_statement,
     needs_limit_wrap,
     resolve_explain_timeout_ms,
     resolve_row_cap,
@@ -4415,6 +4420,23 @@ async def admin_db_query(
     statement, which is exactly why it works on the queries worth investigating — a
     statement that always hits the timeout still yields a plan, because planning it
     costs nothing. `analyze: true` DOES execute, and is gated accordingly.
+
+    LAT-P027 (#1641) — three changes to what EXECUTES and what comes BACK:
+
+    * Every executing path (rows AND `analyze`) refuses operational functions such as
+      `pg_cancel_backend` and the advisory locks. `SET TRANSACTION READ ONLY` does not
+      prevent those: their effects are not transactional. `analyze` additionally
+      requires every call to be on a pure-function allowlist.
+    * No response echoes the caller's SQL. `explain_sql` is replaced by
+      `explain_mode` (server-composed) plus `sql_fingerprint`.
+    * Plans are capped at `RESPONSE_CAP_BYTES` with an explicit `truncated` verdict,
+      and errors return a typed `reason` plus a `correlation_id` — the full error is
+      logged server-side, never returned.
+
+    Plan-only remains ungated by the function allowlist, because it does not execute.
+    Planning can constant-fold IMMUTABLE functions, but an immutable function is by
+    definition side-effect free, and the volatile ones that matter here are never
+    pre-evaluated by the planner.
     """
     # Function-local, matching this file's prevailing idiom (there are ~10 other
     # local `import json as _json` sites). A module-level `_json` here would be the
@@ -4422,6 +4444,7 @@ async def admin_db_query(
     # locally — gotcha #7 territory for no benefit.
     import json as _json
     import time as _t
+    import uuid as _uuid
 
     _check_admin_secret(secret, request=request)
 
@@ -4438,11 +4461,43 @@ async def admin_db_query(
             sql_stripped = assert_executable_for_analyze(body.sql)
         else:
             sql_stripped = assert_read_only(body.sql)
+            # The row path EXECUTES too, and predates the plan rail. #1641 was
+            # written up as an ANALYZE defect; gating only ANALYZE would leave the
+            # same hole one JSON field away.
+            if not body.explain:
+                assert_no_operational_functions(sql_stripped)
     except SqlGuardError as e:
         raise HTTPException(status_code=400, detail=e.detail)
 
     row_cap = resolve_row_cap(body.limit)
     _start = _t.monotonic()
+    fingerprint = fingerprint_statement(sql_stripped)
+
+    def _fail(exc: Exception) -> HTTPException:
+        """Typed, bounded refusal. The detail never quotes the caller or the DB.
+
+        The correlation id is the whole mechanism: an operator who needs the real
+        message reads it out of the logs by id, so the response can afford to say
+        nothing. Truncating `str(e)` disclosed the first 500 characters, which is
+        exactly where the failing statement fragment and its literals sit.
+        """
+        correlation_id = _uuid.uuid4().hex[:12]
+        reason = classify_db_error(exc)
+        logger.exception(
+            "admin db-query failed: correlation_id=%s reason=%s fingerprint=%s",
+            correlation_id,
+            reason,
+            fingerprint,
+        )
+        return HTTPException(
+            status_code=400,
+            detail={
+                "error": "query_failed",
+                "reason": reason,
+                "correlation_id": correlation_id,
+                "sql_fingerprint": fingerprint,
+            },
+        )
 
     if body.explain:
         timeout_ms = resolve_explain_timeout_ms(body.timeout_ms)
@@ -4459,13 +4514,19 @@ async def admin_db_query(
             return {
                 "explain": True,
                 "analyzed": body.analyze,
-                "plan": plan,
-                "explain_sql": explain_sql,
+                # `explain_sql` is GONE: it echoed the caller's complete statement,
+                # literals included, into browser state and screenshots, and told the
+                # caller nothing they did not already have. The mode is
+                # server-composed; the fingerprint is what ties a plan to a
+                # statement and one response to another.
+                "explain_mode": explain_mode_label(analyze=body.analyze),
+                "sql_fingerprint": fingerprint,
                 "statement_timeout_ms": timeout_ms,
                 "duration_ms": round((_t.monotonic() - _start) * 1000, 1),
+                **cap_plan_payload(plan),
             }
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e)[:500])
+            raise _fail(e)
 
     try:
         await db.execute(text("SET TRANSACTION READ ONLY"))
@@ -4493,9 +4554,10 @@ async def admin_db_query(
             "row_count": len(rows),
             "truncated": truncated,
             "duration_ms": duration_ms,
+            "sql_fingerprint": fingerprint,
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)[:500])
+        raise _fail(e)
 
 
 @router.get("/query")
