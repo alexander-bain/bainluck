@@ -9,16 +9,46 @@
  * dispatch time by `browser-audit.yml` (`wait-for-frontend-sha.js`) and recorded
  * per journey in the manifest, so this file stays true across deploys.
  *
- * Two route-resolution modes, both honest:
+ * Three route-resolution modes, all honest:
  *   - `static`  — a config-stable slug the backend adapter resolves to the latest
  *                 edition even off-season (awards/oscars, election/2026-midterms,
- *                 soccer/world-cup-2026, cycling/tour-de-france-2026). Always
- *                 observable.
+ *                 soccer/world-cup-2026). Always observable.
  *   - `discover`— the slug rotates (combat date-tokens, current golf/tennis/f1
  *                 events), so the pack asks a documented API endpoint at run time
  *                 for a currently-live concept key. When discovery returns nothing,
  *                 the journey is honestly NOT-OBSERVABLE (skipped with a reason),
  *                 never green.
+ *   - `unavailable`
+ *               — the domain has NO live specimen AND no endpoint to discover one
+ *                 from. Declared, dated, and owned by a tracking issue, so the
+ *                 journey reaches the honest NOT-OBSERVABLE terminal instead of
+ *                 asserting a dead slug MUST render. See UX-P059 / #1733.
+ *
+ * UX-P059 (#1733) — WHY THE THIRD MODE EXISTS, and it is a correction to the text
+ * above rather than an addition to it. `static` claimed the adapter "resolves to
+ * the latest edition even off-season". That is true for a BARE slug (`oscars`); it
+ * is NOT true for a slug carrying a year, and three of the four static specimens
+ * carried one. MEASURED 2026-08-11:
+ *
+ *   /api/event/event:awards:oscars                 -> 200
+ *   /api/event/event:election:2026-midterms        -> 200
+ *   /api/event/event:soccer:world-cup-2026         -> 200
+ *   /api/event/event:cycling:tour-de-france-2026   -> 404   <- the 2026 Tour ended in July
+ *
+ * So the cycling journey asserted MUST-RENDER against a slug with an expiry date,
+ * and reds every night forever. That is gotcha #44's class — the fixture had an
+ * expiry date — which is verbatim the lesson of Q329/#1729.
+ *
+ * Cycling cannot be converted to `discover`: there is no endpoint to discover from.
+ * `/api/concepts` 404s (it does not exist), and the hub registry covers only
+ * mma/boxing/golf/tennis/esports (`app/routes/hub.py`). Inventing a slug would swap
+ * a stale specimen for an unverified one, so the state is DECLARED instead.
+ *
+ * LATENT, recorded and deliberately not fixed here: `election/2026-midterms`
+ * ("active markets through Nov 2026") and `soccer/world-cup-2026` are the same
+ * dated shape and will expire the same way. The general fix is an `expires` date,
+ * which makes the rail clock-dependent — and gotcha #44 plus Q329 say that needs a
+ * `clock_sweep`-grade proof, not a side effect of this queue.
  *
  * The generic shell (C139 `generic-*`) is not a separate route — it is the shared
  * page every domain below renders through (`app/event/[domain]/[slug]/page.tsx`),
@@ -57,6 +87,24 @@ export type RouteResolution =
       filterDomain?: string;
       /** A config-stable fallback path used only when discovery finds nothing. */
       fallback?: string;
+    }
+  | {
+      /**
+       * UX-P059 (#1733): no live specimen exists AND no endpoint can discover one.
+       * The journey takes the NOT-OBSERVABLE path — it probes the deterministic
+       * `no-live-specimen` slug and proves the honest "Event not found" terminal
+       * renders — rather than asserting a dead hard-coded slug MUST render.
+       *
+       * This is a DECLARED gap, not a mute button, and the difference is these two
+       * required fields: `reason` states the condition that must change, and
+       * `trackingIssue` stays open until it does. A reader of the manifest sees the
+       * domain is unproven and why; a silent skip would tell them nothing.
+       */
+      mode: "unavailable";
+      /** Why no specimen is reachable — the condition that must change to flip back. */
+      reason: string;
+      /** The GitHub issue that stays open while this domain is unproven. */
+      trackingIssue: string;
     };
 
 export interface TournamentRoute {
@@ -126,7 +174,18 @@ export const TOURNAMENT_ROUTES: readonly TournamentRoute[] = [
     journeyId: "tournament.cycling",
     domain: "cycling",
     c139Case: "cycling-tour-static",
-    resolution: { mode: "static", path: "/event/cycling/tour-de-france-2026" },
+    // UX-P059 (#1733): was `{ mode: "static", path: "/event/cycling/tour-de-france-2026" }`,
+    // which 404s — the 2026 Tour ended in July. See the dated-specimen note in this
+    // file's header for why this is `unavailable` rather than re-pointed or discovered.
+    resolution: {
+      mode: "unavailable",
+      reason:
+        "The 2026 Tour de France ended in July and its concept 404s; there is no live " +
+        "cycling concept and no endpoint to discover one from (/api/concepts does not " +
+        "exist; the hub registry covers only mma/boxing/golf/tennis/esports). Flip back " +
+        "to `discover` the moment a cycling hub or concept-listing endpoint ships.",
+      trackingIssue: "#1733",
+    },
     required: [
       "hero",
       "field",
@@ -139,8 +198,11 @@ export const TOURNAMENT_ROUTES: readonly TournamentRoute[] = [
     ],
     childIssue: "GAP:cycling",
     notes:
-      "Config-stable (event_cycling.py, canonical tour-de-france-2026). Winner-field " +
-      "race chart + leaderboard + stage rail; up-links to /sports.",
+      "UX-P059 (#1733): DECLARED UNAVAILABLE — the adapter (event_cycling.py) is not " +
+      "known to be broken, but no live cycling concept exists and nothing can discover " +
+      "one, so the domain is UNPROVEN rather than shipped or broken. When a specimen " +
+      "returns, this route proves: winner-field race chart + leaderboard + stage rail, " +
+      "up-linking to /sports.",
   },
   {
     journeyId: "tournament.golf",

@@ -150,3 +150,114 @@ describe("EventCard — the north-star 'read the probability' surface", () => {
     expect(renderEventCard("low")).toContain("Low confidence");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UX-P059 (#1690) — the DISCOVER FUTURES HERO, which this suite never covered.
+//
+// THE HOLE. Everything above renders EventCard. But `FuturesCard` is what the
+// Discover dispatcher routes most futures items to, and its two hero variants
+// (`FuturesCard.tsx` Variant A image-led and Variant B data-pure) each apply
+// `authorityClass` to the headline number. Neither was asserted anywhere, so both
+// lines could be DELETED and CI would stay green — on the primary surface of the
+// default landing page. `data-testid="futures-hero-probability"` exists precisely
+// to be queried and nothing queried it.
+//
+// This is not a new coupling. #1690's coupling shipped in UX-P052; this pins it
+// where it actually lives for most readers.
+//
+// NOT COVERED ON PURPOSE: the ladder/row percentages (ComparisonCard, heatmap
+// rungs, compact rows) are uncoupled by an explicit recorded decision at
+// FuturesCard.tsx:302-306 — "the finding (and the tier) is about the card's
+// headline probability". Asserting them either way here would quietly convert a
+// deliberate product decision into a test-enforced one; that call is Alex's.
+
+import { FuturesCard } from "../../components/discover/FuturesCard";
+import type { FeedFuturesData } from "@/lib/types";
+
+// Mirror the exposure-level A/B hash (FuturesCard.tsx): seed = session_id + id.
+// Under `testEnvironment: 'node'` there is no localStorage, so the seed is "anon".
+function abHash(seed: string): number {
+  return Array.from(seed).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+}
+/** A deterministic id landing on the requested variant, so BOTH heroes are exercised. */
+function idForVariant(wantB: boolean): number {
+  for (let id = 1; id < 100_000; id++) {
+    if ((Math.abs(abHash(`anon_${id}`)) % 2 === 0) === wantB) return id;
+  }
+  throw new Error(`no id found for variant ${wantB ? "B" : "A"}`);
+}
+
+function futuresData(tier: Tier, wantB: boolean): FeedFuturesData {
+  return {
+    id: idForVariant(wantB),
+    name: "Will the incumbent win the 2026 election?",
+    llm_sport_category: "politics",
+    sport_name: "Politics",
+    resolution_date: "2026-11-03T00:00:00Z",
+    source: "kalshi",
+    top_outcomes: [{ id: 1, name: "Yes", probability: 0.62, movement: 2.1 }],
+    outcome_count: 2,
+    volume_24h: 1_400_000,
+    confidence_tier: tier,
+  } as unknown as FeedFuturesData;
+}
+
+function renderFuturesCard(tier: Tier, wantB: boolean): string {
+  const data = futuresData(tier, wantB);
+  const item = { type: "futures", score: 90, reason: "", headline: "", data } as unknown as FeedItem;
+  return renderToStaticMarkup(
+    <FuturesCard item={item} data={data} liked={false} setLiked={() => {}} trending={false} />
+  );
+}
+
+/** The class list on the hero probability span — the rendered answer. */
+function heroProbabilityClass(html: string): string {
+  const m = /<span class="([^"]*)"[^>]*data-testid="futures-hero-probability"/.exec(html);
+  return m?.[1] ?? "";
+}
+
+for (const [label, wantB] of [
+  ["Variant B (data-pure)", true],
+  ["Variant A (image-led)", false],
+] as const) {
+  describe(`FuturesCard hero — ${label}`, () => {
+    it("actually rendered the variant under test, and rendered a hero at all", () => {
+      // Non-vacuity twice over: every assertion below reads a regex capture that
+      // silently yields "" if the testid is missing, and the A/B hash could
+      // otherwise land us on the same variant for both passes.
+      const html = renderFuturesCard("high", wantB);
+      expect(html).toContain(`data-card-variant="${wantB ? "B" : "A"}"`);
+      expect(html).toContain('data-testid="futures-hero-probability"');
+      expect(heroProbabilityClass(html)).not.toBe("");
+    });
+
+    it("still paints the number at every tier (coupling must never withhold)", () => {
+      for (const tier of ["high", "moderate", "low", null] as Tier[]) {
+        expect(renderFuturesCard(tier, wantB)).toContain("62%");
+      }
+    });
+
+    it("mutes a low-confidence hero and does NOT mute a high-confidence one", () => {
+      const high = heroProbabilityClass(renderFuturesCard("high", wantB));
+      const low = heroProbabilityClass(renderFuturesCard("low", wantB));
+      expect(high).not.toMatch(/opacity-/);
+      expect(low).toContain(PROBABILITY_AUTHORITY_CLASS.low);
+      // The muting must be the ONLY difference — a coupling that also dropped the
+      // font treatment would be a redesign smuggled in as a provenance signal.
+      expect(low.replace(PROBABILITY_AUTHORITY_CLASS.low, "").trim()).toBe(high.trim());
+    });
+
+    it("mutes moderate strictly less than low", () => {
+      const moderate = heroProbabilityClass(renderFuturesCard("moderate", wantB));
+      expect(moderate).toContain(PROBABILITY_AUTHORITY_CLASS.moderate);
+      expect(moderate).not.toContain(PROBABILITY_AUTHORITY_CLASS.low);
+    });
+
+    it("renders a tier-less hero exactly as a high-confidence one", () => {
+      // "We did not measure this" must not render as "we doubt this".
+      expect(heroProbabilityClass(renderFuturesCard(null, wantB))).toBe(
+        heroProbabilityClass(renderFuturesCard("high", wantB))
+      );
+    });
+  });
+}

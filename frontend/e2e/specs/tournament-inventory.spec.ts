@@ -30,8 +30,17 @@ import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
  *     resolved from a first-party API AT RUN TIME, never hard-coded. When no live
  *     specimen exists the journey is honestly NOT-OBSERVABLE — `test.skip` with a
  *     reason — never a false green and never a false red.
- *   - Config-stable specimens (awards/election/soccer/cycling) MUST render; a
- *     blank or error terminal there is a real BROKEN finding and reds the journey.
+ *   - Config-stable specimens (awards/election/soccer) MUST render; a blank or
+ *     error terminal there is a real BROKEN finding and reds the journey.
+ *   - UX-P059 (#1733): a domain with no live specimen AND no way to discover one
+ *     is DECLARED `unavailable` in the registry and takes the NOT-OBSERVABLE path.
+ *     `cycling` left the list above for exactly this reason — its slug carried an
+ *     expiry date. A declared gap names its reason and its issue; that is what
+ *     separates it from a mute.
+ *   - UX-P059 (#1734): `content.main_region_nonblank` grades BLANKNESS ONLY. Whether
+ *     the right surface rendered is a separate fact with its own assertions (the
+ *     pass-bar expects at the foot of each journey). Conflating them made this pack
+ *     report "main region rendered blank" about a legibly-rendered page.
  *
  * The per-domain capability presence is attached as evidence (`capabilities`) so
  * the SHIPPED-GOOD / SHIPPED-PARTIAL / BROKEN classification (Item 2) is
@@ -96,6 +105,11 @@ async function resolvePath(
   route: TournamentRoute,
 ): Promise<string | null> {
   if (route.resolution.mode === "static") return route.resolution.path;
+  // UX-P059 (#1733): a declared-unavailable domain resolves to nothing ON PURPOSE, so
+  // it takes exactly the same NOT-OBSERVABLE path as a rotating domain with no live
+  // specimen — the `no-live-specimen` probe, its declared 404 allowance, and the
+  // honest error terminal. No separate branch downstream, so no second way to pass.
+  if (route.resolution.mode === "unavailable") return null;
 
   const { endpoint, keyPath, filterDomain, fallback } = route.resolution;
   try {
@@ -224,6 +238,14 @@ for (const route of TOURNAMENT_ROUTES) {
       realConceptFound,
       errorTerminalVisible: errorVisible,
       notObservable: isNotObservable,
+      // UX-P059 (#1733): a declared-unavailable domain must say WHY in the evidence a
+      // reader actually opens. NOT-OBSERVABLE with no reason is indistinguishable from
+      // a rotating domain that happened to be between editions — and one of those is a
+      // gap somebody owes work on.
+      unavailableReason:
+        route.resolution.mode === "unavailable" ? route.resolution.reason : null,
+      unavailableTrackingIssue:
+        route.resolution.mode === "unavailable" ? route.resolution.trackingIssue : null,
       required: route.required,
       requiredPresent,
       requiredMissing,
@@ -260,7 +282,26 @@ for (const route of TOURNAMENT_ROUTES) {
       // bare substring), which is correct here because unlike a racy RSC abort this
       // 404 is deterministic — the path that declares it is the path that causes it.
       allowedFailures: notObservable ? [`${API_BASE}/api/event/${encodeURIComponent(`event:${route.domain}:no-live-specimen`)}`] : [],
-      mainRegionNonBlank: (realConceptFound || (isNotObservable && errorVisible)) && mainText.trim().length > 40,
+      // UX-P059 (#1734): BLANKNESS ONLY. This used to be
+      //   `(realConceptFound || (isNotObservable && errorVisible)) && length > 40`
+      // — the measurement multiplied by the journey's CLASSIFICATION. The two are
+      // different facts, and conflating them made the rail report
+      // "main region rendered blank" about a page rendering 75 legible characters.
+      //
+      // MEASURED, run 31473736725: `tournament.cycling` (static) and
+      // `tournament.f1` (discover, no live specimen) both landed on the SAME
+      // "Event not found" terminal — the two terminal screenshots are identical —
+      // yet f1 passed this assertion and cycling failed it, purely because
+      // `isNotObservable` is false for a static route. #1734 read the 1286ms-vs-
+      // 1769ms durations and diagnosed a racing `h1` selector; there is no `<h1>`
+      // in site chrome at all (the brand is a span, ErrorMessage's title is a p),
+      // so timing was never the variable. The conjunction was.
+      //
+      // Whether the domain SHOULD have rendered a concept is a separate question
+      // and is still asserted, by the pass-bar `expect` below — which is what
+      // keeps a dead static specimen red. Nothing stops being graded here; one
+      // assertion stops answering a question it was never measuring.
+      mainRegionNonBlank: mainText.trim().length > 40,
     });
 
     // The pass bar branches on observability:
@@ -322,7 +363,11 @@ test(`competition hub renders and links into concepts — ${HUB_ROUTE.path}`, as
     journeyId: HUB_ROUTE.journeyId,
     contentMode: "none",
     realCardFound: false,
-    mainRegionNonBlank: heroVisible && nonBlank,
+    // UX-P059 (#1734): blankness only, same reasoning as the per-domain journey
+    // above. `heroVisible` is the hub's RENDERED-CORRECTLY fact and is asserted on
+    // its own line below; folding it in here would let a hub that painted plenty
+    // of text be reported as "blank" because its hero was missing.
+    mainRegionNonBlank: nonBlank,
   });
 
   expect(heroVisible && nonBlank, "the competition hub must render real content").toBe(true);
