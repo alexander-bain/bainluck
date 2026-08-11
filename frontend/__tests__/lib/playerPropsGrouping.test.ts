@@ -254,6 +254,10 @@ describe("the guard — one bad row does not cost the other players", () => {
     expect(groupPlayerProps({ playerProps: [], other: [] })).toEqual({
       players: [],
       dropped: [],
+      // UX-P058 Item 2: no rows at all is the one honest absence, and it is
+      // reported as such rather than being indistinguishable from a poisoned
+      // section that dropped everything it had.
+      emptyReason: "none",
     });
   });
 });

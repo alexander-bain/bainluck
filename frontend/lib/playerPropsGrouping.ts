@@ -131,6 +131,30 @@ export interface DroppedItem {
 export interface GroupPlayerPropsResult {
   players: PlayerData[];
   dropped: DroppedItem[];
+  /**
+   * UX-P058 Item 2 (C277) — WHY THERE ARE NO PLAYERS, when there are none.
+   *
+   * `players: []` had two utterly different meanings and one rendering. The
+   * caller did `if (players.length === 0) return null`, so a game with no props
+   * and a game whose props ALL FAILED TO PARSE both drew nothing — and the
+   * "N props couldn't be read" line added in UX-P056 sat AFTER that return,
+   * making it unreachable in exactly the case it was written for.
+   *
+   * This is gotcha #53 in the client: an empty is not an absence, and code that
+   * infers a FACT ("this game has no player props") from the emptier reading is
+   * inventing it. A poisoned section that renders as a clean absence is the worst
+   * of the three states, because nothing anywhere says a thing went wrong.
+   *
+   *   - `"none"`      — no input rows at all. A genuine absence.
+   *   - `"clean"`     — rows existed, nothing threw, nothing grouped (benign:
+   *                     no thresholds, unpriced, unmatched stats).
+   *   - `"unreadable"`— rows existed and at least one was DROPPED by a guard, and
+   *                     nothing survived. The section must say so.
+   *
+   * Populated on every return, including the early one, so a caller cannot read
+   * it as absent.
+   */
+  emptyReason: "none" | "clean" | "unreadable" | null;
 }
 
 export const STAT_TYPES = [
@@ -245,6 +269,13 @@ interface StatAccumulator {
   rungs: StatRung[];
   sources: Set<string>;
   movement: number | null;
+  /**
+   * UX-P060 (C281 B1): the magnitude of `movement`, stored so the commit phase can
+   * pick the largest move by COMPARING two primitives it already holds. Commit used
+   * to recompute `Math.abs(c.movement)`, which is a coercion — and a coercion is a
+   * read, and a read can throw. See the read phase's normalization comment.
+   */
+  movementAbs: number | null;
   serverActual?: number | null;
   serverIsWinner?: boolean | null;
   gradeRows: PropGradeFields[];
@@ -260,6 +291,129 @@ interface PlayerAccumulator {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * UX-P058 Item 3 (C277) — a player is a NAME **and a side**, not a name.
+ *
+ * The bucket key was `parsed.player.toLowerCase()` alone, so two different people
+ * who share a name — a Will Smith on each roster, a father/son, the very common
+ * MLB/NFL surname collisions — merged into ONE card and pooled their stats. The
+ * card then shows one person's line under the other's team colour, and
+ * `readPropGrade` adjudicates over a `gradeRows` array spanning two humans.
+ * That is a data-corruption shape, not a cosmetic one: it is silently wrong and
+ * self-consistent, which is the class this lane's ordering rule makes
+ * priority-eligible at any likelihood.
+ *
+ * Normalization is deliberately UNCHANGED (`toLowerCase()`, nothing else). This
+ * queue adds the team dimension and touches nothing about how names fold —
+ * widening normalization is how you MERGE players that were correctly separate,
+ * the inverse defect, and the candidate-base work already recorded that trap.
+ *
+ * ── ONLY AN *AUTHORITATIVE* SIDE MAY KEY, AND THIS WAS MEASURED THE HARD WAY ──
+ *
+ * The first draft of this repair keyed on the side the row RESOLVED to, which is
+ * `p.player_team ?? detectTeam(...)`. Held against the production oracle it
+ * FRAGMENTED REAL PEOPLE: on event 15187845, `Mike Trout` and `Zach Neto` each
+ * split into a home card and an away card, and the payload's player count went
+ * 23 -> 26.
+ *
+ * The cause is that `detectTeam` reads a market name which NAMES BOTH TEAMS
+ * ("Angels vs Athletics: Hits"), so its answer depends on word order and can
+ * differ between two rows about the same person. It is a display-time heuristic,
+ * never an identity.
+ *
+ * That inverse defect is strictly worse than the one being fixed: a same-name
+ * collision needs two same-named players in one game, while fragmentation would
+ * have hit ordinary games immediately and split a star's card in half.
+ *
+ * So identity uses `player_team` ONLY — a side the backend typed — and treats a
+ * merely-detected side as unknown for keying while still using it for the card's
+ * colour. STATED LIMITATION, not an oversight: when the backend supplies no side,
+ * two same-named opponents still merge. We separate where we have authority and
+ * refuse to guess where we do not, because the guess is what broke Mike Trout.
+ */
+type TeamSide = "home" | "away" | "unknown";
+
+/**
+ * The separator is a NUL (`\u0000`) because it is the one character a player name
+ * cannot contain. A printable separator (`|`, `:`, `-`) is a character some name
+ * eventually DOES contain, and then two different identities collide into one key
+ * — the exact bug this function exists to prevent, reintroduced by its own
+ * encoding. Written as an escape, never as a literal byte: a raw NUL in a source
+ * file makes git treat it as binary and stops the diff being reviewable.
+ */
+function identityKey(name: string, team: TeamSide): string {
+  return `${name.toLowerCase()}\u0000${team}`;
+}
+
+/**
+ * THE UNKNOWN-TEAM POLICY — decided from the WHOLE payload, never from arrival order.
+ *
+ * A row whose side we could not detect carries no evidence about which of two
+ * same-named people it belongs to. Insertion order must not decide that, because
+ * it is a property of the payload's ordering, not of the world.
+ *
+ * Given the set of AUTHORITATIVE sides (`player_team`) seen for a name across every
+ * accepted row:
+ *
+ *   - a KNOWN-team row always claims `name|team`;
+ *   - an UNKNOWN-team row joins that side when EXACTLY ONE exists — the ordinary
+ *     case, one real player with some rows missing a side;
+ *   - with ZERO known sides, all unknown rows for the name share one bucket;
+ *   - with TWO known sides the row is genuinely ambiguous and stands alone in
+ *     `name|unknown`. Assigning it would be a coin flip, and a borrowed stat is
+ *     worse than an unattributed one.
+ *
+ * ── WHY THIS IS A BARRIER AND NOT AN ALIAS TABLE (UX-P060, C281 B1) ──
+ *
+ * The first repair kept an alias table and resolved EAGERLY, row by row, so the
+ * policy above was only true for payloads that happened to arrive in a helpful
+ * order. C281 executed the real function and measured it: the same three rows gave
+ * TWO cards ordered `unknown -> home -> away` (the unknown row was permanently
+ * aliased into `home`, and `away` could no longer be separated from it) and THREE
+ * ordered `home -> away -> unknown`. An unknown row arriving first silently became
+ * evidence for whichever side appeared next.
+ *
+ * The fix is not a cleverer alias rule — no rule evaluated one row at a time can
+ * be order-independent, because the information needed to decide arrives later.
+ * Every row is read first, the side sets are learned, and only then is any row
+ * committed. `resolveBucketKey` is now a PURE FUNCTION of (name, side, side-set):
+ * it holds no state, so there is nothing left for order to perturb.
+ *
+ * ── THE ORDERING LESSON THAT STILL APPLIES ──
+ *
+ * Absorbing was once written as `playerMap.set(newKey, entry); delete(oldKey)`.
+ * That is correct about grouping and WRONG about order: deleting and re-inserting
+ * moves a key to the END of a Map, the final `sort` is stable, so cards with an
+ * equal stat count silently REORDERED on screen. The oracle caught it — same set
+ * of players, different sequence. **`playerMap` is still never deleted from**, and
+ * buckets are still created in row order, so card order is unchanged by all of this.
+ */
+function resolveBucketKey(
+  knownSidesByName: ReadonlyMap<string, ReadonlySet<"home" | "away">>,
+  name: string,
+  team: TeamSide,
+): string {
+  const knownSides = knownSidesByName.get(name.toLowerCase());
+  const knownCount = knownSides ? knownSides.size : 0;
+
+  if (team !== "unknown") return identityKey(name, team);
+
+  // Unknown side. The decision depends ONLY on how many authoritative sides exist
+  // for this name across the WHOLE payload — never on what has been seen so far —
+  // which is what makes it permutation-invariant.
+  //
+  //   0 known sides  → every unknown row for this name shares one bucket.
+  //   1 known side   → unambiguous; join it (the pre-existing rule).
+  //   2 known sides  → genuinely ambiguous; stand alone. Attaching the row to
+  //                    either same-named opponent would be a coin flip, and a
+  //                    borrowed stat is worse than an unattributed one.
+  if (knownCount === 1) {
+    const only = [...knownSides!][0];
+    return identityKey(name, only);
+  }
+  return identityKey(name, "unknown");
 }
 
 /**
@@ -285,9 +439,21 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
 
   const hasPlayerProps = rows.length > 0;
   const hasOtherProps = otherRows.length > 0;
-  if (!hasPlayerProps && !hasOtherProps) return { players: [], dropped };
+  // No rows at all is the one honest absence, and it is decided BEFORE any
+  // parsing so it can never be confused with "everything we had was unreadable".
+  if (!hasPlayerProps && !hasOtherProps) {
+    return { players: [], dropped, emptyReason: "none" };
+  }
 
   const playerMap = new Map<string, PlayerAccumulator>();
+  /**
+   * UX-P060 (C281 B1) — name -> the set of AUTHORITATIVE sides seen for it across
+   * the whole payload. Populated after every row has been read and before any row
+   * is committed, which is what makes identity permutation-invariant. The alias
+   * table this replaces resolved eagerly, so `unknown -> home -> away` produced two
+   * cards while `home -> away -> unknown` produced three from identical rows.
+   */
+  const knownSidesByName = new Map<string, Set<"home" | "away">>();
 
   const homeLower = homeTeam?.toLowerCase() ?? "";
   const awayLower = awayTeam?.toLowerCase() ?? "";
@@ -309,113 +475,282 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     return "unknown";
   }
 
-  rows.forEach((p, index) => {
-    try {
-      const parsed = parsePlayerName(p.market_name || "", p.outcome_name || "");
-      if (!parsed || !parsed.player) return;
-      if (p.threshold == null) return;
+  /**
+   * UX-P058 Item 1 (C277) — THE ROW COMMIT IS ATOMIC, and this is a repair of the
+   * guard itself, not a new feature.
+   *
+   * The per-item `try` (gotcha #42) contained the blast radius of a throw to one
+   * row. It did NOT contain the row's PARTIAL WRITES: `playerMap.set` and
+   * `stats.set` ran near the top, and a dozen further reads followed — the grade
+   * fields, `p.source`, `Math.abs(p.movement)`, any of which can throw on a
+   * hostile payload (a throwing getter, a Proxy, a poisoned prototype). A late
+   * throw therefore left a player entry, and a stat bucket, ALREADY COMMITTED —
+   * with ZERO RUNGS pushed.
+   *
+   * A zero-rung stat is exactly #1722's precondition. The downstream `continue`
+   * added in UX-P056 stops it killing the page, but the guard meant to contain
+   * #1722 could still manufacture #1722's input, and a phantom player card with
+   * no stats is a claim we never had data for.
+   *
+   * So the row is read into an immutable candidate FIRST — every field, including
+   * the constructed grade row — and only a fully-read row is committed. The read
+   * phase can throw and costs exactly one row; the commit phase touches nothing
+   * that can throw, because every value in it has already been read.
+   */
+  interface RowCandidate {
+    readonly playerName: string;
+    /** Display side; may be a heuristic. */
+    readonly team: TeamSide;
+    /** Identity side; authoritative (`player_team`) or "unknown". */
+    readonly keyTeam: TeamSide;
+    readonly headshot: string | undefined;
+    readonly statKey: string;
+    readonly identified: boolean;
+    readonly threshold: number;
+    readonly overProb: number;
+    readonly movement: number | null;
+    /** `Math.abs(movement)`, computed ONCE here so commit never coerces. */
+    readonly movementAbs: number | null;
+    readonly hit: boolean | null;
+    readonly actual: number | null;
+    readonly isWinner: boolean | null;
+    readonly gradeRow: PropGradeFields;
+    readonly source: string;
+  }
 
-      const playerKey = parsed.player.toLowerCase();
-      if (!playerMap.has(playerKey)) {
-        const team: "home" | "away" | "unknown" =
-          p.player_team ?? detectTeam(parsed.team || p.market_name || "");
+  /** PURE READ. Returns null for a benign skip; throws only on a hostile row. */
+  function readPlayerPropRow(p: PlayerPropRow): RowCandidate | null {
+    const parsed = parsePlayerName(p.market_name || "", p.outcome_name || "");
+    if (!parsed || !parsed.player) return null;
+    if (p.threshold == null) return null;
 
-        playerMap.set(playerKey, {
-          name: parsed.player,
-          team,
-          headshot: p.player_headshot ?? undefined,
-          stats: new Map(),
-        });
-      }
-
-      const playerEntry = playerMap.get(playerKey)!;
-      if (p.player_headshot && !playerEntry.headshot) {
-        playerEntry.headshot = p.player_headshot;
-      }
-
-      const statKey = (parsed.stat || "prop").toLowerCase();
-      if (!playerEntry.stats.has(statKey)) {
-        playerEntry.stats.set(statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
-      }
-
-      const statEntry = playerEntry.stats.get(statKey)!;
-      // #1642 P1b: one unidentified row poisons the bucket for all of them —
-      // the bucket is only a person if every row that landed in it named one.
-      if (!parsed.identified) statEntry.identified = false;
-      const existingRung = statEntry.rungs.find((r) => r.threshold === p.threshold);
-      if (existingRung) {
-        if (p.over_probability != null && (existingRung.overProb == null || p.over_probability > existingRung.overProb)) {
-          existingRung.overProb = p.over_probability;
-        }
-        if (p.hit != null && existingRung.hit == null) existingRung.hit = p.hit;
-      } else {
-        statEntry.rungs.push({
-          threshold: p.threshold,
-          overProb: p.over_probability as number,
-          sources: 1,
-          movement: p.movement ?? null,
-          hit: p.hit ?? null,
-        });
-      }
-      // Queue #190 Item 3: carry the server-side settled grade (actual stat +
-      // is_winner) at the player+stat level (same actual across all thresholds).
-      if (p.actual != null) statEntry.serverActual = p.actual;
-      if (p.is_winner != null && statEntry.serverIsWinner == null) statEntry.serverIsWinner = p.is_winner;
-      // UX-P040 (#1638): keep the raw grading fields so `readPropGrade` can tell
-      // "graded a loser" from "never graded" — `is_winner` alone cannot, being a
-      // non-nullable column defaulted to false.
-      statEntry.gradeRows.push({
+    // `team` is for DISPLAY (card colour, team filter) and may be a heuristic.
+    // `keyTeam` is for IDENTITY and is authoritative-or-nothing — see the header.
+    const team: TeamSide = p.player_team ?? detectTeam(parsed.team || p.market_name || "");
+    const keyTeam: TeamSide =
+      p.player_team === "home" || p.player_team === "away" ? p.player_team : "unknown";
+    // UX-P060 (C281 B1) — NORMALIZE TO A PRIMITIVE EXACTLY ONCE.
+    //
+    // The previous repair read `p.movement` here and then merely PROBED it with a
+    // discarded `Math.abs(...)`, still carrying the RAW value onto the candidate.
+    // Commit then coerced the same value a second time, outside the guard, AFTER
+    // it had already mutated the player, stat, rung, grade and source. A value
+    // whose first coercion succeeds and whose second throws — a stateful getter or
+    // a Proxy — therefore aborted the entire grouping instead of recording one
+    // drop. The probe proved the value was coercible ONCE; it is the SECOND
+    // coercion that had no guard.
+    //
+    // `Number()` here is that single coercion, inside the try. Both the value and
+    // its magnitude are carried as primitives, so nothing downstream re-reads the
+    // caller's object. For an ordinary number this is the identity, so the
+    // production oracle is unchanged; a NaN still compares false exactly as before.
+    const rawMovement = p.movement ?? null;
+    const movement = rawMovement == null ? null : Number(rawMovement);
+    const movementAbs = movement == null ? null : Math.abs(movement);
+    const candidate: RowCandidate = {
+      playerName: parsed.player,
+      team,
+      keyTeam,
+      headshot: p.player_headshot ?? undefined,
+      statKey: (parsed.stat || "prop").toLowerCase(),
+      identified: parsed.identified,
+      threshold: p.threshold,
+      overProb: p.over_probability as number,
+      movement,
+      hit: p.hit ?? null,
+      actual: p.actual ?? null,
+      isWinner: p.is_winner ?? null,
+      // Constructed HERE, in the read phase, so a throwing grade field cannot
+      // leave a half-built player behind.
+      gradeRow: {
         actual: p.actual ?? null,
         hit: p.hit ?? null,
         is_winner: p.is_winner ?? null,
         resolution_source: p.resolution_source ?? null,
+      },
+      source: p.source as string,
+      // Both `movement` and `movementAbs` are primitives normalized above, inside
+      // this guarded read. The commit phase must never coerce anything.
+      movementAbs,
+    };
+    return Object.freeze(candidate);
+  }
+
+  /** MUTATION ONLY. Every value here was already read; nothing here can throw. */
+  function commitPlayerPropRow(c: RowCandidate): void {
+    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, c.keyTeam);
+    if (!playerMap.has(playerKey)) {
+      playerMap.set(playerKey, {
+        name: c.playerName,
+        team: c.team,
+        headshot: c.headshot,
+        stats: new Map(),
       });
-      statEntry.sources.add(p.source as string);
-      if (p.movement != null && (statEntry.movement == null || Math.abs(p.movement) > Math.abs(statEntry.movement))) {
-        statEntry.movement = p.movement;
+    }
+
+    const playerEntry = playerMap.get(playerKey)!;
+    if (c.headshot && !playerEntry.headshot) playerEntry.headshot = c.headshot;
+
+    if (!playerEntry.stats.has(c.statKey)) {
+      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, movementAbs: null, gradeRows: [], identified: true });
+    }
+
+    const statEntry = playerEntry.stats.get(c.statKey)!;
+    // #1642 P1b: one unidentified row poisons the bucket for all of them —
+    // the bucket is only a person if every row that landed in it named one.
+    if (!c.identified) statEntry.identified = false;
+    const existingRung = statEntry.rungs.find((r) => r.threshold === c.threshold);
+    if (existingRung) {
+      if (c.overProb != null && (existingRung.overProb == null || c.overProb > existingRung.overProb)) {
+        existingRung.overProb = c.overProb;
       }
+      if (c.hit != null && existingRung.hit == null) existingRung.hit = c.hit;
+    } else {
+      statEntry.rungs.push({
+        threshold: c.threshold,
+        overProb: c.overProb,
+        sources: 1,
+        movement: c.movement,
+        hit: c.hit,
+      });
+    }
+    // Queue #190 Item 3: carry the server-side settled grade (actual stat +
+    // is_winner) at the player+stat level (same actual across all thresholds).
+    if (c.actual != null) statEntry.serverActual = c.actual;
+    if (c.isWinner != null && statEntry.serverIsWinner == null) statEntry.serverIsWinner = c.isWinner;
+    // UX-P040 (#1638): keep the raw grading fields so `readPropGrade` can tell
+    // "graded a loser" from "never graded" — `is_winner` alone cannot, being a
+    // non-nullable column defaulted to false.
+    statEntry.gradeRows.push(c.gradeRow);
+    statEntry.sources.add(c.source);
+    // UX-P060 (C281 B1): a comparison of two stored primitives — no coercion, so
+    // this line cannot throw after the mutations above it.
+    if (c.movementAbs != null && (statEntry.movementAbs == null || c.movementAbs > statEntry.movementAbs)) {
+      statEntry.movement = c.movement;
+      statEntry.movementAbs = c.movementAbs;
+    }
+  }
+
+  // ── READ EVERY ROW, THEN LEARN THE SIDES, THEN COMMIT ──
+  //
+  // UX-P060 (C281 B1). The read/commit split already existed for atomicity; this
+  // adds a BARRIER between the two so identity is decided with full knowledge.
+  // A row's bucket must not depend on which rows happen to precede it.
+  //
+  // Commit order is unchanged — `candidates` preserves row order and dropped rows
+  // are skipped in both versions — so `playerMap` insertion order, and therefore
+  // card order among equal-stat players, is exactly what it was.
+  const candidates: RowCandidate[] = [];
+  rows.forEach((p, index) => {
+    try {
+      const candidate = readPlayerPropRow(p);
+      if (candidate) candidates.push(candidate);
     } catch (err) {
       dropped.push({ kind: "player_prop_row", at: String(index), message: messageOf(err) });
     }
   });
 
-  // Scan "other" markets for player props (double/triple doubles, etc.)
-  otherRows.forEach((o, index) => {
-    try {
-      const parsed = parsePlayerName(o.market_name || "", o.outcome_name || "");
-      if (!parsed || !parsed.player || !parsed.stat) return;
-      const statLower = parsed.stat.toLowerCase();
-      if (!STAT_TYPES.some((st) => st.toLowerCase() === statLower)) return;
+  // Only ACCEPTED rows teach us a side. A row that was dropped by the guard is not
+  // evidence about the world — counting it would let a hostile row change how a
+  // healthy one is attributed, which is the blast radius this whole module exists
+  // to close.
+  for (const c of candidates) {
+    if (c.keyTeam !== "home" && c.keyTeam !== "away") continue;
+    const nameKey = c.playerName.toLowerCase();
+    let sides = knownSidesByName.get(nameKey);
+    if (!sides) {
+      sides = new Set();
+      knownSidesByName.set(nameKey, sides);
+    }
+    sides.add(c.keyTeam);
+  }
 
-      const playerKey = parsed.player.toLowerCase();
-      if (!playerMap.has(playerKey)) {
-        playerMap.set(playerKey, {
-          name: parsed.player,
-          team: detectTeam(parsed.team || o.market_name || ""),
-          stats: new Map(),
-        });
-      }
-      // #1722 — THE CAUSE. The bucket used to be created unconditionally while
-      // the rung was pushed only when `o.probability != null`, so an unpriced
-      // row left a stat with ZERO rungs behind it. Downstream that picks the
-      // "line" shape (0 < 3) and dereferences `sortedRungs[0]`, which killed the
-      // ENTIRE page — not the card — with `Cannot read properties of undefined
-      // (reading 'threshold')`. Event 15191146 carried 64 such rows.
-      //
-      // A row that cannot contribute a rung is not a stat, so it no longer
-      // creates one. `sources` is still credited only for rows that made it in;
-      // counting a source for a price we never got would overstate the card.
-      if (o.probability == null) return;
-      const playerEntry = playerMap.get(playerKey)!;
-      if (!playerEntry.stats.has(statLower)) {
-        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
-      }
-      const statEntry = playerEntry.stats.get(statLower)!;
-      statEntry.rungs.push({ threshold: 0.5, overProb: o.probability, sources: 1, movement: null });
-      statEntry.sources.add(o.source as string);
+  for (const candidate of candidates) commitPlayerPropRow(candidate);
+
+  // Scan "other" markets for player props (double/triple doubles, etc.)
+  interface OtherCandidate {
+    readonly playerName: string;
+    readonly team: TeamSide;
+    readonly statKey: string;
+    /**
+     * `null` for an unpriced row. The row still names a PLAYER, and the player
+     * bucket is still created for it — see `commitOtherRow`.
+     */
+    readonly probability: number | null;
+    readonly source: string;
+  }
+
+  /**
+   * UX-P058 Item 1, the `other[]` half. Same rule: read everything, then commit.
+   * This pass is where #1722 came from, so it is the last place a partial write
+   * belongs — and note the ORDER below is load-bearing. The unpriced check
+   * (`probability == null`) must happen in the READ phase, because that is the
+   * check UX-P056 added to stop an unpriced row creating a zero-rung stat; doing
+   * it after a commit would restore the original bug exactly.
+   */
+  function readOtherRow(o: OtherMarketRow): OtherCandidate | null {
+    const parsed = parsePlayerName(o.market_name || "", o.outcome_name || "");
+    if (!parsed || !parsed.player || !parsed.stat) return null;
+    const statLower = parsed.stat.toLowerCase();
+    if (!STAT_TYPES.some((st) => st.toLowerCase() === statLower)) return null;
+    return Object.freeze({
+      playerName: parsed.player,
+      team: detectTeam(parsed.team || o.market_name || ""),
+      statKey: statLower,
+      probability: o.probability ?? null,
+      source: o.source as string,
+    });
+  }
+
+  function commitOtherRow(c: OtherCandidate): void {
+    // `other[]` rows carry no `player_team`, so identity is always unknown here
+    // and this pass groups exactly as it did before.
+    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, "unknown");
+    if (!playerMap.has(playerKey)) {
+      playerMap.set(playerKey, {
+        name: c.playerName,
+        team: c.team,
+        stats: new Map(),
+      });
+    }
+    // UNPRICED ROWS STOP HERE, and the placement of this line is load-bearing
+    // twice over.
+    //
+    // It must come AFTER the player bucket exists, because that is what the
+    // pre-change code did and the bucket's creation order decides CARD ORDER: on
+    // event 15191146 an unpriced Rhys Hoskins row at `other[43]` creates his
+    // bucket before Angel Genao's at `other[55]`, and skipping the row outright
+    // moved Hoskins to `other[57]` and swapped two cards on screen. The oracle
+    // caught that; it is a real if small user-visible change, and this is a
+    // repair queue, not a re-ranking of the dashboard.
+    //
+    // It must come BEFORE the STAT is created, because that is #1722 itself: a
+    // row with no price cannot contribute a rung, and a stat with zero rungs is
+    // what dereferenced `sortedRungs[0]` and killed the page.
+    //
+    // So: an unpriced row names a player and nothing more. `sources` is credited
+    // only for rows that made it in — counting a source for a price we never got
+    // would overstate the card.
+    if (c.probability == null) return;
+
+    const playerEntry = playerMap.get(playerKey)!;
+    if (!playerEntry.stats.has(c.statKey)) {
+      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, movementAbs: null, gradeRows: [], identified: true });
+    }
+    const statEntry = playerEntry.stats.get(c.statKey)!;
+    statEntry.rungs.push({ threshold: 0.5, overProb: c.probability, sources: 1, movement: null });
+    statEntry.sources.add(c.source);
+  }
+
+  otherRows.forEach((o, index) => {
+    let candidate: OtherCandidate | null;
+    try {
+      candidate = readOtherRow(o);
     } catch (err) {
       dropped.push({ kind: "other_row", at: String(index), message: messageOf(err) });
+      return;
     }
+    if (candidate) commitOtherRow(candidate);
   });
 
   // Build player data with box score actuals
@@ -527,5 +862,15 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
 
   // Sort by most props (interesting players first)
   result.sort((a, b) => b.stats.length - a.stats.length);
-  return { players: result, dropped };
+
+  // UX-P058 Item 2: decided from what actually happened, not guessed at by the
+  // caller. `dropped` non-empty with nothing surviving means a guard ate the
+  // section — POISON, and the surface must say so rather than draw a blank.
+  // Note the drop can come from any of the three kinds, including `player`:
+  // a throw while BUILDING the last surviving card empties the section just as
+  // completely as a row that never parsed.
+  const emptyReason: GroupPlayerPropsResult["emptyReason"] =
+    result.length > 0 ? null : dropped.length > 0 ? "unreadable" : "clean";
+
+  return { players: result, dropped, emptyReason };
 }

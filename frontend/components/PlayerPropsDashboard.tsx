@@ -364,7 +364,7 @@ export default function PlayerPropsDashboard({
   // NOT have caught #1722: that throw happened HERE, before any card existed.
   //
   // `dropped` is deliberately surfaced rather than swallowed — see below.
-  const { players, dropped } = useMemo(
+  const { players, dropped, emptyReason } = useMemo(
     () =>
       groupPlayerProps({
         playerProps: data.player_props,
@@ -385,7 +385,32 @@ export default function PlayerPropsDashboard({
     [data.player_props, data.other, homeTeam, awayTeam, homeColor, awayColor, boxScore, hasBoxScore],
   );
 
-  if (players.length === 0) return null;
+  // UX-P058 Item 2 (C277) — an empty section states WHICH empty it is.
+  //
+  // This was `if (players.length === 0) return null`, which drew nothing whether
+  // the game had no props or every prop it had failed to parse. The
+  // "N props couldn't be read" line below was written for exactly the second
+  // case and sat AFTER this return, so it was unreachable there.
+  //
+  // Gotcha #53 in the client: an empty is not an absence. A poisoned section
+  // rendering as a clean absence is the worst of the three states — the surface
+  // asserts "this game has no player props", which is a claim about the WORLD
+  // made from a fact about our parsing.
+  //
+  // Bounded on purpose: a fixed one-line notice, no row list, no error text, no
+  // retry. The section says it could not read this and stops. It never grows to
+  // fill the space the cards would have taken.
+  if (players.length === 0) {
+    if (emptyReason !== "unreadable") return null;
+    return (
+      <div>
+        <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
+        <p className="text-[11px] text-text-muted mt-0.5">
+          Player props couldn&apos;t be read for this game.
+        </p>
+      </div>
+    );
+  }
 
   const filtered = teamFilter === "all" ? players : players.filter((p) => p.team === teamFilter || p.team === "unknown");
   const totalProps = players.reduce((a, p) => a + p.stats.length, 0);
