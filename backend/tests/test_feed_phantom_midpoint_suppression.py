@@ -8,12 +8,14 @@ below is a production row read on 2026-08-07.
 Both directions per gotcha #43: the phantom cards go AND the healthy cards stay.
 """
 
+import inspect
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.routes.feed import _score_futures
+from app.utils.market_staleness import is_title_implied_stale
 from app.utils.personalization import PersonalizationContext
 
 
@@ -32,31 +34,38 @@ class _Outcome:
         self.current_yes_ask = ask
 
 
+# The instant this file's world is frozen at: midday on the day every book below
+# was read off production. NOT derived from the real clock, and there is no
+# branch on the clock — see ``_stable_now``.
+_FROZEN_NOW = datetime(2026, 8, 7, 12, 0, 0, tzinfo=timezone.utc)
+
+
 def _stable_now() -> datetime:
-    """Midday UTC today — NEVER a bare ``datetime.now()``. Gotcha #44.
+    """The frozen capture instant. Reads no clock and branches on nothing.
 
-    These tests seed ``commence_time`` at ``now - 1 day`` and read back a
-    DATE token. Seeded from the real clock, that token flips the moment the
-    run crosses UTC midnight, so the suite went green all afternoon Pacific
-    and red every evening from 17:00 PT — a nightly deploy landmine that CI
-    (which mostly runs earlier in the UTC day) almost never saw.
+    Two previous fixes anchored to the real clock and both went red for half of
+    every day, in opposite windows. Neither could have worked, because the thing
+    that expires here is not an offset — it is the FIXTURE ITSELF.
 
-    Found by INT-037 at 00:12 UTC: 3 failures on pure ``origin/master`` with
-    no local changes, while master's own CI was green. Shifting the clock 6h
-    back made all 5 pass, which is the proof.
+    The specimens are production rows, and two of them are titled "Week of
+    August 3 2026". ``app/utils/market_staleness.infer_market_real_world_end``
+    reads that title as a real deadline: implied end 2026-08-03 23:59:59, plus a
+    7-day grace, so the scorer starts suppressing the NVIDIA card — correctly —
+    the moment the ``now`` it is handed passes **2026-08-10 23:59:59 UTC**.
 
-    Pinning the HOUR keeps every relative offset inside one UTC day whatever
-    time the suite runs.
+    That is the whole mechanism. The "red after 12:00 UTC" symptom was the old
+    anchor stepping between yesterday-noon (under the deadline) and today-noon
+    (past it) — a boundary that only looked like a time-of-day rule on
+    2026-08-11, and would have become red 24h/day on 2026-08-12. A fixed-offset
+    anchor ("N hours old, with margin") only picks the date the suite dies.
+
+    So the clock is removed from the test instead of tuned: seeds, comparison
+    instant, and the dates written in the fixture titles all come from one
+    frozen world. ``test_the_fixture_world_is_internally_consistent`` pins that
+    invariant so a future edit to either the anchor or a title fails loudly and
+    says why, rather than going quietly red half a day later.
     """
-    anchor = datetime.now(timezone.utc).replace(
-        hour=12, minute=0, second=0, microsecond=0
-    )
-    # Must always be in the PAST: the production scorer reads the real clock and
-    # compares against these seeds, so a noon anchor taken at 00:12 UTC would sit
-    # twelve hours in the future and drop the card for a different reason.
-    if anchor > datetime.now(timezone.utc):
-        anchor -= timedelta(days=1)
-    return anchor
+    return _FROZEN_NOW
 
 
 class _Market:
@@ -253,6 +262,53 @@ async def test_nvidia_keeps_its_card_and_drops_only_the_phantom_rung():
     shown = {o["name"] for o in card["top_outcomes"]}
     assert "up 204" not in shown, "the 48c/99c phantom rung is still being shown"
     assert "up 200" in shown, "the real 0.845 leader was dropped"
+
+
+# --- the anchor invariant (why this file stopped going red half of every day) --
+
+
+def test_the_fixture_world_is_internally_consistent():
+    """The seeds, the comparison instant, and the DATES INSIDE THE TITLES must all
+    come from one frozen world.
+
+    Two specimens are titled "Week of August 3 2026" because they are production
+    rows. The scorer reads that as a real deadline (implied end 2026-08-03, plus
+    7 grace days), so a ``now`` past 2026-08-10 23:59:59 UTC suppresses the
+    NVIDIA card for a reason that has nothing to do with phantom midpoints — and
+    every assertion below it becomes a lie about a different thing.
+
+    Pinned here, and not left to be rediscovered, because it already cost two
+    fixes: both anchored to the real clock, and both were red for half of every
+    day in opposite windows.
+    """
+    assert _stable_now() == _FROZEN_NOW
+
+    for market in (_spacex(), _oscars(), _nvidia(), _fed(), _golf()):
+        reason = is_title_implied_stale(
+            market.name, market.llm_sport_category, _FROZEN_NOW
+        )
+        assert reason is None, (
+            f"{market.name!r} has expired at the frozen anchor "
+            f"({_FROZEN_NOW:%Y-%m-%d %H:%M} UTC, reason={reason}). The scorer will "
+            "drop this card on a staleness rule, not on the phantom-midpoint rule "
+            "these tests exist to guard. Move _FROZEN_NOW back, or re-capture the "
+            "specimen with a title whose implied deadline is later."
+        )
+
+
+def test_the_anchor_reads_no_clock_and_branches_on_nothing():
+    """The class this file was the third instance of.
+
+    An anchor that reads the wall clock has a boundary somewhere, and a
+    conditional that steps it back is what hides which side of the boundary you
+    are on. Gotcha #44 (amended). Source-level so that reintroducing either
+    shape fails immediately rather than at whatever hour the boundary sits.
+    """
+    src = inspect.getsource(_stable_now)
+    body = src.split('"""')[-1]  # exclude the docstring, which discusses both
+    assert "datetime.now" not in body, "the anchor must not read the wall clock"
+    assert "utcnow" not in body, "the anchor must not read the wall clock"
+    assert "if " not in body, "the anchor must not branch on the clock"
 
 
 @pytest.mark.asyncio

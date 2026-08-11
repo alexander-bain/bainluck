@@ -64,11 +64,17 @@ def _payload(*, buckets=1, outcomes=635464):
 
 # Queue 297 age-bounds a servable last-good at 7 days, so a hardcoded date would
 # silently age out of the fixture's own contract and red the suite one week after
-# it was written. Anchored 2 days back at a FIXED hour (gotcha #44: never seed
-# relative to `now` across a date boundary).
+# it was written. It therefore has to stay relative.
+#
+# Offset FIRST, then truncate (gotcha #44, amended by Queue 329) — the same shape
+# as ``test_calibration_durable_298._at``. The former ``.replace(hour=12)`` idiom
+# pinned the hour of the resulting *day*, which makes the age swing 36-60h with
+# the wall clock: an anchor whose distance from the threshold it feeds depends on
+# what time the suite runs is one threshold change away from being a half-the-day
+# red. This shape holds a constant 48h and touches no boundary.
 _RECENT_GENERATED_AT = (
     (datetime.now(timezone.utc) - timedelta(days=2))
-    .replace(hour=12, minute=0, second=0, microsecond=0)
+    .replace(minute=0, second=0, microsecond=0)
     .isoformat()
 )
 

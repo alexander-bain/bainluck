@@ -37,11 +37,19 @@ pytestmark = pytest.mark.asyncio
 
 
 def _at(*, days_ago: float = 0.0) -> str:
-    """A fixed-hour timestamp N days back (gotcha #44: never straddle midnight)."""
-    base = datetime.now(timezone.utc).replace(
-        hour=12, minute=0, second=0, microsecond=0
-    )
-    return (base - timedelta(days=days_ago)).isoformat()
+    """A stamp N days back that is ALWAYS in the past and ALWAYS that age.
+
+    Offset FIRST, then truncate — the shape from ``test_calibration_durable_298``
+    (gotcha #44, amended by Queue 329). The previous version pinned noon of
+    *today* and subtracted from there, so the age it produced swung a full day
+    with the wall clock: ``days_ago=2`` was 2.5 days old at 00:00 UTC and 1.5
+    days old at 12:00 UTC, and ``days_ago=0`` was twelve hours in the FUTURE all
+    morning. ``test_main_miss_serves_dated_last_good`` asserts an age inside
+    (1.5d, 2.5d) — a window exactly as wide as the swing, so the suite was red
+    at precisely 00:00 UTC, which is when CI most often runs.
+    """
+    base = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return base.replace(minute=0, second=0, microsecond=0).isoformat()
 
 
 def _payload(*, outcomes: int = 1_000_000, version: str | None = None, generated_at=None):
