@@ -240,6 +240,90 @@ two that mutate the **decoder** to show it is genuinely on the path. One mutant 
 SURVIVED and out-of-class: rewriting the test's own transition log to fake its evidence defeats any
 test that keeps bookkeeping, and it mutates the test rather than the code.
 
+## ✅ THE WALL IS `plan_units`, AND IT WAS NEVER IN THE FROZEN FILE (CAL-P036, 2026-08-11)
+
+CAL-P035 established that ~80% of the peak is resident before the cursor loads and concluded the
+roster was the wall, escalating a `del roster` to Alex under ruling 009. **The roster is a term. It is
+not the wall, and the escalation cannot reach the peak.** Measured this window at the production
+cardinality of **669,383 rows**, `tracemalloc`, everything allocated inside the traced region:
+
+| term | when it exists | bytes |
+|---|---|---|
+| roster, `list[Row]` | held all beat | **98.1 MB** |
+| `plan_units` transient | **during planning** | **439.7 MB** |
+| chunks | held all beat | 57.9 MB |
+| `assignment` | held all beat | 55.7 MB |
+| high-water through planning | — | **537.8 MB** |
+
+**The peak is INSIDE `plan_units`, where the roster is necessarily still alive** — it is the input
+being iterated. So releasing the roster afterwards, which is what CAL-P035 authored and escalated,
+lowers the *resident* floor for the long unit loop by ~98 MB and moves the *peak* by zero. That is
+worth having and it is not this problem.
+
+**And `plan_units` is in `app/utils/calibration_staged_futures.py` — the unfrozen pure module.** The
+lane could ship it all along. Three queues aimed at the cursor and a fourth escalated the roster,
+while the dominant term sat in the one file this lane was always free to edit.
+
+### Why a planner costs 440 MB to cut 669,383 rows into 128 pieces
+
+It keyed three intermediates on `vm_id` — `by_vm`, `seen`, `members_by_vm` — and **`vm_id` is
+near-unique in this population.** An ungrouped market's virtual question is `m:<market_id>`, so a
+669,383-row roster carries ~669,383 distinct `vm_id`s. This is the trap: CAL-P034 measured **1,586
+distinct group keys** and that number is real, but it counts *bucket price bands*, which are a
+different key on a different axis. Reading "grouped" as "few" is what made a per-`vm_id` accumulator
+look cheap.
+
+An empty CPython `set` costs **216 bytes** whether it holds one element or none:
+
+| container | count | overhead |
+|---|---|---|
+| `seen` — one `set[int]` per `vm_id` | 669,383 | 137.9 MB |
+| `members_by_vm` — one `set[str]` per `vm_id` | 669,383 | 137.9 MB |
+| `by_vm` — one `list[int]` per `vm_id` | 669,383 | 40.9 MB |
+| **container headers alone, zero payload** | ~2.0M | **316.6 MB** |
+
+### The fix, and what it is careful about
+
+Accumulate per **bucket index** (128) instead of per **`vm_id`** (669,383). ~2.0M containers become
+~384, and the overhead stops scaling with the population. The payload is untouched; only the boxes
+holding it change.
+
+    plan_units transient, 669,383 rows      OLD 439.7 MB  ->  NEW 285.8 MB
+    same, 50% grouped roster                OLD 352.8 MB  ->  NEW 233.1 MB
+
+**Output is byte-identical**, asserted against the prior implementation kept in the test file as an
+oracle — chunks, `key`, and `member_digest` all compared, over four bucket counts. `key` is
+`(buckets, index)` and does not move, so **no banked unit is invalidated and the cursor survives.**
+Verified hash-seed independent (`PYTHONHASHSEED` 0/1/12345 → identical digest), which matters because
+the new code iterates sets where the old iterated a sorted dict.
+
+The one semantic worth naming: **the dedupe is per `vm_id` and deliberately NOT global.** `vm_id` is
+derived with source-scoped group and event sizes, so one `market_id` can be a peer inside `e:1` on
+kalshi and its own `m:7` on polymarket — both real memberships the chunk predicate needs. Deduping on
+`market_id` alone within a bucket is the cheaper, obvious-looking mistake that silently shrinks a
+chunk; it is pinned by its own test and it is mutation M1.
+
+Non-vacuous by **7 mutations, 7 caught**; module restored byte-identical after the battery.
+
+### What this does and does not claim
+
+It does **not** turn the SLO green, and does not claim to. Production is at **407 MB RSS before
+`plan_units` is called**; a 286 MB transient on top still exceeds a 512 MB worker, so hard kills may
+continue. What changed is that the largest single term is now 154 MB smaller and the remaining
+arithmetic is finally legible: 407 resident + 286 transient, against 512.
+
+**Measured, still unowned, in descending size:** the ~286 MB that remains inside `plan_units`
+(~53 MB of it the `(vm_id, market_id)` pair sets, kept deliberately over parsing the member strings
+back — this lane does not invent ambiguous parses); the **`members` tuples at 57.9 MB retained**,
+whose only consumer is `member_digest`, a hash — storing the digest at plan time instead would
+retire almost all of it, and that is the next largest prize; and CAL-P035's roster release, which is
+still correct and still owed.
+
+> **The rule this cost:** *"~80% of the peak is resident before X"* localises the peak in TIME, never
+> in CODE. CAL-P035's gauge reading was right and its inference from it was wrong, because the
+> stage boundary it sampled at is not where the allocation happens. A gauge sampled between two
+> statements cannot see a transient inside either of them.
+
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
 CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
