@@ -160,25 +160,36 @@ async def celery_dashboard(
     }
 
 
-def build_schedule_adherence(beat_schedule, metrics, label_map):
+def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
     Split out from the route so the join logic is unit-testable against fixed
-    inputs. The three arguments are exactly the three facts the question needs:
-    what is SCHEDULED (the live beat schedule), what was RECORDED (the metrics),
-    and which recorded label belongs to which scheduled task (the map).
+    inputs. The arguments are exactly the facts the question needs: what is
+    SCHEDULED (the live beat schedule), what was RECORDED (the metrics), which
+    recorded label belongs to which scheduled task (the map), and how many times
+    each task was actually DELIVERED (LAT-P039).
+
+    Deliveries are keyed by the celery name directly, so they need no label
+    join — and that is the point, not a convenience. The label map is written
+    from inside ``_tracked_run``, so the 30 beat tasks that never call it were
+    unjoinable and therefore ungradeable forever: they made up 30 of the 34
+    ``unmapped`` entries (#1716). A task with deliveries is now graded on them
+    even when the label join finds nothing, so being invisible to the join no
+    longer means being invisible to the surface.
     """
     from app.utils.schedule_adherence import adherence, beat_intervals, find_lapping
 
     intervals = beat_intervals(beat_schedule)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
+    deliveries = deliveries or {}
 
     graded = {}
     unmapped = []
     for full_name, interval_s in sorted(intervals.items()):
         label = label_map.get(full_name)
         m = by_label.get(label) if label else None
-        if not m:
+        d = deliveries.get(full_name) or {}
+        if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
             # NOT "healthy" — it is a beat entry the health surface cannot see,
             # which is a finding in its own right and is reported as one rather
@@ -190,13 +201,22 @@ def build_schedule_adherence(beat_schedule, metrics, label_map):
                           else "label_recorded_but_no_metrics",
             })
             continue
+        # No metrics row at all means completions are UNKNOWN, not zero. Passing
+        # 0 would be gotcha #53 committed by the fix for gotcha #53: an absent
+        # observation rendered as an observed absence, and here it would make
+        # every delivery-only task look like one that never finishes.
+        terminals = None
+        if m:
+            terminals = (m.get("successes_24h", 0) + m.get("failures_24h", 0)
+                         + m.get("incompletes_24h", 0))
         graded[full_name] = adherence(
-            starts=m.get("starts_24h", 0),
-            starts_window_s=m.get("starts_window_s"),
+            starts=(m or {}).get("starts_24h", 0),
+            starts_window_s=(m or {}).get("starts_window_s"),
             interval_s=interval_s,
-            terminals=(m.get("successes_24h", 0) + m.get("failures_24h", 0)
-                       + m.get("incompletes_24h", 0)),
-            durations_ms=m.get("recent_durations_ms") or [],
+            terminals=terminals,
+            durations_ms=(m or {}).get("recent_durations_ms") or [],
+            deliveries=d.get("fires"),
+            deliveries_window_s=d.get("window_s"),
         )
 
     lapping = find_lapping(graded)
@@ -239,12 +259,17 @@ async def celery_schedule_adherence(
     _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
-    from app.tasks.redis_state import get_all_task_metrics, get_task_label_map
+    from app.tasks.redis_state import (
+        get_all_task_deliveries,
+        get_all_task_metrics,
+        get_task_label_map,
+    )
 
     return build_schedule_adherence(
         celery_app.conf.beat_schedule,
         get_all_task_metrics(),
         get_task_label_map(),
+        get_all_task_deliveries(),
     )
 
 
