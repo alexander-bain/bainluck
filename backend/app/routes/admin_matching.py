@@ -3429,7 +3429,7 @@ async def delete_matching_override(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete a matching override."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
     stmt = select(MatchingOverride).where(
         MatchingOverride.id == override_id,
         MatchingOverride.league_slug == league_slug,
@@ -4071,6 +4071,7 @@ async def sawtooth_diagnosis(
 
 @router.post("/sawtooth-fix")
 async def sawtooth_fix(
+    request: Request,
     secret: str = Query(None, description="Admin secret"),
     event_id: Optional[int] = Query(None, description="Fix a single event (or all if omitted)"),
     dry_run: bool = Query(True, description="Preview changes without applying"),
@@ -4090,7 +4091,7 @@ async def sawtooth_fix(
 
     Use dry_run=true (default) to preview, then dry_run=false to apply.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     # Find affected events
     if event_id:

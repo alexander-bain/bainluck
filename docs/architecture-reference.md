@@ -678,38 +678,74 @@ Claude Code can't directly connect to the production Postgres DB (sandbox blocks
 ### Endpoint
 
 ```
-GET /api/admin/query?sql=SELECT ...
+POST /api/admin/db-query
 Authorization: Bearer $ADMIN_TOKEN
+Content-Type: application/json
+
+{"sql": "SELECT ...", "limit": 500}
 ```
 
-- **SELECT-only** — rejects INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/CREATE/GRANT/REVOKE/COPY
-- **1000 row limit** — hardcoded in the endpoint
-- **10 second statement timeout** — via `SET LOCAL statement_timeout = '10s'`
-- **Auth required** — `Authorization: Bearer $ADMIN_TOKEN` header (or `?secret=` query param, deprecated)
-- **Returns JSON**: `{"columns": [...], "rows": [{...}, ...], "count": N}`
+- **SELECT-only** — enforced by `assert_read_only` in `app/utils/sql_read_guard.py`, not by a
+  bare regex
+- **Refuses operational functions BY NAME** — `pg_cancel_backend`, `pg_terminate_backend`, the
+  advisory locks, `nextval`/`setval`, `pg_sleep`, `dblink`, `pg_read_file`. `SET TRANSACTION
+  READ ONLY` does **not** make these safe: it forbids writing tables and sequences, and
+  cancelling a backend is neither (#1641)
+- **Row cap** — via `limit`, capped server-side; the response carries an explicit `truncated`
+  verdict rather than silently returning a short page
+- **Auth required** — `Authorization: Bearer $ADMIN_TOKEN`. There is **no** `?secret=` form;
+  a token in a URL leaks through shell history, the Referer header and every proxy log
+  (#252 Item 3)
+- **Returns JSON**: `{"columns": [...], "rows": [[...], ...], "row_count": N, "truncated": bool,
+  "duration_ms": float, "sql_fingerprint": "..."}` — note `rows` are **lists** aligned to
+  `columns`
+- **Errors are HTTP 400** with `{"error", "reason", "correlation_id", "sql_fingerprint"}`. The
+  raw database message is never echoed; read it from the logs by correlation id
+- **Query plans** — `{"explain": true}` returns `EXPLAIN (FORMAT JSON)` without executing;
+  `{"analyze": true}` executes and additionally requires every function to be on the
+  pure-function allowlist
+
+### There is exactly ONE read rail — do not add a second
+
+`GET /api/admin/query` was **retired** in Queue 332 (Item 5, from C279 P1). It was a second door
+into the same database, and it had none of the hardening above: no `assert_read_only`, no
+operational-function refusal, the token in the query string, and an `except` that returned HTTP
+**200** carrying the raw database error — making a failure and an empty result the same shape to
+a caller (gotcha #53).
+
+The lesson is the C1 lesson: two rails is the disease. Every hardening pass has to be remembered
+on both, and one of them will be forgotten. `backend/tests/test_admin_query_rail_retired.py`
+asserts at the **route boundary** that no route with that path exists, so this cannot be
+reintroduced quietly. **If you find yourself wanting a second read endpoint, extend this one.**
 
 ### CLI tool
 
 ```bash
-source .env.claude
+source ~/.claude/.env
 python3 backend/scripts/db_query.py "SELECT COUNT(*) FROM futures_markets"
 ```
 
-Formats results as a table. Works from Claude Code sessions via `urllib` (bypasses curl sandbox restrictions).
+Formats results as a table. Works from Claude Code sessions via `urllib` (bypasses curl sandbox
+restrictions).
 
 ### How it works
 
-1. Endpoint in `backend/app/routes/admin_data_quality.py` (bottom of file)
-2. Validates SQL is SELECT-only via regex
-3. Runs against the request's async DB session with a 10s statement timeout
-4. Returns results as JSON array of objects
+1. Endpoint `admin_db_query` in `backend/app/routes/admin_data_quality.py`
+2. Auth, then a structured audit line, then the SQL guards — in that order, so a query rejected
+   by the guard still leaves an audit trace
+3. Runs read-only against the request's async DB session under a statement timeout
+4. Returns columns + row lists, with an explicit truncation verdict
 
 ### If it breaks
 
-1. Check the endpoint exists: `curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/query?sql=SELECT%201"`
-2. If 404: the route may not be mounted. Check `admin_data_quality.py` is included in `admin.py`'s router includes.
-3. If 500: check Heroku logs for the specific error. Most likely cause is the SQL having syntax errors or hitting the 10s timeout.
-4. If the endpoint is deleted: recreate it — see commit `00ce882` for the original implementation.
+1. Check the route is mounted: `POST` a trivial query —
+   `curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{"sql":"SELECT 1"}' "$BAINLUCK_API/api/admin/db-query"`
+2. If 404: check `admin_data_quality.py` is included in `admin.py`'s router includes
+3. If 400: read `reason` and `correlation_id`, then find the real message in the Heroku logs by
+   that id. A `reason` of `guard_refused` means the SQL hit `sql_read_guard` — widen the
+   allowlist deliberately (it refuses by name, so it is a one-line change), never by bypassing
+4. **If the endpoint is missing: restore THIS one.** Do not stand up a simpler GET variant —
+   that is exactly how the retired rail came to exist
 
 ### Recovery check script
 

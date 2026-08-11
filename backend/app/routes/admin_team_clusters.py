@@ -32,7 +32,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import MatchingOverride
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.utils.team_merge import _apply_merge, _normalize, run_team_identity_merge
 
@@ -214,7 +214,7 @@ async def team_clusters_verdict(
     - **keep_separate** / **defer**: persist the decision so the cluster drops out
       of the pending queue. Reversible via /undo.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     if body.verdict not in _VERDICT_DECISION:
         raise HTTPException(
@@ -356,7 +356,7 @@ async def team_clusters_undo(
     NOTE: a MERGE physically re-points FKs and deletes the stub rows — that data
     change is NOT reversed (the merged cluster can't re-form), we only clear the
     record. ``reversible`` reports whether the underlying action can be undone."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     row = (
         await db.execute(

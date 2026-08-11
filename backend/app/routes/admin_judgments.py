@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.models import FuturesMarket, FuturesOutcome, RankingJudgment, Sport
-from app.routes.admin_utils import _check_admin_auth, _check_admin_secret, _resolve_admin_email
+from app.routes.admin_utils import (
+    _check_admin_auth,
+    _check_admin_destructive,
+    _check_admin_secret,
+    _resolve_admin_email,
+)
 from app.services import get_db, get_db_rw
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
@@ -790,7 +795,7 @@ async def delete_judgment(
     fast one-tap grading is fearless — a mis-tap is one keypress to reverse
     instead of a permanent bad row polluting Alex's gold-set batches.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     judgment = (
         await db.execute(

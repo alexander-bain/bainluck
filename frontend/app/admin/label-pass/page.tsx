@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
+import { requireDestructiveToken } from "@/lib/destructiveToken";
 import { trackEvent } from "@/lib/analytics";
 import {
   INITIAL_SESSION,
@@ -111,11 +112,19 @@ export default function LabelPassPage() {
     if (undone.newId != null && secret) {
       (async () => {
         try {
-          await adminFetchJSON("/api/admin/label-pass/undo", secret, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ decision_id: undone.newId }),
-          });
+          // Destructive (deletes the verdict row) — needs the second token.
+          const destructive = requireDestructiveToken();
+          if (!destructive) return;
+          await adminFetchJSON(
+            "/api/admin/label-pass/undo",
+            secret,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ decision_id: undone.newId }),
+            },
+            destructive
+          );
         } catch (e) {
           console.error(e);
         }

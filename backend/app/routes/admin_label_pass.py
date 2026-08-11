@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import DiscoverReviewDecision, FuturesMarket
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.utils.eval_promote import (
     APPLIED_DECISIONS,
@@ -504,7 +504,7 @@ async def label_pass_undo(
     """Server-side undo (#222 Rapid-undo): delete the most recent verdict row for a
     target so any applied ranking boost is reverted AND the proposal returns to the
     pending queue. Reverses accept/reject/skip alike."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     row = None
     if body.decision_id is not None:

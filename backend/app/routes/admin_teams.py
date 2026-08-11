@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db, get_db_rw
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 router = APIRouter()
 
@@ -79,7 +79,7 @@ async def merge_duplicate_team(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge a duplicate team into the canonical one. Reassigns all FKs then deletes the duplicate."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.models import Team
 
