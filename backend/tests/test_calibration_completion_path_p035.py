@@ -41,11 +41,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.utils.calibration_phase_ledger import RESUME
 from app.utils.calibration_staged_futures import (
     GROUP_KEY_COLUMNS,
     REPRESENTATIVE_TIE_COLUMN,
     advance,
     collect_unit_results,
+    decode_staged_cursor_detailed,
     new_staged_cursor,
 )
 
@@ -122,8 +124,18 @@ def _cursor():
     )
 
 
-def _walk(units: int, *, round_trip: bool) -> object:
-    """Bank ``units`` units, optionally through real JSON between each one."""
+def _walk(units: int, *, round_trip: bool, transitions: list | None = None) -> object:
+    """Bank ``units`` units, optionally through real JSON between each one.
+
+    **CAL-P035 repair (C276 item 2).** The round trip used to re-inflate the
+    cursor by hand — ``cursor.__class__(**{**vars(cursor), ...})`` — which reads
+    like a resume and is not one: it never touched the production decoder, so
+    every predicate that decides whether a persisted cursor is *usable* was
+    skipped, and deleting the round trip entirely changed nothing that any
+    assertion could see. It now goes through
+    :func:`decode_staged_cursor_detailed`, the same function the beat calls, and
+    each transition is recorded so a test can prove the decode actually happened.
+    """
     cursor = _cursor()
     for index in range(units):
         cursor = advance(
@@ -134,9 +146,61 @@ def _walk(units: int, *, round_trip: bool) -> object:
             lease_expires_at=1e12,
         )
         if round_trip:
+            # Through canonical JSON exactly as ``save_staged_cursor`` persists
+            # it, then back through the PRODUCTION decoder.
             raw = json.loads(json.dumps(cursor.as_payload(), default=str))
-            cursor = cursor.__class__(**{**vars(cursor), "accumulator": raw["accumulator"]})
+            cursor, action, reason = decode_staged_cursor_detailed(
+                raw,
+                expected_population_version=VERSION,
+                expected_input_fingerprint=INPUT_FP,
+                expected_generation_fingerprint=GEN_FP,
+                owner=OWNER,
+                generation=1,
+                now=0.0,
+            )
+            if transitions is not None:
+                transitions.append((action, reason))
     return cursor
+
+
+# =============================================================================
+# The INDEPENDENT oracle (CAL-P035 repair, C276 item 1)
+# =============================================================================
+#
+# The previous version compared ``_finalize(fold)`` against
+# ``_finalize(all_rows)``. Both sides ran the same finalizer, so any defect in
+# the finalizer itself cancelled: dropping its first output row dropped it from
+# both, and the assertion still passed. That is the "two derivations of one
+# fact" failure this lane keeps paying for, wearing the costume of a reference
+# comparison.
+#
+# The oracle below is computed from the GENERATED ROWS by plain arithmetic in
+# this file. It shares no code with the merge, so it can disagree with it.
+
+
+def _expected_from_generated_rows(units: int) -> tuple[dict, dict]:
+    """``(groups, census_totals)`` derived only from ``_unit_rows``."""
+    groups: dict[tuple, dict] = {}
+    for unit_index in range(units):
+        for row in _unit_rows(unit_index):
+            key = tuple(getattr(row, name) for name in GROUP_KEY_COLUMNS)
+            acc = groups.setdefault(
+                key, {"n": 0, "winners": 0, "sum_prob": Decimal(0), "sum_sq_err": 0.0}
+            )
+            acc["n"] += row.n
+            acc["winners"] += row.winners
+            acc["sum_prob"] += row.sum_prob
+            acc["sum_sq_err"] += row.sum_sq_err
+
+    # Census columns are per-unit constants that finalization SUMS across units
+    # and broadcasts onto every merged row.
+    census_totals = {
+        "published_outcomes": sum(1_000 + i for i in range(units)),
+        "published_questions": sum(100 + i for i in range(units)),
+        "kalshi_included": sum(7 + i for i in range(units)),
+        REPRESENTATIVE_TIE_COLUMN: sum(range(units)),
+    }
+    return groups, census_totals
 
 
 @pytest.fixture(scope="module")
@@ -147,34 +211,77 @@ def walked():
 class TestTheFullWalkFinalizes:
     """The event production is about to reach, executed."""
 
-    def test_a_full_128_unit_walk_finalizes_identically_to_banking_every_row(self, walked):
-        """The acceptance bar, at production scale rather than at three groups.
+    @staticmethod
+    def _assert_matches_the_oracle(finalized, units=UNITS):
+        """Compare finalized output against arithmetic done in THIS file."""
+        expected_groups, expected_census = _expected_from_generated_rows(units)
 
-        ``bank-all-then-merge`` is the reference the fold must be
-        indistinguishable from. CAL-P034 proves that over 5 units; the risk this
-        closes is an error that only appears once the group space saturates and
-        the accumulator is larger than any single unit.
+        produced = {
+            tuple(getattr(row, name) for name in GROUP_KEY_COLUMNS): row
+            for row in finalized
+        }
+        # Key SET, independently derived — this is what a dropped output row
+        # violates, and what comparing two runs of the same finalizer cannot see.
+        assert set(produced) == set(expected_groups), (
+            f"group keys differ from the independently derived set: "
+            f"{len(produced)} produced vs {len(expected_groups)} expected"
+        )
+        assert len(finalized) == len(expected_groups)
+
+        for key, want in expected_groups.items():
+            row = produced[key]
+            assert row.n == want["n"], f"n mismatch at {key}"
+            assert row.winners == want["winners"], f"winners mismatch at {key}"
+            assert float(row.sum_prob) == pytest.approx(float(want["sum_prob"])), key
+            assert float(row.sum_sq_err) == pytest.approx(float(want["sum_sq_err"])), key
+            # Derived, never summed.
+            assert float(row.avg_prob) == pytest.approx(
+                float(want["sum_prob"]) / want["n"] if want["n"] else 0.0
+            ), key
+
+        # Census totals are broadcast identically onto every row.
+        for column, total in expected_census.items():
+            values = {getattr(row, column) for row in finalized}
+            assert values == {total}, (
+                f"census {column}: expected {total} broadcast onto every row, got {values}"
+            )
+
+    def test_a_full_128_unit_walk_finalizes_to_the_independently_derived_totals(self, walked):
+        """The acceptance bar, against an oracle that shares no code with the merge.
+
+        ``bank-all-then-merge`` used to be the reference here. It is not a
+        reference — it is the same finalizer run twice, so it certifies the fold
+        only against itself. The oracle is now the arithmetic in
+        :func:`_expected_from_generated_rows`.
         """
         folded = _finalize(collect_unit_results(walked, [f"u{i}" for i in range(UNITS)]))
-        direct = _finalize([_unit_rows(i) for i in range(UNITS)])
+        self._assert_matches_the_oracle(folded)
 
-        assert [vars(row) for row in folded] == [vars(row) for row in direct]
-
-    def test_the_walk_survives_a_json_round_trip_between_every_one_of_128_units(self):
+    def test_the_walk_survives_a_json_round_trip_through_the_production_decoder(self):
         """The only edge production takes, at the length production takes it.
 
-        A beat banks ~18 units, so a 128-unit build is resumed from Postgres
-        six or seven times. CAL-P034's version of this runs five units; the
-        distinction that matters is that the accumulator here is re-encoded and
-        re-decoded 128 times, each time carrying the full saturated group space.
+        A beat banks ~18 units, so a 128-unit build is resumed from Postgres six
+        or seven times. Every one of the 128 steps here is persisted through
+        canonical JSON and read back through ``decode_staged_cursor_detailed``,
+        and the transition log is asserted — so removing the round trip fails
+        this test rather than silently making it a second copy of the one above.
         """
-        resumed = _walk(UNITS, round_trip=True)
+        transitions: list = []
+        resumed = _walk(UNITS, round_trip=True, transitions=transitions)
+
+        assert len(transitions) == UNITS, (
+            f"expected {UNITS} persist/decode transitions, saw {len(transitions)} — "
+            "the round trip is not happening"
+        )
+        assert {action for action, _reason in transitions} == {RESUME}, (
+            f"every transition must be a production RESUME, saw "
+            f"{ {a for a, _ in transitions} }"
+        )
+
         through_json = _finalize(
             collect_unit_results(resumed, [f"u{i}" for i in range(UNITS)])
         )
-        direct = _finalize([_unit_rows(i) for i in range(UNITS)])
-
-        assert [vars(row) for row in through_json] == [vars(row) for row in direct]
+        self._assert_matches_the_oracle(through_json)
 
     def test_the_saturating_group_space_is_actually_reproduced(self, walked):
         """Guards the FIXTURE, not the code.
@@ -192,8 +299,22 @@ class TestTheFullWalkFinalizes:
         assert UNITS * ROWS_PER_UNIT > 20 * len(buckets), "rows must dwarf groups, or there is nothing to fold"
 
 
-class TestTheFinalizeSpike:
-    """CAL-P034's unowned item 1, closed with a number."""
+class TestTheFinalizeAllocation:
+    """CAL-P034's unowned item 1 — measured, and labelled for what it is.
+
+    **CAL-P035 repair (C276 item 3).** This measures ``tracemalloc``, which
+    counts **Python allocation requested inside the traced block**. It is not
+    process RSS: it cannot see the interpreter, the driver's result buffers,
+    arena fragmentation, or anything C-level, and the worker's 512 MB limit is
+    enforced against RSS. So the number below bounds *incremental Python
+    allocation across the completion path* and supports exactly one conclusion —
+    that this cost scales with the group space and not the unit count.
+
+    **It does not establish that finalization is safe on the dyno**, and the
+    earlier version of this file said it did. RSS closure can only come from a
+    process-RSS reading around the real finalizer in production — the
+    ``rss:at:staged:finalize`` gauge on the first beat that completes.
+    """
 
     @staticmethod
     def _finalize_peak(units: int) -> int:
@@ -208,7 +329,7 @@ class TestTheFinalizeSpike:
             tracemalloc.stop()
         return peak
 
-    def test_finalize_cost_is_bounded_by_the_group_space_not_the_unit_count(self):
+    def test_finalize_allocation_is_bounded_by_the_group_space_not_the_unit_count(self):
         """The property, asserted as a RATIO so it cannot flake on absolutes.
 
         Peak bytes are machine- and version-sensitive, so an absolute ceiling
@@ -222,19 +343,23 @@ class TestTheFinalizeSpike:
         full = self._finalize_peak(UNITS)
 
         assert full < 3 * small, (
-            f"finalize peak scaled with units, not groups: "
+            f"finalize allocation scaled with units, not groups: "
             f"{small:,} B at 8 units -> {full:,} B at {UNITS} "
             f"({full / max(small, 1):.1f}x for 16x the units)"
         )
 
-    def test_the_measured_peak_is_recorded(self, record_property):
+    def test_the_measured_allocation_is_recorded(self, record_property):
         """Report the number, so 'unmeasured' stops being the answer.
+
+        Recorded under a name that says what was measured. "peak" alone reads as
+        peak MEMORY, and this is peak Python ALLOCATION — the distinction the
+        C276 block was raised on.
 
         Recorded as a test property rather than asserted against a threshold:
         the useful output is the figure itself, and a threshold invented here
         would be a guess dressed as a bar. The ratio test above is the guard.
         """
         peak = self._finalize_peak(UNITS)
-        record_property("finalize_peak_bytes_at_128_units", peak)
+        record_property("finalize_python_allocation_bytes_at_128_units", peak)
 
         assert peak > 0, "tracemalloc measured nothing — the harness is not exercising finalize"

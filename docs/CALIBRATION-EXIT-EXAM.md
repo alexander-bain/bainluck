@@ -195,7 +195,7 @@ they worked, and would have encoded a false premise into CI forever. **Do not re
 > **The rule, because it cost an hour:** a plan-cost delta between two statements is **not** a runtime
 > delta until `act`/`loops` say the nodes ran. `Total Cost` sums nodes that never execute.
 
-## ✅ THE FINALIZE SPIKE IS MEASURED, AND IT IS A NON-ISSUE — CAL-P034's unowned item 1, closed (CAL-P035, 2026-08-11)
+## 🟡 THE COMPLETION PATH RUNS AT FULL SCALE — and its allocation is bounded (CAL-P035, 2026-08-11; REPAIRED after the C276 block)
 
 CAL-P033 and CAL-P034 both left this open — *"finalization materialises every banked row at once
 (~70K rows) and nobody has measured that spike; it is the one step no beat has ever reached"* — and
@@ -203,23 +203,174 @@ CAL-P034 noted that shrinking the cursor makes it *reachable*, hence more urgent
 
 **The completion path has now been executed at full production scale**, offline and deterministic,
 over a cursor in the real post-P034 folded shape (`tests/test_calibration_completion_path_p035.py`).
-It completes cleanly, and its output is identical to the bank-all-then-merge reference — including
-through a real JSON round trip between every one of the 128 units, which is the only edge production
-takes.
+It completes cleanly, and its output matches an **independently derived oracle** — expected group
+keys and additive/census totals computed from the generated rows by arithmetic in the test file,
+sharing no code with the merge. Every one of the 128 steps is persisted through canonical JSON and
+read back through the **production** `decode_staged_cursor_detailed`.
 
-| walk | rows in | distinct groups | cursor bytes | finalize peak |
+| walk | rows in | distinct groups | cursor bytes | finalize Python allocation |
 |---|---|---|---|---|
 | 1 unit | 470 | 470 | 31,599 | 993,308 |
 | 32 units | 15,040 | **1,650** | 116,181 | 3,564,952 |
 | 128 units | 60,160 | **1,650** | 128,726 | **3,615,384** |
 
-**The finalize peak is ~3.6 MB — 0.7% of the 512 MB dyno**, and it is bounded by the group space
-rather than the unit count (3.56 MB at 32 units vs 3.62 MB at 128: +1.6% for 4x the units). It is not
-a risk and the lane can stop carrying it.
+**What this establishes:** finalization's cost is **bounded by the group space, not the unit count**
+(3.56 MB at 32 units vs 3.62 MB at 128 — +1.6% for 4x the units). That scaling property is the claim,
+and it holds.
+
+⚠️ **What it does NOT establish, and an earlier version of this section wrongly did.** These figures
+are `tracemalloc`: **incremental Python allocation requested inside the traced block.** They are not
+process RSS. They cannot see the interpreter, driver result buffers, allocator arenas or any C-level
+allocation — and the worker's 512 MB limit is enforced against RSS. **The previous text read "~3.6 MB
+= 0.7% of the 512 MB dyno … not a risk and the lane can stop carrying it", which compares a
+Python-allocation figure against an RSS budget. That conclusion is withdrawn.** RSS closure on
+finalization can come from exactly one place: an `rss:at:staged:finalize` reading on the first
+production beat that completes. No beat has produced one since 2026-08-02.
 
 **The harness validates itself against production:** its synthetic cursor at 128 units is **128,726
 B** against the live cursor's **135,843 B**, a 6% difference — so the fixture reproduces the real
-shape rather than a convenient one. Non-vacuous by **6 mutations, 6 caught**.
+shape rather than a convenient one.
+
+**Repair provenance (C276 block at `9afce07e`).** Three defects, all real: the oracle ran the same
+finalizer on both sides, so a drop-first-output defect cancelled and the assertion still passed; the
+"round trip" re-inflated the cursor by hand and never touched the production decoder, so deleting it
+changed nothing observable; and the memory conclusion above. Re-proven by mutation — **7 caught**,
+including the two the block named by name (merge drops its first output row; round trip removed) and
+two that mutate the **decoder** to show it is genuinely on the path. One mutant is recorded as
+SURVIVED and out-of-class: rewriting the test's own transition log to fake its evidence defeats any
+test that keeps bookkeeping, and it mutates the test rather than the code.
+
+## ✅ THE WALL IS `plan_units`, AND IT WAS NEVER IN THE FROZEN FILE (CAL-P036, 2026-08-11)
+
+CAL-P035 established that ~80% of the peak is resident before the cursor loads and concluded the
+roster was the wall, escalating a `del roster` to Alex under ruling 009. **The roster is a term. It is
+not the wall, and the escalation cannot reach the peak.** Measured this window at the production
+cardinality of **669,383 rows**, `tracemalloc`, everything allocated inside the traced region:
+
+| term | when it exists | Python allocation |
+|---|---|---|
+| roster, `list[Row]` | held all beat | **98.1 MB** |
+| `plan_units` transient | **during planning** | **439.7 MB** |
+| chunks | held all beat | 57.9 MB |
+| `assignment` | held all beat | 55.7 MB |
+| high-water through planning | — | **537.8 MB** |
+
+⚠️ **These are `tracemalloc` figures — incremental Python allocation, not process RSS**, and the same
+caution the C276 block attached to CAL-P035's finalize numbers applies here. They are used below only
+to compare `plan_units` against ITSELF and against the terms beside it, which is a comparison
+`tracemalloc` supports. They are **not** added to the 408 MB RSS gauge to produce a total; the two
+instruments do not share units.
+
+**The peak is INSIDE `plan_units`, where the roster is necessarily still alive** — it is the input
+being iterated. So releasing the roster afterwards, which is what CAL-P035 authored and escalated,
+lowers the *resident* floor for the long unit loop by ~98 MB and moves the *peak* by zero. That is
+worth having and it is not this problem.
+
+**And `plan_units` is in `app/utils/calibration_staged_futures.py` — the unfrozen pure module.** The
+lane could ship it all along. Three queues aimed at the cursor and a fourth escalated the roster,
+while the dominant term sat in the one file this lane was always free to edit.
+
+### Why a planner costs 440 MB to cut 669,383 rows into 128 pieces
+
+It keyed three intermediates on `vm_id` — `by_vm`, `seen`, `members_by_vm` — and **`vm_id` is
+near-unique in this population.** An ungrouped market's virtual question is `m:<market_id>`, so a
+669,383-row roster carries ~669,383 distinct `vm_id`s. This is the trap: CAL-P034 measured **1,586
+distinct group keys** and that number is real, but it counts *bucket price bands*, which are a
+different key on a different axis. Reading "grouped" as "few" is what made a per-`vm_id` accumulator
+look cheap.
+
+An empty CPython `set` costs **216 bytes** whether it holds one element or none:
+
+| container | count | overhead |
+|---|---|---|
+| `seen` — one `set[int]` per `vm_id` | 669,383 | 137.9 MB |
+| `members_by_vm` — one `set[str]` per `vm_id` | 669,383 | 137.9 MB |
+| `by_vm` — one `list[int]` per `vm_id` | 669,383 | 40.9 MB |
+| **container headers alone, zero payload** | ~2.0M | **316.6 MB** |
+
+### The fix, and what it is careful about
+
+Accumulate per **bucket index** (128) instead of per **`vm_id`** (669,383). ~2.0M containers become
+~384, and the overhead stops scaling with the population. The payload is untouched; only the boxes
+holding it change.
+
+**Output is byte-identical**, asserted against the prior implementation kept in the test file as an
+oracle — chunks, `key`, and `member_digest` all compared, over four bucket counts. `key` is
+`(buckets, index)` and does not move, so **no banked unit is invalidated and the cursor survives.**
+Verified hash-seed independent (`PYTHONHASHSEED` 0/1/12345 → identical digest), which matters because
+the new code iterates sets where the old iterated a sorted dict. `generation_fingerprint` is
+separately pinned to a golden digest, computed on `origin/master` and verified unmoved.
+
+### ⚠️ THE NEAR-MISS — the first version of this fix was a REGRESSION, and only a sweep found it
+
+The obvious implementation keeps a per-bucket set of `(vm_id, market_id)` pairs to preserve the
+dedupe. It was written, tested, mutation-proven, committed, and **it was wrong** — because a pair set
+costs one tuple **per ROW**, while the shape it replaces costs **per DISTINCT `vm_id`**. So its sign
+depends on how grouped the roster is, and it was measured only at the near-unique end:
+
+| avg group size | distinct `vm_id` | old | pair-set draft | SHIPPED |
+|---|---|---|---|---|
+| 1 market | 669,383 | 439.7 MB | 285.8 MB | **204.9 MB** |
+| 2 markets | 334,692 | 246.3 MB | 235.1 MB | **154.2 MB** |
+| 4 markets | 167,346 | 149.5 MB | **233.6 MB — worse by 84 MB** | 152.7 MB |
+| 8 markets | 83,673 | 185.1 MB | **215.5 MB — worse by 30 MB** | 137.2 MB |
+| 20 markets | 33,470 | 208.1 MB | 202.9 MB | **129.2 MB** |
+
+<!-- NOTE: the first column says "N markets", not a bare "N", deliberately. The
+     scoreboard-integrity test counts any row matching `^\| [1-7] \| ` as an exam
+     item, so a bare digit here silently inflates the scoreboard count. CAL-P034
+     hit this exact trap and recorded it; CAL-P036 hit it again anyway. -->
+
+**And production's group-size distribution cannot be measured from here.** `count(DISTINCT vm_id)`
+over the population chain exceeds the read rail's 25 s ceiling (the roster read alone is 20.4 s), the
+planner's own estimate for that node is its default guess of 200, and `EXPLAIN ANALYZE` is refused on
+this statement by a `MATERIALIZED (`/`NOT (` false positive in the function allowlist. So the draft
+would have shipped a change whose sign rested on a number nobody had.
+
+The shipped version drops the pair set entirely and recovers `market_ids` from the members each chunk
+already carries. It is better in four of five regimes, by up to **234.7 MB**, and worse in one by
+**3.3 MB (2%)** — a bounded worst case instead of an unbounded unknown one. **Output equivalence was
+re-verified in every regime.**
+
+> **The rule:** a memory fix measured at one point on a distribution is a measurement of that point.
+> If the structure it replaces scales on a different axis than the structure replacing it, the two
+> curves CROSS, and which side you are on is an empirical question — not a design argument.
+
+The one semantic worth naming: **the dedupe is per `vm_id` and deliberately NOT global.** `vm_id` is
+derived with source-scoped group and event sizes, so one `market_id` can be a peer inside `e:1` on
+kalshi and its own `m:7` on polymarket — both real memberships the chunk predicate needs. Deduping on
+`market_id` alone within a bucket is the cheaper, obvious-looking mistake that silently shrinks a
+chunk; it is pinned by its own test and it is mutation M1. Recovering `market_ids` by splitting the
+member rows also made the encoding's reliance on its separator explicit: a `\x1e` inside `vm_id` or
+`source` is now **refused**, where before it would have silently collided two rosters on
+`member_digest`.
+
+Non-vacuous by **9 mutations, 9 caught**; module restored byte-identical after the battery.
+
+### What this does and does not claim
+
+It does **not** turn the SLO green, and does not claim to. It also does not claim the beat will now
+survive: the 512 MB limit is enforced against RSS, these figures are Python allocation, and the two
+cannot be added. What is established is narrower and still worth having — **the largest single
+allocation term in the beat is `plan_units`, it is in unfrozen code, and it is now less than half its
+former size at the near-unique end and smaller in four of five regimes.**
+
+**The one reading that would settle it** is an `rss:` gauge sampled INSIDE the planning region. There
+is none: `runner.stage(...)` wraps the roster read and each unit read, and `plan_units` runs between
+two stages, so the peak gauge structurally cannot see it. That is also the likeliest explanation for
+the standing **SIGKILL attribution gap** — a beat killed during planning writes no ledger at all, so
+every ledger we have is drawn from beats that survived planning. Adding that gauge is in the frozen
+file.
+
+**Measured, still unowned, in descending size:** the ~205 MB that remains inside `plan_units`; the
+**`members` tuples at 57.9 MB retained**, whose only consumer is `member_digest`, a hash — storing the
+digest at plan time instead would retire almost all of it, and that is the next largest prize; the
+`assignment` dict at 55.7 MB; and CAL-P035's roster release, which is still correct and still owed.
+
+> **The rule this cost:** *"~80% of the peak is resident before X"* localises the peak in TIME, never
+> in CODE. CAL-P035's gauge reading was right and its inference from it was wrong, because the
+> stage boundary it sampled at is not where the allocation happens. A gauge sampled between two
+> statements cannot see a transient inside either of them.
 
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
