@@ -115,8 +115,13 @@ describe("#1722 — an unpriced player-prop row cannot take down the page", () =
     // The invariant, asserted at the source rather than through the DOM: the
     // consumption site bails before the shape decision, so a future upstream
     // change cannot re-open the dereference.
+    //
+    // UX-P056 repointed this at `lib/playerPropsGrouping.ts`, where the grouping
+    // now lives. The guard travelled WITH the code rather than being deleted as
+    // "covered elsewhere" — a source assertion left pointing at a file the code
+    // has left is a guard that passes forever without checking anything.
     const src = require("fs").readFileSync(
-      require("path").resolve(__dirname, "../../components/PlayerPropsDashboard.tsx"),
+      require("path").resolve(__dirname, "../../lib/playerPropsGrouping.ts"),
       "utf8",
     );
     const guardIdx = src.indexOf("if (sortedRungs.length === 0) continue;");

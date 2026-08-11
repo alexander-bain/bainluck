@@ -197,6 +197,17 @@ function buildRunManifest(input) {
       // Recorded so a run-level expiry red says WHICH excuse died, instead of
       // making a reader diff two journeys to find out.
       unfired_navigation_allowances: unfiredAllowances(journeys),
+      // UX-P057: how many journeys assert WHICH surface rendered, not just how
+      // much of it. Counted rather than left to inspection because this whole
+      // queue exists to fix an opt-in mechanism that only 3 of 11 specs opted
+      // into — and nobody noticed, because adoption was not a number anywhere.
+      // A new opt-in check that hides its own coverage would repeat that.
+      surface_vocabulary_coverage: (() => {
+        const asserted = journeys.filter((j) =>
+          ((j && j.assertions) || []).some((a) => a.assertion_id === "content.surface_vocabulary")
+        ).length;
+        return { asserted, total: journeys.length };
+      })(),
       result: input.result || deriveRunResult(journeys, { superseded: input.superseded }),
       superseded_by: input.supersededBy || null,
       notes: Array.isArray(input.notes) ? input.notes : [],

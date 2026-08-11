@@ -103,6 +103,10 @@ export interface FinishInput {
    * fails.
    */
   allowedNavigationAborts?: Array<string | NavigationAbortAllowance>;
+  /** UX-P057: vocabulary proving which surface rendered. One match suffices. */
+  surfaceMarkers?: string[];
+  /** The observed text those markers are searched in. */
+  surfaceText?: string | null;
   /** `"none"` for journeys whose subject is not the feed (the consent pack). */
   contentMode?: "card" | "none";
   /**
@@ -347,6 +351,8 @@ export class JourneyRecorder {
       allowedFailures: input.allowedFailures ?? [],
       allowedConsoleErrors: input.allowedConsoleErrors ?? [],
       allowedNavigationAborts: input.allowedNavigationAborts ?? [],
+      surfaceMarkers: input.surfaceMarkers ?? [],
+      surfaceText: input.surfaceText ?? null,
       artifacts,
       contentMode: input.contentMode ?? "card",
       telemetry: this.telemetrySeen(),

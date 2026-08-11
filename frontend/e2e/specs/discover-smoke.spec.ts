@@ -1,4 +1,5 @@
 import { test, expect, measureMainRegion } from "../fixtures/audit";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 import { classifyMainRegion } from "../helpers/contentState";
 
 /**
@@ -116,11 +117,10 @@ const SKELETON = '[data-testid="discover-skeleton"]';
  * shows it fires on every run — at which point it should become a bare string
  * and be held to the strict staleness rule.
  */
-const RSC_PREFETCH_ABORT = {
-  match: "_rsc=",
-  issue: 1525,
-  intermittent: true,
-} as const;
+// UX-P057: the declaration itself now lives in `helpers/navigationAborts`.
+// The reasoning above is why it is intermittent and is kept here, where it was
+// measured; what moved is the OBJECT, because eight more specs need the same one
+// and eight copies of one token is the drift that module exists to end.
 
 const PATHS = [
   { journeyId: "discover.landing", path: "/", allowRscAbort: true },

@@ -114,6 +114,36 @@ jobs:
     # pack; each leg's manifest is separate evidence and all of it is wanted.
     strategy:
       fail-fast: false
+      # UX-P057: the packs run ONE AT A TIME, against one rate-limited API.
+      #
+      # MEASURED, on the two runs that filed the issues. Both launched their
+      # matrix legs in the same second:
+      #
+      #   run 31473736725  tournament-inventory   started 08:33:30Z
+      #   run 31473736725  deploy-smoke+consent   started 08:33:30Z
+      #   run 31372562742  tournament-inventory   started 09:00:04Z
+      #   run 31372562742  deploy-smoke+consent   started 09:00:04Z
+      #
+      # Two full browser packs against a 60/min public API is enough on its own
+      # to produce HTTP 429, and the graders correctly report a 429 as a failed
+      # request and a console error. Twelve open issues describe nothing but
+      # that — the rail rate-limiting itself and then filing the result.
+      #
+      # This was believed to be covered by the pack-in-the-concurrency-key fix
+      # (#1691) and it is NOT, in two separate ways. That key governs SEPARATE
+      # DISPATCHES, while these legs belong to ONE run; and its purpose was the
+      # opposite of serialising — it stopped different packs cancelling each
+      # other, which is precisely what lets them run at the same time. A
+      # concurrency group cannot serialise a matrix. Only this can.
+      #
+      # `fail-fast: false` above still stands and is unrelated: a red smoke pack
+      # must not cancel the tournament pack. This changes WHEN each leg runs,
+      # never whether it runs.
+      #
+      # Cost: a scheduled sweep takes the sum rather than the max of its legs —
+      # about four minutes instead of about two, well inside `timeout-minutes`.
+      # A dispatched run asks for one pack and is unaffected.
+      max-parallel: 1
       matrix:
         pack: ${{ fromJSON(inputs.pack && format('["{0}"]', inputs.pack) || '["deploy-smoke+consent","tournament-inventory"]') }}
 

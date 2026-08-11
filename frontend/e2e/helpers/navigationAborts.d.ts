@@ -8,6 +8,17 @@ import type { FailedRequestLike } from "./errorVolume";
 /** The Next.js RSC prefetch marker, shared so two specs cannot restate it. */
 export declare const RSC_PREFETCH: string;
 
+/**
+ * The same allowance in its measured-intermittent form, for specs with no
+ * measured base rate of their own. Exempt from run-level expiry, so declaring
+ * it cannot manufacture a red; tied to #1525 so it still has an end.
+ */
+export declare const RSC_PREFETCH_ABORT: Readonly<{
+  match: string;
+  issue: number;
+  intermittent: true;
+}>;
+
 export declare const NAVIGATION_CANCEL_FAILURES: ReadonlySet<string>;
 
 /** Is this failure a cancelled navigation/prefetch rather than a real failure? */

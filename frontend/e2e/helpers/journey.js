@@ -335,6 +335,55 @@ function evaluateJourney(observation) {
     );
   }
 
+  // --- Which SURFACE rendered, not merely how much of it. ---
+  //
+  //     UX-P057. `route.expected_path` proves the URL and
+  //     `content.main_region_nonblank` proves a character count. Neither says
+  //     the page is the page: a route that 200s with the wrong surface, a
+  //     generic error body, or a shell that never hydrated its subject all
+  //     satisfy both — enough characters at the right address.
+  //
+  //     #1650 is the standing example. `settled_props_verdict` grades a char
+  //     count, so the question "does the settled page speak the settled
+  //     vocabulary" has been unanswerable in the rail for six cycles.
+  //
+  //     ONE marker is enough, deliberately. Requiring all of them makes the
+  //     assertion a copy of the page's current wording, and it would then fail
+  //     on every honest copy edit — a guard nobody believes is worse than no
+  //     guard (UX-P053's find). Matching is case-insensitive for the same
+  //     reason.
+  //
+  //     Declared markers with NO observed text is a FAILURE, not a skip. An
+  //     unobserved surface is not a proven one — the same rule the main-region
+  //     branch above already applies to itself.
+  const markers = Array.isArray(o.surfaceMarkers)
+    ? o.surfaceMarkers.filter((m) => isNonEmptyString(m))
+    : [];
+  if (markers.length === 0) {
+    checkedClean.push("content.surface_vocabulary (journey declares no surface markers)");
+  } else if (!isNonEmptyString(o.surfaceText)) {
+    assertions.push(
+      assertion(
+        "content.surface_vocabulary",
+        false,
+        `${markers.length} marker(s) declared but no surface text was observed`
+      )
+    );
+  } else {
+    const haystack = String(o.surfaceText).toLowerCase();
+    const found = markers.filter((m) => haystack.includes(String(m).toLowerCase()));
+    assertions.push(
+      assertion(
+        "content.surface_vocabulary",
+        found.length > 0,
+        found.length > 0
+          ? `matched ${redactText(found[0], { maxLength: 60 })}`
+          : `none of ${markers.length} declared marker(s) appeared: ` +
+            markers.map((m) => redactText(m, { maxLength: 40 })).join("; ")
+      )
+    );
+  }
+
   // --- The exact false-green guard: a duration may only exist for a card that
   //     was actually found. Recording elapsed time for an absent card is the
   //     C96 [P1] defect, so it is an assertion, not a comment. ---

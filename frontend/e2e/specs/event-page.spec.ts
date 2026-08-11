@@ -177,6 +177,20 @@ test("settled props are described one way, not three", async ({ page, journey })
     firstCardMs: specimen ? Date.now() - startedAt : null,
     mainRegion,
     allowedNavigationAborts: [RSC_PREFETCH],
+    // UX-P057 — the #1650 surface, now GRADED rather than merely asserted.
+    //
+    // The two `expect`s below already read this same text, but a Playwright
+    // failure is a test failure: it never reaches the manifest, so the rail's
+    // own verdict for this journey has been a CHARACTER COUNT
+    // (`content.main_region_nonblank`) for six cycles. A settled page that
+    // renders 6,000 characters of the wrong thing passed.
+    //
+    // Either settled header counts — which of the two is the #1650 question and
+    // is adjudicated below, against the PAYLOAD. This assertion answers the
+    // prior question the rail could not ask at all: did the settled surface
+    // render its own vocabulary.
+    surfaceMarkers: [GRADED_HEADER, NO_GRADE_HEADER],
+    surfaceText: body,
   });
 
   expect(

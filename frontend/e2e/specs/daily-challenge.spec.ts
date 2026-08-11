@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import { redactUrl } from "../helpers/redaction";
@@ -154,6 +155,7 @@ test("daily reports only a share that actually happened", async ({ page, journey
   const mainText = await readContentRegionText(page);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "daily.anonymous.share",
     expectedPath: path,
     // The subject is the daily flow, not the Discover feed, so the shared
@@ -222,6 +224,7 @@ test("an unknown shared challenge renders a named not-found state", async ({ pag
   const mainText = await readContentRegionText(page);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "challenge.anonymous.unknown_code",
     expectedPath: path,
     contentMode: "none",

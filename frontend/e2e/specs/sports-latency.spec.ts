@@ -1,5 +1,6 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import type { Page, Response } from "@playwright/test";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
  * Sports cold/warm latency trace — L2-240 Items 0/3.
@@ -151,6 +152,7 @@ for (const path of PATHS) {
 
       const mainText = await readContentRegionText(page);
       await journey.finish({
+        allowedNavigationAborts: [RSC_PREFETCH_ABORT],
         journeyId: "sports.latency",
         expectedPath: path,
         realCardFound,

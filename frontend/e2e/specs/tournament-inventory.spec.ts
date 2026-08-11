@@ -5,6 +5,7 @@ import {
   type Capability,
   type TournamentRoute,
 } from "../fixtures/tournamentRoutes";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
  * L2-245 Item 1 — the rendered tournament/event-concept inventory.
@@ -240,6 +241,7 @@ for (const route of TOURNAMENT_ROUTES) {
     );
 
     await journey.finish({
+      allowedNavigationAborts: [RSC_PREFETCH_ABORT],
       journeyId: route.journeyId,
       // No expectedPath: the shell canonicalizes the slug via router.replace, so
       // an exact match would false-red. The prefix / terminal is asserted below.
@@ -303,6 +305,7 @@ test(`competition hub renders and links into concepts — ${HUB_ROUTE.path}`, as
   });
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: HUB_ROUTE.journeyId,
     contentMode: "none",
     realCardFound: false,
