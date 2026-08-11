@@ -5,11 +5,29 @@ Runs every 2 hours. Checks ingestion freshness, winner coverage, and snapshot
 sparsity. When a check fails:
   1. GPT-4o-mini generates a diagnosis
   2. Email alert sent to DAILY_DIGEST_RECIPIENTS
-  3. GitHub Issue created with diagnosis so /triage gets a running start
+  3. The condition is reconciled onto the shared sentinel filing rail
+     (``app.tasks.sentinel_filing``) — file OR comment, one open issue per
+     condition, so /triage gets a running start without a new issue per day.
 
-Redis dedup prevents duplicate alerts within 24h per check.
+Filing (Queue #328, #1727)
+--------------------------
+Dedupe is keyed on the CONDITION IDENTITY and matched against the OPEN
+``alert-intake`` issue list, exactly like the Flow/Grid/Board sentinels.
+
+What this replaced, because the old shape is an easy one to re-introduce: the
+previous dedupe was a bare ``SETEX watchdog:alert:{check_name} 86400`` and the
+filed body carried NO fingerprint of any kind. Nothing ever consulted the board,
+so a condition that stayed failing filed a brand-new issue every single day — 23
+open ``[Data Quality]`` issues for 5 live conditions, six of them P0s for the one
+``espn_freshness`` condition on six different days. A reader triaging by priority
+saw six emergencies where there was one.
+
+The Redis TTL survives, demoted to what it is actually good at: rate-limiting the
+recurrence COMMENT (and the alert email) so a flapping condition does not comment
+every run. It no longer decides whether to file.
 """
 
+import hashlib
 import html
 import json
 import logging
@@ -646,30 +664,89 @@ def send_alert_email(check: dict[str, Any], value: Any, diagnosis: str) -> bool:
 # GitHub Issue creation
 # ---------------------------------------------------------------------------
 
-def create_alert_issue(
-    check: dict[str, Any],
-    value: Any,
-    diagnosis: str,
-) -> int | None:
-    """Create a GitHub Issue for the failed check, returns issue number or None."""
-    from app.tasks.bug_report_github import (
-        GITHUB_TOKEN,
-        create_github_issue,
-        add_to_project_board,
+_WATCHDOG_MARKER = "watchdog-alert-fingerprint"
+
+
+def watchdog_alert_fingerprint(check_name: str, dimension: str | None = None) -> str:
+    """Stable 12-char fingerprint for a watchdog CONDITION (Queue #328).
+
+    Keyed on the condition identity — ``check_name`` plus an optional
+    ``dimension`` — and deliberately NOT on the rendered title. Titles embed the
+    observed value and threshold, both of which move between firings, so a
+    title-keyed dedupe silently stops deduping the moment a number changes. That
+    is not hypothetical: ``calibration_publish_age`` filed #1680 ("no calibration
+    publish since 2026-08-02 (8.9 days)") and then #1759 ("no successful
+    calibration publish in over 2 hours") for the very same condition.
+
+    The hex-digest form is required, not cosmetic. The one shared declaration
+    parser (``sentinel_filing._DECLARED_FINGERPRINT_RE``) only recognises
+    ``<marker>:<hex 6-40>``, so writing a raw ``check_name`` here would produce a
+    body whose marker never matches — dedupe that looks implemented in review and
+    files a duplicate on every run.
+    """
+    key = f"watchdog:{check_name}"
+    if dimension:
+        key = f"{key}:{dimension}"
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _watchdog_title_prefix(check_name: str) -> str:
+    """Title-prefix dedup fallback — 1:1 with the condition fingerprint.
+
+    Stable through the check name; everything after it is the message, which
+    carries the moving value. Used only on the RED dedup path (never on close),
+    so an edited-away body declaration still de-dups but a human-filed lookalike
+    is never auto-closed."""
+    return f"[Data Quality] {check_name}: "
+
+
+def _has_open_canonical(check_name: str, open_issues: Any) -> bool:
+    """True only when this condition's canonical issue is KNOWN to be open.
+
+    Deliberately conservative in one direction: an unreadable/absent snapshot
+    returns False, so the run proceeds to the rail rather than silently skipping.
+    The rail then makes the real decision and no-ops explicitly if it also cannot
+    read the board. An unknown must never be resolved here into "already
+    handled" — that is how a condition goes unfiled during an outage."""
+    from app.tasks.sentinel_filing import OpenIssuesResult, find_matching_issue
+
+    if isinstance(open_issues, OpenIssuesResult):
+        if not open_issues.ok:
+            return False
+        snapshot = open_issues.issues
+    elif isinstance(open_issues, list):
+        snapshot = open_issues
+    else:
+        return False
+    return (
+        find_matching_issue(
+            snapshot,
+            watchdog_alert_fingerprint(check_name),
+            _WATCHDOG_MARKER,
+            _watchdog_title_prefix(check_name),
+        )
+        is not None
     )
 
-    if not GITHUB_TOKEN:
-        logger.warning("GITHUB_TOKEN not set, skipping issue creation")
-        return None
 
-    severity = check["severity"].lower()
+def build_alert_issue_title(check: dict[str, Any]) -> str:
     title = f"[Data Quality] {check['name']}: {check['message']}"
     # Truncate title to 256 chars (GitHub limit)
     if len(title) > 256:
         title = title[:253] + "..."
+    return title
 
-    body = (
+
+def build_alert_issue_body(check: dict[str, Any], value: Any, diagnosis: str) -> str:
+    """Issue body carrying the canonical fingerprint declaration.
+
+    The declaration line is what makes this condition de-dupable forever; the
+    ``(dedupe key — do not remove)`` annotation is part of the parser's contract,
+    not a comment."""
+    fp = watchdog_alert_fingerprint(check["name"])
+    return (
         f"## Data Quality Alert\n\n"
+        f"`{_WATCHDOG_MARKER}:{fp}`  (dedupe key — do not remove)\n\n"
         f"**Severity:** {check['severity']}  \n"
         f"**Check:** `{check['name']}`  \n"
         f"**Current value:** `{value}`  \n"
@@ -678,40 +755,95 @@ def create_alert_issue(
         f"{check['message']}\n\n"
         f"### Diagnosis\n\n"
         f"{diagnosis}\n\n"
+        f"### Recurrence\n\n"
+        f"This is the canonical issue for the `{check['name']}` condition. Later "
+        f"firings COMMENT here rather than filing a sibling. If this issue is "
+        f"closed and the condition fires again, the watchdog opens a FRESH issue "
+        f"for that new episode and cross-references this one — a recurrence after "
+        f"a fix is real news and must not be buried in an immortal thread.\n\n"
         f"---\n"
         f"*Auto-created by data quality watchdog. "
         f"[Admin Dashboard](https://bainluck.com/admin)*"
     )
 
-    labels = [f"priority:{severity}", "alert-intake", "needs-agent"]
 
-    try:
-        issue_number, issue_node_id = create_github_issue(title, body, labels)
-        logger.info(
-            "Created GitHub issue #%d for watchdog check '%s'",
-            issue_number,
-            check["name"],
-        )
-        try:
-            add_to_project_board(issue_node_id)
-        except Exception:
-            logger.warning(
-                "Failed to add issue #%d to project board (non-fatal)",
-                issue_number,
-                exc_info=True,
-            )
-        return issue_number
-    except Exception as exc:
-        logger.error("Failed to create GitHub issue for '%s': %s", check["name"], exc)
-        return None
+def reconcile_alert_issue(
+    check: dict[str, Any],
+    value: Any,
+    diagnosis: str,
+    open_issues: Any = None,
+) -> dict:
+    """File-or-comment this condition's canonical issue via the shared rail.
+
+    Returns the rail's result dict; ``action`` is one of ``filed`` /
+    ``commented`` / ``dedup_unknown_no_op`` / ``filing_deferred`` /
+    ``skipped_no_token`` / ``comment_failed`` / ``error``.
+
+    ``dedup_unknown_no_op`` is the important one: when the open-issue read fails
+    or truncates, the rail refuses to act rather than treating an unreadable
+    board as an empty one. That is the difference between "nothing is open" and
+    "we could not tell" — collapsing them is how a duplicate gets filed during an
+    outage (gotcha #53's shape)."""
+    from app.tasks.sentinel_filing import reconcile_issue
+
+    check_name = check["name"]
+    severity = check["severity"].lower()
+    fp = watchdog_alert_fingerprint(check_name)
+
+    return reconcile_issue(
+        red=True,
+        fingerprint=fp,
+        marker_key=_WATCHDOG_MARKER,
+        labels=[f"priority:{severity}", "alert-intake", "needs-agent"],
+        title=build_alert_issue_title(check),
+        body=build_alert_issue_body(check, value, diagnosis),
+        title_prefix=_watchdog_title_prefix(check_name),
+        red_comment=(
+            f"Watchdog re-observed **{check_name}** at "
+            f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} — "
+            f"value `{value}`, threshold `{check['threshold']}` "
+            f"({check.get('comparison', 'gte')}), severity {check['severity']} "
+            f"(fingerprint `{fp}`).\n\n"
+            f"{check['message']}\n\n"
+            f"Still open — recurrence recorded here rather than filed as a new issue."
+        ),
+        open_issues=open_issues,
+    )
+
+
+def create_alert_issue(
+    check: dict[str, Any],
+    value: Any,
+    diagnosis: str,
+) -> int | None:
+    """Back-compat shim: reconcile this condition, return the issue number.
+
+    Prefer ``reconcile_alert_issue`` — it returns the full action so a caller can
+    distinguish "filed" from "commented" from "could not read the board", which
+    is exactly the distinction the counters exist to report."""
+    res = reconcile_alert_issue(check, value, diagnosis)
+    return res.get("issue")
 
 
 # ---------------------------------------------------------------------------
-# Redis dedup
+# Redis comment/email rate-limiter
+#
+# This TTL used to BE the dedupe, which is the wrong job for a TTL: keyed on the
+# check name with no reference to the board, it let a still-failing condition
+# file a fresh issue every day once the key expired. Dedupe now lives on the
+# filing rail (open-issue fingerprint match). What is left here is a rate limit
+# on the recurrence comment and the alert email, so a flapping condition does not
+# comment on every run. It must never again decide whether to FILE.
 # ---------------------------------------------------------------------------
 
 def _check_redis_dedup(check_name: str) -> bool:
-    """Return True if this check has already alerted in the last 24h."""
+    """Return True if this check already commented/emailed in the last 24h.
+
+    Note the failure direction: a Redis fault returns False (allow), because
+    over-commenting is a nuisance and silence is a missed alert. This is safe
+    precisely BECAUSE it no longer gates filing — the rail's own
+    ``dedup_unknown_no_op`` handles the unreadable-board case, where the safe
+    direction is the opposite one (do nothing)."""
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -724,7 +856,7 @@ def _check_redis_dedup(check_name: str) -> bool:
 
 
 def _set_redis_dedup(check_name: str, issue_number: int | None = None) -> None:
-    """Mark this check as alerted for 24h."""
+    """Mark this check as commented/emailed for 24h (rate limit, not dedupe)."""
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -786,9 +918,37 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
         "checks_passed": 0,
         "alerts_fired": 0,
         "alerts_deduped": 0,
+        # Queue #328 counters — the point of the migration is that these are
+        # distinguishable. "It filed" and "it commented" and "it could not read
+        # the board" all used to look like one number.
+        "issues_filed": 0,
+        "issues_commented": 0,
+        # RE-FILE POLICY (Queue #328 Item 4, decided here and recorded in #1727):
+        # dedupe against OPEN issues ONLY. A condition that fires, is fixed, is
+        # closed, and fires again months later gets a FRESH issue for that new
+        # episode — it does not reopen the old one. A recurrence after a fix is
+        # real news; folding it back into an immortal thread destroys exactly the
+        # signal this rail exists to produce, and it is the same call the sibling
+        # sentinels already make ("a future recurrence opens a fresh episode").
+        # So this counter is structurally 0 under the chosen policy; it is kept
+        # visible rather than dropped so the policy is legible from the output.
+        "issues_reopened": 0,
+        "recurrence_policy": "fresh-episode-per-recurrence (no reopen)",
+        "dedup_unknown_no_op": 0,
         "errors": [],
         "results": {},
     }
+
+    # ONE open-issue snapshot for the whole run (typed): every condition dedups
+    # against the same strongly-consistent REST read instead of one round-trip
+    # each. ok=False propagates to every reconcile as dedup_unknown_no_op.
+    try:
+        from app.tasks.sentinel_filing import fetch_open_alert_issues
+
+        open_issues = fetch_open_alert_issues()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Watchdog: open-issue snapshot failed: %s", exc)
+        open_issues = None
 
     async with get_task_session() as session:
         for check in CHECKS:
@@ -809,12 +969,18 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                     stats["checks_passed"] += 1
                     continue
 
-                # Check failed — check dedup before firing
-                if _check_redis_dedup(check_name):
+                # Check failed. The 24h key is a COMMENT rate limit, not a
+                # filing gate: it may suppress a repeat comment/email, but it
+                # must never suppress the file when nothing is open for this
+                # condition. So we only short-circuit when the key is hot AND the
+                # board already holds this condition's canonical open issue.
+                rate_limited = _check_redis_dedup(check_name)
+                if rate_limited and _has_open_canonical(check_name, open_issues):
                     stats["alerts_deduped"] += 1
                     stats["results"][check_name]["deduped"] = True
                     logger.info(
-                        "Watchdog check '%s' failed but already alerted in 24h",
+                        "Watchdog check '%s' failed; canonical issue already open "
+                        "and commented within 24h — rate-limited",
                         check_name,
                     )
                     continue
@@ -840,20 +1006,37 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 if context:
                     diagnosis = f"{context}\n\n{diagnosis}"
 
-                # Email
-                try:
-                    send_alert_email(check, value, diagnosis)
-                except Exception as exc:
-                    logger.error("Alert email failed for '%s': %s", check_name, exc)
+                # Email — rate-limited by the same 24h key.
+                if not rate_limited:
+                    try:
+                        send_alert_email(check, value, diagnosis)
+                    except Exception as exc:
+                        logger.error("Alert email failed for '%s': %s", check_name, exc)
 
-                # GitHub Issue
+                # GitHub Issue — file OR comment on the canonical open issue.
                 issue_number = None
                 try:
-                    issue_number = create_alert_issue(check, value, diagnosis)
+                    res = reconcile_alert_issue(check, value, diagnosis, open_issues=open_issues)
+                    action = res.get("action")
+                    issue_number = res.get("issue")
+                    stats["results"][check_name]["filing_action"] = action
+                    if action == "filed":
+                        stats["issues_filed"] += 1
+                    elif action == "commented":
+                        stats["issues_commented"] += 1
+                    elif action == "dedup_unknown_no_op":
+                        # The board could not be read. NOT a file, NOT a close.
+                        stats["dedup_unknown_no_op"] += 1
+                        logger.warning(
+                            "Watchdog '%s': open-issue read unavailable (%s) — "
+                            "no file, no close",
+                            check_name,
+                            res.get("error"),
+                        )
                 except Exception as exc:
-                    logger.error("GitHub issue creation failed for '%s': %s", check_name, exc)
+                    logger.error("GitHub issue reconcile failed for '%s': %s", check_name, exc)
 
-                # Set dedup key
+                # Arm the comment/email rate limit for the next 24h.
                 _set_redis_dedup(check_name, issue_number)
                 if issue_number:
                     stats["results"][check_name]["issue"] = issue_number
@@ -877,7 +1060,10 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
     # exception (not merely failed a threshold), the monitor's "all clear" is
     # unreliable — surface it as a deduped P1 alert so a broken monitor is
     # visible instead of only landing in Sentry.
-    if stats["errors"] and not _check_redis_dedup("watchdog_self_error"):
+    self_rate_limited = _check_redis_dedup("watchdog_self_error")
+    if stats["errors"] and not (
+        self_rate_limited and _has_open_canonical("watchdog_self_error", open_issues)
+    ):
         err_names = ", ".join(e["check"] for e in stats["errors"])
         self_check = {
             "name": "watchdog_self_error",
@@ -890,13 +1076,21 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
             ),
         }
         try:
-            issue_number = create_alert_issue(
+            res = reconcile_alert_issue(
                 self_check,
                 len(stats["errors"]),
                 "One or more watchdog check queries raised an exception "
                 "(see the task result's errors list / Sentry).",
+                open_issues=open_issues,
             )
-            _set_redis_dedup("watchdog_self_error", issue_number)
+            action = res.get("action")
+            if action == "filed":
+                stats["issues_filed"] += 1
+            elif action == "commented":
+                stats["issues_commented"] += 1
+            elif action == "dedup_unknown_no_op":
+                stats["dedup_unknown_no_op"] += 1
+            _set_redis_dedup("watchdog_self_error", res.get("issue"))
             stats["alerts_fired"] += 1
         except Exception as exc:
             logger.error("Watchdog self-alert failed: %s", exc)
