@@ -39,6 +39,7 @@ import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
+import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -520,13 +521,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         outcomeName={heroOutcome ? (isGenericOutcomeName(heroOutcome.name) ? "Yes" : heroOutcome.name) : undefined}
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         sourceCount={market.source_count ?? undefined}
-        resolveDate={
-          isResolved
-            ? undefined
-            : market.resolution_date
-              ? `Resolves ${new Date(market.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-              : undefined
-        }
+        // UX-P054 (#1719) — the third copy of the "Resolves <date>" rule, and the
+        // one the authority guard could not see: it named this line as its blind
+        // spot because it sits outside `components/` and `lib/`.
+        //
+        // The year was already right here. What was missing is the authority's
+        // past-date rule, so an unresolved market whose scheduled date had gone
+        // would assert "Resolves Dec 19, 2025". `resolution_date` is the SCHEDULED
+        // resolution, never an observed one, so the page must neither state it as
+        // upcoming nor infer settlement from it — it says nothing.
+        //
+        // REACHABILITY IS UNPROVEN, DELIBERATELY NOT OVERCLAIMED: 8,609 open
+        // markets carry a passed date (UX-P053), but 0 were reachable via
+        // /api/futures/browse (200 sampled) or /api/events/search (10 queries).
+        // This lands for the mechanism — one formatter, no third copy — not on a
+        // prevalence claim.
+        resolveDate={isResolved ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
         categoryLabel={market.sport_name || market.llm_sport_category || undefined}
         isMultiOutcome={(market.outcome_count ?? 0) > 2}

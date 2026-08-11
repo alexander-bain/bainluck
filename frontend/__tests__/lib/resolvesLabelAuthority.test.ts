@@ -18,6 +18,19 @@ import { formatResolvesLabel, formatTournamentTimingLabel } from "@/lib/gameTime
  * Eighth instance of the #1620 shape on this lane, and the answer already existed
  * in a sibling module — again.
  *
+ * ── UX-P054 (#1719) — THE NINTH INSTANCE WAS THIS FILE'S OWN RECORDED DEBT ──
+ *
+ * UX-P053 shipped with two known copies exempted and a scan that stopped at
+ * `components/` + `lib/`. One cycle later the exempted copy was measured on the
+ * live Sports tab: 46 of 60 cards there are futures cards, 41 carry a date, and
+ * **29 of those 41 printed a year that was not the current one** — "2030 FIFA
+ * World Cup Champion" rendering "Resolves Jan 14" about January 2031, which is
+ * verbatim the misreading `formatResolvesLabel`'s docstring exists to prevent.
+ *
+ * Both copies are converted, the exemption list is deleted, and the scan reaches
+ * `app/`. The guard's assertion is therefore now an EQUALITY — one file builds
+ * this string — rather than a subset check against a list that could grow.
+ *
  * WHY THIS FILE EXISTS RATHER THAN JUST A UNIT TEST. Alex's ruling was not
  * "extend it" but "use the IDENTICAL formatter — one formatting authority, so
  * the next drift is unrepresentable rather than refiled." A unit test proves
@@ -42,6 +55,36 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/**
+ * A CONSTRUCTION of the timing rule, as opposed to any string starting "Resolves".
+ *
+ * UX-P054 (#1719) — THE SCAN WIDENED TO `app/`, SO THE PATTERN HAD TO NARROW.
+ *
+ * UX-P053 scanned only `components/` and `lib/`, and named `app/futures/[id]/
+ * page.tsx` as its blind spot. Widening to `app/` closes that, but the old
+ * `["'`]Resolves\s` pattern picks up three sites there that implement no date
+ * rule at all:
+ *
+ *   - `app/economics/page.tsx`      "Resolves post-FOMC", "Resolves daily."
+ *                                   — prose in a footnote and a section subtitle
+ *   - `app/kernels-preview/page.tsx` "Resolves Sep 17", "Resolves Sunday"
+ *                                   — static fixture props in a design preview
+ *
+ * Exempting three innocent sites to widen the scan would have taught the next
+ * reader that this guard cries wolf, which is the failure standing note 4 names:
+ * a guard nobody believes is worse than no guard. So the pattern now matches what
+ * a construction actually looks like — the string being BUILT from a date
+ * (interpolation) or a relative-time ladder rung — and the exemption list is
+ * empty instead.
+ *
+ * KNOWN RESIDUAL, stated rather than left for someone to discover: a hand-written
+ * weekday literal (`return "Resolves Sunday"`) inside a ladder would not be
+ * caught, because it is indistinguishable by regex from the preview fixture that
+ * legitimately contains that exact string. Interpolation and the relative rungs
+ * are what every real drift on this lane has actually looked like.
+ */
+const CONSTRUCTION = /["'`]Resolves \$\{|["'`]Resolves (today|tomorrow|tonight)\b/;
+
 /** Files that construct a "Resolves ..." string, discovered rather than listed. */
 function resolvesConstructionSites(): string[] {
   const hits: string[] = [];
@@ -54,12 +97,12 @@ function resolvesConstructionSites(): string[] {
         continue;
       }
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-      if (/["'`]Resolves\s/.test(stripComments(fs.readFileSync(full, "utf8")))) {
+      if (CONSTRUCTION.test(stripComments(fs.readFileSync(full, "utf8")))) {
         hits.push(path.relative(FRONTEND, full));
       }
     }
   };
-  for (const root of ["components", "lib"]) walk(path.join(FRONTEND, root));
+  for (const root of ["components", "lib", "app"]) walk(path.join(FRONTEND, root));
   return [...new Set(hits)].sort();
 }
 
@@ -67,26 +110,27 @@ function resolvesConstructionSites(): string[] {
 const AUTHORITY = "lib/gameTimeLabel.ts";
 
 /**
- * RECORDED DEBT, not an allowlist that grows quietly.
+ * Every file allowed to construct the string.
  *
- * This predates the authority and is NOT restyled here, deliberately: converting
- * it would change what another surface prints in the commit that fixes the
- * Discover card, which is the unmeasured-restyle failure UX-P045 named. It is a
- * real inconsistency and it is filed on #1717.
+ * UX-P054 (#1719) — THE EXEMPTION LIST IS EMPTY, AND THAT IS THE DELIVERABLE.
  *
- *  - `components/FeedCard.tsx` runs its own ladder ("Resolves today" /
- *    "Resolves tomorrow" / weekday / month-day) and NEVER prints a year, so a
- *    2028 market reads as this week — the exact misreading #1708 called out.
+ * UX-P053 recorded two sites as named debt rather than restyling them unmeasured
+ * (the UX-P045 rule). Both are now converted, so the list is deleted rather than
+ * edited — an exemption that outlives its reason is its own drift (#1525):
  *
- * Also filed and NOT scanned, because it sits outside `components/` and `lib/`:
- * `app/futures/[id]/page.tsx:527` inlines a third `toLocaleDateString`. Named
- * here so the next reader knows the guard's blind spot rather than inferring
- * from its silence that no third copy exists.
+ *   - `components/FeedCard.tsx` ran a private ladder whose last rung printed a
+ *     month-day with no year. On the live Sports tab that was 29 of the 41 dated
+ *     futures cards implying the wrong year — "2030 FIFA World Cup Champion"
+ *     rendering "Resolves Jan 14" about January 2031. It now calls
+ *     `resolvesLabel`, the same function the Discover futures card calls.
+ *   - `app/futures/[id]/page.tsx` inlined a third `toLocaleDateString`. It now
+ *     calls `formatResolvesLabel` and thereby gains the past-date rule it lacked.
+ *
+ * With both gone, ONE file may build this string. That is what makes the next
+ * drift unrepresentable rather than merely refiled — which was Alex's #1717
+ * ruling, and it is only true now that the list is empty.
  */
-const RECORDED_LEGACY_SITES = ["components/FeedCard.tsx"];
-
-/** Every file allowed to contain the construction today. */
-const PERMITTED = [AUTHORITY, ...RECORDED_LEGACY_SITES];
+const PERMITTED = [AUTHORITY];
 
 describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
   it("the futures card and the tournament card produce the IDENTICAL string", () => {
@@ -103,23 +147,34 @@ describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
     expect(futuresCardLine).toContain("2026");
   });
 
-  it("only the authority constructs the string; every other site is recorded debt", () => {
-    const sites = resolvesConstructionSites();
-    const unrecorded = sites.filter((s) => !PERMITTED.includes(s));
-    expect(unrecorded).toEqual([]);
+  it("ONE file constructs the string, and it is the authority", () => {
+    // UX-P054: this is now an equality, not a subset check. While an exemption
+    // list existed the guard could only say "no NEW copies"; with the list empty
+    // it says "no copies", which is the property that makes drift unrepresentable.
+    expect(resolvesConstructionSites()).toEqual([AUTHORITY]);
   });
 
   it("the authority is one file, and it is the one named here", () => {
     expect(resolvesConstructionSites()).toContain(AUTHORITY);
   });
 
-  it("the recorded debt still exists — a stale exemption is its own drift", () => {
-    // If FeedCard is ever converted, this fails and the exemption gets deleted
-    // rather than quietly outliving its reason (the #1525 lesson).
-    const sites = resolvesConstructionSites();
-    for (const known of RECORDED_LEGACY_SITES) {
-      expect(sites).toContain(known);
-    }
+  it("the scan reaches `app/`, where the last legacy copy lived", () => {
+    // The blind spot UX-P053 named. Proven by construction: the walk covers the
+    // directory that contains the converted file, so a new copy there is caught.
+    const roots = ["components", "lib", "app"];
+    for (const r of roots) expect(fs.existsSync(path.join(FRONTEND, r))).toBe(true);
+    expect(fs.existsSync(path.join(FRONTEND, "app/futures/[id]/page.tsx"))).toBe(true);
+    // ...and that file no longer builds the string.
+    const src = fs.readFileSync(path.join(FRONTEND, "app/futures/[id]/page.tsx"), "utf8");
+    expect(CONSTRUCTION.test(stripComments(src))).toBe(false);
+  });
+
+  it("`components/FeedCard.tsx` no longer runs a ladder of its own", () => {
+    // The converted debt. Pinned by name because it is the specific regression
+    // #1719 fixed, and a generic "one site" assertion would not name it.
+    const src = fs.readFileSync(path.join(FRONTEND, "components/FeedCard.tsx"), "utf8");
+    expect(CONSTRUCTION.test(stripComments(src))).toBe(false);
+    expect(stripComments(src)).not.toMatch(/function formatResolutionDate/);
   });
 
   it("`components/discover/utils.ts` builds no Resolves string of its own", () => {
@@ -130,14 +185,52 @@ describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
   it("the guard tells a construction from a MENTION in documentation", () => {
     // Pinned because the first draft did not, and flagged three kernel prop-docs.
     expect(stripComments('/** state copy ("Resolves Sep 17"). */\nconst a = 1;')).not.toMatch(
-      /["'`]Resolves\s/,
+      CONSTRUCTION,
     );
     expect(stripComments('// design: red "Resolves Sunday"\nconst b = 2;')).not.toMatch(
-      /["'`]Resolves\s/,
+      CONSTRUCTION,
     );
     // ...and still catches a real one.
-    expect(stripComments('return `Resolves ${d}`;')).toMatch(/["'`]Resolves\s/);
-    expect(stripComments('const s = "Resolves today";')).toMatch(/["'`]Resolves\s/);
+    expect(stripComments("return `Resolves ${d}`;")).toMatch(CONSTRUCTION);
+    expect(stripComments('const s = "Resolves today";')).toMatch(CONSTRUCTION);
+  });
+
+  it("narrowing the pattern did NOT weaken it — both directions (gotcha #43)", () => {
+    // UX-P054 widened the scan and narrowed the pattern in one change, so the
+    // narrowing has to be proven, not asserted. CATCHES every real shape this
+    // lane has actually seen drift:
+    for (const real of [
+      "return `Resolves ${d.toLocaleDateString([], { weekday: 'short' })}`;", // FeedCard rung 3
+      "return `Resolves ${d.toLocaleDateString([], { month: 'short' })}`;", //   FeedCard rung 4
+      '? `Resolves ${new Date(market.resolution_date).toLocaleDateString("en-US", {})}`', // detail page
+      "return `Resolves ${end.toLocaleDateString([], { year: 'numeric' })}`;", // the authority
+      'if (diffDays < 1) return "Resolves today";', //                          relative rungs
+      'if (diffDays < 2) return "Resolves tomorrow";',
+    ]) {
+      expect(real).toMatch(CONSTRUCTION);
+    }
+
+    // ...and does NOT fire on the three sites that widening to `app/` newly
+    // exposed, none of which implements a date rule. If any of these regressed
+    // into a false positive the exemption list would grow back.
+    for (const innocent of [
+      '<FooterNote left="Each column = one FOMC meeting" right="Resolves post-FOMC" />',
+      'title="Resolves daily. Highest-velocity section."',
+      'stateLabel="Resolves Sep 17"',
+      'angle={{ kind: "resolving_soon", label: "Resolves Sunday" }}',
+    ]) {
+      expect(innocent).not.toMatch(CONSTRUCTION);
+    }
+  });
+
+  it("the three newly-scanned prose/fixture files stay clean in the real tree", () => {
+    // The literals above are transcriptions; assert against the actual files so
+    // the proof cannot rot if those pages are reworded.
+    for (const f of ["app/economics/page.tsx", "app/kernels-preview/page.tsx"]) {
+      const full = path.join(FRONTEND, f);
+      if (!fs.existsSync(full)) continue;
+      expect(CONSTRUCTION.test(stripComments(fs.readFileSync(full, "utf8")))).toBe(false);
+    }
   });
 });
 

@@ -13,7 +13,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedItemHasRenderableContent } from "@/components/discover/utils";
+import { feedItemHasRenderableContent, resolvesLabel } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import TeamNameLink from "./TeamNameLink";
 
@@ -140,22 +140,6 @@ function formatGameTime(commenceTime: string): string {
  */
 function formatFinishedDate(commenceTime: string): string {
   return formatFinishedGameLabel(commenceTime, Date.now(), "relative");
-}
-
-/** Format resolution date as a short string. */
-function formatResolutionDate(dateStr: string | null): string | null {
-  if (!dateStr) return null;
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffMs = d.getTime() - now.getTime();
-  if (diffMs <= 0) return null;
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-  if (diffDays < 1) return "Resolves today";
-  if (diffDays < 2) return "Resolves tomorrow";
-  if (diffDays < 7) {
-    return `Resolves ${d.toLocaleDateString([], { weekday: "short" })}`;
-  }
-  return `Resolves ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }
 
 // ============================================================================
@@ -577,8 +561,19 @@ function FuturesFeedCard({
   // Entity image detection
   const isNonSports = isNonSportsCategory(catKey || null);
 
-  // Resolution date
-  const resolvesText = formatResolutionDate(data.resolution_date);
+  // UX-P054 (#1719) — the SAME timing line the Discover futures card prints.
+  //
+  // This card ran its own ladder until now, and its last branch printed a
+  // month-day with NO YEAR. On the live Sports tab that was 29 of the 41 dated
+  // futures cards stating the wrong year by omission: "2030 FIFA World Cup
+  // Champion" rendered "Resolves Jan 14" about January 2031. The authority's own
+  // docstring names that exact string as the misreading it exists to prevent.
+  //
+  // Ninth instance of the #1620 shape on this lane, and the ninth time the answer
+  // already lived in a sibling module. `resolvesLabel` is the futures/comparison
+  // card's line, so the Sports tab and Discover now print the identical string
+  // from the identical field rather than disagreeing by tab.
+  const resolvesText = resolvesLabel(data.resolution_date);
 
   const { track } = useAnalyticsContext();
 

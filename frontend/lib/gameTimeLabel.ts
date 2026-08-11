@@ -234,10 +234,22 @@ export function formatTournamentWhenLabel(
  * invitation for the next card type to write its own, which is exactly how this
  * lane arrived at eight instances of the #1620 shape.
  *
- * `__tests__/lib/resolvesLabelAuthority.test.ts` enforces it: a NEW construction
- * of this string anywhere under `components/` or `lib/` fails the suite. Two
- * legacy sites predate the authority and are recorded there as named debt rather
- * than restyled unmeasured (the UX-P045 rule).
+ * `__tests__/lib/resolvesLabelAuthority.test.ts` enforces it: a construction of
+ * this string anywhere under `components/`, `lib/` or `app/` fails the suite.
+ *
+ * ── UX-P054 (#1719): THE EXEMPTION LIST IS NOW EMPTY ──
+ *
+ * UX-P053 shipped the guard with two sites recorded as named debt rather than
+ * restyled unmeasured (the UX-P045 rule), and with a scan that did not reach
+ * `app/`. Both are closed. `components/FeedCard.tsx` — the Sports tab, where 29
+ * of 41 dated futures cards were printing a month-day with no year, so a 2031
+ * championship read as this January — now calls `resolvesLabel`. And
+ * `app/futures/[id]/page.tsx`, the blind spot the guard named in its own
+ * docstring, now calls this function directly.
+ *
+ * So the assertion strengthened from "no NEW copies" to "no copies": exactly one
+ * file in the frontend may build this string, which is what Alex's ruling asked
+ * for and what was not yet true when the ruling was banked.
  */
 export function formatResolvesLabel(
   resolutionDate: string | null | undefined,
