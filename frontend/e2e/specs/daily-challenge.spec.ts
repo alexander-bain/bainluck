@@ -232,12 +232,16 @@ test("an unknown shared challenge renders a named not-found state", async ({ pag
     emptyState: errorVisible ? { name: errorName ?? "unnamed", visible: true } : null,
     mainRegionNonBlank: mainText.trim().length > 80,
     allowedFailures: [expected404, ...prefetchAborts],
-    // Chromium logs its OWN message for any 4xx subresource, so the 404 this
-    // journey exists to provoke arrives on the console channel as well as the
-    // network one. Declared here rather than waived: anything else in the
-    // console still fails, and if this stops firing the journey fails too —
-    // because then the 404 it is built on stopped happening.
-    allowedConsoleErrors: ["Failed to load resource: the server responded with a status of 404"],
+    // UX-P058: the console declaration that used to sit here is GONE, not waived.
+    // Chromium's resource-load message no longer reaches the console grader at all
+    // (`audit.ts`), so declaring it would now match nothing — and an allowance that
+    // matches nothing is itself a failure. The 404 is still declared where it can be
+    // named and scoped: `expected404`, on the network channel above.
+    //
+    // The old comment's protection ("if this stops firing the journey fails too")
+    // is not lost, and is in fact stronger below: if the 404 stopped happening the
+    // named error state would not render, and the two `expect`s on `errorVisible`
+    // and `errorName === "challenge-not-found"` fail outright.
   });
 
   expect(errorVisible, "an unknown code must render the named error state").toBe(true);

@@ -457,6 +457,21 @@ function evaluateJourney(observation) {
     checkedClean.push("console.declared_allowances_fired (journey declares no console allowances)");
   }
 
+  // UX-P058 (#1610/#1612/#1614). Resource-load console messages are graded on the
+  // NETWORK channel, which is the only ledger that can name a URL and scope it to
+  // first-party. Say so in the manifest with the count: a check that quietly grades
+  // less than its name suggests is how a mute button hides, and this lane has
+  // already shipped one coverage number (`surface_vocabulary_coverage`) for exactly
+  // that reason. `checked_clean` is the rail's existing word for "considered, not
+  // graded here".
+  const consoleResourceErrors = Array.isArray(o.consoleResourceErrors)
+    ? o.consoleResourceErrors
+    : [];
+  checkedClean.push(
+    `console.resource_errors_graded_on_network (${consoleResourceErrors.length} resource-load ` +
+      `message(s); first-party failures are graded by network.no_unexpected_failures)`
+  );
+
   const pageErrors = Array.isArray(o.pageErrors) ? o.pageErrors : [];
   assertions.push(
     assertion(

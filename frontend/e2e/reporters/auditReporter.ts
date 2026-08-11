@@ -77,6 +77,11 @@ export default class AuditReporter implements Reporter {
       ],
       checked_clean: [],
       console_errors: [],
+      // UX-P058: present-and-empty, not absent. Same rule the viewport fix above
+      // records — a required field left off turns an honest infra_error into a
+      // schema violation, which is how a real failure gets reported as a broken
+      // manifest instead.
+      console_resource_errors: [],
       page_errors: [],
       failed_requests: [],
       telemetry_requests: [],

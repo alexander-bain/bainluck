@@ -247,6 +247,19 @@ for (const route of TOURNAMENT_ROUTES) {
       // an exact match would false-red. The prefix / terminal is asserted below.
       contentMode: "none",
       realCardFound: false,
+      // UX-P058 (#1615/#1616): when no live specimen resolves, THIS SPEC navigates
+      // to a slug it invented (`no-live-specimen`, above) precisely so the journey
+      // reaches a real terminal instead of skipping. The concept fetch behind that
+      // slug 404s BY CONSTRUCTION, and it is first-party, so the network grader is
+      // right to see it — an intentional probe must DECLARE its expected failure
+      // rather than be exempted from grading, the same rule UX-P057 applied to
+      // navigation aborts.
+      //
+      // Declared ONLY on the NOT-OBSERVABLE path: a 404 on a REAL resolved f1
+      // specimen is a genuine defect and still reds. The allowance is strict (a
+      // bare substring), which is correct here because unlike a racy RSC abort this
+      // 404 is deterministic — the path that declares it is the path that causes it.
+      allowedFailures: notObservable ? [`${API_BASE}/api/event/${encodeURIComponent(`event:${route.domain}:no-live-specimen`)}`] : [],
       mainRegionNonBlank: (realConceptFound || (isNotObservable && errorVisible)) && mainText.trim().length > 40,
     });
 

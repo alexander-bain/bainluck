@@ -22,6 +22,8 @@ export interface JourneyRecord {
   declared_navigation_allowances?: string[];
   fired_navigation_allowances?: string[];
   console_errors: string[];
+  /** UX-P058 — sub-resource failures, kept READABLE though graded on the network channel. */
+  console_resource_errors: string[];
   page_errors: string[];
   failed_requests: FailedRequestSummary[];
   telemetry_requests?: Array<{ host: string; path: string; count: number }>;

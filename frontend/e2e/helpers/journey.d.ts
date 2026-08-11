@@ -101,7 +101,15 @@ export interface JourneyObservation {
   surfaceMarkers?: string[];
   /** The observed surface text the markers are searched in. */
   surfaceText?: string | null;
+  /** Genuine script errors. Resource-load messages are NOT here — see below. */
   consoleErrors?: string[];
+  /**
+   * UX-P058 — Chromium's own sub-resource failure messages, recorded as evidence
+   * but graded on the NETWORK channel, which is the only ledger carrying a URL to
+   * scope first-party on. Counted into `checked_clean` so a reader can see what
+   * this channel set aside rather than having to infer it.
+   */
+  consoleResourceErrors?: string[];
   pageErrors?: string[];
   failedRequests?: FailedRequestSummary[];
   allowedFailures?: string[];

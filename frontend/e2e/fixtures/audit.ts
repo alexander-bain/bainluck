@@ -13,6 +13,7 @@ import type { JourneyRecord } from "../helpers/manifest";
 import { redactText, redactUrl } from "../helpers/redaction";
 import { compareSha } from "../helpers/buildAuthority";
 import { describeAbort, type AbortPacket } from "../helpers/abortRecord";
+import { isResourceLoadConsoleError } from "../helpers/consoleChannel";
 
 /**
  * L2-221 Item 1 — one evidence collector, installed before navigation.
@@ -119,6 +120,35 @@ export interface FinishInput {
 
 export class JourneyRecorder {
   readonly consoleErrors: string[] = [];
+  /**
+   * UX-P058 — resource-load console messages, RECORDED as evidence but not graded
+   * on the console channel.
+   *
+   * `audit.ts` already states the rail's scoping rule where the response ledger is
+   * built (below): first-party 4xx/5xx are our defect, "third-party noise is not
+   * graded". The console channel contradicted that rule, because Chromium emits its
+   * generic resource-load error for EVERY 4xx sub-resource, first- or third-party
+   * alike, and `msg.text()` carries no URL to discriminate on. An ESPN logo or a
+   * Pexels image 404 therefore red-ed a journey through the console channel that the
+   * network channel deliberately ignored — two graders, one event stream, two scopes.
+   *
+   * That is what minted #1610/#1612/#1614 (election, tennis, combat — all pages that
+   * RENDER CORRECTLY), and it is why they sat open: the issue body says
+   * "1 console error(s): Failed to load resource: ... 404" and no reader can learn
+   * what 404'd. A grader that reports an error it cannot attribute cannot be acted on.
+   *
+   * A resource-load message is a statement ABOUT A REQUEST, and requests already have
+   * exactly one authority here — a URL-carrying, first-party-scoped ledger. So this
+   * channel yields the fact rather than duplicating it unattributably, and
+   * `console.no_errors` goes back to meaning what its name says: genuine JS errors.
+   *
+   * COVERAGE IS PRESERVED, and that is the load-bearing claim, not the noise removal:
+   *   - a first-party 4xx/5xx still reds via `network.no_unexpected_failures`
+   *     (the `response` handler below);
+   *   - a request that dies before any response still reds via `requestfailed`.
+   * Nothing first-party stops being graded. Only the duplicate goes away.
+   */
+  readonly consoleResourceErrors: string[] = [];
   readonly pageErrors: string[] = [];
   readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket }> = [];
   readonly redirectChain: string[] = [];
@@ -142,7 +172,15 @@ export class JourneyRecorder {
 
   install(): void {
     this.page.on("console", (msg) => {
-      if (msg.type() === "error") this.consoleErrors.push(redactText(msg.text()));
+      if (msg.type() !== "error") return;
+      const text = redactText(msg.text());
+      // UX-P058: split, never drop. The resource channel stays in the manifest as
+      // evidence; only the GRADING moves to the ledger that can name a URL.
+      if (isResourceLoadConsoleError(msg.text())) {
+        this.consoleResourceErrors.push(text);
+        return;
+      }
+      this.consoleErrors.push(text);
     });
     this.page.on("pageerror", (err) => {
       this.pageErrors.push(redactText(err?.message ?? String(err)));
@@ -346,6 +384,7 @@ export class JourneyRecorder {
       mainRegion: input.mainRegion ?? null,
       mainRegionNonBlank: input.mainRegionNonBlank,
       consoleErrors: this.consoleErrors,
+      consoleResourceErrors: this.consoleResourceErrors,
       pageErrors: this.pageErrors,
       failedRequests: this.failedRequests,
       allowedFailures: input.allowedFailures ?? [],
@@ -380,6 +419,9 @@ export class JourneyRecorder {
       declared_navigation_allowances: verdict.declared_navigation_allowances ?? [],
       fired_navigation_allowances: verdict.fired_navigation_allowances ?? [],
       console_errors: this.consoleErrors,
+      // UX-P058: kept in the manifest so the sub-resource failures stay READABLE
+      // even though the network ledger is what grades them.
+      console_resource_errors: this.consoleResourceErrors,
       page_errors: this.pageErrors,
       failed_requests: this.failedRequests,
       telemetry_requests: this.telemetrySeen(),

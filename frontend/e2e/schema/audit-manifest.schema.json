@@ -305,6 +305,13 @@
               "type": "string"
             }
           },
+          "console_resource_errors": {
+            "description": "UX-P058 (#1610/#1612/#1614) - Chromium's own sub-resource failure messages. Recorded as evidence but graded on the NETWORK channel, the only ledger carrying a URL to scope first-party on. Declared but NOT required, so a manifest produced before this field existed still validates.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "page_errors": {
             "type": "array",
             "items": {
