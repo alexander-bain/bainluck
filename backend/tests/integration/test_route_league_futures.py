@@ -39,6 +39,7 @@ def _mock_market(
     market_tier=1, status="open", event_id=None,
     outcomes=None, resolution_date=None,
     canonical_market_key=None,
+    group_id=None,
 ):
     now = datetime.now(timezone.utc)
     m = SimpleNamespace(
@@ -58,6 +59,11 @@ def _mock_market(
         ],
         resolution_date=resolution_date or now + timedelta(days=90),
         canonical_market_key=canonical_market_key,
+        # UX-P061 (#1742): the real FuturesMarket has carried `group_id` all along;
+        # this stand-in did not, so the route's new read of it AttributeError'd.
+        # A fake that is missing a field the model has is a fake that certifies a
+        # shape production never serves.
+        group_id=group_id,
     )
     return m
 
@@ -264,6 +270,11 @@ class TestLeagueFuturesSeeded:
             "id", "name", "source", "market_tier", "category",
             "resolution_date", "outcome_count", "top_outcomes",
             "canonical_market_key", "section",
+            # UX-P061 (#1742): the tier resolver deduplicates answers by
+            # `group_id` + `canonical_market_key`. Pinned in the shape test because
+            # dropping it silently would not fail anything else — it would just
+            # quietly stop 190 esports rows from collapsing into their questions.
+            "group_id",
         }
         assert expected_keys.issubset(set(market.keys()))
         assert isinstance(market["top_outcomes"], list)

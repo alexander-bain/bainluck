@@ -17,6 +17,13 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorState from "@/components/ErrorState";
 import HubSkeleton from "@/components/skeletons/HubSkeleton";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import {
+  applyCountedCap,
+  earnsCountChip,
+  earnsGrid,
+  earnsSectionHeader,
+  probabilityBarWidth,
+} from "@/lib/entityPageChrome";
 import { fetchHub, formatProbability } from "@/lib/api";
 import type { HubResponse, HubUpcoming, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { eventPath } from "@/lib/eventKey";
@@ -103,16 +110,20 @@ function UpcomingCard({ card }: { card: HubUpcoming }) {
 }
 
 function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
-  const pct = o.probability != null ? Math.round(o.probability * 100) : null;
+  // UX-P061 (#1742), register E2: this was `width: ${pct ?? 0}%`, which renders a
+  // NULL probability as a 0%-wide bar — a claim that we measured this and it is
+  // zero, about something we did not measure (doctrine A3, honest or absent).
+  // The whole track is withheld, not just the fill: a 0%-width bar inside a
+  // visible track is the same lie with extra steps.
+  const pct = probabilityBarWidth(o.probability);
   return (
     <div className="flex items-center gap-2 py-1.5">
       <span className="flex-1 text-[13px] text-text-secondary truncate">{o.name}</span>
-      <div className="w-20 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
-        <div
-          className="h-full rounded-full bg-accent-brand"
-          style={{ width: `${pct ?? 0}%` }}
-        />
-      </div>
+      {pct !== null && (
+        <div className="w-20 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
+          <div className="h-full rounded-full bg-accent-brand" style={{ width: `${pct}%` }} />
+        </div>
+      )}
       <span className="w-10 text-right font-mono text-[13px] font-semibold text-text-primary">
         {formatProbability(o.probability)}
       </span>
@@ -120,7 +131,10 @@ function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
   );
 }
 
+const OUTCOME_DISPLAY_CAP = 4;
+
 function MarketCard({ market }: { market: LeagueMarket }) {
+  const outcomeCap = applyCountedCap(market.outcome_count, OUTCOME_DISPLAY_CAP);
   return (
     <Link
       href={`/futures/${market.id}`}
@@ -137,12 +151,15 @@ function MarketCard({ market }: { market: LeagueMarket }) {
         )}
       </div>
       <div className="divide-y divide-surface-border">
-        {market.top_outcomes.slice(0, 4).map((o) => (
+        {market.top_outcomes.slice(0, outcomeCap.shown).map((o) => (
           <OutcomeRow key={o.id} o={o} />
         ))}
       </div>
-      {market.outcome_count > 4 && (
-        <div className="mt-2 text-[11px] text-text-muted">+{market.outcome_count - 4} more</div>
+      {/* UX-P061 (#1742), register E1: `+{n} more` fired at n=1, which costs the
+          same row as the item it hides. `applyCountedCap` absorbs a single
+          leftover and only announces a remainder of two or more. */}
+      {outcomeCap.showMoreLink && (
+        <div className="mt-2 text-[11px] text-text-muted">+{outcomeCap.hidden} more</div>
       )}
     </Link>
   );
@@ -174,14 +191,25 @@ function HubContent({ competition }: { competition: string }) {
   const isEmpty = !hasUpcoming && sections.length === 0;
 
   return (
-    <div className="-mx-3 md:-mx-6 -mt-4 bg-surface-deep min-h-screen">
+    <div
+      className="-mx-3 md:-mx-6 -mt-4 bg-surface-deep min-h-screen"
+      data-entity-kind="competition"
+      data-entity-tier={data.tier ?? undefined}
+      data-availability={data.availability ?? undefined}
+    >
       {/* Hero */}
       <div className="px-4 md:px-6 pt-10 pb-8" style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="font-mono text-xs text-text-muted">
-            {data.total_markets.toLocaleString()} active markets
-          </span>
-        </div>
+        {/* UX-P061 (#1742): a count chip is a STAT, and spec §3 bans it below T2 —
+            at 1-3 answers the count is already visible and printing it is the page
+            apologizing for its size. Boxing is T0 today and printed "0 active
+            markets", which is the apology in its purest form. */}
+        {earnsCountChip(data.tier) && (
+          <div className="flex items-center gap-2 mb-3">
+            <span className="font-mono text-xs text-text-muted">
+              {data.total_markets.toLocaleString()} active markets
+            </span>
+          </div>
+        )}
         <h1 className="text-[38px] md:text-[52px] font-semibold text-text-primary leading-[1.1] tracking-tight flex items-center gap-3">
           <span aria-hidden>{data.emoji}</span>
           {data.title}
@@ -190,8 +218,19 @@ function HubContent({ competition }: { competition: string }) {
       </div>
 
       <div className="px-4 md:px-6 pb-20" style={{ maxWidth: 1200, margin: "0 auto" }}>
+        {/* UX-P061 (#1742) — spec §6 clause 7 / ruling 012: the browser-audit rail
+            must be able to PROVE honest-empty against broken-blank. Without a
+            named hook those two render identically to a grader, which is gotcha
+            #53 on the rendered surface. The copy already names a WHEN; the full
+            T0 statement (identity at full fidelity, the record, a counted
+            up-link) arrives with step 2, which is where competitions get their
+            record strip. */}
         {isEmpty && (
-          <div className="py-20 text-center text-text-muted">
+          <div
+            className="py-20 text-center text-text-muted"
+            data-testid="hub-empty-state"
+            data-empty-state-name="entity-competition-present"
+          >
             No open markets right now. Check back when the next card is announced.
           </div>
         )}
@@ -211,21 +250,43 @@ function HubContent({ competition }: { competition: string }) {
         )}
 
         {/* Market sections */}
-        {sections.map(([key, markets]) => (
-          <section key={key} className="mb-12">
-            <div className="flex items-baseline justify-between mb-3">
-              <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase">
-                {sectionLabel(key)}
-              </h2>
-              <span className="font-mono text-[11px] text-text-muted">{markets.length}</span>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {markets.map((m) => (
-                <MarketCard key={m.id} market={m} />
-              ))}
-            </div>
-          </section>
-        ))}
+        {/* UX-P061 (#1742), register E1 — the broken shelf, fixed at its source.
+            Sections rendered at length >= 1, so a single market got a section
+            header AND a count chip: chrome organizing nothing. Both are now
+            EARNED (spec §4), and the tier that gates the chip is the backend's
+            declared field, never a count this client re-derives (ruling 021). */}
+        {sections.map(([key, markets]) => {
+          const showHeader = earnsSectionHeader(markets.length, sections.length);
+          const showChip = showHeader && earnsCountChip(data.tier);
+          return (
+            <section key={key} className="mb-12" data-section-key={key}>
+              {showHeader && (
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase">
+                    {sectionLabel(key)}
+                  </h2>
+                  {showChip && (
+                    <span className="font-mono text-[11px] text-text-muted">
+                      {markets.length}
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* A grid that would render one orphaned row is a stack. */}
+              <div
+                className={
+                  earnsGrid(markets.length)
+                    ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                    : "flex flex-col gap-3"
+                }
+              >
+                {markets.map((m) => (
+                  <MarketCard key={m.id} market={m} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       <footer className="border-t border-surface-border bg-surface-card">

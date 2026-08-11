@@ -43,6 +43,11 @@ from app.utils.event_concept_cache import (
     with_availability,
     write_payload,
 )
+from app.utils.entity_page_tiers import (
+    AVAILABILITY_DEGRADED,
+    AVAILABILITY_EMPTY,
+    conforming_availability,
+)
 from app.utils.event_tennis import list_tennis_tournament_concepts
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 
@@ -305,6 +310,7 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     alongside a surviving page, so losing it is `partial`.
     """
     from app.utils.event_concept_cache import LOSS_DEGRADED, LOSS_PARTIAL, note_build_loss
+    from app.utils.entity_page_tiers import resolve_entity_tier
 
     losses: list[tuple[str, str]] = []
 
@@ -366,6 +372,27 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         if moved_props:
             sections["props"] = (sections.get("props") or []) + moved_props
 
+    # ── UX-P061 (#1742, epic #1741): the entity envelope ──
+    #
+    # Spec §7: every count the page renders arrives IN the payload; clients never
+    # derive `shown/total` by measuring arrays. Spec §2 / ruling 021: the TIER is a
+    # typed backend field, because the moment web and SwiftUI each count arrays to
+    # pick a layout, the same competition renders as a map on one and an answer on
+    # the other and the parity bug is unfindable — both clients are "correct".
+    #
+    # `degraded` is taken from the typed losses this build already records, so a
+    # hub that lost its market sections cannot present as fresh (ruling 025 clause
+    # 4). The counts come from the shared resolver — never reimplemented here, or
+    # the histogram would predict a tier the page does not render.
+    tiering = resolve_entity_tier(
+        sections,
+        now=datetime.now(timezone.utc),
+        entity_is_real=True,  # a hub slug exists in HUB_CONFIGS or the route 404s
+        record_n=0,  # the record strip lands on competitions at step 2 (#1744)
+        next_event_count=len(upcoming),
+        season_known=False,
+    )
+
     response = {
         "competition": cfg.slug,
         "label": cfg.label,
@@ -376,6 +403,24 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         "upcoming": upcoming,
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),
+        "tier": tiering["tier"],
+        "pool_counts": tiering["pool_counts"],
+        # Per-section total/shown/dropped. `shown` equals `total` on the hub today
+        # because this surface caps nothing — stated explicitly rather than omitted,
+        # so a future cap has an existing field to be counted in instead of arriving
+        # as a silent truncation (spec §4: uncounted caps are concealment).
+        "section_counts": {
+            name: {
+                "total": s["total"],
+                "shown": s["total"],
+                "dropped": s["unpriced"],
+                "answers": s["answers"],
+            }
+            for name, s in tiering["per_section"].items()
+        },
+        # The build's own view of whether it lost anything, so the route can stamp
+        # a conforming availability without re-deriving it from the cache slot.
+        "_build_degraded": any(sev == LOSS_DEGRADED for _, sev in losses),
     }
     for reason, severity in losses:
         note_build_loss(response, reason, severity)
@@ -420,6 +465,36 @@ async def build_and_cache_hub(cfg: HubConfig, db: AsyncSession, rc=None) -> dict
     return payload
 
 
+def _with_entity_envelope(payload: dict, legacy_availability: str) -> dict:
+    """Stamp ruling 025's conforming `availability` beside the legacy field.
+
+    UX-P061 (#1742). Register E10 / doctrine C17: `event_concept_cache` declares
+    availability as `live | stale_ok | unavailable`, a THIRD vocabulary for a fact
+    rulings 025 already named `fresh | stale | degraded | empty`. The entity
+    envelope adopts the ruled vocabulary from day one (spec §7).
+
+    ADDITIVE, deliberately. The legacy field stays exactly where it is, because
+    other consumers read it and this queue is not a migration of the cache tier.
+    What changes is that an entity CLIENT now has a conforming field to read, and
+    the two can be reconciled when the cache tier is migrated.
+
+    The degraded case is the one that matters: a build that lost its market
+    sections is served promptly and therefore looks `live`, while being a page
+    missing its substance. Ruling 025 clause 4 is exactly that — a plausible
+    substitute served without declaration.
+    """
+    stamped = with_availability(payload, legacy_availability)
+    degraded = bool(stamped.get("_build_degraded"))
+    if not stamped.get("sections") and not stamped.get("upcoming"):
+        # Nothing to show and nothing lost = genuinely empty, not degraded.
+        conforming = AVAILABILITY_EMPTY if not degraded else AVAILABILITY_DEGRADED
+    else:
+        conforming = conforming_availability(legacy_availability, degraded=degraded)
+    out = {**stamped, "availability": conforming}
+    out.pop("_build_degraded", None)
+    return out
+
+
 @router.get("/{competition}")
 async def get_competition_hub(
     competition: str = Path(..., description="Competition slug (e.g. 'mma')"),
@@ -438,7 +513,7 @@ async def get_competition_hub(
     # 1. A live hit inside the primary TTL.
     primary = read_slot(rc, keys.primary)
     if primary is not None:
-        return with_availability(primary, AVAILABILITY_LIVE)
+        return _with_entity_envelope(primary, AVAILABILITY_LIVE)
 
     # 2. THE FIX (#1651): a MISS serves the mirror and schedules one rebuild,
     #    instead of walking past a healthy snapshot into a full rebuild. There is
@@ -448,7 +523,7 @@ async def get_competition_hub(
     stale = read_slot(rc, keys.stale)
     if stale is not None:
         _schedule_refresh(rc, keys, cfg.slug)
-        return with_availability(stale, AVAILABILITY_STALE_OK)
+        return _with_entity_envelope(stale, AVAILABILITY_STALE_OK)
 
     # 3. Nothing usable cached — build inline. A cold miss must still SERVE, so
     #    this path stays synchronous and is never gated on the refresh task.
@@ -460,7 +535,7 @@ async def get_competition_hub(
         rescued = read_slot(rc, keys.stale)
         if rescued is not None:
             logger.warning("hub build failed for %s — serving stale", cfg.slug)
-            return with_availability(rescued, AVAILABILITY_STALE_OK)
+            return _with_entity_envelope(rescued, AVAILABILITY_STALE_OK)
         raise
 
     # 4. The empty-build rescue, kept: it is correct, it was just insufficient on
@@ -470,6 +545,6 @@ async def get_competition_hub(
         rescued = read_slot(rc, keys.stale)
         if rescued is not None:
             logger.warning("hub built empty for %s — serving stale", cfg.slug)
-            return with_availability(rescued, AVAILABILITY_STALE_OK)
+            return _with_entity_envelope(rescued, AVAILABILITY_STALE_OK)
 
-    return with_availability(payload, AVAILABILITY_LIVE)
+    return _with_entity_envelope(payload, AVAILABILITY_LIVE)

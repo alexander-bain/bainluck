@@ -880,6 +880,12 @@ class TestLeagueFuturesEndpoint:
                     },
                 ],
                 "canonical_market_key": "basketball_nba_mvp_2026",
+                # UX-P061 (#1742): the section payload now carries `group_id`, the
+                # second half of the tier resolver's answers-not-rows dedup key
+                # (spec §2). This market is ungrouped, so it is None — pinned
+                # explicitly because this is an exact-shape assertion and a new key
+                # appearing silently is what it exists to catch.
+                "group_id": None,
                 "section": "awards",
             }
         ]

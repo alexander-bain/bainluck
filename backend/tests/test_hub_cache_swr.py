@@ -214,9 +214,16 @@ async def test_warm_primary_hit_serves_live_and_never_builds():
 
     assert spy.calls == 0
     assert out["cache"]["availability"] == cache_mod.AVAILABILITY_LIVE
+    # UX-P061 (#1742): the route now ALSO stamps ruling 025's conforming
+    # `availability` at the top level (spec §7). The legacy `cache.availability` is
+    # untouched above — this is additive, not a migration of the cache tier — but
+    # the conforming field is a real second envelope key and must be excluded from
+    # the byte-identity check rather than silently tolerated.
+    assert out["availability"] == "fresh"
+    envelope_keys = {"cache", "availability"}
     # Additive only: every non-envelope key is byte-identical to what was stored.
-    assert {k: v for k, v in out.items() if k != "cache"} == {
-        k: v for k, v in stored.items() if k != "cache"
+    assert {k: v for k, v in out.items() if k not in envelope_keys} == {
+        k: v for k, v in stored.items() if k not in envelope_keys
     }
 
 

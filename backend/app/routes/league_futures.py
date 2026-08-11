@@ -373,6 +373,17 @@ async def get_league_futures(
             "outcome_count": len(market.outcomes),
             "top_outcomes": outcomes_data,
             "canonical_market_key": market.canonical_market_key,
+            # UX-P061 (#1742, epic #1741): the entity tier resolver counts ANSWERS,
+            # not rows, and it deduplicates by `group_id` + `canonical_market_key`
+            # (spec §2). MEASURED before adding this: on the esports hub only 7 of
+            # 190 rows carried a canonical key and `group_id` was not in the payload
+            # at all, so 190 rows resolved to 187 "answers" — the flagship
+            # answers-not-rows case the spec cites did not collapse ANYTHING.
+            #
+            # `group_id` is what makes ten Polymarket sub-markets about one question
+            # count as one question. It is already on the model, already indexed,
+            # and already the feed's dedup key; it was simply never serialized here.
+            "group_id": market.group_id,
             "section": section,
         }
 
