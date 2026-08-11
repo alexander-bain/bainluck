@@ -2,6 +2,7 @@
  * API client for Bain Luck backend
  */
 
+import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
 import type {
   EventsResponse,
   EventDetailResponse,
@@ -1556,6 +1557,23 @@ export interface HubResponse {
   upcoming: HubUpcoming[];
   sections: Record<string, LeagueMarket[]>;
   total_markets: number;
+  // UX-P061 (#1742, epic #1741) — the entity envelope, spec §7.
+  //
+  // `tier` is DECLARED by the backend and rendered, never inferred (ruling 021):
+  // the moment web and SwiftUI each count arrays to pick a layout, the same
+  // competition renders as a map on one and an answer on the other, and the
+  // parity bug is unfindable because both clients are "correct".
+  tier?: EntityTier | null;
+  // Ruling 025's conforming vocabulary. Distinct from the legacy
+  // `cache.availability` (`live|stale_ok|unavailable`), which stays where it is.
+  availability?: EntityAvailability;
+  // Every count the page renders arrives IN the payload; clients never derive
+  // shown/total by measuring arrays.
+  pool_counts?: { answers: number; dropped: number; settled: number };
+  section_counts?: Record<
+    string,
+    { total: number; shown: number; dropped: number; answers: number }
+  >;
 }
 
 export async function fetchHub(competition: string): Promise<HubResponse> {

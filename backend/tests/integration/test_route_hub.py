@@ -35,6 +35,7 @@ def _mock_market(
     *, market_id=1, name="Jones vs Aspinall", external_id="KXUFCFIGHT-26JUL11JONASP",
     category="game_prop", market_tier=5, status="open", outcomes=None,
     canonical_market_key=None,
+    group_id=None,
 ):
     now = datetime.now(timezone.utc)
     return SimpleNamespace(
@@ -54,6 +55,11 @@ def _mock_market(
         ],
         resolution_date=now + timedelta(days=30),
         canonical_market_key=canonical_market_key,
+        # UX-P061 (#1742): the real FuturesMarket has carried `group_id` all along;
+        # this stand-in did not, so the route's new read of it AttributeError'd.
+        # A fake that is missing a field the model has is a fake that certifies a
+        # shape production never serves.
+        group_id=group_id,
     )
 
 
