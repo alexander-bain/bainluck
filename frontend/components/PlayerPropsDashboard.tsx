@@ -611,14 +611,23 @@ export default function PlayerPropsDashboard({
           stats: new Map(),
         });
       }
+      // #1722 — THE CAUSE. The bucket used to be created unconditionally while
+      // the rung was pushed only when `o.probability != null`, so an unpriced
+      // row left a stat with ZERO rungs behind it. Downstream that picks the
+      // "line" shape (0 < 3) and dereferences `sortedRungs[0]`, which killed the
+      // ENTIRE page — not the card — with `Cannot read properties of undefined
+      // (reading 'threshold')`. Event 15191146 carried 64 such rows.
+      //
+      // A row that cannot contribute a rung is not a stat, so it no longer
+      // creates one. `sources` is still credited only for rows that made it in;
+      // counting a source for a price we never got would overstate the card.
+      if (o.probability == null) continue;
       const playerEntry = playerMap.get(playerKey)!;
       if (!playerEntry.stats.has(statLower)) {
         playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
       }
       const statEntry = playerEntry.stats.get(statLower)!;
-      if (o.probability != null) {
-        statEntry.rungs.push({ threshold: 0.5, overProb: o.probability, sources: 1, movement: null });
-      }
+      statEntry.rungs.push({ threshold: 0.5, overProb: o.probability, sources: 1, movement: null });
       statEntry.sources.add(o.source);
     }
 
@@ -631,6 +640,18 @@ export default function PlayerPropsDashboard({
 
       for (const [statKey, statData] of entry.stats) {
         const sortedRungs = statData.rungs.sort((a, b) => a.threshold - b.threshold);
+        // #1722 — THE INVARIANT, kept separate from the cause on purpose.
+        //
+        // `shape` is "line" whenever there are fewer than 3 rungs, and that
+        // INCLUDES ZERO — so the else-branch below reads `sortedRungs[0]` on an
+        // empty array. The sibling ladder branch was already written defensively
+        // (`sortedRungs[0]?.hit`); the branch that could actually be reached
+        // empty was not, which is the whole bug.
+        //
+        // Fixing only the upstream cause would leave that dereference one future
+        // caller away from killing the page again. A stat with no rungs is not a
+        // stat, so it never reaches the shape decision.
+        if (sortedRungs.length === 0) continue;
         const shape: "ladder" | "line" = sortedRungs.length >= 3 ? "ladder" : "line";
 
         // Find actual from box score — match by meaningful last name (skip Jr/Sr/III)
