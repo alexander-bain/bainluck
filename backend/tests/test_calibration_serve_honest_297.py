@@ -28,10 +28,10 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
 
 from app.utils import request_cache as rc
 from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S
+from tests.conftest import unavailable_body
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,11 +216,9 @@ async def test_too_old_last_good_is_refused(monkeypatch):
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
+    body = unavailable_body(await calibration.public_calibration(db=object()))
 
-    assert exc.value.status_code == 503
-    assert exc.value.detail["status"] == "unavailable"
+    assert body["status"] == "unavailable"
 
 
 async def test_wrong_version_last_good_is_refused(monkeypatch):
@@ -237,10 +235,7 @@ async def test_wrong_version_last_good_is_refused(monkeypatch):
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
-
-    assert exc.value.status_code == 503
+    unavailable_body(await calibration.public_calibration(db=object()))
 
 
 @pytest.mark.parametrize(
@@ -265,11 +260,9 @@ async def test_malformed_last_good_is_refused(monkeypatch, bad):
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
+    body = unavailable_body(await calibration.public_calibration(db=object()))
 
-    assert exc.value.status_code == 503
-    assert exc.value.detail["status"] == "unavailable"
+    assert body["status"] == "unavailable"
 
 
 async def test_one_bad_field_cannot_poison_a_complete_snapshot(monkeypatch):
@@ -305,16 +298,15 @@ async def test_nothing_trustworthy_returns_a_typed_unavailable_response(monkeypa
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _hang)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
+    res = await calibration.public_calibration(db=object())
+    body = unavailable_body(res)
 
-    detail = exc.value.detail
-    assert isinstance(detail, dict), "the body must be typed, not a bare string"
-    assert detail["status"] == "unavailable"
-    assert detail["retry_after_s"] == 30
-    assert detail["reason"]
-    assert "retry" in detail["message"].lower()
-    assert exc.value.headers["Retry-After"] == "30"
+    assert isinstance(body, dict), "the body must be typed, not a bare string"
+    assert body["status"] == "unavailable"
+    assert body["retry_after_s"] == 30
+    assert body["reason"]
+    assert "retry" in body["message"].lower()
+    assert res.headers["Retry-After"] == "30"
 
 
 # ---------------------------------------------------------------------------
@@ -340,8 +332,7 @@ async def test_whole_request_is_bounded_by_the_absolute_budget(monkeypatch):
 
     loop = asyncio.get_running_loop()
     start = loop.time()
-    with pytest.raises(HTTPException):
-        await calibration.public_calibration(db=object())
+    unavailable_body(await calibration.public_calibration(db=object()))
     elapsed_ms = (loop.time() - start) * 1000
 
     assert elapsed_ms < 2_000, f"handler ran {elapsed_ms:.0f}ms, budget was 400ms"
@@ -359,10 +350,9 @@ async def test_an_exhausted_budget_answers_immediately_instead_of_computing(monk
 
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
+    body = unavailable_body(await calibration.public_calibration(db=object()))
 
-    assert exc.value.detail["reason"] == "route_budget_exhausted"
+    assert body["reason"] == "route_budget_exhausted"
 
 
 # ---------------------------------------------------------------------------

@@ -345,6 +345,14 @@ class TestCalibrationPublicEndpoint:
             "corrections",  # L2-73 §E
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
+            # Queue 324 / ruling 025: the serve-time declaration. Not a payload
+            # field — the builder cannot know which tier will answer or how old
+            # the content will be by then — so it is stamped by whichever tier
+            # serves, on every answer including the 503. It is in this pinned set
+            # because the ruling's acceptance test is absolute: NO path serves
+            # substitute content without a declared state, and the only way to
+            # check an absolute is by enumeration.
+            "availability",
         }
 
     async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):

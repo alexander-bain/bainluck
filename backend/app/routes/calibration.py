@@ -4,7 +4,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -799,8 +800,21 @@ async def public_calibration(
     import json as _json
 
     from app.utils import request_cache as _rc
+    from app.utils.availability_envelope import (
+        AVAILABILITY_DEGRADED,
+        AVAILABILITY_EMPTY,
+        AVAILABILITY_FIELD,
+        AVAILABILITY_FRESH,
+        AVAILABILITY_STALE,
+        declare as _declare,
+        never_stronger as _never_stronger,
+    )
     from app.utils.calibration_coverage_bridge import ensure_census as _ensure_census
-    from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S, snapshot_verdict
+    from app.utils.calibration_publish_gate import (
+        SERVE_MAX_AGE_S,
+        payload_age_s,
+        snapshot_verdict,
+    )
 
     _lg_key = "calibration:main"
 
@@ -821,12 +835,33 @@ async def public_calibration(
         except Exception:  # noqa: BLE001 — a version we can't read isn't a mismatch
             return None
 
-    def _degraded(payload: dict, reason: str, verdict=None) -> dict:
+    def _degraded(
+        payload: dict, reason: str, verdict=None, availability: str = AVAILABILITY_STALE
+    ) -> dict:
         """A last-good copy, marked stale and dated so the page can say how old it is.
 
         Never presented as current: ``status`` is always ``stale`` and the age is
         explicit, so the banner can render "as of <time>" rather than implying the
         numbers are live.
+
+        Ruling 025: every construction of this shape IS the act of serving a
+        dated substitute, so it carries the ``availability`` declaration too. The
+        default is ``stale`` because what these tiers serve is a WHOLE copy of
+        the pool that is merely old; a caller serving something incomplete or
+        unvalidated passes ``degraded`` explicitly. This is computed at the
+        construction site of the response — it is NOT a map from ``cache.status``
+        (clause 2 forbids exactly that), which is why the value is an argument
+        the serving tier chooses rather than something read back off ``cache``.
+
+        Q330 / B1 defect 1 — **a re-wrap may weaken a declaration, never heal
+        one.** Some payloads reaching here have already been classified by the
+        tier that admitted them: the process-local fallback below re-wraps
+        whatever the main tier memoized, which may be a shape-unvalidated copy
+        stamped ``degraded``. This function's own default is ``stale``, computed
+        from the only thing IT knows (the copy is old) — so without the clamp an
+        incomplete payload came out the far side promising a whole one. The
+        content is identical either way; only the claim about it improved, which
+        is the direction that turns a disclosure into a lie.
         """
         # Queue 300C: a last-good/durable copy can predate the coverage census.
         # Absent is not zero — mark it explicitly unavailable so the page cannot
@@ -841,26 +876,53 @@ async def public_calibration(
         elif isinstance(payload.get("generated_at"), str):
             cache["generated_at"] = payload["generated_at"]
         out["cache"] = cache
-        return out
+        return _declare(
+            out, _never_stronger(payload.get(AVAILABILITY_FIELD), availability)
+        )
 
-    def _unavailable(reason: str) -> HTTPException:
+    def _unavailable(reason: str) -> JSONResponse:
         """The typed unavailable response — honest, actionable, never opaque.
 
         Still a 503 (the semantics are right and Retry-After is meaningful), but
         the body is structured so the page renders a dated "temporarily
         unavailable, retry" state instead of a bare "Failed to load".
+
+        Q330 / B1 defect 2 — **why this RETURNS a response instead of raising.**
+        Ruling 025's promise is that a client reads ONE field across all five
+        outcomes. Raising ``HTTPException(detail={...})`` cannot keep it: FastAPI
+        serializes the detail nested, so the four served answers put
+        ``availability`` at the top level of the body and the refusal put it at
+        ``detail.availability``. A real HTTP client therefore had to special-case
+        exactly the path that is hardest to reach and hardest to test — and a
+        primitive with one exception is not a primitive. Composing the response
+        here is what makes the wire path uniform; the default exception handler's
+        envelope is not ours to reshape.
+
+        ``detail`` is kept as a MIRROR of the same body, and that is deliberate
+        rather than lazy: the shipped web page reads ``error.detail.status`` /
+        ``.reason`` / ``.message`` to render its "temporarily unavailable" state
+        (``frontend/app/calibration/page.tsx``), so dropping the key would take
+        down the exact user-facing surface #1680 is about, on a queue whose whole
+        point is that the page must not go dark. New readers use the top level;
+        the mirror is compatibility, not a second contract.
         """
-        return HTTPException(
+        body = {
+            "status": "unavailable",
+            # Ruling 025: nothing was served, and the refusal says so in the
+            # same vocabulary as every other answer this endpoint gives, so a
+            # client has one field to read across all five outcomes instead
+            # of a special case for the failure.
+            "availability": AVAILABILITY_EMPTY,
+            "reason": reason,
+            "retry_after_s": 30,
+            "message": (
+                "Calibration data is temporarily unavailable. It is rebuilt "
+                "hourly — please retry shortly."
+            ),
+        }
+        return JSONResponse(
             status_code=503,
-            detail={
-                "status": "unavailable",
-                "reason": reason,
-                "retry_after_s": 30,
-                "message": (
-                    "Calibration data is temporarily unavailable. It is rebuilt "
-                    "hourly — please retry shortly."
-                ),
-            },
+            content={**body, "detail": dict(body)},
             headers={"Retry-After": "30"},
         )
 
@@ -875,7 +937,29 @@ async def public_calibration(
         and (now - _cache["timestamp"]) < CACHE_TTL
         and _cache["data"].get("cache", {}).get("status") != "stale"
     ):
-        return _cache["data"]
+        # Ruling 025: this tier re-derives the declaration from the CONTENT it is
+        # about to serve rather than replaying whatever the producing tier
+        # stamped an hour ago. The memo can only hold an unmarked copy admitted
+        # by the main tier, but it can hold it for up to CACHE_TTL, and "it was
+        # fresh when I stored it" is a claim about the past. Age only — no shape
+        # re-check, for the reason recorded at the main tier below.
+        memo_age = payload_age_s(_cache["data"])
+        if _cache["data"].get("availability") == AVAILABILITY_DEGRADED:
+            # A memo cannot HEAL. The copy stored here was already declared
+            # unvalidated by the tier that admitted it, and re-deriving purely
+            # from age would silently upgrade it to "fresh" — an incomplete
+            # payload with a recent timestamp is recent and still incomplete.
+            # Only a new read of the primary pool can clear this.
+            memo_state = AVAILABILITY_DEGRADED
+        elif memo_age is None:
+            # Unknown age is not zero (gotcha #53's shape): content this process
+            # cannot date is not content it can call fresh.
+            memo_state = AVAILABILITY_DEGRADED
+        else:
+            memo_state = (
+                AVAILABILITY_FRESH if memo_age <= SERVE_MAX_AGE_S else AVAILABILITY_STALE
+            )
+        return _declare(_cache["data"], memo_state)
 
     # 2. Redis precomputed cache (survives deploys) — shared async client + a
     #    hard-bounded op so a Redis stall can never block the loop or the router.
@@ -916,10 +1000,49 @@ async def public_calibration(
                 data, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
             )
             if main_verdict.status != "wrong_version":
+                # Queue 324 / ruling 025 — THE HOLE THIS CLOSES. The condition
+                # above accepts three verdicts, not one: ``ok``, ``too_old`` and
+                # ``malformed``. Only ``ok`` is the primary pool answering; the
+                # other two were served here **unmarked** — no ``cache`` block,
+                # no provenance, indistinguishable from a current curve — and the
+                # inline justification for that was *"its 2h TTL bounds its
+                # age"*, an assumption the consumer held about the producer. The
+                # producer stopping is precisely the failure mode in play
+                # (#1680), so the assumption fails exactly when it matters.
+                #
+                # What does NOT change: none of these are rejected. Refusing on
+                # shape at this tier is what Queue 300B deliberately ruled out —
+                # a payload-shape addition would blank the page for a reason that
+                # is not a data problem. Declaring is not refusing.
+                if main_verdict.status == "too_old":
+                    # A WHOLE copy of the pool, past the age bound. Stale is the
+                    # honest word and the dated banner is the right rendering, so
+                    # it goes through the same construction as every other dated
+                    # tier rather than getting a bespoke one.
+                    degraded = _degraded(data, "main_key_over_age", main_verdict)
+                    _cache["data"] = degraded
+                    _cache["timestamp"] = now
+                    _rc.remember_last_good(_lg_key, degraded)
+                    return degraded
                 # Queue 300C: same guard as the stale tiers. A ``main`` key
                 # written by the last pre-census build is fresh and correct for
                 # the curve, but carries no census — say so explicitly.
                 data = _ensure_census(data, reason="payload_predates_census")
+                if main_verdict.status != "ok":
+                    # Shape-unvalidated (``malformed``): possibly partial, and
+                    # this build cannot vouch for it. Not old, so ``cache`` stays
+                    # untouched — calling a fresh payload "stale" would be a
+                    # second false statement, not a correction — but the envelope
+                    # says plainly that what you are looking at is not a copy we
+                    # could validate.
+                    logger.warning(
+                        "calibration: main key served UNVALIDATED and declared "
+                        "degraded (%s: %s)",
+                        main_verdict.status, main_verdict.reason,
+                    )
+                    data = _declare(data, AVAILABILITY_DEGRADED)
+                else:
+                    data = _declare(data, AVAILABILITY_FRESH)
                 _cache["data"] = data
                 _cache["timestamp"] = now
                 _rc.remember_last_good(_lg_key, data)
@@ -1135,8 +1258,8 @@ async def public_calibration(
     #    this line: the honest 503 IS the answer, and the hourly beat is what
     #    fixes it. See the docstring for why a request may not start the CTE.
     if _remaining_ms() <= 0:
-        raise _unavailable("route_budget_exhausted")
-    raise _unavailable("no_trustworthy_snapshot")
+        return _unavailable("route_budget_exhausted")
+    return _unavailable("no_trustworthy_snapshot")
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 """Shared test fixtures for the Bain Luck backend test suite."""
 
+import json
+
 import pytest
 from datetime import datetime, timezone, timedelta
 
@@ -87,3 +89,33 @@ def make_multi_bookmaker_snapshots(game_start):
                 ))
         return snapshots
     return _make
+
+
+# ---------------------------------------------------------------------------
+# Queue 330 — reading the unavailable answer at the boundary it is served on
+# ---------------------------------------------------------------------------
+
+
+def unavailable_body(result) -> dict:
+    """Assert ``result`` is the typed 503 and return its SERIALIZED body.
+
+    ``/api/calibration`` used to signal "nothing to serve" by raising
+    ``HTTPException(detail={...})``, and the suite read ``exc.value.detail`` — a
+    Python attribute on an exception object, one layer above anything a client
+    can see. That boundary is why B1's audit of Queue 324 found a defect the
+    branch's own 112 green tests could not: FastAPI nests ``detail`` on the wire,
+    so ``availability`` sat at ``detail.availability`` on the refusal and at the
+    top level on all four served answers, and no test that stops at the exception
+    could observe the difference. A suite that only calls the code the way the
+    code expects to be called cannot audit a wire contract.
+
+    The route now composes the response, so the honest read is the JSON body it
+    will actually put on the socket. This decodes exactly that.
+    """
+    from fastapi.responses import JSONResponse
+
+    assert isinstance(result, JSONResponse), (
+        f"expected the typed unavailable response, got {type(result).__name__}"
+    )
+    assert result.status_code == 503
+    return json.loads(bytes(result.body))

@@ -18,10 +18,10 @@ import asyncio
 import json
 
 import pytest
-from fastapi import HTTPException
 
 from app.utils import request_cache as rc
 from scripts.evals.cache_failure_resilience import evaluate_scenario
+from tests.conftest import unavailable_body
 
 # Production deadline policy — the real constants the code enforces, expressed in
 # the C55 policy shape. compute_deadline is a safety bound well under the router
@@ -194,12 +194,10 @@ async def test_calibration_cold_miss_starts_zero_builds(monkeypatch):
 
     loop = asyncio.get_running_loop()
     start = loop.time()
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=object())
+    body = unavailable_body(await calibration.public_calibration(db=object()))
     elapsed_ms = (loop.time() - start) * 1000
 
-    assert exc.value.status_code == 503
-    assert exc.value.detail["status"] == "unavailable"
+    assert body["status"] == "unavailable"
     assert elapsed_ms < 2000  # nowhere near the 30s router cutoff
     # A miss must not have primed last-good with anything.
     assert rc.recall_last_good("calibration:main") is None
@@ -254,6 +252,13 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     census = out.pop("calibration_coverage_census")
     assert census["status"] == "unavailable"
     assert census["reason"] == "payload_predates_census"
+    # Queue 324 / ruling 025: this two-key stub is exactly the shape the main
+    # tier accepts but cannot validate (no `by_source`, no `total_outcomes`, an
+    # unparseable `generated_at`). It is still SERVED — refusing on shape at this
+    # tier is what Queue 300B ruled out — but the envelope now says so, where
+    # before it went out indistinguishable from a validated curve.
+    availability = out.pop("availability")
+    assert availability == "degraded"
     assert out == payload
 
 
