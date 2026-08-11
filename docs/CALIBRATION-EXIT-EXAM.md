@@ -372,6 +372,94 @@ digest at plan time instead would retire almost all of it, and that is the next 
 > stage boundary it sampled at is not where the allocation happens. A gauge sampled between two
 > statements cannot see a transient inside either of them.
 
+## ✅ 57.9 MB HELD ALL BEAT TO FEED A SIXTEEN-CHARACTER HASH (CAL-P037, 2026-08-11)
+
+CAL-P036's own list named this as the next largest prize, and it is taken. Every `UnitChunk` carried
+a `members` tuple holding **one string per ROSTER ROW** — ~669,383 strings across the partition — and
+kept them for the entire ~23-minute beat. **Its only consumer anywhere in the application is
+`member_digest`**, which turns the whole pile into sixteen characters. Verified by grep across `app/`:
+nothing else reads `.members`, and the ruling-009-frozen `precompute_calibration.py` never touches it
+(it reads `market_ids` and its own `assignment` map).
+
+The planner now takes the digest while the members are in hand and drops the strings. Measured at
+669,383 rows, `tracemalloc`, both accumulators freed as they are consumed:
+
+| average group size | RETAINED before | RETAINED after | saved | PEAK before | PEAK after |
+|---|---|---|---|---|---|
+| 1 market / question | 79.5 MB | **29.5 MB** | **−50.0 MB** | 214.9 MB | **181.0 MB** |
+| 2 markets | 76.7 MB | 26.8 MB | −49.9 MB | 161.7 MB | 130.8 MB |
+| 4 markets | 75.1 MB | 25.5 MB | −49.6 MB | 160.2 MB | 130.4 MB |
+| 8 markets | 74.1 MB | 24.8 MB | −49.3 MB | 143.8 MB | 114.8 MB |
+| 20 markets | 73.6 MB | 24.4 MB | −49.2 MB | 135.4 MB | 106.8 MB |
+
+⚠️ **`tracemalloc` figures — incremental Python allocation, NOT process RSS.** Same caution as the
+CAL-P036 table above, for the same reason (the C276 block). They compare this structure against
+itself and are not added to the 408 MB RSS gauge to make a total.
+
+### The curve-crossing trap does not apply here, and that is checkable rather than hopeful
+
+CAL-P036's near-miss produced the rule: *a memory fix measured at one point on a distribution
+measures that point; if the structure removed and the structure added scale on DIFFERENT axes, the
+curves cross.* Production's group-size distribution is still not measurable from here, so any change
+whose sign depends on it is still unshippable.
+
+**This change's sign does not depend on it.** What is removed scales per ROW; what is added is **one
+16-character digest per BUCKET** — O(buckets), a fixed 128, independent of the roster. A curve and a
+flat line do not cross, and the measured saving is 50.0 / 49.9 / 49.6 / 49.3 / 49.2 MB across the same
+five regimes that broke the earlier draft — flat, as predicted. The grouped end, which is the end
+CAL-P036 got wrong, is asserted in the suite rather than only measured here.
+
+### A property found by mutation-testing, not by reading the code
+
+The planner frees each bucket's accumulator as it consumes it, worth **29.8 MB of peak** on its own.
+There are two accumulators, and **the pops are jointly load-bearing but individually redundant**:
+removing either alone moves the peak by 0.3 B/row, removing both costs 44 B/row. The peak is the live
+set at the *first* bucket — every member and every `vm_id`, nothing built yet — so freeing either one
+is enough to stop the running total ever climbing past it.
+
+Each single-pop mutant is therefore an **equivalent mutant** that no assertion can catch. The test
+pins the pair instead. This was surfaced by the battery, not by inspection, and it is exactly the
+kind of thing a "9/9 caught" scoreboard hides when the two survivors are written off as weak tests.
+
+### What is still owed, in descending size
+
+The ~205 MB still inside `plan_units`; the `assignment` dict at 55.7 MB and CAL-P035's roster release
+at 98.1 MB — **both in the ruling-009-frozen build module, so neither is this lane's to take**; and an
+`rss:` gauge inside the planning region, also frozen, without which the SIGKILL attribution gap cannot
+close. **The closing reading for all of it is `rss:peak_mb` on the next completed production beat,
+against the 505 on record.** Nothing here is production-verified and nothing claims to be.
+
+## ✅ THE MEASUREMENT RAIL WAS REFUSING ITS OWN LANE'S QUERIES (CAL-P037, 2026-08-11)
+
+Three calibration windows lost time to `EXPLAIN ANALYZE` being refused on ordinary population
+queries, and the cause was two SQL keywords read as function calls by a `name(` scan:
+
+    WHERE NOT (a AND b)          ->  "`not()` is not on the allowlist of functions"
+    WITH x AS MATERIALIZED (...) ->  "`materialized()` is not on the allowlist of functions"
+
+Both messages name a function that does not exist, which is why the shape of the bug survived three
+encounters — each window read it as a missing allowlist entry, worked around it, and moved on. It is
+why the production group-size distribution above is still unmeasured: it is the number that decides
+the sign of CAL-P036's fix, and the tool that would measure it was refusing the query.
+
+**The two fixes are deliberately different, and the difference is the whole point:**
+
+* `NOT` is a **reserved** word — it can never be a function name. It goes in the syntactic-token set
+  beside `and` and `or`, where its absence was a plain omission, and it admits nothing.
+* `MATERIALIZED` is **unreserved**, so `materialized(...)` is a legal user-defined function.
+  Allowlisting the NAME would admit a real call. Only the CTE-modifier SHAPE (`AS [NOT] MATERIALIZED (`)
+  is neutralised; a bare `materialized(1)` is still refused, and a mutation proves it.
+
+The execution boundary is unchanged: the `_OPERATIONAL_FUNCTIONS` raw-text backstop, the
+quoted-identifier refusal and the schema-qualified refusal are all untouched, and no name was added
+to `_PURE_FUNCTIONS`. Each is re-asserted wearing the new exemptions.
+
+**One refusal was deliberately NOT fixed.** A `;` inside a comment still trips *"Multi-statement
+queries not allowed"*, because `assert_read_only` checks the raw text and routing it through
+`strip_sql_noise` first would put a function whose own docstring says *"a lexer approximation, NOT a
+parser … never to be the thing that makes execution safe"* in charge of the multi-statement boundary.
+The false refusal costs one rewrite; the false acceptance is a second statement.
+
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
 CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
