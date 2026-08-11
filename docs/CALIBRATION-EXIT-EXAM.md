@@ -400,8 +400,8 @@ itself and are not added to the 408 MB RSS gauge to make a total.
 
 CAL-P036's near-miss produced the rule: *a memory fix measured at one point on a distribution
 measures that point; if the structure removed and the structure added scale on DIFFERENT axes, the
-curves cross.* Production's group-size distribution is still not measurable from here, so any change
-whose sign depends on it is still unshippable.
+curves cross.* (Production's distribution turned out to be measurable after all — see the section
+below, which measures this change at the real shape too. The rule stands regardless.)
 
 **This change's sign does not depend on it.** What is removed scales per ROW; what is added is **one
 16-character digest per BUCKET** — O(buckets), a fixed 128, independent of the roster. A curve and a
@@ -428,6 +428,64 @@ at 98.1 MB — **both in the ruling-009-frozen build module, so neither is this 
 `rss:` gauge inside the planning region, also frozen, without which the SIGKILL attribution gap cannot
 close. **The closing reading for all of it is `rss:peak_mb` on the next completed production beat,
 against the 505 on record.** Nothing here is production-verified and nothing claims to be.
+
+## ✅ THE PRODUCTION GROUP-SIZE DISTRIBUTION, MEASURED AT LAST — and it corrects CAL-P036 (CAL-P037, 2026-08-11)
+
+CAL-P036 declared this number unobtainable and made a decision explicitly conditional on it:
+*"production's group-size distribution cannot be measured from here … so a change whose SIGN depends
+on it is not shippable."* **It is measurable, it is measured, and it settles the open question — in
+CAL-P036's favour on the decision and against it on the magnitude.**
+
+The blocker was assumed to be the population chain. It is not: the grouping rule reads two columns of
+one table. Three read-only aggregates, 3.2–9.8 s each, no `EXPLAIN`, no taint:
+
+    resolved futures_markets                                671,438   (roster is 669,383 rows: −0.3%)
+    ungrouped (group_id IS NULL)                                280   (0.04%)
+    source-scoped groups with size >= 3     29,739 groups /  428,707 markets   (mean 14.4)
+    source-scoped groups with size <  3    242,345 groups /  242,451 markets
+
+The rule is `CASE WHEN group_size >= 3 THEN 'g:'||group_id WHEN event_size >= 3 THEN 'e:'||event_id
+ELSE 'm:'||market_id END`, **source-scoped** — so the 242,451 markets in groups of one or two fall
+through to a near-unique `m:<market_id>`. Distinct `vm_id`s ≤ **272,470**, giving a mean group size of
+**≥ 2.42** — and the shape is **bimodal**, not a uniform 2.42: a small head of 29,739 large groups
+plus a long tail of near-singletons. That distinction matters, because CAL-P036's regime table was
+built on *uniform* synthetic rosters and cannot simply be read off at 2.42.
+
+So the shapes were re-measured on a synthetic roster reproducing the real bimodal distribution
+(659,077 rows, 272,470 distinct `vm_id`s — 1.5% under the true roster, from rounding the big-group
+mean to an integer):
+
+| planner shape | PEAK | RETAINED |
+|---|---|---|
+| pre-CAL-P036, per-`vm_id` | 257.0 MB | 56.2 MB |
+| CAL-P036's pair-set draft — **rejected** | 233.3 MB | 56.2 MB |
+| CAL-P036 as shipped | 154.2 MB | 74.7 MB |
+| **CAL-P037, this queue** | **124.1 MB** | **25.9 MB** |
+
+**Three conclusions, and one of them is a correction to a number this document already carries.**
+
+1. **CAL-P036's headline 439.7 MB is 257.0 MB in production — overstated 1.71x.** It was measured at
+   group size 1 on the premise that *"`vm_id` is near-unique in this population"*. Production is at
+   2.42 and 99.96% of markets carry a group. The premise described 0.04% of the rows.
+2. **Its decision was nevertheless right, and is now confirmed rather than assumed.** At the real
+   shape the shipped form beats the pre-P036 accumulator by 102.8 MB of peak AND beats the pair-set
+   draft it rejected by 79.1 MB. The question it left open because the sign was unknowable resolves
+   in its favour.
+3. ⚠️ **But it made RETENTION worse and nobody noticed: 56.2 -> 74.7 MB, +18.5 MB.** Deriving
+   `market_ids` by re-parsing the member strings means `int(market_text)` allocates a **fresh int per
+   row** (~28 B x 659,077 ≈ 18.5 MB), where the per-`vm_id` shape reused the roster's own int
+   objects. It bought 84 MB of peak with 18.5 MB of retention, which is a good trade — it was just
+   never priced.
+
+CAL-P037 takes retention to 25.9 MB, below even the pre-P036 baseline. **Roughly 18.5 MB of what
+remains is those parsed ints, which makes them the dominant retained term and the next prize.**
+
+> **The rule this corrects:** "unobtainable" was itself an inference. Three windows recorded the
+> distribution as unmeasurable because the *population chain* could not be aggregated inside the read
+> rail's ceiling — but the grouping rule does not need the population chain, only the two columns it
+> keys on. **Check whether the expensive path is the only path before recording a number as
+> unknowable**, because a queue that records it that way makes every later queue inherit the
+> conclusion without re-testing the premise.
 
 ## ✅ THE MEASUREMENT RAIL WAS REFUSING ITS OWN LANE'S QUERIES (CAL-P037, 2026-08-11)
 
