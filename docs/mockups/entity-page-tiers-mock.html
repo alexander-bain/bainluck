@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entity page templates — the four tiers (mock)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --surface-deep:#F5F5F7; --surface-card:#FFFFFF; --surface-elevated:#F0F0F2; --surface-border:#E5E7EB;
+    --text-primary:#111827; --text-secondary:#6B7280; --text-muted:#9CA3AF;
+    --accent-live:#22C55E; --accent-brand:#10B981; --accent-futures:#8B5CF6; --accent-warning:#F59E0B; --accent-danger:#EF4444;
+    --radius-card:10px;
+    --shadow-card:0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+    --font-sans:'Inter',ui-sans-serif,-apple-system,system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#ECECEF;font-family:var(--font-sans);color:var(--text-primary);-webkit-font-smoothing:antialiased;padding:28px 24px 64px}
+  .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+  /* ---- mock chrome (the artifact around the phones) ---- */
+  .mock-head{max-width:1600px;margin:0 auto 6px}
+  .mock-head h1{font-size:19px;font-weight:700;letter-spacing:-0.01em}
+  .mock-head h1 .clover{margin-right:6px}
+  .mock-head p{font-size:12.5px;color:var(--text-secondary);margin-top:5px;max-width:860px;line-height:1.5}
+  .mock-head .tag{display:inline-block;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--text-secondary);background:var(--surface-elevated);border:1px solid var(--surface-border);border-radius:4px;padding:2px 6px;margin-left:8px;vertical-align:2px}
+  .spine{max-width:1600px;margin:10px auto 22px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);letter-spacing:.02em}
+  .spine b{color:var(--text-secondary);font-weight:700}
+
+  .row{display:flex;gap:26px;max-width:1600px;margin:0 auto;align-items:flex-start;flex-wrap:wrap}
+  .col{width:352px;flex-shrink:0}
+  .tier-label{font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--text-primary);text-transform:uppercase;margin-bottom:2px}
+  .tier-sub{font-size:11.5px;color:var(--text-secondary);margin-bottom:10px;line-height:1.45}
+  .notes{margin-top:12px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);line-height:1.65}
+  .notes span{color:var(--text-muted)}
+
+  /* ---- the phone ---- */
+  .phone{background:var(--surface-deep);border:1px solid #DEDEE3;border-radius:22px;box-shadow:0 6px 24px rgba(0,0,0,.07);padding:14px 12px 16px;min-height:200px}
+
+  /* ---- product atoms ---- */
+  .uplink{font-size:11px;color:var(--text-muted);margin:2px 2px 10px}
+  .uplink a{color:var(--text-muted);text-decoration:none}
+  .uplink .here{color:var(--text-primary);font-weight:500}
+  .card{background:var(--surface-card);border:1px solid var(--surface-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:13px 14px;margin-bottom:10px}
+  .microlabel{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin:14px 2px 7px;display:flex;justify-content:space-between;align-items:baseline}
+  .microlabel .count{font-family:var(--font-mono);font-weight:500;letter-spacing:0}
+
+  .identity{display:flex;align-items:center;gap:11px}
+  .idchip{width:42px;height:42px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:15px;flex-shrink:0}
+  .identity h2{font-size:17px;font-weight:700;letter-spacing:-0.01em;line-height:1.15}
+  .identity .fact{font-size:11.5px;color:var(--text-secondary);margin-top:2px}
+  .identity .fact b{font-weight:600;color:var(--text-primary)}
+
+  .headline .q{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+  .headline .ans{display:flex;align-items:baseline;gap:10px;margin-top:4px}
+  .headline .who{font-size:14.5px;font-weight:600}
+  .headline .num{font-family:var(--font-mono);font-weight:700;font-size:30px;letter-spacing:-0.03em;margin-left:auto}
+  .delta{font-family:var(--font-mono);font-size:11px;font-weight:700}
+  .delta.up{color:var(--accent-live)} .delta.down{color:var(--accent-danger)}
+
+  .chart{margin-top:9px}
+  .chart svg{display:block;width:100%;height:auto}
+  .chart .cap{font-size:10px;color:var(--text-muted);margin-top:3px}
+
+  .orow{display:flex;align-items:center;gap:8px;padding:6.5px 0;border-top:1px solid var(--surface-border)}
+  .orow:first-of-type{border-top:none}
+  .orow .nm{font-size:12.5px;color:var(--text-secondary);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .orow .bar{width:64px;height:5px;border-radius:3px;background:var(--surface-elevated);overflow:hidden;flex-shrink:0}
+  .orow .bar i{display:block;height:100%;border-radius:3px;background:var(--accent-brand)}
+  .orow .pc{font-family:var(--font-mono);font-size:12.5px;font-weight:700;width:36px;text-align:right}
+  .orow .d24{width:44px;text-align:right}
+
+  .mkt .mname{font-size:13px;font-weight:600;line-height:1.3;margin-bottom:6px}
+  .browse{display:block;text-align:center;font-size:11.5px;font-weight:600;color:var(--accent-brand);padding:8px 0 2px;text-decoration:none}
+
+  .chiprow{display:flex;gap:6px;overflow:hidden;margin-bottom:2px}
+  .mover{background:var(--surface-card);border:1px solid var(--surface-border);border-radius:9999px;padding:4px 10px;font-size:11px;white-space:nowrap;color:var(--text-secondary)}
+  .mover b{font-family:var(--font-mono);font-weight:700;color:var(--text-primary)}
+
+  .rec-sum{font-size:11.5px;color:var(--text-secondary);padding-bottom:7px;border-bottom:1px solid var(--surface-border);margin-bottom:2px}
+  .rec-sum b{font-family:var(--font-mono);color:var(--text-primary)}
+  .rrow{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--surface-border)}
+  .rrow:first-of-type{border-top:none}
+  .rrow .rq{font-size:12px;color:var(--text-secondary);flex:1;line-height:1.3}
+  .rrow .path{font-family:var(--font-mono);font-size:11.5px;font-weight:700;white-space:nowrap}
+  .chip{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:9999px;padding:2px 7px;flex-shrink:0}
+  .chip.won{background:rgba(34,197,94,.14);color:#16A34A}
+  .chip.miss{background:var(--surface-elevated);color:var(--text-muted)}
+
+  .pfoot{font-size:10px;color:var(--text-muted);text-align:center;padding-top:6px;line-height:1.5}
+
+  .game{display:flex;align-items:center;gap:9px}
+  .game .when{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-brand);width:52px;flex-shrink:0}
+  .game .vs{font-size:12.5px;font-weight:600;flex:1}
+  .game .exp{font-size:11px;color:var(--text-secondary)}
+  .game .exp b{font-family:var(--font-mono);font-weight:700;color:var(--text-primary)}
+
+  .sentence{font-size:13px;line-height:1.55;color:var(--text-primary)}
+  .sentence .why{color:var(--text-secondary)}
+
+  .biglink{display:flex;align-items:center;justify-content:space-between;text-decoration:none}
+  .biglink .t{font-size:13px;font-weight:600;color:var(--text-primary)}
+  .biglink .n{font-size:11px;color:var(--text-secondary);margin-top:2px}
+  .biglink .n b{font-family:var(--font-mono);font-weight:700;color:var(--accent-brand)}
+  .biglink .arrow{color:var(--accent-brand);font-size:16px;font-weight:600}
+
+  .follow{display:block;text-align:center;background:rgba(16,185,129,.10);color:var(--accent-brand);font-size:12.5px;font-weight:600;border-radius:9999px;padding:9px 0;text-decoration:none;margin-bottom:10px}
+
+  .fromlabel{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-futures);margin:14px 2px 7px}
+  .parent-card{border-top:2px solid rgba(139,92,246,.4)}
+
+  .degraded{border-color:rgba(245,158,11,.45)}
+  .degraded .dmsg{display:flex;gap:9px;align-items:flex-start}
+  .degraded .dmsg .ic{color:var(--accent-warning);font-size:14px;line-height:1.3}
+  .degraded .dtxt{font-size:12.5px;color:var(--text-secondary);line-height:1.45}
+  .degraded .retry{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:600;color:var(--text-secondary);background:var(--surface-elevated);border-radius:9999px;padding:5px 12px;text-decoration:none}
+
+  @media (max-width:1500px){.row{justify-content:flex-start}}
+</style>
+</head>
+<body>
+
+<div class="mock-head">
+  <h1><span class="clover">🍀</span>Entity page templates — the four tiers <span class="tag">DRAFT MOCK · 2026-08-11 · ILLUSTRATIVE DATA</span></h1>
+  <p>One template system, four declared tiers. The backend declares the tier (ruling 003/021/025); the client renders it. Chrome is earned by counts — a page is always complete at its size. Companion spec: <span class="mono" style="font-size:11px">_SPEC-ENTITY-PAGE-TEMPLATES.md</span></p>
+</div>
+<div class="spine"><b>The shared spine, every tier:</b> up-link → identity → HEADLINE ANSWER → JOURNEY LINE → body (the only tier-variant region) → THE RECORD (receipts) → provenance</div>
+
+<div class="row">
+
+  <!-- ============================================================ T3 -->
+  <div class="col">
+    <div class="tier-label">T3 · Full — the page is a map</div>
+    <div class="tier-sub">League: MLB, in season. ≥12 answers across ≥3 sections earn shelves, movers, counted caps. (Production today: 35 open markets.)</div>
+    <div class="phone">
+      <div class="uplink"><a href="#">Sports</a> / <a href="#">Baseball</a> / <span class="here">MLB</span></div>
+
+      <div class="card">
+        <div class="identity">
+          <div class="idchip" style="background:#0F2B5B">⚾</div>
+          <div><h2>MLB</h2><div class="fact">2026 season · <b>18 games tonight</b></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="headline">
+          <div class="q">Most likely World Series champion</div>
+          <div class="ans"><span class="who">Dodgers</span><span class="num">22%</span></div>
+          <div style="text-align:right"><span class="delta up">↑ 1.2 today</span></div>
+        </div>
+        <div class="chart">
+          <svg viewBox="0 0 322 96">
+            <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#10B981" stop-opacity="0.14"/><stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+            </linearGradient></defs>
+            <text x="0" y="10" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">100</text>
+            <text x="6" y="50" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">50</text>
+            <text x="10" y="92" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">0</text>
+            <line x1="22" y1="46" x2="322" y2="46" stroke="#E5E7EB" stroke-dasharray="4 4"/>
+            <polygon fill="url(#g1)" points="22,80 52,82 74,78 96,79 118,75 140,77 154,77 176,73 198,75 220,70 242,73 264,69 286,72 308,69 322,71 322,92 22,92"/>
+            <polyline fill="none" stroke="#10B981" stroke-width="2.4" stroke-linecap="round"
+              points="22,80 52,82 74,78 96,79 118,75 140,77 154,77 176,73 198,75 220,70 242,73 264,69 286,72 308,69 322,71"/>
+          </svg>
+          <div class="cap">Title race since opening day · fixed 0–100 axis</div>
+        </div>
+      </div>
+
+      <div class="chiprow">
+        <div class="mover">Mets <b>↑4.1</b></div><div class="mover">Astros <b>↓2.8</b></div><div class="mover">Cubs <b>↑1.9</b></div>
+      </div>
+
+      <div class="microlabel"><span>Awards</span><span class="count">8</span></div>
+      <div class="card mkt">
+        <div class="mname">AL MVP</div>
+        <div class="orow"><span class="nm">Judge</span><span class="bar"><i style="width:44%"></i></span><span class="pc">44%</span></div>
+        <div class="orow"><span class="nm">Witt Jr.</span><span class="bar"><i style="width:21%"></i></span><span class="pc">21%</span></div>
+        <div class="orow"><span class="nm">Raleigh</span><span class="bar"><i style="width:12%"></i></span><span class="pc">12%</span></div>
+        <a class="browse" href="#">All 8 award races →</a>
+      </div>
+
+      <div class="microlabel"><span>Team props</span><span class="count">Showing 2 of 27</span></div>
+      <div class="card mkt">
+        <div class="mname">Win 100+ games</div>
+        <div class="orow"><span class="nm">Dodgers</span><span class="bar"><i style="width:31%"></i></span><span class="pc">31%</span></div>
+        <div class="orow"><span class="nm">Brewers</span><span class="bar"><i style="width:18%"></i></span><span class="pc">18%</span></div>
+      </div>
+      <div class="card mkt">
+        <div class="mname">Most regular-season home runs</div>
+        <div class="orow"><span class="nm">Yankees</span><span class="bar"><i style="width:27%"></i></span><span class="pc">27%</span></div>
+        <div class="orow"><span class="nm">Dodgers</span><span class="bar"><i style="width:22%"></i></span><span class="pc">22%</span></div>
+      </div>
+      <a class="browse" href="#" style="margin-top:-4px">Browse all 27 →</a>
+
+      <div class="microlabel"><span>The record</span><span class="count">31 settled</span></div>
+      <div class="card">
+        <div class="rec-sum"><b>31</b> questions settled this season · favorites hit in <b>19</b></div>
+        <div class="rrow"><span class="rq">Braves make the playoffs</span><span class="path">64% → Won</span><span class="chip won">✓ Won</span></div>
+        <div class="rrow"><span class="rq">April: most wins in March/April</span><span class="path">12% → Won</span><span class="chip won">✓ Won</span></div>
+        <a class="browse" href="#">Full record →</a>
+      </div>
+
+      <div class="pfoot">35 markets tracked · aggregated from 3 sources · as of 6:41 PM<br>Prediction market data · Probabilities, not betting advice.</div>
+    </div>
+    <div class="notes">
+      ▸ shelves + anchor-able sections: earned at ≥3 sections ×3 answers<br>
+      ▸ caps are counted: <span>"Showing 2 of 27 · Browse all"</span> — never silent<br>
+      ▸ movers strip: only with ≥3 real movers<br>
+      ▸ journey line jagged, 0–100, no smoothing — a 22% line sits low
+    </div>
+  </div>
+
+  <!-- ============================================================ T2 -->
+  <div class="col">
+    <div class="tier-label">T2 · Standard — the page is a list</div>
+    <div class="tier-sub">Team: Red Sox, in season. 4–11 answers: one column, inline labels, no shelf chrome. (Production today: 9 futures + 5/5 games.)</div>
+    <div class="phone">
+      <div class="uplink"><a href="#">MLB</a> / <span class="here">Boston Red Sox</span></div>
+
+      <div class="card" style="border-left:4px solid #BD3039">
+        <div class="identity">
+          <div class="idchip" style="background:#BD3039">BOS</div>
+          <div><h2>Boston Red Sox</h2><div class="fact"><b>64–55</b> · 2nd AL East · 2026 season</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="headline">
+          <div class="q">Make the playoffs?</div>
+          <div class="ans"><span class="num" style="margin-left:0">38%</span><span class="delta down" style="margin-left:auto">↓ 0.8 today</span></div>
+        </div>
+        <div class="chart">
+          <svg viewBox="0 0 322 96">
+            <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#10B981" stop-opacity="0.14"/><stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+            </linearGradient></defs>
+            <text x="0" y="10" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">100</text>
+            <text x="6" y="50" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">50</text>
+            <text x="10" y="92" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">0</text>
+            <line x1="22" y1="46" x2="322" y2="46" stroke="#E5E7EB" stroke-dasharray="4 4"/>
+            <polygon fill="url(#g2)" points="22,62 46,58 68,64 90,55 112,59 134,50 156,57 178,53 200,61 222,56 244,66 266,60 288,64 308,57 322,58 322,92 22,92"/>
+            <polyline fill="none" stroke="#10B981" stroke-width="2.4" stroke-linecap="round"
+              points="22,62 46,58 68,64 90,55 112,59 134,50 156,57 178,53 200,61 222,56 244,66 266,60 288,64 308,57 322,58"/>
+          </svg>
+          <div class="cap">Season journey · every kink is real</div>
+        </div>
+      </div>
+
+      <div class="microlabel"><span>Tonight</span></div>
+      <div class="card game">
+        <span class="when">7:10 PM</span>
+        <div style="flex:1"><div class="vs">vs Yankees</div><div class="exp">We have them at <b>54%</b></div></div>
+      </div>
+
+      <div class="microlabel"><span>Open questions</span><span class="count">7</span></div>
+      <div class="card">
+        <div class="orow"><span class="nm">Win the World Series</span><span class="pc" style="width:auto">2%</span><span class="d24 delta up">↑0.1</span></div>
+        <div class="orow"><span class="nm">Win the AL East</span><span class="pc" style="width:auto">4%</span><span class="d24 delta down">↓0.3</span></div>
+        <div class="orow"><span class="nm">Wild card berth</span><span class="pc" style="width:auto">31%</span><span class="d24 delta down">↓0.6</span></div>
+        <div class="orow"><span class="nm">Win 90+ games</span><span class="pc" style="width:auto">24%</span><span class="d24 delta up">↑1.0</span></div>
+        <a class="browse" href="#">All 7 →</a>
+      </div>
+
+      <div class="microlabel"><span>The record</span><span class="count">recent</span></div>
+      <div class="card">
+        <div class="rrow"><span class="rq">Sun vs Rays — we had them at <b class="mono">72%</b></span><span class="path">Won 6–2</span><span class="chip won">✓</span></div>
+        <div class="rrow"><span class="rq">Fri at Rays — we had them at <b class="mono">48%</b></span><span class="path">Lost 3–4</span><span class="chip miss">Miss</span></div>
+      </div>
+
+      <div class="pfoot">9 markets tracked · aggregated from 3 sources · as of 6:41 PM</div>
+    </div>
+    <div class="notes">
+      ▸ same spine as T3 — the body flattens to one labeled list<br>
+      ▸ no tab row, no rails: 7 answers don't earn them<br>
+      ▸ recents use the expectation grammar: <span>"we had them at 72%"</span>
+    </div>
+  </div>
+
+  <!-- ============================================================ T1 -->
+  <div class="col">
+    <div class="tier-label">T1 · Answer — the page is the answer</div>
+    <div class="tier-sub">League: NASCAR. 1–3 answers render full-width at full depth — zero navigation chrome. (Production today: exactly 1 market.)</div>
+    <div class="phone">
+      <div class="uplink"><a href="#">Sports</a> / <a href="#">Motorsports</a> / <span class="here">NASCAR</span></div>
+
+      <div class="card">
+        <div class="identity">
+          <div class="idchip" style="background:#1A1A1A">🏁</div>
+          <div><h2>NASCAR</h2><div class="fact">Cup Series · playoffs begin <b>Sep 6</b></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="headline">
+          <div class="q">2026 Cup Series champion</div>
+        </div>
+        <div style="margin-top:8px">
+          <div class="orow"><span class="nm" style="font-weight:600;color:var(--text-primary)">Larson</span><span class="bar"><i style="width:24%"></i></span><span class="pc">24%</span><span class="d24 delta up">↑0.7</span></div>
+          <div class="orow"><span class="nm">Byron</span><span class="bar"><i style="width:18%"></i></span><span class="pc">18%</span><span class="d24 delta down">↓0.2</span></div>
+          <div class="orow"><span class="nm">Blaney</span><span class="bar"><i style="width:12%"></i></span><span class="pc">12%</span><span class="d24" style="color:var(--text-muted);font-size:10px">—</span></div>
+          <div class="orow"><span class="nm">Hamlin</span><span class="bar"><i style="width:9%"></i></span><span class="pc">9%</span><span class="d24 delta up">↑0.4</span></div>
+        </div>
+        <div class="chart">
+          <svg viewBox="0 0 322 96">
+            <defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#10B981" stop-opacity="0.14"/><stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+            </linearGradient></defs>
+            <text x="0" y="10" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">100</text>
+            <text x="6" y="50" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">50</text>
+            <text x="10" y="92" font-size="8" fill="#9CA3AF" font-family="JetBrains Mono">0</text>
+            <line x1="22" y1="46" x2="322" y2="46" stroke="#E5E7EB" stroke-dasharray="4 4"/>
+            <polygon fill="url(#g3)" points="22,84 60,83 92,80 118,81 150,77 184,79 214,75 246,76 278,72 308,73 322,70 322,92 22,92"/>
+            <polyline fill="none" stroke="#10B981" stroke-width="2.4" stroke-linecap="round"
+              points="22,84 60,83 92,80 118,81 150,77 184,79 214,75 246,76 278,72 308,73 322,70"/>
+          </svg>
+          <div class="cap">Larson, season to date</div>
+        </div>
+        <div style="font-size:10.5px;color:var(--text-muted);margin-top:6px">36 drivers tracked · aggregated from 2 sources</div>
+      </div>
+
+      <div class="fromlabel">From Motorsports</div>
+      <div class="card parent-card">
+        <div class="mname" style="font-size:12.5px;font-weight:600;margin-bottom:5px">F1 Drivers' Champion</div>
+        <div class="orow"><span class="nm">Verstappen</span><span class="bar"><i style="width:41%"></i></span><span class="pc">41%</span></div>
+        <div class="orow"><span class="nm">Norris</span><span class="bar"><i style="width:33%"></i></span><span class="pc">33%</span></div>
+      </div>
+
+      <div class="pfoot">1 market tracked · as of 6:41 PM</div>
+    </div>
+    <div class="notes">
+      ▸ no section header over the answer — <span>"Markets (1)" is shelf cosplay</span><br>
+      ▸ depth instead of breadth: full outcome list + its own journey<br>
+      ▸ adjacent context is real and <span>labeled as the parent's</span> — never padding<br>
+      ▸ banned here: tabs, rails, count chips, "+1 more"
+    </div>
+  </div>
+
+  <!-- ============================================================ T0 -->
+  <div class="col">
+    <div class="tier-label">T0 · Present — honest-empty</div>
+    <div class="tier-sub">Team: Bruins, August. Zero open markets. Identity at full fidelity, the true sentence, and the record we uniquely keep. <span class="mono" style="font-size:10px">availability: fresh · tier: present</span></div>
+    <div class="phone">
+      <div class="uplink"><a href="#">NHL</a> / <span class="here">Boston Bruins</span></div>
+
+      <div class="card" style="border-left:4px solid #FCB514">
+        <div class="identity">
+          <div class="idchip" style="background:#111111;color:#FCB514">B</div>
+          <div><h2>Boston Bruins</h2><div class="fact"><b>44–30–8</b> in 2025-26 · eliminated in Round 1</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sentence">No open markets on the Bruins right now. <span class="why">NHL futures usually return in September.</span></div>
+      </div>
+
+      <div class="microlabel"><span>The record — 2025-26</span><span class="count">12 settled</span></div>
+      <div class="card">
+        <div class="rec-sum"><b>12</b> questions settled last season · favorites hit in <b>8</b></div>
+        <div class="rrow"><span class="rq">Make the playoffs</span><span class="path">71% → Won</span><span class="chip won">✓ Won</span></div>
+        <div class="rrow"><span class="rq">Win the Atlantic</span><span class="path">18% → Missed</span><span class="chip miss">Miss</span></div>
+        <div class="rrow"><span class="rq">Stanley Cup</span><span class="path">opened 4%</span><span class="chip miss">Out Apr 28</span></div>
+        <a class="browse" href="#">Full record →</a>
+      </div>
+
+      <a class="follow" href="#">📌 Follow the Bruins — we'll surface it when it moves</a>
+
+      <div class="card biglink">
+        <div><div class="t">NHL right now</div><div class="n"><b>23 open markets</b> · award races, season props</div></div>
+        <span class="arrow">→</span>
+      </div>
+
+      <div class="pfoot">0 open markets · 12 settled on record · as of 6:41 PM</div>
+    </div>
+    <div class="notes">
+      ▸ identity never degrades — an empty page must look premium<br>
+      ▸ the sentence names WHY and WHEN, season-aware<br>
+      ▸ the record IS the content — purge-proof, only we still have it<br>
+      ▸ up-link promises a count the destination verifiably keeps<br>
+      ▸ <span>data-empty-state-name="entity-team-present"</span> for the audit rail
+    </div>
+
+    <div class="tier-label" style="margin-top:22px">⚠ Degraded ≠ empty</div>
+    <div class="tier-sub">Same zero markets on screen — different truth. A failed fetch must never wear the empty state's clothes (ruling 025).</div>
+    <div class="phone" style="min-height:0">
+      <div class="card degraded" style="margin-bottom:0">
+        <div class="dmsg">
+          <span class="ic">⚠</span>
+          <div class="dtxt">Couldn't load Bruins markets right now.<br><a class="retry" href="#">Retry</a></div>
+        </div>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:8px;text-align:center">availability: degraded · tier withheld</div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

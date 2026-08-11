@@ -1313,3 +1313,5 @@ failure this document already records happening twice.
 - [023](rulings/023-codex-gets-its-own-branch-and-worktree.md) — 2026-08-10 — Codex gets a dedicated branch and worktree; shared-tree passengers become unrepresentable (Alex)
 - [024](rulings/024-one-combined-invalidation-window.md) — 2026-08-10 — The post-publish window is ONE combined invalidation event (Alex)
 - [025](rulings/025-availability-envelope.md) — 2026-08-10 — The availability envelope: substitute content must declare itself (Alex)
+- [026](rulings/026-freshness-is-one-architecture.md) — 2026-08-11 — Freshness is one architecture, not five mechanisms (Alex)
+- [027](rulings/027-entity-pages-render-a-declared-tier.md) — 2026-08-11 — Entity pages render a backend-declared tier; chrome is earned by counts (Alex)

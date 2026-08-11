@@ -58,6 +58,7 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
 | `docs/completed-features.md` | Shipped features log | When features ship |
 | `docs/design-system.md` | Visual design system: colors, type, motion, voice, components | When design tokens or patterns change |
+| `docs/entity-page-templates.md` | The tier system for auto-generated league/competition/team/player pages: four density tiers declared by the backend, the chrome-earning grammar, the three signature elements, honest-empty (ruling 027). Companion mock: `docs/mockups/entity-page-tiers-mock.html` | When tier thresholds, the page spine, or the signature-element contracts change |
 
 ---
 
