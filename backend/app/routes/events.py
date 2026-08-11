@@ -2411,6 +2411,41 @@ async def search_events(
         # AND — measured 85ms against a 36ms control, because the ANDed arms let the
         # selective term drive. The multi-term path does NOT have this defect. What
         # it widened is the PREDICATE, from `len(term)` to pg_trgm's actual rule.
+        #
+        # LAT-P032 (#1732): READ THIS BEFORE WIDENING THE GATE BELOW. The predicate
+        # is about COST — "can pg_trgm serve this pattern" — and it is NOT a
+        # relevance test. A term can be perfectly servable and still make this arm
+        # actively harmful, so passing the gate is not evidence the arm is earning
+        # its place.
+        #
+        # Measured in production 2026-08-11 on `fed` (3 alnum chars, so it takes the
+        # `else` branch and KEEPS the arm). Live top-20 vs the same query with the
+        # arm removed, then the causing outcome looked up for each difference:
+        # **7 of the 20 results — 35% of the page — were substring collisions inside
+        # proper nouns**: Con*fed*eration, Julie *Fed*orchak, Russian *Fed*eration,
+        # Vladimir *Fed*oseev (x2), *Fed*erico Capasso, *Fed*erico Coria. Somebody
+        # typing `fed` wants the Federal Reserve and gets a chess tournament.
+        #
+        # It is not cheap either. db-query EXPLAIN ANALYZE/BUFFERS, two passes each:
+        #
+        #   variant              exec            shared blocks   page
+        #   as shipped           96.5 / 55.5ms   10,755          20 results, 7 junk
+        #   outcome arm removed  26.7 / 20.7ms    3,371          20 results, 0 junk
+        #
+        # The arm is 7,384 blocks — 69% of everything the query touches. Quote the
+        # BLOCKS, not the ms: blocks were identical across passes while wall-clock
+        # varied ~2x. Same shape as the `re`/`la` finding above, but worse — there
+        # the arm contributed nothing, here it contributes wrong rows.
+        #
+        # DELIBERATELY NOT FIXED HERE. It is a recall-semantics change and this lane
+        # ships those behind their own gate, never bolted onto a latency queue —
+        # LAT-P002 was REVERTED for exactly that (shed the futures stage, returned
+        # 200 with the primary result class missing, and it survived a full deploy
+        # verification because it read as "no matches"). #1732 carries the numbers
+        # and names the two naive fixes that must be resisted. Note in particular
+        # that outcome-only matches already score ~0 on the name vector, so the real
+        # defect may be that tier separation is not enforced at the page boundary —
+        # a RANKING fix, not a recall one. Verify that before deleting anything.
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
