@@ -269,6 +269,13 @@ interface StatAccumulator {
   rungs: StatRung[];
   sources: Set<string>;
   movement: number | null;
+  /**
+   * UX-P060 (C281 B1): the magnitude of `movement`, stored so the commit phase can
+   * pick the largest move by COMPARING two primitives it already holds. Commit used
+   * to recompute `Math.abs(c.movement)`, which is a coercion — and a coercion is a
+   * read, and a read can throw. See the read phase's normalization comment.
+   */
+  movementAbs: number | null;
   serverActual?: number | null;
   serverIsWinner?: boolean | null;
   gradeRows: PropGradeFields[];
@@ -341,63 +348,72 @@ function identityKey(name: string, team: TeamSide): string {
 }
 
 /**
- * THE UNKNOWN-TEAM POLICY, stated rather than left to insertion order.
+ * THE UNKNOWN-TEAM POLICY — decided from the WHOLE payload, never from arrival order.
  *
  * A row whose side we could not detect carries no evidence about which of two
  * same-named people it belongs to. Insertion order must not decide that, because
- * it is a property of the payload's ordering, not of the world. So:
+ * it is a property of the payload's ordering, not of the world.
  *
- *   - a KNOWN-team row claims `name|team`, and ABSORBS an existing `name|unknown`
- *     bucket **only when no other known bucket for that name exists** (the
- *     ordinary case: one real player, some rows missing a side);
- *   - an UNKNOWN-team row joins the single known bucket for that name when there
- *     is EXACTLY ONE, and otherwise stands alone in `name|unknown`.
+ * Given the set of AUTHORITATIVE sides (`player_team`) seen for a name across every
+ * accepted row:
  *
- * With two or more known sides for a name the unknown row is genuinely ambiguous,
- * and it is left in its own bucket rather than assigned by a coin flip. An
- * unattributable row is not evidence for either side.
- */
-/**
- * ── WHY AN ALIAS TABLE AND NOT A RENAME ──
+ *   - a KNOWN-team row always claims `name|team`;
+ *   - an UNKNOWN-team row joins that side when EXACTLY ONE exists — the ordinary
+ *     case, one real player with some rows missing a side;
+ *   - with ZERO known sides, all unknown rows for the name share one bucket;
+ *   - with TWO known sides the row is genuinely ambiguous and stands alone in
+ *     `name|unknown`. Assigning it would be a coin flip, and a borrowed stat is
+ *     worse than an unattributed one.
  *
- * Absorbing was first written as `playerMap.set(newKey, entry); delete(oldKey)`.
+ * ── WHY THIS IS A BARRIER AND NOT AN ALIAS TABLE (UX-P060, C281 B1) ──
+ *
+ * The first repair kept an alias table and resolved EAGERLY, row by row, so the
+ * policy above was only true for payloads that happened to arrive in a helpful
+ * order. C281 executed the real function and measured it: the same three rows gave
+ * TWO cards ordered `unknown -> home -> away` (the unknown row was permanently
+ * aliased into `home`, and `away` could no longer be separated from it) and THREE
+ * ordered `home -> away -> unknown`. An unknown row arriving first silently became
+ * evidence for whichever side appeared next.
+ *
+ * The fix is not a cleverer alias rule — no rule evaluated one row at a time can
+ * be order-independent, because the information needed to decide arrives later.
+ * Every row is read first, the side sets are learned, and only then is any row
+ * committed. `resolveBucketKey` is now a PURE FUNCTION of (name, side, side-set):
+ * it holds no state, so there is nothing left for order to perturb.
+ *
+ * ── THE ORDERING LESSON THAT STILL APPLIES ──
+ *
+ * Absorbing was once written as `playerMap.set(newKey, entry); delete(oldKey)`.
  * That is correct about grouping and WRONG about order: deleting and re-inserting
- * moves the key to the END of a Map, the final `sort` is stable, so cards with an
+ * moves a key to the END of a Map, the final `sort` is stable, so cards with an
  * equal stat count silently REORDERED on screen. The oracle caught it — same set
- * of players, different sequence.
- *
- * So identity keys are ALIASES onto a bucket id and `playerMap` is never deleted
- * from. Insertion order is exactly what it was before this queue.
+ * of players, different sequence. **`playerMap` is still never deleted from**, and
+ * buckets are still created in row order, so card order is unchanged by all of this.
  */
 function resolveBucketKey(
-  aliasToBucket: Map<string, string>,
+  knownSidesByName: ReadonlyMap<string, ReadonlySet<"home" | "away">>,
   name: string,
   team: TeamSide,
 ): string {
-  const unknownKey = identityKey(name, "unknown");
-  const known = (["home", "away"] as const)
-    .map((side) => identityKey(name, side))
-    .filter((k) => aliasToBucket.has(k));
+  const knownSides = knownSidesByName.get(name.toLowerCase());
+  const knownCount = knownSides ? knownSides.size : 0;
 
-  if (team === "unknown") {
-    if (aliasToBucket.has(unknownKey)) return aliasToBucket.get(unknownKey)!;
-    // Exactly one known side for this name: unambiguous, so join it. Two or more
-    // is genuinely ambiguous and the row stands alone rather than being assigned.
-    if (known.length === 1) return aliasToBucket.get(known[0])!;
-    aliasToBucket.set(unknownKey, unknownKey);
-    return unknownKey;
-  }
+  if (team !== "unknown") return identityKey(name, team);
 
-  const target = identityKey(name, team);
-  if (aliasToBucket.has(target)) return aliasToBucket.get(target)!;
-  if (known.length === 0 && aliasToBucket.has(unknownKey)) {
-    // The same person's side just became known: alias onto the SAME bucket.
-    const bucket = aliasToBucket.get(unknownKey)!;
-    aliasToBucket.set(target, bucket);
-    return bucket;
+  // Unknown side. The decision depends ONLY on how many authoritative sides exist
+  // for this name across the WHOLE payload — never on what has been seen so far —
+  // which is what makes it permutation-invariant.
+  //
+  //   0 known sides  → every unknown row for this name shares one bucket.
+  //   1 known side   → unambiguous; join it (the pre-existing rule).
+  //   2 known sides  → genuinely ambiguous; stand alone. Attaching the row to
+  //                    either same-named opponent would be a coin flip, and a
+  //                    borrowed stat is worse than an unattributed one.
+  if (knownCount === 1) {
+    const only = [...knownSides!][0];
+    return identityKey(name, only);
   }
-  aliasToBucket.set(target, target);
-  return target;
+  return identityKey(name, "unknown");
 }
 
 /**
@@ -430,8 +446,14 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
   }
 
   const playerMap = new Map<string, PlayerAccumulator>();
-  /** identity key -> bucket id. See `resolveBucketKey`: aliases, never renames. */
-  const aliasToBucket = new Map<string, string>();
+  /**
+   * UX-P060 (C281 B1) — name -> the set of AUTHORITATIVE sides seen for it across
+   * the whole payload. Populated after every row has been read and before any row
+   * is committed, which is what makes identity permutation-invariant. The alias
+   * table this replaces resolved eagerly, so `unknown -> home -> away` produced two
+   * cards while `home -> away -> unknown` produced three from identical rows.
+   */
+  const knownSidesByName = new Map<string, Set<"home" | "away">>();
 
   const homeLower = homeTeam?.toLowerCase() ?? "";
   const awayLower = awayTeam?.toLowerCase() ?? "";
@@ -487,6 +509,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     readonly threshold: number;
     readonly overProb: number;
     readonly movement: number | null;
+    /** `Math.abs(movement)`, computed ONCE here so commit never coerces. */
+    readonly movementAbs: number | null;
     readonly hit: boolean | null;
     readonly actual: number | null;
     readonly isWinner: boolean | null;
@@ -505,7 +529,24 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     const team: TeamSide = p.player_team ?? detectTeam(parsed.team || p.market_name || "");
     const keyTeam: TeamSide =
       p.player_team === "home" || p.player_team === "away" ? p.player_team : "unknown";
-    const movement = p.movement ?? null;
+    // UX-P060 (C281 B1) — NORMALIZE TO A PRIMITIVE EXACTLY ONCE.
+    //
+    // The previous repair read `p.movement` here and then merely PROBED it with a
+    // discarded `Math.abs(...)`, still carrying the RAW value onto the candidate.
+    // Commit then coerced the same value a second time, outside the guard, AFTER
+    // it had already mutated the player, stat, rung, grade and source. A value
+    // whose first coercion succeeds and whose second throws — a stateful getter or
+    // a Proxy — therefore aborted the entire grouping instead of recording one
+    // drop. The probe proved the value was coercible ONCE; it is the SECOND
+    // coercion that had no guard.
+    //
+    // `Number()` here is that single coercion, inside the try. Both the value and
+    // its magnitude are carried as primitives, so nothing downstream re-reads the
+    // caller's object. For an ordinary number this is the identity, so the
+    // production oracle is unchanged; a NaN still compares false exactly as before.
+    const rawMovement = p.movement ?? null;
+    const movement = rawMovement == null ? null : Number(rawMovement);
+    const movementAbs = movement == null ? null : Math.abs(movement);
     const candidate: RowCandidate = {
       playerName: parsed.player,
       team,
@@ -528,16 +569,16 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
         resolution_source: p.resolution_source ?? null,
       },
       source: p.source as string,
-      // `movement` is read above rather than inside the commit, because
-      // `Math.abs` on a hostile value is a read that can throw.
+      // Both `movement` and `movementAbs` are primitives normalized above, inside
+      // this guarded read. The commit phase must never coerce anything.
+      movementAbs,
     };
-    if (candidate.movement != null) Math.abs(candidate.movement);
     return Object.freeze(candidate);
   }
 
   /** MUTATION ONLY. Every value here was already read; nothing here can throw. */
   function commitPlayerPropRow(c: RowCandidate): void {
-    const playerKey = resolveBucketKey(aliasToBucket, c.playerName, c.keyTeam);
+    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, c.keyTeam);
     if (!playerMap.has(playerKey)) {
       playerMap.set(playerKey, {
         name: c.playerName,
@@ -551,7 +592,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     if (c.headshot && !playerEntry.headshot) playerEntry.headshot = c.headshot;
 
     if (!playerEntry.stats.has(c.statKey)) {
-      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
+      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, movementAbs: null, gradeRows: [], identified: true });
     }
 
     const statEntry = playerEntry.stats.get(c.statKey)!;
@@ -582,21 +623,49 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     // non-nullable column defaulted to false.
     statEntry.gradeRows.push(c.gradeRow);
     statEntry.sources.add(c.source);
-    if (c.movement != null && (statEntry.movement == null || Math.abs(c.movement) > Math.abs(statEntry.movement))) {
+    // UX-P060 (C281 B1): a comparison of two stored primitives — no coercion, so
+    // this line cannot throw after the mutations above it.
+    if (c.movementAbs != null && (statEntry.movementAbs == null || c.movementAbs > statEntry.movementAbs)) {
       statEntry.movement = c.movement;
+      statEntry.movementAbs = c.movementAbs;
     }
   }
 
+  // ── READ EVERY ROW, THEN LEARN THE SIDES, THEN COMMIT ──
+  //
+  // UX-P060 (C281 B1). The read/commit split already existed for atomicity; this
+  // adds a BARRIER between the two so identity is decided with full knowledge.
+  // A row's bucket must not depend on which rows happen to precede it.
+  //
+  // Commit order is unchanged — `candidates` preserves row order and dropped rows
+  // are skipped in both versions — so `playerMap` insertion order, and therefore
+  // card order among equal-stat players, is exactly what it was.
+  const candidates: RowCandidate[] = [];
   rows.forEach((p, index) => {
-    let candidate: RowCandidate | null;
     try {
-      candidate = readPlayerPropRow(p);
+      const candidate = readPlayerPropRow(p);
+      if (candidate) candidates.push(candidate);
     } catch (err) {
       dropped.push({ kind: "player_prop_row", at: String(index), message: messageOf(err) });
-      return;
     }
-    if (candidate) commitPlayerPropRow(candidate);
   });
+
+  // Only ACCEPTED rows teach us a side. A row that was dropped by the guard is not
+  // evidence about the world — counting it would let a hostile row change how a
+  // healthy one is attributed, which is the blast radius this whole module exists
+  // to close.
+  for (const c of candidates) {
+    if (c.keyTeam !== "home" && c.keyTeam !== "away") continue;
+    const nameKey = c.playerName.toLowerCase();
+    let sides = knownSidesByName.get(nameKey);
+    if (!sides) {
+      sides = new Set();
+      knownSidesByName.set(nameKey, sides);
+    }
+    sides.add(c.keyTeam);
+  }
+
+  for (const candidate of candidates) commitPlayerPropRow(candidate);
 
   // Scan "other" markets for player props (double/triple doubles, etc.)
   interface OtherCandidate {
@@ -636,7 +705,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
   function commitOtherRow(c: OtherCandidate): void {
     // `other[]` rows carry no `player_team`, so identity is always unknown here
     // and this pass groups exactly as it did before.
-    const playerKey = resolveBucketKey(aliasToBucket, c.playerName, "unknown");
+    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, "unknown");
     if (!playerMap.has(playerKey)) {
       playerMap.set(playerKey, {
         name: c.playerName,
@@ -666,7 +735,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
 
     const playerEntry = playerMap.get(playerKey)!;
     if (!playerEntry.stats.has(c.statKey)) {
-      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, gradeRows: [], identified: true });
+      playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, movementAbs: null, gradeRows: [], identified: true });
     }
     const statEntry = playerEntry.stats.get(c.statKey)!;
     statEntry.rungs.push({ threshold: 0.5, overProb: c.probability, sources: 1, movement: null });
