@@ -257,7 +257,8 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     # unparseable `generated_at`). It is still SERVED — refusing on shape at this
     # tier is what Queue 300B ruled out — but the envelope now says so, where
     # before it went out indistinguishable from a validated curve.
-    assert out.pop("availability") == "degraded"
+    availability = out.pop("availability")
+    assert availability == "degraded"
     assert out == payload
 
 
