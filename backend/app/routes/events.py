@@ -279,6 +279,72 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
 }
 
 
+# LAT-P029 Item 1 (#1494): multi-word colloquial event names.
+#
+# THE CLASS, not the string. `_SEARCH_TERM_SYNONYMS` above is a ONE-TOKEN -> ONE-TOKEN
+# map, and the filters AND its entries together, so it structurally cannot express
+# "this PHRASE means that OTHER PHRASE". `march madness` is two tokens whose canonical
+# form in the corpus shares no token with it at all — there is no row you can add to
+# that table which fixes it. That is why the defect survived: the mechanism was
+# missing, not the entry.
+#
+# MEASURED against production 2026-08-10 (deployed ac7169a2). The market exists:
+#   "Men's 2027 College Basketball Champion"  <- `college basketball` finds it
+#   `march madness`  0 futures     `ncaa tournament` 0 relevant
+#   `final four`     0 relevant    `ncaa basketball` 0 relevant
+# Every name a person actually types for the NCAA men's tournament misses the one
+# market about it. (`final four`'s single live hit was "2026 Oscar for Best Costume
+# Design?" — two unrelated outcomes separately containing "Finale" and "four".)
+#
+# The product has already solved this class ONCE, bespoke: golf majors get a
+# query-tuned concept rail below so "british open" reaches The Open Championship.
+# This is that idea given a general mechanism instead of a second hard-coded rail.
+#
+# Each alias yields ALTERNATIVE term-lists, added as extra UNION arms on the futures
+# recall query (see `_futures_where_or` / `ta_futures_where`). Alternatives are
+# additive by construction: a UNION arm can only ADD rows, so no alias can remove a
+# result that reaches the user today. Cost is paid only when an alias actually fires
+# — a query with no alias produces byte-identical SQL.
+_QUERY_PHRASE_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
+    # The NCAA men's basketball tournament. Corpus names it "College Basketball"
+    # (the championship market) and "NCAA tournament" (the bracket prop); users
+    # type neither of those two-thirds of the time.
+    ("march", "madness"): (("college", "basketball"), ("ncaa", "tournament")),
+    ("final", "four"): (("college", "basketball"), ("ncaa", "tournament")),
+    ("big", "dance"): (("college", "basketball"), ("ncaa", "tournament")),
+    ("ncaa", "tournament"): (("college", "basketball"),),
+    ("ncaa", "basketball"): (("college", "basketball"),),
+}
+
+
+def _phrase_alias_alternatives(terms: list[str]) -> list[list[str]]:
+    """Alternative term-lists for any known multi-word alias in the query.
+
+    Matches a CONTIGUOUS SPAN and keeps the surrounding terms, so the alias
+    composes with the rest of the query rather than only working as the whole of
+    it: "2027 march madness winner" -> "2027 college basketball winner". Returns
+    [] for the overwhelming majority of queries, which is the no-cost path.
+
+    Pure — no DB, no I/O — so the guard tests can pin it directly.
+    """
+
+    lowered = [term.lower() for term in terms]
+    alternatives: list[list[str]] = []
+    for alias, canonicals in _QUERY_PHRASE_ALIASES.items():
+        width = len(alias)
+        for start in range(len(lowered) - width + 1):
+            if tuple(lowered[start : start + width]) != alias:
+                continue
+            for canonical in canonicals:
+                candidate = terms[:start] + list(canonical) + terms[start + width :]
+                # An alternative identical to the query would be a duplicate arm
+                # doing duplicate work for zero extra recall.
+                if [t.lower() for t in candidate] != lowered and candidate not in alternatives:
+                    alternatives.append(candidate)
+            break  # one span per alias is enough; a repeated alias adds nothing
+    return alternatives
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
@@ -810,6 +876,26 @@ def _build_expanded_ilike(column, term: str, expansion: str | None):
     if expansion:
         return or_(base, column.ilike(f"%{expansion}%"))
     return base
+
+
+def _alias_futures_arms(terms: list[str]) -> list:
+    """Futures NAME arms for each alias alternative (LAT-P029 Item 1), ready to UNION.
+
+    Name-only on purpose. The outcome arm is the expensive half of futures recall
+    — a subquery over 3.2M `futures_outcomes` rows — and the markets this class
+    misses are missed by NAME ("Men's 2027 College Basketball Champion" is a name
+    match). An alias is a cheap recall additive; it does not buy a second full
+    search. Returns [] for any query with no alias, so the common path is
+    unchanged SQL.
+    """
+
+    arms = []
+    for alternative in _phrase_alias_alternatives(terms):
+        expanded = _apply_search_synonyms(expand_search_terms(alternative))
+        arms.append(
+            and_(*[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded])
+        )
+    return arms
 
 
 def _build_expanded_fts(column, term: str, expansion: str | None):
@@ -2201,6 +2287,12 @@ async def search_events(
         if arm is not None
     ]
 
+    # LAT-P029 Item 1 (#1494): colloquial multi-word event names ("march madness")
+    # reach the market the corpus names differently ("…College Basketball Champion").
+    # Extra UNION arms, so recall can only increase and the no-alias path is
+    # unchanged. See `_QUERY_PHRASE_ALIASES`.
+    _futures_where_or.extend(_alias_futures_arms(terms))
+
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
     # MEASURED in production 2026-08-08 (3.2M-row `futures_outcomes`, 3 GB), not
@@ -2719,9 +2811,41 @@ def _match_hub_suggestions(q: str) -> list[dict]:
     return rows
 
 
+# LAT-P029 Item 2 (#1494): why this is 200 and not 50.
+#
+# It was 50, and `/api/events/search` has NO cap at all, so the two surfaces
+# disagreed and nothing recorded that as intentional. MEASURED 2026-08-10 on
+# deployed master: the gold-set query *"Where will Taylor Swift and Travis Kelce's
+# Wedding occur?"* (57 chars) returned **HTTP 422 string_too_long**, boundary exact
+# at 50 -> 200 / 51 -> 422. That is a real query from Alex's own search history,
+# 422'd on the Instant Answers surface.
+#
+# What was the cap defending? Not cost. A long `q` feeds `ILIKE '%q%'`, and pg_trgm's
+# rule is 3+ consecutive ALPHANUMERICS, not length — a LONGER query is strictly more
+# selective and CHEAPER. The measured danger is the opposite end: LAT-P010 clocked the
+# 2-char `%re%` at 6,830ms against a seq scan, which is why `min_length=2` plus
+# `_has_extractable_trigram` exist. Length was never the risk it was written against.
+#
+# So the cap is raised, not removed: `q` still becomes a Redis cache key
+# (`bainluck:typeahead:{q}`) and an ILIKE pattern, and neither should be unbounded.
+# 200 gives ~3.5x headroom over the longest real query measured while keeping both
+# bounded. A 200+ character string is not somebody typing in a dropdown.
+#
+# RESIDUAL, stated rather than left silent: `/search` remains uncapped, so the two
+# surfaces still diverge above 200 chars. Bounding `/search` would turn a currently
+# working request into a 422, which is a regression this queue is not chartered to
+# make — it is carried forward in the report with a recommendation, not fixed here.
+_TYPEAHEAD_MAX_QUERY_CHARS = 200
+
+
 @router.get("/typeahead")
 async def typeahead_search(
-    q: str = Query(..., min_length=2, max_length=50, description="Search query"),
+    q: str = Query(
+        ...,
+        min_length=2,
+        max_length=_TYPEAHEAD_MAX_QUERY_CHARS,
+        description="Search query",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2940,6 +3064,13 @@ async def typeahead_search(
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
     if ta_league_ticker_match is not None:
         ta_futures_where.append(ta_league_ticker_match)
+
+    # LAT-P029 Item 1 (#1494): the SAME alias arms as /search. Both surfaces were
+    # measured missing this class together, and events.py's own comment at the
+    # `_build_league_ticker_match` helper records that /search and /typeahead
+    # "had drifted, which is how /search kept the defect for three cycles after
+    # /typeahead's twin was fixed". One helper, both callers, no second copy.
+    ta_futures_where.extend(_alias_futures_arms(terms))
 
     # LAT-P007: UNION, not OR — the LAT-P006 treatment, same reasoning, same
     # measurement rail. A top-level OR blocks the hash-semi-join transformation,

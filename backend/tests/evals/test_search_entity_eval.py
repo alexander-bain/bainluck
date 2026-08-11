@@ -10,7 +10,7 @@ from scripts.evals.probe_registry import filter_probes, load_registry, validate_
 from scripts.evals.search_gold_eval import (
     SearchGoldMigrationError,
     evaluate_entity_probes,
-    load_result_rows,
+    load_result_records,
     parse_gold_markdown,
     require_entity_gold,
 )
@@ -169,7 +169,7 @@ def test_result_loader_rejects_duplicate_probe_rows(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="SEARCH_RESULTS_DUPLICATE"):
-        load_result_rows(path)
+        load_result_records(path)
 
 
 def test_search_registry_rejects_duplicate_version_and_cross_split_leakage() -> None:

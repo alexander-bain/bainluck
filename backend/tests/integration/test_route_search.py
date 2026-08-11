@@ -591,10 +591,32 @@ class TestTypeaheadEndpoint:
         assert resp.status_code == 422
 
     async def test_long_q_returns_403(self, client):
-        """q must be at most 50 characters."""
-        long_query = "a" * 51
+        """q must be at most 200 characters (LAT-P029 Item 2; was 50).
+
+        The bound moved, the contract did not: typeahead still refuses an
+        unbounded `q`, because it becomes both a Redis cache key and an ILIKE
+        pattern. What changed is where the line sits — 50 rejected real user
+        queries (see the test below), and length was never the cost driver
+        anyway; pg_trgm's rule is 3+ consecutive alphanumerics, which is what
+        `min_length=2` guards at the other end.
+        """
+        long_query = "a" * 201
         resp = await client.get(f"/api/events/typeahead?q={long_query}")
         assert resp.status_code == 422
+
+    async def test_real_57_char_user_query_is_not_refused(self, client):
+        """The measured 422 this queue exists to remove.
+
+        *"Where will Taylor Swift and Travis Kelce's Wedding occur?"* is 57
+        characters, comes from Alex's own search history, is a row in the gold
+        set, and returned HTTP 422 `string_too_long` on deployed master
+        2026-08-10. `/api/events/search` accepted the same string, so the two
+        surfaces disagreed with nothing recording that as intentional.
+        """
+        query = "Where will Taylor Swift and Travis Kelce's Wedding occur?"
+        assert len(query) == 57
+        resp = await client.get("/api/events/typeahead", params={"q": query})
+        assert resp.status_code != 422
 
     async def test_empty_suggestions_on_no_match(self, client):
         """Mock DB returns no data, suggestions should be empty."""
