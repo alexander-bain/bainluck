@@ -30,6 +30,7 @@
     ]},
     {"domain": "calibration-evidence", "canonical": "calibration_population_integrity", "members": [
       {"name": "calibration_independence_disclosure_contract", "relation": "extends", "target": "calibration_population_integrity"},
+      {"name": "calibration_census_closure_contract", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "calibration_fingerprint_derived_map", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "calibration_metric_robustness", "relation": "extends", "target": "calibration_population_integrity"},
       {"name": "calibration_publish_gate_contract", "relation": "extends", "target": "calibration_population_integrity"},
