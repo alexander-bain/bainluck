@@ -141,3 +141,8 @@ docs/designs/
 
 # Personal / private notes — never commit
 private/
+
+# Scratch/disposable trees parked in the shared master worktree. NEVER commit these:
+# a 272 MiB full-repo snapshot tarball sat here untracked-and-un-ignored (INT-042), one
+# `git add -A` away from permanent history bloat.
+_to_delete/
