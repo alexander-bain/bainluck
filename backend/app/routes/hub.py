@@ -18,9 +18,9 @@ in `HUB_CONFIGS` and (only if the competition has grouped event pages) a lister
 in `_UPCOMING_LISTERS`.
 """
 
-import json as _json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -30,6 +30,19 @@ from app.routes.league_futures import get_league_futures
 from app.services import get_db
 from app.utils.event_boxing import classify_boxing_prop, list_boxing_card_concepts
 from app.utils.event_concept import list_golf_tournament_concepts
+from app.utils.event_concept_cache import (
+    AVAILABILITY_LIVE,
+    AVAILABILITY_STALE_OK,
+    ConceptCacheKeys,
+    acquire_refresh_lock,
+    cache_keys,
+    get_client,
+    read_slot,
+    release_refresh_lock,
+    stamp_envelope,
+    with_availability,
+    write_payload,
+)
 from app.utils.event_tennis import list_tennis_tournament_concepts
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 
@@ -227,32 +240,73 @@ def _serialize_concept(c: dict) -> dict:
     }
 
 
-@router.get("/{competition}")
-async def get_competition_hub(
-    competition: str = Path(..., description="Competition slug (e.g. 'mma')"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Config-driven competition landing page: upcoming events + futures sections."""
-    cfg = HUB_CONFIGS.get(competition.lower())
-    if cfg is None:
-        raise HTTPException(
-            status_code=404, detail=f"No hub configured for '{competition}'"
-        )
+# ---------------------------------------------------------------------------
+# Cache tier (#1651) — policy lives in `utils/event_concept_cache.py`
+# ---------------------------------------------------------------------------
+#
+# This tier is the SECOND customer of that module (ruling 005, extract-on-touch;
+# contract in `docs/contracts/cache-envelope.md`). It had the same 3-min primary +
+# 24h mirror shape as `routes/event.py` and the same defect: **the mirror was read
+# only when the build came back EMPTY**, so it rescued a failed build and did
+# nothing at all for a cold one. Every 180 seconds the first reader of each hub
+# paid a full rebuild with a perfectly good snapshot one GET away — measured in
+# production on 2026-08-10, golf 2.745s cold vs 0.285s warm (9.6x), tennis 1.622s
+# vs 0.353s, esports 1.101s vs 0.451s.
+#
+# The keys are unchanged (`bainluck:hub:<slug>`), so this is an adoption of the
+# existing policy and not a migration: `cache_keys` takes the prefix.
 
-    # Whole-hub Redis cache (3 min primary + 24h stale fallback), mirroring the
-    # league_futures caching pattern.
-    _cache_key = f"bainluck:hub:{cfg.slug}"
-    _stale_key = f"{_cache_key}:stale"
-    _rc = None
+HUB_CACHE_PREFIX = "bainluck:hub:"
+
+#: How fresh a *live* hit is. Unchanged at 180s — what changed is that expiry no
+#: longer costs the reader a rebuild, so this stopped being a latency knob.
+HUB_PRIMARY_TTL = 180
+
+
+def hub_cache_keys(slug: str) -> ConceptCacheKeys:
+    """The four Redis keys one hub owns. Shared by the route and the refresh task
+    so the two can never disagree about where the mirror lives."""
+    return cache_keys(slug, prefix=HUB_CACHE_PREFIX)
+
+
+def _schedule_refresh(rc, keys: ConceptCacheKeys, slug: str) -> None:
+    """Kick exactly one background rebuild for `slug` and return immediately.
+
+    Single-flight: a burst of readers arriving behind one TTL expiry produces one
+    rebuild, not one per reader. The owner token travels WITH the dispatch because
+    this request acquires the lock and the worker releases it (#1678 finding 1) —
+    a producer that cannot name the token does not get to release.
+
+    Best-effort throughout: the caller has already decided to serve the mirror, and
+    nothing here may turn a served page into an error. If the dispatch itself
+    fails the lock is released, so a dead broker costs the next reader a retry
+    rather than wedging the key for REFRESH_LOCK_TTL.
+    """
+    token = acquire_refresh_lock(rc, keys)
+    if not token:
+        return
     try:
-        from app.tasks.redis_state import get_redis_client
+        from app.tasks import celery_app
 
-        _rc = get_redis_client()
-        cached = _rc.get(_cache_key)
-        if cached:
-            return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
+        celery_app.send_task(
+            "app.tasks.refresh_hub", args=[slug, token], queue="background"
+        )
     except Exception:
-        _rc = None
+        logger.warning("hub: refresh dispatch failed for %s", slug, exc_info=True)
+        release_refresh_lock(rc, keys, token)
+
+
+async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
+    """Build one hub payload from the database. Never raises.
+
+    Both swallow points declare a typed loss where the failure happens, which is
+    the only place that knows what was lost: the market sections are the page's
+    substance, so losing them is `degraded`; the upcoming rail is real content
+    alongside a surviving page, so losing it is `partial`.
+    """
+    from app.utils.event_concept_cache import LOSS_DEGRADED, LOSS_PARTIAL, note_build_loss
+
+    losses: list[tuple[str, str]] = []
 
     # Upcoming events (best-effort — a hub without a lister is sections-only).
     upcoming: list[dict] = []
@@ -272,6 +326,7 @@ async def get_competition_hub(
             except Exception:
                 logger.exception("hub upcoming lister failed for %s", cfg.slug)
                 upcoming = []
+                losses.append(("hub_upcoming_lister_failed", LOSS_PARTIAL))
 
     # Futures / awards / props via the shared league-futures endpoint.
     sections: dict = {}
@@ -285,6 +340,7 @@ async def get_competition_hub(
     except Exception:
         logger.exception("hub league_futures failed for %s", cfg.slug)
         sections = {}
+        losses.append(("hub_league_futures_failed", LOSS_DEGRADED))
 
     # Recover a real props section: league_futures lumps combat-sport game_props
     # into "matches" alongside fights. Pull the classifier-tagged ones out.
@@ -310,18 +366,6 @@ async def get_competition_hub(
         if moved_props:
             sections["props"] = (sections.get("props") or []) + moved_props
 
-    # If everything came back empty, this is likely a transient failure — fall
-    # back to the last good snapshot rather than serving a blank hub.
-    if not upcoming and not sections and _rc is not None:
-        try:
-            stale = _rc.get(_stale_key)
-            if stale:
-                return _json.loads(
-                    stale.decode() if isinstance(stale, bytes) else stale
-                )
-        except Exception:
-            pass
-
     response = {
         "competition": cfg.slug,
         "label": cfg.label,
@@ -333,13 +377,99 @@ async def get_competition_hub(
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),
     }
-
-    try:
-        if _rc:
-            payload = _json.dumps(response, default=str)
-            _rc.setex(_cache_key, 180, payload)
-            _rc.setex(_stale_key, 86400, payload)
-    except Exception:
-        pass
-
+    for reason, severity in losses:
+        note_build_loss(response, reason, severity)
     return response
+
+
+def is_empty_hub(payload: dict) -> bool:
+    """A hub with neither an upcoming rail nor any section is not a page."""
+    return not payload.get("upcoming") and not payload.get("sections")
+
+
+async def build_and_cache_hub(cfg: HubConfig, db: AsyncSession, rc=None) -> dict:
+    """Build one hub, stamp the envelope, write both slots, return the payload.
+
+    One implementation for the route's cold path and the background refresh, so
+    the two cannot drift in what they store.
+
+    **An empty build never overwrites a good mirror.** This is the ordering the
+    pre-#1651 route had for free by checking emptiness before its `setex`, and it
+    is easy to lose when the write moves into a shared helper: writing first would
+    clobber the 24h snapshot with the blank page and then "rescue" by reading back
+    the blank we just stored. The rescue must have something to rescue.
+    """
+    from app.utils.event_concept_cache import take_build_quality
+
+    keys = hub_cache_keys(cfg.slug)
+    built = await build_hub(cfg, db)
+    quality, reasons = take_build_quality(built)
+    payload = stamp_envelope(
+        built,
+        created_at=datetime.now(timezone.utc),
+        # An explicit allowed unknown per the contract. A hub is a composition of
+        # other tiers' data and has no single lifecycle event of its own; claiming
+        # a watermark we cannot compute is the fabrication #1678 finding 3 is about.
+        lifecycle_watermark=None,
+        quality=quality,
+        quality_reasons=reasons,
+    )
+    if is_empty_hub(payload) and read_slot(rc, keys.stale) is not None:
+        return payload
+    write_payload(rc, keys, payload, primary_ttl=HUB_PRIMARY_TTL)
+    return payload
+
+
+@router.get("/{competition}")
+async def get_competition_hub(
+    competition: str = Path(..., description="Competition slug (e.g. 'mma')"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Config-driven competition landing page: upcoming events + futures sections."""
+    cfg = HUB_CONFIGS.get(competition.lower())
+    if cfg is None:
+        raise HTTPException(
+            status_code=404, detail=f"No hub configured for '{competition}'"
+        )
+
+    keys = hub_cache_keys(cfg.slug)
+    rc = get_client()
+
+    # 1. A live hit inside the primary TTL.
+    primary = read_slot(rc, keys.primary)
+    if primary is not None:
+        return with_availability(primary, AVAILABILITY_LIVE)
+
+    # 2. THE FIX (#1651): a MISS serves the mirror and schedules one rebuild,
+    #    instead of walking past a healthy snapshot into a full rebuild. There is
+    #    deliberately no negative-cache read here — unlike a concept key, a hub
+    #    slug either exists in HUB_CONFIGS or 404s above, so "known absent" is
+    #    already answered without touching Redis.
+    stale = read_slot(rc, keys.stale)
+    if stale is not None:
+        _schedule_refresh(rc, keys, cfg.slug)
+        return with_availability(stale, AVAILABILITY_STALE_OK)
+
+    # 3. Nothing usable cached — build inline. A cold miss must still SERVE, so
+    #    this path stays synchronous and is never gated on the refresh task.
+    try:
+        payload = await build_and_cache_hub(cfg, db, rc)
+    except Exception:
+        # Re-read the mirror rather than trusting step 2: a concurrent refresh may
+        # have landed one while we were building.
+        rescued = read_slot(rc, keys.stale)
+        if rescued is not None:
+            logger.warning("hub build failed for %s — serving stale", cfg.slug)
+            return with_availability(rescued, AVAILABILITY_STALE_OK)
+        raise
+
+    # 4. The empty-build rescue, kept: it is correct, it was just insufficient on
+    #    its own. `build_hub` never raises, so a total upstream failure arrives
+    #    here as an empty page rather than as the exception handled above.
+    if is_empty_hub(payload):
+        rescued = read_slot(rc, keys.stale)
+        if rescued is not None:
+            logger.warning("hub built empty for %s — serving stale", cfg.slug)
+            return with_availability(rescued, AVAILABILITY_STALE_OK)
+
+    return with_availability(payload, AVAILABILITY_LIVE)

@@ -189,8 +189,17 @@ class ConceptCacheKeys:
     refresh_lock: str
 
 
-def cache_keys(key: str) -> ConceptCacheKeys:
-    base = f"{CACHE_PREFIX}{key}"
+def cache_keys(key: str, prefix: str = CACHE_PREFIX) -> ConceptCacheKeys:
+    """Every Redis key one cached entity owns, under `prefix`.
+
+    `prefix` defaults to this tier's own, so every existing caller is unchanged.
+    It exists because the competition hub (#1651) is this module's SECOND
+    customer and its keys are already live in production under
+    `bainluck:hub:<slug>` — a second tier adopting the policy must not have to
+    move its keys to get it, and re-deriving the same four-key layout at the new
+    call site is the duplication ruling 005 says to stop.
+    """
+    base = f"{prefix}{key}"
     return ConceptCacheKeys(
         primary=base,
         stale=f"{base}:stale",
@@ -504,13 +513,26 @@ def read_slot(rc, key: str) -> dict[str, Any] | None:
     return payload
 
 
-def write_payload(rc, keys: ConceptCacheKeys, payload: dict[str, Any]) -> None:
-    """Write both slots and clear any negative. Never raises."""
+def write_payload(
+    rc,
+    keys: ConceptCacheKeys,
+    payload: dict[str, Any],
+    primary_ttl: int = ENVELOPE_TTL,
+) -> None:
+    """Write both slots and clear any negative. Never raises.
+
+    `primary_ttl` is per-customer because it means "how fresh is a *live* hit",
+    which is a property of how fast the underlying data moves, not of the caching
+    policy. Concepts poll every ~2 min and use 60s; the hub's futures sections
+    move far more slowly and have used 180s in production since it shipped.
+    `STALE_TTL` is deliberately NOT parameterized — the mirror's job is to outlive
+    an outage, and that is the same job for every tier.
+    """
     if rc is None:
         return
     try:
         encoded = encode_payload(payload)
-        rc.setex(keys.primary, ENVELOPE_TTL, encoded)
+        rc.setex(keys.primary, primary_ttl, encoded)
         rc.setex(keys.stale, STALE_TTL, encoded)
         # A key that now resolves must not keep a negative entry behind it.
         rc.delete(keys.negative)

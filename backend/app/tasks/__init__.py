@@ -2223,6 +2223,26 @@ def refresh_event_concept(self, key: str, token: str | None = None):
     return _tracked_run("refresh_event_concept", _refresh_event_concept(key, token))
 
 
+@celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_hub")
+def refresh_hub(self, slug: str, token: str | None = None):
+    """Revalidate one competition hub after the route served its 24h mirror (#1651).
+
+    Dispatched from `routes/hub.py` under a single-flight lock, so a burst of
+    readers behind one TTL expiry produces one of these, not one per reader.
+
+    `token` is the refresh-lock owner token the route acquired; the acquire and the
+    release are in different processes, so ownership has to travel with the message
+    (#1678 finding 1). Optional so that messages already in the broker when this
+    deploys still execute.
+
+    Not on the beat schedule on purpose: stale-while-revalidate keeps these warm
+    off real traffic, and a scheduled second producer racing the route's lock is
+    exactly the shape #1678 finding 1 was.
+    """
+    from app.tasks.hub_refresh import _refresh_hub
+    return _tracked_run("refresh_hub", _refresh_hub(slug, token))
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")
 def precompute_discover_candidate_base(self):
     """Precompute + publish the anonymous Discover candidate-ID base (Queue 285)."""
