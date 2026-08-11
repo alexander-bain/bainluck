@@ -182,6 +182,26 @@ jobs:
             exit 1
           }
 
+      - name: Odds-enrichment equivalence (real Postgres)
+        # LAT-P030/#1494. The odds enrichment stage was 84-95% of every slow team
+        # query (measured 6,724ms of 12,182ms) because DISTINCT ON cannot skip: it
+        # read the FULL snapshot history of every event on the page. The rewrite
+        # reads one row per (event, bookmaker) instead — 36x faster, and only safe
+        # if the rows are identical. LATERAL / WITH RECURSIVE are Postgres-only, so
+        # this needs the service container; it cannot run in the unit job.
+        #
+        # Same skip-detection as the recall gate above, for the same reason: pytest
+        # exits 0 when every test skips, so a gate that silently did not run is
+        # indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_odds_enrichment_equivalence.py \
+            -v -s -rs 2>&1 | tee /tmp/enrichment.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/enrichment.txt; then
+            echo "::error::odds-enrichment equivalence SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
