@@ -1390,9 +1390,9 @@ SPORT_HIERARCHY: dict[str, dict] = {
         "name": "Basketball",
         "slug": "basketball",
         "leagues": [
-            {"slug": "nba", "name": "NBA", "sport_keys": ["basketball_nba"]},
-            {"slug": "wnba", "name": "WNBA", "sport_keys": ["basketball_wnba"]},
-            {"slug": "ncaab", "name": "NCAA Men's Basketball", "sport_keys": ["basketball_ncaab"]},
+            {"slug": "nba", "name": "NBA", "sport_keys": ["basketball_nba"], "grid_slug": "nba"},
+            {"slug": "wnba", "name": "WNBA", "sport_keys": ["basketball_wnba"], "grid_slug": "wnba"},
+            {"slug": "ncaab", "name": "NCAA Men's Basketball", "sport_keys": ["basketball_ncaab"], "grid_slug": "ncaa-basketball"},
             {"slug": "wncaab", "name": "NCAA Women's Basketball", "sport_keys": ["basketball_wncaab"]},
         ],
         "showcase_events": [
@@ -1404,8 +1404,8 @@ SPORT_HIERARCHY: dict[str, dict] = {
         "name": "Football",
         "slug": "football",
         "leagues": [
-            {"slug": "nfl", "name": "NFL", "sport_keys": ["americanfootball_nfl"]},
-            {"slug": "ncaaf", "name": "NCAA Football", "sport_keys": ["americanfootball_ncaaf"]},
+            {"slug": "nfl", "name": "NFL", "sport_keys": ["americanfootball_nfl"], "grid_slug": "nfl"},
+            {"slug": "ncaaf", "name": "NCAA Football", "sport_keys": ["americanfootball_ncaaf"], "grid_slug": "ncaa-football"},
             {"slug": "cfl", "name": "CFL", "sport_keys": ["americanfootball_cfl"]},
             {"slug": "ufl", "name": "UFL", "sport_keys": ["americanfootball_ufl"]},
         ],
@@ -1418,7 +1418,7 @@ SPORT_HIERARCHY: dict[str, dict] = {
         "name": "Hockey",
         "slug": "hockey",
         "leagues": [
-            {"slug": "nhl", "name": "NHL", "sport_keys": ["icehockey_nhl"]},
+            {"slug": "nhl", "name": "NHL", "sport_keys": ["icehockey_nhl"], "grid_slug": "nhl"},
         ],
         "showcase_events": [
             {"name": "Stanley Cup", "type": "championship"},
@@ -1428,7 +1428,7 @@ SPORT_HIERARCHY: dict[str, dict] = {
         "name": "Baseball",
         "slug": "baseball",
         "leagues": [
-            {"slug": "mlb", "name": "MLB", "sport_keys": ["baseball_mlb"]},
+            {"slug": "mlb", "name": "MLB", "sport_keys": ["baseball_mlb"], "grid_slug": "mlb"},
             {"slug": "ncaa", "name": "College Baseball", "sport_keys": ["baseball_ncaa"]},
         ],
         "showcase_events": [
@@ -1440,13 +1440,13 @@ SPORT_HIERARCHY: dict[str, dict] = {
         "name": "Soccer",
         "slug": "soccer",
         "leagues": [
-            {"slug": "epl", "name": "Premier League", "sport_keys": ["soccer_epl"]},
-            {"slug": "mls", "name": "MLS", "sport_keys": ["soccer_usa_mls"]},
-            {"slug": "laliga", "name": "La Liga", "sport_keys": ["soccer_spain_la_liga"]},
-            {"slug": "bundesliga", "name": "Bundesliga", "sport_keys": ["soccer_germany_bundesliga"]},
+            {"slug": "epl", "name": "Premier League", "sport_keys": ["soccer_epl"], "grid_slug": "epl"},
+            {"slug": "mls", "name": "MLS", "sport_keys": ["soccer_usa_mls"], "grid_slug": "mls"},
+            {"slug": "laliga", "name": "La Liga", "sport_keys": ["soccer_spain_la_liga"], "grid_slug": "la-liga"},
+            {"slug": "bundesliga", "name": "Bundesliga", "sport_keys": ["soccer_germany_bundesliga"], "grid_slug": "bundesliga"},
             {"slug": "seriea", "name": "Serie A", "sport_keys": ["soccer_italy_serie_a"]},
             {"slug": "ligue1", "name": "Ligue 1", "sport_keys": ["soccer_france_ligue_one"]},
-            {"slug": "ucl", "name": "Champions League", "sport_keys": ["soccer_uefa_champs_league"]},
+            {"slug": "ucl", "name": "Champions League", "sport_keys": ["soccer_uefa_champs_league"], "grid_slug": "champions-league"},
         ],
         "showcase_events": [
             {"name": "Champions League", "type": "championship"},

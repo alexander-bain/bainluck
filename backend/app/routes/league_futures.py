@@ -9,14 +9,22 @@ with sport-aware keyword classification for awards, series, and props.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome, Sport
+from app.models import Event, FuturesMarket, FuturesOutcome, Sport
 from app.services import get_db
+from app.utils.entity_page_tiers import (
+    AVAILABILITY_DEGRADED,
+    AVAILABILITY_EMPTY,
+    AVAILABILITY_FRESH,
+    AVAILABILITY_STALE,
+    resolve_entity_tier,
+)
+from app.utils.sport_keys import SPORT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +161,72 @@ _SEASON_STAT_KEYWORDS: list[str] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# UX-P062 (#1743, epic #1741): league identity, from the register
+# ---------------------------------------------------------------------------
+
+#: Every sport key that `SPORT_HIERARCHY` navigates to. This is what makes a
+#: league a REAL entity for the tier resolver (spec §2): a registered league with
+#: zero answers is a legitimate T0 page, while an unrecognised key is not a page at
+#: all — that distinction is the generation gate, and it needs an identity source.
+#: Derived from the register rather than re-listed, so adding a league to the nav
+#: cannot leave a second list behind (the C23 constant-scatter lesson).
+_REGISTERED_SPORT_KEYS: frozenset[str] = frozenset(
+    key
+    for sport in SPORT_HIERARCHY.values()
+    for league in (sport.get("leagues") or [])
+    for key in (league.get("sport_keys") or [])
+)
+
+
+#: How far back a settled game still counts as a RESULT worth showing. Long enough
+#: that a league playing weekly still has receipts, short enough that "recent"
+#: stays true.
+RESULTS_LOOKBACK_DAYS = 14
+
+#: Rail sizes. Both are counted caps (spec §4) — the payload carries the totals, so
+#: a cap is never a silent truncation.
+UPCOMING_GAMES_LIMIT = 8
+RESULTS_LIMIT = 8
+
+
+def _event_probability(event: Event) -> float | None:
+    """The blended home win probability, or None when we never measured one.
+
+    Reads the canonical aggregate the way the team page does — it does NOT roll its
+    own mean over sources. Register E9 records a second blend algorithm living in
+    `teams.py::_get_championship_path`; this queue is not adding a third.
+    """
+    src = event.win_probability_sources
+    if not isinstance(src, dict):
+        return None
+    agg = src.get("aggregate")
+    if not isinstance(agg, dict):
+        return None
+    home = agg.get("home")
+    return float(home) if isinstance(home, (int, float)) else None
+
+
+def _format_game_brief(event: Event) -> dict:
+    """Compact league-rail shape for one game.
+
+    Deliberately NOT the team page's `_format_event_brief`: that one takes a team
+    and renders from that team's perspective ("we had them at 72%"). A league rail
+    has no home side to speak from, so the probability is stated as the home team's
+    and named as such rather than left ambiguous.
+    """
+    return {
+        "id": event.id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "status": event.status,
+        "home_score": event.home_score,
+        "away_score": event.away_score,
+        "home_win_probability": _event_probability(event),
+    }
+
+
 def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
     """Assign a market to a display section.
 
@@ -234,7 +308,14 @@ async def get_league_futures(
             return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
         stale = _rc.get(_stale_key)
         if stale:
-            return _json.loads(stale.decode() if isinstance(stale, bytes) else stale)
+            # UX-P062 (#1743), register E6: this served a 24h-old snapshot with no
+            # declaration at all, so a substituted answer was indistinguishable from
+            # a current one — ruling 025 clause 4, the named violation. The payload
+            # was cached with `availability: fresh`; it is not fresh now.
+            _payload = _json.loads(stale.decode() if isinstance(stale, bytes) else stale)
+            if isinstance(_payload, dict):
+                _payload["availability"] = AVAILABILITY_STALE
+            return _payload
     except Exception:
         _rc = None
 
@@ -301,7 +382,21 @@ async def get_league_futures(
     try:
         result = await asyncio.wait_for(db.execute(query), timeout=25)
     except asyncio.TimeoutError:
-        return {"sport_key": sport_key, "sections": {}, "total_markets": 0, "error": "timeout"}
+        # UX-P062 (#1743), register E6: a statement timeout returned the SAME empty
+        # shape as a league that genuinely has no markets, so an outage and an
+        # off-season rendered identically. `degraded` is the whole distinction
+        # (ruling 025 clause 4), and `tier: None` would tell the page to render a
+        # confident T0 statement about data we failed to read.
+        return {
+            "sport_key": sport_key,
+            "sections": {},
+            "total_markets": 0,
+            "error": "timeout",
+            "tier": None,
+            "availability": AVAILABILITY_DEGRADED,
+            "pool_counts": {"answers": 0, "dropped": 0, "settled": 0},
+            "section_counts": {},
+        }
     markets = list(result.scalars().unique().all())
 
     # Group by section + deduplicate by canonical_market_key
@@ -317,6 +412,23 @@ async def get_league_futures(
 
     seen_canonical: dict[str, dict] = {}
 
+    # UX-P062 (#1743), register E8 / ruling 025 clause 3. The two price-based skips
+    # below used to be bare `continue`s, so a section that lost every row to them
+    # simply disappeared and the page reported the remainder as if it were the
+    # whole. A swallow that counts is detection; a swallow that doesn't is
+    # concealment. This counts them PER SECTION so the envelope can say "showing 3
+    # of 11" instead of quietly saying "3".
+    #
+    # It deliberately does NOT change WHICH markets are skipped. Spec §10 E8 records
+    # that skipping on price alone is the C16 class and that whatever Alex rules for
+    # Discover binds here identically — that ruling is not this queue's to make, and
+    # counting the skip is what makes the eventual decision measurable.
+    resolved_skipped: dict[str, int] = {}
+
+    #: Championship/conference/division rows, kept for the CENSUS only — the grid
+    #: renders them. See the amendment note at the skip site below.
+    championship_census: list[dict] = []
+
     for market in markets:
         section = _assign_section(market, sport_key)
 
@@ -328,6 +440,37 @@ async def get_league_futures(
                 # dropping them (they are the whole point of the esports hub).
                 section = "futures"
             else:
+                # UX-P062 (#1743) + Alex's 2026-08-11 amendment: the grid IS the
+                # rendering of this family, and it is the league page's centerpiece
+                # — so it must COUNT, even though it is not rendered as cards here.
+                #
+                # This was the census hole. Dropping the row entirely meant the
+                # title-winner family was invisible to the tier resolver, which is
+                # why MLB measured "awards + props" and nothing else, and why zero
+                # of 29 leagues could reach T3. Counted, not rendered.
+                championship_census.append(
+                    {
+                        "id": market.id,
+                        "group_id": market.group_id,
+                        "canonical_market_key": market.canonical_market_key,
+                        "status": market.status,
+                        "resolution_date": (
+                            market.resolution_date.isoformat()
+                            if market.resolution_date
+                            else None
+                        ),
+                        "top_outcomes": [
+                            {
+                                "probability": (
+                                    float(o.current_probability)
+                                    if o.current_probability is not None
+                                    else None
+                                )
+                            }
+                            for o in market.outcomes
+                        ],
+                    }
+                )
                 continue
 
         # Sort outcomes by probability descending
@@ -343,10 +486,12 @@ async def get_league_futures(
             if leader_prob >= 0.97:
                 leader_opening = float(sorted_outcomes[0].opening_probability) if sorted_outcomes[0].opening_probability else None
                 if leader_opening is not None and leader_opening >= 0.85:
+                    resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
                     continue
             # All-settled filter: skip if every outcome is <3% or >97% (post-season resolved)
             probs = [float(o.current_probability) for o in sorted_outcomes if o.current_probability is not None]
             if len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs):
+                resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
                 continue
 
         outcomes_data = [
@@ -414,10 +559,163 @@ async def get_league_futures(
     # Remove empty sections
     sections = {k: v for k, v in sections.items() if v}
 
+    # ── Alex's 2026-08-11 amendment: the games rails ──
+    #
+    # "League pages include an UPCOMING GAMES rail and a RECENT RESULTS rail — event
+    # cards, the product's richest and freshest content. No new pipeline; events
+    # already exist." They are served from THIS route rather than fetched separately
+    # by the page, because the tier is declared here (ruling 021) and a census that
+    # counts content the page sourced elsewhere can silently diverge from what the
+    # reader actually sees.
+    #
+    # `events` has no sport_key column, so the league scope is a join through
+    # `sports` (memory: project_events_no_sport_key). Guarded like every optional
+    # section on the team page: a failure here degrades the rails, never the page.
+    upcoming_games: list[dict] = []
+    recent_results: list[dict] = []
+    more_games = False
+    more_results = False
+    try:
+        _games_q = (
+            select(Event)
+            .join(Sport, Sport.id == Event.sport_id)
+            .where(
+                Sport.key == sport_key,
+                Event.status.in_(["live", "scheduled"]),
+                Event.commence_time >= now - timedelta(hours=2),
+            )
+            .order_by(
+                case((Event.status == "live", 0), else_=1),
+                Event.commence_time.asc(),
+            )
+            # +1 so the cap can be DECLARED rather than silently applied. A full
+            # COUNT would be a second round trip to say the same thing.
+            .limit(UPCOMING_GAMES_LIMIT + 1)
+        )
+        _results_q = (
+            select(Event)
+            .join(Sport, Sport.id == Event.sport_id)
+            .where(
+                Sport.key == sport_key,
+                # 'closed' as well as 'completed' — #1204's lesson: a settled
+                # doubleheader (and every source that closes rather than completes)
+                # is orphaned from a recents rail that only looks for 'completed'.
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(RESULTS_LIMIT + 1)
+        )
+        _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
+        _grows = [_format_game_brief(e) for e in _g.scalars().all()]
+        more_games = len(_grows) > UPCOMING_GAMES_LIMIT
+        upcoming_games = _grows[:UPCOMING_GAMES_LIMIT]
+
+        _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
+        _rrows = [_format_game_brief(e) for e in _r.scalars().all()]
+        more_results = len(_rrows) > RESULTS_LIMIT
+        recent_results = _rrows[:RESULTS_LIMIT]
+    except Exception:
+        logger.exception("league page: games rails failed for %s", sport_key)
+
+    # ── UX-P062 (#1743, epic #1741): the entity envelope (spec §7) ──
+    #
+    # Spec §2 / ruling 021: the TIER is a typed backend field. The moment web and
+    # SwiftUI each count arrays to pick a layout, the same league renders as a map
+    # on one and an answer on the other, and the parity bug is unfindable because
+    # both clients are "correct". Counts come from the SHARED resolver and are never
+    # reimplemented here — a second count is a second policy, and the histogram
+    # would then predict a tier the page does not render.
+    # The census is a SUPERSET of the rendered card sections, because two kinds of
+    # content are rendered by something other than a card list (Alex's amendment):
+    #   `championship` — rendered as the GRID, the page's centerpiece
+    #   `games`        — rendered as the upcoming-games rail
+    # Both are real content a reader sees, so both earn their place in the count.
+    #
+    # RECENT RESULTS are deliberately NOT a census section: settled content feeds
+    # the RECORD, never the answer count (doctrine A4, which the kernel encodes —
+    # settled rows resolve to zero answers, so a results "section" could never be
+    # populated without changing the resolver). They arrive as `record_n`, which is
+    # what the receipts strip is for (spec §5.3). Stated here because it is the one
+    # clause of the amendment that does not resolve mechanically.
+    census_sections = dict(sections)
+    if championship_census:
+        census_sections["championship"] = championship_census
+    if upcoming_games:
+        census_sections["games"] = [
+            {
+                "id": f"game:{g['id']}",
+                # A game with no blended number is not an answer — it is a fixture.
+                # Shaping it this way lets the ONE resolver make that call, instead
+                # of this route inventing a second rule about what counts.
+                "top_outcomes": [{"probability": g["home_win_probability"]}],
+            }
+            for g in upcoming_games
+        ]
+
+    tiering = resolve_entity_tier(
+        census_sections,
+        now=now,
+        # A league in SPORT_HIERARCHY is a real entity; an unrecognised key is not a
+        # page at all. That is the generation gate, and it is an IDENTITY question,
+        # not a density one.
+        entity_is_real=sport_key in _REGISTERED_SPORT_KEYS,
+        # Settled games are the league's receipts. This is what makes a registered
+        # league with zero live answers a legitimate T0 PAGE (a statement with a
+        # record on it) rather than a generation-gate 404.
+        record_n=len(recent_results),
+        next_event_count=len(upcoming_games),
+        season_known=False,
+    )
+
+    # Per-section total/shown/dropped. The key set is the UNION of what survived and
+    # what was skipped on price: a section whose every row was skipped vanished from
+    # `sections` entirely, and reporting nothing about it is precisely the silent
+    # truncation clause 3 forbids.
+    section_counts: dict[str, dict[str, int]] = {}
+    for name in set(tiering["per_section"]) | set(resolved_skipped):
+        s = tiering["per_section"].get(
+            name, {"total": 0, "answers": 0, "unpriced": 0, "settled": 0}
+        )
+        skipped = resolved_skipped.get(name, 0)
+        section_counts[name] = {
+            # `total` is what we HAD before the price skip, so "showing X of Y" is
+            # true about the league rather than true about the leftovers.
+            "total": s["total"] + skipped,
+            "shown": s["total"],
+            "dropped": s["unpriced"] + skipped,
+            "answers": s["answers"],
+        }
+
+    total_skipped = sum(resolved_skipped.values())
+    pool_counts = dict(tiering["pool_counts"])
+    pool_counts["dropped"] = pool_counts["dropped"] + total_skipped
+
     response = {
         "sport_key": sport_key,
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),
+        # Alex's amendment. The cap is DECLARED, not silent: `has_more` says there
+        # is more behind it (spec §4 — an uncounted cap reads as coverage).
+        "upcoming_games": upcoming_games,
+        "upcoming_games_has_more": more_games,
+        "recent_results": recent_results,
+        "recent_results_has_more": more_results,
+        "record_n": len(recent_results),
+        "tier": tiering["tier"],
+        # Ruling 025's vocabulary, never live/stale_ok/unavailable (register E10).
+        # A freshly built response with nothing AT ALL in it is EMPTY — a real
+        # state, and a different one from the degraded reads stamped on the cache
+        # and timeout paths, which is the whole point of declaring it. "Nothing"
+        # has to include the games rails, or a league mid-season with a full
+        # schedule and no futures would declare itself empty.
+        "availability": (
+            AVAILABILITY_FRESH
+            if (sections or upcoming_games or recent_results)
+            else AVAILABILITY_EMPTY
+        ),
+        "pool_counts": pool_counts,
+        "section_counts": section_counts,
     }
 
     try:
