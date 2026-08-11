@@ -1315,3 +1315,4 @@ failure this document already records happening twice.
 - [025](rulings/025-availability-envelope.md) — 2026-08-10 — The availability envelope: substitute content must declare itself (Alex)
 - [026](rulings/026-freshness-is-one-architecture.md) — 2026-08-11 — Freshness is one architecture, not five mechanisms (Alex)
 - [027](rulings/027-entity-pages-render-a-declared-tier.md) — 2026-08-11 — Entity pages render a backend-declared tier; chrome is earned by counts (Alex)
+- [028](rulings/028-a-hold-is-declared-never-implied.md) — 2026-08-11 — Readiness is a literal token; a hold is DECLARED, never implied by silence (Alex)
