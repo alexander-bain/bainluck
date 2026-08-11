@@ -28,6 +28,107 @@ CAL-P025/26/27 and CAL-P030 photographed the result. Item 7 has its first datapo
 second, dated ~Aug 15. Item **3 is diagnosed on its cricket half**; its entertainment timing rival is
 UNKNOWN and unobtainable without new capture (see the CAL-P032 correction below).
 
+## 🛑 THE BUILD COULD NEVER HAVE PUBLISHED — a banked unit did not survive its own round trip (CAL-P033, 2026-08-11)
+
+**Five items on this scoreboard wait on "the publish". Every cycle since CAL-P016 has forecast it
+from the unit count, and CAL-P032 corrected that to "the unit count, then a gate". Both are
+downstream of something neither looked at: the completion path itself raises, and always would
+have.**
+
+`advance()` banked the driver's `Row` objects as they came back from the chunk statement. Inside the
+beat that produced them that works — a `Row` is attribute-access and the merge reads it happily. But
+the cursor is persisted through `durable_state.canonical_json`, which is
+`json.dumps(..., default=str)`. A `Row` is not JSON-encodable, so `default=str` stringified it, and
+every banked row reached Postgres as its `repr()`. Read straight off the live cursor:
+
+    "(0, 'kalshi', 'baseball', False, False, 14, 0, Decimal('0.03071428571428571429'), ...)"
+
+The next beat reads that back as a `str`. `decode_staged_cursor` still vouched for those units —
+`list[str]` is a list, which is all its resumability filter asked — so the cursor reported
+`RESUME` / `resumable` and the units counted toward the 128.
+
+**Proven end to end, no DB, deterministic** (now `test_a_banked_unit_survives_the_durable_round_trip`):
+
+| step | result |
+|---|---|
+| unit banked THIS beat → merge | ✅ `n = 14` |
+| same cursor → `canonical_json` → back | resume verdict `RESUME` / `resumable` |
+| resumed row type | **`str`** |
+| resumed unit → merge | 🛑 **`TypeError: cannot read columns off a str`** |
+
+Finalization is the only place those rows are touched again, and finalization needs **all 128**
+units. **A beat banks ~19, so every completed build necessarily contains resumed units** — the
+failure had nowhere to surface, and the completion path has therefore never run. Not once since
+2026-08-02.
+
+**Why ~8,000 backend tests missed it.** Every test hands rows from `advance()` to
+`merge_futures_rows` in one process, and the multi-beat convergence test round-trips through
+`as_payload()` — a **dict**, which keeps the `Row` objects alive. The destruction happens inside
+`json.dumps`. **The round trip was the untested edge and it is the only edge production takes.**
+
+**Fixed in CAL-P033**, in the unfrozen pure module: rows are encoded on the way IN, so a unit banked
+this beat and a unit resumed from disk are the same type. The bug was two representations, not a
+wrong one. A pre-encoding cursor is refused whole under its own reason token (`unencoded_units`) —
+the banked units carry no column names and are unrecoverable, and they were worth nothing, because
+the build they were feeding could not have completed.
+
+### ⚠️ This does NOT make the page publish, and here is what is still in front of it
+
+1. **One reset, by design.** This module is not covered by `_main_input_fingerprint`, so the guard —
+   not the fingerprint — is what discards the old cursor. The walk restarts at 0.
+2. **CAL-P032's publish gate is still there**, unchanged and still ~80% likely to refuse the
+   candidate. It is now reachable, which it was not before.
+3. **The capacity wall below is NOT fixed by this queue.**
+
+## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033)
+
+CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
+margin and a complete build succeeding on the dyno. Neither is reachable from this window — both
+need this instrument deployed and one beat to run."* **It is deployed and the beats have run. The
+measurement it is owed:**
+
+| measured | value |
+|---|---|
+| `worker-heavy` dyno | **Standard-1X = 512 MB**, `--concurrency=2`, `--max-memory-per-child=200000` (≈195 MB) |
+| worker peak RSS, 00:15Z beat | **505 MB** (`rss:at:read:futures_unit` 467, `rss:at:read:futures_generation` 409) |
+| staged cursor size | **7.13 MB** JSON @ 63 units · **8.41 MB** @ 71 → **118 KB per unit**, linear |
+| projected at 128 units | **≈ 15.2 MB**, re-serialised in FULL after **every** unit |
+
+**One child of this task peaks at 505 MB on a 512 MB dyno running two children, against a per-child
+cap it exceeds by 2.6x.** And the beat-final trend is monotone in the wrong direction:
+
+| beat (all beat-final) | banked | drift | net | duration | terminal |
+|---|---|---|---|---|---|
+| 22:15Z | 36 | 0 | +17 | — | cancelled |
+| 23:15Z | 55 | 16 | +19 | 1378 s | cancelled |
+| 00:15Z | 63 | 33 | +8 | **668 s** | **SystemExit** |
+| 01:15Z | 71 | 55 | +8 | **625 s** | **SystemExit** |
+
+**Two corrections to CAL-P032's finding 2, both from source and arithmetic:**
+
+1. **Drift is a measurement, not a destroyer.** Post-CAL-P028 `retain_planned_units` keeps a unit iff
+   its key is in the plan, and the key is `(buckets, index)` — every slot of a 128-way partition is
+   planned every beat, so **nothing is ever dropped**. `roster_drift` only counts. Drift rising with
+   the banked count is what a pure measurement of "how many held units has the roster moved under"
+   does; it has no effect on the net rate. CAL-P032 read it as destruction and derived a decay
+   mechanism from it.
+2. **The rate is not decaying — beat LIFETIME is.** Per unit of *beat time* the build is constant at
+   **~72–80 s/unit** across every beat above (`read:futures_unit` 577 s / 8 units = 72 s). The +19 and
+   the +8 are the same rate through a 1378 s window and a 625 s one. What changed is that the last two
+   beats died at 10.4 and 11.1 minutes — a new terminal (`SystemExit`, exit `-241`) that CAL-P032
+   recorded as unexplained, arriving **sooner as the retained cursor grows**.
+
+**This queue does not fix the capacity wall and does not claim to.** It is handed forward with its
+measurement: the honest reading is that a walk to 128 must hold a 15 MB cursor and re-serialise it
+128 times on a dyno whose worker already peaks at 505/512 MB, and **the finalize step then
+materialises every banked row at once** (~70K rows), which is unmeasured. Either the retained
+structure shrinks or `worker-heavy` gets more memory; that second one is an ops/cost call and is
+Alex's, not this lane's.
+
+**Why it is load-bearing for ruling 024:** the combined-invalidation window's bump wipes the cursor
+and takes the page dark for a full re-walk. **Beat lifetime is therefore the length of a planned
+outage**, and right now it is shrinking beat over beat.
+
 ## 🛑 CONVERGING IS NOT PUBLISHING — the 128th unit does not turn the page green (CAL-P032, 2026-08-10)
 
 **Five items on this scoreboard wait on "the publish", and every handover since CAL-P028 has forecast
