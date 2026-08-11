@@ -101,18 +101,8 @@ KIND_SHAPE = {
 # invent). Both are recorded verbatim so the two halves stay distinguishable (P10).
 GOLD_ROWS: list[tuple[str, str, str, str, str, list[str], str, str]] = [
     # ---- coverage: teams -------------------------------------------------
-    ("red sox", "coverage", "teams", "team:boston-red-sox", "team:boston-red-sox-mlb",
-     ["team:boston-red-sox"], "pass",
-     "LAT-P035 adjudication (#1754): `teams` holds TWO rows for this one club — id 853 "
-     "`boston-red-sox` (sport baseball_mlb_preseason) and id 10709 `boston-red-sox-mlb` "
-     "(baseball_mlb), with IDENTICAL name, abbreviation, espn_id and alternate_names "
-     "(verified in production 2026-08-11). The response can only carry one: search_events "
-     "dedupes the teams bucket by `row.name`, so whichever row sorts first wins and the other "
-     "is dropped silently. LAT-P034 saw the winner ALTERNATE between runs, which made this "
-     "probe — and therefore the lane's headline recall number — flap by +/-1 with no change "
-     "to Search. Both ids denote the same real club, so per P3 this is an AMBIGUITY and is "
-     "recorded with an alternative rather than left to a coin flip. This adjudicates the "
-     "MEASUREMENT only; the duplicate rows remain a real defect and stay open as #1754."),
+    ("red sox", "coverage", "teams", "team:boston-red-sox", "team:boston-red-sox-mlb", [], "pass",
+     "canonical slug confirmed via /api/events/search teams[].slug"),
     ("pats", "coverage", "teams", "team:new-england-patriots", "team:new-england-patriots", [], "pass",
      "nickname for the same club as 'patriots' — shares its group key"),
     ("patriots", "coverage", "teams", "team:new-england-patriots", "team:new-england-patriots", [], "pass",

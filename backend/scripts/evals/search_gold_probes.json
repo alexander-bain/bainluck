@@ -19,8 +19,7 @@
         "task_type": "search_entity",
         "item_type": "team",
         "entity_ids": [
-          "team:boston-red-sox-mlb",
-          "team:boston-red-sox"
+          "team:boston-red-sox-mlb"
         ],
         "gold_half": "coverage",
         "gold_family": "teams"
@@ -40,13 +39,11 @@
         "label_schema": "search_entity/v1",
         "label_schema_version": 1,
         "authority": "product judgment of the correct referent, matched to the identifier the product uses for it",
-        "evidence": "LAT-P035 adjudication (#1754): `teams` holds TWO rows for this one club — id 853 `boston-red-sox` (sport baseball_mlb_preseason) and id 10709 `boston-red-sox-mlb` (baseball_mlb), with IDENTICAL name, abbreviation, espn_id and alternate_names (verified in production 2026-08-11). The response can only carry one: search_events dedupes the teams bucket by `row.name`, so whichever row sorts first wins and the other is dropped silently. LAT-P034 saw the winner ALTERNATE between runs, which made this probe — and therefore the lane's headline recall number — flap by +/-1 with no change to Search. Both ids denote the same real club, so per P3 this is an AMBIGUITY and is recorded with an alternative rather than left to a coin flip. This adjudicates the MEASUREMENT only; the duplicate rows remain a real defect and stay open as #1754.",
+        "evidence": "canonical slug confirmed via /api/events/search teams[].slug",
         "adjudication_history": [],
         "answer": {
           "expected_entity_id": "team:boston-red-sox-mlb",
-          "allowed_entity_ids": [
-            "team:boston-red-sox"
-          ],
+          "allowed_entity_ids": [],
           "expected_surfaces": [
             "team"
           ],

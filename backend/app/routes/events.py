@@ -981,44 +981,6 @@ def _build_expanded_fts(column, term: str, expansion: str | None):
     return base
 
 
-def _term_has_no_lexemes(term: str):
-    """SQL predicate: TRUE when ``term`` produces an EMPTY tsquery.
-
-    LAT-P035. **An empty tsquery is not a permissive match — it is a FALSE one**,
-    and that asymmetry is the whole reason this exists. Measured on production
-    2026-08-11::
-
-        websearch_to_tsquery('english','and')    -> ''      (empty)
-        websearch_to_tsquery('english','by...?') -> ''      (empty)
-        to_tsvector('...') @@ ''                 -> FALSE
-
-    So any AND-ed word test over a stopword or punctuation-only term does not
-    "skip" that term, it **zeroes the whole conjunction**. Confirmed live on
-    v3775 before this fix: ``/api/events/search?q=dodgers`` returned 25 events
-    and ``q=dodgers and cubs`` returned **0**; ``q=cleveland and`` returned 0
-    where the pre-word-test predicate had matched (``and`` is a substring of
-    "Clevel*and*"). The blast radius on events is narrow — the term must also
-    have been an ILIKE substring hit — but the futures half was measured to cost
-    a real gold probe: ``taylor swift pregnant by...?`` matches market 112868
-    "Taylor Swift pregnant by...?" only through the literal term ``by...?``.
-
-    A term with no lexemes carries no word-level information, so the honest
-    predicate is "do not constrain on it" — never "reject everything". OR this in
-    beside the FTS arms and the term stops voting.
-
-    ``numnode`` and the 2-arg ``websearch_to_tsquery`` are both IMMUTABLE over
-    constants, so the planner folds this to a constant at plan time: for a
-    lexeme-less term the whole ``or_(...)`` collapses to TRUE and the FTS recheck
-    is removed from the plan; for a real term it collapses to FALSE and leaves
-    exactly the arms that were there before. Zero runtime cost either way.
-
-    Why not decide it in Python: stopword-ness is a property of the Postgres text
-    search DICTIONARY, not of the string. A hardcoded stopword list would be a
-    second copy of ``english.stop`` that drifts silently. Ask the database.
-    """
-    return func.numnode(_search_tsquery(term)) == 0
-
-
 def _event_name_match(term: str, expansion: str | None):
     """One term against an event's team names: substring RECALL and word ABOUT-NESS.
 
@@ -1094,13 +1056,6 @@ def _event_name_match(term: str, expansion: str | None):
     `re` and `la` are two-character queries that pg_trgm cannot serve at all
     (3+ alphanumerics — see the trigram gotcha), so both forms seq-scan and the
     recheck is pure CPU: +18ms on `la`, to stop returning 4,414 rows of noise.
-
-    LAT-P035 added the ``_term_has_no_lexemes`` arm and nothing else. It is a
-    correctness fix, not a loosening: a stopword term could never have *matched*
-    a word test, it could only ever have **falsified** it, so this arm adds back
-    rows the test was never able to judge and changes no row it could. Read that
-    helper for the live before/after — the shipped form answered `dodgers` with
-    25 events and `dodgers and cubs` with zero.
     """
     return and_(
         or_(
@@ -1108,87 +1063,8 @@ def _event_name_match(term: str, expansion: str | None):
             _build_expanded_ilike(Event.away_team_name, term, expansion),
         ),
         or_(
-            _term_has_no_lexemes(term),
             _build_expanded_fts(Event.home_team_name, term, expansion),
             _build_expanded_fts(Event.away_team_name, term, expansion),
-        ),
-    )
-
-
-def _futures_name_match_term(term: str, exp: str | None):
-    """One term against a market NAME: substring RECALL and word ABOUT-NESS.
-
-    LAT-P035/#1758 — the futures half of the `_event_name_match` judgment,
-    shipped ONE ARM AT A TIME on purpose. Read `_event_name_match` first: it
-    carries the rule, the 59-query recall table and the two losses it accepts.
-
-    The defect, measured live on v3775 (`GET /api/events/search?q=nba+champion`,
-    the **third most-searched query** in `search_query_logs` at 65):
-
-        1. NBA: 2027 Champion                          <- the answer
-        2-10. Set 1/2 Winner: … vs Zhiyenbayeva        <- nine ITF tennis rows
-
-    Both terms match honestly: `nba` is spelled inside the surname
-    Zhiye**nba**yeva, and `champion` expands to `winner`, which is what a
-    tennis set market is called. Nothing was mis-ranked — the page is exactly
-    what the predicate asked for.
-
-    **Why the WHERE and not the tier.** LAT-P033 fixed the `fed` page purely by
-    ordering (name-match tier ahead of outcome-only), and that was the right
-    shape there — re-verified live in this window, `fed` now returns 10/10 real
-    Fed markets. It cannot work here, and the reason is a counted one rather
-    than an argued one. Of the 12 open markets the name arm returns for
-    `nba champion`, only **3** pass the word test:
-
-        NBA: 2027 Champion (x2), NBA Championship Winner   <- word-pass
-        9x "Set N Winner: … Zhiyenbayeva"                  <- substring only
-        WNBA: 2026 Champion                                <- substring only ('wnba')
-
-    The bucket holds 20. Sinking nine rows to tier 2 still shows all nine, just
-    lower — so a ranking fix cannot satisfy "no tennis set markets" when there
-    are only three real rows to fill the page with. Recall has to be the lever.
-
-    **Recall was therefore measured against the gold set, not asserted** — this
-    is the arm whose emptying got LAT-P002 reverted (`f98d8104`). All 49
-    (probe, expected-market) pairs in `scripts/evals/search_gold_probes.json`,
-    evaluated in production SQL 2026-08-11 (before/after the word test):
-
-        43/49 -> 41/49 name-arm hits, i.e. exactly TWO losses, both named:
-
-        * `president` -> "Presidential Election Winner 2028". The English
-          stemmer maps the QUERY 'president' to `presid` and the TEXT
-          "Presidential" to `presidenti` — different lexemes, so the word test
-          cannot see a match that is genuinely there. This probe was ALREADY
-          `NOT_IN_BUCKET` before the change (measured twice this window) for
-          the same root cause: `ts_rank_cd` is 0, so it never reached the page.
-          The scored metric therefore does not move — but the row goes from
-          present-and-unrankable to absent, which is a real reduction and is
-          recorded as such, not rounded away. Filed as #1761.
-        * `taylor swift pregnant by...?` -> market 112868. Caused by the
-          EMPTY-TSQUERY defect, not by the word rule — fixed here rather than
-          accepted; see `_term_has_no_lexemes`. With the guard the probe keeps
-          passing.
-
-    `WNBA: 2026 Champion` dropping out of `nba champion` is deliberate and is
-    the rule working: WNBA is its own league with its own query, and `nba`
-    inside "WNBA" is the same coincidence of spelling as `fed` inside
-    "Federico".
-
-    **The OUTCOME arm is deliberately NOT changed, and that is a separate
-    decision with its own evidence.** LAT-P032 measured it as 69% of the
-    query's blocks and 7/20 junk rows on `fed`; LAT-P033 then removed the
-    VISIBLE half of that by tiering, verified live above. Applying this rule
-    there would cut its candidate markets by ~95% (measured on `fed`: 1,027
-    markets -> 47), which is a recall change of a completely different size,
-    against an arm whose contribution is invisible at the page boundary. That
-    is the exact shape of the LAT-P002 revert and it needs its own gate and its
-    own before/after. Its remaining problem is COST, not correctness (#1731).
-    """
-    return and_(
-        _build_expanded_ilike(FuturesMarket.name, term, exp),
-        or_(
-            _term_has_no_lexemes(term),
-            _build_expanded_fts(FuturesMarket.name, term, exp),
         ),
     )
 
@@ -2701,7 +2577,7 @@ async def search_events(
 
     if len(terms) > 1:
         futures_name_conditions = [
-            _futures_name_match_term(term, exp)
+            _build_expanded_ilike(FuturesMarket.name, term, exp)
             for term, exp in expanded
         ]
         futures_name_ilike = and_(*futures_name_conditions)
@@ -2710,7 +2586,7 @@ async def search_events(
         )
     else:
         term, exp = expanded[0]
-        futures_name_ilike = _futures_name_match_term(term, exp)
+        futures_name_ilike = _build_expanded_ilike(FuturesMarket.name, term, exp)
         # LAT-P010/#1494 GAP 1: for a SINGLE sub-3-character term, the outcome arm
         # drops that term and keeps only its expansion (if any).
         #
