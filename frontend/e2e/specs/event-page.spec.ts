@@ -1,6 +1,7 @@
 import { test, expect, measureMainRegion } from "../fixtures/audit";
 import { classifyMainRegion } from "../helpers/contentState";
 import { RSC_PREFETCH } from "../helpers/navigationAborts";
+import { findSettledEventWithProps } from "../helpers/settledSpecimen";
 
 /** Backend origin, for the one journey that has to FIND its specimen. */
 const API_BASE = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").replace(/\/$/, "");
@@ -102,89 +103,25 @@ async function invisibleTextNodes(page: { evaluate: <T>(fn: () => T) => Promise<
 }
 
 /**
- * UX-P049 (#1650) — the settled-props specimen finder.
+ * UX-P049 / UX-P053 (#1650) — the settled-props specimen search now lives in
+ * `helpers/settledSpecimen`, whose header carries the full measurement.
  *
- * WHY THIS EXISTS, and why it is not just another `.first()`.
+ * WHY IT IS A SEARCH AT ALL. The journeys below deliberately walk the real
+ * north-star journey: open /sports, click whatever game is first. That is the
+ * right shape for "can a reader get to a game and read the probability", and
+ * exactly the wrong shape for #1650, whose defect only appears on a SETTLED game
+ * that PUBLISHES PLAYER PROPS. The obvious alternative — a workflow input
+ * carrying an event id — was rejected twice over: it needs
+ * `.github/workflows/browser-audit.yml`, a barred file, and a pinned id rots,
+ * which is the failure this pack's own header warns about.
  *
- * The two journeys below deliberately walk the real north-star journey: open
- * /sports, click whatever game is first. That is the right shape for "can a
- * reader get to a game and read the probability", and it is exactly the wrong
- * shape for #1650, whose defect only appears on a SETTLED game that CARRIES
- * PLAYER PROPS. Both prior dispatches of this pack landed on prop-less games
- * and photographed a page on which the bug cannot occur — so three cycles of
- * settled-prop fixes (#1638, #1642, #1650) still have no rendered evidence.
- *
- * The obvious fix — a workflow input carrying an event id — was rejected twice
- * over. It needs `.github/workflows/browser-audit.yml`, a barred file; and a
- * pinned id rots, which is the failure the pack's own header comment warns
- * about ("must not depend on one event id surviving to tomorrow").
- *
- * So the specimen is DISCOVERED at run time and the pack stays self-maintaining:
- * ask the API for recently completed events, take the first one that actually
- * publishes player props, and audit that. Bounded probes so a bad slate cannot
- * turn one journey into a crawl, and a hard failure when nothing qualifies —
- * "no evidence collected" is not a pass on this rail, by design.
+ * WHY IT MOVED OUT OF THIS FILE. The search is pure logic over an injected
+ * fetch, and while it sat here the only way to exercise it was to dispatch a run
+ * against whatever slate happened to exist. That slate is what defeated it: at
+ * 18:10 PT the completed window contains no props-bearing game at all, so a live
+ * dispatch could neither prove nor disprove a change to the finder. The contract
+ * suite now pins the behaviour against fixtures.
  */
-/**
- * Player props are a big-four phenomenon. A plain `status=completed` listing is
- * dominated by soccer, AFL, NRL and WNBA, none of which publish them — measured
- * 2026-08-10, the first TEN completed events returned zero props between them,
- * while the MLB-filtered listing hit an 81-prop game third. Probing the
- * unfiltered list deeply enough to stumble onto one costs a 77 kB payload per
- * miss, so the leagues are tried in order first.
- *
- * The unfiltered list stays as the final fallback, so this keeps working in a
- * week when none of these five are in season.
- */
-const PROP_BEARING_SPORTS = [
-  "baseball_mlb",
-  "basketball_nba",
-  "americanfootball_nfl",
-  "icehockey_nhl",
-  "basketball_wnba",
-];
-
-interface Specimen {
-  id: number;
-  propCount: number;
-  /**
-   * Props the BACKEND typed a verdict for. Mirrors the shipped narrow-positive
-   * rule (UX-P044): only an explicit `hit` is a verdict, because a defaulted
-   * `is_winner: false` is what made 70 red MISS badges out of nothing.
-   */
-  gradedCount: number;
-}
-
-async function findSettledEventWithProps(
-  get: (url: string) => Promise<{ ok: () => boolean; json: () => Promise<any> }>,
-): Promise<Specimen | null> {
-  const listings = [
-    ...PROP_BEARING_SPORTS.map((s) => `${API_BASE}/api/events?status=completed&limit=8&sport=${s}`),
-    `${API_BASE}/api/events?status=completed&limit=8`,
-  ];
-
-  for (const listing of listings) {
-    const listRes = await get(listing);
-    if (!listRes.ok()) continue;
-    const events = (await listRes.json())?.events;
-    if (!Array.isArray(events)) continue;
-
-    for (const ev of events) {
-      const id = Number(ev?.id);
-      if (!Number.isFinite(id)) continue;
-      const res = await get(`${API_BASE}/api/events/${id}/game-markets`);
-      if (!res.ok()) continue;
-      const props = (await res.json())?.player_props;
-      if (!Array.isArray(props) || props.length === 0) continue;
-      return {
-        id,
-        propCount: props.length,
-        gradedCount: props.filter((p: { hit?: boolean | null }) => p?.hit != null).length,
-      };
-    }
-  }
-  return null;
-}
 
 /**
  * #1650's contradiction, stated as the browser sees it.
@@ -207,7 +144,7 @@ const NO_GRADE_ROW = "Resolved · grading unavailable";
 test("settled props are described one way, not three", async ({ page, journey }) => {
   const startedAt = Date.now();
 
-  const specimen = await findSettledEventWithProps((url) => page.request.get(url));
+  const specimen = await findSettledEventWithProps((url) => page.request.get(url), API_BASE);
 
   // Navigate first, so a failed search still produces a terminal screenshot of
   // *something* rather than an empty artifact.
