@@ -1,0 +1,2434 @@
+{
+ "15191146": {
+  "captured": "2026-08-11T14:00Z",
+  "endpoint": "GET /api/events/15191146/game-markets",
+  "status": "completed",
+  "home_team": "Chicago White Sox",
+  "away_team": "Cleveland Guardians",
+  "player_props": [
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Patrick Bailey: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.64,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": true,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Patrick Bailey: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.22,
+    "opening_over_probability": null,
+    "pregame_mark": 0.22,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Miguel Vargas: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.14,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/678246/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Travis Bazzana: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.08,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Braden Montgomery: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.17,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Cooper Ingle: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Chase DeLauter: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.37,
+    "opening_over_probability": null,
+    "pregame_mark": 0.37,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/800050/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Chase DeLauter: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.23,
+    "opening_over_probability": null,
+    "pregame_mark": 0.23,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/800050/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Chase DeLauter: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.23,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": true,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/800050/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Teel: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.42,
+    "opening_over_probability": null,
+    "pregame_mark": 0.42,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Teel: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.42,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Steven Kwan: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.44,
+    "opening_over_probability": null,
+    "pregame_mark": null,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/680757/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Steven Kwan: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.25,
+    "opening_over_probability": null,
+    "pregame_mark": 0.25,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/680757/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Steven Kwan: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.06,
+    "opening_over_probability": null,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/680757/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Steven Kwan: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.06,
+    "opening_over_probability": null,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/680757/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Sam Antonacci: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.23,
+    "opening_over_probability": null,
+    "pregame_mark": 0.23,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/803011/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Sam Antonacci: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.06,
+    "opening_over_probability": null,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/803011/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Kyle Teel: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.22,
+    "opening_over_probability": null,
+    "pregame_mark": 0.22,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Tristan Peters: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.07,
+    "opening_over_probability": null,
+    "pregame_mark": 0.07,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/671976/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Colson Montgomery: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.145,
+    "opening_over_probability": null,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/695657/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Kyle Manzardo: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.06,
+    "opening_over_probability": null,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/700932/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Kahlil Watson: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits",
+    "outcome_name": "Chase Meidroth: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/805367/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Home Runs",
+    "outcome_name": "Kahlil Watson: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Home Runs",
+    "outcome_name": "Andrew Benintendi: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/643217/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Home Runs",
+    "outcome_name": "Braden Montgomery: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.05,
+    "opening_over_probability": null,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Gabriel Arias: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.95,
+    "opening_over_probability": null,
+    "pregame_mark": 0.95,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Patrick Bailey: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.57,
+    "opening_over_probability": null,
+    "pregame_mark": 0.57,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kahlil Watson: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.45,
+    "opening_over_probability": null,
+    "pregame_mark": 0.45,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kahlil Watson: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.21,
+    "opening_over_probability": null,
+    "pregame_mark": 0.21,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Travis Bazzana: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.42,
+    "opening_over_probability": null,
+    "pregame_mark": 0.42,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Jacob Gonzalez: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.4,
+    "opening_over_probability": null,
+    "pregame_mark": 0.4,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Colson Montgomery: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.3,
+    "opening_over_probability": null,
+    "pregame_mark": 0.3,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/695657/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Miguel Vargas: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.27,
+    "opening_over_probability": null,
+    "pregame_mark": 0.27,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/678246/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Miguel Vargas: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.18,
+    "opening_over_probability": null,
+    "pregame_mark": 0.18,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/678246/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Andrew Benintendi: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.26,
+    "opening_over_probability": null,
+    "pregame_mark": 0.26,
+    "source": "kalshi",
+    "movement": null,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/643217/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Manzardo: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.24,
+    "opening_over_probability": null,
+    "pregame_mark": 0.24,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/700932/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Manzardo: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.12,
+    "opening_over_probability": null,
+    "pregame_mark": 0.12,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/700932/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: Hits + Runs + RBIs",
+    "outcome_name": "Cooper Ingle: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.09,
+    "opening_over_probability": null,
+    "pregame_mark": 0.09,
+    "source": "kalshi",
+    "movement": null,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   }
+  ],
+  "other": [
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Tie",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.515,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.485,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "NRFI",
+    "probability": 0.475,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Cleveland Guardians vs. Chicago White Sox",
+    "probability": 0.0785,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Progressive Field",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Pinch Hitter / Pinch Hit",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Walk Off",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Wild Pitch",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Bunt / Bunted",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Bases Loaded",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Trade / Traded",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Rob / Robbed",
+    "probability": 0.97,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Error",
+    "probability": 0.96,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Sweep / Swept",
+    "probability": 0.92,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Extra Inning",
+    "probability": 0.91,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Shutout",
+    "probability": 0.49,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Pitch Clock",
+    "probability": 0.39,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Ohtani",
+    "probability": 0.38,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "MVP",
+    "probability": 0.28,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "No Hitter",
+    "probability": 0.16,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "What a Catch",
+    "probability": 0.09,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Event does not qualify",
+    "probability": 0.02,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during White Sox vs Guardians Professional Baseball Game",
+    "outcome_name": "Grand Slam",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.52,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.48,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First Inning Run",
+    "outcome_name": "Yes",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Tie",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First Inning Run",
+    "outcome_name": "Yes",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "No",
+    "probability": 0.515,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Yes",
+    "probability": 0.485,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "NRFI",
+    "probability": 0.9995,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox",
+    "outcome_name": "Cleveland Guardians vs. Chicago White Sox",
+    "probability": 0.9995,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Martínez: Home Runs O/U 0.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Steven Kwan: Home Runs O/U 0.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Munetaka Murakami: Home Runs O/U 0.5",
+    "probability": 0.9995,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Randal Grichuk: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Rhys Hoskins: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "José Ramírez: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Travis Bazzana: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Jo Adell: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brayan Rocchio: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase DeLauter: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Luisangel Acuña: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Austin Hedges: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase Meidroth: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brenton Doyle: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Colson Montgomery: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Miguel Vargas: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Genao: Home Runs O/U 0.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Munetaka Murakami: Home Runs O/U 0.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Rhys Hoskins: Home Runs O/U 0.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Austin Hedges: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase Meidroth: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Steven Kwan: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Braden Montgomery: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brayan Rocchio: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "José Ramírez: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Jo Adell: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Miguel Vargas: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Colson Montgomery: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Sam Antonacci: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Martínez: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Andrew Benintendi: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase DeLauter: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Tristan Peters: Home Runs O/U 0.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Munetaka Murakami: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "José Ramírez: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brayan Rocchio: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Randal Grichuk: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Travis Bazzana: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase DeLauter: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Noah Schultz: Strikeouts O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Austin Hedges: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Luisangel Acuña: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase Meidroth: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Colson Montgomery: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Jo Adell: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brenton Doyle: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Martínez: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Rhys Hoskins: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Miguel Vargas: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Steven Kwan: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Anthony Kay: Strikeouts O/U 1.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Tristan Peters: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Rhys Hoskins: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase DeLauter: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Colson Montgomery: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Brayan Rocchio: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Austin Hedges: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Munetaka Murakami: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Andrew Benintendi: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Steven Kwan: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Sam Antonacci: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Miguel Vargas: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "José Ramírez: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Jo Adell: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Genao: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Braden Montgomery: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Angel Martínez: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Chase Meidroth: Home Runs O/U 1.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Noah Schultz: Strikeouts O/U 2.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Anthony Kay: Strikeouts O/U 2.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Parker Messick: Strikeouts O/U 3.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Noah Schultz: Strikeouts O/U 3.5",
+    "probability": null,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Anthony Kay: Strikeouts O/U 3.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Parker Messick: Strikeouts O/U 4.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Chicago WS wins first 5 innings",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Cleveland wins first 5 innings",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Chicago WS wins first 5 innings",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Chicago WS vs Cleveland: First 5 Innings",
+    "outcome_name": "Cleveland wins first 5 innings",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Parker Messick: Strikeouts O/U 5.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Gavin Williams: Strikeouts O/U 5.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Gavin Williams: Strikeouts O/U 6.5",
+    "probability": 1.0,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Cleveland Guardians vs. Chicago White Sox - Player Props",
+    "outcome_name": "Gavin Williams: Strikeouts O/U 7.5",
+    "probability": null,
+    "source": "polymarket"
+   }
+  ]
+ },
+ "15187845": {
+  "captured": "2026-08-11T14:00Z",
+  "endpoint": "GET /api/events/15187845/game-markets",
+  "status": "completed",
+  "home_team": "Los Angeles Angels",
+  "away_team": "Texas Rangers",
+  "player_props": [
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Sebastián Rivero: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.54,
+    "opening_over_probability": 0.19,
+    "pregame_mark": 0.54,
+    "source": "kalshi",
+    "movement": 0.35,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Sebastián Rivero: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.28,
+    "opening_over_probability": 0.28,
+    "pregame_mark": 0.28,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Sebastián Rivero: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.27,
+    "opening_over_probability": 0.27,
+    "pregame_mark": 0.27,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jorge Soler: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.49,
+    "opening_over_probability": 0.49,
+    "pregame_mark": 0.49,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/624585/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jorge Soler: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.25,
+    "opening_over_probability": 0.33,
+    "pregame_mark": 0.33,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/624585/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jorge Soler: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.2,
+    "opening_over_probability": 0.2,
+    "pregame_mark": 0.2,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/624585/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Mike Trout: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.27,
+    "opening_over_probability": 0.455,
+    "pregame_mark": 0.48,
+    "source": "kalshi",
+    "movement": 0.025,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/545361/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Vaughn Grissom: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.285,
+    "opening_over_probability": 0.48,
+    "pregame_mark": 0.48,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687093/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Vaughn Grissom: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.285,
+    "opening_over_probability": 0.31,
+    "pregame_mark": 0.31,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687093/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jo Adell: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.46,
+    "opening_over_probability": 0.22,
+    "pregame_mark": 0.46,
+    "source": "kalshi",
+    "movement": 0.24,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/666176/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jo Adell: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.11,
+    "opening_over_probability": 0.11,
+    "pregame_mark": 0.11,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/666176/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jo Adell: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.05,
+    "opening_over_probability": 0.05,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/666176/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jo Adell: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.05,
+    "opening_over_probability": 0.1,
+    "pregame_mark": 0.1,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/666176/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Higashioka: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.45,
+    "opening_over_probability": 0.45,
+    "pregame_mark": 0.45,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/543309/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Zach Neto: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.43,
+    "opening_over_probability": 0.43,
+    "pregame_mark": 0.43,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687263/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Zach Neto: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.34,
+    "opening_over_probability": 0.34,
+    "pregame_mark": 0.34,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687263/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Sam Haggerty: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.34,
+    "opening_over_probability": 0.34,
+    "pregame_mark": 0.34,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/664059/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Sam Haggerty: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.18,
+    "opening_over_probability": 0.19,
+    "pregame_mark": 0.19,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/664059/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Adam Frazier: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.33,
+    "opening_over_probability": 0.33,
+    "pregame_mark": 0.33,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/624428/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Adam Frazier: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.2,
+    "opening_over_probability": 0.23,
+    "pregame_mark": 0.23,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2,
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/624428/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jose Siri: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.33,
+    "opening_over_probability": 0.33,
+    "pregame_mark": 0.33,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Jose Siri: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.07,
+    "opening_over_probability": 0.07,
+    "pregame_mark": 0.07,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Brandon Nimmo: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.33,
+    "opening_over_probability": 0.33,
+    "pregame_mark": 0.33,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/607043/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Brandon Nimmo: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.12,
+    "opening_over_probability": 0.55,
+    "pregame_mark": 0.12,
+    "source": "kalshi",
+    "movement": -0.43,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/607043/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Brandon Nimmo: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.1,
+    "opening_over_probability": 0.1,
+    "pregame_mark": 0.1,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/607043/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Michael Helman: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.21,
+    "opening_over_probability": 0.33,
+    "pregame_mark": 0.33,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "all_sources": [
+     "kalshi"
+    ],
+    "source_count": 2
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Michael Helman: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.07,
+    "opening_over_probability": 0.07,
+    "pregame_mark": 0.07,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Ezequiel Duran: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.31,
+    "opening_over_probability": 0.31,
+    "pregame_mark": 0.31,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/677649/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Ezequiel Duran: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.12,
+    "opening_over_probability": 0.12,
+    "pregame_mark": 0.12,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/677649/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Justin Foscue: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.25,
+    "opening_over_probability": 0.25,
+    "pregame_mark": 0.25,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Justin Foscue: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.14,
+    "opening_over_probability": 0.14,
+    "pregame_mark": 0.14,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+    "outcome_name": "Oswald Peraza: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.08,
+    "opening_over_probability": 0.08,
+    "pregame_mark": 0.08,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/672724/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Home Runs",
+    "outcome_name": "Andrew McCutchen: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.17,
+    "opening_over_probability": 0.01,
+    "pregame_mark": 0.17,
+    "source": "kalshi",
+    "movement": 0.16,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/457705/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Home Runs",
+    "outcome_name": "Vaughn Grissom: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.1,
+    "opening_over_probability": 0.045,
+    "pregame_mark": 0.1,
+    "source": "kalshi",
+    "movement": 0.055,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687093/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Home Runs",
+    "outcome_name": "Jo Adell: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.05,
+    "opening_over_probability": 0.055,
+    "pregame_mark": 0.05,
+    "source": "kalshi",
+    "movement": -0.005,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/666176/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Michael Helman: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.19,
+    "opening_over_probability": 0.19,
+    "pregame_mark": 0.19,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Vaughn Grissom: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.18,
+    "opening_over_probability": 0.18,
+    "pregame_mark": 0.18,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 2.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/687093/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Oswald Peraza: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.17,
+    "opening_over_probability": 0.17,
+    "pregame_mark": 0.17,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/672724/headshot/67/current",
+    "player_team": "home"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Jose Siri: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.17,
+    "opening_over_probability": 0.17,
+    "pregame_mark": 0.17,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 0.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Kyle Higashioka: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.17,
+    "opening_over_probability": 0.17,
+    "pregame_mark": 0.17,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": null,
+    "hit": null,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/543309/headshot/67/current",
+    "player_team": "away"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: Hits",
+    "outcome_name": "Jake Burger: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.06,
+    "opening_over_probability": 0.06,
+    "pregame_mark": 0.06,
+    "source": "kalshi",
+    "movement": 0.0,
+    "actual": 1.0,
+    "hit": false,
+    "is_winner": false,
+    "resolution_source": "api_settlement",
+    "player_headshot": "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/669394/headshot/67/current",
+    "player_team": "away"
+   }
+  ],
+  "other": [
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Texas Rangers vs. Los Angeles Angels",
+    "probability": 0.565,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "NRFI",
+    "probability": 0.545,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Texas Rangers vs. Los Angeles Angels",
+    "probability": 0.58,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "NRFI",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "NRFI",
+    "probability": 0.9995,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Texas Rangers vs. Los Angeles Angels",
+    "probability": 0.956,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.51,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.49,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Texas Rangers vs. Los Angeles Angels",
+    "probability": 0.565,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "NRFI",
+    "probability": 0.51,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: First 5 Innings",
+    "outcome_name": "Tie",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Angel Stadium",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Ohtani",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Error",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Bases Loaded",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Pinch Hitter / Pinch Hit",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Walk Off",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Bullpen",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Trade / Traded",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Extra Inning",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Triple",
+    "probability": 0.99,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Pitch Clock",
+    "probability": 0.98,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "MVP",
+    "probability": 0.98,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Bunt / Bunted",
+    "probability": 0.95,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Double Play",
+    "probability": 0.02,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "What a Catch",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Event does not qualify",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Perfect Game",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Wild Pitch",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "What will the announcers say during Rangers vs Angels Professional Baseball Game",
+    "outcome_name": "Grand Slam",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.495,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.515,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.485,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "No",
+    "probability": 0.51,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Will there be a run scored in the first inning?: Texas Rangers vs. Los Angeles Angels",
+    "outcome_name": "Yes",
+    "probability": 0.49,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A",
+    "outcome_name": "Texas",
+    "probability": 0.565,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A",
+    "outcome_name": "Los Angeles A",
+    "probability": 0.43,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Mike Trout: Home Runs O/U 0.5",
+    "probability": 0.999,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Zach Neto: Home Runs O/U 0.5",
+    "probability": 0.515,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Jose Siri: Home Runs O/U 0.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Jonah Bride: Home Runs O/U 0.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Nolan Schanuel: Home Runs O/U 0.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Travis d'Arnaud: Home Runs O/U 0.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Vaughn Grissom: Home Runs O/U 0.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Denzer Guzman: Home Runs O/U 0.5",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Brandon Nimmo: Home Runs O/U 0.5",
+    "probability": 0.5,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Ezequiel Duran: Home Runs O/U 0.5",
+    "probability": 0.057,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Mike Trout: Home Runs O/U 1.5",
+    "probability": 0.505,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Jonah Bride: Home Runs O/U 1.5",
+    "probability": 0.4955,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Denzer Guzman: Home Runs O/U 1.5",
+    "probability": 0.4955,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Corey Seager: Home Runs O/U 1.5",
+    "probability": 0.03,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Zach Neto: Home Runs O/U 1.5",
+    "probability": 0.025,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Jose Siri: Home Runs O/U 1.5",
+    "probability": 0.025,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Jake Burger: Home Runs O/U 1.5",
+    "probability": 0.025,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Wyatt Langford: Home Runs O/U 1.5",
+    "probability": 0.025,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Brandon Nimmo: Home Runs O/U 1.5",
+    "probability": 0.025,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Ezequiel Duran: Home Runs O/U 1.5",
+    "probability": 0.0155,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Vaughn Grissom: Home Runs O/U 1.5",
+    "probability": 0.0155,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Nolan Schanuel: Home Runs O/U 1.5",
+    "probability": 0.0155,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas Rangers vs. Los Angeles Angels - Player Props",
+    "outcome_name": "Travis d'Arnaud: Home Runs O/U 1.5",
+    "probability": 0.0155,
+    "source": "polymarket"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: First 5 Innings",
+    "outcome_name": "Texas wins first 5 innings",
+    "probability": 0.01,
+    "source": "kalshi"
+   },
+   {
+    "market_name": "Texas vs Los Angeles A: First 5 Innings",
+    "outcome_name": "Los Angeles A wins first 5 innings",
+    "probability": 0.01,
+    "source": "kalshi"
+   }
+  ]
+ }
+}

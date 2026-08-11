@@ -195,11 +195,16 @@ describe("the event page actually wraps its sections", () => {
   test("the props dashboard memo depends on the field it reads", () => {
     // #1722 follow-up: the memo reads data.other twice; omitting it from the
     // deps serves a stale card when a refetch changes only that field.
+    //
+    // UX-P056: the memo body moved to `lib/playerPropsGrouping.ts`, but the
+    // DEPS array is still the dashboard's — a stale card is a caller bug, not a
+    // module one — so this stays pointed here, matched on the array itself
+    // rather than on the closing punctuation the extraction reformatted.
     const dashboard = fs.readFileSync(
       path.join(__dirname, "../../components/PlayerPropsDashboard.tsx"),
       "utf8",
     );
-    const deps = dashboard.match(/\}, \[data\.player_props[^\]]*\]\);/);
+    const deps = dashboard.match(/\[data\.player_props[^\]]*\]/);
     expect(deps).not.toBeNull();
     expect(deps![0]).toContain("data.other");
   });
