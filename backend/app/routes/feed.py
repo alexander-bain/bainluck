@@ -47,7 +47,7 @@ from app.models.models import (
     Team,
 )
 from app.services import get_db, get_db_rw
-from app.utils.tonights_games import lead_with_tonights_games
+from app.utils.tonights_games import compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     compute_aggregate_probability as _compute_aggregate_probability,
@@ -961,24 +961,14 @@ def _rank_key(item: dict) -> tuple:
     )
 
 
-def _pin_marquee_items(feed_items: list[dict]) -> list[dict]:
-    """Move in-progress, calendar-flagged marquee concepts/tournaments to the very
-    top of the feed, preserving the relative order of everyone else (Queue #223
-    Item 2). A concept/tournament earns the pin only when it set ``_marquee_pin``
-    at scoring time (marquee-flagged in majors_calendar.yaml AND currently live).
-
-    Pure, stable, defensive: on any error it returns the list unchanged so a marquee
-    lookup can never empty the feed (gotcha #42). Among multiple pins, the existing
-    rank order is preserved (they are already in score order at this point)."""
-    try:
-        pinned = [it for it in feed_items if it.get("_marquee_pin")]
-        if not pinned:
-            return feed_items
-        rest = [it for it in feed_items if not it.get("_marquee_pin")]
-        return pinned + rest
-    except Exception:
-        logger.warning("Feed: marquee pin pass failed; leaving order unchanged", exc_info=True)
-        return feed_items
+# C185: `_pin_marquee_items` lived here. It is gone, not moved — it was one of
+# TWO prefix-writing passes whose sequential composition was the defect, so
+# leaving it importable would leave the footgun loaded (a future caller could
+# pair it with the game pass again and reintroduce last-writer-wins). The
+# marquee prefix it produced is now the first slice of
+# `app.utils.tonights_games.compose_lead`, which is the only pass that writes
+# the front of the deck. Its guard suite moved with it, to
+# `tests/test_feed_marquee_pin.py` against `compose_lead`.
 
 
 def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
@@ -2197,37 +2187,41 @@ async def get_feed(
             feed_items = assemble_swings_theme_bundles(feed_items)
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
 
-        # === MARQUEE PINNING (Queue #223 Item 2) ===
-        # Calendar-flagged marquee concepts/tournaments that are IN PROGRESS pin to the
-        # very top — the last word on ordering, after every score/diversity/bundle pass,
-        # so The Open / World Cup top-slot failure class dies. Pure stable reorder: it
-        # touches no score and can never empty the feed (gotcha #42/#43).
-        feed_items = _pin_marquee_items(feed_items)
-        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "marquee_pin")
-
-        # === TONIGHT'S GAMES LEAD (Alex ruling 2026-08-08(d)(1)) ===
-        # Discover-mode only: the landing page leads with tonight's games — live
-        # or starting soon — with the Discover mix below. The finding was 55
-        # cards with ZERO game events while games were on, led by aliens and
-        # hantavirus.
+        # === LEAD COMPOSITION: marquees, then tonight's games (C185) ===
+        # ONE pass, deliberately. This was two — `_pin_marquee_items` (Queue #223
+        # Item 2) followed by `lead_with_tonights_games` (Alex ruling
+        # 2026-08-08(d)(1)) — and because BOTH write a prefix they composed as
+        # last-writer-wins: the game pass hoisted a live/imminent game above the
+        # marquee the pin had just placed. The Open / World Cup final lost the
+        # top slot to a routine game, which is the precise failure class the
+        # marquee pin exists to prevent.
+        #
+        # The comment that used to sit here asserted the opposite — that running
+        # second let the marquee "keep the very top" — and that is why the defect
+        # survived review. Reordering the two passes would not have fixed it; it
+        # would only have swapped which one lost. Two prefix-writers cannot be
+        # sequenced into the intended result, so the composition is single and
+        # the ordering authority is C185's eight-case corpus
+        # (tests/evals/fixtures/discover_lead_order_contract.json).
         #
         # PROMOTE, DO NOT UN-DEMOTE. The demotion above stays exactly as it is:
         # it is load-bearing for the rest of Discover, and #1091 is the standing
-        # lesson that changing a feed cap is how the Sports tab got emptied.
-        # This is a pure stable reorder in the same shape as the marquee pin —
-        # it moves at most MAX_LEAD already-present items to the front, touches
-        # no score, drops nothing, and returns the list unchanged on any error.
+        # lesson that changing a feed cap is how the Sports tab got emptied. This
+        # remains a pure stable reorder — no score touched, nothing dropped, the
+        # list returned unchanged on any error (gotcha #42/#43).
         #
-        # It runs AFTER the marquee pin deliberately: an in-progress marquee
-        # concept (The Open, a World Cup final) is the bigger story and keeps the
-        # very top. Tonight's games lead the rest.
-        if not my_teams_only and (
-            (event_pct is not None and event_pct < 0.3) or not include_events
-        ):
-            feed_items = lead_with_tonights_games(feed_items)
-            _previous_at = _record_feed_timing(
-                _timings, _started_at, _previous_at, "tonights_games_lead"
-            )
+        # The marquee prefix is UNGATED (as it always was); only the tonight's-
+        # games prefix is Discover-mode-only, so Sports mode never invokes it.
+        feed_items = compose_lead(
+            feed_items,
+            include_tonights_games=(
+                not my_teams_only
+                and ((event_pct is not None and event_pct < 0.3) or not include_events)
+            ),
+        )
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "lead_composition"
+        )
 
         total = len(feed_items)
         paginated = feed_items[offset : offset + limit]

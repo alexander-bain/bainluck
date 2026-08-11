@@ -46,9 +46,17 @@ from typing import Any
 __all__ = [
     "MAX_LEAD",
     "SOON_WINDOW_HOURS",
+    "MARQUEE_PIN_KEY",
     "select_tonights_games",
     "lead_with_tonights_games",
+    "compose_lead",
 ]
+
+# The flag `_score_*` sets on a calendar-flagged marquee that is currently live.
+# Named here because `compose_lead` is now the single place the marquee prefix
+# and the tonight-games prefix are decided together, so the key has to be
+# readable from this module rather than only from the route.
+MARQUEE_PIN_KEY = "_marquee_pin"
 
 # How many games may lead the deck. Enough to answer "what's on tonight",
 # far short of a scoreboard.
@@ -161,5 +169,72 @@ def lead_with_tonights_games(
         lead_ids = {id(it) for it in lead}
         rest = [it for it in feed_items if id(it) not in lead_ids]
         return lead + rest
+    except Exception:  # noqa: BLE001 — a reorder must never break the feed
+        return feed_items
+
+
+def compose_lead(
+    feed_items: list[dict],
+    now: datetime | None = None,
+    *,
+    include_tonights_games: bool = True,
+    max_lead: int = MAX_LEAD,
+    soon_window_hours: int = SOON_WINDOW_HOURS,
+) -> list[dict]:
+    """The ONE ordering pass for the front of the Discover deck (C185).
+
+    Returns ``[pinned marquees] + [up to max_lead tonight games] + [remainder]``,
+    every slice in stable input order.
+
+    WHY THIS IS ONE FUNCTION AND NOT TWO PASSES
+    -------------------------------------------
+    It used to be two, run back to back in the route: ``_pin_marquee_items``
+    returned ``pinned + rest``, and then ``lead_with_tonights_games`` returned
+    ``lead + rest`` over that result. Both write a PREFIX, so they compose as
+    last-writer-wins: the second pass hoisted a live/imminent game above the
+    marquee the first pass had just pinned. The Open and the World Cup final
+    lost the top slot to a routine game — the exact failure class the marquee
+    pin exists to prevent.
+
+    The route comment asserted the opposite ("It runs AFTER the marquee pin
+    deliberately: an in-progress marquee concept … keeps the very top"), which
+    is why the defect survived review: the code and the comment disagreed and
+    the comment was the more convincing of the two. Two prefix-writers cannot be
+    ordered into the intended result — running the marquee pass second would
+    just invert which one loses. The composition has to be single.
+
+    Ordering authority is ``tests/evals/fixtures/discover_lead_order_contract.json``
+    (C185's eight-case corpus), which this function is bound to by
+    ``tests/evals/test_discover_lead_order_contract.py``.
+
+    Preserves every property of the two passes it replaces: pure, stable, no
+    score touched, nothing dropped or duplicated, and any error returns the
+    input unchanged (gotchas #42/#43).
+    """
+    try:
+        if not feed_items:
+            return feed_items
+        if now is None:
+            now = datetime.now(timezone.utc)
+
+        pinned = [it for it in feed_items if it.get(MARQUEE_PIN_KEY)]
+        unpinned = [it for it in feed_items if not it.get(MARQUEE_PIN_KEY)]
+
+        # Selected from the UNPINNED items only. A marquee that is itself an
+        # eligible game is already leading, so it must not also consume one of
+        # the `max_lead` slots — that would silently shorten the game lead-in
+        # while looking like a cap.
+        games = (
+            select_tonights_games(unpinned, now, max_lead, soon_window_hours)
+            if include_tonights_games
+            else []
+        )
+
+        if not pinned and not games:
+            return feed_items
+
+        game_ids = {id(it) for it in games}
+        tail = [it for it in unpinned if id(it) not in game_ids]
+        return pinned + games + tail
     except Exception:  # noqa: BLE001 — a reorder must never break the feed
         return feed_items

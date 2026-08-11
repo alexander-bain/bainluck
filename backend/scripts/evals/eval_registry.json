@@ -55,6 +55,7 @@
       {"name": "animation_dependency_equivalence_contract", "relation": "extends", "target": "first_card_client_contract"},
       {"name": "first_content_latency_attribution_contract", "relation": "extends", "target": "first_card_client_contract"}
     ]},
+    {"domain": "discover-ordering", "canonical": "discover_lead_order_contract", "members": []},
     {"domain": "search-truth", "canonical": "search_truth_closure_contract", "members": [
       {"name": "search_concept_containment_contract", "relation": "extends", "target": "search_truth_closure_contract"},
       {"name": "search_degraded_response_contract", "relation": "extends", "target": "search_truth_closure_contract"},

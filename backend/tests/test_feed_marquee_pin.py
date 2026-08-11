@@ -2,17 +2,31 @@
 
 The pin pass moves in-progress, calendar-flagged marquee concepts/tournaments to
 the very top, preserving everyone else's order, and NEVER empties the feed
-(gotcha #42/#43 — the guard must be provable in both directions)."""
+(gotcha #42/#43 — the guard must be provable in both directions).
+
+C185: the pin is no longer its own pass. `_pin_marquee_items` was one of two
+prefix-writers whose sequential composition let a live game displace the pinned
+marquee, so it was folded into `compose_lead` as the FIRST slice and deleted.
+These tests now exercise that slice directly, with the tonight's-games prefix
+switched off — which is exactly the old pass's behaviour, so the guarantees
+below are unchanged rather than merely re-expressed. The cases where the two
+prefixes INTERACT (the actual defect) live in
+`tests/evals/test_discover_lead_order_contract.py`, bound to C185's corpus."""
 
 from datetime import datetime, timedelta, timezone
 
-from app.routes.feed import _pin_marquee_items
+from app.utils.tonights_games import compose_lead
 from app.utils.majors_calendar import (
     calendar_entry_by_concept_key,
     load_calendar,
     marquee_concept_keys,
     marquee_pin_state,
 )
+
+
+def pin_only(items):
+    """The marquee prefix in isolation — the old `_pin_marquee_items` exactly."""
+    return compose_lead(items, include_tonights_games=False)
 
 
 class TestPinPass:
@@ -22,13 +36,13 @@ class TestPinPass:
             {"type": "event", "score": 90},
             {"type": "concept", "score": 40, "_marquee_pin": True, "data": {"name": "TdF"}},
         ]
-        out = _pin_marquee_items(items)
+        out = pin_only(items)
         assert out[0]["data"]["name"] == "TdF"
         assert [i["type"] for i in out] == ["concept", "futures", "event"]
 
     def test_no_pin_is_identity(self):
         items = [{"type": "futures", "score": 1}, {"type": "event", "score": 2}]
-        assert _pin_marquee_items(items) == items
+        assert pin_only(items) == items
 
     def test_multiple_pins_preserve_relative_order(self):
         items = [
@@ -36,7 +50,7 @@ class TestPinPass:
             {"type": "concept", "score": 50, "_marquee_pin": True, "data": {"name": "A"}},
             {"type": "tournament", "score": 30, "_marquee_pin": True, "data": {"name": "B"}},
         ]
-        out = _pin_marquee_items(items)
+        out = pin_only(items)
         assert [i["data"]["name"] for i in out[:2]] == ["A", "B"]
         assert out[2]["type"] == "futures"
 
@@ -46,15 +60,35 @@ class TestPinPass:
             {"type": "concept", "_marquee_pin": True, "data": {}},
             {"type": "tournament", "_marquee_pin": True, "data": {}},
         ]
-        assert len(_pin_marquee_items(items)) == 2
+        assert len(pin_only(items)) == 2
         # And a flood of non-pinned items survives untouched.
         big = [{"type": "futures", "score": i} for i in range(50)]
-        assert len(_pin_marquee_items(big)) == 50
+        assert len(pin_only(big)) == 50
 
     def test_malformed_item_does_not_crash(self):
         # A missing _marquee_pin key is falsy; a bad item type is tolerated.
         items = [{"type": "futures"}, {"nonsense": True}]
-        assert _pin_marquee_items(items) == items
+        assert pin_only(items) == items
+
+    def test_marquee_still_leads_when_the_games_prefix_is_ON(self):
+        """C185's regression pin, at this suite's own altitude.
+
+        The old pass was correct in isolation and wrong in composition, so a
+        suite that only ever ran it in isolation could not have caught the
+        defect. This case is the reason the file is not purely a rename.
+        """
+        items = [
+            {"type": "futures", "score": 99},
+            {
+                "type": "event",
+                "score": 35,
+                "data": {"status": "live", "home_team_data": {"logo": "x"}, "name": "game"},
+            },
+            {"type": "concept", "score": 40, "_marquee_pin": True, "data": {"name": "TdF"}},
+        ]
+        out = compose_lead(items, include_tonights_games=True)
+        assert out[0]["data"]["name"] == "TdF"
+        assert out[1]["data"]["name"] == "game"
 
 
 class TestSharedCalendar:

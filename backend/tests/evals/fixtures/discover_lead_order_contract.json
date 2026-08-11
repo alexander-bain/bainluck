@@ -1,0 +1,13 @@
+{
+  "schema_version": "discover-lead-order/v1",
+  "cases": [
+    {"id":"marquee-live-game","before":["future:a","game:live","marquee:open"],"after":["marquee:open","game:live","future:a"],"scores_before":[90,35,99],"scores_after":[90,35,99],"expected":{"verdict":"ALLOW","errors":[]}},
+    {"id":"marquee-scheduled-game","before":["game:soon","future:a","marquee:open"],"after":["marquee:open","game:soon","future:a"],"scores_before":[35,90,99],"scores_after":[35,90,99],"expected":{"verdict":"ALLOW","errors":[]}},
+    {"id":"multiple-marquees","before":["future:a","marquee:first","game:live","marquee:second"],"after":["marquee:first","marquee:second","game:live","future:a"],"scores_before":[90,99,35,98],"scores_after":[90,99,35,98],"expected":{"verdict":"ALLOW","errors":[]}},
+    {"id":"no-marquee","before":["future:a","game:live"],"after":["game:live","future:a"],"scores_before":[90,35],"scores_after":[90,35],"expected":{"verdict":"ALLOW","errors":[]}},
+    {"id":"current-production-residual","before":["future:a","game:live","marquee:open"],"after":["game:live","marquee:open","future:a"],"scores_before":[90,35,99],"scores_after":[90,35,99],"expected":{"verdict":"REFUSE","errors":["MARQUEE_TOP_SLOT_DISPLACED"]}},
+    {"id":"membership-loss","before":["future:a","game:live"],"after":["game:live"],"scores_before":[90,35],"scores_after":[90,35],"expected":{"verdict":"REFUSE","errors":["MEMBERSHIP_CHANGED"]}},
+    {"id":"score-mutation","before":["future:a","game:live"],"after":["game:live","future:a"],"scores_before":[90,35],"scores_after":[35,90],"expected":{"verdict":"REFUSE","errors":["SCORES_CHANGED"]}},
+    {"id":"no-game-no-op","before":["bundle:a","future:b"],"after":["bundle:a","future:b"],"scores_before":[80,70],"scores_after":[80,70],"expected":{"verdict":"ALLOW","errors":[]}}
+  ]
+}
