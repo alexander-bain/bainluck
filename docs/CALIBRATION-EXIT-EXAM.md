@@ -195,7 +195,7 @@ they worked, and would have encoded a false premise into CI forever. **Do not re
 > **The rule, because it cost an hour:** a plan-cost delta between two statements is **not** a runtime
 > delta until `act`/`loops` say the nodes ran. `Total Cost` sums nodes that never execute.
 
-## ✅ THE FINALIZE SPIKE IS MEASURED, AND IT IS A NON-ISSUE — CAL-P034's unowned item 1, closed (CAL-P035, 2026-08-11)
+## 🟡 THE COMPLETION PATH RUNS AT FULL SCALE — and its allocation is bounded (CAL-P035, 2026-08-11; REPAIRED after the C276 block)
 
 CAL-P033 and CAL-P034 both left this open — *"finalization materialises every banked row at once
 (~70K rows) and nobody has measured that spike; it is the one step no beat has ever reached"* — and
@@ -203,23 +203,42 @@ CAL-P034 noted that shrinking the cursor makes it *reachable*, hence more urgent
 
 **The completion path has now been executed at full production scale**, offline and deterministic,
 over a cursor in the real post-P034 folded shape (`tests/test_calibration_completion_path_p035.py`).
-It completes cleanly, and its output is identical to the bank-all-then-merge reference — including
-through a real JSON round trip between every one of the 128 units, which is the only edge production
-takes.
+It completes cleanly, and its output matches an **independently derived oracle** — expected group
+keys and additive/census totals computed from the generated rows by arithmetic in the test file,
+sharing no code with the merge. Every one of the 128 steps is persisted through canonical JSON and
+read back through the **production** `decode_staged_cursor_detailed`.
 
-| walk | rows in | distinct groups | cursor bytes | finalize peak |
+| walk | rows in | distinct groups | cursor bytes | finalize Python allocation |
 |---|---|---|---|---|
 | 1 unit | 470 | 470 | 31,599 | 993,308 |
 | 32 units | 15,040 | **1,650** | 116,181 | 3,564,952 |
 | 128 units | 60,160 | **1,650** | 128,726 | **3,615,384** |
 
-**The finalize peak is ~3.6 MB — 0.7% of the 512 MB dyno**, and it is bounded by the group space
-rather than the unit count (3.56 MB at 32 units vs 3.62 MB at 128: +1.6% for 4x the units). It is not
-a risk and the lane can stop carrying it.
+**What this establishes:** finalization's cost is **bounded by the group space, not the unit count**
+(3.56 MB at 32 units vs 3.62 MB at 128 — +1.6% for 4x the units). That scaling property is the claim,
+and it holds.
+
+⚠️ **What it does NOT establish, and an earlier version of this section wrongly did.** These figures
+are `tracemalloc`: **incremental Python allocation requested inside the traced block.** They are not
+process RSS. They cannot see the interpreter, driver result buffers, allocator arenas or any C-level
+allocation — and the worker's 512 MB limit is enforced against RSS. **The previous text read "~3.6 MB
+= 0.7% of the 512 MB dyno … not a risk and the lane can stop carrying it", which compares a
+Python-allocation figure against an RSS budget. That conclusion is withdrawn.** RSS closure on
+finalization can come from exactly one place: an `rss:at:staged:finalize` reading on the first
+production beat that completes. No beat has produced one since 2026-08-02.
 
 **The harness validates itself against production:** its synthetic cursor at 128 units is **128,726
 B** against the live cursor's **135,843 B**, a 6% difference — so the fixture reproduces the real
-shape rather than a convenient one. Non-vacuous by **6 mutations, 6 caught**.
+shape rather than a convenient one.
+
+**Repair provenance (C276 block at `9afce07e`).** Three defects, all real: the oracle ran the same
+finalizer on both sides, so a drop-first-output defect cancelled and the assertion still passed; the
+"round trip" re-inflated the cursor by hand and never touched the production decoder, so deleting it
+changed nothing observable; and the memory conclusion above. Re-proven by mutation — **7 caught**,
+including the two the block named by name (merge drops its first output row; round trip removed) and
+two that mutate the **decoder** to show it is genuinely on the path. One mutant is recorded as
+SURVIVED and out-of-class: rewriting the test's own transition log to fake its evidence defeats any
+test that keeps bookkeeping, and it mutates the test rather than the code.
 
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
