@@ -125,7 +125,7 @@ Organized by the programs in the (now archived) `docs/archive/execution-plan-202
 - ✅ **Football + motorsports misclassification sweeps** (#181/#183/#184) — esports/rugby/KBO/NPB/K-League/cricket rows mis-tagged `football`; motorsports non-race markets fixed via ticker-prefix maps in `sport_keys.py` + reclassification backfill + guard tests.
 
 ### Multi-platform (P7)
-- ✅ **P7 Step-0 device audit** (#1080) — watch/iPad/Mac inventory; CLAUDE.md platform line corrected to iOS/iPadOS/macOS/watchOS; surfaced that the watch complication + `BainLuckWidget/` are not wired into any Xcode target.
+- ✅ **P7 Step-0 device audit** (#1080) — watch/iPad/Mac inventory; CLAUDE.md platform line corrected to iOS/iPadOS/macOS/watchOS; surfaced that the watch complication + `BainLuckWidget/` are not wired into any Xcode target. *(Historical record of what the audit found. **Superseded in part 2026-08-11:** the widget is now wired via Xcode 16 synchronized groups; only the complication remains unwired. See the CLAUDE.md tech-stack row and #1080.)*
 - ✅ **Native dogfood fixes** — macOS build breaks (`Color(.systemBackground)` → cross-platform), iOS `FlowLayout` redeclaration + `TextFormatting` actor-isolation (#184), native Discover golf-flood + abrupt-end fixes (#187).
 
 ### Docs & governance
