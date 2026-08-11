@@ -1799,6 +1799,23 @@ async def _run_flow_sentinel(
             if r.get("action") in ("resolved", "close_failed")
         ]
 
+    # --- Board sync guard (#1153) ---
+    # Rides this sentinel rather than taking its own beat entry. Two invariants:
+    # every open issue has a card (passes today — guarded for durability), and
+    # no card's Status contradicts its labels (fails today). A crash here must
+    # not take down the 15 flows above, but it must NEVER read as a pass: the
+    # result carries an explicit `ok`, and a truncated board read raises rather
+    # than reporting a gap.
+    try:
+        from app.tasks.board_sync import _run_board_sync
+
+        board = await _run_board_sync()
+        board["ok"] = not board.get("skipped") and not board.get("errors")
+        stats["board_sync"] = board
+    except Exception as exc:
+        logger.error("Board sync guard crashed: %s", exc)
+        stats["board_sync"] = {"ok": False, "error": str(exc)[:300]}
+
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     # #232: L2-153's cockpit card needs a wall-clock stamp to render precise
     # staleness (a cached verdict without one reads as SILENT). TTL is 14d — far

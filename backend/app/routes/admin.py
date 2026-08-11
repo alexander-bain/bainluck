@@ -1380,6 +1380,28 @@ async def get_flow_sentinel_last(
     )
 
 
+@router.post("/board-sync/run")
+async def trigger_board_sync(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    dry_run: bool = Query(False, description="Measure and report drift without writing"),
+):
+    """#1153: on-demand run of the board-sync guard.
+
+    Normally rides the nightly Flow Sentinel; this runs it in-request and
+    returns the counters, which is how the sync is verified. ``dry_run=true``
+    measures membership + status drift without touching the board.
+
+    Note: do NOT accept ``/api/admin/task-metrics`` as proof this ran (#1008 —
+    it returns an identical fixed record for every task). The counters here and
+    a board census are the proof."""
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.board_sync import _run_board_sync
+
+    return await _run_board_sync(dry_run=dry_run)
+
+
 @router.get("/mlb-schedule-coverage")
 async def get_mlb_schedule_coverage(
     request: Request,
