@@ -14,6 +14,7 @@ import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, 
 import QuantityGroup from "../QuantityGroup";
 import type { CardActionCallbacks } from "./types";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
+import { probabilityAuthorityClass } from "@/lib/confidence";
 
 // Deterministic exposure hash — the same char-fold the card has always used,
 // factored out so the SSR/first-render seed and the post-mount session
@@ -298,6 +299,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   }
 
   const pctDisplay = prob != null ? formatProbabilityPercent(prob) : null;
+  // UX-P052 (#1690) — the verbatim census finding names THIS number: rendered
+  // "at full visual authority regardless of provenance", so a single 48h-old
+  // print and a 3-source consensus look identical at the same 62%. Both hero
+  // variants below take the coupling; the ladder rows do not, because the
+  // finding (and the tier) is about the card's headline probability.
+  const authorityClass = probabilityAuthorityClass(data.confidence_tier);
   const movementVal = leader?.movement;
   const movementUp = movementVal != null && movementVal > 0;
   // L2-160 — respect the 5% placeholder floor: suppress the hero movement delta
@@ -347,7 +354,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
 
           {pctDisplay && (
             <div className="flex items-end gap-3 mb-3">
-              <span className="font-mono font-bold text-4xl tracking-tight leading-none text-text-primary tabular-nums">{pctDisplay}</span>
+              <span
+                className={`font-mono font-bold text-4xl tracking-tight leading-none text-text-primary tabular-nums ${authorityClass}`.trim()}
+                data-testid="futures-hero-probability"
+                data-authority-tier={data.confidence_tier ?? undefined}
+              >{pctDisplay}</span>
               {showProbabilityHint && (
                 <span className="pb-1 text-[11px] leading-none text-text-muted" data-testid="hero-probability-hint">
                   {HERO_PROBABILITY_HINT}
@@ -429,7 +440,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         {leader && (
           <div className="relative z-10 px-3.5 pb-2.5">
             <div className="flex items-end gap-2">
-              <span className="font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums">{pctDisplay}</span>
+              <span
+                className={`font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums ${authorityClass}`.trim()}
+                data-testid="futures-hero-probability"
+                data-authority-tier={data.confidence_tier ?? undefined}
+              >{pctDisplay}</span>
               {movementStr && (
                 <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`} title={movementTitle} aria-label={movementTitle}>{movementStr}</span>
               )}

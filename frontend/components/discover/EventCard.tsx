@@ -11,6 +11,7 @@ import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } 
 import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { probabilityAuthorityClass } from "@/lib/confidence";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -32,6 +33,13 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const probWithheld = shouldWithholdProbability(data);
   const homeProb = probWithheld ? null : data.current_odds?.home_probability;
   const awayProb = probWithheld ? null : data.current_odds?.away_probability;
+  // UX-P052 (#1690) — the two percentages below are the card's answer to the
+  // north-star "read the probability" task, and they were drawn at full
+  // authority whatever the SignalBars beside them said. Measured live
+  // 2026-08-10: Phillies @ Cardinals carried a 45-POINT source spread
+  // (mlb 34%, stat_model 27%, espn 68%, polymarket 72%) with
+  // `sources_agree: false`, and painted a bold, full-strength 68 / 32.
+  const authorityClass = probabilityAuthorityClass(data.confidence_tier);
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 
@@ -110,10 +118,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   actually PAINTED and compare it against the hero on the page it
                   links to, without scraping styled prose. */}
               <span
-                className="font-bold"
+                className={`font-bold ${authorityClass}`.trim()}
                 style={{ color: awayColor }}
                 data-testid="event-card-away-probability"
                 data-probability={awayProb}
+                data-authority-tier={data.confidence_tier ?? undefined}
               >
                 {formatProbability(awayProb)}
               </span>
@@ -122,10 +131,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 <SignalBars tier={data.confidence_tier} />
               </span>
               <span
-                className="font-bold"
+                className={`font-bold ${authorityClass}`.trim()}
                 style={{ color: homeColor }}
                 data-testid="event-card-home-probability"
                 data-probability={homeProb}
+                data-authority-tier={data.confidence_tier ?? undefined}
               >
                 {formatProbability(homeProb)}
               </span>

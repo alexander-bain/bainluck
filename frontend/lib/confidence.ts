@@ -97,6 +97,54 @@ export function normalizeTier(
   return null;
 }
 
+// ── UX-P052 (#1690): display authority couples to the tier ─────────────────
+// The census finding: a card renders its leader % at FULL visual authority
+// regardless of provenance, so "a single print, one source, 48h old" and
+// "3-source consensus, 2 min ago" are indistinguishable at the same 62%.
+// `SignalBars` already ships on these cards — but as a SIBLING of the number
+// instead of something that governs how the number is drawn, and a reader takes
+// the big number.
+//
+// This is a COUPLING, not a new signal. The input is the tier that already
+// exists; nothing here recomputes provenance (ruling 003 — the client must not
+// adjudicate trust twice, and #1690 forbids a second derivation explicitly).
+//
+// Deliberately ONE lever (opacity):
+//   - it composes with an inline `color` (EventCard paints team colors) and with
+//     `text-white` over a photo (FuturesCard variant A), where a token swap
+//     would not;
+//   - it cannot shift layout, so a tier flip mid-poll never reflows a live card.
+// Weight and size were rejected for that second reason: EventCard's percentages
+// are proportional (not `tabular-nums`), so `font-bold` -> `font-semibold` moves
+// the row.
+//
+// `high` and an ABSENT tier both render byte-identically to before. Absent must
+// not mute — most cards outside the feed carry no tier, and muting them would
+// turn "we didn't measure this" into "we doubt this", which is a stronger claim
+// than the data supports and the exact inversion #1690 is fixing.
+export const PROBABILITY_AUTHORITY_CLASS: Record<ConfidenceTier, string> = {
+  high: "",
+  moderate: "opacity-80",
+  low: "opacity-60",
+};
+
+/**
+ * Tailwind class coupling a rendered probability's visual authority to its
+ * confidence tier. Returns "" for a full-authority render (high tier, or no
+ * tier at all) so call sites can concatenate unconditionally.
+ *
+ * Visual only — deliberately silent. The tier is already ANNOUNCED to assistive
+ * tech by the sibling `SignalBars` (`aria-label` names the tier and its inputs),
+ * so adding a second announcement here would read the same fact twice.
+ */
+export function probabilityAuthorityClass(
+  tier: string | null | undefined
+): string {
+  const t = normalizeTier(tier);
+  if (!t) return "";
+  return PROBABILITY_AUTHORITY_CLASS[t];
+}
+
 // ── L2-172: calibration-ready signals ──────────────────────────────────────
 // The backend now records two extra signals on the confidence payload
 // (`confidence_signals`): whether independent sources agree, and whether a
