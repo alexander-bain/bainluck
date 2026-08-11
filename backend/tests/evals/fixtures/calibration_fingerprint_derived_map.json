@@ -435,10 +435,10 @@
     {
       "covered_by_value": false,
       "definition_sha16": null,
-      "impact": "behavior_or_evidence",
+      "impact": "sql_shaping",
       "name": "VM_ROSTER_MARKET_INFO_EXTRA",
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_INFO_EXTRA",
-      "sql_interpolated": false,
+      "sql_interpolated": true,
       "used_in": [
         "_main_futures_sql"
       ]
@@ -540,7 +540,7 @@
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
   "source_sha256": "39695eb27f60451d1d2857aca3c42df31b3b988615cbf7f8dc88ada0c291054b",
-  "uncovered_behavior_or_evidence": 23,
+  "uncovered_behavior_or_evidence": 22,
   "uncovered_count": 43,
-  "uncovered_sql_shaping": 20
+  "uncovered_sql_shaping": 21
 }

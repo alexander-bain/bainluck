@@ -12,6 +12,35 @@ BACKEND=Path(__file__).resolve().parents[2]
 BUILD=BACKEND/"app/tasks/precompute_calibration.py"
 DEFAULT_MAP=BACKEND/"tests/evals/fixtures/calibration_fingerprint_derived_map.json"
 
+#: Carried forward from CAL-P031's hand map when the generated artifact replaced
+#: it as sole authority. It is the one thing the artifact cannot express: WHEN
+#: the fix may be applied. Ruling 024 answers it — the fix rides the single
+#: combined invalidation window, not on its own.
+FIX_SEQUENCING_NOTE = """\
+Covering these means adding them to `_main_input_fingerprint`, in the idiom that
+function already uses for `COVERAGE_CENSUS_ENABLED` — hashed by NAME and by
+VALUE, so the input is greppable rather than an incidental substring.
+
+TWO CONSTRAINTS, EACH INDEPENDENTLY SUFFICIENT TO BLOCK IT TODAY:
+
+1. `precompute_calibration.py` is FROZEN (ruling 009), and ruling 024 places the
+   fix inside the ONE combined invalidation window that opens at the first fresh
+   publish — together with ruling 011's two-tier well-traded, the cricket and
+   entertainment exclusions, and the population-version bump plus its published
+   before/after census. Shipped separately, each invalidates the last and no
+   before/after census means anything.
+
+2. APPLYING THE FIX WIPES EVERY BANKED UNIT. Moving the digest is, by design, a
+   wholesale cursor invalidation. Doing it mid-convergence destroys exactly the
+   progress the fix exists to protect and restarts a multi-hour walk.
+
+   => Apply IMMEDIATELY AFTER a successful publish, never during a convergence.
+
+The instinct "we found a correctness bug, fix it now" is wrong here, and it is
+wrong in a way that costs the SLO. That is why this note ships beside the census
+instead of the patch.
+"""
+
 def _functions(tree): return {n.name:n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}
 def _fingerprint_node(tree): return _functions(tree)["_main_input_fingerprint"]
 def derive_declared(source:str)->tuple[set[str],set[str]]:
@@ -73,6 +102,15 @@ def derive_map(source:str|None=None,module_sources:dict[str,str]|None=None)->dic
   if not node: continue
   for f in (n for n in ast.walk(node) if isinstance(n,ast.FormattedValue)):
    interpolated.update(x.id for x in ast.walk(f.value) if isinstance(x,ast.Name))
+  # CAL-P032: f-strings are not the only way a value reaches emitted SQL. This
+  # module builds statements with ``+`` and ``%`` too, and an f-string-only
+  # detector under-counts ``uncovered_sql_shaping`` — the one number that says
+  # how many unguarded values shape the population predicate. Measured: it
+  # missed VM_ROSTER_MARKET_INFO_EXTRA (20 -> 21).
+  for b in (n for n in ast.walk(node) if isinstance(n,ast.BinOp) and isinstance(n.op,(ast.Add,ast.Mod))):
+   sides=(b.left,b.right)
+   if not any(isinstance(s,ast.Constant) and isinstance(s.value,str) for s in sides): continue
+   for s in sides: interpolated.update(x.id for x in ast.walk(s) if isinstance(x,ast.Name))
   for n in ast.walk(node):
    if isinstance(n,ast.Name) and isinstance(n.ctx,ast.Load) and (n.id in defs or n.id in imports): used.setdefault(n.id,set()).add(fn)
  rows=[]
