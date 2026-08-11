@@ -472,7 +472,7 @@ async def merge_duplicate_events_sql(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge duplicate events: find orphans, clear FK refs, then delete."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     # Step 1: Find keeper-orphan pairs
     result = await db.execute(text("""
@@ -622,7 +622,7 @@ async def clear_line_movement_cache(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete cached line movement explanations for an event so they regenerate."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     result = await db.execute(
         select(LineMovementAnalysis).where(

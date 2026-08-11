@@ -267,8 +267,10 @@ def test_delete_judgment_removes_row_and_commits(monkeypatch):
     # row and commits (read-your-writes) so a mis-tap never lingers in the set.
     judgment = _judgment(id=99, label="kill")
     db = _DeleteDB(judgment)
+    # Queue 332 Item 1: DELETE /ranking-judgments/{id} is destructive and now
+    # runs the strong gate, so that is the gate the test must satisfy.
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret, **kw: True
+        admin_judgments, "_check_admin_destructive", lambda secret, **kw: True
     )
 
     response = _client_with_db(db).delete("/admin/ranking-judgments/99?secret=ok")
@@ -281,8 +283,10 @@ def test_delete_judgment_removes_row_and_commits(monkeypatch):
 
 def test_delete_judgment_missing_returns_404(monkeypatch):
     db = _DeleteDB(None)
+    # Queue 332 Item 1: DELETE /ranking-judgments/{id} is destructive and now
+    # runs the strong gate, so that is the gate the test must satisfy.
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret, **kw: True
+        admin_judgments, "_check_admin_destructive", lambda secret, **kw: True
     )
 
     response = _client_with_db(db).delete("/admin/ranking-judgments/12345?secret=ok")

@@ -17,6 +17,43 @@ _logger = logging.getLogger(__name__)
 DESTRUCTIVE_TOKEN_HEADER = "X-Admin-Destructive-Token"
 
 
+def bearer_credentials(request: Request | None) -> str:
+    """Return the credentials from ``Authorization: Bearer <token>``, or ``""``.
+
+    The scheme is matched CASE-INSENSITIVELY (Queue 332 Item 3). RFC 9110 §11.1
+    defines auth-scheme as case-insensitive, and more concretely: the rate-limit
+    boundary already lowercases this exact prefix (``app/utils/rate_limit.py:412``,
+    ``auth_header.lower().startswith("bearer ")``) before assigning the 300/min
+    admin bucket. While this parser required a capital ``Bearer``, one identical
+    request was classified INTO the admin bucket by one boundary and rejected 403
+    by the other. Two readings of one request is the bug — not either reading.
+
+    Parsing lives here, once, so the two boundaries cannot drift apart again. The
+    token comparison stays exact and constant-time; only the scheme is lenient.
+    """
+    if request is None:
+        return ""
+    auth_header = request.headers.get("authorization", "")
+    scheme, separator, credentials = auth_header.partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return ""
+    return credentials.strip()
+
+
+def _tokens_match(presented: str | None, expected: str | None) -> bool:
+    """Constant-time token equality.
+
+    ``hmac.compare_digest`` over UTF-8 bytes rather than ``==``: a plain string
+    compare short-circuits on the first differing byte, so its timing leaks a
+    prefix-length oracle to anyone who can measure it. Encoding first also avoids
+    ``compare_digest``'s TypeError on non-ASCII str inputs, which a caller
+    controls by simply sending a non-ASCII token.
+    """
+    if not presented or not expected:
+        return False
+    return hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+
 def _hash_for_audit(value: str | None) -> str:
     """Short sha256 for audit lines. Never log the value itself."""
     if not value:
@@ -99,12 +136,8 @@ def _check_admin_secret(secret: str | None = None, *, request: Request | None = 
         raise HTTPException(status_code=403, detail="Admin auth not configured")
 
     # Authorization header is the ONLY accepted transport.
-    if request is not None:
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()
-            if token == expected:
-                return True
+    if _tokens_match(bearer_credentials(request), expected):
+        return True
 
     if secret:
         _logger.warning(
@@ -172,7 +205,7 @@ def _check_admin_destructive(
             ),
         )
 
-    if not hmac.compare_digest(presented, expected):
+    if not _tokens_match(presented, expected):
         raise HTTPException(
             status_code=403,
             detail=(
@@ -222,9 +255,8 @@ async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bo
             return True
     except Exception:
         pass
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    token = bearer_credentials(request)
+    if token:
         try:
             from app.services.firebase_auth import verify_id_token
             claims = verify_id_token(token)
@@ -252,10 +284,9 @@ async def _resolve_admin_email(request: Request, db=None) -> str | None:
     Returns the email string when the request carries a valid admin Bearer
     token, or ``None`` when the caller is not authenticated or not an admin.
     """
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
+    token = bearer_credentials(request)
+    if not token:
         return None
-    token = auth_header[7:]
     try:
         from app.services.firebase_auth import verify_id_token
 

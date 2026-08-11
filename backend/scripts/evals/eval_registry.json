@@ -3,71 +3,314 @@
   "ratified_at": "2026-08-09",
   "legacy_policy": "Artifacts committed before ratification may remain unregistered until touched. Every artifact added or materially changed after ratification must be a canonical or name extends/supersedes.",
   "domains": [
-    {"domain": "eval-governance", "canonical": "eval_registry_contract", "members": [
-      {"name": "eval_bite_rate_audit", "relation": "extends", "target": "eval_registry_contract"}
-    ]},
-    {"domain": "admin-health", "canonical": "admin_surface_truth_contract", "members": [
-      {"name": "admin_health_evidence_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
-      {"name": "admin_health_closure_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
-      {"name": "admin_verdict_parity_contract", "relation": "extends", "target": "admin_surface_truth_contract"},
-      {"name": "measurement_surface_truth_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
-      ,{"name": "grid_freshness_query_authority_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
-      ,{"name": "query_plan_rail_authority_contract", "relation": "extends", "target": "admin_surface_truth_contract"}
-    ]},
-    {"domain": "browser-audit", "canonical": "browser_audit_replacement_contract", "members": [
-      {"name": "browser_edge_failure_contract", "relation": "extends", "target": "browser_audit_replacement_contract"},
-      {"name": "browser_filer_privilege_residual_contract", "relation": "extends", "target": "browser_audit_replacement_contract"},
-      {"name": "browser_product_jank_contract", "relation": "extends", "target": "browser_audit_replacement_contract"},
-      {"name": "browser_replacement_closure_contract", "relation": "extends", "target": "browser_audit_replacement_contract"},
-      {"name": "browser_sweep_filing_contract", "relation": "extends", "target": "browser_audit_replacement_contract"}
-    ]},
-    {"domain": "cache-resilience", "canonical": "cache_failure_resilience", "members": [
-      {"name": "cache_connection_ownership_contract", "relation": "extends", "target": "cache_failure_resilience"},
-      {"name": "degraded_cache_privacy_contract", "relation": "extends", "target": "cache_failure_resilience"},
-      {"name": "event_cache_repair_closure_contract", "relation": "extends", "target": "cache_failure_resilience"},
-      {"name": "event_negative_cache_precedence_contract", "relation": "extends", "target": "cache_failure_resilience"},
-      {"name": "politics_cache_tier_contract", "relation": "extends", "target": "cache_failure_resilience"}
-    ]},
-    {"domain": "calibration-evidence", "canonical": "calibration_population_integrity", "members": [
-      {"name": "calibration_independence_disclosure_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_census_closure_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_fingerprint_derived_map", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_metric_robustness", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_publish_gate_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_surface_population_authority", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_rendered_parity_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "calibration_subcohort_diagnosis_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "matched_calibration_evidence_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "nonexclusive_bundle_contract", "relation": "extends", "target": "calibration_population_integrity"},
-      {"name": "trading_activity_authority_contract", "relation": "extends", "target": "calibration_population_integrity"}
-    ]},
-    {"domain": "event-page-trust", "canonical": "feed_card_trust_contract", "members": [
-      {"name": "additional_markets_authority_contract", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "golf_event_membership_contract", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "prop_divergence_grouping_contract", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "settled_event_result_authority", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "settlement_authority_ladder_contract", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "settled_prop_grade_authority_contract", "relation": "extends", "target": "feed_card_trust_contract"},
-      {"name": "tournament_ux_closure_contract", "relation": "extends", "target": "feed_card_trust_contract"}
-    ]},
-    {"domain": "native-trust", "canonical": "native_parity_inventory", "members": [
-      {"name": "native_surface_authority_contract", "relation": "extends", "target": "native_parity_inventory"}
-    ]},
-    {"domain": "frontend-performance", "canonical": "first_card_client_contract", "members": [
-      {"name": "animation_dependency_equivalence_contract", "relation": "extends", "target": "first_card_client_contract"},
-      {"name": "first_content_latency_attribution_contract", "relation": "extends", "target": "first_card_client_contract"}
-    ]},
-    {"domain": "discover-ordering", "canonical": "discover_lead_order_contract", "members": []},
-    {"domain": "search-truth", "canonical": "search_truth_closure_contract", "members": [
-      {"name": "search_concept_containment_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_degraded_response_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_dropdown_cross_surface_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_enrichment_failure_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_latency_budget_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_missing_answer_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_observability_truth_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_recovery_state_contract", "relation": "extends", "target": "search_truth_closure_contract"},
-      {"name": "search_response_truth_contract", "relation": "extends", "target": "search_truth_closure_contract"}
-    ]}
+    {
+      "domain": "eval-governance",
+      "canonical": "eval_registry_contract",
+      "members": [
+        {
+          "name": "eval_bite_rate_audit",
+          "relation": "extends",
+          "target": "eval_registry_contract"
+        }
+      ]
+    },
+    {
+      "domain": "admin-health",
+      "canonical": "admin_surface_truth_contract",
+      "members": [
+        {
+          "name": "admin_health_evidence_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "admin_health_closure_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "admin_destructive_boundary_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "admin_auth_gate_mutations",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "admin_destructive_audit_sanitization",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "admin_verdict_parity_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "measurement_surface_truth_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "grid_freshness_query_authority_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        },
+        {
+          "name": "query_plan_rail_authority_contract",
+          "relation": "extends",
+          "target": "admin_surface_truth_contract"
+        }
+      ]
+    },
+    {
+      "domain": "browser-audit",
+      "canonical": "browser_audit_replacement_contract",
+      "members": [
+        {
+          "name": "browser_edge_failure_contract",
+          "relation": "extends",
+          "target": "browser_audit_replacement_contract"
+        },
+        {
+          "name": "browser_filer_privilege_residual_contract",
+          "relation": "extends",
+          "target": "browser_audit_replacement_contract"
+        },
+        {
+          "name": "browser_product_jank_contract",
+          "relation": "extends",
+          "target": "browser_audit_replacement_contract"
+        },
+        {
+          "name": "browser_replacement_closure_contract",
+          "relation": "extends",
+          "target": "browser_audit_replacement_contract"
+        },
+        {
+          "name": "browser_sweep_filing_contract",
+          "relation": "extends",
+          "target": "browser_audit_replacement_contract"
+        }
+      ]
+    },
+    {
+      "domain": "cache-resilience",
+      "canonical": "cache_failure_resilience",
+      "members": [
+        {
+          "name": "cache_connection_ownership_contract",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "degraded_cache_privacy_contract",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "event_cache_repair_closure_contract",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "event_negative_cache_precedence_contract",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "politics_cache_tier_contract",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        }
+      ]
+    },
+    {
+      "domain": "calibration-evidence",
+      "canonical": "calibration_population_integrity",
+      "members": [
+        {
+          "name": "calibration_independence_disclosure_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_census_closure_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_fingerprint_derived_map",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_metric_robustness",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_publish_gate_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_surface_population_authority",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_rendered_parity_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "calibration_subcohort_diagnosis_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "matched_calibration_evidence_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "nonexclusive_bundle_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "trading_activity_authority_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        }
+      ]
+    },
+    {
+      "domain": "event-page-trust",
+      "canonical": "feed_card_trust_contract",
+      "members": [
+        {
+          "name": "additional_markets_authority_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "golf_event_membership_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "prop_divergence_grouping_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "settled_event_result_authority",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "settlement_authority_ladder_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "settled_prop_grade_authority_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "tournament_ux_closure_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        }
+      ]
+    },
+    {
+      "domain": "native-trust",
+      "canonical": "native_parity_inventory",
+      "members": [
+        {
+          "name": "native_surface_authority_contract",
+          "relation": "extends",
+          "target": "native_parity_inventory"
+        }
+      ]
+    },
+    {
+      "domain": "frontend-performance",
+      "canonical": "first_card_client_contract",
+      "members": [
+        {
+          "name": "animation_dependency_equivalence_contract",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "first_content_latency_attribution_contract",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        }
+      ]
+    },
+    {
+      "domain": "discover-ordering",
+      "canonical": "discover_lead_order_contract",
+      "members": []
+    },
+    {
+      "domain": "search-truth",
+      "canonical": "search_truth_closure_contract",
+      "members": [
+        {
+          "name": "search_concept_containment_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_degraded_response_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_dropdown_cross_surface_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_enrichment_failure_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_latency_budget_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_missing_answer_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_observability_truth_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_recovery_state_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_response_truth_contract",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        }
+      ]
+    }
   ]
 }

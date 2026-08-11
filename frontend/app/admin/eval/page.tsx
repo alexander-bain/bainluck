@@ -7,6 +7,7 @@ import PairwiseTab from "@/components/admin/discover/PairwiseTab";
 import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { requireDestructiveToken } from "@/lib/destructiveToken";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -228,10 +229,13 @@ async function fetchOverrides(league: string): Promise<Override[]> {
 }
 
 async function deleteOverride(league: string, id: number) {
+  const destructive = requireDestructiveToken();
+  if (!destructive) throw new Error("Destructive token required to delete an override");
   const res = await adminFetch(
     `/api/admin/matching-review/${league}/override/${id}`,
     secret,
     { method: "DELETE" },
+    destructive,
   );
   if (!res.ok) throw new Error(`Delete override error: ${res.status}`);
   return res.json();

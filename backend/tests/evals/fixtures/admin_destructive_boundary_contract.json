@@ -1,0 +1,20 @@
+{
+  "contract_version": "admin-destructive-boundary/v1",
+  "cases": [
+    {"id": "protected-merge-duplicate-events", "module": "admin_data_quality.py", "method": "post", "route": "/cleanup/merge-duplicate-events"},
+    {"id": "protected-purge-orphan-events", "module": "admin_data_quality.py", "method": "post", "route": "/cleanup/purge-orphan-pm-events"},
+    {"id": "protected-delete-orphan-snapshots", "module": "admin_data_quality.py", "method": "post", "route": "/db/delete-orphan-futures-snapshots"},
+    {"id": "protected-vacuum", "module": "admin_data_quality.py", "method": "post", "route": "/db/vacuum"},
+    {"id": "protected-drop-index", "module": "admin_data_quality.py", "method": "post", "route": "/db/drop-duplicate-index"},
+    {"id": "protected-delete-events", "module": "admin_events.py", "method": "delete", "route": "/events/delete-duplicates"},
+    {"id": "merge-events-sql", "module": "admin_events.py", "method": "post", "route": "/events/merge-duplicates-sql"},
+    {"id": "delete-line-movement-cache", "module": "admin_events.py", "method": "delete", "route": "/line-movement/cache/{event_id}"},
+    {"id": "delete-ranking-judgment", "module": "admin_judgments.py", "method": "delete", "route": "/{judgment_id}"},
+    {"id": "undo-label-pass", "module": "admin_label_pass.py", "method": "post", "route": "/label-pass/undo"},
+    {"id": "delete-matching-override", "module": "admin_matching.py", "method": "delete", "route": "/matching-review/{league_slug}/override/{override_id}"},
+    {"id": "sawtooth-fix", "module": "admin_matching.py", "method": "post", "route": "/sawtooth-fix"},
+    {"id": "team-cluster-verdict-replace", "module": "admin_team_clusters.py", "method": "post", "route": "/team-clusters/verdict"},
+    {"id": "undo-team-cluster", "module": "admin_team_clusters.py", "method": "post", "route": "/team-clusters/undo"},
+    {"id": "merge-team", "module": "admin_teams.py", "method": "post", "route": "/teams/merge"}
+  ]
+}

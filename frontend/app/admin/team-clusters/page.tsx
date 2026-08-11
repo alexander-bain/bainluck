@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
+import { requireDestructiveToken } from "@/lib/destructiveToken";
 import { trackEvent } from "@/lib/analytics";
 import {
   INITIAL_SESSION,
@@ -103,19 +104,31 @@ export default function TeamClustersPage() {
 
       (async () => {
         try {
-          await adminFetchJSON("/api/admin/team-clusters/verdict", secret, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cluster_key: clusterKey,
-              verdict,
-              sport_key: current.sport_key,
-              canonical_id: verdict === "merge" ? canonicalId : null,
-              fold_ids: foldIds,
-              member_ids: current.member_ids,
-              reason: current.recommended.reason,
-            }),
-          });
+          // Destructive: a `merge` verdict re-points FKs and deletes the stub
+          // rows via the team_merge rail, and is NOT reversible by /undo.
+          const destructive = requireDestructiveToken();
+          if (!destructive) {
+            setSession((s) => rollbackVerdict(s, uid));
+            return;
+          }
+          await adminFetchJSON(
+            "/api/admin/team-clusters/verdict",
+            secret,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                cluster_key: clusterKey,
+                verdict,
+                sport_key: current.sport_key,
+                canonical_id: verdict === "merge" ? canonicalId : null,
+                fold_ids: foldIds,
+                member_ids: current.member_ids,
+                reason: current.recommended.reason,
+              }),
+            },
+            destructive
+          );
           trackEvent("team_cluster_verdict", {
             verdict,
             cluster_key: clusterKey,
@@ -141,11 +154,19 @@ export default function TeamClustersPage() {
     if (secret) {
       (async () => {
         try {
-          await adminFetchJSON("/api/admin/team-clusters/undo", secret, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cluster_key: undone.clusterKey }),
-          });
+          // Destructive (deletes the matching_overrides row).
+          const destructive = requireDestructiveToken();
+          if (!destructive) return;
+          await adminFetchJSON(
+            "/api/admin/team-clusters/undo",
+            secret,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cluster_key: undone.clusterKey }),
+            },
+            destructive
+          );
         } catch (e) {
           console.error(e);
         }

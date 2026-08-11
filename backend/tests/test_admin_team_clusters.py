@@ -16,7 +16,43 @@ from app.routes import admin_team_clusters as tc
 
 # Admin auth now flows only through the Authorization: Bearer header
 # (Queue #252 Item 3 removed the ?secret= query path).
-_ADMIN_REQ = SimpleNamespace(headers={"authorization": "Bearer test-secret"})
+#
+# Queue 332 Item 1: the verdict and undo routes are DESTRUCTIVE — a `merge` verdict
+# re-points FKs and deletes the stub rows — so they now sit behind
+# `_check_admin_destructive` and need the second token too. A real Starlette Request
+# rather than a SimpleNamespace, for two reasons the fake could not meet: header
+# lookup must be case-insensitive, and the gate emits an audit line that reads
+# `request.method` and `request.url`.
+_DESTRUCTIVE_TOKEN = "test-destructive-token"
+
+
+def _admin_request():
+    from starlette.requests import Request
+
+    from app.routes.admin_utils import DESTRUCTIVE_TOKEN_HEADER
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/admin/team-clusters/verdict",
+            "query_string": b"",
+            "headers": [
+                (b"authorization", b"Bearer test-secret"),
+                (DESTRUCTIVE_TOKEN_HEADER.lower().encode(), _DESTRUCTIVE_TOKEN.encode()),
+            ],
+        }
+    )
+
+
+_ADMIN_REQ = _admin_request()
+
+
+@pytest.fixture(autouse=True)
+def _admin_tokens(monkeypatch):
+    """Both tokens configured for every test in this module."""
+    monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+    monkeypatch.setenv("ADMIN_TOKEN_DESTRUCTIVE", _DESTRUCTIVE_TOKEN)
 
 
 # --------------------------------------------------------------------------- #

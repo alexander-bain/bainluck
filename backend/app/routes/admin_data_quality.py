@@ -4571,35 +4571,33 @@ async def admin_db_query(
         raise _fail(e)
 
 
-@router.get("/query")
-async def admin_query(
-    request: Request,
-    sql: str = Query(..., description="SELECT-only SQL query"), secret: str = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    """Run a read-only SQL query and return JSON results.
-
-    Admin-secret gated. Only SELECT statements allowed.
-    1000 row limit, 30 second statement timeout.
-    """
-    _check_admin_secret(secret, request=request)
-
-    sql_stripped = sql.strip().rstrip(";")
-    if _MUTATING_RE.search(sql_stripped):
-        raise HTTPException(status_code=400, detail="Only SELECT queries are allowed")
-    if not sql_stripped.upper().startswith("SELECT"):
-        raise HTTPException(status_code=400, detail="Query must start with SELECT")
-
-    try:
-        has_limit = "limit" in sql_stripped.lower().split("order")[-1] or "fetch" in sql_stripped.lower()
-        bounded = sql_stripped if has_limit else sql_stripped + " LIMIT 1000"
-        await db.execute(text("SET LOCAL statement_timeout = '30s'"))
-        result = await db.execute(text(bounded))
-        columns = list(result.keys())
-        rows = [dict(zip(columns, row)) for row in result.fetchall()]
-        return {"columns": columns, "rows": rows, "count": len(rows)}
-    except Exception as e:
-        return {"error": str(e)[:500], "columns": [], "rows": [], "count": 0}
+# RETIRED (Queue 332 Item 5, from C279 P1): ``GET /api/admin/query``.
+#
+# It was a SECOND read rail into the same database, and every hardening that landed
+# on ``POST /api/admin/db-query`` had to be remembered here separately — which it was
+# not. Two rails is the disease (the C1 lesson); the cure is one door, not two doors
+# kept in sync by discipline.
+#
+# What it was missing, concretely, at the time of retirement:
+#   * No ``assert_no_operational_functions``. ``SELECT pg_terminate_backend(...)`` /
+#     ``pg_cancel_backend(...)`` / ``nextval(...)`` is refused BY NAME on the POST
+#     rail (#1641 — ``SET TRANSACTION READ ONLY`` forbids writing tables and
+#     sequences, and cancelling a backend is neither) and sailed through this route's
+#     two string checks unexamined.
+#   * No ``assert_read_only`` — just ``_MUTATING_RE`` plus ``startswith("SELECT")``.
+#   * The token came in the QUERY STRING (``?secret=``), i.e. in URLs, shell history
+#     and every proxy log — the disclosure Queue #252 Item 3 removed.
+#   * Its ``except`` returned HTTP **200** with ``{"error": str(e)[:500]}``, echoing
+#     the raw database message the POST rail deliberately replaced with
+#     ``{reason, correlation_id}``. To a caller, that error and an empty result set
+#     are the same shape — gotcha #53.
+#
+# Callers use ``POST /api/admin/db-query``. ``backend/scripts/db_query.py`` was ported
+# to it here; note that script had in fact been dead since #252 removed query-param
+# auth, so this route's only live code consumer was already 403ing.
+#
+# The retirement is asserted at the ROUTE BOUNDARY in
+# ``tests/test_admin_query_rail_retired.py`` — no route with this path may exist.
 
 
 @router.get("/debug-cal-prob")
