@@ -730,7 +730,13 @@ export default function PlayerPropsDashboard({
     // Sort by most props (interesting players first)
     result.sort((a, b) => b.stats.length - a.stats.length);
     return result;
-  }, [data.player_props, homeTeam, awayTeam, homeColor, awayColor, boxScore]);
+    // UX-P055 (#1722 follow-up): `data.other` was MISSING here while the body
+    // reads it twice (the `hasOtherProps` early return, and the "scan other
+    // markets" pass). On a polling surface that means a stale card: when a
+    // refetch changes only `other`, the memo hands back the previous result.
+    // Reported on #1722 and deliberately left out of that diff to keep the
+    // crash fix reviewable; this is where it gets paid.
+  }, [data.player_props, data.other, homeTeam, awayTeam, homeColor, awayColor, boxScore]);
 
   if (players.length === 0) return null;
 

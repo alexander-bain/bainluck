@@ -24,6 +24,7 @@ import type { PropMark } from "@/components/event/PropsSection";
 import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
@@ -485,6 +486,11 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Hero Section — v2 design */}
+      {/* UX-P055: the hero is the answer, so it is the LAST thing worth losing —
+          which is exactly why it gets its own boundary rather than sharing the
+          route's. A hero that throws must not also cost the reader the chart,
+          the props and the script. */}
+      <SectionErrorBoundary label="The score and probability" resetKey={event}>
       <div className="rounded-card shadow-card overflow-hidden bg-surface-card">
         {/* Top meta row: phase + broadcast + date/time */}
         <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-surface-border/30">
@@ -828,7 +834,16 @@ export default function EventPage({ params }: EventPageProps) {
 
       </div>
 
+      </SectionErrorBoundary>
+
       {/* Win Probability Chart */}
+      {/* UX-P055: per-section boundaries. The children below are deliberately
+          NOT re-indented — a wrapper that reflows ~900 lines buries the one
+          thing a reviewer needs to check, which is where each boundary opens
+          and closes. `resetKey` is the fetched object, whose identity changes
+          only on a refetch, so a section that failed on a bad payload retries
+          when the next one lands instead of staying dead for the session. */}
+      <SectionErrorBoundary label="The win probability chart" resetKey={historyData}>
       <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
         {/* Chart Header — v2: title + freshness */}
         <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
@@ -987,10 +1002,13 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
+      </SectionErrorBoundary>
+
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
 
       {/* Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4) */}
       {hasScoreDiffData && (
+        <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             Score Differential
@@ -1022,10 +1040,12 @@ export default function EventPage({ params }: EventPageProps) {
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
+        </SectionErrorBoundary>
       )}
 
       {/* Market Map cards — Margin Map + Total Map */}
       {gameMarkets && ((gameMarkets.spreads?.length ?? 0) > 0 || gameMarkets.totals.length > 0) && (
+        <SectionErrorBoundary label="The market maps" resetKey={gameMarkets}>
         <MarketMapSection
           gameMarkets={gameMarkets}
           eventStatus={event.status}
@@ -1044,13 +1064,19 @@ export default function EventPage({ params }: EventPageProps) {
           sportKey={event.sport || undefined}
           espnHistory={historyData?.espn_history as Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>}
         />
+        </SectionErrorBoundary>
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
       {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
         <div className="space-y-3">
 
+          {/* UX-P055: #1722's actual crash site. This is the one boundary that
+              is not speculative — an unpriced `other` row here took the whole
+              route down on 2026-08-10, and 7 of 8 sampled settled MLB events
+              carry 55-73 rows of that shape. */}
           {gameMarkets.player_props.length > 0 && (
+            <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
             <PlayerPropsDashboard
               data={gameMarkets}
               eventStatus={event.status}
@@ -1060,10 +1086,12 @@ export default function EventPage({ params }: EventPageProps) {
               awayColor={event.away_team_data?.primary_color || undefined}
               boxScore={event.box_score_data}
             />
+            </SectionErrorBoundary>
           )}
 
           {/* Matchups — H2H and 3-ball markets (golf) */}
           {(gameMarkets.matchups?.length ?? 0) > 0 && (
+            <SectionErrorBoundary label="Matchups" resetKey={gameMarkets}>
             <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
               <div className="px-4 sm:px-5 py-3 border-b border-surface-border/30">
                 <h3 className="text-[13px] font-semibold text-text-primary">Matchups</h3>
@@ -1105,11 +1133,14 @@ export default function EventPage({ params }: EventPageProps) {
                 ))}
               </div>
             </div>
+            </SectionErrorBoundary>
           )}
 
           {/* Special Event Markets (auto-categorized other markets) */}
           {(gameMarkets.other?.length ?? 0) >= 3 && (
-            <SpecialEventMarkets data={gameMarkets} eventStatus={event.status} />
+            <SectionErrorBoundary label="Special markets" resetKey={gameMarkets}>
+              <SpecialEventMarkets data={gameMarkets} eventStatus={event.status} />
+            </SectionErrorBoundary>
           )}
         </div>
       )}
@@ -1126,6 +1157,7 @@ export default function EventPage({ params }: EventPageProps) {
         // Props card above it, using the raw typed rows on this same payload.
         const rawPropRowsByKey = indexPropRowsByScriptKey(gameMarkets?.player_props);
         return (
+          <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
           <PropsSection
             eventStatus={event.status}
             items={propsScript.map((p, i): PropMark => {
@@ -1140,6 +1172,7 @@ export default function EventPage({ params }: EventPageProps) {
               };
             })}
           />
+          </SectionErrorBoundary>
         );
       })()}
 
@@ -1176,6 +1209,7 @@ export default function EventPage({ params }: EventPageProps) {
         const awaySeriesWins = (event.espn as any)?.series_away_wins ?? 0;
         const gamesToWin = event.event_tags!.includes("competitive_structure:best_of_7") ? 4 : 4;
         return (
+          <SectionErrorBoundary label="The series picture" resetKey={event}>
           <SeriesProbability
             homeWinProb={event.current_odds!.home_probability!}
             homeSeriesWins={homeSeriesWins}
@@ -1186,10 +1220,12 @@ export default function EventPage({ params }: EventPageProps) {
             homeTeamColor={event.home_team_data?.primary_color || undefined}
             awayTeamColor={event.away_team_data?.primary_color || undefined}
           />
+          </SectionErrorBoundary>
         );
       })()}
 
       {/* Related Futures — bigger picture context (below charts) */}
+      <SectionErrorBoundary label="Related futures" resetKey={eventId}>
       <RelatedFutures
         eventId={eventId}
         homeTeam={event.home_team}
@@ -1205,6 +1241,7 @@ export default function EventPage({ params }: EventPageProps) {
         hasGameMarkets={!!gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.team_totals?.length ?? 0) > 0)}
         teamProgression={teamProgression || undefined}
       />
+      </SectionErrorBoundary>
 
       {/* League page link */}
       {event.sport && (() => {
@@ -1230,13 +1267,15 @@ export default function EventPage({ params }: EventPageProps) {
       {event.sport && (() => {
         const cat = getCategoryForLeague(event.sport!);
         return cat ? (
-          <RelatedByTag
-            tags={[`sport:${cat.key}`]}
-            excludeId={event.id}
-            excludeType="event"
-            limit={4}
-            title={`More ${cat.name}`}
-          />
+          <SectionErrorBoundary label="Related content" resetKey={event.id}>
+            <RelatedByTag
+              tags={[`sport:${cat.key}`]}
+              excludeId={event.id}
+              excludeType="event"
+              limit={4}
+              title={`More ${cat.name}`}
+            />
+          </SectionErrorBoundary>
         ) : null;
       })()}
 
