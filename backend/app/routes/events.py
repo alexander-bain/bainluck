@@ -863,6 +863,81 @@ def _search_rank(search_vector, q: str):
     return func.ts_rank_cd(search_vector, _search_tsquery(q))
 
 
+def _search_rank_tsquery(search_vector, tsquery):
+    """`_search_rank` for a PREBUILT tsquery (see `_expanded_tsquery`)."""
+    return func.ts_rank_cd(search_vector, tsquery)
+
+
+def _expanded_tsquery(expanded: list[tuple[str, str | None]]):
+    """Rank-side tsquery that keeps the ORIGINAL term ALONGSIDE its expansion.
+
+    LAT-P033/#1732. The recall side has always ORed a term with its expansion
+    (`_build_expanded_ilike` → `name ILIKE '%fed%' OR name ILIKE '%federal
+    reserve%'`). The RANK side did not: `fts_q` was built as
+    ``exp if exp else term``, so an expansion **replaced** the term it was meant
+    to widen. That single word — `if` instead of `or` — is the whole of #1732.
+
+    What it cost, measured in production 2026-08-11 on `fed` (expands to
+    `federal reserve`, so the rank tsquery was ``'feder' & 'reserv'`` — BOTH
+    words required in the market NAME):
+
+        rank-tier                                             open markets
+        ts_rank_cd > 0  ("…Federal Reserve…")                            5
+        ts_rank_cd = 0  (name matches the query, scores nothing)       311
+
+    311 legitimate name matches — every single "Fed decision in Sep 2026?",
+    "How many Fed rate cuts in 2026?", "Who will be confirmed as Fed Chair?"
+    (58.9M volume) — tied at **exactly 0.0** with every outcome-only substring
+    collision. With the primary relevance signal dead, the ORDER BY fell through
+    to `market_tier`, which is a market-QUALITY prior and not a relevance signal
+    at all, so tier-1 "FedEx St. Jude Championship Winner" beat tier-2 "Who will
+    be confirmed as Fed Chair?" at 3.6x less volume, and 7 of the visible 20 were
+    junk: Con*fed*eration, Julie *Fed*orchak, Vladimir *Fed*oseev ×2, *Fed*erico
+    Capasso, *Fed*erico Coria, Russian *Fed*eration.
+
+    ORing per term restores the signal — `'fed' | ('feder' & 'reserv')` — and the
+    live top-20 becomes 20/20 Federal Reserve markets ordered by volume.
+
+    **This is a RANKING change and deletes no recall.** Every arm of the WHERE is
+    untouched; rows that used to appear still match, they just sort below rows
+    the query is actually about. That distinction is why #1732 was refused in a
+    latency queue: LAT-P002 was REVERTED for shedding a recall class and
+    returning HTTP 200 with the primary results missing.
+
+    It also gets the word-boundary semantics #1732 said to resist implementing —
+    for FREE and without the regex. `to_tsvector` tokenises on word boundaries,
+    so "FedEx"→`fedex` and "Fedoseev"→`fedoseev` simply are not the lexeme `fed`.
+    pg_trgm genuinely cannot serve `\\mfed` (which is why #1732 named it a naive
+    fix), but nothing here asks it to: this is a rank expression over the already
+    reduced candidate set, not a WHERE predicate.
+
+    Shape: per term ``(term | expansion)``, ANDed across terms — the exact
+    algebra `_build_expanded_ilike` + `and_` already use on the recall side, so
+    rank and recall finally agree. `nba champion` → ``'nba' & ('champion' |
+    'winner')``. A stopword-only term collapses harmlessly (Postgres folds an
+    empty tsquery through `&&`: ``'the' && 'fed'`` is just ``'fed'``), verified
+    in production rather than assumed.
+    """
+    per_term = []
+    for term, exp in expanded:
+        tq = _search_tsquery(term)
+        if exp:
+            # `.self_group()` is explicit-not-load-bearing: SQLAlchemy already
+            # parenthesises a nested binary op from the expression tree, and
+            # LAT-P033 mutation-tested that (compiled SQL is byte-identical
+            # without it). Kept because `&` binds tighter than `|` in Postgres,
+            # so a reader has to be told the grouping is guaranteed rather than
+            # left to check.
+            tq = tq.op("||")(_search_tsquery(exp)).self_group()
+        per_term.append(tq)
+    if not per_term:
+        return None
+    combined = per_term[0]
+    for tq in per_term[1:]:
+        combined = combined.op("&&")(tq)
+    return combined
+
+
 def _fts_filter(column, q: str):
     """FTS match filter: to_tsvector(column) @@ websearch_to_tsquery(q)."""
     return func.to_tsvector(
@@ -1851,9 +1926,14 @@ async def search_events(
         (t, e) for t, e in expanded if t.lower() not in _SPORT_SEARCH_ALIASES
     ]
 
-    fts_q = " ".join(
-        exp if exp else term for term, exp in expanded
-    )
+    # LAT-P033/#1732: the `fts_q = " ".join(exp if exp else term …)` string that
+    # used to live here is DELETED, not deprecated. Its only consumer was the
+    # futures ORDER BY, which now builds `_expanded_tsquery(expanded)` at the use
+    # site; leaving the string behind would leave the `if`-instead-of-`or` bug
+    # sitting in the file for the next reader to reach for. The /typeahead path
+    # keeps its own `ta_fts_q` (:3168) — same shape, but it feeds `_fts_filter`,
+    # a WHERE predicate, so changing it would move RECALL and not ranking. That
+    # is a separate change with a separate risk profile; see the report.
 
     # --- Event filter: trigram-servable ILIKE only ---
     # LAT-P002/#1494 (1c): the event WHERE used to OR an FTS arm
@@ -2411,6 +2491,41 @@ async def search_events(
         # AND — measured 85ms against a 36ms control, because the ANDed arms let the
         # selective term drive. The multi-term path does NOT have this defect. What
         # it widened is the PREDICATE, from `len(term)` to pg_trgm's actual rule.
+        #
+        # LAT-P032 (#1732): READ THIS BEFORE WIDENING THE GATE BELOW. The predicate
+        # is about COST — "can pg_trgm serve this pattern" — and it is NOT a
+        # relevance test. A term can be perfectly servable and still make this arm
+        # actively harmful, so passing the gate is not evidence the arm is earning
+        # its place.
+        #
+        # Measured in production 2026-08-11 on `fed` (3 alnum chars, so it takes the
+        # `else` branch and KEEPS the arm). Live top-20 vs the same query with the
+        # arm removed, then the causing outcome looked up for each difference:
+        # **7 of the 20 results — 35% of the page — were substring collisions inside
+        # proper nouns**: Con*fed*eration, Julie *Fed*orchak, Russian *Fed*eration,
+        # Vladimir *Fed*oseev (x2), *Fed*erico Capasso, *Fed*erico Coria. Somebody
+        # typing `fed` wants the Federal Reserve and gets a chess tournament.
+        #
+        # It is not cheap either. db-query EXPLAIN ANALYZE/BUFFERS, two passes each:
+        #
+        #   variant              exec            shared blocks   page
+        #   as shipped           96.5 / 55.5ms   10,755          20 results, 7 junk
+        #   outcome arm removed  26.7 / 20.7ms    3,371          20 results, 0 junk
+        #
+        # The arm is 7,384 blocks — 69% of everything the query touches. Quote the
+        # BLOCKS, not the ms: blocks were identical across passes while wall-clock
+        # varied ~2x. Same shape as the `re`/`la` finding above, but worse — there
+        # the arm contributed nothing, here it contributes wrong rows.
+        #
+        # DELIBERATELY NOT FIXED HERE. It is a recall-semantics change and this lane
+        # ships those behind their own gate, never bolted onto a latency queue —
+        # LAT-P002 was REVERTED for exactly that (shed the futures stage, returned
+        # 200 with the primary result class missing, and it survived a full deploy
+        # verification because it read as "no matches"). #1732 carries the numbers
+        # and names the two naive fixes that must be resisted. Note in particular
+        # that outcome-only matches already score ~0 on the name vector, so the real
+        # defect may be that tier separation is not enforced at the page boundary —
+        # a RANKING fix, not a recall one. Verify that before deleting anything.
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
@@ -2492,10 +2607,39 @@ async def search_events(
     # correlated string_agg(outcome names) computed for every candidate row
     # (~151ms); outcome text was weight C (minor), so ordering on the proven
     # name-matched traces is unchanged while dropping the per-row subquery.
-    futures_search_rank = _search_rank(
+    #
+    # LAT-P033/#1732: ranked against `_expanded_tsquery(expanded)`, NOT the old
+    # `fts_q` string. `fts_q` was `exp if exp else term` — an expansion REPLACED
+    # its term instead of widening it, which zeroed the rank of 311 of the 316
+    # `fed` name matches. See `_expanded_tsquery` for the measurement.
+    futures_search_rank = _search_rank_tsquery(
         _weighted_search_vector(FuturesMarket.name, _SEARCH_FUTURES_MARKET_WEIGHT),
-        fts_q,
+        _expanded_tsquery(expanded),
     )
+
+    # LAT-P033/#1732: enforce the name-match tier IN SQL, ahead of the rank.
+    #
+    # `_rerank_search_futures` (:680) has always asserted "name-match beats
+    # outcome-only-match" — but it runs at :2669, AFTER this `.limit(20)`. It can
+    # only reorder the 20 rows SQL already chose, so when the page boundary cut
+    # ACROSS the tiers the reranker had nothing left to fix: the name matches it
+    # would have promoted were never fetched. Measured on `fed`, 7 of the 20 rows
+    # handed to it were outcome-only collisions while 300+ name matches sat below
+    # the cut.
+    #
+    # So the ordering that governs the LIMIT now carries the same signal the
+    # reranker applies to its output — SQL and Python finally agree on what the
+    # page means. Tier 1 keeps league-ticker recall ("nfl mvp" → "MVP Winner?",
+    # ticker KXNFLMVP, no "nfl" in the name) ABOVE outcome-only rows; without it
+    # those award markets would sink into tier 2 with the substring collisions.
+    #
+    # Recall is untouched — this reorders the candidate set, it does not filter
+    # it. The arms in `_futures_where_or` are exactly as they were.
+    _futures_tier_whens = [(futures_name_match, 0)]
+    if league_ticker_match is not None:
+        _futures_tier_whens.append((league_ticker_match, 1))
+    _futures_name_tier = case(*_futures_tier_whens, else_=2)
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
@@ -2505,6 +2649,7 @@ async def search_events(
             *_futures_open_now,
         )
         .order_by(
+            _futures_name_tier.asc(),
             futures_search_rank.desc(),
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
