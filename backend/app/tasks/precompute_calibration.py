@@ -1718,6 +1718,46 @@ def _calibration_population_ctes(
     gate, so the sweep can no longer collapse unrelated same-event props or split
     a two-market group).
     """
+    # CAL-P039 measured it; CAL-P040 applies it under the ruling-009 exception
+    # granted in `.claude/handoff/GO-CAL-P039-EXCEPTION.md` (Fable, 2026-08-11).
+    #
+    # `vm_stats` joins `futures_outcomes` to `virtual_market` with NO predicate on
+    # the outcomes table at all. `virtual_market` is referenced 7 times, so PG12+
+    # auto-materializes it, and a CTE Scan carries no index and no ordering — so
+    # the planner's only options are hash+seqscan or N blind index lookups, and it
+    # prices the seq scan lower. Every chunk therefore paid a full 3.3M-row scan of
+    # `futures_outcomes`. Measured against production at the real unit size (5,302
+    # markets, `backend/scripts/probe_chunk_unit_plan.py`, with act/loops per
+    # CAL-P035's rule, NOT a cost delta):
+    #
+    #     production shape    Seq Scan    act=3,302,680   8,378.8 ms   total 9,104.5 ms
+    #     + this predicate    Index Scan  act=   40,696     289.2 ms   total   477.1 ms
+    #
+    # 19.1x on the QUERY, and both produce the identical aggregate (3,107 groups
+    # over 40,696 joined rows). ⚠️ Do NOT quote 19.1x as a beat-level number: a
+    # unit costs ~62.9 s measured, so this is ~13.3% of a unit. It buys throughput.
+    # It does not make the build converge, and CAL-P039 said so against itself.
+    #
+    # SOUNDNESS is by construction, not by measurement, and only under
+    # `frozen_vm_roster=True`: `frozen_vm_roster` is `unnest` of exactly this array
+    # into `market_id`, and `virtual_market` INNER-joins `market_info` against that
+    # roster on `market_id` — so every `vm.market_id` is literally an element of the
+    # array, and `fo.market_id = vm.market_id` already implies this conjunct. It is
+    # a planner hint spelled as a predicate. That premise is guarded structurally
+    # (not by string-matching today's SQL) in
+    # `tests/test_calibration_unit_scan_redundancy_p039.py`, which fails loudly and
+    # by name if any of the three inferences it rests on is changed.
+    #
+    # On the GLOBAL path it is omitted, and that is load-bearing rather than
+    # tidy: there is no roster array bound there, and adding one would filter the
+    # whole population down to a chunk — silently, with every downstream row count
+    # still looking self-consistent. Pinned by `TestPredicateMustNotLeakIntoGlobal`.
+    vm_stats_roster_predicate = (
+        f"\n                  AND fo.market_id "
+        f"= ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+        if frozen_vm_roster
+        else ""
+    )
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -1975,7 +2015,7 @@ def _calibration_population_ctes(
                                       AND fo.opening_probability > 0
                                       AND fo.opening_probability < 1) AS eligible
                 FROM virtual_market vm
-                JOIN futures_outcomes fo ON fo.market_id = vm.market_id
+                JOIN futures_outcomes fo ON fo.market_id = vm.market_id{vm_stats_roster_predicate}
                 GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
                          vm.mutually_exclusive
             ),

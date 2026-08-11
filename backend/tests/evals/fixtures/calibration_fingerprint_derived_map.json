@@ -439,6 +439,7 @@
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_IDS_PARAM",
       "sql_interpolated": true,
       "used_in": [
+        "_calibration_population_ctes",
         "_run_staged_futures",
         "_virtual_market_ctes"
       ]
@@ -550,7 +551,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "7712cbb167562091eb9a2d635efd2996c57caec51b8a91b3218da21920b2131a",
+  "source_sha256": "69e65dee500227ef0364cfe82d053b5538314ca1173151ae0c4971b960e67bed",
   "uncovered_behavior_or_evidence": 23,
   "uncovered_count": 44,
   "uncovered_sql_shaping": 21
