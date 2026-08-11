@@ -132,7 +132,96 @@ finalize spike remains unmeasured** — still CAL-P033's unowned item.
 `unfolded_units`, kept distinct from CAL-P033's `unencoded_units`. If the stack deploys together —
 it is one stack — production sees `unencoded_units` once and `unfolded_units` never.
 
-## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033)
+## ✅ THE WALL IS THE ROSTER, NOT THE CURSOR — the deploy ran the experiment (CAL-P035, 2026-08-11)
+
+Three queues treated the retained cursor as the capacity wall. **Deploying CAL-P033+P034 settled it,
+and the answer is no.** Both readings are beat-final, same gauge, same dyno, either side of the
+deploy of `cd84f690`:
+
+| beat | cursor bytes | units | bytes/unit | `rss:peak_mb` | `rss:at:read:futures_generation` |
+|---|---|---|---|---|---|
+| pre-P034, 04:15Z | 12,987,375 | 109 | 119,150 | 493 | 423 |
+| post-P034, 11:15Z | 135,843 | 72 | **1,887** | **507** | 407 |
+
+**The cursor shrank 95.6x and the peak got 14 MB WORSE.** CAL-P034 works exactly as designed — 1,887
+B/unit against 119,150 confirms the fold, and 119,150 B/unit is a third independent confirmation of
+CAL-P033's 118 KB and CAL-P034's 116.7 KB. **The fix is sound; the target was wrong.**
+
+**Where the memory is, measured rather than inferred:** `rss:at:read:futures_generation` = **407 MB
+of a 507 MB peak**, and that gauge is sampled at the stage boundary *after the roster read and before
+`load_staged_cursor` is called*. **~80% of the peak is resident before the cursor exists.** No cursor
+change can move it.
+
+The roster is **669,383 rows** (`EXPLAIN ANALYZE` actual; the planner says 356,292 — out by 1.9x),
+materialised by `.all()` into `list[Row]` and held live for the whole ~23-minute beat, although it is
+dead about fifteen lines after it is read, once `gen_digest`, `chunks` and `assignment` are derived.
+
+**The fix does not wipe the cursor**, which is what makes it unlike every other fix this lane has
+found blocked. Releasing the roster lives in `_run_staged_futures`, which is **not** among
+`_main_input_fingerprint`'s four hashed roots (`compute_calibration_payload`,
+`_calibration_population_ctes`, `_virtual_market_ctes`, `_main_futures_sql`), so it does not move the
+digest and cannot invalidate a banked unit. It is blocked **only** by ruling 009 → Alex escalation.
+
+### ✅ Correction — beat lifetime does NOT decay with cursor size
+
+The section below (CAL-P033) reads the two short beats as evidence that `SystemExit` arrives sooner
+as the cursor grows. **Refuted.** The last ten futures-phase durations span the largest cursor this
+lane ever had (13 MB) and the smallest (136 KB):
+
+    1378744, 667348, 623476, 1370945, 1379170, 664501, 1377034, 1359253, 1373900, 1377558
+
+Full-length beats on both sides of a 95.6x cursor change. The two short beats were something else.
+Two queues have now forecast from this; it should stop here.
+
+### ❌ A lead raised and REFUTED in the same window — the dead CTE tail
+
+Recorded because it looks exactly like a finding. `_futures_generation_sql` selects only from
+`virtual_market`, and PostgreSQL's CTE pruning is **non-transitive** (a *dead* referrer still counts),
+so `ranked_outcomes` and `normalized` — 900,614 rows each — stay in the plan. Full plans at **Total
+Cost 8,317,057** against **657,255** for the same statement truncated at `virtual_market`: 12.7x, for
+byte-identical output. It reads as ~11 s/beat of waste.
+
+**It is not waste.** `EXPLAIN ANALYZE` settles it in one column:
+
+    CTE market_info           est=  333,221   act=669,383   loops=1
+    CTE market_result_shape   est=3,296,652   act=      0   loops=0     <-- planned, NEVER RUN
+    Planning Time 3.283 ms
+
+PostgreSQL plans a dead CTE and never executes it; nothing scans it, so it costs planning only, and
+planning is 3 ms. The docstring's *conclusion* ("costs nothing") is correct; only its mechanism
+("planned away") is loose. **A detector and CI ratchet for this were built and deleted unshipped** —
+they worked, and would have encoded a false premise into CI forever. **Do not rebuild them.**
+
+> **The rule, because it cost an hour:** a plan-cost delta between two statements is **not** a runtime
+> delta until `act`/`loops` say the nodes ran. `Total Cost` sums nodes that never execute.
+
+## ✅ THE FINALIZE SPIKE IS MEASURED, AND IT IS A NON-ISSUE — CAL-P034's unowned item 1, closed (CAL-P035, 2026-08-11)
+
+CAL-P033 and CAL-P034 both left this open — *"finalization materialises every banked row at once
+(~70K rows) and nobody has measured that spike; it is the one step no beat has ever reached"* — and
+CAL-P034 noted that shrinking the cursor makes it *reachable*, hence more urgent.
+
+**The completion path has now been executed at full production scale**, offline and deterministic,
+over a cursor in the real post-P034 folded shape (`tests/test_calibration_completion_path_p035.py`).
+It completes cleanly, and its output is identical to the bank-all-then-merge reference — including
+through a real JSON round trip between every one of the 128 units, which is the only edge production
+takes.
+
+| walk | rows in | distinct groups | cursor bytes | finalize peak |
+|---|---|---|---|---|
+| 1 unit | 470 | 470 | 31,599 | 993,308 |
+| 32 units | 15,040 | **1,650** | 116,181 | 3,564,952 |
+| 128 units | 60,160 | **1,650** | 128,726 | **3,615,384** |
+
+**The finalize peak is ~3.6 MB — 0.7% of the 512 MB dyno**, and it is bounded by the group space
+rather than the unit count (3.56 MB at 32 units vs 3.62 MB at 128: +1.6% for 4x the units). It is not
+a risk and the lane can stop carrying it.
+
+**The harness validates itself against production:** its synthetic cursor at 128 units is **128,726
+B** against the live cursor's **135,843 B**, a 6% difference — so the fixture reproduces the real
+shape rather than a convenient one. Non-vacuous by **6 mutations, 6 caught**.
+
+## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
 CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
 margin and a complete build succeeding on the dyno. Neither is reachable from this window — both
