@@ -52,6 +52,27 @@ const nextConfig = {
         destination: "/event/golf/:slug",
         permanent: true,
       },
+      // #1763 decision 1 (Alex, 2026-08-11): retire the orphaned /futures index.
+      // It showed wrong counts through legacy filters, leaked raw taxonomy keys,
+      // and said "betting markets" — the one framing this product is defined
+      // against.
+      //
+      // ⚠️ `permanent: false` (307), and the contrast with the golf entry above is
+      // deliberate, not an oversight. A 308 is cached hard and effectively forever
+      // by browsers, and Alex's decision 3 REBUILDS a real /futures landing at
+      // this exact URL on the entity-page templates. A permanent redirect would
+      // send every returning visitor straight past that new page with no
+      // server-side fix available — the cache lives on their machine. This URL is
+      // being vacated temporarily, so the status code has to say so.
+      //
+      // Matches ONLY the index. `/futures/[id]` is the live market page and stays
+      // serving — it is linked from Discover, Entertainment and the movers rails.
+      // Never write this as `/futures/:path*`.
+      {
+        source: "/futures",
+        destination: "/discover",
+        permanent: false,
+      },
     ];
   },
   images: {

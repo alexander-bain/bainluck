@@ -381,14 +381,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
   const backLink = (
     <div className="flex items-center gap-2">
+      {/* #1763 decision 1: the /futures index is retired, so this pointed at a
+          redirect and the label became a lie — "Back to Futures" landing on
+          Discover. The staged brief called the index orphaned with ZERO inbound
+          links; this is the one, and it lives on the very page the retirement
+          keeps alive. When decision 3 rebuilds a real /futures landing, this is
+          the link that should point back at it. */}
       <Link
-        href="/futures"
+        href="/discover"
         className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
       >
         <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
         </svg>
-        Back to Futures
+        Back to Discover
       </Link>
     </div>
   );
