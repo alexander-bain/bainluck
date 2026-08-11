@@ -1,0 +1,33 @@
+{
+  "payload_fixture": "prod-2026-08-02.json",
+  "surface": {
+    "population_version": "q267",
+    "contract_state": "match",
+    "cache_status": "stale",
+    "generated_at": "2026-08-02T03:23:54.886392+00:00",
+    "markets": 534269,
+    "full_n": 652407,
+    "moved_n": 349310,
+    "unchanged_n": 263022,
+    "not_applicable_n": 40075,
+    "reconciles": true
+  },
+  "cohorts": [
+    {
+      "key": "default",
+      "include_never_moved": false,
+      "n": 389385,
+      "ece": 1.542547,
+      "mce": 1.45,
+      "brier": 0.164935
+    },
+    {
+      "key": "include_never_moved",
+      "include_never_moved": true,
+      "n": 652407,
+      "ece": 1.26146,
+      "mce": 1.24,
+      "brier": 0.163755
+    }
+  ]
+}

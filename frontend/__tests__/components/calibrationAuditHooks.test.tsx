@@ -70,6 +70,10 @@ const SINGLETON_HOOKS = [
   "calibration-population-count",
   "calibration-stat-outcomes",
   "calibration-stat-ece",
+  // CAL-P043 / #1643. MCE lived only inside the ECE card's detail PROSE, so the
+  // rail could read the headline number and not the worst-bucket number beside
+  // it. Both are raw attributes on this wrapper now.
+  "calibration-stat-ece-figures",
   "calibration-stat-brier",
   "calibration-stat-sources",
   "calibration-stat-categories",
@@ -126,6 +130,20 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     // renders under current labels and no client can tell (C111 P2 / Q297 §3).
     expect(SOURCE).toContain("data-population-version={data.population_version");
     expect(SOURCE).toContain("data-cache-status=");
+  });
+
+  test("the page root publishes the complete cross-surface parity record", () => {
+    // CAL-P043 / #1643. Web published these facts as a dozen separate
+    // attributes and native published one structured string, so "do the two
+    // surfaces agree" had no answer that did not involve a translation table
+    // nobody maintained. `data-parity` is that answer, in native's grammar.
+    expect(SOURCE).toContain("data-parity={parity ? parityValue(parity) : \"\"}");
+
+    // Raw, not formatted. The whole point of the record is that it survives a
+    // reword and fails on a wrong number; `toFixed(1)`/`toLocaleString()` values
+    // do the opposite of both.
+    expect(SOURCE).toContain("data-ece={cohortECE}");
+    expect(SOURCE).toContain("data-mce={cohortMCE}");
   });
 
   test("the page root says WHY it considered itself allowed to render", () => {

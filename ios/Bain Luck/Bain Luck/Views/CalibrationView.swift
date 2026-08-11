@@ -146,6 +146,15 @@ struct CalibrationSurfaceView: View {
     ///
     /// `key=value` pairs, space-separated, stable order — parseable without a
     /// grammar and readable in Accessibility Inspector without one either.
+    /// CAL-P043 (#1643): this now carries the COMPLETE parity record, in the
+    /// same order and the same grammar web publishes as `data-parity`. It used
+    /// to stop at `full_n`, so the figures a reader most wants to compare — ECE,
+    /// MCE, Brier, and the activity partition — were reachable on web as data
+    /// and on native only by rasterising the view and reading the pixels.
+    ///
+    /// Raw values only, never display strings. A parity check that compared
+    /// "1.5pp" against "1.5425" fails on a formatting choice and passes on a
+    /// wrong number, which is codex C236's second P1.
     static func provenanceValue(_ p: CalibrationViewModel.Parity) -> String {
         "population=\(p.populationVersion.isEmpty ? "none" : p.populationVersion)"
             + " contract=\(p.contractState)"
@@ -153,6 +162,13 @@ struct CalibrationSurfaceView: View {
             + " generated=\(p.generatedAt.isEmpty ? "none" : p.generatedAt)"
             + " cohort_n=\(p.cohortN)"
             + " full_n=\(p.fullN)"
+            + " moved_n=\(p.movedN)"
+            + " unchanged_n=\(p.unchangedN)"
+            + " not_applicable_n=\(p.notApplicableN)"
+            + " markets=\(p.markets)"
+            + " ece=\(String(format: "%.4f", p.ece))"
+            + " mce=\(String(format: "%.4f", p.mce))"
+            + " brier=\(String(format: "%.4f", p.brier))"
             + " reconciles=\(p.reconciles)"
     }
 
