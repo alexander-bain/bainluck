@@ -57,7 +57,7 @@ from app.utils.calibration_staged_futures import (
     UNIT_KEY_VM_ID,
     decode_staged_cursor,
     decode_staged_cursor_detailed,
-    encode_unit_rows,
+    encode_accumulator,
 )
 
 # --- The production beat, in numbers, so the tests are about a real event ----
@@ -166,7 +166,8 @@ def _raw(**overrides):
         "owner": "me",
         "lease_expires_at": 0.0,
         "committed_units": ["u1"],
-        "unit_results": {"u1": encode_unit_rows([{"bucket_idx": 1}])},
+        # CAL-P034: the cursor holds the running fold, not per-unit rows.
+        "accumulator": encode_accumulator([{"bucket_idx": 1, "n": 1}], []),
         "terminal": "partial",
     }
     raw.update(overrides)
@@ -236,7 +237,7 @@ class TestTheCursorSaysWhyItReset:
         assert cursor.committed_units == ("u1",)
 
     def test_an_empty_but_valid_cursor_is_fresh_not_invalid(self):
-        _cursor, action, reason = _decode(_raw(committed_units=[], unit_results={}))
+        _cursor, action, reason = _decode(_raw(committed_units=[], accumulator=None))
         assert (action, reason) == (FRESH, REASON_NOTHING_BANKED)
 
     def test_absent_and_malformed_are_different_facts(self):

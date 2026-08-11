@@ -25,9 +25,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from dataclasses import replace
+
 from app.utils.calibration_staged_futures import (
     StagedFuturesCursor,
-    encode_unit_rows,
+    advance,
+    encode_accumulator,
     plan_units,
     retain_planned_units,
     roster_drift,
@@ -47,15 +50,18 @@ def _roster(n: int, *, extra: list | None = None) -> list:
 
 
 def _banked(chunks, keys) -> StagedFuturesCursor:
-    """A cursor holding ``keys``, stamped with the digests those chunks had."""
+    """A cursor holding ``keys``, stamped with the digests those chunks had.
+
+    CAL-P034: built by actually advancing, because there is no longer a per-unit
+    slot to hand-populate — the units are summed into one accumulator.
+    """
     by_key = {unit_key(c): c for c in chunks}
-    return StagedFuturesCursor(
-        population_version="q267",
-        input_fingerprint="fp",
-        committed_units=tuple(keys),
-        unit_results={k: encode_unit_rows([{"bucket_idx": 1, "n": 1}]) for k in keys},
-        unit_digests={k: by_key[k].member_digest for k in keys},
-    )
+    cursor = StagedFuturesCursor(population_version="q267", input_fingerprint="fp")
+    for key in keys:
+        cursor = advance(
+            cursor, key, [{"bucket_idx": 1, "n": 1}], owner="", lease_expires_at=0.0
+        )
+    return replace(cursor, unit_digests={k: by_key[k].member_digest for k in keys})
 
 
 class TestUnitKeyIsTheSlot:
@@ -150,12 +156,8 @@ class TestDriftIsMeasuredNotObeyed:
         Gotcha #53: the emptier reading must not become a fact.
         """
         chunks = plan_units(_roster(100), buckets=8)
-        cursor = StagedFuturesCursor(
-            population_version="q267",
-            committed_units=tuple(unit_key(c) for c in chunks),
-            unit_results={
-                unit_key(c): encode_unit_rows([{"bucket_idx": 1}]) for c in chunks
-            },
+        cursor = replace(
+            _banked(chunks, [unit_key(c) for c in chunks]),
             unit_digests={},  # pre-CAL-P028
         )
         assert roster_drift(cursor, chunks) == 0
@@ -190,11 +192,22 @@ class TestWhatMustStillBeRefused:
         assert len(dropped) == len(chunks)
 
     def test_dropped_units_lose_their_rows_and_their_digests(self):
+        """CAL-P034 STRENGTHENS this: a drop now costs the WHOLE accumulator.
+
+        Before the fold, the kept units kept their rows and only the dropped
+        ones lost theirs. A fold cannot be inverted — the dropped unit's mass is
+        already summed in — so the only safe answer is to discard everything and
+        re-walk. The assertion is the same shape; what it proves is stronger.
+        """
         chunks = plan_units(_roster(200), buckets=8)
         cursor = _banked(chunks, [unit_key(c) for c in chunks])
-        kept, _dropped = retain_planned_units(cursor, plan_units(_roster(200), buckets=4))
+        assert cursor.accumulator is not None, "precondition: mass is banked"
+
+        kept, dropped = retain_planned_units(cursor, plan_units(_roster(200), buckets=4))
+
+        assert dropped, "precondition: this plan really does drop slots"
         assert kept.committed_units == ()
-        assert kept.unit_results == {}
+        assert kept.accumulator is None, "the fold cannot survive a partial drop"
         assert kept.unit_digests == {}
 
     def test_member_digest_still_sees_source_and_grouping(self):
@@ -245,7 +258,7 @@ class TestDecodeCarriesDigests:
             "population_version": "q267",
             "input_fingerprint": "fp",
             "committed_units": ["u1"],
-            "unit_results": {"u1": encode_unit_rows([{"bucket_idx": 1}])},
+            "accumulator": encode_accumulator([{"bucket_idx": 1, "n": 1}], []),
             "unit_digests": {"u1": "d1"},
             "lease_expires_at": 0.0,
         }
@@ -257,15 +270,21 @@ class TestDecodeCarriesDigests:
         assert cursor.unit_digests == {"u1": "d1"}
 
     def test_a_digest_for_an_unresumable_unit_is_discarded(self):
-        """A digest describing work this cursor is not carrying must not persist."""
+        """A digest describing work this cursor is not carrying must not persist.
+
+        REVERSED IN SHAPE BY CAL-P034, and rewritten rather than deleted. The
+        old version made ``u2`` unresumable by giving it no stored rows, which
+        the fold makes impossible to express — mass is shared, so a unit is
+        either committed or it is not. The RULE is unchanged and still worth
+        pinning: a digest for a unit the cursor does not carry is dropped, so a
+        later drift count can never include work nobody holds.
+        """
         raw = self._raw(
-            committed_units=["u1", "u2"],
-            # u2 has no rows at all => not resumable (an absent unit, not an
-            # unencoded one — the two are different refusals since CAL-P033).
-            unit_results={"u1": encode_unit_rows([{"bucket_idx": 1}])},
+            committed_units=["u1"],
             unit_digests={"u1": "d1", "u2": "d2"},
         )
         cursor, _action, _reason = self._decode(raw)
+        assert cursor.committed_units == ("u1",)
         assert "u2" not in cursor.unit_digests
 
     @pytest.mark.parametrize("bad", ["not-a-dict", 7, None, []])

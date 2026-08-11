@@ -49,7 +49,9 @@ from app.utils.calibration_staged_futures import (
     decode_staged_cursor,
     decode_staged_cursor_detailed,
     decode_unit_rows,
+    encode_accumulator,
     encode_unit_rows,
+    fold_unit_rows,
     generation_fingerprint,
     is_complete,
     is_encoded_unit_rows,
@@ -707,6 +709,37 @@ GENERATION_FP = generation_fingerprint(
 )
 
 
+#: The one row the raw-cursor fixture banks. Carries a ``bucket_idx`` because a
+#: row without one is a census carrier, not a bucket — which is what the
+#: finalizer has always done with a null-keyed row, and what the fold does now.
+_BANKED_ROW = {"bucket_idx": 1, "n": 1}
+
+
+def _folded_dicts(cursor) -> tuple[list[dict], list[dict]]:
+    """The cursor's running fold as ``(bucket dicts, carrier dicts)``."""
+    buckets, carriers = cursor.folded()
+    return _row_dicts(buckets), _row_dicts(carriers)
+
+
+def _mass(cursor) -> dict[tuple, tuple]:
+    """Bucket mass keyed by group key — what a fold is allowed to be judged on.
+
+    Comparing whole rows would pin ``avg_prob`` and column ORDER, neither of
+    which the fold promises; the sums by group key are the thing that must not
+    move.
+    """
+    buckets, _carriers = cursor.folded()
+    return {
+        (r.bucket_idx, r.source, r.category, r.price_moved, r.is_nonexclusive_bundle): (
+            r.n,
+            r.winners,
+            r.sum_prob,
+            r.sum_sq_err,
+        )
+        for r in buckets
+    }
+
+
 def _raw_cursor(**overrides) -> dict:
     raw = {
         "schema": STAGED_FUTURES_SCHEMA,
@@ -725,7 +758,11 @@ def _raw_cursor(**overrides) -> dict:
         # driver ``Row`` objects, ``canonical_json``'s ``default=str``
         # stringified them, and the next beat resumed ``list[str]``. Banked rows
         # are now an ``encode_unit_rows`` envelope, so this helper writes one.
-        "unit_results": {_chunks()[0].key: encode_unit_rows([{"bucket_idx": 1}])},
+        # CAL-P034 — SECOND DECLARED REVERSAL, same helper. The cursor no longer
+        # holds units at all; it holds the running fold they were summed into.
+        # Built through the real fold rather than hand-written, so the fixture
+        # cannot drift from what ``advance`` actually produces.
+        "accumulator": encode_accumulator(*fold_unit_rows([], [], [_BANKED_ROW])),
         "terminal": TERMINAL_PARTIAL,
     }
     raw.update(overrides)
@@ -766,7 +803,7 @@ def test_a_matching_cursor_resumes_with_its_banked_units():
     cursor, action = _decode(_raw_cursor())
     assert action == RESUME
     assert cursor.committed_units == (_chunks()[0].key,)
-    assert _row_dicts(cursor.result(_chunks()[0])) == [{"bucket_idx": 1}]
+    assert _mass(cursor) == {(1, None, None, None, None): (1, 0, 0.0, 0.0)}
 
 
 @pytest.mark.parametrize(
@@ -778,7 +815,8 @@ def test_a_matching_cursor_resumes_with_its_banked_units():
         {"population_version": "q999"},
         {"input_fingerprint": "fp-changed"},
         {"committed_units": "not-a-list"},
-        {"unit_results": "not-a-dict"},
+        {"accumulator": "not-a-dict"},
+        {"accumulator": None},
     ],
 )
 def test_anything_we_cannot_vouch_for_is_invalidated(override):
@@ -844,7 +882,13 @@ def test_late_arrival_is_enforced_per_unit_not_per_generation():
         generation=1,
     )
     for chunk in planned_before:
-        cursor = advance(cursor, chunk.key, [{"unit": chunk.index}], owner=OWNER, lease_expires_at=0.0)
+        cursor = advance(
+            cursor,
+            chunk.key,
+            [_population_row(bucket_idx=chunk.index + 1)],
+            owner=OWNER,
+            lease_expires_at=0.0,
+        )
     assert is_complete(cursor, planned_before)
 
     # ``advance`` banks a unit by KEY and never sees the chunk, so the digests
@@ -930,9 +974,17 @@ def test_our_own_live_lease_is_never_refused_to_us():
 
 
 def test_a_unit_marked_committed_with_no_stored_rows_is_not_resumed():
-    cursor, action = _decode(_raw_cursor(unit_results={}))
+    """CAL-P034: the same rule, now necessarily all-or-nothing.
+
+    A unit claimed with no mass behind it was a per-unit refusal while each unit
+    carried its own rows. One shared fold cannot answer "does THIS unit have
+    mass", so the refusal is the whole cursor — and it INVALIDATES rather than
+    reporting FRESH, because a cursor that claims units it cannot back is a
+    bookkeeping error worth naming, not an empty start.
+    """
+    cursor, action = _decode(_raw_cursor(accumulator=None))
     assert cursor.committed_units == ()
-    assert action == FRESH
+    assert action == INVALIDATE
 
 
 def test_the_cursor_payload_round_trips():
@@ -940,7 +992,8 @@ def test_the_cursor_payload_round_trips():
     reloaded, action = _decode(cursor.as_payload())
     assert action == RESUME
     assert reloaded.committed_units == cursor.committed_units
-    assert reloaded.unit_results == cursor.unit_results
+    assert reloaded.accumulator == cursor.accumulator
+    assert _mass(reloaded) == _mass(cursor)
 
 
 def test_advancing_banks_a_unit():
@@ -952,9 +1005,11 @@ def test_advancing_banks_a_unit():
         owner=OWNER,
         generation=1,
     )
-    advanced = advance(cursor, chunks[0], [{"n": 1}], owner=OWNER, lease_expires_at=500.0)
+    advanced = advance(
+        cursor, chunks[0], [_BANKED_ROW], owner=OWNER, lease_expires_at=500.0
+    )
     assert advanced.committed_units == (chunks[0].key,)
-    assert _row_dicts(advanced.result(chunks[0])) == [{"n": 1}]
+    assert _mass(advanced) == {(1, None, None, None, None): (1, 0, 0.0, 0.0)}
     assert advanced.lease_expires_at == 500.0
     # The input cursor is untouched — a new cursor, never a mutation.
     assert cursor.committed_units == ()
@@ -971,10 +1026,19 @@ def test_re_advancing_the_same_unit_is_idempotent():
         owner=OWNER,
         generation=1,
     )
-    once = advance(cursor, chunks[0], [{"n": 1}], owner=OWNER, lease_expires_at=100.0)
-    twice = advance(once, chunks[0], [{"n": 999}], owner=OWNER, lease_expires_at=200.0)
+    once = advance(cursor, chunks[0], [_BANKED_ROW], owner=OWNER, lease_expires_at=100.0)
+    twice = advance(
+        once,
+        chunks[0],
+        [{"bucket_idx": 1, "n": 999}],
+        owner=OWNER,
+        lease_expires_at=200.0,
+    )
     assert twice.committed_units == (chunks[0].key,)
-    assert _row_dicts(twice.result(chunks[0])) == [{"n": 1}]
+    # CAL-P034 makes this guard LOAD-BEARING rather than tidy. A fold cannot be
+    # un-added, so a duplicate advance would silently double the mass instead of
+    # merely replacing a stored list. 1, not 1000 and not 999.
+    assert _mass(twice) == {(1, None, None, None, None): (1, 0, 0.0, 0.0)}
     assert twice.lease_expires_at == 200.0  # the lease still renews
 
 
@@ -1045,22 +1109,44 @@ def test_a_banked_unit_that_matches_no_planned_chunk_blocks_completion():
     assert is_complete(cursor, chunks) is False
 
 
-def test_banked_units_are_collected_in_plan_order_whatever_the_commit_order():
+def test_the_merged_result_does_not_depend_on_commit_order():
+    """REPLACES ``..._collected_in_plan_order_whatever_the_commit_order``.
+
+    CAL-P034 makes plan order unexpressible — units are summed into one running
+    fold as they arrive, so there is no per-unit list left to order. Plan order
+    was never the point though; it was the MECHANISM by which the merge saw the
+    same sequence however the beats interleaved. This asserts the property that
+    mechanism existed for, and asserts it end to end through the real merge,
+    which is strictly more than the old test proved.
+    """
     chunks = _chunks()
-    cursor = new_staged_cursor(
-        population_version=VERSION,
-        input_fingerprint=INPUT_FP,
-        generation_fingerprint=GENERATION_FP,
-        owner=OWNER,
-        generation=1,
-    )
-    for chunk in reversed(chunks):
-        cursor = advance(
-            cursor, chunk, [{"index": chunk.index}], owner=OWNER, lease_expires_at=1.0
+    rows = {
+        chunk.key: [_population_row(bucket_idx=i + 1, n=i + 1, source="kalshi")]
+        for i, chunk in enumerate(chunks)
+    }
+
+    def build(order):
+        cursor = new_staged_cursor(
+            population_version=VERSION,
+            input_fingerprint=INPUT_FP,
+            generation_fingerprint=GENERATION_FP,
+            owner=OWNER,
+            generation=1,
         )
-    assert [_row_dicts(unit) for unit in collect_unit_results(cursor, chunks)] == [
-        [{"index": chunk.index}] for chunk in chunks
-    ]
+        for chunk in order:
+            cursor = advance(
+                cursor, chunk, rows[chunk.key], owner=OWNER, lease_expires_at=1.0
+            )
+        return [
+            vars(r)
+            for r in merge_futures_rows(
+                collect_unit_results(cursor, chunks), census_columns=CENSUS
+            )
+        ]
+
+    forward = build(chunks)
+    assert forward, "the merge produced nothing to compare against"
+    assert forward == build(list(reversed(chunks)))
 
 
 def test_progress_is_monotonic_across_three_beats_and_only_the_last_publishes():
@@ -1075,7 +1161,11 @@ def test_progress_is_monotonic_across_three_beats_and_only_the_last_publishes():
         cursor, action = _decode(raw)
         assert action in (FRESH, RESUME)
         cursor = advance(
-            cursor, chunk, [{"beat": beat}], owner=OWNER, lease_expires_at=float(beat)
+            cursor,
+            chunk,
+            [_population_row(bucket_idx=beat + 1, n=beat + 1)],
+            owner=OWNER,
+            lease_expires_at=float(beat),
         )
         banked_over_time.append(len(cursor.committed_units))
         if is_complete(cursor, chunks):
@@ -1123,7 +1213,11 @@ def test_the_build_converges_when_the_roster_moves_between_every_beat():
         todo = [c for c in chunks if not cursor.has(c.key)]
         if todo:
             cursor = advance(
-                cursor, todo[0].key, [{"beat": beat}], owner=OWNER, lease_expires_at=0.0
+                cursor,
+                todo[0].key,
+                [_population_row(bucket_idx=beat + 1, n=beat + 1)],
+                owner=OWNER,
+                lease_expires_at=0.0,
             )
         progress.append(len(cursor.committed_units))
 
@@ -1218,9 +1312,18 @@ def test_a_resumed_row_is_the_same_type_as_a_freshly_banked_one():
         generation=1,
     )
     cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
-    fresh = cursor.result(chunks[0])
+    fresh_buckets, fresh_carriers = cursor.folded()
     resumed, _ = _decode(_durable_round_trip(cursor))
-    assert type(resumed.result(chunks[0])[0]) is type(fresh[0])
+    resumed_buckets, resumed_carriers = resumed.folded()
+
+    assert fresh_buckets and fresh_carriers, "precondition: both kinds are present"
+    assert type(resumed_buckets[0]) is type(fresh_buckets[0])
+    assert type(resumed_carriers[0]) is type(fresh_carriers[0])
+    # CAL-P034 raises the bar from "same type" to "same value". With one shared
+    # fold there is no longer a per-unit list whose identity could differ, so
+    # the round trip either reproduces the running total exactly or it is broken.
+    assert _row_dicts(resumed_buckets) == _row_dicts(fresh_buckets)
+    assert _row_dicts(resumed_carriers) == _row_dicts(fresh_carriers)
 
 
 def test_finalization_can_read_columns_off_a_resumed_row():
@@ -1245,9 +1348,28 @@ def test_finalization_can_read_columns_off_a_resumed_row():
 
 
 def test_a_numeric_column_round_trips_as_a_decimal_not_a_float():
-    """``sum_prob`` is NUMERIC. Encoding it through ``float()`` would change the
-    addends the merge sums before the payload ever rounds them, so the encoding
-    carries the exact digits and gives back a ``Decimal``."""
+    """CAL-P033's rule, REWRITTEN by CAL-P034 rather than dropped.
+
+    The rule was "do not let the cursor's encoding change the addends the merge
+    sums". CAL-P033 kept that by storing ``Decimal``; the fold keeps it by
+    converting each addend through ``_as_float`` at exactly the point, and with
+    exactly the granularity, ``merge_futures_rows`` would have — so the addends
+    are the same numbers, computed by the same call, one step earlier.
+
+    What is genuinely reversed: an additive column is a ``float`` in the cursor
+    now, because it is a running total rather than a stored row. So both halves
+    are pinned — the ENCODER still round-trips ``Decimal`` exactly (carriers and
+    census values still rely on it), and the FOLD produces the merge's own
+    addend.
+    """
+    exact = Decimal("0.03071428571428571429")
+
+    # 1. The encoder is unchanged: exact digits in, exact Decimal out.
+    (decoded,) = decode_unit_rows(encode_unit_rows([{"sum_prob": exact}]))
+    assert isinstance(decoded.sum_prob, Decimal)
+    assert decoded.sum_prob == exact
+
+    # 2. The fold produces the merge's addend, not a re-rounded one.
     chunks = _chunks()
     cursor = new_staged_cursor(
         population_version=VERSION,
@@ -1258,9 +1380,9 @@ def test_a_numeric_column_round_trips_as_a_decimal_not_a_float():
     )
     cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
     resumed, _ = _decode(_durable_round_trip(cursor))
-    value = resumed.result(chunks[0])[0].sum_prob
-    assert isinstance(value, Decimal)
-    assert value == Decimal("0.03071428571428571429")
+    (row,) = [r for r in resumed.folded()[0] if r.bucket_idx == 3]
+    assert row.sum_prob == float(exact)
+    assert row.sum_prob == merge_futures_rows([[_population_row()]])[0].sum_prob
 
 
 def test_a_pre_encoding_cursor_is_refused_with_its_own_reason():
@@ -1301,7 +1423,12 @@ def test_a_legacy_cursor_is_never_partially_resumed():
     good = advance(good, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
     raw = _durable_round_trip(good)
     raw["committed_units"] = [chunks[0].key, chunks[1].key]
-    raw["unit_results"][chunks[1].key] = ["(1, 'kalshi')"]
+    # CAL-P034: a legacy unit can no longer sit BESIDE a good one in the same
+    # cursor — there is no per-unit slot to put it in. The equivalent state is a
+    # cursor that carries a valid fold and ALSO a leftover ``unit_results`` map
+    # from the pre-fold shape. It is still refused whole, and still under the
+    # unencoded token, because that is the older and more specific of the two.
+    raw["unit_results"] = {chunks[1].key: ["(1, 'kalshi')"]}
     _, action, reason = decode_staged_cursor_detailed(
         raw,
         expected_population_version=VERSION,
@@ -1330,11 +1457,44 @@ def test_an_undeclared_value_type_is_refused_loudly_not_stringified():
         owner=OWNER,
         generation=1,
     )
+    # CAL-P034 — the column must be a DECLARED one, or the fold's undeclared-
+    # column guard fires first and this test would pass for the wrong reason.
+    # The hazard being pinned is an undeclared VALUE TYPE in a legitimate
+    # column, which only the encoder can catch.
     with pytest.raises(UnencodableValueError):
         advance(
             cursor,
             chunks[0],
-            [SimpleNamespace(bucket_idx=1, weird=Opaque())],
+            [SimpleNamespace(bucket_idx=None, published_questions=Opaque())],
+            owner=OWNER,
+            lease_expires_at=1e12,
+        )
+
+
+def test_an_undeclared_column_is_refused_at_bank_time_not_broadcast():
+    """CAL-P034's own half of the same guard, and the more dangerous half.
+
+    ``merge_futures_rows`` refuses an undeclared column because there is no safe
+    default: summing a census column double-counts it, and BROADCASTING an
+    additive one freezes a single unit's mass onto every row. The fold routes
+    every non-group, non-additive column into the carrier — i.e. it broadcasts —
+    so without this guard at bank time, a column the statement grew would take
+    the silent-broadcast path instead of raising. Same refusal, moved to the
+    last point where a unit's rows are seen whole.
+    """
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    with pytest.raises(UndeclaredColumnError):
+        advance(
+            cursor,
+            chunks[0],
+            [{"bucket_idx": 1, "n": 5, "a_column_nobody_declared": 3}],
             owner=OWNER,
             lease_expires_at=1e12,
         )

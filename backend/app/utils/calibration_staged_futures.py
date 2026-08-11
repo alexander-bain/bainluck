@@ -82,10 +82,13 @@ from app.utils.calibration_phase_ledger import (
 __all__ = [
     "ADDITIVE_COLUMNS",
     "AVG_PROB_COLUMN",
+    "ACCUMULATOR_SCHEMA",
+    "DECLARED_CENSUS_COLUMNS",
     "DEFAULT_CENSUS_COLUMNS",
     "DISTINCT_CENSUS_COLUMNS",
     "GROUP_KEY_COLUMNS",
     "INTEGER_ADDITIVE_COLUMNS",
+    "REPRESENTATIVE_TIE_COLUMN",
     "STAGED_FUTURES_SCHEMA",
     "UNIT_KEY_VM_ID",
     "StagedFuturesCursor",
@@ -95,14 +98,19 @@ __all__ = [
     "bucket_of",
     "can_advance",
     "collect_unit_results",
+    "decode_accumulator",
     "decode_staged_cursor",
     "decode_staged_cursor_detailed",
     "decode_unit_rows",
+    "encode_accumulator",
     "encode_unit_rows",
+    "fold_unit_rows",
     "generation_fingerprint",
     "is_complete",
+    "is_encoded_accumulator",
     "is_encoded_unit_rows",
     "merge_futures_rows",
+    "split_unit_rows",
     "new_staged_cursor",
     "plan_units",
     "retain_planned_units",
@@ -116,6 +124,13 @@ __all__ = [
 UNIT_KEY_VM_ID = "vm_id"
 
 STAGED_FUTURES_SCHEMA = "calibration-staged-futures/v1"
+
+#: The accumulator envelope's own version, carried INSIDE the cursor rather than
+#: bumping :data:`STAGED_FUTURES_SCHEMA`. The cursor contract — task, unit key,
+#: population version, fingerprint — is unchanged by CAL-P034; only what it
+#: retains changed, and a reader that finds an unfolded cursor reports
+#: :data:`REASON_UNFOLDED_UNITS`, which says more than ``schema_mismatch`` would.
+ACCUMULATOR_SCHEMA = "calibration-staged-accumulator/v1"
 
 # --- Why a cursor was not resumed (CAL-P024) ---------------------------------
 #
@@ -140,6 +155,14 @@ REASON_MALFORMED_UNITS = "malformed_units"
 #: one generation after this ships. Folding it into ``malformed_units`` would
 #: make that one expected reset indistinguishable from a real one.
 REASON_UNENCODED_UNITS = "unencoded_units"
+#: CAL-P034. A cursor holding per-unit rows rather than the running fold — i.e.
+#: written by CAL-P033-era code, whose rows were encoded and therefore readable,
+#: just not folded. Distinct from ``unencoded_units`` for the same reason that
+#: one is distinct from ``malformed_units``: it is the ONE expected reset when
+#: this ships, and an expected reset that cannot be told from a real one is not
+#: an observation. If both queues deploy together — they are one stack —
+#: production sees ``unencoded_units`` once and this token never.
+REASON_UNFOLDED_UNITS = "unfolded_units"
 REASON_LEASE_HELD = "lease_held_by_other"
 #: The snapshot read itself threw — an unreadable cursor is a fresh one.
 REASON_READ_FAILED = "read_failed"
@@ -237,6 +260,32 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         "mex_published_markets",
         "published_questions",
     }
+)
+
+#: Always emitted by the statement (Queue 300D Item 1), so unlike the ``cb_*``
+#: rungs it is not conditional and belongs in the default declared set.
+REPRESENTATIVE_TIE_COLUMN = "representative_tie_broken"
+
+#: **The census set the build actually declares, reconstructed here** (CAL-P034).
+#:
+#: :func:`fold_unit_rows` runs the ``UndeclaredColumnError`` guard at BANK time,
+#: because that is where a unit's rows are last seen whole. The declared set
+#: lives in the frozen ``precompute_calibration`` next to the statement that
+#: emits it, and ruling 009 bars importing that module at runtime — so it is
+#: mirrored here and the mirror is PINNED: a characterization test reads the
+#: frozen file as TEXT and fails if its expression and this constant disagree,
+#: in either direction. Before CAL-P034 :data:`DEFAULT_CENSUS_COLUMNS` mirrored
+#: the same statement "as of Queue 300D" with nothing checking it at all.
+#:
+#: The conditional ``cb_*`` half is deliberately absent. ``COVERAGE_CENSUS_ENABLED``
+#: is ``False`` and — this is the part that makes a default safe rather than a
+#: guess — it is hashed BY VALUE into ``_main_input_fingerprint``
+#: (``f"coverage_census={COVERAGE_CENSUS_ENABLED}"``), so flipping it invalidates
+#: every banked unit wholesale. **A cursor therefore only ever sees ONE census
+#: set in its lifetime**, and a caller that turns the switch on must pass
+#: ``census_columns`` explicitly; the pinning test fails until it does.
+DECLARED_CENSUS_COLUMNS: tuple[str, ...] = tuple(DEFAULT_CENSUS_COLUMNS) + (
+    REPRESENTATIVE_TIE_COLUMN,
 )
 
 
@@ -898,6 +947,201 @@ def merge_futures_rows(
 
 
 # =============================================================================
+# The running fold (CAL-P034)
+# =============================================================================
+
+
+def _known_columns(census_columns: Sequence[str]) -> set[str]:
+    return (
+        set(GROUP_KEY_COLUMNS)
+        | set(ADDITIVE_COLUMNS)
+        | set(census_columns)
+        | {AVG_PROB_COLUMN}
+    )
+
+
+def split_unit_rows(
+    rows: Iterable[Any],
+    *,
+    census_columns: Sequence[str] = DECLARED_CENSUS_COLUMNS,
+) -> tuple[list[tuple[tuple, dict[str, Any]]], list[dict[str, Any]]]:
+    """One unit's rows as ``(bucket mass, census carriers)``.
+
+    The split :func:`merge_futures_rows` performs implicitly, hoisted to bank
+    time so the mass can be folded and the rows thrown away.
+
+    **Bucket mass** is ``(group key, additive values)`` — the only part of a row
+    that survives a merge. Everything else about a bucket row is either derived
+    (``avg_prob``, recomputed from the sums) or constant across the chunk (the
+    census passthroughs).
+
+    **Census carriers** are rows the finalizer must see individually, and there
+    are two kinds, matching what the frozen call site already does with them:
+
+    * a genuinely null-keyed row — an empty chunk's carrier, kept whole; and
+    * a synthetic carrier holding the census read off this unit's FIRST bucket
+      row, which is where :func:`merge_futures_rows` takes a chunk's census
+      from today. Marked ``bucket_idx=None`` so the finalizer routes it into
+      ``extra_censuses``, which contributes it exactly once — the same arity as
+      the per-chunk census it replaces.
+
+    A unit with both kinds yields both, because that is what happens today: the
+    finalizer strips null-keyed rows into ``extra_censuses`` and
+    :func:`merge_futures_rows` still takes a census off the first surviving
+    bucket row. Replicated rather than tidied, because "tidier" here would mean
+    a different census total.
+
+    Raises :class:`UndeclaredColumnError` on a column that is not a group key,
+    not additive, not ``avg_prob`` and not declared census — the same refusal
+    :func:`merge_futures_rows` makes, moved to the last point where a unit's
+    rows are seen whole. Without it here the fold would route an undeclared
+    column into the carrier and BROADCAST it, which is precisely the
+    "freezes one chunk's mass onto every row" failure that guard exists for.
+    """
+    known = _known_columns(census_columns)
+    mass: list[tuple[tuple, dict[str, Any]]] = []
+    carriers: list[dict[str, Any]] = []
+    census_taken = False
+    for row in rows or ():
+        mapping = _row_mapping(row)
+        undeclared = sorted(set(mapping.keys()) - known)
+        if undeclared:
+            raise UndeclaredColumnError(
+                "undeclared column(s) in a chunk result: " + ", ".join(undeclared)
+            )
+        if mapping.get("bucket_idx") is None:
+            carriers.append(dict(mapping))
+            continue
+        if not census_taken:
+            carrier = {name: mapping[name] for name in census_columns if name in mapping}
+            carrier["bucket_idx"] = None
+            carriers.append(carrier)
+            census_taken = True
+        mass.append(
+            (
+                tuple(mapping.get(name) for name in GROUP_KEY_COLUMNS),
+                {name: mapping.get(name) for name in ADDITIVE_COLUMNS},
+            )
+        )
+    return mass, carriers
+
+
+def fold_unit_rows(
+    accumulated: Iterable[Any],
+    carried: Iterable[Any],
+    rows: Iterable[Any],
+    *,
+    census_columns: Sequence[str] = DECLARED_CENSUS_COLUMNS,
+) -> tuple[list[SimpleNamespace], list[SimpleNamespace]]:
+    """Add one unit to the running total. Returns ``(buckets, carriers)``.
+
+    **This is the change CAL-P034 exists for.** The cursor used to retain every
+    banked row so finalization could fold them all at the end. Measured on the
+    live cursor at 91/128 units: 44,272 retained rows carrying **1,586** distinct
+    group keys — 27.9x redundancy, rising with every unit because rows grow
+    linearly while the group space saturates (469 groups at one unit, 1,586 at
+    ninety-one). At 128 units it is ~62,300 rows for ~1,650 groups.
+
+    Retaining the fold instead makes the cursor **bounded by the group space**
+    rather than by the number of units — and the cursor is re-serialised in FULL
+    after every unit (per-unit ``save_staged_cursor``, which is what caps a
+    SIGKILL's cost at one unit), so the old shape spent O(units²) bytes in
+    ``json.dumps``: ~960 MB across a full walk, against ~51 MB for this one.
+
+    The arithmetic is :func:`merge_futures_rows`' own, deliberately identical:
+    integers summed as integers, the two doubles through :func:`_as_float`.
+    Reusing that function directly is not possible — it needs the declared
+    census set to broadcast, and broadcasting a running total onto its own rows
+    every unit would re-observe it as a fresh census each time.
+
+    **One declared difference, and it is the existing one.** Folding happens in
+    COMMIT order; the old shape summed in PLAN order at the end. For ``n`` and
+    ``winners`` that is exact either way. For ``sum_prob`` and ``sum_sq_err`` it
+    is a reassociation of the same addends — the difference this module's own
+    merge docstring already declines to promise away, bounded well below the
+    payload's 4-decimal rounding.
+    """
+    acc: dict[tuple, dict[str, Any]] = {}
+    order: list[tuple] = []
+    for row in accumulated or ():
+        mapping = _row_mapping(row)
+        key = tuple(mapping.get(name) for name in GROUP_KEY_COLUMNS)
+        if key not in acc:
+            acc[key] = {name: mapping.get(name) for name in ADDITIVE_COLUMNS}
+            order.append(key)
+
+    mass, new_carriers = split_unit_rows(rows, census_columns=census_columns)
+    for key, values in mass:
+        entry = acc.get(key)
+        if entry is None:
+            entry = {name: 0 for name in ADDITIVE_COLUMNS}
+            acc[key] = entry
+            order.append(key)
+        for name in ADDITIVE_COLUMNS:
+            value = values.get(name)
+            if name in INTEGER_ADDITIVE_COLUMNS:
+                entry[name] = _as_int(entry[name]) + _as_int(value)
+            else:
+                entry[name] = _as_float(entry[name]) + _as_float(value)
+
+    buckets = [
+        SimpleNamespace(
+            **dict(zip(GROUP_KEY_COLUMNS, key)),
+            **{
+                name: (
+                    _as_int(acc[key][name])
+                    if name in INTEGER_ADDITIVE_COLUMNS
+                    else _as_float(acc[key][name])
+                )
+                for name in ADDITIVE_COLUMNS
+            },
+        )
+        for key in order
+    ]
+    carriers = [
+        row if isinstance(row, SimpleNamespace) else SimpleNamespace(**_row_mapping(row))
+        for row in list(carried or ())
+    ] + [SimpleNamespace(**item) for item in new_carriers]
+    return buckets, carriers
+
+
+def encode_accumulator(
+    buckets: Iterable[Any], carriers: Iterable[Any]
+) -> dict[str, Any]:
+    """The running fold, JSON-safe, through CAL-P033's envelope.
+
+    Reusing :func:`encode_unit_rows` rather than inventing a second encoding is
+    the whole of CAL-P033's lesson applied one level up: the bug it fixed was
+    two representations of a banked row, not a wrong one.
+    """
+    return {
+        "schema": ACCUMULATOR_SCHEMA,
+        "buckets": encode_unit_rows(buckets),
+        "carriers": encode_unit_rows(carriers),
+    }
+
+
+def is_encoded_accumulator(stored: Any) -> bool:
+    """Whether ``stored`` is an :func:`encode_accumulator` envelope."""
+    return (
+        isinstance(stored, Mapping)
+        and stored.get("schema") == ACCUMULATOR_SCHEMA
+        and is_encoded_unit_rows(stored.get("buckets"))
+        and is_encoded_unit_rows(stored.get("carriers"))
+    )
+
+
+def decode_accumulator(stored: Any) -> tuple[list[SimpleNamespace], list[SimpleNamespace]]:
+    """An accumulator envelope back to ``(buckets, carriers)``."""
+    if not is_encoded_accumulator(stored):
+        return [], []
+    return (
+        decode_unit_rows(stored.get("buckets")),
+        decode_unit_rows(stored.get("carriers")),
+    )
+
+
+# =============================================================================
 # The cursor
 # =============================================================================
 
@@ -928,7 +1172,13 @@ class StagedFuturesCursor:
     owner: str = ""
     lease_expires_at: float = 0.0
     committed_units: tuple[str, ...] = ()
-    unit_results: dict[str, Any] = field(default_factory=dict)
+    #: **The running fold, not the banked rows** (CAL-P034). An
+    #: :func:`encode_accumulator` envelope, or ``None`` when nothing is banked.
+    #: Bounded by the group space (~1,650 rows) instead of by units (~62,300 at
+    #: 128), because a bucket is a price band and every unit re-states the same
+    #: bands. The rows themselves are gone by design: their only consumer was a
+    #: merge that immediately summed them.
+    accumulator: Optional[dict[str, Any]] = None
     terminal: str = TERMINAL_PARTIAL
     #: unit key -> the :attr:`UnitChunk.member_digest` that unit was BANKED
     #: against (CAL-P028). Compared against the current plan by
@@ -944,20 +1194,19 @@ class StagedFuturesCursor:
     roster_drift_units: int = 0
 
     def has(self, key: Any) -> bool:
-        name = unit_key(key)
-        return name in self.committed_units and name in self.unit_results
+        """Whether this unit is banked.
 
-    def result(self, key: Any) -> Optional[list]:
-        name = unit_key(key)
-        if not self.has(name):
-            return None
-        stored = self.unit_results.get(name)
-        # CAL-P033: units are held ENCODED, whether banked this beat or resumed
-        # from a durable read, so this decode is the only way rows come out and
-        # both paths get identical objects. A legacy list-of-``repr`` unit is
-        # refused upstream by :func:`decode_staged_cursor_detailed`; reaching
-        # here with one yields no rows rather than a plausible wrong answer.
-        return decode_unit_rows(stored) if is_encoded_unit_rows(stored) else None
+        CAL-P034: a unit's rows no longer exist separately — they are summed
+        into :attr:`accumulator` — so the key IS the evidence. The old
+        "committed AND carries rows" check has moved to
+        :func:`decode_staged_cursor_detailed`, which refuses a cursor claiming
+        committed units with no accumulator behind them.
+        """
+        return unit_key(key) in self.committed_units
+
+    def folded(self) -> tuple[list[SimpleNamespace], list[SimpleNamespace]]:
+        """The running fold as ``(buckets, carriers)``, decoded."""
+        return decode_accumulator(self.accumulator)
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -971,7 +1220,7 @@ class StagedFuturesCursor:
             "owner": self.owner,
             "lease_expires_at": self.lease_expires_at,
             "committed_units": list(self.committed_units),
-            "unit_results": self.unit_results,
+            "accumulator": self.accumulator,
             "terminal": self.terminal,
             "unit_digests": dict(self.unit_digests),
             "roster_drift_units": self.roster_drift_units,
@@ -1138,33 +1387,41 @@ def decode_staged_cursor_detailed(
         )
 
     committed = raw.get("committed_units")
-    results = raw.get("unit_results")
-    if not isinstance(committed, list) or not isinstance(results, dict):
+    if not isinstance(committed, list):
         return blank, INVALIDATE, REASON_MALFORMED_UNITS
 
-    # A unit is resumable only if it is BOTH declared committed and carries a
-    # stored row list. A unit marked done with no rows is a bookkeeping error,
-    # and treating it as done would silently drop its buckets from the merge —
-    # a payload that is quietly missing a slice of the population is worse than
-    # one that has to be recomputed.
-    # CAL-P033. A pre-encoding cursor's units are ``list[str]`` — the driver
-    # ``Row``s stringified by ``canonical_json``'s ``default=str``. That is a
-    # list, so the old filter here vouched for them, and the build carried them
-    # to a finalization that cannot read a column off a ``str``. Refuse the
-    # whole cursor with its own reason: those rows are not recoverable (the
-    # ``repr`` carries no column names), and re-walking is the only honest
-    # answer. It costs the banked units ONCE, and they were worth nothing —
-    # the build they were feeding could not have completed.
-    if any(
-        isinstance(name, str) and name in results and not is_encoded_unit_rows(results[name])
-        for name in committed
-    ):
-        return blank, INVALIDATE, REASON_UNENCODED_UNITS
-    resumable = tuple(
-        name
-        for name in committed
-        if isinstance(name, str) and is_encoded_unit_rows(results.get(name))
-    )
+    # CAL-P034. A cursor from before the fold holds ``unit_results`` — either
+    # CAL-P033's per-unit envelopes or, older still, the ``list[str]`` reprs
+    # CAL-P033 refuses. Both are refused HERE, whole, ahead of the accumulator
+    # check, so the operator sees which shape they had rather than a generic
+    # "malformed". Folding them on read was considered and rejected: it would
+    # mean holding a third accepted representation (CAL-P033's lesson was that
+    # two is already one too many) and the fold-on-resume would materialise
+    # every banked row at once — the very peak this queue removes.
+    if raw.get("unit_results"):
+        legacy = raw.get("unit_results")
+        unencoded = isinstance(legacy, dict) and any(
+            not is_encoded_unit_rows(value) for value in legacy.values()
+        )
+        return (
+            blank,
+            INVALIDATE,
+            REASON_UNENCODED_UNITS if unencoded else REASON_UNFOLDED_UNITS,
+        )
+
+    stored_accumulator = raw.get("accumulator")
+    if committed and not is_encoded_accumulator(stored_accumulator):
+        # Units claimed with no fold behind them. The pre-CAL-P034 filter made
+        # the same refusal per unit ("marked done with no rows is a bookkeeping
+        # error"); with one shared accumulator it is necessarily all-or-nothing.
+        return blank, INVALIDATE, REASON_MALFORMED_UNITS
+
+    # CAL-P034: the per-unit resumability filter that stood here is gone with
+    # the per-unit rows. Its job — never treat a unit as done when its mass is
+    # not actually carried — is now done by the accumulator check above, which
+    # is all-or-nothing because the fold is shared. A name that is not a string
+    # is still no kind of unit key.
+    resumable = tuple(name for name in committed if isinstance(name, str))
     stored_digests = raw.get("unit_digests")
     if not isinstance(stored_digests, dict):
         # Absent (a pre-CAL-P028 cursor) or malformed. Both mean "we cannot say
@@ -1180,10 +1437,11 @@ def decode_staged_cursor_detailed(
             owner=owner,
             lease_expires_at=lease_expires_at,
             committed_units=resumable,
-            # The envelope is carried through verbatim — ``list()`` here would
-            # turn the encoded mapping into its KEY list, which is the same
-            # class of silent reshaping this whole change exists to remove.
-            unit_results={name: results[name] for name in resumable},
+            # Carried through verbatim. Re-encoding it here would decode and
+            # re-encode ~1,650 rows on every beat's first read for no gain, and
+            # a reshaping step is exactly what this module keeps being bitten
+            # by.
+            accumulator=stored_accumulator if resumable else None,
             terminal=str(raw.get("terminal") or TERMINAL_PARTIAL),
             # Only for units we are actually resuming. A digest for a unit whose
             # rows did not survive the resumability filter describes work this
@@ -1241,11 +1499,33 @@ def retain_planned_units(
     }
     kept = tuple(name for name in cursor.committed_units if name in planned)
     dropped = tuple(name for name in cursor.committed_units if name not in planned)
+    if dropped:
+        # CAL-P034 — FAIL CLOSED. A fold cannot be inverted: the dropped unit's
+        # mass is already summed into the accumulator and there is no way to
+        # subtract it, so keeping the accumulator would publish rows for
+        # questions the plan no longer asks about — ``LATE_ARRIVAL_NOT_
+        # INVALIDATED``, the exact failure this function exists to prevent.
+        # Everything goes, and the walk restarts.
+        #
+        # This does not fire today and is not expected to: CAL-P028 made the
+        # unit key the SLOT ``(buckets, index)``, every slot is planned every
+        # beat, and CAL-P033 settled from source that nothing is ever dropped.
+        # It is written because "cannot happen today" and "is safe if it
+        # happens" are different claims, and only the second one is checkable.
+        return (
+            replace(
+                cursor,
+                committed_units=(),
+                accumulator=None,
+                unit_digests={},
+                roster_drift_units=drift,
+            ),
+            dropped,
+        )
     return (
         replace(
             cursor,
             committed_units=kept,
-            unit_results={name: cursor.unit_results[name] for name in kept},
             unit_digests={name: digests[name] for name in kept if name in digests},
             roster_drift_units=drift,
         ),
@@ -1300,6 +1580,7 @@ def advance(
     *,
     owner: str,
     lease_expires_at: float,
+    census_columns: Sequence[str] = DECLARED_CENSUS_COLUMNS,
 ) -> StagedFuturesCursor:
     """Bank one unit's rows, returning a NEW cursor.
 
@@ -1323,15 +1604,22 @@ def advance(
     key = unit_key(chunk_key)
     if key in cursor.committed_units:
         return replace(cursor, owner=owner, lease_expires_at=lease_expires_at)
+    # CAL-P034: fold, do not bank. The idempotence guard above is what makes
+    # this safe — a fold cannot be un-added, so banking the same unit twice
+    # would double its mass silently. That guard predates this change and was
+    # merely a tidiness rule before; it is load-bearing now.
+    accumulated, carried = cursor.folded()
+    buckets, carriers = fold_unit_rows(
+        accumulated, carried, rows, census_columns=census_columns
+    )
     return replace(
         cursor,
         owner=owner,
         lease_expires_at=lease_expires_at,
         committed_units=tuple(list(cursor.committed_units) + [key]),
-        # CAL-P033: encode on the way IN. Banking the driver's ``Row`` objects
-        # is what made a unit's representation depend on whether the process
-        # that computed it was still alive — see :func:`encode_unit_rows`.
-        unit_results={**cursor.unit_results, key: encode_unit_rows(rows)},
+        # CAL-P033: encode on the way IN, so a unit's representation never
+        # depends on whether the process that computed it is still alive.
+        accumulator=encode_accumulator(buckets, carriers),
     )
 
 
@@ -1356,19 +1644,33 @@ def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
     second is what catches a retention step that was skipped.
     """
     planned = {unit_key(chunk) for chunk in chunks}
-    committed = {name for name in cursor.committed_units if name in cursor.unit_results}
-    return planned == committed
+    return planned == set(cursor.committed_units)
 
 
 def collect_unit_results(
     cursor: StagedFuturesCursor, chunks: Sequence[Any]
 ) -> list[list[Any]]:
-    """Banked rows, in plan order, ready for :func:`merge_futures_rows`.
+    """The running fold, shaped as the chunk list the finalizer expects.
 
-    Plan order rather than commit order so the merge sees the same sequence
-    however the beats interleaved. A unit with nothing banked contributes an
-    empty list — which is also what a chunk that legitimately published no
-    buckets looks like, so callers must gate on :func:`is_complete` first rather
-    than inferring completeness from this.
+    **The signature and the consumer are unchanged on purpose.** The only call
+    site is in ``precompute_calibration``, which ruling 009 bars this lane from
+    editing, and it does its own census/bucket split on whatever comes back:
+    null-keyed rows go to ``extra_censuses``, the rest to
+    :func:`merge_futures_rows`. So this returns ONE chunk carrying the folded
+    bucket rows plus every retained carrier, and the finalizer separates them
+    exactly as it always has.
+
+    ``chunks`` is now only a completeness signal — the plan order it used to
+    impose is already baked into the fold. It stays in the signature because the
+    caller passes it and this lane cannot change that call.
+
+    **Re-merging an already-folded set must be a no-op**, and that is the
+    property this whole change rests on: each group appears once, so the sums
+    pass through; ``avg_prob`` is recomputed from those sums either way; the
+    census arrives entirely through the carriers, so the folded rows contribute
+    no census observation of their own and nothing is double-counted; and the
+    output is re-sorted by the same key. Asserted directly by
+    ``test_refolding_a_folded_set_changes_nothing``, not assumed.
     """
-    return [list(cursor.result(chunk) or []) for chunk in chunks]
+    buckets, carriers = cursor.folded()
+    return [list(buckets) + list(carriers)]
