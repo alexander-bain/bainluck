@@ -48,6 +48,27 @@ if os.getenv("DYNO"):
 logger = logging.getLogger(__name__)
 
 
+def _is_staged_futures_incomplete(exc: BaseException) -> bool:
+    """Is this the calibration build's "banked progress, nothing to publish" signal?
+
+    CAL-P040 (codex C283). Imported lazily and inside a guard for two reasons,
+    both of which matter more than the tidiness of a module-scope import:
+
+    * ``_tracked_run`` is the boundary for ~125 tasks. Only one of them can ever
+      raise this type, so the cost belongs on the exception path, not on every
+      task's import.
+    * This runs while an exception is already in flight. An import that raised
+      here would replace the real terminal with an ``ImportError`` — the failure
+      mode is *losing the thing we came to record*. Returning ``False`` degrades
+      to the previous behaviour (record a failure), which is wrong but honest.
+    """
+    try:
+        from app.tasks.calibration_main_build import StagedFuturesIncomplete
+    except Exception:  # noqa: BLE001 — see docstring: never mask the live exception
+        return False
+    return isinstance(exc, StagedFuturesIncomplete)
+
+
 def _tracked_run(task_name: str, async_fn):
     """Run an async task and record its HONEST outcome in Redis.
 
@@ -76,10 +97,18 @@ def _tracked_run(task_name: str, async_fn):
     means "no live games" or "nothing to backfill" in most of this codebase and
     reading it as a terminal would swap one false GREEN for thirty false REDs.
 
-    Thrown exceptions keep their existing behaviour. ``BaseException`` is now
-    caught rather than ``Exception`` so a cancellation or a warm-shutdown kill
-    records a terminal before propagating — an in-flight beat killed by a
-    deploy used to vanish from both the ledger and the counters (r346).
+    Thrown exceptions keep their existing behaviour, with ONE named exception
+    (CAL-P040, codex C283): :class:`~app.tasks.calibration_main_build.StagedFuturesIncomplete`
+    is the calibration build's designed "units banked, nothing published" signal,
+    and it was being counted as a thrown failure like anything else. See the
+    handler below — that single miscount is why ``incompletes_24h`` sat at 0
+    against ``consecutive_failures`` 201 while the clean partial path existed and
+    worked.
+
+    ``BaseException`` is now caught rather than ``Exception`` so a cancellation
+    or a warm-shutdown kill records a terminal before propagating — an in-flight
+    beat killed by a deploy used to vanish from both the ledger and the counters
+    (r346).
     """
     from app.tasks.redis_state import (
         record_task_incomplete,
@@ -89,7 +118,7 @@ def _tracked_run(task_name: str, async_fn):
         record_task_failure,
         touch_worker_liveness,
     )
-    from app.utils.task_verdict import COMPLETE, FAILED, UNKNOWN, verdict_for
+    from app.utils.task_verdict import COMPLETE, FAILED, PARTIAL, UNKNOWN, verdict_for
 
     # #1280 Item 3: every task run refreshes this worker generation's liveness so
     # the phase-heartbeat watchdog can tell a frozen marker owned by a live
@@ -149,6 +178,59 @@ def _tracked_run(task_name: str, async_fn):
         return result
     except BaseException as exc:  # noqa: BLE001 — cancellation must leave a terminal
         duration_ms = (_time.monotonic() - start) * 1000
+        if _is_staged_futures_incomplete(exc):
+            # CAL-P040, from codex C283's BLOCK on CAL-P038.
+            #
+            # CAL-P038 made the build STOP at a unit boundary and raise this
+            # instead of letting Postgres cancel its last unit — its fix works.
+            # But the type is raised, and every raise reached the generic handler
+            # below, so the honest partial was recorded as a thrown failure at the
+            # one boundary CAL-P038's unit tests stopped below. Production said so
+            # plainly and for a long time: ``incompletes_24h`` **0** against
+            # ``consecutive_failures`` **201**, with a ledger whose own terminal
+            # already read ``cancelled``. Two boundaries, one event, two verdicts.
+            #
+            # This is not "an error we tolerate". ``StagedFuturesIncomplete``
+            # documents itself as the one way this build stops that is neither a
+            # bug nor a resource problem, and ``PhaseRunner.classify_failure``
+            # already maps it to ``cancelled`` rather than ``failed`` so that "a
+            # working build does not page anybody RED for doing exactly what it
+            # was designed to do". Recording a failure here defeated that in the
+            # only place an operator actually looks.
+            #
+            # Consequences worth stating, because they are visible in production
+            # the moment this deploys:
+            #   * ``incompletes_24h`` starts moving.
+            #   * ``consecutive_failures`` FREEZES rather than climbing —
+            #     ``record_task_incomplete`` deliberately leaves it alone. That is
+            #     the counter no longer being lied to, NOT the build recovering.
+            #     Nothing here makes a beat converge.
+            #   * ``last_verdict`` becomes ``partial``, which keeps the task out
+            #     of GREEN exactly as before. An incomplete build is still not a
+            #     healthy one.
+            summary = {
+                "status": "incomplete",
+                # ``cancelled`` is not decoration: it is in
+                # ``task_verdict._TERMINAL_PARTIAL``, so this summary classifies
+                # as PARTIAL if it is ever fed back through the contract. The two
+                # paths cannot drift into disagreeing about the same event.
+                "terminal": "cancelled",
+                "reason": str(exc) or type(exc).__name__,
+            }
+            record_task_incomplete(
+                task_name, duration_ms,
+                verdict=PARTIAL, verdict_reason=type(exc).__name__,
+                result_summary=summary,
+            )
+            # RETURN rather than re-raise, deliberately, and this is the one
+            # judgement call in the change. Re-raising would move the counter
+            # correctly and then mark the Celery task FAILURE and emit a Sentry
+            # event for behaviour the design calls correct — reintroducing the
+            # false RED one layer up from the one being removed. Nothing retries
+            # this task and nothing reads its Celery state, so returning costs no
+            # signal; the counters above carry the whole truth, and the ledger
+            # (already written by the build before it raised) carries the detail.
+            return summary
         record_task_failure(
             task_name, duration_ms,
             str(exc) or type(exc).__name__,

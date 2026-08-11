@@ -145,6 +145,12 @@ LEGITIMATE_ANALYSIS_QUERIES = [
     "SELECT count(*) FILTER (WHERE status = 'live') FROM events",
     "SELECT string_agg(DISTINCT name, ', ') FROM teams",
     "SELECT calls, mean_exec_time FROM pg_stat_statements WHERE query LIKE '%events%'",
+    # CAL-P037: the two shapes this rail refused for months. Both are ordinary
+    # SQL and neither is a call. The CTEs are wrapped in `SELECT * FROM (...)`
+    # because a leading WITH is separately and deliberately refused here.
+    "SELECT count(*) FROM events WHERE NOT (status = 'closed' AND completed_at IS NULL)",
+    "SELECT * FROM (WITH r AS MATERIALIZED (SELECT id FROM events) SELECT count(*) FROM r) q",
+    "SELECT * FROM (WITH r AS NOT MATERIALIZED (SELECT id FROM events) SELECT count(*) FROM r) q",
 ]
 
 
@@ -173,6 +179,87 @@ def test_plan_only_is_deliberately_not_allowlisted():
     definition side-effect free, and volatile ones are never pre-evaluated.
     """
     assert assert_read_only("SELECT some_function_nobody_predicted(1)")
+
+
+# ---------------------------------------------------------------------------
+# CAL-P037: two keywords the `name(` scan read as function calls.
+#
+# The refusal message named a function that cannot exist ("`not()` is not on the
+# allowlist"), which is why three separate calibration windows spent time on it
+# before anyone looked at the scan. The two fixes are deliberately DIFFERENT
+# shapes, and the difference is the point:
+#
+#   NOT          is a RESERVED word — it can never be a function name, so it is
+#                simply added to the syntactic-token set next to `and`/`or`,
+#                where its absence was a plain omission.
+#   MATERIALIZED is UNRESERVED — `materialized(...)` is a legal user-defined
+#                function, so allowlisting the NAME would admit a real call.
+#                Only the CTE-modifier SHAPE (`AS [NOT] MATERIALIZED (`) is
+#                neutralised.
+# ---------------------------------------------------------------------------
+
+
+def test_not_is_accepted_as_a_syntactic_token_rather_than_a_function():
+    """`not` is cleared by the ALLOWLIST, not by the scan.
+
+    `called_function_names` is deliberately dumb and still reports `not` — the
+    scan's job is to over-report, and the policy's job is to decide. Asserting
+    the scan returns nothing here would be asserting the wrong fix, and would go
+    green if someone made the scan clever enough to hide a real call.
+    """
+    sql = "SELECT 1 FROM t WHERE NOT (a AND b)"
+    assert "not" in called_function_names(sql)
+    assert_analyze_function_policy(sql)
+
+
+def test_the_cte_materialization_hint_is_not_a_function_call():
+    """`materialized` IS cleared by the scan, because it must not be allowlisted.
+
+    The opposite treatment to `not` above, for the reason in the section header:
+    the token has to disappear before the allowlist sees it, so that the name
+    itself is never callable.
+    """
+    for hint in ("MATERIALIZED", "NOT MATERIALIZED"):
+        sql = f"SELECT * FROM (WITH r AS {hint} (SELECT 1 AS a) SELECT count(a) FROM r) q"
+        assert "materialized" not in called_function_names(sql), hint
+        assert "count" in called_function_names(sql), hint
+        assert_analyze_function_policy(sql)
+
+
+def test_but_a_bare_materialized_call_is_still_refused():
+    """The reason `materialized` is handled by shape and not by name.
+
+    MATERIALIZED is unreserved in PostgreSQL, so this really can be a call to a
+    user-defined function. Anchoring the exemption to the preceding `AS` keeps
+    the syntactic-token set's stated invariant — reserved words and type names
+    only — literally true.
+    """
+    for sql in (
+        "SELECT materialized(1)",
+        "SELECT x FROM t WHERE materialized (1) > 0",
+        # `AS` present but not as a CTE modifier: still a call, still refused.
+        "SELECT materialized(1) AS m FROM t",
+    ):
+        with pytest.raises(SqlGuardError, match="materialized"):
+            assert_analyze_function_policy(sql)
+
+
+def test_the_exemptions_did_not_widen_the_execution_boundary():
+    """The ceiling on Item B: clearing two false refusals admits nothing else.
+
+    Asserted against the exact bypass shapes the policy exists to stop, each
+    dressed in the new exemptions so a too-greedy rewrite of either would show
+    up here rather than in production.
+    """
+    for sql in (
+        "SELECT pg_cancel_backend(1) WHERE NOT (a)",
+        "SELECT * FROM (WITH r AS MATERIALIZED (SELECT pg_sleep(10)) SELECT 1 FROM r) q",
+        'SELECT * FROM (WITH r AS MATERIALIZED (SELECT "pg_cancel_backend"(1)) SELECT 1 FROM r) q',
+        "SELECT * FROM (WITH r AS MATERIALIZED (SELECT pg_catalog.pg_cancel_backend(1)) SELECT 1 FROM r) q",
+        "SELECT nosuchfn(1) WHERE NOT (a)",
+    ):
+        with pytest.raises(SqlGuardError):
+            assert_analyze_function_policy(sql)
 
 
 # ---------------------------------------------------------------------------

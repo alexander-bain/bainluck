@@ -183,14 +183,26 @@ _OPERATIONAL_RE = re.compile(
 # Omitting one costs a FALSE REFUSAL naming the token, which is safe and a one-line
 # fix; admitting a real function name here would be the dangerous direction, so this
 # set contains only reserved words and type names.
+#
+# CAL-P037 added `not`, which was a plain omission sitting next to `and` and `or`:
+# `WHERE NOT (a AND b)` was refused as "`not()` is not on the allowlist", a message
+# naming a function that does not exist and cannot exist — NOT is a RESERVED word in
+# PostgreSQL and therefore cannot be a function or type name, so it meets this set's
+# criterion exactly and admits nothing.
+#
+# `materialized` is deliberately NOT here despite being the other token this rail
+# kept refusing. It is an UNRESERVED keyword, so `materialized(...)` is a legal
+# function name and putting it in this set would admit a real call. Its only
+# non-call position is the CTE modifier, and that SHAPE is handled in
+# `called_function_names` instead — narrow enough to keep this set's invariant true.
 _SYNTACTIC_TOKENS = frozenset(
     {
         "all", "and", "any", "as", "asc", "at", "between", "by", "case", "cast",
         "cross", "desc", "distinct", "else", "end", "escape", "except", "exists",
         "filter", "first", "for", "from", "full", "group", "grouping", "having",
         "ilike", "in", "inner", "intersect", "interval", "into", "is", "join",
-        "last", "lateral", "left", "like", "limit", "nulls", "offset", "on", "only",
-        "or", "order", "outer", "over", "partition", "range", "right", "rows",
+        "last", "lateral", "left", "like", "limit", "not", "nulls", "offset", "on",
+        "only", "or", "order", "outer", "over", "partition", "range", "right", "rows",
         "select", "similar", "some", "then", "union", "using", "values", "when",
         "where", "window", "with", "within",
         # Type names, which appear before `(` in casts and length specifiers.
@@ -267,6 +279,17 @@ _QUOTED_IDENT_CALL_RE = re.compile(r'"[^"]*"\s*\(')
 _QUALIFIED_CALL_RE = re.compile(r"([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\(")
 _CALL_RE = re.compile(r"([A-Za-z_]\w*)\s*\(")
 
+# The CTE materialization modifier: `WITH x AS MATERIALIZED (SELECT ...)` and its
+# `AS NOT MATERIALIZED` twin. This is the ONLY position in which `MATERIALIZED`
+# precedes `(` without being a call, so the keyword is neutralised here — anchored
+# to a preceding `AS` — rather than allowlisted as a callable name. `MATERIALIZED`
+# is unreserved in PostgreSQL, so a bare `materialized(...)` really can be a
+# user-defined function and must stay refused; matching the shape keeps that true
+# while clearing the false refusal. `AS` is left in place so nothing else shifts.
+_CTE_MATERIALIZED_RE = re.compile(
+    r"\bas\s+(?:not\s+)?materialized\s*(?=\()", re.IGNORECASE
+)
+
 
 def strip_sql_noise(sql: str) -> str:
     """Blank out string literals and comments so a `name(` scan sees only code.
@@ -288,8 +311,16 @@ def strip_sql_noise(sql: str) -> str:
 
 
 def called_function_names(sql: str) -> set[str]:
-    """Every lowercased identifier used as a call in `sql`, literals/comments removed."""
-    return {name.lower() for name in _CALL_RE.findall(strip_sql_noise(sql))}
+    """Every lowercased identifier used as a call in `sql`, literals/comments removed.
+
+    The CTE materialization modifier is dropped first: `AS MATERIALIZED (` is a
+    planner hint, not a call, and it is the one place the keyword precedes `(`
+    legitimately. Everything else keeps the deliberately dumb `name(` scan —
+    over-reporting a name costs a refusal that says which token, under-reporting
+    one is how a call gets executed unseen.
+    """
+    text = _CTE_MATERIALIZED_RE.sub("as ", strip_sql_noise(sql))
+    return {name.lower() for name in _CALL_RE.findall(text)}
 
 
 def assert_no_operational_functions(sql: str) -> None:

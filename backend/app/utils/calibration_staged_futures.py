@@ -599,13 +599,36 @@ class UnitChunk:
     #: Sorted ``(market_id, source, vm_id, is_grouped)`` roster tuples for THIS
     #: unit's markets — the same tuple :func:`generation_fingerprint` digests
     #: globally, scoped to the unit. Defaulted so a hand-built chunk in a test
-    #: stays valid; the planner always fills it.
+    #: stays valid.
+    #:
+    #: **CAL-P037: the planner no longer fills this.** It is populated only
+    #: transiently, inside :func:`plan_units`, long enough to compute
+    #: :attr:`stored_member_digest`; the chunk that escapes the planner carries
+    #: the digest and an empty tuple. See that attribute for the measurement.
     members: tuple[str, ...] = ()
     #: The partition size this chunk was cut with. Part of :attr:`key` so a
     #: cursor banked under one bucket count can never be resumed under another —
     #: the one cross-partition confusion the old membership digest ruled out for
     #: free and a positional key would reintroduce silently.
     buckets: int = 0
+    #: The value of :attr:`member_digest`, computed at plan time while
+    #: :attr:`members` was still in hand — so that the members need not be kept.
+    #:
+    #: **CAL-P037, and the reason is a measurement.** ``members`` holds one
+    #: string per ROSTER ROW: ~669,383 of them across the partition, **57.9 MB,
+    #: retained for the whole ~23-minute beat** — including the moment
+    #: ``rss:at:read:futures_unit`` samples 466 MB on a 512 MB worker. Its only
+    #: consumer in the entire application is :attr:`member_digest`, which turns
+    #: it into **sixteen characters**. Holding 57.9 MB all beat to feed one hash
+    #: is the largest remaining term this lane can reach without touching the
+    #: ruling-009-frozen build module.
+    #:
+    #: **Precedence, stated rather than implied:** when this is non-empty it IS
+    #: the digest and ``members`` is not consulted; when it is empty the digest
+    #: is computed from ``members`` as before. The empty case exists for chunks
+    #: built by hand in tests, which is why ``members`` remains an accepted
+    #: field rather than being deleted outright.
+    stored_member_digest: str = ""
 
     @property
     def key(self) -> str:
@@ -655,6 +678,27 @@ class UnitChunk:
         Its job now is to answer "how much has the roster moved under the units
         we are holding", which is the honest version of the question CAL-P016
         was trying to answer by discarding them.
+
+        **CAL-P037: returns :attr:`stored_member_digest` when the planner filled
+        it**, which is always the case for a chunk that came out of
+        :func:`plan_units`. The value is unchanged either way — the planner
+        obtains it by calling this very property on a chunk that still holds its
+        members, so the two paths are the same code and not two derivations of
+        one fact. The stored value is load-bearing beyond this beat: the cursor
+        keeps it per banked unit in ``unit_digests`` and :func:`roster_drift`
+        compares against it, so a digest that MOVED would report all 128 banked
+        units as drifted.
+        """
+        if self.stored_member_digest:
+            return self.stored_member_digest
+        return self._digest_of_members()
+
+    def _digest_of_members(self) -> str:
+        """:attr:`member_digest` computed from :attr:`members`, ignoring the store.
+
+        Separated only so :func:`plan_units` can compute the digest and then
+        discard the members without the property short-circuiting on a value it
+        is in the middle of producing.
         """
         parts = (
             [f"vm:{vm}" for vm in self.vm_ids]
@@ -803,8 +847,13 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
         )
 
     chunks: list[UnitChunk] = []
+    # ``sorted`` materialises the key list, so popping inside the loop is safe.
+    # CAL-P037: pop rather than read. A bucket's members are dead the moment its
+    # digest exists, and holding all 128 buckets' sets until the function
+    # returns keeps the whole 57.9 MB alive across the chunk-building pass for
+    # no reason. Popping frees each bucket as it is consumed.
     for index in sorted(by_bucket_vm):
-        members = by_bucket_members[index]
+        members = by_bucket_members.pop(index)
         # The dedupe is per ``vm_id`` and deliberately NOT global. The roster
         # carries a row per (market, source), and ``vm_id`` is derived with
         # source-scoped group/event sizes, so one ``market_id`` can legitimately
@@ -818,14 +867,24 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
         # ``sorted`` on each set reproduces the old ordering: the previous code
         # appended ``vm_id``s in ``sorted(by_vm)`` order and sorted both
         # ``market_ids`` and ``members`` on the way into the chunk.
+        #
+        # CAL-P037: the chunk is built WITH its members, its digest is taken,
+        # and the members are then dropped. The digest is therefore produced by
+        # the same property every other caller reads, on a chunk holding the
+        # same tuple the old planner returned — so byte-identity is structural
+        # here rather than a claim a test has to be trusted to police (one
+        # polices it anyway, against the pre-CAL-P036 accumulator).
+        complete = UnitChunk(
+            index=index,
+            vm_ids=tuple(sorted(by_bucket_vm.pop(index))),
+            market_ids=tuple(sorted(market for _vm, market in pairs)),
+            members=tuple(sorted(members)),
+            buckets=buckets,
+        )
+        # ``complete`` has no stored digest, so this is the members-based path
+        # of the public property — not a second derivation reached around it.
         chunks.append(
-            UnitChunk(
-                index=index,
-                vm_ids=tuple(sorted(by_bucket_vm[index])),
-                market_ids=tuple(sorted(market for _vm, market in pairs)),
-                members=tuple(sorted(members)),
-                buckets=buckets,
-            )
+            replace(complete, members=(), stored_member_digest=complete.member_digest)
         )
     return tuple(chunks)
 

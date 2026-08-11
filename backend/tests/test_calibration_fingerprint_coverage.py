@@ -95,15 +95,22 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             __import__("app.utils.calibration_fingerprint_coverage")
 
     def test_the_census_counts_come_from_the_artifact(self, artifact):
-        """46 inputs, 3 covered, 43 uncovered — the C258 figures.
+        """47 inputs, 3 covered, 44 uncovered — the C258 figures, +1 at CAL-P038.
 
         CAL-P030/P031 prose said "3 of 43", reading the UNCOVERED count as the
         total. The lists were right; the sentence was not. Asserting all three
         against one another makes that class of slip impossible to restate.
+
+        CAL-P038 moved the totals 46/43 -> 47/44 by adding
+        ``STAGED_UNIT_WINDOW_SAFETY``, the unit-window margin. The pin is
+        deliberately kept as a pin — it is a tripwire, and a tripwire that is
+        loosened when it fires is not one. What matters is WHICH number moved:
+        ``uncovered_sql_shaping`` is asserted separately below precisely because
+        a behaviour-only input must not touch it, and this one does not.
         """
-        assert artifact["input_count"] == 46
+        assert artifact["input_count"] == 47
         assert len(artifact["covered_by_value"]) == 3
-        assert artifact["uncovered_count"] == 43
+        assert artifact["uncovered_count"] == 44
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -112,6 +119,17 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             + artifact["uncovered_behavior_or_evidence"]
             == artifact["uncovered_count"]
         )
+
+    def test_a_behaviour_only_input_does_not_widen_the_sql_shaping_hole(self, artifact):
+        """The count with correctness consequences, pinned on its own.
+
+        The totals above move whenever the module gains any named input. This
+        one moves only when an input reaches the emitted SQL, which is the only
+        class that can silently change the published population — so separating
+        them is what stops a routine +1 from being read as "the unguarded
+        surface grew".
+        """
+        assert artifact["uncovered_sql_shaping"] == 21
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
@@ -137,8 +155,13 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
 
     def test_the_five_cross_module_holes_are_the_unguarded_tier(self, artifact):
         """Ruling 009 freezes the build module and NOTHING else, so these are
-        live today. The other 38 are protected only incidentally, by a freeze
-        that is designed to lift (ruling 024's named failure)."""
+        live today. The other 39 are protected only incidentally, by a freeze
+        that is designed to lift (ruling 024's named failure).
+
+        The cross-module FIVE is the assertion that carries the meaning and it
+        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038),
+        which is the direction that costs nothing — an in-module input is behind
+        the freeze."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -152,7 +175,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 38 == artifact["uncovered_count"]
+        assert len(cross) + 39 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

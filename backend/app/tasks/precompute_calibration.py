@@ -1718,6 +1718,46 @@ def _calibration_population_ctes(
     gate, so the sweep can no longer collapse unrelated same-event props or split
     a two-market group).
     """
+    # CAL-P039 measured it; CAL-P040 applies it under the ruling-009 exception
+    # granted in `.claude/handoff/GO-CAL-P039-EXCEPTION.md` (Fable, 2026-08-11).
+    #
+    # `vm_stats` joins `futures_outcomes` to `virtual_market` with NO predicate on
+    # the outcomes table at all. `virtual_market` is referenced 7 times, so PG12+
+    # auto-materializes it, and a CTE Scan carries no index and no ordering — so
+    # the planner's only options are hash+seqscan or N blind index lookups, and it
+    # prices the seq scan lower. Every chunk therefore paid a full 3.3M-row scan of
+    # `futures_outcomes`. Measured against production at the real unit size (5,302
+    # markets, `backend/scripts/probe_chunk_unit_plan.py`, with act/loops per
+    # CAL-P035's rule, NOT a cost delta):
+    #
+    #     production shape    Seq Scan    act=3,302,680   8,378.8 ms   total 9,104.5 ms
+    #     + this predicate    Index Scan  act=   40,696     289.2 ms   total   477.1 ms
+    #
+    # 19.1x on the QUERY, and both produce the identical aggregate (3,107 groups
+    # over 40,696 joined rows). ⚠️ Do NOT quote 19.1x as a beat-level number: a
+    # unit costs ~62.9 s measured, so this is ~13.3% of a unit. It buys throughput.
+    # It does not make the build converge, and CAL-P039 said so against itself.
+    #
+    # SOUNDNESS is by construction, not by measurement, and only under
+    # `frozen_vm_roster=True`: `frozen_vm_roster` is `unnest` of exactly this array
+    # into `market_id`, and `virtual_market` INNER-joins `market_info` against that
+    # roster on `market_id` — so every `vm.market_id` is literally an element of the
+    # array, and `fo.market_id = vm.market_id` already implies this conjunct. It is
+    # a planner hint spelled as a predicate. That premise is guarded structurally
+    # (not by string-matching today's SQL) in
+    # `tests/test_calibration_unit_scan_redundancy_p039.py`, which fails loudly and
+    # by name if any of the three inferences it rests on is changed.
+    #
+    # On the GLOBAL path it is omitted, and that is load-bearing rather than
+    # tidy: there is no roster array bound there, and adding one would filter the
+    # whole population down to a chunk — silently, with every downstream row count
+    # still looking self-consistent. Pinned by `TestPredicateMustNotLeakIntoGlobal`.
+    vm_stats_roster_predicate = (
+        f"\n                  AND fo.market_id "
+        f"= ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+        if frozen_vm_roster
+        else ""
+    )
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -1975,7 +2015,7 @@ def _calibration_population_ctes(
                                       AND fo.opening_probability > 0
                                       AND fo.opening_probability < 1) AS eligible
                 FROM virtual_market vm
-                JOIN futures_outcomes fo ON fo.market_id = vm.market_id
+                JOIN futures_outcomes fo ON fo.market_id = vm.market_id{vm_stats_roster_predicate}
                 GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
                          vm.mutually_exclusive
             ),
@@ -2789,8 +2829,61 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
         """)
 
 
+#: How much of the WORST unit observed this beat must still be on the clock
+#: before the loop is allowed to start another one (CAL-P038, #1597).
+#:
+#: The loop's only prior gate was ``deadline_exceeded()`` — "is there any time
+#: left" — which is not the question. A unit takes ~70s; a beat that starts one
+#: with 30s left hands it a ``statement_timeout`` of 27s (see
+#: :func:`~app.utils.calibration_phase_ledger._statement_timeout_for`, which
+#: scales the inner margin down proportionally rather than refusing), Postgres
+#: cancels it, and ``QueryCanceledError`` propagates out of the phase. So the
+#: LAST unit of every deadline-reaching beat was guaranteed to be cancelled, and
+#: the beat's terminal was ``timeout``/``DBAPIError`` instead of the honest
+#: partial the design already has a type for.
+#:
+#: That is not cosmetic. :class:`~app.tasks.calibration_main_build.StagedFuturesIncomplete`
+#: classifies to ``cancelled``, NOT ``failed`` — precisely "a working build must
+#: not page anybody RED for doing what it was designed to do". Production has
+#: ``incompletes_24h = 0`` against ``consecutive_failures = 199``: the clean path
+#: exists and has never once been reached, because the cancellation always won
+#: the race. It also costs the ledger its convergence projection, since
+#: :func:`_record_convergence_projection` runs AFTER the loop and a throw skips
+#: it — which is why ``staged:beats_to_publish`` is absent from every ledger.
+#:
+#: 1.25 rather than 1.0 because the bound is the worst unit SO FAR, and the next
+#: unit may be worse. The cost of the margin is at most one unit of window per
+#: beat (~5%); the cost of omitting it is a guaranteed hard failure per beat.
+STAGED_UNIT_WINDOW_SAFETY = 1.25
+
+
+def _unit_fits_in_window(remaining_ms: int, worst_unit_ms: float) -> bool:
+    """Whether another unit may be STARTED, not merely whether time remains.
+
+    ``worst_unit_ms <= 0`` means this beat has not completed a unit yet and so
+    has no measurement to reason from. The answer is then True — a beat must be
+    allowed to attempt one unit or the build can never progress, and refusing on
+    a number we do not have would be exactly the invented constant this module
+    keeps refusing to write. The residual is named rather than papered over: a
+    beat whose FIRST unit does not fit still ends in a cancellation. In
+    production that window is ~1,360s against a ~20s generation read, so it is
+    the last unit that was killing every beat, not the first.
+    """
+    if remaining_ms <= 0:
+        return False
+    if worst_unit_ms <= 0:
+        return True
+    return remaining_ms >= worst_unit_ms * STAGED_UNIT_WINDOW_SAFETY
+
+
 def _record_convergence_projection(
-    runner, *, done: int, planned: int, ran_this_beat: int, unit_ms_this_beat: float
+    runner,
+    *,
+    done: int,
+    planned: int,
+    ran_this_beat: int,
+    unit_ms_this_beat: float,
+    worst_unit_ms: float = 0.0,
 ) -> None:
     """Say, in the ledger, how many more beats this build needs to publish.
 
@@ -2818,6 +2911,13 @@ def _record_convergence_projection(
         return
     unit_ms_mean = unit_ms_this_beat / ran_this_beat
     runner.ledger.record_stage("staged:unit_ms_mean", int(unit_ms_mean))
+    # CAL-P038: the mean sizes the build, the WORST unit sizes the window check
+    # that decides whether the beat ends honest or cancelled. Both are recorded
+    # because a large gap between them is itself the diagnosis — it says the
+    # units are unevenly sized, which is a plan/partition problem, not a budget
+    # one, and no timeout change can fix it.
+    if worst_unit_ms > 0:
+        runner.ledger.record_gauge("staged:unit_ms_worst", int(worst_unit_ms))
     # The window a FUTURE beat gets for units is the phase budget less what
     # freezing the generation costs — measured from this beat rather than
     # assumed, since the freeze is the one cost every beat pays again.
@@ -2958,14 +3058,26 @@ async def _run_staged_futures(db, runner, sql_builder):
     done = 0
     ran_this_beat = 0
     unit_ms_this_beat = 0.0
+    worst_unit_ms = 0.0
     for chunk in chunks:
         if cursor.has(chunk.key):
             done += 1
             continue
-        if runner.deadline_exceeded():
+        remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
+        if not _unit_fits_in_window(remaining_ms, worst_unit_ms):
+            # CAL-P038 (#1597): STOP BEFORE the window runs out, not after. The
+            # two cases are recorded apart because they mean different things —
+            # ``deadline`` is the window genuinely gone, ``unit_too_large`` is
+            # time left that provably cannot hold a unit. An absent stage reads
+            # as "fine" (gotcha #53), and this is the branch that decides whether
+            # the beat ends honest or ends RED.
+            stop_reason = "deadline" if remaining_ms <= 0 else "unit_too_large"
+            runner.ledger.record_stage(f"staged:window_stop:{stop_reason}", 0)
+            runner.ledger.record_gauge("staged:window_left_ms", max(0, remaining_ms))
             logger.info(
-                "calibration staged futures: out of window with %d/%d units banked",
-                done, len(chunks),
+                "calibration staged futures: out of window (%s) with %d/%d units "
+                "banked — %d ms left, worst unit %d ms",
+                stop_reason, done, len(chunks), max(0, remaining_ms), int(worst_unit_ms),
             )
             break
         unit_started = time.monotonic()
@@ -3001,7 +3113,13 @@ async def _run_staged_futures(db, runner, sql_builder):
             return None
         done += 1
         ran_this_beat += 1
-        unit_ms_this_beat += (time.monotonic() - unit_started) * 1000.0
+        unit_ms = (time.monotonic() - unit_started) * 1000.0
+        unit_ms_this_beat += unit_ms
+        # The WORST unit, not the mean: the mean is what the build costs, the
+        # worst is what the next unit might cost, and it is the next unit the
+        # window has to hold. A mean-based bound admits exactly the above-average
+        # unit that then gets cancelled.
+        worst_unit_ms = max(worst_unit_ms, unit_ms)
 
     _record_convergence_projection(
         runner,
@@ -3009,6 +3127,7 @@ async def _run_staged_futures(db, runner, sql_builder):
         planned=len(chunks),
         ran_this_beat=ran_this_beat,
         unit_ms_this_beat=unit_ms_this_beat,
+        worst_unit_ms=worst_unit_ms,
     )
 
     # -- Stage 3: finalize globally, or not at all ----------------------------

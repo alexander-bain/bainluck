@@ -321,11 +321,17 @@ depends on how grouped the roster is, and it was measured only at the near-uniqu
      item, so a bare digit here silently inflates the scoreboard count. CAL-P034
      hit this exact trap and recorded it; CAL-P036 hit it again anyway. -->
 
-**And production's group-size distribution cannot be measured from here.** `count(DISTINCT vm_id)`
-over the population chain exceeds the read rail's 25 s ceiling (the roster read alone is 20.4 s), the
-planner's own estimate for that node is its default guess of 200, and `EXPLAIN ANALYZE` is refused on
-this statement by a `MATERIALIZED (`/`NOT (` false positive in the function allowlist. So the draft
-would have shipped a change whose sign rested on a number nobody had.
+**And production's group-size distribution could not be measured from here — CAL-P036's reading at
+the time, since overturned.** `count(DISTINCT vm_id)` over the population chain exceeds the read
+rail's 25 s ceiling (the roster read alone is 20.4 s), the planner's own estimate for that node is
+its default guess of 200, and `EXPLAIN ANALYZE` was refused on this statement by a `MATERIALIZED (`/
+`NOT (` false positive in the function allowlist. So the draft would have shipped a change whose sign
+rested on a number nobody had.
+
+> ⚠️ **Read this paragraph as a record of what CAL-P036 believed, not as a live constraint.** The
+> distribution IS measurable and CAL-P037 measured it — the population chain was never the only
+> route to it. The sentence is kept in place rather than deleted because the inference it encodes
+> ("the expensive path is the only path") is the mistake worth seeing at the point it was made.
 
 The shipped version drops the pair set entirely and recovers `market_ids` from the members each chunk
 already carries. It is better in four of five regimes, by up to **234.7 MB**, and worse in one by
@@ -371,6 +377,283 @@ digest at plan time instead would retire almost all of it, and that is the next 
 > in CODE. CAL-P035's gauge reading was right and its inference from it was wrong, because the
 > stage boundary it sampled at is not where the allocation happens. A gauge sampled between two
 > statements cannot see a transient inside either of them.
+
+## ✅ 57.9 MB HELD ALL BEAT TO FEED A SIXTEEN-CHARACTER HASH (CAL-P037, 2026-08-11)
+
+CAL-P036's own list named this as the next largest prize, and it is taken. Every `UnitChunk` carried
+a `members` tuple holding **one string per ROSTER ROW** — ~669,383 strings across the partition — and
+kept them for the entire ~23-minute beat. **Its only consumer anywhere in the application is
+`member_digest`**, which turns the whole pile into sixteen characters. Verified by grep across `app/`:
+nothing else reads `.members`, and the ruling-009-frozen `precompute_calibration.py` never touches it
+(it reads `market_ids` and its own `assignment` map).
+
+The planner now takes the digest while the members are in hand and drops the strings. Measured at
+669,383 rows, `tracemalloc`, both accumulators freed as they are consumed:
+
+| average group size | RETAINED before | RETAINED after | saved | PEAK before | PEAK after |
+|---|---|---|---|---|---|
+| 1 market / question | 79.5 MB | **29.5 MB** | **−50.0 MB** | 214.9 MB | **181.0 MB** |
+| 2 markets | 76.7 MB | 26.8 MB | −49.9 MB | 161.7 MB | 130.8 MB |
+| 4 markets | 75.1 MB | 25.5 MB | −49.6 MB | 160.2 MB | 130.4 MB |
+| 8 markets | 74.1 MB | 24.8 MB | −49.3 MB | 143.8 MB | 114.8 MB |
+| 20 markets | 73.6 MB | 24.4 MB | −49.2 MB | 135.4 MB | 106.8 MB |
+
+⚠️ **`tracemalloc` figures — incremental Python allocation, NOT process RSS.** Same caution as the
+CAL-P036 table above, for the same reason (the C276 block). They compare this structure against
+itself and are not added to the 408 MB RSS gauge to make a total.
+
+### The curve-crossing trap does not apply here, and that is checkable rather than hopeful
+
+CAL-P036's near-miss produced the rule: *a memory fix measured at one point on a distribution
+measures that point; if the structure removed and the structure added scale on DIFFERENT axes, the
+curves cross.* (Production's distribution turned out to be measurable after all — see the section
+below, which measures this change at the real shape too. The rule stands regardless.)
+
+**This change's sign does not depend on it.** What is removed scales per ROW; what is added is **one
+16-character digest per BUCKET** — O(buckets), a fixed 128, independent of the roster. A curve and a
+flat line do not cross, and the measured saving is 50.0 / 49.9 / 49.6 / 49.3 / 49.2 MB across the same
+five regimes that broke the earlier draft — flat, as predicted. The grouped end, which is the end
+CAL-P036 got wrong, is asserted in the suite rather than only measured here.
+
+### A property found by mutation-testing, not by reading the code
+
+The planner frees each bucket's accumulator as it consumes it, worth **29.8 MB of peak** on its own.
+There are two accumulators, and **the pops are jointly load-bearing but individually redundant**:
+removing either alone moves the peak by 0.3 B/row, removing both costs 44 B/row. The peak is the live
+set at the *first* bucket — every member and every `vm_id`, nothing built yet — so freeing either one
+is enough to stop the running total ever climbing past it.
+
+Each single-pop mutant is therefore an **equivalent mutant** that no assertion can catch. The test
+pins the pair instead. This was surfaced by the battery, not by inspection, and it is exactly the
+kind of thing a "9/9 caught" scoreboard hides when the two survivors are written off as weak tests.
+
+### What is still owed, in descending size
+
+The ~205 MB still inside `plan_units`; the `assignment` dict at 55.7 MB and CAL-P035's roster release
+at 98.1 MB — **both in the ruling-009-frozen build module, so neither is this lane's to take**; and an
+`rss:` gauge inside the planning region, also frozen, without which the SIGKILL attribution gap cannot
+close. **The closing reading for all of it is `rss:peak_mb` on the next completed production beat,
+against the 505 on record.** Nothing here is production-verified and nothing claims to be.
+
+## ✅ THE PRODUCTION GROUP-SIZE DISTRIBUTION, MEASURED AT LAST — and it corrects CAL-P036 (CAL-P037, 2026-08-11)
+
+CAL-P036 declared this number unobtainable and made a decision explicitly conditional on it:
+*"production's group-size distribution cannot be measured from here … so a change whose SIGN depends
+on it is not shippable."* **It is measurable, it is measured, and it settles the open question — in
+CAL-P036's favour on the decision and against it on the magnitude.**
+
+The blocker was assumed to be the population chain. It is not: the grouping rule reads two columns of
+one table. Three read-only aggregates, 3.2–9.8 s each, no `EXPLAIN`, no taint:
+
+    resolved futures_markets                                671,438   (roster is 669,383 rows: −0.3%)
+    ungrouped (group_id IS NULL)                                280   (0.04%)
+    source-scoped groups with size >= 3     29,739 groups /  428,707 markets   (mean 14.4)
+    source-scoped groups with size <  3    242,345 groups /  242,451 markets
+
+The rule is `CASE WHEN group_size >= 3 THEN 'g:'||group_id WHEN event_size >= 3 THEN 'e:'||event_id
+ELSE 'm:'||market_id END`, **source-scoped** — so a market falls through to a near-unique
+`m:<market_id>` unless it sits in a group of **three or more**. That is the line that matters, and
+it is NOT the same line as "has a `group_id`":
+
+| virtual-market shape | markets | share |
+|---|---|---|
+| **effectively grouped** (`group_size >= 3`) | 428,707 | **63.85%** |
+| **near-unique** `m:<market_id>` (groups of 1–2, plus the 280 with no group at all) | **242,731** | **36.15%** |
+| total | 671,438 | 100% |
+
+**242,451 + 280 = 242,731**, and it partitions the population exactly against the 428,707
+(`428,707 + 242,731 = 671,438`). The same split is what produces the distinct-`vm_id` figure this
+section already carried: `29,739 + 242,731 = ` **272,470**, giving a mean group size of **≥ 2.42**.
+
+The shape is therefore **bimodal**, not a uniform 2.42: a small head of 29,739 large groups plus a
+long tail of near-singletons **more than a third of the population deep**. That distinction matters,
+because CAL-P036's regime table was built on *uniform* synthetic rosters and cannot simply be read
+off at 2.42.
+
+So the shapes were re-measured on a synthetic roster reproducing the real bimodal distribution
+(659,077 rows, 272,470 distinct `vm_id`s — 1.5% under the true roster, from rounding the big-group
+mean to an integer):
+
+| planner shape | PEAK | RETAINED |
+|---|---|---|
+| pre-CAL-P036, per-`vm_id` | 257.0 MB | 56.2 MB |
+| CAL-P036's pair-set draft — **rejected** | 233.3 MB | 56.2 MB |
+| CAL-P036 as shipped | 154.2 MB | 74.7 MB |
+| **CAL-P037, this queue** | **124.1 MB** | **25.9 MB** |
+
+**Three conclusions, and one of them is a correction to a number this document already carries.**
+
+1. **CAL-P036's headline 439.7 MB is 257.0 MB in production — overstated 1.71x.** It was measured at
+   group size 1 on the premise that *"`vm_id` is near-unique in this population"*. Production's mean
+   is 2.42, so the premise overstates — but it describes **36.15% of the rows, not 0.04%**, and the
+   difference between those two readings is the whole reason this correction needed a correction of
+   its own (codex B2, 2026-08-11; see the rider below).
+
+   > ⚠️ **The 0.04% this document carried until CAL-P040 was the wrong denominator, and it was wrong
+   > in the flattering direction.** It counted only `group_id IS NULL` — 280 markets — as if *having*
+   > a `group_id` made a market an effectively grouped virtual market. It does not: the rule needs
+   > `group_size >= 3`, so all **242,731** markets in groups of one or two are near-unique too. The
+   > premise was not describing a rounding error in the population; it was describing **more than a
+   > third of it.** CAL-P036's decision and the 257.0 MB measurement both survive unchanged — the
+   > shipped form still beats the pre-P036 accumulator by 102.8 MB at the real shape, and that
+   > number was measured at the bimodal distribution, not derived from the share. **Only the framing
+   > was wrong, and only in the direction of making a stale premise look harmless.**
+2. **Its decision was nevertheless right, and is now confirmed rather than assumed.** At the real
+   shape the shipped form beats the pre-P036 accumulator by 102.8 MB of peak AND beats the pair-set
+   draft it rejected by 79.1 MB. The question it left open because the sign was unknowable resolves
+   in its favour.
+3. ⚠️ **But it made RETENTION worse and nobody noticed: 56.2 -> 74.7 MB, +18.5 MB.** Deriving
+   `market_ids` by re-parsing the member strings means `int(market_text)` allocates a **fresh int per
+   row** (~28 B x 659,077 ≈ 18.5 MB), where the per-`vm_id` shape reused the roster's own int
+   objects. It bought 84 MB of peak with 18.5 MB of retention, which is a good trade — it was just
+   never priced.
+
+CAL-P037 takes retention to 25.9 MB, below even the pre-P036 baseline. **Roughly 18.5 MB of what
+remains is those parsed ints, which makes them the dominant retained term and the next prize.**
+
+> **The rule this corrects:** "unobtainable" was itself an inference. Three windows recorded the
+> distribution as unmeasurable because the *population chain* could not be aggregated inside the read
+> rail's ceiling — but the grouping rule does not need the population chain, only the two columns it
+> keys on. **Check whether the expensive path is the only path before recording a number as
+> unknowable**, because a queue that records it that way makes every later queue inherit the
+> conclusion without re-testing the premise.
+
+## ✅ THE MEASUREMENT RAIL WAS REFUSING ITS OWN LANE'S QUERIES (CAL-P037, 2026-08-11)
+
+Three calibration windows lost time to `EXPLAIN ANALYZE` being refused on ordinary population
+queries, and the cause was two SQL keywords read as function calls by a `name(` scan:
+
+    WHERE NOT (a AND b)          ->  "`not()` is not on the allowlist of functions"
+    WITH x AS MATERIALIZED (...) ->  "`materialized()` is not on the allowlist of functions"
+
+Both messages name a function that does not exist, which is why the shape of the bug survived three
+encounters — each window read it as a missing allowlist entry, worked around it, and moved on. It
+was **why the production group-size distribution went unmeasured for three windows**: it is the
+number that decides the sign of CAL-P036's fix, and the tool that would measure it was refusing the
+query. **That is past tense as of CAL-P037** — the distribution is measured in the section above,
+and by a route that never needed this rail at all (three plain aggregates over two columns). The
+refusal delayed the measurement; it never actually prevented it, which is its own lesson and is
+recorded there.
+
+**The two fixes are deliberately different, and the difference is the whole point:**
+
+* `NOT` is a **reserved** word — it can never be a function name. It goes in the syntactic-token set
+  beside `and` and `or`, where its absence was a plain omission, and it admits nothing.
+* `MATERIALIZED` is **unreserved**, so `materialized(...)` is a legal user-defined function.
+  Allowlisting the NAME would admit a real call. Only the CTE-modifier SHAPE (`AS [NOT] MATERIALIZED (`)
+  is neutralised; a bare `materialized(1)` is still refused, and a mutation proves it.
+
+The execution boundary is unchanged: the `_OPERATIONAL_FUNCTIONS` raw-text backstop, the
+quoted-identifier refusal and the schema-qualified refusal are all untouched, and no name was added
+to `_PURE_FUNCTIONS`. Each is re-asserted wearing the new exemptions.
+
+**One refusal was deliberately NOT fixed.** A `;` inside a comment still trips *"Multi-statement
+queries not allowed"*, because `assert_read_only` checks the raw text and routing it through
+`strip_sql_noise` first would put a function whose own docstring says *"a lexer approximation, NOT a
+parser … never to be the thing that makes execution safe"* in charge of the multi-statement boundary.
+The false refusal costs one rewrite; the false acceptance is a second statement.
+
+## 🛑 THE PRODUCER'S "TIMEOUT" IS A LOOP THAT STARTS A UNIT IT CANNOT FINISH (CAL-P038, 2026-08-11, #1597)
+
+Staged by Fable as *"asyncpg.QueryCanceledError on the market_info CTE at the 1500s backstop
+(`_MAIN_COMPUTE_STMT_TIMEOUT_MS`) … ≥2.8x regression in 9 days"*, with one hypothesis to test first:
+that #1698's restoration of ~16,861 eligible futures rows raised the CTE's input cardinality.
+
+**The hypothesis is disconfirmed, by date.** #1698's hotfix is `42bd96e2`, **2026-08-10**. The
+producer's last success is **2026-08-02T03:23:54Z** and `consecutive_failures` is 199. A fix that
+landed eight days after a regression began did not cause it.
+
+**And the named bound is the wrong one.** `_MAIN_COMPUTE_STMT_TIMEOUT_MS` is 1,500,000 ms, but the
+observed failure duration is 1,378,221 ms — which is `PHASE_DEADLINE_MS`, i.e.
+`SOFT_LIMIT_MS 1,500,000 − CLEANUP_MARGIN_MS 120,000 = 1,380,000`. The 1500 s backstop has never
+fired. What fires is the per-phase bound `PhaseRunner.apply_statement_timeout` derives from the time
+left before that deadline.
+
+### What is actually happening, from the live ledger
+
+| reading | value |
+|---|---|
+| `plan.status` | `infeasible`, `infeasible_phases: ["futures"]` |
+| futures phase | `status: timeout`, `duration_ms: 1,376,969`, `committed: false` |
+| `staged:units_banked` / `staged:units_partition` | **108 / 128** |
+| `staged:cursor_resume` · reason | present · `resumable` — the cursor IS resuming |
+| `staged:units_done` / `staged:beats_to_publish` | **absent from every ledger** |
+| `incompletes_24h` vs `consecutive_failures` | **0** vs **199** |
+| beats in 24h | `starts 13` = `thrown 5` + `hard_kills 8` |
+
+The last two rows are the finding. `StagedFuturesIncomplete` exists precisely so a beat that runs out
+of window classifies as `cancelled`, not `failed` — *"a working build does not page anybody RED for
+doing exactly what it was designed to do"*. **`incompletes_24h = 0` says that path has never once
+been reached in 199 attempts.**
+
+It could not be. The unit loop's only gate was `runner.deadline_exceeded()` — *is there any time
+left* — when the question is *is there enough time left for a unit*. A unit costs ~70 s. A beat that
+started one with 30 s left got a `statement_timeout` of 27 s (`_statement_timeout_for` scales the
+inner margin down proportionally rather than refusing), Postgres cancelled it, and the error
+propagated out of the phase. **The last unit of every deadline-reaching beat was guaranteed to be
+cancelled.** The same throw skips `_record_convergence_projection`, which runs after the loop — which
+is why `staged:beats_to_publish`, the one number that says whether the build will ever finish, is
+absent from every ledger this lane has ever read.
+
+**Fixed here.** The loop now stops when the window cannot hold the WORST unit observed this beat
+(× 1.25), records `staged:window_stop:{deadline,unit_too_large}` and `staged:unit_ms_worst`, and
+exits through `StagedFuturesIncomplete`. Proved by a fake database that cancels under the same
+condition PostgreSQL does; the mutation test restores `remaining > 0` and the production throw
+returns.
+
+**The banked units survive this change.** `_main_input_fingerprint()` on the edited tree is
+`e0048938f513e814c72cb35aa8732d65` — **byte-identical to the value the live cursor and ledger both
+carry**. `_run_staged_futures` is not among the four hashed roots (`_calibration_population_ctes`,
+`_main_futures_sql`, `_virtual_market_ctes`, `compute_calibration_payload`), and hashing a function's
+source never covers its callees. So the 108 banked units are not reset.
+
+**What this does NOT do:** it does not turn the SLO green and does not make the build converge. It
+converts a beat that lies (`failed`) into one that tells the truth (`cancelled`, with a projection).
+The convergence blocker is the next section, and it is a different defect.
+
+## 🛑 CHUNKING MULTIPLIED THE WORK — every unit pays a FULL scan of `futures_outcomes` (CAL-P038, 2026-08-11)
+
+Why the build does not converge, measured against production by `EXPLAIN` on the real chunk
+statement (`_main_futures_sql(frozen=True)`) with literal roster arrays at increasing sizes.
+
+| markets in the unit | seq scans of `futures_outcomes` | plan cost | measured runtime |
+|---|---|---|---|
+| 100 | none | 6,844 | 313 ms |
+| 250 | none | 18,211 | 410 ms |
+| 500 | none | 49,293 | 1,368 ms |
+| 1,000 | none | 94,834 | 5,739 ms |
+| 2,000 | none | 174,466 | 8,470 ms |
+| 3,000 | none | 243,402 | >10 s (probe cap) |
+| **3,500** | **ONE (3,309,578 rows)** | 264,417 | >10 s |
+| **5,302 — production's unit size** | **ONE (3,309,578 rows)** | 311,794 | >10 s |
+
+The plan **flips between 3,000 and 3,500 markets**: below it the outcome reads are nested-loop index
+scans on `ix_futures_outcomes_market_id`; above it the planner switches to a hash join over a full
+sequential scan of all 3.3 M `futures_outcomes` rows. Production's units are **5,302 markets**
+(671,373 resolved markets ÷ `STAGED_FUTURES_BUCKETS` 128), i.e. **on the wrong side of the
+crossover** — and the scan does not shrink with the chunk, so it is paid **128 times per generation**.
+
+The monolith, for comparison, plans **two** such scans in total (cost 8,001,081) and last completed
+in **534 s**. So the staged path did not inherit the monolith's cost divided by 128; it inherited a
+per-chunk fixed cost multiplied by it.
+
+**This is also why the switch has never worked.** `STAGED_FUTURES_ENABLED` was flipped on in
+`fa5898aa`, **2026-08-03 10:34 PT** — the day after the last successful publish. The staged build has
+produced **zero successes in eight days**. The monolith was already failing when it was flipped
+(that commit's own message records ten consecutive ~22.5-minute floors), so this is not an argument
+for reverting the switch; it is the reason the switch did not help.
+
+**Not fixed here, and deliberately.** The obvious lever — more, smaller units — changes
+`chunk.key = hash(buckets, index)`, i.e. **unit identity**, which the ruling-009 exception granted
+for this queue explicitly holds frozen. The in-scope alternative (hoisting the chunk's outcomes into
+one materialised CTE so the scan happens once, by index, per chunk) is a restructure of the
+population CTE chain in a truth-touching frozen file and needs a row-identity proof against
+production before it can be trusted. Both are named in the handoff rather than half-taken.
+
+⚠️ **Honest limit on the numbers above.** The probe rosters were built as `m:<id>` / `is_grouped =
+false`, whereas CAL-P037 measured production at **99.96% grouped**. The seq-scan crossover is a
+property of the chunk-scoped scan and is not sensitive to that, but the absolute runtimes are a lower
+bound on production's, not a reproduction of them.
 
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
@@ -1929,3 +2212,157 @@ on the publish converging, or on elapsed time.
 If N turns out unmeasurable — i.e. too few rows carry BOTH volume and adequate snapshot density to
 validate the proxy — then tier 2 has no empirical basis and item 1 comes back with a real choice
 (ship tier 1 + unknown only, or keep the old bar). Flagged now so it is not a surprise later.
+
+---
+
+## ✅ THE MEMORY CEILING MOVED, AND EVERY MEMORY NUMBER IN THIS DOCUMENT IS NOW DATED (CAL-P040, 2026-08-11)
+
+Alex upgraded `worker-heavy` from **Standard-1X (512 MB) to Standard-2X (1024 MB)** on the evening
+of 2026-08-11. Measured at CAL-P040's Phase 0, four minutes after the dyno came up:
+
+    worker-heavy (Standard-2X)   worker-heavy.1: up 2026/08/11 13:50:05 -0700
+    --concurrency=2  --max-memory-per-child=200000
+
+**This retires the wall four consecutive queues were measuring against, and it should be read as
+retiring their CONCLUSIONS, not their measurements.** CAL-P033's 505/512, CAL-P036's 507/512 and
+CAL-P039's 488/512 were all correct, and all against a ceiling that no longer exists. The 20:15Z
+beat died `SystemExit` at 488 MB with **536 MB of headroom it would now have**.
+
+What survives unchanged: the `plan_units` allocation work (CAL-P036/P037) is still worth what it
+measured — a build with headroom is not a build that should waste it, and `--concurrency=2` means
+two children share the 1 GB. What does NOT survive is any sentence in this document of the form
+*"the beat cannot complete because it runs out of memory."* That is now an open question with a
+dated answer owed from the first uninterrupted beat on the new dyno.
+
+⚠️ **And one thing did NOT move with the dyno: `--max-memory-per-child=200000` (≈195 MB).** One
+child is measured at 488 MB — **2.5× over its own per-child cap** — and that was equally true at
+512 MB. It is recorded here as a thing to check, deliberately NOT as a defect: Celery's
+`worker_max_memory_per_child` retires a child *after* a task returns, so it cannot be the mid-task
+`SystemExit`. It is the wrong shape to be the bug that has been killing beats, and the right shape
+to be the next one — a child that legitimately exceeds it is replaced between beats, which is
+invisible until it isn't.
+
+### The rule this cycle adds — STATE THE DENOMINATOR WITH EVERY SHARE
+
+Recommended by INT-045 after the second consecutive calibration cycle whose headline NUMBER was
+wrong while its DECISION was right, and adopted here because CAL-P040 then found the third instance
+in the same paragraph the rule was written about:
+
+> A percentage without its denominator is not a measurement, it is a mood. Every share published by
+> this lane names the count and the population it is over.
+
+The failure mode is specific and it is not carelessness — in all three instances the number was
+computed correctly from a denominator that answered a *slightly different question* than the
+sentence around it. `99.96% of markets carry a group` is TRUE. It is simply not the same claim as
+`99.96% of markets are effectively grouped`, because the identity rule needs `group_size >= 3`; the
+real figure is 63.85%. Stating the denominator inline is what makes the substitution visible,
+because the two questions have visibly different denominators the moment you have to write them
+down.
+
+### Sequencing fact for whoever deploys the calibration stack, MEASURED
+
+`_main_input_fingerprint` over the four `inspect.getsource()` roots, computed on each head:
+
+| head | digest | cursor |
+|---|---|---|
+| `38c0bce8` — CAL-P037 + CAL-P038 + CAL-P039 | `e0048938f513e814c72cb35aa8732d65` | **survives** |
+| CAL-P040 (the roster predicate) | `e7e439ac6ca279ffd3ee69264a0d8c61` | **reset to 0** |
+
+The base digest is **identical to the `input_fingerprint` in the live production phase ledger**,
+which is the strongest available proof that CAL-P037/P038/P039 do not touch a hashed root: three
+queues of work can merge without costing the walk a single unit. **Only CAL-P040's predicate
+resets it**, exactly as `GO-CAL-P039-EXCEPTION.md` accepted — but the grant priced that reset at
+108 banked units, and it is **123/128** as of 20:31Z. If the walk completes before the deploy, the
+publish-gate verdict it produces is ruling 024's owed census and it must be captured BEFORE the
+deploy lands, because the deploy destroys the cursor that produced it.
+
+---
+
+## 🟢 IT PUBLISHED. THE SLO IS GREEN AFTER 9.73 DAYS AND 201 CONSECUTIVE FAILURES (CAL-P040, 2026-08-11 21:20:36Z)
+
+The 21:15Z beat — the first uninterrupted beat on the 1 GB dyno — **completed the walk, ran the
+completion path, passed the publish gate and published.** Observed live during CAL-P040's window,
+not inferred from a later reading.
+
+    /api/calibration  generated_at  2026-08-02T03:23:54Z  ->  2026-08-11T21:20:35Z
+                      cache.status  stale/durable_over_age -> fresh
+                      age           9.729 d                ->  ~1 min
+
+    task-metrics      successes_24h          0    ->  1
+                      consecutive_failures   201  ->  0
+                      last_verdict           thrown/SystemExit -> complete
+                      last_verdict_reason    ledger:complete+green
+                      health                 critical -> healthy
+                      duration               1,010,672 ms -> 335,931 ms (5.6 min)
+
+**Five queues of this lane's work are confirmed correct in production by this one beat**, each of
+which had shipped on a prediction that no beat had ever been able to test:
+
+| queue | its prediction | this beat |
+|---|---|---|
+| CAL-P033 | finalization raises `TypeError` on resumed rows unless they are encoded on the way in | `staged:finalize` **45 ms**, no throw — the encode fix carried 128 resumed units through |
+| CAL-P034 | the fold keeps the cursor ~134 KB at 128 units instead of ~15.2 MB | cursor at 128 units = **72,820 B** |
+| CAL-P035 | the finalize spike is ~3.6 MB and "not a risk" | confirmed: finalize completed in 45 ms |
+| CAL-P036 | the `plan_units` transient is the dominant term and is in unfrozen code | beat survived planning; `rss:peak_mb` 578 |
+| CAL-P038 | the throw skips `_record_convergence_projection`, which is why `staged:beats_to_publish` has NEVER been recorded | **`staged:beats_to_publish 0` is present in this ledger** — first time ever |
+
+### 🛑 THE WALL WAS MEMORY, AND THE NUMBER SETTLES IT: `rss:peak_mb` **578**
+
+**578 MB is 66 MB above the old 512 MB ceiling.** This beat could not have completed on
+Standard-1X — it would have been killed at 512 exactly as the previous 201 were. CAL-P039's
+"the wall is MEMORY, not time" is confirmed, and the confirming instrument is the same `rss:` gauge
+CAL-P024c shipped.
+
+⚠️ **Do NOT subtract the allocation work's savings from 578 to argue the beat would have fit.**
+CAL-P036/P037's figures are `tracemalloc` (incremental Python allocation); 578 is process RSS. This
+document has now re-taught that rule three times (C276's block, CAL-P036's own first draft,
+CAL-P037's caution) and it applies to its own good news too. What can be said honestly: the peak
+exceeded the retired ceiling, the dyno upgrade is load-bearing for this publish, and the allocation
+work is why the peak is 578 rather than something larger — a quantity nobody has measured in RSS.
+
+⚠️ Also note **`staged:units_this_beat` = 5.** This beat only had to bank 5 units (123 → 128), so
+`staged:unit_ms_mean` 49,774 ms is a five-sample mean off a warm cache. **It is not a measurement of
+the roster predicate**, which is not deployed. CAL-P040's 13.3%-of-a-unit claim remains untested in
+production and must not be read as confirmed by this beat.
+
+### 🔴 THE GATE PASSED — AND THE REASON IS UNCOMFORTABLE ENOUGH TO BE THE FINDING
+
+CAL-P032 forecast **P(reject) ≈ 0.80** on population drift: candidate ≈ 695,653 against published
+652,407 = +6.63%, versus a ±5% limit. The forecast's measurement was good. Its conclusion was wrong,
+for a reason nobody modelled:
+
+    gate: {"ok": true, "codes": [], "first_publish": true,
+           "candidate_population": 703980,
+           "published_population": null,      <- THE BASELINE WAS GONE
+           "published_version": null}
+
+**The drift check could not fire, because there was nothing left to compare against.** The last-good
+artifact aged out at `SERVE_MAX_AGE_S = 7 * 86400` on ~2026-08-09, seven days after the 08-02
+publish. By the time a candidate finally arrived, the gate classified it as a FIRST publish.
+
+So the population move went through **ungated**, and it is bigger than CAL-P032 estimated:
+
+| published | outcomes | buckets |
+|---|---|---|
+| 2026-08-02 | 652,407 | 1,606 |
+| 2026-08-11 | **703,980** | 1,660 |
+| delta | **+51,573 = +7.91%** | +54 |
+
++7.91% sits inside CAL-P032's 95% CI (+2.85/+10.41) — its point estimate was low by 1.28pp, which is
+a good forecast off 55 banked units. **The lesson is not about the estimate. It is that an outage
+long enough to expire its own baseline silently disables the guard that would have scrutinised the
+recovery** — the page was dark so long that the gate protecting it stopped being able to see.
+
+**Ruling 024's owed census is therefore still owed, and it is owed BY HAND**, because the gate did
+not perform the comparison it exists to perform. The two numbers above are that comparison, recorded
+here at the moment they were both available. A +7.91% population move is now live on
+`/api/calibration` with `population_version` still `q267` and no drift verdict behind it.
+
+### What this does NOT settle
+
+The build published once, from a cursor 123/128 of the way there when the window opened. **No beat
+has yet walked 0 → 128 within the new memory ceiling**, so the throughput question CAL-P038 and
+CAL-P039 were working is untouched: at ~50–63 s/unit a cold 128-unit walk is ~1.8 hours of unit
+time against a 23-minute window. The SLO is green because a nine-day walk finally crossed the line,
+not because the build now converges in one beat. **The next SLO reading to watch is the first beat
+that starts from an empty cursor.**

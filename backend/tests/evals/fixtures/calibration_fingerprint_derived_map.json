@@ -10,7 +10,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 46,
+  "input_count": 47,
   "inputs": [
     {
       "covered_by_value": false,
@@ -411,6 +411,17 @@
     {
       "covered_by_value": false,
       "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "STAGED_UNIT_WINDOW_SAFETY",
+      "origin": "app.tasks.precompute_calibration:STAGED_UNIT_WINDOW_SAFETY",
+      "sql_interpolated": false,
+      "used_in": [
+        "_unit_fits_in_window"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_IS_GROUPED_PARAM",
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_IS_GROUPED_PARAM",
@@ -428,6 +439,7 @@
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_IDS_PARAM",
       "sql_interpolated": true,
       "used_in": [
+        "_calibration_population_ctes",
         "_run_staged_futures",
         "_virtual_market_ctes"
       ]
@@ -539,8 +551,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "39695eb27f60451d1d2857aca3c42df31b3b988615cbf7f8dc88ada0c291054b",
-  "uncovered_behavior_or_evidence": 22,
-  "uncovered_count": 43,
+  "source_sha256": "69e65dee500227ef0364cfe82d053b5538314ca1173151ae0c4971b960e67bed",
+  "uncovered_behavior_or_evidence": 23,
+  "uncovered_count": 44,
   "uncovered_sql_shaping": 21
 }
