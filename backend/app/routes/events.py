@@ -71,17 +71,63 @@ _FUTURES_DEDUP_STRIP = re.compile(
     re.I,
 )
 
+def _fold_dedup_punctuation(text: str) -> str:
+    """Punctuation becomes a SEPARATOR, never nothing.
+
+    "NBA: 2027 Champion" and "NBA Championship Winner" are the same question
+    written by two sources, and the only thing keeping their keys apart was a
+    colon. Folding punctuation to a space merges them.
+
+    Deletion would be wrong and the difference is not cosmetic: dropping the
+    characters outright maps "O/U 5.5" and "O/U 55" both to `ou 55`, silently
+    merging two different prop lines. A space keeps `5 5` and `55` distinct.
+    """
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+
 def _normalize_futures_dedup_key(market) -> str:
     """Normalize a futures market name for cross-source deduplication.
 
     "2026 NBA Champion" and "NBA Championship Winner" → same key.
     "76ers vs. Celtics" and "Celtics vs 76ers" → same key.
+
+    LAT-P038/#1769 — `canonical_market_key` is NOT consulted, and that is the
+    fix rather than a simplification. This function short-circuited on it, and
+    the stored values are `{sport}:{league}:{category}:{season}` by
+    construction (`compute_canonical_market_key`) — a CATEGORY taxonomy for
+    cross-source cohort counting in calibration, with nothing in it that
+    identifies a market. Used as dedup IDENTITY it does not merge duplicates,
+    it deletes the corpus.
+
+    Counted in production 2026-08-11, open + unresolved markets: **20,818
+    markets carry a canonical key and there are 387 distinct values** — seven
+    of them cover 14,765 markets, and only 139 keys are singletons.
+    `soccer::championship:2026` alone holds **8,475 markets with 8,452
+    distinct names and 8,475 distinct `group_id`s**. The trailing-year strip
+    then merged separate election cycles on top of that.
+
+    What that cost, over the REAL compiled top-20 window (the 46-query gold
+    set, production SQL, same date):
+
+        query           page BEFORE   page AFTER
+        president            1            10
+        election             1            10
+        celtics              2            10
+        march madness        1            10
+        total (46 q)       275           348
+
+    `president` returned ONE row while 461 open markets matched. The rows it
+    merged were never duplicates: one key held all six Oscar categories,
+    another all seven Danish Golf Championship props, another nine unrelated
+    NBA markets including "LeBron James Next Team".
+
+    The name path below is what actually performs the docstring's job, and it
+    keeps doing it — verified by looking for what the canonical arm was the
+    only thing merging. Across all 46 queries that was **exactly two** pairs,
+    both the same shape ("NBA: 2027 Champion" vs "NBA Championship Winner"),
+    both recovered by `_fold_dedup_punctuation`. Market-gold recall over the
+    same set: **46/51 before → 47/51 after**, zero losses.
     """
-    if getattr(market, "canonical_market_key", None):
-        # Strip trailing season (e.g., ":2025-26") and trailing colons
-        key = re.sub(r":\d{4}(-\d{2,4})?$", "", market.canonical_market_key)
-        key = key.rstrip(":")
-        return f"canonical:{key}"
     name = (market.name or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
@@ -90,12 +136,12 @@ def _normalize_futures_dedup_key(market) -> str:
     name_lower = re.sub(r"\b\d{4}(-\d{2,4})?\s*", "", name_lower).strip()
     name_lower = re.sub(r"\bchampionship\s+winner\b", "champion", name_lower)
     name_lower = re.sub(r"\bwinner\b", "champion", name_lower)
-    # Split on matchup separators
+    # Split on matchup separators BEFORE folding — the fold would eat the "@".
     parts = re.split(r"\s+(?:vs\.?|at|@)\s+", name_lower, maxsplit=1)
     if len(parts) == 2:
-        parts = sorted(p.strip() for p in parts)
+        parts = sorted(_fold_dedup_punctuation(p) for p in parts)
         return f"matchup:{'|'.join(parts)}:{market.market_tier or 0}"
-    return f"name:{name_lower}:{market.market_tier or 0}"
+    return f"name:{_fold_dedup_punctuation(name_lower)}:{market.market_tier or 0}"
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -887,6 +933,14 @@ _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
+
+# LAT-P038/#1769: the three numbers the futures bucket is built from, named so
+# the relationship between them is visible. The window was a bare `20` and the
+# page a bare `10` at two call sites; the fact that the window is the page's
+# only dedup headroom was true, load-bearing, and written down nowhere.
+_SEARCH_FUTURES_PAGE = 10      # rows the flat `futures` bucket returns
+_SEARCH_FUTURES_WINDOW = 20    # rows fetched before rerank + dedup
+_SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collapse
 
 
 def _search_tsquery(q: str):
@@ -3077,7 +3131,7 @@ async def search_events(
             FuturesMarket.volume.desc().nulls_last(),
             FuturesMarket.updated_at.desc(),
         )
-        .limit(20)
+        .limit(_SEARCH_FUTURES_WINDOW)
     )
 
     # Apply sport filter to futures if specified
@@ -3138,7 +3192,90 @@ async def search_events(
             continue
         seen_search_keys.add(dkey)
         deduped_futures.append(m)
-    futures_markets = deduped_futures[:10]  # flat list (unchanged shape/behavior)
+
+    # LAT-P038/#1769 (defect 1b): dedup runs AFTER the LIMIT, so a collapsing
+    # key SHRINKS the page instead of merging within it — the 20-row window is
+    # consumed, the survivors are fewer than the page holds, and the eligible
+    # markets at rank 21+ are never consulted. `president` was left holding one
+    # row with 441 more waiting below the cut.
+    #
+    # Fixing the dedup KEY removes today's cause; this removes the failure MODE.
+    # A future coarse key — a new taxonomy field, a normalization that merges
+    # too hard — would otherwise silently starve the page again, and the recall
+    # gate cannot see it (that is Item 2's `bucket_collapse` verdict).
+    #
+    # DELIBERATELY NOT A WIDER `LIMIT`. The futures stage's cost is #1731's open
+    # subject and the outcome arm is 69% of its blocks, so paying for 40 more
+    # rows on every search to protect against a case that no longer happens is a
+    # latency change wearing a recall fix's clothes. This pays only when the
+    # collapse is OBSERVED: the window came back saturated AND dedup could not
+    # fill the page. Measured over the 46-query gold set on the fixed key, it
+    # fires **0 times** — every saturated window now yields a full page of 10.
+    #
+    # One refill, never a loop, and never at the cost of a late answer: if the
+    # deadline is spent the short page ships as-is. A timeout here leaves the
+    # already-good page alone rather than degrading the whole stage.
+    if (
+        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and time.monotonic() < _deadline
+    ):
+        logger.warning(
+            "search futures bucket COLLAPSED for %r — %d rows deduped to %d; "
+            "refilling from rank %d",
+            q, len(futures_markets_raw), len(deduped_futures), _SEARCH_FUTURES_WINDOW,
+        )
+        await _apply_search_statement_timeout(db, _deadline)
+        try:
+            refill_result = await db.execute(
+                futures_query.offset(_SEARCH_FUTURES_WINDOW).limit(
+                    _SEARCH_FUTURES_REFILL
+                )
+            )
+            refill_rows = refill_result.scalars().unique().all()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_query_timeout(exc):
+                raise
+            logger.error(
+                "search futures REFILL timed out for %r — shipping the short "
+                "page rather than nothing", q
+            )
+            await _recover_search_session(db, _deadline)
+            refill_rows = []
+        for m in _rerank_search_futures(refill_rows, expanded):
+            dkey = _normalize_futures_dedup_key(m)
+            if dkey in seen_search_keys:
+                continue
+            seen_search_keys.add(dkey)
+            deduped_futures.append(m)
+            if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
+                break
+
+    futures_markets = deduped_futures[:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
+
+    # LAT-P038/#1769 Item 2: say so when the bucket is short BECAUSE rows were
+    # merged away, not because the corpus had nothing.
+    #
+    # The recall gate grades "is the expected id present", and 112897 is the one
+    # row that survived `president` — so `search-gold-president-001` PASSED while
+    # 461 markets were deleted behind it. A recall score is structurally blind to
+    # bucket COLLAPSE; the sibling of LAT-P037's `empty_expected_bucket`, which
+    # covers only the size-zero case.
+    #
+    # A CLIENT cannot compute this. From outside, a one-row `president` and a
+    # one-row `tush push` are the same response — the candidate count is the
+    # missing half, and only the server holds it. So the server reports it, in
+    # the same additive-when-true grammar as `degraded`: absent key == the page
+    # is short because the corpus is, which is an honest answer.
+    #
+    # Saturated window AND a short page AFTER the refill. Both halves matter: an
+    # unsaturated window means we saw every candidate, and a refilled page means
+    # the collapse was survivable. This fires only when a user really is being
+    # shown fewer distinct markets than exist.
+    _futures_collapsed = (
+        len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and len(futures_markets) < _SEARCH_FUTURES_PAGE
+    )
 
     # Format each deduped market ONCE and reuse in both flat + families (avoids
     # double outcome_display work — protects the L2-38 latency gains). #993 L2-41
@@ -3469,6 +3606,16 @@ async def search_events(
         # honestly found nothing — the same "missing evidence is not GREEN" grammar
         # the Flow and Grid Sentinels use. Absent key == complete answer.
         **({"degraded": degraded} if degraded else {}),
+        # LAT-P038/#1769: ADDITIVE and present only on an observed collapse —
+        # the futures bucket is shorter than the page while its candidate window
+        # was saturated. Carries the counts, because "collapsed" without the
+        # denominator is the same unfalsifiable claim the recall score makes.
+        **({"futures_collapse": {
+            "window": _SEARCH_FUTURES_WINDOW,
+            "fetched": len(futures_markets_raw),
+            "returned": len(futures_markets),
+            "page": _SEARCH_FUTURES_PAGE,
+        }} if _futures_collapsed else {}),
         # LAT-P002/#1494: opt-in only (?debug_timing=1); absent otherwise, so the
         # normal response shape is untouched.
         **({"debug_timing": {**_stage_ms,

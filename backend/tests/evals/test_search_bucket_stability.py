@@ -208,3 +208,117 @@ def test_the_expected_bucket_is_derived_from_the_bucket_map():
     )
     assert producer.expected_bucket(None) is None
     assert producer.expected_bucket("nonsense") is None
+
+
+# --- LAT-P038/#1769: bucket COLLAPSE, the sibling of an empty bucket ----------
+#
+# `search-gold-president-001` PASSED on every run while `president` returned ONE
+# market out of 461 open matches, because 112897 was the row that survived the
+# dedup. Recall asks "is the answer present" and cannot ask "and nothing else was
+# deleted", so the collapse needs its own verdict — kept separate from recall and
+# from emptiness rather than averaged into either (gotcha #53).
+
+
+def _collapse_payload(futures_ids, collapse=None):
+    payload = _payload([], futures_ids=futures_ids)
+    if collapse is not None:
+        payload["futures_collapse"] = collapse
+    return payload
+
+
+def test_a_collapsed_bucket_is_reported_and_fails_the_run():
+    """The #1769 shape exactly: HTTP 200, bucket NON-empty, and still wrong."""
+    out = _run_items(
+        [("probe-1", "president", "futures", "pass")],
+        [_collapse_payload(
+            [112897],
+            {"window": 20, "fetched": 20, "returned": 1, "page": 10},
+        )],
+    )
+    row = out["results"][0]
+    assert row["fetch_ok"] is True
+    assert row["empty_expected_bucket"] is False, (
+        "a collapsed bucket is NOT an empty one — one row came back. Folding the "
+        "two verdicts together loses the distinction the fix turns on"
+    )
+    assert row["bucket_collapse"] is True
+    assert row["bucket_collapse_detail"]["returned"] == 1
+    assert out["metadata"]["bucket_collapse"] == 1
+    assert out["metadata"]["bucket_collapse_probes"] == ["probe-1"]
+
+
+def test_a_small_but_honest_bucket_is_not_a_collapse():
+    """`tush push` returns one market and is CORRECT.
+
+    This is the whole reason the verdict is read from the server rather than
+    inferred from bucket size: from out here a right one-row answer and a
+    collapsed one-row answer are the same response. A size heuristic would fire
+    on every narrow query, and a check that always fires gets switched off.
+    """
+    out = _run_items(
+        [("probe-1", "tush push", "futures", "pass")],
+        [_collapse_payload([113466])],
+    )
+    assert out["results"][0]["bucket_collapse"] is False
+    assert out["metadata"]["bucket_collapse"] == 0
+
+
+def test_collapse_is_not_inferred_from_a_full_bucket_either():
+    out = _run_items(
+        [("probe-1", "fed", "futures", "pass")],
+        [_collapse_payload(list(range(1, 11)))],
+    )
+    assert out["results"][0]["bucket_collapse"] is False
+
+
+def test_collapse_is_reported_even_with_no_expected_bucket():
+    """Exploration mode has no expected answer, but collapse is a claim about the
+    RESPONSE, not about the probe's referent — so it is still observable."""
+    out = _run_items(
+        [("explore-001", "election")],
+        [_collapse_payload(
+            [112897], {"window": 20, "fetched": 20, "returned": 1, "page": 10}
+        )],
+    )
+    assert out["results"][0]["bucket_collapse"] is True
+    assert out["metadata"]["bucket_collapse"] == 1
+
+
+def test_a_failed_fetch_makes_no_collapse_claim():
+    """Absence of evidence, again. A fetch error must not read as a clean bucket."""
+
+    def boom(query, *, api, timeout):
+        raise TimeoutError("boom")
+
+    original = producer.fetch_search
+    producer.fetch_search = boom
+    try:
+        out = producer.produce(
+            [("probe-1", "president", "futures", "pass")],
+            api="http://x", sleep=0, timeout=1, retries=0,
+        )
+    finally:
+        producer.fetch_search = original
+    row = out["results"][0]
+    assert row["fetch_ok"] is False
+    assert "bucket_collapse" not in row
+    assert out["metadata"]["bucket_collapse"] == 0
+
+
+def test_the_collapse_verdict_actually_fails_the_run():
+    """Recording a verdict and not acting on it is this module's named failure —
+    it carried `bucket_sizes` through two reverts without ever reading them. The
+    exit policy is measured, not assumed: over the real compiled predicate
+    against production 2026-08-11 with the #1769 fix applied, collapse fires on
+    0 of the 46 gold queries, so a non-zero count is a regression."""
+    import inspect
+
+    exit_expr = inspect.getsource(producer.main)
+    exit_expr = exit_expr[exit_expr.index("return 1 if ("):]
+    for signal in (
+        "fetch_failed",
+        "flapping",
+        "empty_expected_bucket",
+        "bucket_collapse",
+    ):
+        assert signal in exit_expr, f"{signal} is reported but cannot fail the run"

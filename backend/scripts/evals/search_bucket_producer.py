@@ -280,6 +280,26 @@ def produce(
                 if empty and failure_status == "xfail":
                     row["empty_expected_bucket"] = False
                     row["empty_expected_bucket_declared"] = True
+            # LAT-P038/#1769: the SIBLING verdict — a bucket that is not empty
+            # and is still wrong, because rows were merged away rather than
+            # never found.
+            #
+            # `president` returned ONE market while 461 open ones matched, and
+            # `search-gold-president-001` PASSED throughout, because 112897 was
+            # the row that survived. Recall asks "is the answer present" and
+            # cannot ask "and nothing else was deleted" — so collapse is a
+            # separate verdict, not a term in the recall score (gotcha #53).
+            #
+            # Read from the server, never inferred from bucket size. A one-row
+            # bucket is legitimate for a narrow query (`tush push` returns one
+            # market and is CORRECT), and from out here the two are identical
+            # responses; the candidate count that tells them apart exists only
+            # inside the request. /search reports `futures_collapse` when its
+            # candidate window was saturated and the page still came up short.
+            collapse = payload.get("futures_collapse")
+            row["bucket_collapse"] = bool(collapse)
+            if collapse:
+                row["bucket_collapse_detail"] = collapse
 
         if repeat > 1:
             # A run that FAILED to fetch is not evidence of instability — it is
@@ -316,6 +336,7 @@ def produce(
     declared_empty = [
         row["probe_key"] for row in rows if row.get("empty_expected_bucket_declared")
     ]
+    collapsed = [row["probe_key"] for row in rows if row.get("bucket_collapse")]
     return {
         "metadata": {
             "adapter_version": ADAPTER_VERSION,
@@ -330,6 +351,8 @@ def produce(
             "empty_expected_bucket": len(emptied),
             "empty_expected_bucket_probes": emptied,
             "empty_expected_bucket_declared_probes": declared_empty,
+            "bucket_collapse": len(collapsed),
+            "bucket_collapse_probes": collapsed,
         },
         "results": rows,
     }
@@ -411,8 +434,20 @@ def main() -> int:
         print(f"  EMPTY EXPECTED BUCKET: {probe_key}")
     for probe_key in meta["empty_expected_bucket_declared_probes"]:
         print(f"  empty expected bucket (declared xfail, not counted): {probe_key}")
+    # Printed on its own line for the same reason as the one above, and FAILS the
+    # run for the same reason: this module has twice recorded a signal and never
+    # read it. The exit policy is measured, not assumed — over the real compiled
+    # predicate against production 2026-08-11, with the #1769 dedup fix applied,
+    # collapse fires on 0 of the 46 gold queries, so a non-zero count is a
+    # regression rather than a standing red.
+    print(f"SEARCH BUCKET COLLAPSE: {meta['bucket_collapse']}")
+    for probe_key in meta["bucket_collapse_probes"]:
+        print(f"  BUCKET COLLAPSED: {probe_key}")
     return 1 if (
-        meta["fetch_failed"] or meta["flapping"] or meta["empty_expected_bucket"]
+        meta["fetch_failed"]
+        or meta["flapping"]
+        or meta["empty_expected_bucket"]
+        or meta["bucket_collapse"]
     ) else 0
 
 

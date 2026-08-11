@@ -57,6 +57,7 @@ REGISTRY_GEN = BACKEND / "scripts/evals/build_search_gold_registry.py"
 SHAPE_ORACLE = "tests/test_search_latency_contract.py"
 STABILITY_ORACLE = "tests/evals/test_search_bucket_stability.py"
 REGISTRY_ORACLE = "tests/evals/test_search_gold_registry.py"
+DEDUP_ORACLE = "tests/test_search_futures_dedup_identity.py"  # LAT-P038/#1769
 
 # (id, file, needle, replacement, oracle, why)
 MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
@@ -306,6 +307,115 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         STABILITY_ORACLE,
         "Counts the declared wedding-query xfail, whose empty 200 IS its declared "
         "breakage — leaving the check permanently red from the day it ships.",
+    ),
+    # ---- LAT-P038/#1769: the dedup key is an identity, not a taxonomy ----
+    (
+        "canonical-shortcircuit-restored",
+        EVENTS,
+        """    name = (market.name or "").strip()
+    name = _FUTURES_DEDUP_STRIP.sub("", name).strip()""",
+        """    if getattr(market, "canonical_market_key", None):
+        return f"canonical:{market.canonical_market_key}"
+    name = (market.name or "").strip()
+    name = _FUTURES_DEDUP_STRIP.sub("", name).strip()""",
+        DEDUP_ORACLE,
+        "Puts a CATEGORY key back in the identity slot: `president` returns one "
+        "market again with 461 open ones behind it (#1769).",
+    ),
+    (
+        "fold-deletes-punctuation",
+        EVENTS,
+        """    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())""",
+        """    return " ".join(re.sub(r"[^a-z0-9]+", "", text).split())""",
+        DEDUP_ORACLE,
+        "OVER-APPLIES the fold — deleting punctuation instead of separating on it "
+        "merges the prop lines `O/U 5.5` and `O/U 55` into one row, reintroducing "
+        "the same silent deletion one layer down.",
+    ),
+    (
+        "fold-removed",
+        EVENTS,
+        """    return f"name:{_fold_dedup_punctuation(name_lower)}:{market.market_tier or 0}\"""",
+        """    return f"name:{name_lower}:{market.market_tier or 0}\"""",
+        DEDUP_ORACLE,
+        "Drops the fold: 'NBA: 2027 Champion' and 'NBA Championship Winner' stop "
+        "merging, so the one merge the canonical arm really was performing is lost.",
+    ),
+    (
+        "futures-window-back-to-a-literal",
+        EVENTS,
+        """        .limit(_SEARCH_FUTURES_WINDOW)
+    )
+
+    # Apply sport filter to futures if specified""",
+        """        .limit(20)
+    )
+
+    # Apply sport filter to futures if specified""",
+        DEDUP_ORACLE,
+        "Re-hides the relationship between the window and the page — the fact "
+        "that the window IS the page's only dedup headroom goes uncommented "
+        "again, which is how 1b survived.",
+    ),
+    (
+        "refill-fires-unconditionally",
+        EVENTS,
+        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW""",
+        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE""",
+        DEDUP_ORACLE,
+        "OVER-APPLIES the refill: every short page — including the honestly short "
+        "ones — pays a second futures query, on the stage that is already #1731's "
+        "open cost subject.",
+    ),
+    (
+        "refill-ignores-the-deadline",
+        EVENTS,
+        """        and time.monotonic() < _deadline
+    ):
+        logger.warning(
+            "search futures bucket COLLAPSED""",
+        """    ):
+        logger.warning(
+            "search futures bucket COLLAPSED""",
+        DEDUP_ORACLE,
+        "Lets the refill run after the budget is spent — trading the LAT-P002 "
+        "failure (a fast wrong answer) for its twin (a late one).",
+    ),
+    (
+        "collapse-never-reported",
+        EVENTS,
+        """    _futures_collapsed = (
+        len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and len(futures_markets) < _SEARCH_FUTURES_PAGE
+    )""",
+        """    _futures_collapsed = False""",
+        DEDUP_ORACLE,
+        "Silences the only signal a client cannot compute for itself, returning "
+        "the gate to grading recall on a bucket it cannot see the size of.",
+    ),
+    (
+        "producer-ignores-the-collapse-key",
+        PRODUCER,
+        """            row["bucket_collapse"] = bool(collapse)""",
+        """            row["bucket_collapse"] = False""",
+        STABILITY_ORACLE,
+        "Reads the server's collapse report and throws it away — the exact "
+        "'recorded bucket_sizes and never looked at them' failure, third time.",
+    ),
+    (
+        "collapse-inferred-from-bucket-size",
+        PRODUCER,
+        """            collapse = payload.get("futures_collapse")""",
+        """            collapse = (
+                {"inferred": True}
+                if len(payload.get("futures") or []) < 10
+                else None
+            )""",
+        STABILITY_ORACLE,
+        "OVER-APPLIES the verdict by guessing it from the outside: `tush push` "
+        "honestly returns one market and would be flagged, so the check fires on "
+        "correct answers and gets switched off.",
     ),
 ]
 
