@@ -2275,3 +2275,94 @@ resets it**, exactly as `GO-CAL-P039-EXCEPTION.md` accepted — but the grant pr
 108 banked units, and it is **123/128** as of 20:31Z. If the walk completes before the deploy, the
 publish-gate verdict it produces is ruling 024's owed census and it must be captured BEFORE the
 deploy lands, because the deploy destroys the cursor that produced it.
+
+---
+
+## 🟢 IT PUBLISHED. THE SLO IS GREEN AFTER 9.73 DAYS AND 201 CONSECUTIVE FAILURES (CAL-P040, 2026-08-11 21:20:36Z)
+
+The 21:15Z beat — the first uninterrupted beat on the 1 GB dyno — **completed the walk, ran the
+completion path, passed the publish gate and published.** Observed live during CAL-P040's window,
+not inferred from a later reading.
+
+    /api/calibration  generated_at  2026-08-02T03:23:54Z  ->  2026-08-11T21:20:35Z
+                      cache.status  stale/durable_over_age -> fresh
+                      age           9.729 d                ->  ~1 min
+
+    task-metrics      successes_24h          0    ->  1
+                      consecutive_failures   201  ->  0
+                      last_verdict           thrown/SystemExit -> complete
+                      last_verdict_reason    ledger:complete+green
+                      health                 critical -> healthy
+                      duration               1,010,672 ms -> 335,931 ms (5.6 min)
+
+**Five queues of this lane's work are confirmed correct in production by this one beat**, each of
+which had shipped on a prediction that no beat had ever been able to test:
+
+| queue | its prediction | this beat |
+|---|---|---|
+| CAL-P033 | finalization raises `TypeError` on resumed rows unless they are encoded on the way in | `staged:finalize` **45 ms**, no throw — the encode fix carried 128 resumed units through |
+| CAL-P034 | the fold keeps the cursor ~134 KB at 128 units instead of ~15.2 MB | cursor at 128 units = **72,820 B** |
+| CAL-P035 | the finalize spike is ~3.6 MB and "not a risk" | confirmed: finalize completed in 45 ms |
+| CAL-P036 | the `plan_units` transient is the dominant term and is in unfrozen code | beat survived planning; `rss:peak_mb` 578 |
+| CAL-P038 | the throw skips `_record_convergence_projection`, which is why `staged:beats_to_publish` has NEVER been recorded | **`staged:beats_to_publish 0` is present in this ledger** — first time ever |
+
+### 🛑 THE WALL WAS MEMORY, AND THE NUMBER SETTLES IT: `rss:peak_mb` **578**
+
+**578 MB is 66 MB above the old 512 MB ceiling.** This beat could not have completed on
+Standard-1X — it would have been killed at 512 exactly as the previous 201 were. CAL-P039's
+"the wall is MEMORY, not time" is confirmed, and the confirming instrument is the same `rss:` gauge
+CAL-P024c shipped.
+
+⚠️ **Do NOT subtract the allocation work's savings from 578 to argue the beat would have fit.**
+CAL-P036/P037's figures are `tracemalloc` (incremental Python allocation); 578 is process RSS. This
+document has now re-taught that rule three times (C276's block, CAL-P036's own first draft,
+CAL-P037's caution) and it applies to its own good news too. What can be said honestly: the peak
+exceeded the retired ceiling, the dyno upgrade is load-bearing for this publish, and the allocation
+work is why the peak is 578 rather than something larger — a quantity nobody has measured in RSS.
+
+⚠️ Also note **`staged:units_this_beat` = 5.** This beat only had to bank 5 units (123 → 128), so
+`staged:unit_ms_mean` 49,774 ms is a five-sample mean off a warm cache. **It is not a measurement of
+the roster predicate**, which is not deployed. CAL-P040's 13.3%-of-a-unit claim remains untested in
+production and must not be read as confirmed by this beat.
+
+### 🔴 THE GATE PASSED — AND THE REASON IS UNCOMFORTABLE ENOUGH TO BE THE FINDING
+
+CAL-P032 forecast **P(reject) ≈ 0.80** on population drift: candidate ≈ 695,653 against published
+652,407 = +6.63%, versus a ±5% limit. The forecast's measurement was good. Its conclusion was wrong,
+for a reason nobody modelled:
+
+    gate: {"ok": true, "codes": [], "first_publish": true,
+           "candidate_population": 703980,
+           "published_population": null,      <- THE BASELINE WAS GONE
+           "published_version": null}
+
+**The drift check could not fire, because there was nothing left to compare against.** The last-good
+artifact aged out at `SERVE_MAX_AGE_S = 7 * 86400` on ~2026-08-09, seven days after the 08-02
+publish. By the time a candidate finally arrived, the gate classified it as a FIRST publish.
+
+So the population move went through **ungated**, and it is bigger than CAL-P032 estimated:
+
+| published | outcomes | buckets |
+|---|---|---|
+| 2026-08-02 | 652,407 | 1,606 |
+| 2026-08-11 | **703,980** | 1,660 |
+| delta | **+51,573 = +7.91%** | +54 |
+
++7.91% sits inside CAL-P032's 95% CI (+2.85/+10.41) — its point estimate was low by 1.28pp, which is
+a good forecast off 55 banked units. **The lesson is not about the estimate. It is that an outage
+long enough to expire its own baseline silently disables the guard that would have scrutinised the
+recovery** — the page was dark so long that the gate protecting it stopped being able to see.
+
+**Ruling 024's owed census is therefore still owed, and it is owed BY HAND**, because the gate did
+not perform the comparison it exists to perform. The two numbers above are that comparison, recorded
+here at the moment they were both available. A +7.91% population move is now live on
+`/api/calibration` with `population_version` still `q267` and no drift verdict behind it.
+
+### What this does NOT settle
+
+The build published once, from a cursor 123/128 of the way there when the window opened. **No beat
+has yet walked 0 → 128 within the new memory ceiling**, so the throughput question CAL-P038 and
+CAL-P039 were working is untouched: at ~50–63 s/unit a cold 128-unit walk is ~1.8 hours of unit
+time against a 23-minute window. The SLO is green because a nine-day walk finally crossed the line,
+not because the build now converges in one beat. **The next SLO reading to watch is the first beat
+that starts from an empty cursor.**
