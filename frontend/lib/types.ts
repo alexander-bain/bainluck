@@ -1805,6 +1805,14 @@ export interface SportLeague {
   slug: string;
   name: string;
   sport_keys: string[];
+  /**
+   * Championship-grid slug, served from `SPORT_HIERARCHY` (UX-P062 / #1743).
+   *
+   * Register E5: this was a `GRID_SLUG_MAP` hardcoded inside the league page. Grid
+   * slugs are register data — a copy in a page is a second register that drifts
+   * the first time a grid is renamed. Absent for leagues with no grid.
+   */
+  grid_slug?: string | null;
 }
 
 export interface SportShowcaseEvent {

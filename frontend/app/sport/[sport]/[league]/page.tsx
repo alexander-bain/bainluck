@@ -11,7 +11,6 @@ import {
   fetchGolfData,
   fetchChampionshipGrid,
   fetchGolfLeaderboard,
-  fetchFeed,
   fetchLeagueMarkets,
 } from "@/lib/api";
 import type {
@@ -25,17 +24,21 @@ import type {
   ProgressionResponse,
   ProgressionStage,
   ProgressionParticipant,
-  FeedItem,
-  FeedEventData,
 } from "@/lib/types";
 import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
 import { gridCellsToProgression } from "@/lib/gridCellState";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
+import LeagueGameRail from "@/components/LeagueGameRail";
 import type { PositionOption } from "@/components/EvolutionView";
-import FeedCard from "@/components/FeedCard";
 import MoversRibbon from "@/components/MoversRibbon";
+import { earnsCountChip, earnsMoversStrip } from "@/lib/entityPageChrome";
+import {
+  countRenderedSections,
+  resolveGridSlug,
+  resolveLeagueTerminalState,
+} from "@/lib/leaguePageChrome";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // Lazy-load the heavy interactive EvolutionView so it is not in this page's
@@ -164,7 +167,6 @@ export default function LeagueShowcasePage() {
   const [golfData, setGolfData] = useState<GolfResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<GolfLeaderboardPlayer[]>([]);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
-  const [todayEvents, setTodayEvents] = useState<FeedItem[]>([]);
   const [leagueMarkets, setLeagueMarkets] = useState<LeagueFuturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -222,48 +224,25 @@ export default function LeagueShowcasePage() {
           if (results[1].status === "fulfilled") setLeaderboard(results[1].value.players || []);
         }
 
-        // Championship grid + today's events + league markets (parallel, all supplementary)
+        // Championship grid + league envelope (parallel, both supplementary)
         const sportKey = l.sport_keys[0];
         if (sportKey) {
-          // Map sport_key to grid slug — grid slugs don't always match sport key suffixes
-          const GRID_SLUG_MAP: Record<string, string> = {
-            "soccer_usa_mls": "mls",
-            "soccer_epl": "epl",
-            "soccer_uefa_champs_league": "champions-league",
-            "soccer_spain_la_liga": "la-liga",
-            "soccer_germany_bundesliga": "bundesliga",
-            "americanfootball_nfl": "nfl",
-            "americanfootball_ncaaf": "ncaa-football",
-            "basketball_nba": "nba",
-            "basketball_ncaab": "ncaa-basketball",
-            "basketball_wnba": "wnba",
-            "icehockey_nhl": "nhl",
-            "baseball_mlb": "mlb",
-          };
-          const gridSlug = GRID_SLUG_MAP[sportKey] || sportKey.split("_").slice(1).join("_") || sportKey;
-          const [gridResult, feedResult, marketsResult] = await Promise.allSettled([
+          // UX-P062 (#1743), register E5: `GRID_SLUG_MAP` used to be hardcoded
+          // right here. The grid slug is register data — it now rides the
+          // hierarchy payload, so the page holds no map to drift.
+          const gridSlug = resolveGridSlug(l.grid_slug, sportKey);
+          const [gridResult, marketsResult] = await Promise.allSettled([
             fetchChampionshipGrid(gridSlug),
-            fetchFeed({ sport: sportKey, include_futures: false, limit: 30 }),
             fetchLeagueMarkets(sportKey),
           ]);
           if (cancelled) return;
           if (gridResult.status === "fulfilled") setGrid(gridResult.value);
-          if (marketsResult.status === "fulfilled" && marketsResult.value.total_markets > 0) {
+          // Alex's amendment: the games rails ride this same payload, so the tier
+          // the backend declared counts exactly the content the page renders.
+          // Note the dropped `total_markets > 0` guard — a league with games and
+          // no futures still has an envelope worth keeping (and a tier).
+          if (marketsResult.status === "fulfilled") {
             setLeagueMarkets(marketsResult.value);
-          }
-          if (feedResult.status === "fulfilled") {
-            const events = feedResult.value.items
-              .filter((item): item is FeedItem & { data: FeedEventData } => item.type === "event")
-              .sort((a, b) => {
-                const statusOrder = { live: 0, scheduled: 1, completed: 2, closed: 2 };
-                const da = (a.data as FeedEventData).status;
-                const db = (b.data as FeedEventData).status;
-                const orderA = statusOrder[da] ?? 3;
-                const orderB = statusOrder[db] ?? 3;
-                if (orderA !== orderB) return orderA - orderB;
-                return b.score - a.score;
-              });
-            setTodayEvents(events);
           }
         }
       } catch {
@@ -373,6 +352,38 @@ export default function LeagueShowcasePage() {
 
   const heroTournament = liveTournaments[0] || upcomingTournaments[0];
 
+  // ── UX-P062 (#1743, epic #1741): render the DECLARED tier, never infer it ──
+  //
+  // Ruling 021: the moment web and SwiftUI each count arrays to pick a layout, the
+  // same league renders as a map on one and an answer on the other, and the parity
+  // bug is unfindable because both clients are "correct".
+  const tier = leagueMarkets?.tier ?? null;
+  const upcomingGames = leagueMarkets?.upcoming_games ?? [];
+  const recentResults = leagueMarkets?.recent_results ?? [];
+  const marketSections = Object.entries(leagueMarkets?.sections ?? {});
+  const gridTeams = grid?.teams?.length ?? 0;
+
+  // How many CONTAINERS the page is actually rendering — what a section header has
+  // to distinguish itself from (spec §4). Counted here rather than inside each
+  // section, because "am I the only thing on this page?" is a page-level question.
+  const renderedSectionCount = countRenderedSections({
+    marketSectionCount: marketSections.length,
+    upcomingGameCount: upcomingGames.length,
+    recentResultCount: recentResults.length,
+    gridTeamCount: gridTeams,
+  });
+
+  // T0 (spec §6): a real league with nothing live to say — a STATEMENT, never
+  // "check back later". `degraded` stays a DIFFERENT state: an outage that renders
+  // as an off-season is the concealment ruling 025 clause 4 names.
+  const terminalState = resolveLeagueTerminalState({
+    loaded: leagueMarkets != null,
+    tier,
+    availability: leagueMarkets?.availability,
+    marketSectionCount: marketSections.length,
+    upcomingGameCount: upcomingGames.length,
+  });
+
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen">
@@ -400,7 +411,10 @@ export default function LeagueShowcasePage() {
               {completedTournaments.length > 0 && `${completedTournaments.length} completed`}
             </p>
           )}
-          {!golfData && grid && (
+          {/* A count chip is a STAT. At 1-3 answers the count is already visible
+              and printing it is the page apologizing for its size (spec \u00a73 bans it
+              at T1) \u2014 this is what stopped boxing printing "0 active markets". */}
+          {!golfData && grid && earnsCountChip(tier) && (
             <p className="text-text-secondary mt-2">
               {grid.team_count > 0 && `${grid.team_count} teams`}
               {grid.season && ` \u00b7 ${grid.season}`}
@@ -439,42 +453,41 @@ export default function LeagueShowcasePage() {
         {/* TEAM SPORT LAYOUT: Movers → Games → Grid → Evolution → Markets */}
         {/* ============================================================ */}
 
-        {/* Movers Ribbon (team sports only — golf doesn't have movers) */}
-        {sportSlug !== "golf" && grid && grid.movers && grid.movers.length > 0 && (
+        {/* Movers Ribbon (team sports only — golf doesn't have movers).
+            A movers strip below three is a list of one thing that moved (§4). */}
+        {sportSlug !== "golf" && grid && earnsMoversStrip(grid.movers?.length ?? 0) && (
           <MoversRibbon
             movers={grid.movers}
             gridHref={`/sport/${sportSlug}/${leagueSlug}`}
           />
         )}
 
-        {/* Today's Games */}
-        {todayEvents.length > 0 && (
-          <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
-              {todayEvents.some((e) => (e.data as FeedEventData).status === "live")
-                ? "Live & Today's Games"
-                : "Today's Games"}
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {todayEvents.map((item) => (
-                <FeedCard key={(item.data as FeedEventData).id} item={item} />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Games — Alex's 2026-08-11 amendment. Served by the league envelope, so
+            the tier census counts exactly what renders here. */}
+        <LeagueGameRail
+          title={
+            upcomingGames.some((g) => g.status === "live")
+              ? "Live & Upcoming"
+              : "Upcoming Games"
+          }
+          games={upcomingGames}
+          hasMore={leagueMarkets?.upcoming_games_has_more}
+        />
+
+        <LeagueGameRail
+          title="Recent Results"
+          games={recentResults}
+          hasMore={leagueMarkets?.recent_results_has_more}
+          settled
+        />
 
         {/* Championship Grid — before evolution chart for team sports, after for golf */}
         {sportSlug !== "golf" && grid && grid.teams && grid.teams.length > 0 && (
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
-              <Link
-                href={`/sport/${sportSlug}/${leagueSlug}`}
-                className="text-xs font-medium text-accent-brand hover:underline"
-              >
-                View full grid &rarr;
-              </Link>
-            </div>
+            {/* UX-P062 (#1743), register E5: "View full grid →" linked to the
+                page it was already on. A link that goes nowhere teaches a reader
+                their tap did not register. The grid IS the full grid here. */}
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Championship Odds</h2>
             <TournamentProgressionTable
               data={gridToProgression(grid)}
               pageType="sport_league"
@@ -500,15 +513,10 @@ export default function LeagueShowcasePage() {
         {/* Championship Grid — after evolution chart for golf */}
         {sportSlug === "golf" && grid && grid.teams && grid.teams.length > 0 && (
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
-              <Link
-                href={`/sport/${sportSlug}/${leagueSlug}`}
-                className="text-xs font-medium text-accent-brand hover:underline"
-              >
-                View full grid &rarr;
-              </Link>
-            </div>
+            {/* UX-P062 (#1743), register E5: "View full grid →" linked to the
+                page it was already on. A link that goes nowhere teaches a reader
+                their tap did not register. The grid IS the full grid here. */}
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Championship Odds</h2>
             <TournamentProgressionTable
               data={gridToProgression(grid)}
               pageType="sport_league"
@@ -516,8 +524,11 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* League Market Sections (Series, Awards, Props, Stats, etc.) */}
-        {leagueMarkets && Object.entries(leagueMarkets.sections)
+        {/* League Market Sections (Series, Awards, Props, Stats, etc.).
+            `sectionCount` + `tier` are passed so each section can decide whether
+            it has EARNED its header and count chip (§4) — a header over one card
+            on a page with one section is chrome organizing nothing. */}
+        {marketSections
           .sort(([a], [b]) => (SECTION_META[a]?.order ?? 99) - (SECTION_META[b]?.order ?? 99))
           .map(([sectionKey, markets]) => (
             <LeagueMarketSection
@@ -525,6 +536,8 @@ export default function LeagueShowcasePage() {
               sectionKey={sectionKey}
               label={SECTION_META[sectionKey]?.label ?? sectionKey}
               markets={markets as LeagueMarket[]}
+              sectionCount={renderedSectionCount}
+              tier={tier}
             />
           ))
         }
@@ -564,15 +577,53 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Empty state — only when there is truly no data at all */}
-        {sportSlug !== "golf" && !grid && todayEvents.length === 0 && !leagueMarkets && (
-          <div className="text-center py-16">
+        {/* ── T0 / honest-empty (spec §6, ruling 025) ──
+            The old state read "No X data available right now / Check back when the
+            season is active" — register E4's anti-pattern precisely: no why, no
+            when, no record, and no way out of the page. A thin page is a COMPLETE
+            page about a quiet league, so it says what IS true and links up.
+
+            `degraded` is kept distinct from empty on purpose: an outage that
+            renders as an off-season is the concealment clause 4 names. */}
+        {terminalState === "degraded" && (
+          <div className="text-center py-16" data-empty-state-name="league-degraded">
             <p className="text-text-secondary text-lg">
-              No {league.name} data available right now
+              {league.name} data didn&apos;t load
             </p>
             <p className="text-text-muted text-sm mt-2">
-              Check back when the season is active for championship odds, games, and market analysis
+              This is a problem on our side, not a quiet week.
             </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 text-sm text-accent-brand hover:underline"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {terminalState === "present" && (
+          <div className="text-center py-16" data-empty-state-name="league-present">
+            <p className="text-text-secondary text-lg">
+              Nothing open on {league.name} right now
+            </p>
+            {recentResults.length > 0 ? (
+              <p className="text-text-muted text-sm mt-2">
+                The last {recentResults.length} result
+                {recentResults.length !== 1 ? "s" : ""} are above. New markets appear
+                when the schedule picks back up.
+              </p>
+            ) : (
+              <p className="text-text-muted text-sm mt-2">
+                No live markets and no games in the last two weeks.
+              </p>
+            )}
+            <Link
+              href={`/sport/${sportSlug}`}
+              className="mt-4 inline-block text-sm text-accent-brand hover:underline"
+            >
+              See all of {hierarchy?.name || sportSlug} &rarr;
+            </Link>
           </div>
         )}
       </div>

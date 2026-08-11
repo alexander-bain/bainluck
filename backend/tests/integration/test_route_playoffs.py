@@ -791,12 +791,34 @@ class TestLeagueFuturesEndpoint:
             )
 
     async def test_empty_db_returns_empty_sections_contract(self, client):
+        """UX-P062 (#1743): the league envelope, on the nothing-at-all path.
+
+        Kept as an EXACT equality rather than relaxed to a subset. This test is the
+        reason the new fields could not be added silently, which is its whole job —
+        loosening it to `issubset` would buy one easy edit today and remove the
+        alarm permanently.
+
+        `tier: None` is correct here and worth reading carefully: an empty DB means
+        a registered league with no answers, no record and no upcoming games, which
+        is the GENERATION GATE (spec §2), not T0. T0 needs something true to say.
+        """
         resp = await client.get("/api/leagues/basketball_nba")
         body = resp.json()
         assert body == {
             "sport_key": "basketball_nba",
             "sections": {},
             "total_markets": 0,
+            # The entity envelope (spec §7).
+            "tier": None,
+            "availability": "empty",
+            "pool_counts": {"answers": 0, "dropped": 0, "settled": 0},
+            "section_counts": {},
+            # Alex's 2026-08-11 amendment: the games rails.
+            "upcoming_games": [],
+            "upcoming_games_has_more": False,
+            "recent_results": [],
+            "recent_results_has_more": False,
+            "record_n": 0,
         }
 
     async def test_mocked_award_market_is_grouped_with_outcome_shape(

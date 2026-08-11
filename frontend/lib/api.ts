@@ -1522,10 +1522,47 @@ export interface LeagueMarket {
   prop_type?: string;
 }
 
+/**
+ * One game on a league rail (UX-P062 / #1743, Alex's 2026-08-11 amendment).
+ *
+ * Served by `/api/leagues/{sport_key}` rather than fetched separately, because the
+ * TIER is declared by that route and a census counting content the page sourced
+ * elsewhere can silently diverge from what the reader sees.
+ */
+export interface LeagueGameBrief {
+  id: number;
+  home_team: string;
+  away_team: string;
+  commence_time: string | null;
+  status: string;
+  home_score: number | null;
+  away_score: number | null;
+  /** Null when we never measured one — render nothing, never a 0% claim. */
+  home_win_probability: number | null;
+}
+
 export interface LeagueFuturesResponse {
   sport_key: string;
   sections: Record<string, LeagueMarket[]>;
   total_markets: number;
+  // UX-P062 (#1743, epic #1741) — the same entity envelope the hub carries
+  // (spec §7). `tier` is DECLARED and rendered, never inferred (ruling 021).
+  tier?: EntityTier | null;
+  availability?: EntityAvailability;
+  pool_counts?: { answers: number; dropped: number; settled: number };
+  section_counts?: Record<
+    string,
+    { total: number; shown: number; dropped: number; answers: number }
+  >;
+  // Alex's amendment: games are the league page's freshest content, and the tier
+  // census counts them. `has_more` declares the cap rather than applying it
+  // silently (spec §4 — an uncounted cap reads as coverage).
+  upcoming_games?: LeagueGameBrief[];
+  upcoming_games_has_more?: boolean;
+  recent_results?: LeagueGameBrief[];
+  recent_results_has_more?: boolean;
+  /** Settled games behind "The record" — spec §5.3. */
+  record_n?: number;
 }
 
 export async function fetchLeagueMarkets(sportKey: string): Promise<LeagueFuturesResponse> {

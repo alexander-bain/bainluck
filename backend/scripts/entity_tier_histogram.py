@@ -79,6 +79,37 @@ try:
 except Exception:  # pragma: no cover - the script must still run standalone
     COMPETITION_SLUGS = []
 
+#: Leagues come from `SPORT_HIERARCHY` for the same reason competitions come from
+#: `HUB_CONFIGS`: it is the register the product already navigates by, so a second
+#: list here would drift the first time a league is added. Step 1 (#1743).
+try:
+    from app.utils.sport_keys import SPORT_HIERARCHY  # noqa: E402
+
+    _LEAGUE_ROWS = [
+        {
+            "sport_slug": sport_slug,
+            "league_slug": lg.get("slug"),
+            "name": lg.get("name"),
+            "sport_key": (lg.get("sport_keys") or [None])[0],
+        }
+        for sport_slug, sport in SPORT_HIERARCHY.items()
+        for lg in (sport.get("leagues") or [])
+    ]
+except Exception:  # pragma: no cover - the script must still run standalone
+    _LEAGUE_ROWS = []
+
+#: Measurable = has a sport key to query with.
+LEAGUE_ROWS = [r for r in _LEAGUE_ROWS if r["sport_key"]]
+
+#: NOT a tier, and deliberately not an error either. A league in the register with
+#: no `sport_keys` (golf's DP World / LIV / Korn Ferry today) cannot be queried at
+#: all, so we have no measurement of it. Gotcha #53 is the whole point: an absence
+#: of measurement is not a measurement of absence, and filing these as T0 would
+#: report "three empty leagues" when the truth is "three unasked questions".
+LEAGUE_UNMEASURABLE = [r for r in _LEAGUE_ROWS if not r["sport_key"]]
+
+LEAGUE_LABELS = {r["sport_key"]: f"{r['sport_slug']}/{r['league_slug']}" for r in LEAGUE_ROWS}
+
 
 def _get(url: str, timeout: float = 30.0):
     req = urllib.request.Request(url, headers={"User-Agent": "bainluck-tier-histogram"})
@@ -119,13 +150,73 @@ def measure_competition(api: str, slug: str, *, now: datetime) -> dict:
     }
 
 
+def measure_league(api: str, sport_key: str, *, now: datetime) -> dict:
+    """One league → its resolved tier plus the counts that explain it.
+
+    Reads `/api/leagues/{sport_key}` — the same payload the league page is handed,
+    for the reason stated in the module docstring: measuring the DB instead would
+    measure a different thing and silently diverge from the resolver's real inputs.
+    """
+    payload = _get(f"{api}/api/leagues/{sport_key}")
+    sections = payload.get("sections") or {}
+
+    out = resolve_entity_tier(
+        sections,
+        now=now,
+        entity_is_real=True,  # it is in SPORT_HIERARCHY; that IS league identity
+        record_n=payload.get("record_n") or 0,
+        next_event_count=payload.get("next_event_count") or 0,
+        season_known=bool((payload.get("season") or {}).get("state")),
+    )
+
+    # Ruling 021, made mechanical. Once the route declares a tier, the histogram
+    # must not quietly compute a second opinion: two graders over one input is
+    # exactly the parity bug the typed field exists to prevent, and it is
+    # unfindable precisely because both sides believe they are correct.
+    declared = payload.get("tier", "__absent__")
+    return {
+        "key": LEAGUE_LABELS.get(sport_key, sport_key),
+        "sport_key": sport_key,
+        "tier": out["tier"],
+        "declared_tier": declared,
+        "tier_agrees": declared == "__absent__" or declared == out["tier"],
+        "answers": out["answers"],
+        "sections_populated": out["sections_populated"],
+        "rows": sum(len(v or []) for v in sections.values()),
+        "upcoming": payload.get("next_event_count") or 0,
+        "dropped": out["pool_counts"]["dropped"],
+        "settled": out["pool_counts"]["settled"],
+        "unpriced": out["unpriced"],
+        "duplicates": out["duplicates"],
+        "per_section": {
+            k: v["answers"] for k, v in sorted(out["per_section"].items())
+        },
+    }
+
+
 CLASS_MEASURERS = {
-    "competition": (lambda: COMPETITION_SLUGS, measure_competition),
+    "competition": {
+        "keys": lambda: COMPETITION_SLUGS,
+        "measure": measure_competition,
+        "unmeasurable": lambda: [],
+        "step": 0,
+    },
+    "league": {
+        "keys": lambda: [r["sport_key"] for r in LEAGUE_ROWS],
+        "measure": measure_league,
+        "unmeasurable": lambda: [
+            {
+                "key": f"{r['sport_slug']}/{r['league_slug']}",
+                "reason": "no sport_keys in SPORT_HIERARCHY — not queryable",
+            }
+            for r in LEAGUE_UNMEASURABLE
+        ],
+        "step": 1,
+    },
     # Declared now so the report's SHAPE is stable across the epic; the numbers
     # arrive with their steps.
-    "league": (lambda: [], None),      # step 1 (#1743)
-    "team": (lambda: [], None),        # step 3 (#1745)
-    "player": (lambda: [], None),      # step 4 (#1746)
+    "team": {"keys": lambda: [], "measure": None, "unmeasurable": lambda: [], "step": 3},
+    "player": {"keys": lambda: [], "measure": None, "unmeasurable": lambda: [], "step": 4},
 }
 
 
@@ -137,12 +228,13 @@ def run(api: str, classes: list[str], *, now: datetime) -> dict:
     }
 
     for cls in classes:
-        keys_fn, measurer = CLASS_MEASURERS[cls]
+        spec = CLASS_MEASURERS[cls]
+        measurer = spec["measure"]
         if measurer is None:
             report["classes"][cls] = {"status": "not_wired", "entities": []}
             continue
 
-        keys = keys_fn()
+        keys = spec["keys"]()
         entities: list[dict] = []
         errors: list[dict] = []
         for i, key in enumerate(keys):
@@ -160,6 +252,18 @@ def run(api: str, classes: list[str], *, now: datetime) -> dict:
             "status": "measured",
             "measured": len(entities),
             "errors": errors,
+            # Neither a tier nor an error: entities we could not ask about at all.
+            "unmeasurable": spec["unmeasurable"](),
+            # Ruling 021: where the route declares a tier, it must match ours.
+            "tier_disagreements": [
+                {
+                    "key": e["key"],
+                    "declared": e.get("declared_tier"),
+                    "recomputed": e["tier"],
+                }
+                for e in entities
+                if not e.get("tier_agrees", True)
+            ],
             "histogram": {
                 **{t: hist.get(t, 0) for t in TIERS},
                 "no_page": hist.get(None, 0),
@@ -182,7 +286,7 @@ def render(report: dict) -> str:
     for cls, data in report["classes"].items():
         lines.append(f"── {cls.upper()} ──")
         if data["status"] == "not_wired":
-            step = {"league": 1, "team": 3, "player": 4}.get(cls, "?")
+            step = CLASS_MEASURERS.get(cls, {}).get("step", "?")
             lines.append(f"   not wired yet — arrives with step {step}")
             lines.append("")
             continue
@@ -200,15 +304,33 @@ def render(report: dict) -> str:
         if h["no_page"]:
             lines.append(f"   {'no_page':<9} {h['no_page']:>3}")
         lines.append("")
-        lines.append(f"   {'entity':<12}{'tier':<10}{'ans':>4}{'secs':>6}{'rows':>6}{'drop':>6}  sections")
+        # Width is computed, not guessed: league keys are "motorsports/nascar",
+        # which silently ran into the tier column at a hardcoded 12.
+        kw = max(
+            [12]
+            + [len(e["key"]) for e in data["entities"]]
+            + [len(x["key"]) for x in data["errors"]]
+            + [len(x["key"]) for x in (data.get("unmeasurable") or [])]
+        ) + 2
+        lines.append(f"   {'entity':<{kw}}{'tier':<10}{'ans':>4}{'secs':>6}{'rows':>6}{'drop':>6}  sections")
         for e in data["entities"]:
             secs = " ".join(f"{k}={v}" for k, v in e["per_section"].items() if v)
             lines.append(
-                f"   {e['key']:<12}{str(e['tier']):<10}{e['answers']:>4}"
+                f"   {e['key']:<{kw}}{str(e['tier']):<10}{e['answers']:>4}"
                 f"{e['sections_populated']:>6}{e['rows']:>6}{e['dropped']:>6}  {secs}"
             )
         for err in data["errors"]:
-            lines.append(f"   {err['key']:<12}ERROR     {err['error'][:60]}")
+            lines.append(f"   {err['key']:<{kw}}ERROR     {err['error'][:60]}")
+        for un in data.get("unmeasurable") or []:
+            lines.append(f"   {un['key']:<{kw}}—         unmeasurable: {un['reason']}")
+
+        # Loud on purpose. A silent disagreement here is the ruling-021 parity bug
+        # arriving through the instrument that exists to catch it.
+        for d in data.get("tier_disagreements") or []:
+            lines.append(
+                f"   !! TIER DISAGREEMENT {d['key']}: route declared "
+                f"{d['declared']!r}, resolver says {d['recomputed']!r}"
+            )
         lines.append("")
 
     lines.append("READ THIS BEFORE TUNING (spec §11):")

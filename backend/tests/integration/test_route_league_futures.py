@@ -403,3 +403,256 @@ class TestLeagueFuturesHTTPBehavior:
         assert resp.status_code == 200
         body = resp.json()
         assert "sport_key" in body
+
+
+# ============================================================================
+# UX-P062 (#1743, epic #1741) — the entity envelope + Alex's games/grid amendment
+# ============================================================================
+
+
+def _mock_event(
+    *, event_id=1, home="Boston Red Sox", away="New York Yankees",
+    status="scheduled", hours_from_now=6, home_prob=0.55,
+    home_score=None, away_score=None,
+):
+    """A stand-in Event for the league rails.
+
+    Carries `win_probability_sources` in the real JSONB shape — the route reads the
+    canonical `aggregate` block rather than rolling its own mean (register E9), so a
+    fake with a flattened probability would certify a read production never does.
+    """
+    return SimpleNamespace(
+        id=event_id,
+        home_team_name=home,
+        away_team_name=away,
+        status=status,
+        commence_time=datetime.now(timezone.utc) + timedelta(hours=hours_from_now),
+        home_score=home_score,
+        away_score=away_score,
+        win_probability_sources=(
+            {"aggregate": {"home": home_prob, "away": 1 - home_prob}}
+            if home_prob is not None
+            else None
+        ),
+    )
+
+
+def _three_call_db(mock_db, markets, games=(), results=()):
+    """Sequence the route's THREE queries: markets, then games, then results.
+
+    The existing seeded tests set a single `return_value`, so every query — including
+    the two rail queries this queue added — receives the MARKET rows. That silently
+    routes real work into the rails' exception guard, which is exactly the shape that
+    makes a guard hide a bug instead of surviving one. Anything asserting on the
+    rails must sequence the calls.
+    """
+    mock_db.execute.side_effect = [
+        _scalars_result(list(markets)),
+        _scalars_result(list(games)),
+        _scalars_result(list(results)),
+    ]
+
+
+class TestLeagueEntityEnvelope:
+    """Spec §7: tier, availability and every count arrive IN the payload."""
+
+    async def test_envelope_fields_present(self, client, mock_db):
+        _three_call_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+
+        for field in ("tier", "availability", "pool_counts", "section_counts"):
+            assert field in body, f"{field} missing from the league envelope"
+        assert set(body["pool_counts"]) == {"answers", "dropped", "settled"}
+
+    async def test_availability_is_the_ruled_vocabulary(self, client, mock_db):
+        """Ruling 025 / register E10: never live | stale_ok | unavailable."""
+        _three_call_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+        assert body["availability"] in {"fresh", "stale", "degraded", "empty"}
+
+    async def test_empty_league_declares_empty_not_fresh(self, client):
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+        assert body["availability"] == "empty"
+
+    async def test_unregistered_key_gets_no_page(self, client):
+        """The generation gate is an IDENTITY question, not a density one."""
+        body = (await client.get("/api/leagues/not_a_real_league")).json()
+        assert body["tier"] is None
+
+
+class TestLeaguePriceSkipIsCounted:
+    """Register E8 / ruling 025 clause 3: a swallow that counts is detection."""
+
+    async def test_effectively_resolved_market_is_counted_not_vanished(
+        self, client, mock_db
+    ):
+        # Leader at 98% having opened at 90% — the existing price-based skip.
+        resolved = _mock_market(
+            market_id=70,
+            name="NBA Most Improved Player",
+            market_tier=3,
+            llm_sport_category="basketball",
+            llm_league="nba",
+            outcomes=[
+                _mock_outcome(outcome_id=700, name="Runaway", probability=0.98, opening=0.90),
+                _mock_outcome(outcome_id=701, name="Other", probability=0.02, rank=2),
+            ],
+        )
+        live = _mock_market(
+            market_id=71,
+            name="NBA Sixth Man of the Year",
+            market_tier=3,
+            llm_sport_category="basketball",
+            llm_league="nba",
+        )
+        _three_call_db(mock_db, [resolved, live])
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+
+        awards = body["section_counts"]["awards"]
+        # The skipped market is not rendered...
+        assert awards["shown"] == 1
+        # ...but the page can still say "1 of 2", which is the whole point.
+        assert awards["total"] == 2
+        assert awards["dropped"] == 1
+        assert body["pool_counts"]["dropped"] >= 1
+
+
+class TestLeagueGamesAndGridAmendment:
+    """Alex's 2026-08-11 amendment: games rails ship, and the census counts
+    event content and the championship grid."""
+
+    async def test_games_rails_are_served_by_this_route(self, client, mock_db):
+        _three_call_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[_mock_event(event_id=11), _mock_event(event_id=12)],
+            results=[_mock_event(event_id=13, status="completed", hours_from_now=-48,
+                                 home_score=5, away_score=3)],
+        )
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+
+        assert len(body["upcoming_games"]) == 2
+        assert len(body["recent_results"]) == 1
+        assert body["record_n"] == 1
+        assert body["upcoming_games"][0]["home_win_probability"] == 0.55
+
+    async def test_championship_markets_are_counted_even_though_the_grid_renders_them(
+        self, client, mock_db
+    ):
+        """THE CENSUS HOLE this amendment closed.
+
+        Tier 1/2/4 rows are dropped from the card sections because the GRID renders
+        them. They were dropped from the COUNT too, so the league page's centerpiece
+        was invisible to the resolver — which is why MLB measured "awards + props"
+        and why zero of 29 leagues could reach T3.
+        """
+        champ = _mock_market(
+            market_id=80, name="World Series Winner", market_tier=1,
+            llm_sport_category="baseball", llm_league="mlb", external_id="KXMLB-CHAMP",
+        )
+        award = _mock_market(
+            market_id=81, name="Cy Young Winner", market_tier=3,
+            llm_sport_category="baseball", llm_league="mlb", external_id="KXMLB-CY",
+        )
+        _three_call_db(mock_db, [champ, award])
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        # Still not rendered as cards — the grid is its rendering.
+        assert "championship" not in body["sections"]
+        # But it COUNTS now.
+        assert body["section_counts"]["championship"]["answers"] == 1
+        assert body["pool_counts"]["answers"] == 2
+
+    async def test_priced_game_counts_as_an_answer_unpriced_one_does_not(
+        self, client, mock_db
+    ):
+        """A game with a blended number answers "who wins tonight?"; one without
+        is a fixture. The ONE resolver makes that call, not this route."""
+        _three_call_db(
+            mock_db,
+            [],
+            games=[
+                _mock_event(event_id=21, home_prob=0.61),
+                _mock_event(event_id=22, home_prob=None),
+            ],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        assert body["section_counts"]["games"]["answers"] == 1
+        assert body["section_counts"]["games"]["dropped"] == 1
+
+    async def test_registered_league_with_only_a_record_is_T0_not_a_404(
+        self, client, mock_db
+    ):
+        """Doctrine A4 + spec §6: settled content feeds the RECORD, so a registered
+        league between seasons is a statement page, not a generation-gate hole."""
+        _three_call_db(
+            mock_db,
+            [],
+            results=[_mock_event(event_id=31, status="completed", hours_from_now=-72,
+                                 home_score=2, away_score=1)],
+        )
+        body = (await client.get("/api/leagues/soccer_italy_serie_a")).json()
+
+        assert body["pool_counts"]["answers"] == 0
+        assert body["tier"] == "present", "a real league with receipts must render T0"
+
+    async def test_mlb_shaped_league_reaches_the_rich_tier_on_real_content(
+        self, client, mock_db
+    ):
+        """The amendment's PREDICTION, pinned.
+
+        MLB measured T2 in production (awards 8 + props 27 = 2 populated sections)
+        and the spec §8 predicted T3. Alex's resolution was "more content kinds", no
+        threshold override — so the same league, once the grid and the games rail
+        count, must clear `T3_MIN_SECTIONS_POPULATED`.
+        """
+        markets = (
+            [
+                _mock_market(
+                    market_id=100 + i, name=f"MLB Award {i}", market_tier=3,
+                    llm_sport_category="baseball", llm_league="mlb",
+                    external_id=f"KXMLB-AW{i}",
+                )
+                for i in range(4)
+            ]
+            + [
+                _mock_market(
+                    market_id=200 + i, name=f"Team {i} Win Total", market_tier=5,
+                    category="prop", llm_sport_category="baseball", llm_league="mlb",
+                    external_id=f"KXMLB-WT{i}",
+                )
+                for i in range(4)
+            ]
+            + [
+                _mock_market(
+                    market_id=300, name="World Series Winner", market_tier=1,
+                    llm_sport_category="baseball", llm_league="mlb",
+                    external_id="KXMLB-CHAMP",
+                ),
+                _mock_market(
+                    market_id=301, name="AL Pennant Winner", market_tier=2,
+                    llm_sport_category="baseball", llm_league="mlb",
+                    external_id="KXMLB-AL",
+                ),
+                _mock_market(
+                    market_id=302, name="NL Pennant Winner", market_tier=2,
+                    llm_sport_category="baseball", llm_league="mlb",
+                    external_id="KXMLB-NL",
+                ),
+            ]
+        )
+        games = [_mock_event(event_id=400 + i, home_prob=0.5 + i / 100) for i in range(4)]
+        _three_call_db(mock_db, markets, games=games)
+
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        populated = [
+            name for name, c in body["section_counts"].items() if c["answers"] >= 3
+        ]
+        assert "championship" in populated
+        assert "games" in populated
+        assert body["tier"] == "full", (
+            f"expected the rich tier on real content; got {body['tier']} "
+            f"with populated sections {sorted(populated)}"
+        )
