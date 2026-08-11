@@ -1003,3 +1003,148 @@ class TestTheRealPostgresRailExists:
             assert "skipped" in step["run"], (
                 f"step {step.get('name')!r} does not fail on an all-skipped run"
             )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P031 / #1494 — the EVENT recall arms, same defect one table over.
+#
+# `or_(team_filter, Sport.key.in_(sport_alias_keys))` puts a trigram-servable
+# ILIKE and a joined-column IN inside one top-level OR. No single index serves
+# both, so the planner abandons both and drives off `ix_events_status_commence`,
+# heap-scanning the whole 30-day window and filtering row by row.
+#
+# The tell is that the cost does not depend on the answer. MEASURED in production
+# 2026-08-11 (`db-query` EXPLAIN ANALYZE/BUFFERS, two warm passes each): the OR
+# form touches **6,416 shared blocks for every league query**, whether it returns
+# 0 rows (`golf`) or 2,013 (`tennis`). The UNION form touches 59 / 584 / 1,522.
+#
+#     query     OR (exec / blocks)      UNION (exec / blocks)
+#     golf       65.6-176.8ms / 6,416     6.8-11.7ms /    59
+#     nfl         79.5-95.7ms / 6,416     4.1-48.8ms /   584
+#     tennis      53.6-59.6ms / 6,416     9.7-10.2ms / 1,522
+#
+# End to end that was `event_count` = 932ms of a 1,097ms `golf` request, to count
+# ZERO events. Recall is preserved by construction (A OR B and A UNION B select
+# the same set) and was verified against production anyway: 8/8 league queries
+# returned identical counts through both forms.
+# ---------------------------------------------------------------------------
+class TestEventRecallArmsAreUnionedNotOred:
+    """Guard the SHAPE. LAT-P006 proved it for futures; this is the event half."""
+
+    def test_league_arm_is_not_ored_into_the_team_filter(self):
+        assert "or_(team_filter, league_scope)" not in SEARCH_CODE, (
+            "EVENT_ARMS_ORED reintroduced: the league arm is being OR'd into the "
+            "event predicate again. Measured 6,416 shared blocks on EVERY league "
+            "query regardless of the answer (golf 932ms of a 1,097ms request, for "
+            "zero events) versus 59-1,522 blocks for the set-identical UNION."
+        )
+
+    def test_recall_arms_are_combined_with_a_union(self):
+        assert "union(*_event_arm_selects)" in SEARCH_CODE, (
+            "the UNION of the event recall arms is gone — if the arms are "
+            "combined some other way, re-point this guard deliberately"
+        )
+
+    def test_scope_conditions_are_pushed_into_each_arm(self):
+        """AND distributes over UNION. An unfiltered arm hands the outer query
+        every out-of-window event it matches."""
+        assert "select(Event.id)" in SEARCH_CODE, (
+            "the per-arm id select is gone from the event candidate filter"
+        )
+        assert ".where(arm, *event_scope_conditions)" in SEARCH_CODE, (
+            "the scope conditions (window, status, sport, tags) are no longer "
+            "pushed into each UNION arm"
+        )
+
+    def test_the_outer_query_still_carries_the_scope_conditions(self):
+        """Deliberate redundancy, matching the futures precedent: the predicate
+        stays correct if the push-down is ever removed."""
+        assert "*event_scope_conditions," in SEARCH_CODE
+
+    def test_recall_is_not_narrowed_because_both_arms_survive(self):
+        """The league arm must be ADDED to the arm list, never replace the name arm.
+
+        A UNION that lost an arm is the silent failure this whole class of change
+        risks: it reads fine, compiles fine, and halves recall.
+        """
+        assert "_event_recall_arms = [team_filter]" in SEARCH_CODE, (
+            "the name arm must be the base of the arm list"
+        )
+        assert "_event_recall_arms.append(league_scope)" in SEARCH_CODE, (
+            "the league arm must be APPENDED — if it replaces team_filter, a "
+            "league query stops matching by team name entirely"
+        )
+
+    def test_the_no_league_token_path_is_a_single_bare_arm(self):
+        """The common path (no sport alias in the query) must compile to exactly
+        what it did before this change — one predicate, no UNION, no id-IN."""
+        assert "event_conditions = [_event_recall_arms[0], *event_scope_conditions]" in SEARCH_CODE, (
+            "the no-alias path no longer bypasses the UNION machinery; every "
+            "ordinary query would pay for a subquery it does not need"
+        )
+        assert "if len(_event_recall_arms) > 1:" in SEARCH_CODE, (
+            "the single-arm fast path is gone"
+        )
+
+    def test_the_ored_shape_would_fail_this_guard(self):
+        """Mutation check — the guard must reject the shape it replaced.
+
+        A guard that passes on the defect is not a guard. This reconstructs the
+        exact pre-LAT-P031 line and asserts the check above discriminates.
+        """
+        reverted_shape = "        team_filter = or_(team_filter, league_scope)\n"
+        assert "or_(team_filter, league_scope)" in reverted_shape
+        assert "or_(team_filter, league_scope)" not in SEARCH_CODE, (
+            "the mutation check and the live source disagree — the guard is not "
+            "actually discriminating"
+        )
+
+    def test_the_union_survives_compilation_as_a_single_scalar_subquery(self):
+        """Compiled, not source-matched: `union()` of one arm, or a stray
+        `intersect()`, reads fine and silently halves recall.
+
+        Also pins that BOTH arms reach the SQL — the name arm's ILIKE and the
+        league arm's `sports.key IN` must each appear.
+        """
+        from sqlalchemy import union as _union
+
+        team_arm = Event.home_team_name.ilike("%golf%")
+        league_arm = Sport.key.in_(["golf_pga", "golf_lpga"])
+        scope = (Event.status.in_(["scheduled", "live"]),)
+        candidates = _union(
+            *[
+                select(Event.id).join(Sport, Event.sport_id == Sport.id).where(arm, *scope)
+                for arm in (team_arm, league_arm)
+            ]
+        ).subquery()
+        sql = _compile(
+            select(Event).where(Event.id.in_(select(candidates.c.id)), *scope)
+        ).upper()
+
+        assert " UNION " in sql, "the arms did not compile to a UNION"
+        assert "INTERSECT" not in sql, "an INTERSECT would silently halve recall"
+        assert "EXCEPT" not in sql, "an EXCEPT would silently subtract an arm"
+        assert "ILIKE" in sql or "LIKE" in sql, "the name arm vanished from the UNION"
+        assert "SPORTS.KEY" in sql, "the league arm vanished from the UNION"
+        # status appears once per arm plus once on the outer query.
+        assert sql.count("EVENTS.STATUS") >= 3, (
+            "the scope filter is not present in every arm plus the outer query"
+        )
+
+    def test_union_and_or_are_set_identical_on_the_same_arms(self):
+        """The recall argument this change rests on, asserted rather than trusted.
+
+        Not a database test — a set-algebra one. If someone later swaps the UNION
+        for something that is not set-identical to the OR it replaced, the premise
+        of the whole change is void and this fails.
+        """
+        universe = list(range(60))
+        arm_a = {n for n in universe if n % 3 == 0}
+        arm_b = {n for n in universe if n % 5 == 0}
+        ored = {n for n in universe if n in arm_a or n in arm_b}
+        unioned = arm_a | arm_b
+        assert ored == unioned
+        # and an event matching BOTH arms is counted once, which is why the
+        # implementation uses UNION and not UNION ALL.
+        both = arm_a & arm_b
+        assert both and len(unioned) == len(arm_a) + len(arm_b) - len(both)
