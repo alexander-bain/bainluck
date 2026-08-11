@@ -80,6 +80,58 @@ the build they were feeding could not have completed.
    candidate. It is now reachable, which it was not before.
 3. **The capacity wall below is NOT fixed by this queue.**
 
+## ✅ THE RETAINED STRUCTURE SHRANK — the cursor now banks a running total (CAL-P034, 2026-08-11)
+
+CAL-P033 (below) handed the capacity wall forward with two exits: **shrink the retained structure**,
+or move `worker-heavy` off a 512 MB Standard-1X. The second is a cost call and is Alex's. **The
+first turned out to be much wider than it looked, and it is entirely inside the unfrozen pure
+module.**
+
+**Measured off the LIVE cursor at 91/128 units** (`calibration:main:staged_futures`,
+`2026-08-11T03:36:23Z`) — not projected:
+
+<!-- The first column deliberately reads "N units", not a bare "N". A bare digit
+     matches the scoreboard's own row shape `| N | ` and this table would then be
+     counted as five extra scoreboard rows — the false positive
+     test_exit_exam_keeps_a_scoreboard_row_per_item already warns about, and which
+     this section tripped on its first draft. -->
+
+| units banked | rows retained | distinct group keys | compaction |
+|---|---|---|---|
+| 1 unit | 469 | 469 | 1.0x |
+| 5 units | 2,364 | 866 | 2.7x |
+| 10 units | 4,825 | 1,063 | 4.5x |
+| 20 units | 9,899 | 1,239 | 8.0x |
+| 40 units | 19,498 | 1,363 | 14.3x |
+| 60 units | 29,446 | 1,507 | 19.5x |
+| **91 units** | **44,272** | **1,586** | **27.9x** |
+
+**Rows grow linearly; groups saturate.** Every unit re-states the same ~470 price bands, because a
+bucket is a price band and not a question, and the merge's only act is to sum them. Total banked
+bytes at 91 units = **10,622,807** → **116.7 KB/unit**, confirming CAL-P033's 118 KB/unit
+independently and by a different method.
+
+**Nothing downstream ever wanted the rows.** Their only consumer is `collect_unit_results` →
+`merge_futures_rows`, which folds them immediately. The cursor was holding ~62,300 rows so that
+finalization could turn them into ~1,650 — and dying before it got there.
+
+`advance()` now folds instead of banking. On production's shape at 128 units:
+
+| | old | folded | |
+|---|---|---|---|
+| cursor bytes | 18,753,197 | **134,191** | **139.8x** |
+| retained rows | 62,208 | **1,200** | |
+| `json.dumps` across a full walk | ~1,210 MB | **~9 MB** | the cursor is re-serialised after EVERY unit |
+
+⚠️ **This does not turn the SLO green and does not claim to.** CAL-P032's publish gate is unchanged
+and still ~80% likely to refuse the candidate. It removes the dominant *growing* term in the
+retained structure; the 505 MB peak has other contributors this window did not measure, and **the
+finalize spike remains unmeasured** — still CAL-P033's unowned item.
+
+⚠️ **One reset, by design.** A pre-fold cursor is refused whole under its own token
+`unfolded_units`, kept distinct from CAL-P033's `unencoded_units`. If the stack deploys together —
+it is one stack — production sees `unencoded_units` once and `unfolded_units` never.
+
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033)
 
 CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
