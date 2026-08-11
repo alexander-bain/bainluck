@@ -23,7 +23,24 @@ import pytest
 
 from app.utils import durable_state as ds
 from app.utils import request_cache as rc
+from app.utils.calibration_durable_baseline import COLD_START, BaselineProbe
 from tests.conftest import unavailable_body
+
+
+@pytest.fixture(autouse=True)
+def _durable_baseline_is_a_cold_start(monkeypatch):
+    """#1768: an empty volatile cache no longer means "first publish" by itself.
+
+    These scenarios are about durable WRITE ordering, and every one of them
+    predates the gate's durable READ. They all assume a true cold start, so
+    declare it once here rather than threading a probe through each harness —
+    and, more to the point, so a future failure in this file means the write
+    ordering broke, not that the baseline probe fired.
+    """
+    monkeypatch.setattr(
+        "app.utils.calibration_durable_baseline.probe_durable_baseline",
+        lambda *a, **k: BaselineProbe(COLD_START, detail="test default: no durable row"),
+    )
 
 pytestmark = pytest.mark.asyncio
 
