@@ -254,6 +254,12 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     census = out.pop("calibration_coverage_census")
     assert census["status"] == "unavailable"
     assert census["reason"] == "payload_predates_census"
+    # Queue 324 / ruling 025: this two-key stub is exactly the shape the main
+    # tier accepts but cannot validate (no `by_source`, no `total_outcomes`, an
+    # unparseable `generated_at`). It is still SERVED — refusing on shape at this
+    # tier is what Queue 300B ruled out — but the envelope now says so, where
+    # before it went out indistinguishable from a validated curve.
+    assert out.pop("availability") == "degraded"
     assert out == payload
 
 

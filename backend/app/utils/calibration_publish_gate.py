@@ -223,6 +223,27 @@ def snapshot_verdict(
     )
 
 
+def payload_age_s(payload: Any, *, now: Optional[datetime] = None) -> Optional[float]:
+    """Age of a payload's CONTENT, from its own ``generated_at``.
+
+    ``snapshot_verdict`` answers "may this be served", which requires the full
+    shape and version check; a caller that has already admitted a payload and
+    only needs to know how old the numbers are should not have to re-run that —
+    a shape check re-used as an age check turns "we added a section" into "this
+    is not fresh" (the Queue 300B lesson, recorded at the route's main tier).
+
+    ``None`` means the age is genuinely unknown (absent or unparseable
+    timestamp), which is never the same as zero.
+    """
+    if not isinstance(payload, dict):
+        return None
+    generated = _parse_generated_at(payload.get("generated_at"))
+    if generated is None:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    return (reference - generated).total_seconds()
+
+
 # --------------------------------------------------------------------------
 # Census — the comparable fingerprint of one artifact
 # --------------------------------------------------------------------------

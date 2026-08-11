@@ -371,10 +371,24 @@ CHECKS: list[dict[str, Any]] = [
         "threshold": 2,
         "comparison": "lte",
         "severity": "P1",
+        # Queue 324: the second half of this sentence used to promise a 503 the
+        # system deliberately does not have. CAL-P017 (Alex, 2026-08-08) made the
+        # route serve the newest durable snapshot at ANY age, dated and declared;
+        # #1680 then fired with a 8.9-day-old curve and a title asserting the page
+        # was about to go dark. It was not, and never would.
+        #
+        # This matters because the alert's text is the first thing a responder
+        # reads, and it was pointing at the wrong half of the system: at the
+        # serving guard (working as designed) instead of at the producer (stopped
+        # for nine days). An alarm that describes imaginary behaviour costs every
+        # future responder the same wrong first hour.
         "message": (
-            "No successful calibration publish in over 2 hours (2 beats) — "
-            "/api/calibration is serving a stale curve and will 503 outright once "
-            "the last-good copy crosses SERVE_MAX_AGE_S"
+            "No successful calibration publish in over 2 hours (2 beats) — the "
+            "PRODUCER has stopped. /api/calibration is NOT dark and will not go "
+            "dark: it serves the newest durable snapshot at any age, dated and "
+            "declared availability=stale (CAL-P017 — it never 503s for age "
+            "alone). Investigate the precompute phase ledger, not the serving "
+            "guard"
         ),
     },
 ]

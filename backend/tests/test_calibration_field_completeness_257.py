@@ -319,6 +319,16 @@ async def test_route_serves_the_shared_compute_payload_unaltered():
     moved: the shared compute publishes, and the route must hand back exactly
     what was published. (Before 300B this called the route and let it compute
     the payload itself, which is precisely the ability that queue removed.)
+
+    Queue 324 narrows "unaltered" by exactly one key, and only in the direction
+    the ruling requires. ``availability`` (ruling 025) is a **serve-time**
+    declaration: it answers "is what you are looking at the real thing", which
+    depends on WHICH tier answered and how old the content was by then — neither
+    of which the builder can know at build time, any more than it could write its
+    own ``cache`` or ``provenance`` block. So it is asserted separately rather
+    than compared into the payload. Every content field is still required to be
+    byte-identical, which is the property this test exists for: the route is not
+    a second builder.
     """
     import time as _time
 
@@ -327,7 +337,9 @@ async def test_route_serves_the_shared_compute_payload_unaltered():
 
     routed = await calibration.public_calibration(db=_FakeDB())
 
-    assert routed == shared
+    assert {k: v for k, v in routed.items() if k != "availability"} == shared
+    # Freshly built, served from the memo of a validated main copy.
+    assert routed["availability"] == "fresh"
 
 
 @pytest.mark.asyncio
