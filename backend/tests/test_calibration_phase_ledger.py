@@ -53,6 +53,8 @@ from app.utils.calibration_phase_ledger import (
     TERMINAL_CANCELLED,
     TERMINAL_COMPLETE,
     TERMINAL_FAILED,
+    TERMINAL_HARD_LOSS,
+    TERMINAL_OVERLAP_REFUSED,
     TERMINAL_PARTIAL,
     TIMEOUT,
     GREEN,
@@ -1143,3 +1145,67 @@ def test_a_poison_phase_does_not_erase_the_healthy_ones():
     checkpoint, banked = runner.build_checkpoint()
     assert checkpoint.completed_phases == (PHASE_FUTURES,)
     assert banked[PHASE_FUTURES] == "stored"
+
+
+# =============================================================================
+# The values themselves
+# =============================================================================
+
+
+class TestLedgerVocabularyIsPinnedIndependently:
+    """The terminal states and health colours are persisted in the ledger and read
+    back by the cockpit tile, the publish gate and the resume path -- they are a
+    stored vocabulary, not internal enum names, so renaming one silently
+    reinterprets rows already on disk.
+
+    Everything else in this file asserts ``health_for(...) == GREEN`` and
+    ``terminal_for(...) == TERMINAL_FAILED``, comparing the result to the same
+    constant the function returns. Those assertions are right about what they
+    test -- which branch was taken -- and cannot notice a value change.
+
+    Mutation-proven (queue 331), and the split is the whole argument for testing
+    this by mutation rather than by reading: ``TERMINAL_COMPLETE``,
+    ``TERMINAL_PARTIAL`` and ``TERMINAL_CANCELLED`` were already caught by
+    literals elsewhere in the suite, while ``TERMINAL_FAILED``,
+    ``TERMINAL_HARD_LOSS``, ``TERMINAL_OVERLAP_REFUSED``, all three health
+    colours, the three decision verbs and ``BUDGET_SAFETY`` could each be changed
+    with the entire suite staying green. Nothing about the code distinguishes the
+    two groups.
+    """
+
+    def test_terminal_states(self):
+        assert TERMINAL_COMPLETE == "complete"
+        assert TERMINAL_PARTIAL == "partial"
+        assert TERMINAL_FAILED == "failed"
+        assert TERMINAL_CANCELLED == "cancelled"
+        assert TERMINAL_HARD_LOSS == "hard_loss"
+        assert TERMINAL_OVERLAP_REFUSED == "overlap_refused"
+
+    def test_health_colours(self):
+        assert (GREEN, UNKNOWN, RED) == ("green", "unknown", "red")
+
+    def test_decision_verbs(self):
+        assert (FRESH, RESUME, INVALIDATE, REFUSE) == (
+            "fresh",
+            "resume",
+            "invalidate",
+            "refuse",
+        )
+
+    def test_terminal_states_stay_distinct(self):
+        states = (
+            TERMINAL_COMPLETE,
+            TERMINAL_PARTIAL,
+            TERMINAL_FAILED,
+            TERMINAL_CANCELLED,
+            TERMINAL_HARD_LOSS,
+            TERMINAL_OVERLAP_REFUSED,
+        )
+        assert len(set(states)) == len(states)
+
+    def test_budget_safety_margin(self):
+        # A budget multiplier is a real operational choice, not a detail: it is
+        # what decides whether a phase is cut off before the dyno's own limit.
+        # Every budget assertion in this file multiplies BY this constant, so all
+        # of them move with it and none of them pin it.
+        assert BUDGET_SAFETY == 1.5
