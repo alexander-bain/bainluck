@@ -1312,3 +1312,4 @@ failure this document already records happening twice.
 - [022](rulings/022-one-shared-lock-claim-primitive.md) — 2026-08-10 — One shared lock-claim primitive; hand-rolled claim logic is deleted (Alex)
 - [023](rulings/023-codex-gets-its-own-branch-and-worktree.md) — 2026-08-10 — Codex gets a dedicated branch and worktree; shared-tree passengers become unrepresentable (Alex)
 - [024](rulings/024-one-combined-invalidation-window.md) — 2026-08-10 — The post-publish window is ONE combined invalidation event (Alex)
+- [025](rulings/025-availability-envelope.md) — 2026-08-10 — The availability envelope: substitute content must declare itself (Alex)
