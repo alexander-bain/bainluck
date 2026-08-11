@@ -21,6 +21,7 @@ import gc
 import json
 import random
 import tracemalloc
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -39,6 +40,7 @@ from app.utils.calibration_staged_futures import (
     DEFAULT_CENSUS_COLUMNS,
     DISTINCT_CENSUS_COLUMNS,
     GROUP_KEY_COLUMNS,
+    MEMBER_SEPARATOR,
     STAGED_FUTURES_SCHEMA,
     UNIT_KEY_VM_ID,
     StagedFuturesCursor,
@@ -301,9 +303,29 @@ def test_the_planner_is_output_identical_to_the_per_vm_id_accumulator(buckets):
 
     produced = plan_units(rows, buckets=buckets)
     expected = _plan_units_per_vm_reference(rows, buckets=buckets)
-    assert produced == expected
+
+    # CAL-P037: the planner no longer RETAINS ``members``, so a whole-dataclass
+    # ``==`` would now compare a deliberate difference and fail on it. Every
+    # field is still compared — field by field, so that adding a field to
+    # ``UnitChunk`` cannot silently fall out of this check the way a narrowed
+    # ``==`` would — and ``members`` is compared where it survives: inside the
+    # digest, which is the only thing anything ever read it for.
+    assert [c.index for c in produced] == [c.index for c in expected]
+    assert [c.vm_ids for c in produced] == [c.vm_ids for c in expected]
+    assert [c.market_ids for c in produced] == [c.market_ids for c in expected]
+    assert [c.buckets for c in produced] == [c.buckets for c in expected]
     assert [c.key for c in produced] == [c.key for c in expected]
+
+    # THE acceptance bar for CAL-P037, and the reason it is stated as
+    # byte-identity rather than "a digest": ``member_digest`` is stored per
+    # banked unit in the cursor and ``roster_drift`` compares against it, so a
+    # digest that MOVED would report all 128 banked units as drifted — a
+    # 128-unit false alarm on the exact gauge this lane reads to judge its own
+    # convergence. ``expected`` here carries real ``members`` and an empty
+    # store, so this compares the members-based path against the stored one.
     assert [c.member_digest for c in produced] == [c.member_digest for c in expected]
+    assert all(c.stored_member_digest for c in produced), "the planner must store it"
+    assert all(c.members == () for c in produced), "and must not retain the strings"
 
 
 def test_a_market_under_two_virtual_questions_is_kept_under_both():
@@ -391,6 +413,216 @@ def test_planning_does_not_allocate_a_container_per_virtual_question():
         f"headers alone are 432 B/row, so this has regressed to one container "
         f"per virtual question"
     )
+
+
+def test_the_planner_does_not_retain_a_string_per_roster_row():
+    """CAL-P037's capacity guard, and it measures RETENTION, not peak.
+
+    The test above bounds what planning ALLOCATES. This one bounds what the
+    returned chunks HOLD, which is a different and longer-lived cost: the plan
+    outlives planning by the whole ~23-minute beat, and it is still resident at
+    the moment ``rss:at:read:futures_unit`` samples 466 MB on a 512 MB worker.
+
+    ``members`` held one string per ROSTER ROW — ~669,383 of them — so the whole
+    unit partition could be read for a hash that is sixteen characters long.
+    Measured with ``tracemalloc`` at the production cardinality, retention falls
+    **79.5 MB -> 29.5 MB** with the members dropped.
+
+    ⚠️ That is a **Python allocation** figure and it is deliberately not
+    compared against the dyno's RSS budget anywhere: they are different
+    instruments, and conflating them is what the C276 block was raised on.
+
+    The bar is per row at test scale, where the same measurement gives ~117
+    B/row retained for the old shape and ~45 B/row for this one. 75 sits between
+    them with ~30 B of margin either side, so it fails on a reintroduced
+    per-row retained string and passes without being flaky.
+    """
+    rows = 40_000
+    roster = [
+        SimpleNamespace(
+            market_id=i, source="kalshi" if i % 2 else "polymarket",
+            vm_id=f"m:{i}", is_grouped=False,
+        )
+        for i in range(1, rows + 1)
+    ]
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        chunks = plan_units(roster, buckets=128)
+        gc.collect()
+        retained, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(chunks) == 128
+    bytes_per_row = (retained - before) / rows
+    assert bytes_per_row < 75, (
+        f"the plan retains {bytes_per_row:.0f} B/row; the shape that kept one "
+        f"member string per roster row measured ~117 B/row, so this has "
+        f"regressed to retaining the roster"
+    )
+
+
+def test_the_planner_frees_each_bucket_as_it_consumes_it():
+    """The other half of CAL-P037, which changes no output at all.
+
+    Dropping ``members`` from the chunk lowers what the plan RETAINS. Popping
+    each bucket's member set as the chunk is built lowers what planning PEAKS
+    at, by letting the early buckets die before the late ones are read — worth
+    a measured 29.8 MB at production cardinality (210.8 -> 181.0 MB), and 24.2
+    MB even at an average group size of 20.
+
+    It is guarded separately and tightly because it is invisible in every other
+    way: the digests are identical with and without it (verified directly), so
+    nothing else in this file can tell the two apart, and a reviewer removing
+    the ``pop`` for looking odd would silently give back the 29.8 MB.
+
+    ⚠️ **The two pops are jointly load-bearing and individually redundant, and
+    that is measured rather than reasoned.** Removing EITHER one alone changes
+    the peak by 0.3 B/row; removing BOTH costs 44 B/row. The reason is that the
+    peak is the live set at the FIRST bucket — every member and every ``vm_id``,
+    and nothing built yet — so freeing either accumulator is enough to stop the
+    running total from ever climbing past it. Mutation-testing this file is what
+    surfaced it: the single-pop mutants are equivalent mutants and no assertion
+    can catch them, so this test deliberately pins the pair.
+
+    The bar is tight — 226 B/row measured here against 271 B/row with neither
+    pop — which is only acceptable because the instrument has no variance:
+    ``tracemalloc`` counts allocation bytes rather than sampling RSS, and this
+    measurement reproduces byte-for-byte (226.22 B/row) across repeated trials
+    and across ``PYTHONHASHSEED`` 0/1/2. It is NOT an RSS figure and is not
+    compared to one.
+    """
+    rows = 40_000
+    roster = [
+        SimpleNamespace(
+            market_id=i, source="kalshi" if i % 2 else "polymarket",
+            vm_id=f"m:{i}", is_grouped=False,
+        )
+        for i in range(1, rows + 1)
+    ]
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        chunks = plan_units(roster, buckets=128)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(chunks) == 128
+    bytes_per_row = (peak - before) / rows
+    assert bytes_per_row < 250, (
+        f"planning peaked at {bytes_per_row:.0f} B/row; holding both "
+        f"accumulators to the end of the loop measures ~271 B/row, so the "
+        f"free-as-you-go pops have been removed"
+    )
+
+
+def test_dropping_the_members_cannot_regress_a_grouped_roster():
+    """CAL-P036's near-miss, answered structurally rather than by hoping.
+
+    CAL-P036's first draft of ITS fix was a regression in grouped regimes,
+    because the structure it removed scaled per DISTINCT ``vm_id`` while the
+    structure it added scaled per ROW — different axes, so the curves crossed,
+    and production's group-size distribution (which decides the side) is not
+    measurable from here.
+
+    That trap cannot apply to this change, and the reason is worth pinning
+    rather than restating: what is removed scales per ROW, and what is added is
+    **one 16-character digest per BUCKET** — O(buckets), a constant 128,
+    independent of the roster entirely. Two curves where one is flat cannot
+    cross. Measured at 669,383 rows the saving is 50.0 / 49.9 / 49.6 / 49.3 /
+    49.2 MB at average group sizes 1 / 2 / 4 / 8 / 20 — flat, as predicted.
+
+    Asserted here at the grouped end, which is the end CAL-P036 got wrong.
+    """
+    rows = 40_000
+    group_size = 20
+    roster = [
+        SimpleNamespace(
+            market_id=i, source="kalshi" if i % 2 else "polymarket",
+            vm_id=f"e:{i // group_size}", is_grouped=True,
+        )
+        for i in range(1, rows + 1)
+    ]
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        chunks = plan_units(roster, buckets=128)
+        gc.collect()
+        retained, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    # One digest per chunk is the entire addition, so retention here must be no
+    # worse than the ungrouped case's bar rather than merely "better than old".
+    assert (retained - before) / rows < 75
+    assert sum(len(c.members) for c in chunks) == 0
+    assert len({c.stored_member_digest for c in chunks}) == len(chunks)
+
+
+def test_the_stored_digest_is_exactly_the_digest_of_the_members_it_replaced():
+    """Byte-identity at the level of one chunk, including the pathological case.
+
+    The randomized equivalence test above covers this across four bucket counts,
+    but it can only compare the planner against the planner. This pins the value
+    against a chunk that still HOLDS its members, which is the thing the stored
+    digest claims to stand in for — and it uses the one-market-under-two-
+    ``vm_id``s roster, because that is where the membership set and the market
+    set disagree and a digest could quietly be taken over the wrong one.
+    """
+    rows = _roster(
+        (7, "kalshi", "e:1", True),
+        (8, "kalshi", "e:1", True),
+        (7, "polymarket", "m:7", False),
+    )
+    (produced,) = plan_units(rows, buckets=1)
+
+    # Rebuild the members the pre-CAL-P037 planner would have carried, from the
+    # roster rather than from the planner, so this is an independent statement
+    # of what the digest is taken over.
+    members = tuple(sorted(
+        MEMBER_SEPARATOR.join((str(r.market_id), r.source, r.vm_id,
+                               "1" if r.is_grouped else "0"))
+        for r in rows
+    ))
+    retaining = UnitChunk(
+        index=produced.index, vm_ids=produced.vm_ids,
+        market_ids=produced.market_ids, members=members, buckets=1,
+    )
+
+    assert retaining.stored_member_digest == "", "the oracle must take the members path"
+    assert produced.stored_member_digest == retaining.member_digest
+    assert produced.member_digest == retaining.member_digest
+    assert produced.members == ()
+
+
+def test_a_stored_digest_takes_precedence_and_an_absent_one_falls_back():
+    """The precedence the attribute documents, asserted in both directions.
+
+    The fallback is not decoration: every hand-built chunk in this repo's tests
+    predates the store, and a property that silently returned ``""`` for them
+    would make a whole class of test assert nothing at all.
+    """
+    members = ("1\x1ekalshi\x1ee:1\x1e1",)
+    from_members = UnitChunk(
+        index=0, vm_ids=("e:1",), market_ids=(1,), members=members, buckets=4,
+    )
+    assert from_members.member_digest == from_members._digest_of_members()
+    assert from_members.member_digest != ""
+
+    # Stored wins, and is not silently cross-checked against the members: the
+    # planner is the only writer and it computes the value from those members.
+    stored = replace(from_members, stored_member_digest="sentinel-digest")
+    assert stored.member_digest == "sentinel-digest"
+
+    # Empty store falls back even when members are also empty, rather than
+    # raising — an empty unit is a legitimate shape.
+    empty = UnitChunk(index=0, vm_ids=(), market_ids=(), buckets=4)
+    assert empty.member_digest == empty._digest_of_members()
 
 
 def test_an_empty_roster_plans_no_units():

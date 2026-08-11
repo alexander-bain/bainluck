@@ -79,7 +79,15 @@ class TestUnitKeyIsTheSlot:
         target = next(c for c in after if "e:7" in c.vm_ids)
         original = next(c for c in before if c.index == target.index)
 
-        assert target.members != original.members, "the arrival must be visible somewhere"
+        # CAL-P037 moved WHERE "somewhere" is. The arrival used to be visible as
+        # a new string in ``members``; the planner no longer keeps those, so the
+        # assertion reads the digest they were only ever kept to produce. This
+        # is the same property the cursor stores per banked unit and the same
+        # one ``roster_drift`` compares, i.e. the place the visibility actually
+        # has to hold — the old form asserted on the raw material instead.
+        assert (
+            target.member_digest != original.member_digest
+        ), "the arrival must be visible somewhere"
         assert target.key == original.key, "but it must NOT re-key the unit"
 
     def test_a_whole_beat_of_arrivals_drops_nothing(self):
