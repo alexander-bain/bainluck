@@ -33,19 +33,21 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 
 from app.utils import durable_state as ds
 from app.utils import request_cache as rc
 from app.utils.availability_envelope import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
+    AVAILABILITY_FIELD,
     AVAILABILITY_FRESH,
     AVAILABILITY_STALE,
     AVAILABILITY_VALUES,
     declare,
+    never_stronger,
 )
 from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S
+from tests.conftest import unavailable_body
 
 # No module-level ``asyncio`` mark: pytest.ini runs asyncio in AUTO mode, so the
 # async tests are collected without one — and a blanket mark would attach to this
@@ -275,13 +277,13 @@ class TestEveryTierDeclares:
         _use(monkeypatch, _DeadRedis())
         _no_compute(monkeypatch)
 
-        with pytest.raises(HTTPException) as exc:
-            await calibration.public_calibration(db=_empty_db())
+        body = unavailable_body(await calibration.public_calibration(db=_empty_db()))
 
-        assert exc.value.status_code == 503
         # The refusal answers in the SAME vocabulary as every served response, so
-        # a client reads one field across all five outcomes.
-        assert exc.value.detail["availability"] == AVAILABILITY_EMPTY
+        # a client reads one field across all five outcomes. Read off the
+        # serialized body — see TestOneWirePath for why the exception attribute
+        # this used to assert on was the wrong boundary.
+        assert body[AVAILABILITY_FIELD] == AVAILABILITY_EMPTY
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +333,12 @@ class TestOverAgeIsServedNotRefused:
         src = inspect.getsource(route.public_calibration)
         assert '_unavailable("no_trustworthy_snapshot")' in src
         assert '_unavailable("route_budget_exhausted")' in src
-        # Exactly two raise sites, both below the last-resort tier.
-        assert src.count("raise _unavailable(") == 2
+        # Exactly two refusal sites, both below the last-resort tier. Q330 turned
+        # these from ``raise`` into ``return`` (the refusal is a composed response
+        # now, so its wire shape matches the served answers) — the count is what
+        # this test was ever about, not the keyword.
+        assert src.count("return _unavailable(") == 2
+        assert "raise _unavailable(" not in src
         assert src.index("durable_over_age") < src.index(
             '_unavailable("no_trustworthy_snapshot")'
         )
@@ -453,3 +459,236 @@ class TestAdditiveNotARename:
 
         assert out["availability"] == AVAILABILITY_DEGRADED
         assert "cache" not in out or out["cache"].get("status") != "stale"
+
+
+# ---------------------------------------------------------------------------
+# Queue 330 / B1 defect 1 — a re-wrap may weaken a declaration, never heal one
+# ---------------------------------------------------------------------------
+
+
+class TestARewrapNeverHeals:
+    """C272/B1 found this with an independent attack on the real route while
+    this file's 112 tests were green, which is the finding worth keeping: every
+    test above drives a tier ONCE, and the defect lives in the SECOND wrap.
+
+    The main tier admits a shape-unvalidated copy and correctly calls it
+    ``degraded``. The process-local fallback later picks that same copy up,
+    knows only that it is old, and re-declares it ``stale`` — a word this
+    vocabulary defines as *complete, merely aged*. Nothing about the content
+    changed; the promise about it got better.
+    """
+
+    async def test_the_b1_attack_no_longer_reproduces(self, monkeypatch):
+        """degraded -> (memo expiry + Redis down + no durable row) -> degraded."""
+        from app.routes import calibration
+
+        # 1. The main tier admits an unvalidatable copy and declares it degraded.
+        partial = {"buckets": [{"bucket_idx": 0}], "generated_at": _at(days_ago=0.01)}
+        _use(monkeypatch, _FakeRedis(main=json.dumps(partial)))
+        _no_compute(monkeypatch)
+
+        first = await calibration.public_calibration(db=_empty_db())
+        assert first["availability"] == AVAILABILITY_DEGRADED
+
+        # 2. The memo TTL lapses, so tier 1 can no longer answer...
+        calibration._cache["timestamp"] = 0
+        # ...and Redis fails while no durable row exists, which is the only way
+        # to reach the process-local fallback at the bottom of the handler.
+        _use(monkeypatch, _DeadRedis())
+
+        second = await calibration.public_calibration(db=_empty_db())
+
+        # 3. Same bytes, same incompleteness — so the same declaration.
+        assert second["availability"] == AVAILABILITY_DEGRADED, (
+            "the process-local fallback healed a degraded payload into stale: "
+            "'stale' promises a whole copy whose only compromise is age"
+        )
+        assert second["cache"]["reason"] == "redis_unavailable"
+        # The cache vocabulary is untouched and still says "stale" — the two
+        # vocabularies are deliberately independent (ruling 025 clause 2), and
+        # this asserts the fix did NOT collapse one into the other.
+        assert second["cache"]["status"] == "stale"
+
+    async def test_a_complete_old_copy_is_still_stale_through_the_same_tier(
+        self, monkeypatch
+    ):
+        """The clamp must not over-fire: B1 confirmed this path was correct, and
+        a fix that drags every fallback down to ``degraded`` would be a second
+        false statement, not a correction."""
+        from app.routes import calibration
+
+        _use(monkeypatch, _FakeRedis(main=json.dumps(_payload(generated_at=_at()))))
+        _no_compute(monkeypatch)
+
+        first = await calibration.public_calibration(db=_empty_db())
+        assert first["availability"] == AVAILABILITY_FRESH
+
+        calibration._cache["timestamp"] = 0
+        _use(monkeypatch, _DeadRedis())
+
+        second = await calibration.public_calibration(db=_empty_db())
+
+        assert second["availability"] == AVAILABILITY_STALE
+        assert second["cache"]["reason"] == "redis_unavailable"
+
+
+class TestNeverStronger:
+    """The clamp itself, over the whole vocabulary rather than the one pair the
+    route happens to hit today."""
+
+    @pytest.mark.parametrize(
+        "current,proposed,expected",
+        [
+            # The B1 pair: the weaker existing claim survives.
+            (AVAILABILITY_DEGRADED, AVAILABILITY_STALE, AVAILABILITY_DEGRADED),
+            (AVAILABILITY_DEGRADED, AVAILABILITY_FRESH, AVAILABILITY_DEGRADED),
+            (AVAILABILITY_STALE, AVAILABILITY_FRESH, AVAILABILITY_STALE),
+            # Weakening is always allowed — a later tier can know something worse.
+            (AVAILABILITY_FRESH, AVAILABILITY_STALE, AVAILABILITY_STALE),
+            (AVAILABILITY_FRESH, AVAILABILITY_DEGRADED, AVAILABILITY_DEGRADED),
+            (AVAILABILITY_STALE, AVAILABILITY_DEGRADED, AVAILABILITY_DEGRADED),
+            # Equal is equal.
+            (AVAILABILITY_STALE, AVAILABILITY_STALE, AVAILABILITY_STALE),
+            # No prior claim: the serving tier decides, unclamped.
+            (None, AVAILABILITY_STALE, AVAILABILITY_STALE),
+        ],
+    )
+    def test_the_ordering(self, current, proposed, expected):
+        assert never_stronger(current, proposed) == expected
+
+    def test_an_unreadable_prior_claim_is_no_claim(self):
+        """A typo tells a consumer exactly as little as an absent field, and
+        ranking it would be a second guess stacked on a first."""
+        assert never_stronger("stale_hit", AVAILABILITY_STALE) == AVAILABILITY_STALE
+
+    def test_empty_is_not_a_claim_content_can_make(self):
+        """``empty`` means NOTHING was served. A payload on its way to a client
+        contradicts it, and honouring it would ship a body full of numbers
+        declared absent."""
+        assert never_stronger(AVAILABILITY_EMPTY, AVAILABILITY_STALE) == AVAILABILITY_STALE
+
+    def test_an_invalid_proposal_still_raises_where_it_should(self):
+        """The clamp must not swallow a bad state — ``declare`` owns that error,
+        and its message names the offending value."""
+        assert never_stronger(AVAILABILITY_STALE, "stale_hit") == "stale_hit"
+        with pytest.raises(ValueError):
+            declare({}, never_stronger(AVAILABILITY_STALE, "stale_hit"))
+
+
+# ---------------------------------------------------------------------------
+# Queue 330 / B1 defect 2 — ONE wire-level availability path, 503 included
+# ---------------------------------------------------------------------------
+
+
+def _wire_client(monkeypatch, *, db):
+    """A REAL HTTP client over the real app — the only boundary that can certify
+    a wire contract.
+
+    Everything above this line calls ``public_calibration`` directly and reads a
+    Python dict. That is why Queue 324 shipped believing a client could read one
+    field across all five outcomes when it could not: ``HTTPException(detail=
+    {...})`` serializes NESTED, so the four served answers carried
+    ``availability`` at the top level and the refusal carried it at
+    ``detail.availability``. An in-process call never renders that difference —
+    the exception object holds the detail dict either way — so 112 green tests
+    saw nothing. A test that cannot see the wire cannot certify the wire.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services.database import get_db
+
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
+    async def _db():
+        yield db
+
+    app.dependency_overrides[get_db] = _db
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+class TestOneWirePath:
+    """Synchronous on purpose: ``TestClient`` drives the app through its own
+    portal, so these read the bytes the route actually puts on the socket."""
+
+    def test_the_503_declares_at_the_same_top_level_path_as_a_200(self, monkeypatch):
+        """B1 defect 2, reproduced and closed.
+
+        Read with the SAME expression — ``body["availability"]`` — on both a
+        served answer and the refusal. A primitive with one exception is not a
+        primitive, so the assertion is deliberately written as one expression
+        applied twice rather than two shapes checked separately.
+        """
+        gen = _wire_client(monkeypatch, db=_empty_db())
+        client = next(gen)
+        try:
+            # The refusal goes FIRST, deliberately: a served answer memoizes
+            # itself as this process's last-good, and the bottom tier would then
+            # answer 200 from it — correctly, which is the whole CAL-P017 point.
+            # "Nothing anywhere" has to mean nothing anywhere.
+            _use(monkeypatch, _DeadRedis())
+            refused = client.get("/api/calibration")
+
+            assert refused.status_code == 503
+            assert refused.json()[AVAILABILITY_FIELD] == AVAILABILITY_EMPTY, (
+                "the refusal hid its declaration under `detail` — a client must "
+                "not special-case the hardest path to reach"
+            )
+
+            _use(monkeypatch, _FakeRedis(main=json.dumps(_payload(generated_at=_at()))))
+            served = client.get("/api/calibration")
+
+            assert served.status_code == 200
+            # Same expression, both outcomes. That is the whole contract.
+            assert served.json()[AVAILABILITY_FIELD] == AVAILABILITY_FRESH
+        finally:
+            next(gen, None)
+
+    def test_the_503_keeps_retry_after_and_its_legacy_detail_mirror(self, monkeypatch):
+        """The shipped web page renders its "temporarily unavailable" state from
+        ``error.detail.status`` / ``.reason`` / ``.message``
+        (``frontend/app/calibration/page.tsx``). Moving the declaration up must
+        not take that surface down — on a queue whose entire point is that the
+        page does not go dark."""
+        gen = _wire_client(monkeypatch, db=_empty_db())
+        client = next(gen)
+        try:
+            _use(monkeypatch, _DeadRedis())
+            refused = client.get("/api/calibration")
+            body = refused.json()
+
+            assert refused.status_code == 503
+            assert refused.headers["Retry-After"] == "30"
+            assert body["status"] == "unavailable"
+            assert body["reason"] == "no_trustworthy_snapshot"
+            assert body["retry_after_s"] == 30
+            assert "retry" in body["message"].lower()
+
+            mirror = body["detail"]
+            assert mirror["status"] == "unavailable"
+            assert mirror["reason"] == body["reason"]
+            assert mirror["message"] == body["message"]
+        finally:
+            next(gen, None)
+
+    def test_a_dated_answer_declares_on_the_wire_too(self, monkeypatch):
+        """The third of the five outcomes, over HTTP: served, 200, dated, and
+        declared at the same path as the other four."""
+        gen = _wire_client(monkeypatch, db=_empty_db())
+        client = next(gen)
+        try:
+            old = _payload(generated_at=_at(days_ago=SERVE_MAX_AGE_S / 86400 + 1))
+            _use(monkeypatch, _FakeRedis(main=json.dumps(old)))
+
+            res = client.get("/api/calibration")
+            body = res.json()
+
+            assert res.status_code == 200
+            assert body[AVAILABILITY_FIELD] == AVAILABILITY_STALE
+            assert body["cache"]["reason"] == "main_key_over_age"
+        finally:
+            next(gen, None)

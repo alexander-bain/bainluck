@@ -28,10 +28,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 
 from app.utils import durable_state as ds
 from app.utils import request_cache as rc
+from tests.conftest import unavailable_body
 
 pytestmark = pytest.mark.asyncio
 
@@ -160,14 +160,22 @@ def _build_is_a_landmine(monkeypatch):
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
 
 
-def _assert_typed_unavailable(exc: HTTPException) -> None:
-    assert exc.status_code == 503
-    detail = exc.detail
-    assert isinstance(detail, dict), "the body must be typed, not a bare string"
-    assert detail["status"] == "unavailable"
-    assert detail["retry_after_s"] == 30
-    assert detail["reason"]
-    assert exc.headers["Retry-After"] == "30"
+def _assert_typed_unavailable(res) -> dict:
+    """Queue 330: assert the typed refusal on the WIRE, not on an exception.
+
+    This used to take the ``HTTPException`` and read ``exc.detail``. That is one
+    layer above anything a client sees, and it is exactly the blind spot B1's
+    audit exploited: ``availability`` was nested under ``detail`` on the refusal
+    and top-level on every served answer, and no assertion at this boundary could
+    tell. It now decodes the serialized body.
+    """
+    body = unavailable_body(res)
+    assert isinstance(body, dict), "the body must be typed, not a bare string"
+    assert body["status"] == "unavailable"
+    assert body["retry_after_s"] == 30
+    assert body["reason"]
+    assert res.headers["Retry-After"] == "30"
+    return body
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +262,10 @@ async def test_clean_cache_miss_is_a_typed_503_not_a_build(monkeypatch):
 
     _use(monkeypatch, _EmptyRedis())
 
-    with pytest.raises(HTTPException) as exc:
+    body = _assert_typed_unavailable(
         await calibration.public_calibration(db=_empty_db())
-
-    _assert_typed_unavailable(exc.value)
-    assert exc.value.detail["reason"] == "no_trustworthy_snapshot"
+    )
+    assert body["reason"] == "no_trustworthy_snapshot"
 
 
 async def test_cache_failure_is_a_typed_503_not_a_build(monkeypatch):
@@ -267,10 +274,7 @@ async def test_cache_failure_is_a_typed_503_not_a_build(monkeypatch):
 
     _use(monkeypatch, _DeadRedis())
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=_empty_db())
-
-    _assert_typed_unavailable(exc.value)
+    _assert_typed_unavailable(await calibration.public_calibration(db=_empty_db()))
 
 
 async def test_cache_failure_prefers_a_dated_copy_over_any_503(monkeypatch):
@@ -313,10 +317,7 @@ async def test_durable_miss_does_not_fall_through_to_a_build(monkeypatch):
 
     _use(monkeypatch, _EmptyRedis())
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=_empty_db())
-
-    _assert_typed_unavailable(exc.value)
+    _assert_typed_unavailable(await calibration.public_calibration(db=_empty_db()))
 
 
 async def test_durable_wrong_version_does_not_fall_through_to_a_build(monkeypatch):
@@ -326,10 +327,7 @@ async def test_durable_wrong_version_does_not_fall_through_to_a_build(monkeypatc
     _use(monkeypatch, _EmptyRedis())
     db = _durable_db(_payload(), schema_version="q000-ancient")
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=db)
-
-    _assert_typed_unavailable(exc.value)
+    _assert_typed_unavailable(await calibration.public_calibration(db=db))
 
 
 async def test_durable_read_that_raises_does_not_fall_through_to_a_build(monkeypatch):
@@ -339,10 +337,7 @@ async def test_durable_read_that_raises_does_not_fall_through_to_a_build(monkeyp
     db = AsyncMock()
     db.execute.side_effect = RuntimeError("connection reset by peer")
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=db)
-
-    _assert_typed_unavailable(exc.value)
+    _assert_typed_unavailable(await calibration.public_calibration(db=db))
 
 
 # ---------------------------------------------------------------------------
@@ -382,10 +377,7 @@ async def test_every_tier_poisoned_is_a_typed_503(monkeypatch):
     db = AsyncMock()
     db.execute.side_effect = RuntimeError("durable read exploded too")
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(db=db)
-
-    _assert_typed_unavailable(exc.value)
+    _assert_typed_unavailable(await calibration.public_calibration(db=db))
 
 
 # ---------------------------------------------------------------------------
@@ -410,8 +402,22 @@ async def test_client_cancellation_leaves_nothing_running(monkeypatch):
     _use(monkeypatch, _CancellingRedis())
 
     task = asyncio.create_task(calibration.public_calibration(db=_empty_db()))
-    with pytest.raises((asyncio.CancelledError, HTTPException)):
-        await task
+    await _cancelled_or_unavailable(task)
+
+
+async def _cancelled_or_unavailable(coro) -> None:
+    """Queue 330: the refusal is now RETURNED, so "either" needs saying properly.
+
+    These two tests always accepted two endings — the cancellation propagates, or
+    the handler answers honestly. While the refusal was an exception both endings
+    were exceptions and ``pytest.raises((CancelledError, HTTPException))`` covered
+    them. One ending is now a return value, so the tolerance is written out.
+    """
+    try:
+        res = await coro
+    except asyncio.CancelledError:
+        return
+    _assert_typed_unavailable(res)
 
 
 async def test_a_cancelled_request_does_not_poison_the_next_one(monkeypatch):
@@ -428,8 +434,7 @@ async def test_a_cancelled_request_does_not_poison_the_next_one(monkeypatch):
 
     _use(monkeypatch, _FirstCallCancels())
 
-    with pytest.raises((asyncio.CancelledError, HTTPException)):
-        await calibration.public_calibration(db=_empty_db())
+    await _cancelled_or_unavailable(calibration.public_calibration(db=_empty_db()))
 
     out = await calibration.public_calibration(db=_empty_db())
     assert out["total_outcomes"] == 1_000_000
@@ -458,7 +463,7 @@ async def test_forty_concurrent_cold_requests_start_zero_builds(monkeypatch):
 
     assert len(results) == 40
     for item in results:
-        assert isinstance(item, HTTPException)
+        assert not isinstance(item, BaseException), item
         _assert_typed_unavailable(item)
 
 

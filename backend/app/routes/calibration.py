@@ -4,7 +4,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -802,9 +803,11 @@ async def public_calibration(
     from app.utils.availability_envelope import (
         AVAILABILITY_DEGRADED,
         AVAILABILITY_EMPTY,
+        AVAILABILITY_FIELD,
         AVAILABILITY_FRESH,
         AVAILABILITY_STALE,
         declare as _declare,
+        never_stronger as _never_stronger,
     )
     from app.utils.calibration_coverage_bridge import ensure_census as _ensure_census
     from app.utils.calibration_publish_gate import (
@@ -849,6 +852,16 @@ async def public_calibration(
         construction site of the response — it is NOT a map from ``cache.status``
         (clause 2 forbids exactly that), which is why the value is an argument
         the serving tier chooses rather than something read back off ``cache``.
+
+        Q330 / B1 defect 1 — **a re-wrap may weaken a declaration, never heal
+        one.** Some payloads reaching here have already been classified by the
+        tier that admitted them: the process-local fallback below re-wraps
+        whatever the main tier memoized, which may be a shape-unvalidated copy
+        stamped ``degraded``. This function's own default is ``stale``, computed
+        from the only thing IT knows (the copy is old) — so without the clamp an
+        incomplete payload came out the far side promising a whole one. The
+        content is identical either way; only the claim about it improved, which
+        is the direction that turns a disclosure into a lie.
         """
         # Queue 300C: a last-good/durable copy can predate the coverage census.
         # Absent is not zero — mark it explicitly unavailable so the page cannot
@@ -863,31 +876,53 @@ async def public_calibration(
         elif isinstance(payload.get("generated_at"), str):
             cache["generated_at"] = payload["generated_at"]
         out["cache"] = cache
-        return _declare(out, availability)
+        return _declare(
+            out, _never_stronger(payload.get(AVAILABILITY_FIELD), availability)
+        )
 
-    def _unavailable(reason: str) -> HTTPException:
+    def _unavailable(reason: str) -> JSONResponse:
         """The typed unavailable response — honest, actionable, never opaque.
 
         Still a 503 (the semantics are right and Retry-After is meaningful), but
         the body is structured so the page renders a dated "temporarily
         unavailable, retry" state instead of a bare "Failed to load".
+
+        Q330 / B1 defect 2 — **why this RETURNS a response instead of raising.**
+        Ruling 025's promise is that a client reads ONE field across all five
+        outcomes. Raising ``HTTPException(detail={...})`` cannot keep it: FastAPI
+        serializes the detail nested, so the four served answers put
+        ``availability`` at the top level of the body and the refusal put it at
+        ``detail.availability``. A real HTTP client therefore had to special-case
+        exactly the path that is hardest to reach and hardest to test — and a
+        primitive with one exception is not a primitive. Composing the response
+        here is what makes the wire path uniform; the default exception handler's
+        envelope is not ours to reshape.
+
+        ``detail`` is kept as a MIRROR of the same body, and that is deliberate
+        rather than lazy: the shipped web page reads ``error.detail.status`` /
+        ``.reason`` / ``.message`` to render its "temporarily unavailable" state
+        (``frontend/app/calibration/page.tsx``), so dropping the key would take
+        down the exact user-facing surface #1680 is about, on a queue whose whole
+        point is that the page must not go dark. New readers use the top level;
+        the mirror is compatibility, not a second contract.
         """
-        return HTTPException(
+        body = {
+            "status": "unavailable",
+            # Ruling 025: nothing was served, and the refusal says so in the
+            # same vocabulary as every other answer this endpoint gives, so a
+            # client has one field to read across all five outcomes instead
+            # of a special case for the failure.
+            "availability": AVAILABILITY_EMPTY,
+            "reason": reason,
+            "retry_after_s": 30,
+            "message": (
+                "Calibration data is temporarily unavailable. It is rebuilt "
+                "hourly — please retry shortly."
+            ),
+        }
+        return JSONResponse(
             status_code=503,
-            detail={
-                "status": "unavailable",
-                # Ruling 025: nothing was served, and the refusal says so in the
-                # same vocabulary as every other answer this endpoint gives, so a
-                # client has one field to read across all five outcomes instead
-                # of a special case for the failure.
-                "availability": AVAILABILITY_EMPTY,
-                "reason": reason,
-                "retry_after_s": 30,
-                "message": (
-                    "Calibration data is temporarily unavailable. It is rebuilt "
-                    "hourly — please retry shortly."
-                ),
-            },
+            content={**body, "detail": dict(body)},
             headers={"Retry-After": "30"},
         )
 
@@ -1223,8 +1258,8 @@ async def public_calibration(
     #    this line: the honest 503 IS the answer, and the hourly beat is what
     #    fixes it. See the docstring for why a request may not start the CTE.
     if _remaining_ms() <= 0:
-        raise _unavailable("route_budget_exhausted")
-    raise _unavailable("no_trustworthy_snapshot")
+        return _unavailable("route_budget_exhausted")
+    return _unavailable("no_trustworthy_snapshot")
 
 
 # ---------------------------------------------------------------------------

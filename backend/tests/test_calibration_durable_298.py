@@ -20,10 +20,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 
 from app.utils import durable_state as ds
 from app.utils import request_cache as rc
+from tests.conftest import unavailable_body
 
 pytestmark = pytest.mark.asyncio
 
@@ -256,10 +256,9 @@ async def test_a_wrong_version_durable_copy_is_refused(monkeypatch):
     _use(monkeypatch, _DeadRedis())
     _compute_fails(monkeypatch)
 
-    with pytest.raises(HTTPException) as exc:
-        await calibration.public_calibration(
-            db=_durable_db(payload, schema_version="q000-ancient"))
-    assert exc.value.status_code == 503
+    unavailable_body(
+        await calibration.public_calibration(db=_durable_db(payload, schema_version="q000-ancient"))
+    )
 
 
 async def test_a_corrupted_durable_payload_is_refused(monkeypatch):
@@ -285,9 +284,9 @@ async def test_a_corrupted_durable_payload_is_refused(monkeypatch):
     _use(monkeypatch, _DeadRedis())
     _compute_fails(monkeypatch)
 
-    with pytest.raises(HTTPException) as exc:
+    unavailable_body(
         await calibration.public_calibration(db=db)
-    assert exc.value.status_code == 503
+    )
 
 
 async def test_nothing_anywhere_is_still_a_typed_unavailable(monkeypatch):
@@ -297,10 +296,10 @@ async def test_nothing_anywhere_is_still_a_typed_unavailable(monkeypatch):
     _use(monkeypatch, _DeadRedis())
     _compute_fails(monkeypatch)
 
-    with pytest.raises(HTTPException) as exc:
+    body = unavailable_body(
         await calibration.public_calibration(db=_empty_db())
-    assert exc.value.status_code == 503
-    assert exc.value.detail["status"] == "unavailable"
+    )
+    assert body["status"] == "unavailable"
 
 
 async def test_a_broken_durable_tier_cannot_break_the_route(monkeypatch):
@@ -312,9 +311,9 @@ async def test_a_broken_durable_tier_cannot_break_the_route(monkeypatch):
     _use(monkeypatch, _DeadRedis())
     _compute_fails(monkeypatch)
 
-    with pytest.raises(HTTPException) as exc:
+    unavailable_body(
         await calibration.public_calibration(db=db)
-    assert exc.value.status_code == 503
+    )
 
 
 async def test_no_caller_can_skip_the_durable_tier_into_a_recompute(monkeypatch):
