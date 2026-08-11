@@ -1604,6 +1604,65 @@ def _has_extractable_trigram(term: str) -> bool:
     )
 
 
+def latest_odds_per_bookmaker_query(event_ids: list[int]):
+    """The latest snapshot per (event, bookmaker) for a page of events.
+
+    LAT-P030/#1494. Extracted from the route so the real production statement is what
+    CI executes against real Postgres — a test that rebuilds the query is a test of the
+    copy. See `test_search_latency_contract.py` for the shape guards and
+    `tests/integration/test_search_odds_enrichment_equivalence.py` for the behavioural
+    equivalence against the shape this replaced.
+
+    Reads O(distinct bookmakers), not O(snapshot depth). Full reasoning, plans and
+    measurements at the call site.
+    """
+    bookmakers = (
+        select(
+            Event.id.label("event_id"),
+            select(func.min(OddsSnapshot.bookmaker))
+            .where(OddsSnapshot.event_id == Event.id)
+            .scalar_subquery()
+            .label("bookmaker"),
+        )
+        .where(Event.id.in_(event_ids))
+        .cte("odds_bookmakers", recursive=True)
+    )
+    _prev = bookmakers.alias("prev_bookmaker")
+    bookmakers = bookmakers.union_all(
+        select(
+            _prev.c.event_id,
+            select(func.min(OddsSnapshot.bookmaker))
+            .where(
+                OddsSnapshot.event_id == _prev.c.event_id,
+                OddsSnapshot.bookmaker > _prev.c.bookmaker,
+            )
+            .scalar_subquery(),
+        ).where(_prev.c.bookmaker.isnot(None))
+    )
+    latest_snap = (
+        select(OddsSnapshot)
+        .where(
+            OddsSnapshot.event_id == bookmakers.c.event_id,
+            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+        )
+        .order_by(
+            OddsSnapshot.captured_at.desc(),
+            OddsSnapshot.id.desc(),
+        )
+        .limit(1)
+        .lateral("latest_snap")
+    )
+    snap = aliased(OddsSnapshot, latest_snap)
+    return (
+        select(snap)
+        .select_from(bookmakers)
+        .join(latest_snap, true())
+        # the walk emits one trailing NULL per event when its bookmakers are
+        # exhausted — that row is the terminator, not a snapshot.
+        .where(bookmakers.c.bookmaker.isnot(None))
+    )
+
+
 def _stage_timeout_ms(deadline: float | None) -> int:
     """Statement bound for the next stage: whatever is left of the request deadline.
 
@@ -2098,24 +2157,47 @@ async def search_events(
         # is identical; the only behavioural change is that `id DESC` makes the
         # choice among equal `captured_at` deterministic, where `row_number()` left
         # it arbitrary.
-        _latest_snap = (
-            select(OddsSnapshot)
-            .where(OddsSnapshot.event_id == Event.id)
-            .distinct(OddsSnapshot.bookmaker)
-            .order_by(
-                OddsSnapshot.bookmaker,
-                OddsSnapshot.captured_at.desc(),
-                OddsSnapshot.id.desc(),
-            )
-            .lateral("latest_snap")
-        )
-        _snap = aliased(OddsSnapshot, _latest_snap)
-        latest_odds_query = (
-            select(_snap)
-            .select_from(Event)
-            .join(_latest_snap, true())
-            .where(Event.id.in_(event_ids))
-        )
+        #
+        # LAT-P030/#1494: THE PARAGRAPH ABOVE DESCRIBES A PLAN POSTGRES NEVER CHOSE.
+        # Measured with `EXPLAIN (ANALYZE)` against production 2026-08-10 on the 25
+        # events a `red sox` search actually returns:
+        #
+        #     Nested Loop
+        #       Index Only Scan  events_pkey
+        #       Unique                              <- rows=10  loops=25
+        #         Sort                              <- 2,702 rows sorted PER EVENT
+        #           Index Scan  ix_odds_snapshots_event_id
+        #
+        # It used the event-only index and SORTED, because `DISTINCT ON` cannot skip:
+        # to keep one row per bookmaker it must still READ every snapshot of every
+        # event on the page. Tier-1 teams poll at 32s, so that is deep — one Red Sox
+        # event carries **13,522 snapshots across 19 bookmakers**. The stage read
+        # **78,800 rows to return 299**, and cost 6,724ms of a 12,182ms request
+        # (`?debug_timing=1`: `event_odds_query` was 84-95% of every slow team query).
+        #
+        # Removing the sort was the right idea aimed at the wrong half. The cost is
+        # not HOW the rows are ordered, it is HOW MANY are read. So enumerate the
+        # bookmakers with a loose index scan (the canonical PostgreSQL recursive
+        # skip-scan) and fetch exactly one row per (event, bookmaker) pair:
+        #
+        #     Recursive Union   947 rows read total
+        #       Index Only Scan ix_odds_snapshots_bookmaker_closing   (min bookmaker)
+        #       WorkTable Scan -> Index Only Scan  (next bookmaker > previous)
+        #     Nested Loop -> Limit 1  ix_odds_snapshots_bookmaker_closing
+        #
+        # MEASURED, same 25 events, same connection, minutes apart:
+        #     6,724ms -> 185ms   (36x), 78,800 rows read -> 947
+        # and the 299 returned rows are **byte-identical**, verified column by column
+        # (id, event_id, bookmaker, captured_at, moneylines, spread, total, win prob)
+        # via two full result-set diffs at 6-event and 25-event scale. This is a pure
+        # access-path change: `DISTINCT ON (bookmaker) ORDER BY bookmaker,
+        # captured_at DESC, id DESC` and "top-1 per bookmaker by captured_at DESC,
+        # id DESC" select the same row by construction.
+        #
+        # The composite index this finally uses already exists in production
+        # (`ix_odds_snapshots_bookmaker_closing`), so there is no migration here and
+        # none is needed — gotcha #31 keeps large indexes out of the Alembic chain.
+        latest_odds_query = latest_odds_per_bookmaker_query(event_ids)
 
         latest_odds_result = await db.execute(latest_odds_query)
         all_snapshots = latest_odds_result.scalars().all()

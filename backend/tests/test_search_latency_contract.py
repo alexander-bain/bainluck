@@ -332,32 +332,107 @@ def test_every_db_stage_is_timed_separately():
         assert f'_mark("{stage}")' in SEARCH_CODE, f"stage {stage} is not timed"
 
 
-def test_the_odds_enrichment_query_is_a_lateral_top_one_not_a_window_scan():
-    """LAT-P013/#1494. `event_enrichment` was the entire cost of every search that
-    returned real team events — 16,516ms of a 21,032ms request for `q=la`, against
-    ~0ms for a query returning no events — because it ranked
-    `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY captured_at DESC)`
-    across the FULL snapshot history of all ~25 result events, then joined the
-    survivors back by id. Tier-1 events poll every 32s, so that history is deep.
+def _enrichment_source() -> str:
+    """The statement that enriches a page of events with their latest odds.
 
-    The replacement takes one LATERAL top-1 per event, walking
-    `ix_odds_snapshots_bookmaker_closing (event_id, bookmaker, captured_at DESC)`
-    in its own index order. Both directions asserted so neither can come back."""
-    enrich = SEARCH_CODE.split("event_ids = [e.id for e in events]", 1)[1]
-    enrich = enrich.split('_mark("event_odds_aggregate")', 1)[0]
+    LAT-P030 lifted this out of `search_events` into a module-level helper so CI can
+    execute the REAL query against real Postgres rather than a copy of it. Comments
+    are stripped because the block deliberately quotes both anti-patterns it replaced.
+    """
+    return _strip_comments(_source_of(events_route.latest_odds_per_bookmaker_query))
+
+
+def test_the_route_uses_the_shared_enrichment_query():
+    """If the route stops calling the helper, every guard below is asserting the shape
+    of dead code while the live path does whatever it likes."""
+    assert "latest_odds_per_bookmaker_query(event_ids)" in SEARCH_CODE, (
+        "search_events no longer builds its odds enrichment from the shared helper — "
+        "the shape guards and the real-Postgres equivalence test now cover nothing"
+    )
+
+
+def test_the_odds_enrichment_query_reads_bookmakers_not_snapshot_history():
+    """LAT-P013 then LAT-P030, both on #1494. `event_odds_query` is the entire cost of
+    every search that returns real team events and ~0ms for one that returns none.
+
+    Two shapes have now been retired here, and BOTH are asserted gone, because the
+    second one looked like the fix for the first:
+
+    1. `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY captured_at DESC)`
+       over the full history of all ~25 result events, joined back by id.
+    2. `DISTINCT ON (bookmaker)` inside a per-event LATERAL. This removed the window
+       and the join-back, and LAT-P013's comment claimed it walked
+       `ix_odds_snapshots_bookmaker_closing` in index order with "no sort". Postgres
+       never chose that plan. Measured on production 2026-08-10, it took
+       `ix_odds_snapshots_event_id` and **sorted 2,702 rows per event**, because
+       DISTINCT ON cannot skip: keeping one row per bookmaker still requires reading
+       every snapshot of every event. 78,800 rows read to return 299; 6,724ms.
+
+    The property that makes this fast is not the absence of a sort — it is that the
+    number of rows read scales with DISTINCT BOOKMAKERS (~19) instead of SNAPSHOT
+    DEPTH (13,522 on one measured Red Sox event). A recursive loose index scan
+    enumerates the bookmakers, then exactly one row is fetched per pair: 947 rows,
+    185ms, byte-identical output. So assert the bound, not the syntax."""
+    enrich = _enrichment_source()
 
     assert "row_number()" not in enrich, (
         "the window-function scan over full snapshot history is back — it reads and "
         "sorts every snapshot of every event on the page to keep one row per bookmaker"
     )
-    assert ".lateral(" in enrich, "the per-event LATERAL top-1 is gone"
-    assert ".distinct(OddsSnapshot.bookmaker)" in enrich, (
-        "DISTINCT ON (bookmaker) is what makes the lateral a top-1 per bookmaker"
+    assert ".distinct(OddsSnapshot.bookmaker)" not in enrich, (
+        "DISTINCT ON (bookmaker) is back. It reads the FULL snapshot history of every "
+        "event on the page (measured: 78,800 rows for 299 results, 6,724ms) because it "
+        "cannot skip. It is not a top-1; it is a full scan that discards."
+    )
+    assert "recursive=True" in enrich, (
+        "the loose index scan is gone — without it nothing bounds the read to the "
+        "number of distinct bookmakers"
+    )
+    assert ".limit(1)" in enrich, (
+        "the per-(event, bookmaker) fetch must be a top-1; without LIMIT 1 the lateral "
+        "returns that bookmaker's entire history"
     )
     assert "OddsSnapshot.captured_at.desc()" in enrich, "latest-first ordering is gone"
     assert "OddsSnapshot.id.desc()" in enrich, (
         "the id tiebreak is what makes the pick deterministic among equal "
         "captured_at, where row_number() left it arbitrary"
+    )
+
+
+def test_the_bookmaker_walk_advances_strictly_and_terminates():
+    """A recursive CTE that does not strictly advance does not return — it spins until
+    the statement timeout, turning the fastest stage into the slowest failure.
+
+    `OddsSnapshot.bookmaker > prev` is the termination proof: each step takes the
+    MINIMUM bookmaker strictly greater than the previous, so the sequence is strictly
+    increasing over a finite set and `min()` returns NULL exactly once per event. `>=`
+    would re-select the same bookmaker forever."""
+    enrich = _enrichment_source()
+
+    assert "OddsSnapshot.bookmaker > _prev.c.bookmaker" in enrich, (
+        "the walk must advance STRICTLY (`>`); `>=` re-selects the same bookmaker and "
+        "the recursive CTE never terminates"
+    )
+    # BOTH arms, counted. A first version of this guard asserted only that the
+    # substring appeared somewhere, and a mutation that turned the RECURSIVE arm's
+    # `min()` into `max()` sailed through it — the seed arm's `min()` satisfied the
+    # assertion while the walk jumped straight to the last bookmaker and dropped every
+    # one in between. That is a silent wrong answer (a book's odds simply missing),
+    # which is exactly the class this file exists to catch.
+    assert enrich.count("func.min(OddsSnapshot.bookmaker)") == 2, (
+        "both the seed and the recursive arm must take the MINIMUM of the remaining "
+        "bookmakers; anything else skips bookmakers and silently drops their odds"
+    )
+    assert "func.max(" not in enrich, (
+        "a max() anywhere in the walk reverses it: the seed starts at the last "
+        "bookmaker and the walk terminates immediately, returning one book instead "
+        "of all of them"
+    )
+    assert "_prev.c.bookmaker.isnot(None)" in enrich, (
+        "the recursive term must stop descending once a NULL terminator is produced"
+    )
+    assert "bookmakers.c.bookmaker.isnot(None)" in enrich, (
+        "the NULL terminator row must be filtered out of the final select"
     )
 
 
@@ -852,3 +927,79 @@ class TestSearchSkipsTheUnservableOutcomeArm:
         """
         assert "_has_extractable_trigram(term)" in SEARCH_CODE
         assert "_has_extractable_trigram(_ta_q_compact)" in TYPEAHEAD_CODE
+
+
+# ---------------------------------------------------------------------------
+# LAT-P030 — the CI rail that runs the real-Postgres gates.
+#
+# Both search gates that need a real database live in ONE job (`search-recall`),
+# because it is the only job with a Postgres service. Nothing asserted that the
+# job existed, that it pointed at those files, or that it still failed on a skip
+# — so the entire rail could be deleted, or quietly reduced to a no-op, without
+# a single test going red.
+#
+# That is not a hypothetical failure mode for this lane. It is the SAME failure
+# the job's own inline comments were written to prevent one level down ("pytest
+# exits 0 when every test skips, and a silently-skipped gate reads exactly like
+# a passing one"). The step defends itself against skipping; nothing defended
+# the step.
+# ---------------------------------------------------------------------------
+class TestTheRealPostgresRailExists:
+    """The gates only mean something if a job still runs them."""
+
+    @staticmethod
+    def _job():
+        import pathlib
+
+        import yaml
+
+        ci = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+        assert ci.exists(), f"ci.yml not found at {ci}"
+        jobs = yaml.safe_load(ci.read_text())["jobs"]
+        assert "search-recall" in jobs, (
+            "the `search-recall` job is gone — every real-Postgres search gate now "
+            "skips, and pytest exits 0 on an all-skipped run, so CI stays green "
+            "while nothing is checked"
+        )
+        return jobs["search-recall"]
+
+    def test_the_job_still_provides_a_real_postgres(self):
+        job = self._job()
+        services = job.get("services") or {}
+        assert "postgres" in services, (
+            "the Postgres service container is gone; the gates will skip"
+        )
+        env = job.get("env") or {}
+        assert "SEARCH_TEST_DATABASE_URL" in env, (
+            "SEARCH_TEST_DATABASE_URL is what arms both gates — without it they skip"
+        )
+
+    @pytest.mark.parametrize("gate", [
+        "tests/integration/test_search_recall_contract.py",
+        "tests/integration/test_search_odds_enrichment_equivalence.py",
+    ])
+    def test_every_real_postgres_gate_is_actually_invoked(self, gate):
+        """A gate file that no job names is a file that never runs."""
+        steps = self._job().get("steps") or []
+        runs = "\n".join(s.get("run", "") for s in steps)
+        assert gate in runs, (
+            f"{gate} is not invoked by the search-recall job. It requires real "
+            "Postgres, so it skips everywhere else — adding the file without "
+            "adding it here means it has never once executed."
+        )
+
+    def test_every_gate_step_still_fails_on_a_silent_skip(self):
+        """`pytest` exits 0 when every test skips. Each gate step must detect that
+        itself; otherwise a dropped service container reads as a pass."""
+        steps = self._job().get("steps") or []
+        gate_steps = [
+            s for s in steps
+            if "tests/integration/test_search" in (s.get("run") or "")
+        ]
+        assert len(gate_steps) >= 2, (
+            f"expected both real-Postgres gate steps, found {len(gate_steps)}"
+        )
+        for step in gate_steps:
+            assert "skipped" in step["run"], (
+                f"step {step.get('name')!r} does not fail on an all-skipped run"
+            )
