@@ -32,11 +32,38 @@ class _Outcome:
         self.current_yes_ask = ask
 
 
+def _stable_now() -> datetime:
+    """Midday UTC today — NEVER a bare ``datetime.now()``. Gotcha #44.
+
+    These tests seed ``commence_time`` at ``now - 1 day`` and read back a
+    DATE token. Seeded from the real clock, that token flips the moment the
+    run crosses UTC midnight, so the suite went green all afternoon Pacific
+    and red every evening from 17:00 PT — a nightly deploy landmine that CI
+    (which mostly runs earlier in the UTC day) almost never saw.
+
+    Found by INT-037 at 00:12 UTC: 3 failures on pure ``origin/master`` with
+    no local changes, while master's own CI was green. Shifting the clock 6h
+    back made all 5 pass, which is the proof.
+
+    Pinning the HOUR keeps every relative offset inside one UTC day whatever
+    time the suite runs.
+    """
+    anchor = datetime.now(timezone.utc).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    # Must always be in the PAST: the production scorer reads the real clock and
+    # compares against these seeds, so a noon anchor taken at 00:12 UTC would sit
+    # twelve hours in the future and drop the card for a different reason.
+    if anchor > datetime.now(timezone.utc):
+        anchor -= timedelta(days=1)
+    return anchor
+
+
 class _Market:
     """A real object (not MagicMock) so ``__dict__.get(...)`` reads work."""
 
     def __init__(self, id, name, category, outcomes, *, group_type=None):
-        now = datetime.now(timezone.utc)
+        now = _stable_now()
         self.id = id
         self.name = name
         self.source = "polymarket"
@@ -97,7 +124,7 @@ async def _run(markets):
             side_effect=Exception("no redis in test"),
         ),
     ):
-        now = datetime.now(timezone.utc)
+        now = _stable_now()
         ctx = PersonalizationContext()
         items = await _score_futures(_mock_db(markets), now, None, ctx)
     return items
