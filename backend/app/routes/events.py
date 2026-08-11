@@ -1902,6 +1902,7 @@ async def search_events(
     #   "nba lakers"   -> Lakers games, not every NBA game
     #   "nba"          -> the bare league arm is kept, since a league-only query IS
     #                     asking for the league (corpus case `league_only_explicit`).
+    _event_recall_arms = [team_filter]
     if sport_alias_keys:
         league_scope = Sport.key.in_(sport_alias_keys)
         if non_league_expanded:
@@ -1913,7 +1914,9 @@ async def search_events(
                 for t, e in non_league_expanded
             ]
             league_scope = and_(league_scope, *remaining)
-        team_filter = or_(team_filter, league_scope)
+        # LAT-P031/#1494: the league arm is a separate UNION arm, NOT `or_()`.
+        # See `_event_candidate_filter` below for the measurement and the why.
+        _event_recall_arms.append(league_scope)
 
     # LAT-P002/#1494 (1a): collect the predicate ONCE so the count can be built from
     # it directly. The count used to be `select(count()).select_from(query.subquery())`
@@ -1922,17 +1925,24 @@ async def search_events(
     # commence_time CASE sort keys, plus a full entity projection it never read.
     # Contract: count_shape=predicate_identity_only, count_has_ordering=false,
     # count_has_entity_projection=false.
-    event_conditions = [team_filter, Event.commence_time >= cutoff]
+    #
+    # LAT-P031: these are the SCOPE conditions — everything that is not recall. They
+    # are pushed into each UNION arm as well as kept here (AND distributes over UNION),
+    # exactly as `_futures_open_now` is. Unfiltered arms would hand the outer query
+    # every out-of-window event they match.
+    event_scope_conditions = [Event.commence_time >= cutoff]
 
     # Filter by status based on include_upcoming
     if include_upcoming:
-        event_conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+        event_scope_conditions.append(
+            Event.status.in_(["scheduled", "live", "completed", "closed"])
+        )
     else:
-        event_conditions.append(Event.status.in_(["live", "completed", "closed"]))
+        event_scope_conditions.append(Event.status.in_(["live", "completed", "closed"]))
 
     # Filter by sport if specified
     if sport:
-        event_conditions.append(Sport.key == sport)
+        event_scope_conditions.append(Sport.key == sport)
 
     # Filter by taxonomy tags via GIN index
     if tags:
@@ -1940,11 +1950,65 @@ async def search_events(
         try:
             tag_list = _json.loads(tags)
             if isinstance(tag_list, list) and tag_list:
-                event_conditions.append(
+                event_scope_conditions.append(
                     Event.event_tags.op("@>")(cast(_json.dumps(tag_list), JSONB))
                 )
         except (ValueError, TypeError):
             pass
+
+    # LAT-P031/#1494: a league token's arm is UNIONed with the name arm, not OR'd.
+    #
+    # This is LAT-P006's futures fix arriving on the EVENT predicate, and it is the
+    # same defect one table over: `or_(<trigram-servable ILIKE>, <Sport.key IN ...>)`
+    # cannot be served by one index, so the planner abandons both and drives off
+    # `ix_events_status_commence` instead — heap-scanning the entire 30-day window and
+    # filtering row by row.
+    #
+    # MEASURED in production 2026-08-11 via `db-query` EXPLAIN (ANALYZE, BUFFERS), two
+    # warm passes each. The tell is the block count: the OR form touches **6,416 shared
+    # blocks for every league query regardless of the answer** — it scans 27,074 events
+    # to return 0 for `golf` and to return 2,013 for `tennis`. The UNION form touches
+    # blocks proportional to the answer, because each arm gets its own index
+    # (`ix_events_home_trgm`/`ix_events_away_trgm` for the name arm,
+    # `ix_events_sport_id` for the league arm):
+    #
+    #     query     OR (exec / blocks)      UNION (exec / blocks)
+    #     golf       65.6-176.8ms / 6,416     6.8-11.7ms /    59
+    #     nfl         79.5-95.7ms / 6,416     4.1-48.8ms /   584
+    #     tennis      53.6-59.6ms / 6,416     9.7-10.2ms / 1,522
+    #
+    # End to end this is the `golf` bucket: `event_count` was **932ms of a 1,097ms**
+    # request (`?debug_timing=1`, production, 2026-08-11 07:0x PT) for a query that
+    # returns ZERO events.
+    #
+    # Recall is preserved BY CONSTRUCTION, not by argument: `A OR B` and `A UNION B`
+    # select the same set. Verified anyway against production data before this was
+    # written — 8/8 queries returned identical counts through both forms (`golf` 0,
+    # `nba` 15, `nba lakers` 0, `nfl` 278, `soccer` 116, `nba champion` 0,
+    # `mlb yankees` 17, `tennis` 2,013).
+    #
+    # UNION and not UNION ALL: `count(*)` here is over the arms directly, so an event
+    # matching BOTH arms must not be counted twice. A third form — `id IN (arm UNION
+    # ALL arm)` — was measured too and is correct (IN dedups) but slower and noisier
+    # than plain UNION on every query tried, so the file keeps ONE pattern, the one
+    # `_futures_candidate_filter` already uses.
+    #
+    # The no-league-token path is deliberately untouched: with a single arm the
+    # compiled SQL is exactly what it was before this change.
+    if len(_event_recall_arms) > 1:
+        _event_arm_selects = [
+            select(Event.id)
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(arm, *event_scope_conditions)
+            for arm in _event_recall_arms
+        ]
+        _event_candidates = union(*_event_arm_selects).subquery()
+        event_conditions = [
+            Event.id.in_(select(_event_candidates.c.id)),
+            *event_scope_conditions,
+        ]
+    else:
+        event_conditions = [_event_recall_arms[0], *event_scope_conditions]
 
     # Build base query - search both home and away team names
     query = (
