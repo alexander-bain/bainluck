@@ -37,6 +37,43 @@
 const RSC_PREFETCH = "_rsc=";
 
 /**
+ * The RSC prefetch allowance in its MEASURED-INTERMITTENT form, declared once
+ * for every spec that has not measured its own base rate.
+ *
+ * UX-P057. `discover-smoke` owned a local copy of this object and eight specs
+ * owned nothing at all — the allowance was opt-in, so the nightly pack filed
+ * twelve issues describing Next.js cancelling its own prefetches. Eleven specs
+ * assembling eleven copies of one token from one string literal is the drift
+ * this module exists to end, one level up; so the whole DECLARATION is shared,
+ * not just the token.
+ *
+ * WHY INTERMITTENT AND NOT STRICT, for the specs adopting it here. A strict
+ * allowance must fire somewhere in the run or the run is red, and that property
+ * is only safe once you have measured that it does. UX-P047 measured
+ * `discover-smoke` at 2 runs in 3 — one clean run in three would have gone red
+ * on `network.declared_allowances_fired`, trading a false red for a different
+ * false red. None of the eight specs adopting this has a measured base rate, so
+ * strict could only manufacture reds. Intermittent is exempt from run-level
+ * expiry and therefore cannot.
+ *
+ * `event-page` deliberately keeps the bare-string STRICT form: it measured 7-12
+ * aborts per journey across 8 of 8 journeys and two dispatches, so it has earned
+ * the expiry property. Do not downgrade a measured allowance to silence a red.
+ *
+ * Expiry has not been abandoned, only relocated: `issue` ties every intermittent
+ * declaration to #1525, and it retires when #1525 does — or sooner, for any spec
+ * whose base rate someone measures.
+ *
+ * Shape A is untouched. `abortAllowanceMatches` refuses a feed request before it
+ * ever consults this token, so an aborted `/api/feed` still fails everywhere.
+ */
+const RSC_PREFETCH_ABORT = Object.freeze({
+  match: RSC_PREFETCH,
+  issue: 1525,
+  intermittent: true,
+});
+
+/**
  * Failures caused by tearing down a navigation are not product defects: the
  * browser cancels in-flight requests when the page navigates away, and Next
  * prefetches links on hover and in viewport then abandons what it no longer
@@ -143,6 +180,7 @@ function unfiredAllowances(journeys) {
 
 module.exports = {
   RSC_PREFETCH,
+  RSC_PREFETCH_ABORT,
   allowanceMatch,
   allowanceIsIntermittent,
   NAVIGATION_CANCEL_FAILURES,

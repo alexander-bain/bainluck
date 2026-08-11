@@ -1,4 +1,5 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
  * L2-228 — the public calibration journey.
@@ -321,6 +322,7 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
       : null;
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "calibration.anonymous",
     expectedPath: path,
     // The subject is not the Discover feed, so the shared card check does not

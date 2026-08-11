@@ -1,4 +1,5 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
  * L2-227 — rendered truth for the five championship grids.
@@ -97,6 +98,7 @@ for (const league of LEAGUES) {
     const mainText = await readContentRegionText(page);
 
     await journey.finish({
+      allowedNavigationAborts: [RSC_PREFETCH_ABORT],
       journeyId: league.journeyId,
       expectedPath: league.path,
       contentMode: "none",
@@ -140,6 +142,7 @@ test("adjacent league page still renders its progression table", async ({ page, 
   const mainText = await readContentRegionText(page);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "grid.adjacent_league_page",
     expectedPath: path,
     contentMode: "none",

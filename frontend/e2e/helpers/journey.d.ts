@@ -52,6 +52,8 @@ export interface TelemetryExpectation {
   allowUnlisted?: boolean;
 }
 
+import type { NavigationAbortAllowanceLike } from "./navigationAborts";
+
 export interface JourneyObservation {
   /** Set when the browser/runner itself broke — never a product verdict. */
   infra?: { crashed: boolean; reason?: string } | null;
@@ -60,6 +62,16 @@ export interface JourneyObservation {
   shaDetail?: string | null;
   expectedPath?: string | null;
   urlPath?: string | null;
+  /**
+   * Declared navigation-abort allowances (UX-P047).
+   *
+   * UX-P057: this was MISSING from the observation type while `fixtures/audit.ts`
+   * had always written it — so the one field every spec must set to stop the rail
+   * crying wolf was the one field the types did not know about. `tsc` said so at
+   * `audit.ts:349` and nothing was watching, because the e2e tree is outside the
+   * frontend typecheck gate.
+   */
+  allowedNavigationAborts?: Array<NavigationAbortAllowanceLike>;
   /** The origin the browser actually landed on. */
   finalOrigin?: string | null;
   /** Allowlist for `finalOrigin`. Omit to skip the check explicitly. */
@@ -78,6 +90,17 @@ export interface JourneyObservation {
   mainRegion?: MainRegionObservation | null;
   /** Legacy pre-computed verdict, for surfaces not yet converted. */
   mainRegionNonBlank?: boolean;
+  /**
+   * UX-P057 — the vocabulary that proves WHICH surface rendered.
+   *
+   * One match is enough: requiring all of them turns the assertion into a copy
+   * of the current wording and reds on any honest copy edit. Declaring markers
+   * without `surfaceText` FAILS rather than skipping — an unobserved surface is
+   * not a proven one.
+   */
+  surfaceMarkers?: string[];
+  /** The observed surface text the markers are searched in. */
+  surfaceText?: string | null;
   consoleErrors?: string[];
   pageErrors?: string[];
   failedRequests?: FailedRequestSummary[];

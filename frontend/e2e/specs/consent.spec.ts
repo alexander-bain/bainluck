@@ -1,5 +1,6 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import type { TelemetryExpectation } from "../helpers/journey";
+import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
  * L2-222 Item 3 (#1453) — the desktop/mobile web consent pack.
@@ -88,6 +89,7 @@ test("consent.untouched — no choice, no telemetry", async ({ page, journey }) 
   await expect(page.getByText(BANNER_HEADING)).toBeVisible();
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.untouched",
     expectedPath: "/",
     realCardFound: false,
@@ -113,6 +115,7 @@ test("consent.decline — zero analytics requests after Decline", async ({ page,
   await expect(page.getByText(BANNER_HEADING)).toBeHidden();
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.decline",
     expectedPath: "/",
     realCardFound: false,
@@ -139,6 +142,7 @@ test("consent.grant — exactly one page view for the page you are on", async ({
   expect(await storedConsent(page)).toBe("all");
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.grant",
     expectedPath: "/",
     realCardFound: false,
@@ -191,6 +195,7 @@ test("consent.grant_then_revoke — nothing leaves after the revoke", async ({
   expect(await storedConsent(page)).toBe("none");
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.grant_then_revoke",
     realCardFound: false,
     contentMode: "none",
@@ -224,6 +229,7 @@ test("consent.navigation — declined stays declined across nav and history", as
   await expect(page.getByText(BANNER_HEADING)).toBeHidden();
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.navigation",
     realCardFound: false,
     contentMode: "none",
@@ -260,6 +266,7 @@ test("consent.two_tabs — revoking in tab B silences tab A", async ({ page, jou
   await tabB.close();
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.two_tabs",
     realCardFound: false,
     contentMode: "none",
@@ -303,6 +310,7 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
   expect(status).not.toMatch(/^Analytics is OFF\. None of those load\.$/m);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.storage_failure",
     realCardFound: false,
     contentMode: "none",
@@ -336,6 +344,7 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
   await watch(page);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.deferred_event",
     realCardFound: false,
     contentMode: "none",
@@ -370,6 +379,7 @@ test("consent.identity_after_denial — no user_id reaches gtag", async ({ page,
   expect(idsInDataLayer, "no user_id may be configured after a denial").toBe(false);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.identity_after_denial",
     realCardFound: false,
     contentMode: "none",
@@ -406,6 +416,7 @@ test("consent.reachable — footer link reaches a keyboard-operable control", as
   await watch(page);
 
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.reachable",
     expectedPath: "/preferences",
     realCardFound: false,
@@ -432,6 +443,7 @@ test("consent.my_stuff_denied — the latency packet is gated too", async ({ pag
   // (dropped unregistered at the sanitizer, L2-220) — an event nobody could see
   // is exactly the kind that escapes a consent gate unnoticed.
   await journey.finish({
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
     journeyId: "consent.my_stuff_denied",
     expectedPath: "/my-stuff",
     realCardFound: false,
