@@ -122,6 +122,7 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.recover_datagolf_participation",
         "app.tasks.refresh_event_concept",
         "app.tasks.refresh_hub",
+        "app.tasks.refresh_league",
         "app.tasks.regenerate_tags",
         "app.tasks.regrade_polymarket_under_signflip",
         "app.tasks.seed_entity_registry",

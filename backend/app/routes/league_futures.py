@@ -8,6 +8,8 @@ Phase 3 generalizes the sectioned layout to all major sports (NBA, NHL, MLB, NFL
 with sport-aware keyword classification for awards, series, and props.
 """
 
+import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
@@ -24,9 +26,30 @@ from app.utils.entity_page_tiers import (
     AVAILABILITY_STALE,
     resolve_entity_tier,
 )
+from app.utils.event_concept_cache import (
+    ConceptCacheKeys,
+    acquire_refresh_lock,
+    cache_keys,
+    release_refresh_lock,
+)
 from app.utils.sport_keys import SPORT_HIERARCHY
 
 logger = logging.getLogger(__name__)
+
+#: The league tier's Redis namespace. These are the keys that have been live since
+#: #777, and `cache_keys()` reproduces them EXACTLY (`<prefix><sport_key>` and
+#: `…:stale`) — so adopting the shared four-key layout here is a drop-in that adds
+#: a `:refreshing` lock without moving or orphaning a single existing entry.
+LEAGUE_CACHE_PREFIX = "bainluck:league:"
+
+#: How fresh a *live* hit is. Unchanged from the value this route has always used;
+#: the defect #1767 fixes was never this number (see `_schedule_league_refresh`).
+LEAGUE_PRIMARY_TTL = 300
+
+#: How long the mirror outlives an outage. Also unchanged, and deliberately so:
+#: shortening it would have traded a 24-hour lie for a shorter one while leaving
+#: the missing revalidation — the actual defect — in place.
+LEAGUE_STALE_TTL = 86400
 
 router = APIRouter()
 
@@ -288,37 +311,184 @@ def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
     return "more_markets"
 
 
+def league_cache_keys(sport_key: str) -> ConceptCacheKeys:
+    """Every Redis key one league owns. Shared by the route and the refresh task so
+    the two can never disagree about where the mirror lives."""
+    return cache_keys(sport_key, prefix=LEAGUE_CACHE_PREFIX)
+
+
+def _redis_or_none():
+    """The bounded shared client, or None. Never raises (gotcha #39)."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return get_redis_client()
+    except Exception:
+        return None
+
+
+def _read_league_slot(rc, key: str) -> dict | None:
+    """Read one league cache slot, or None.
+
+    Deliberately NOT `event_concept_cache.read_slot`: that helper validates the
+    stamped `cache` envelope and reads an unstamped payload as a MISS, so adopting
+    it here would silently invalidate every live league entry and, worse, couple a
+    revalidation fix to a payload-shape migration. The keys are shared; the codec
+    is this tier's own until it adopts the envelope deliberately.
+    """
+    if rc is None:
+        return None
+    try:
+        raw = rc.get(key)
+    except Exception:
+        logger.warning("league cache: read failed for %s", key)
+        return None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception:
+        logger.warning("league cache: refusing undecodable payload for %s", key)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
+    """Write both slots. Never raises."""
+    if rc is None:
+        return
+    try:
+        encoded = json.dumps(payload, default=str)
+        rc.setex(keys.primary, LEAGUE_PRIMARY_TTL, encoded)
+        rc.setex(keys.stale, LEAGUE_STALE_TTL, encoded)
+    except Exception:
+        logger.warning("league cache: write failed for %s", keys.primary)
+
+
+def _schedule_league_refresh(rc, keys: ConceptCacheKeys, sport_key: str) -> None:
+    """Kick exactly one background rebuild for `sport_key` and return immediately.
+
+    #1767. This is the half that was missing, and its absence was not a slow cache
+    — it was a 24-hour one. The stale branch returned the mirror and scheduled
+    NOTHING, and the build path is reached only when BOTH slots miss, so a league
+    rebuilt once per `LEAGUE_STALE_TTL` and served a stale copy for the other
+    23h55m: ~99.6% of loads, measured in production an hour after the UX-P062
+    deploy with every sampled league still pinned on a pre-deploy payload.
+
+    Single-flight: a burst of readers arriving behind one TTL expiry produces one
+    rebuild, not one per reader. The owner token travels WITH the dispatch because
+    this request acquires the lock and the worker releases it (#1678 finding 1) —
+    a producer that cannot name the token does not get to release.
+
+    Best-effort throughout: the caller has already decided to serve the mirror, and
+    nothing here may turn a served page into an error. If the dispatch itself fails
+    the lock is released, so a dead broker costs the next reader a retry rather
+    than wedging the key for `REFRESH_LOCK_TTL`.
+
+    The guard wraps the ACQUIRE as well as the dispatch, so "never errors the
+    page" is a property of this function rather than one inherited from
+    `acquire_refresh_lock`'s internal hardening. A guarantee that holds only
+    because a callee currently swallows its own exceptions is one refactor away
+    from being false, and the caller has already committed to a 200 by the time it
+    gets here.
+    """
+    token = None
+    try:
+        token = acquire_refresh_lock(rc, keys)
+        if not token:
+            return
+
+        from app.tasks import celery_app
+
+        celery_app.send_task(
+            "app.tasks.refresh_league", args=[sport_key, token], queue="background"
+        )
+    except Exception:
+        logger.warning("league: refresh dispatch failed for %s", sport_key, exc_info=True)
+        if token:
+            release_refresh_lock(rc, keys, token)
+
+
+def is_empty_league(payload: dict) -> bool:
+    """A league with no sections and neither games rail has nothing on it."""
+    return not (
+        payload.get("sections")
+        or payload.get("upcoming_games")
+        or payload.get("recent_results")
+    )
+
+
+async def build_and_cache_league(sport_key: str, db: AsyncSession, rc=None) -> dict:
+    """Build one league, write both slots, return the payload.
+
+    One implementation for the route's cold path and the background refresh, so the
+    two cannot drift in what they store.
+
+    **A degraded build is never mirrored.** `build_league` returns the `degraded`
+    envelope when its market query times out, and caching that would pin an outage
+    into the 24h mirror — the one payload that must never outlive its cause.
+
+    **An empty build never overwrites a NON-EMPTY mirror**, the ordering
+    `build_and_cache_hub` established: writing first would clobber the good
+    snapshot with the blank page and then "rescue" by reading back the blank we
+    just stored.
+
+    This diverges from the hub's version in one deliberate way: the hub skips the
+    write whenever *any* stale entry exists, and this skips only when the existing
+    mirror still has content. An empty league whose mirror is also empty is the
+    ordinary steady state for the 7 registered leagues that genuinely have nothing
+    (`wncaab`, `cfl`, `ufl`, …), and skipping there would leave the primary slot
+    permanently unset — so every request would fall to the stale branch and
+    schedule another refresh, forever. Refusing to overwrite nothing with nothing
+    protects no data and costs a rebuild per lock window.
+    """
+    payload = await build_league(sport_key, db)
+    keys = league_cache_keys(sport_key)
+
+    if payload.get("availability") == AVAILABILITY_DEGRADED:
+        return payload
+
+    if is_empty_league(payload):
+        mirror = _read_league_slot(rc, keys.stale)
+        if mirror is not None and not is_empty_league(mirror):
+            return payload
+
+    _write_league_payload(rc, keys, payload)
+    return payload
+
+
 @router.get("/{sport_key}")
 async def get_league_futures(
     sport_key: str = Path(..., description="Sport key (e.g., basketball_nba, icehockey_nhl)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all open futures markets for a league, grouped by section."""
-    import asyncio
-    import json as _json
+    rc = _redis_or_none()
+    keys = league_cache_keys(sport_key)
 
-    # Redis cache: 5 min primary, 24h stale fallback
-    _cache_key = f"bainluck:league:{sport_key}"
-    _stale_key = f"{_cache_key}:stale"
-    try:
-        from app.tasks.redis_state import get_redis_client
-        _rc = get_redis_client()
-        cached = _rc.get(_cache_key)
-        if cached:
-            return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
-        stale = _rc.get(_stale_key)
-        if stale:
-            # UX-P062 (#1743), register E6: this served a 24h-old snapshot with no
-            # declaration at all, so a substituted answer was indistinguishable from
-            # a current one — ruling 025 clause 4, the named violation. The payload
-            # was cached with `availability: fresh`; it is not fresh now.
-            _payload = _json.loads(stale.decode() if isinstance(stale, bytes) else stale)
-            if isinstance(_payload, dict):
-                _payload["availability"] = AVAILABILITY_STALE
-            return _payload
-    except Exception:
-        _rc = None
+    cached = _read_league_slot(rc, keys.primary)
+    if cached is not None:
+        return cached
 
+    stale = _read_league_slot(rc, keys.stale)
+    if stale is not None:
+        # UX-P062 (#1743), register E6: this served a 24h-old snapshot with no
+        # declaration at all, so a substituted answer was indistinguishable from
+        # a current one — ruling 025 clause 4, the named violation. The payload
+        # was cached with `availability: fresh`; it is not fresh now.
+        #
+        # #1767: and the declaration is what made the REAL defect visible — the
+        # mirror was being served almost always, because nothing ever rebuilt it.
+        # Serve it (a fast answer beats a correct wait) and revalidate behind it.
+        _schedule_league_refresh(rc, keys, sport_key)
+        stale["availability"] = AVAILABILITY_STALE
+        return stale
+
+    return await build_and_cache_league(sport_key, db, rc)
+
+
+async def build_league(sport_key: str, db: AsyncSession) -> dict:
+    """Build one league payload from the database. Does not touch the cache."""
     now = datetime.now(timezone.utc)
 
     # Determine the sport category from the key
@@ -717,13 +887,5 @@ async def get_league_futures(
         "pool_counts": pool_counts,
         "section_counts": section_counts,
     }
-
-    try:
-        if _rc:
-            payload = _json.dumps(response, default=str)
-            _rc.setex(_cache_key, 300, payload)
-            _rc.setex(_stale_key, 86400, payload)
-    except Exception:
-        pass
 
     return response
