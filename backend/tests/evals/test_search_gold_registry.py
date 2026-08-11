@@ -208,3 +208,51 @@ def test_adapter_never_mints_identity_from_display_text() -> None:
 
     unknown = map_suggestion({"type": "person", "text": "Taylor Swift"}, 2)
     assert unknown["entity_id"] == "unresolved:unmapped_type:person"
+
+
+def test_an_allowed_alternative_must_carry_its_reason() -> None:
+    """An alternative is the one edit that can make a failing probe pass.
+
+    `allowed_entity_ids` widens what counts as correct, so it is also the cheapest
+    way to make a red number green without touching the product. LAT-P035 added one
+    (`red sox`, the #1754 duplicate rows) and this is the guard that keeps that from
+    becoming a habit: an alternative must be accompanied by prose saying WHY the two
+    ids denote the same real thing. The scorer cannot check that claim, so a human
+    reading the registry has to be able to.
+
+    The assertion is PRESENCE, not prose length. A first draft required 80
+    characters and immediately failed `apple` on "any Apple company market is
+    acceptable" — which is a perfectly good reason. A guard that grades writing
+    invents defects; the real failure mode is an alternative appearing with nothing
+    said about it at all.
+    """
+
+    for probe in _probes():
+        answer = probe["oracle"]["answer"]
+        if not answer["allowed_entity_ids"]:
+            continue
+        evidence = (probe["oracle"]["evidence"] or "").strip()
+        assert evidence, (
+            f"{probe['identity']['probe_key']} allows {answer['allowed_entity_ids']} "
+            "with no recorded reason — an unexplained alternative is indistinguishable "
+            "from moving the goalposts"
+        )
+
+
+def test_the_red_sox_duplicate_stays_pointed_at_its_defect() -> None:
+    """The adjudication is a MEASUREMENT fix; the duplicate rows are still a bug.
+
+    `teams` holds two rows for one club (853 `boston-red-sox`, 10709
+    `boston-red-sox-mlb`), and search dedupes the bucket by name, so which one
+    survives decided this probe — and therefore the lane's headline recall — by
+    coin flip. Accepting both stops the flap. It must not also erase the pointer to
+    the defect, or #1754 becomes invisible the moment the number goes green.
+    """
+
+    probe = next(p for p in _probes() if p["identity"]["probe_key"] == "search-gold-red-sox-001")
+    answer = probe["oracle"]["answer"]
+    assert answer["allowed_entity_ids"] == ["team:boston-red-sox"]
+    assert "1754" in probe["oracle"]["evidence"], (
+        "the Red Sox adjudication no longer names the duplicate-rows defect it is "
+        "papering over"
+    )
