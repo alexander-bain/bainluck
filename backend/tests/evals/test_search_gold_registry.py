@@ -16,8 +16,10 @@ import pytest
 
 from scripts.evals.build_search_gold_registry import (
     GOLD_ROWS,
+    GOLD_SET_SOURCE,
     KIND_SHAPE,
     MC_CANDIDATES,
+    NON_DRAFT_SOURCES,
     build_registry,
 )
 from scripts.evals.probe_registry import filter_probes, load_registry, validate_registry
@@ -51,11 +53,41 @@ def test_registry_validates_clean() -> None:
 
 
 def test_every_gold_query_is_either_migrated_or_an_open_question() -> None:
-    """No query may be silently dropped: migrated + MC candidates must be the whole set."""
+    """No query may be silently dropped: migrated + MC candidates must be the whole set.
 
-    migrated = len(GOLD_ROWS)
+    LAT-P033: `migrated` counts only rows that came FROM the draft. Probes added
+    from a measured production defect (`NON_DRAFT_SOURCES`, e.g. `fed`/#1732) are
+    subtracted, because this invariant is a statement about ALEX'S DRAFT — "none
+    of the 71 queries he approved was silently dropped". Growing the 71 to absorb
+    a defect-derived probe would have turned the constant into "however many rows
+    exist today", which cannot fail and so checks nothing.
+    """
+
+    migrated = len(GOLD_ROWS) - len(NON_DRAFT_SOURCES)
     deferred = sum(len(queries) for queries, _ in MC_CANDIDATES)
     assert migrated + deferred == GOLD_SET_UNIQUE_QUERIES
+
+
+def test_defect_derived_probes_are_declared_and_carry_their_issue() -> None:
+    """A non-draft probe must not borrow the gold draft's provenance.
+
+    The subtraction above is only honest if `NON_DRAFT_SOURCES` is the complete
+    list of rows that did not come from the draft — otherwise it becomes a knob
+    for making the accounting balance.
+    """
+
+    declared = set(NON_DRAFT_SOURCES)
+    assert declared <= {row[0] for row in GOLD_ROWS}, "declared a non-draft query that has no row"
+
+    for probe in _probes():
+        query = probe["presentation"]["query"]
+        source = probe["evidence"]["source"]
+        if query in declared:
+            assert source == NON_DRAFT_SOURCES[query][0]
+            assert probe["lifecycle"]["issue_gotcha"] == NON_DRAFT_SOURCES[query][1]
+            assert "gold_queries_draft" not in source
+        else:
+            assert source == GOLD_SET_SOURCE
 
 
 def test_no_duplicate_queries_or_probe_keys() -> None:

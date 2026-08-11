@@ -66,6 +66,25 @@ GOLD_SET_SOURCE = ".claude/handoff/gold_queries_draft.md (gold query set v1, Ale
 CAPTURED_AT = "2026-08-11T00:00:00Z"
 EVIDENCE_SURFACE = "GET /api/events/typeahead on api.bainluck.com"
 
+# Probes whose query did NOT come from Alex's gold draft, but from a MEASURED
+# production defect. query -> (evidence source, issue).
+#
+# LAT-P033: these are tracked explicitly rather than just appended, for two
+# reasons. First, PROVENANCE — stamping the gold-draft source onto a row Alex
+# never wrote would be a lie in the one field whose whole job is saying where the
+# expectation came from. Second, ACCOUNTING — the
+# `migrated + deferred == GOLD_SET_UNIQUE_QUERIES` invariant is a statement about
+# the DRAFT ("no query Alex approved was silently dropped"), so it must keep
+# measuring the draft. Bumping the 71 to absorb a defect-derived probe would
+# quietly redefine that constant as "however many rows exist", which is exactly
+# the check the invariant is there to make impossible.
+NON_DRAFT_SOURCES: dict[str, tuple[str, str]] = {
+    "fed": (
+        "GitHub #1732 — measured on production by LAT-P032, 2026-08-11 (v3770 cd84f690)",
+        "#1732",
+    ),
+}
+
 # Entity kind -> (surface, item_type). Mirrors search_results_producer.TYPE_MAP.
 KIND_SHAPE = {
     "team": ("team", "team"),
@@ -125,6 +144,20 @@ GOLD_ROWS: list[tuple[str, str, str, str, str, list[str], str, str]] = [
      "cross-kind alternative the scorer cannot hold, so it is noted here rather than recorded"),
     ("rate cut", "coverage", "politics_econ", "economics:fed-rate-cuts", "market:113032",
      ["market:109534"], "pass", "two equivalent rate-cut-count markets"),
+    ("fed", "coverage", "politics_econ", "economics:federal-reserve", "market:2656292",
+     [], "xfail",
+     "LAT-P033/#1732 gate. Measured on production 2026-08-11 (v3770 cd84f690): `fed` returns "
+     "EIGHT futures, FOUR of them substring collisions inside proper nouns - 2026 Nobel Physics "
+     "winner, ATP 1000 Montreal, Titled Tuesday and Grand Chess Tour (both Vladimir Fedoseev) - "
+     "while 'Who will be confirmed as Fed Chair?' (58.9M volume, the expected id here) and 'How "
+     "many Fed rate cuts in 2026?' (44.5M) do not appear AT ALL. Deliberately pinned to a market "
+     "BELOW today's cut so that it CAN fail: pinning it to 'Will Trump end the Federal Reserve?' "
+     "(live at #2) would have gated nothing. Single id with no alternatives, per this registry's "
+     "own rule that an xfail carrying alternatives is an ambiguity wearing the wrong marker - the "
+     "two rival Fed markets are therefore named here in prose, not encoded as allowed ids. xfail "
+     "until LAT-P033 deploys; NOTE `--mode bucket_recall` does not consult known_failure_status "
+     "(only the top1 mode does), so until then it reads as a straight fail and it is the "
+     "DENOMINATOR that moved, not the numerator."),
     ("recession", "coverage", "politics_econ", "economics:recession", "market:108622",
      ["market:113012"], "pass", "two equivalent US recession markets"),
     ("inflation", "coverage", "politics_econ", "economics:inflation", "market:113386",
@@ -247,6 +280,7 @@ def build_probes() -> list[dict[str, Any]]:
         kind = expected.split(":", 1)[0]
         surface, item_type = KIND_SHAPE[kind]
         presentation = {"query": query}
+        non_draft = NON_DRAFT_SOURCES.get(query)
         probes.append({
             "identity": {
                 "probe_key": f"search-gold-{_slug(query)}-001",
@@ -262,8 +296,13 @@ def build_probes() -> list[dict[str, Any]]:
             "evidence": {
                 "fixture_hash": fixture_sha256(presentation),
                 "hash_scope": "presentation/v1",
-                "source": GOLD_SET_SOURCE,
-                "provenance": f"{half} half of the gold set; expected entity resolved against {EVIDENCE_SURFACE}",
+                "source": non_draft[0] if non_draft else GOLD_SET_SOURCE,
+                "provenance": (
+                    f"defect-derived probe, not from the gold draft; expected entity resolved "
+                    f"against {EVIDENCE_SURFACE}"
+                    if non_draft
+                    else f"{half} half of the gold set; expected entity resolved against {EVIDENCE_SURFACE}"
+                ),
                 "captured_at": CAPTURED_AT,
                 "valid_at": CAPTURED_AT,
                 "license_usage_note": "internal product query set; queries name public figures and public events only",
@@ -289,7 +328,9 @@ def build_probes() -> list[dict[str, Any]]:
                 "owner": "search-evals",
                 "difficulty": "baseline",
                 "failure_family": "search-entity-top-1",
-                "issue_gotcha": "#993" if status == "xfail" else None,
+                "issue_gotcha": (
+                    non_draft[1] if non_draft else ("#993" if status == "xfail" else None)
+                ),
                 "known_failure_status": status,
             },
             "audience_safety": {
