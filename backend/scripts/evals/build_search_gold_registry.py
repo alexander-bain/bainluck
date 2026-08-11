@@ -83,6 +83,11 @@ NON_DRAFT_SOURCES: dict[str, tuple[str, str]] = {
         "GitHub #1732 — measured on production by LAT-P032, 2026-08-11 (v3770 cd84f690)",
         "#1732",
     ),
+    "ai": (
+        "GitHub #1758 — the revert of LAT-P035 (e22576db); measured on production "
+        "by LAT-P037, 2026-08-11 (v3777 e22576db)",
+        "#1758",
+    ),
 }
 
 # Entity kind -> (surface, item_type). Mirrors search_results_producer.TYPE_MAP.
@@ -101,8 +106,18 @@ KIND_SHAPE = {
 # invent). Both are recorded verbatim so the two halves stay distinguishable (P10).
 GOLD_ROWS: list[tuple[str, str, str, str, str, list[str], str, str]] = [
     # ---- coverage: teams -------------------------------------------------
-    ("red sox", "coverage", "teams", "team:boston-red-sox", "team:boston-red-sox-mlb", [], "pass",
-     "canonical slug confirmed via /api/events/search teams[].slug"),
+    ("red sox", "coverage", "teams", "team:boston-red-sox", "team:boston-red-sox-mlb",
+     ["team:boston-red-sox"], "pass",
+     "LAT-P035 adjudication (#1754): `teams` holds TWO rows for this one club — id 853 "
+     "`boston-red-sox` (sport baseball_mlb_preseason) and id 10709 `boston-red-sox-mlb` "
+     "(baseball_mlb), with IDENTICAL name, abbreviation, espn_id and alternate_names "
+     "(verified in production 2026-08-11). The response can only carry one: search_events "
+     "dedupes the teams bucket by `row.name`, so whichever row sorts first wins and the other "
+     "is dropped silently. LAT-P034 saw the winner ALTERNATE between runs, which made this "
+     "probe — and therefore the lane's headline recall number — flap by +/-1 with no change "
+     "to Search. Both ids denote the same real club, so per P3 this is an AMBIGUITY and is "
+     "recorded with an alternative rather than left to a coin flip. This adjudicates the "
+     "MEASUREMENT only; the duplicate rows remain a real defect and stay open as #1754."),
     ("pats", "coverage", "teams", "team:new-england-patriots", "team:new-england-patriots", [], "pass",
      "nickname for the same club as 'patriots' — shares its group key"),
     ("patriots", "coverage", "teams", "team:new-england-patriots", "team:new-england-patriots", [], "pass",
@@ -190,6 +205,29 @@ GOLD_ROWS: list[tuple[str, str, str, str, str, list[str], str, str]] = [
      "currently ranks a Greek football club (Asteras Tripolis) first"),
     ("apple", "coverage", "tech", "company:apple", "market:109349",
      ["market:113419", "market:113774"], "pass", "any Apple company market is acceptable"),
+    ("ai", "coverage", "tech", "tech:ai-models", "market:109596",
+     ["market:113435"], "pass",
+     "LAT-P037/#1758: THE GOLD SET'S FIRST SUB-3-CHARACTER PROBE, and it is here because its "
+     "absence is what let LAT-P035 ship and be reverted. That queue measured 49 pairs, named its "
+     "two losses honestly, and was green — while emptying the futures NAME arm at two characters, "
+     "because not one of the 49 probes was shorter than three characters. A blind spot in a gold "
+     "set does not announce itself; it reports a good number. "
+     "WHAT THIS PROBE CAN AND CANNOT CATCH, stated so nobody over-reads it. It catches the "
+     "SHAPE of that failure — if the 2-char name arm empties again, `ai`'s futures bucket goes "
+     "empty and both this probe and the producer's empty-expected-bucket check fire. It would "
+     "NOT have caught LAT-P035 itself: `to_tsvector('Best AI at the end of 2026?')` contains the "
+     "lexeme `ai`, so the word test passed this market and only shrank the bucket around it. The "
+     "probe that WOULD have caught it is `re` -> \"US Recession in 2026?\", and it is deliberately "
+     "NOT added: measured on production 2026-08-11 (v3777), `re` returns 10 futures led by "
+     "Presidential Election Winner 2028 and nine Ukraine 're-enter' markets, and 108622 is not "
+     "among them. `re` has no correct referent — it is a prefix of a word the user has not "
+     "finished typing — so encoding one would be inventing an expectation to satisfy a gate, "
+     "which is the single failure mode this registry's own rules forbid. The deterministic guard "
+     "for that boundary is a compiled-SQL oracle instead "
+     "(test_search_latency_contract.TestTheWordTestDoesNotVoteOnAFragment), which needs no "
+     "Postgres and therefore runs where the lane actually works. "
+     "Referent: 'Best AI at the end of 2026?' (109596), rank 1 on production; 'AI bubble burst "
+     "by...?' (113435) is an equally acceptable read of a bare `ai`."),
     # ---- coverage: family-specific --------------------------------------
     ("wwe", "coverage", "family_specific", "promotion:wwe", "market:12434043",
      ["market:56775492"], "pass", "currently ranks The Emmys first"),
