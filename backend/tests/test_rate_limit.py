@@ -4,7 +4,7 @@ Tests for the API rate limiting middleware.
 Verifies:
   - Anonymous requests are rate-limited at 60/minute per IP
   - Authenticated requests get 120/minute per user
-  - Admin endpoints are exempt
+  - Admin endpoints are CEILED at 300/minute per admin token, never exempt
   - 429 responses include Retry-After header and JSON body
   - Different IPs / users have independent buckets
 """
@@ -222,8 +222,18 @@ class TestTrustedUidResolver:
 class TestIsExempt:
     """Tests for _is_exempt."""
 
-    def test_admin_exempt(self):
-        assert _is_exempt("/api/admin/something") is True
+    def test_admin_NOT_exempt(self):
+        """Queue 315 Item 1: /api/admin lost its exemption and must never regain it.
+
+        This assertion is inverted from what it said before, deliberately. An auth
+        gate bounds who may call an endpoint, never how often — so "already gated
+        by _check_admin_secret" was never a reason to skip the limiter, and a
+        leaked token bought unmetered access to every admin read including
+        db-query. Admin requests are now CEILED (see TestAdminRateLimitBucket),
+        not exempted.
+        """
+        assert _is_exempt("/api/admin/something") is False
+        assert _is_exempt("/api/admin") is False
 
     def test_docs_exempt(self):
         assert _is_exempt("/docs") is True
@@ -253,14 +263,21 @@ def _reset_rate_limiter_state():
     old_anon = rl_mod._anon_limit
     old_auth = rl_mod._auth_limit
     old_resolver = rl_mod._trusted_uid_resolver
+    old_admin = rl_mod._admin_limit
+    old_admin_rate = rl_mod.ADMIN_RATE_LIMIT
+    old_admin_max = rl_mod._ADMIN_MAX
     # Force fresh singletons each test
     rl_mod._rate_limiter = None
     rl_mod._anon_limit = None
     rl_mod._auth_limit = None
+    rl_mod._admin_limit = None
     yield
     rl_mod._rate_limiter = old_limiter
     rl_mod._anon_limit = old_anon
     rl_mod._auth_limit = old_auth
+    rl_mod._admin_limit = old_admin
+    rl_mod.ADMIN_RATE_LIMIT = old_admin_rate
+    rl_mod._ADMIN_MAX = old_admin_max
     rl_mod._trusted_uid_resolver = old_resolver
 
 
@@ -396,19 +413,13 @@ class TestRateLimitMiddleware:
         assert "retry_after" in body
         assert "Retry-After" in resp.headers
 
-    def test_admin_endpoints_exempt(self):
-        """Admin endpoints are never rate limited."""
-        from starlette.testclient import TestClient
-        app = _make_test_app(anon_limit="2/minute")
-        client = TestClient(app)
+    def test_admin_requests_reach_the_limiter(self):
+        """Admin requests are COUNTED now — the limiter must be consulted.
 
-        # Admin endpoints should never be limited
-        for _ in range(10):
-            resp = client.get("/api/admin/status")
-            assert resp.status_code == 200
-
-    def test_admin_exemption_does_not_touch_limiter(self):
-        """Admin exemption short-circuits before storage is consulted."""
+        The inverse of the old `test_admin_exemption_does_not_touch_limiter`. If
+        this ever goes back to False, the exemption has been reinstated and the
+        ceiling is decoration.
+        """
         import app.utils.rate_limit as rl_mod
         from starlette.testclient import TestClient
 
@@ -425,11 +436,9 @@ class TestRateLimitMiddleware:
         app = _make_test_app(anon_limit="1/minute")
         client = TestClient(app)
 
-        for _ in range(3):
-            resp = client.get("/api/admin/status")
-            assert resp.status_code == 200
-
-        assert limiter.called is False
+        resp = client.get("/api/admin/status")
+        assert resp.status_code == 200
+        assert limiter.called is True
 
     def test_authenticated_gets_higher_limit(self, monkeypatch):
         """Authenticated users get a higher rate limit than anonymous."""
@@ -778,3 +787,111 @@ class TestThrottleCorsContract:
             assert leaked not in body, f"429 body leaked internal identity: {leaked}"
         # The keying IP must not appear anywhere in the serialized body.
         assert "203.0.113.44" not in json.dumps(body)
+
+
+# ---------------------------------------------------------------------------
+# Queue 315 Item 1 — the admin bucket
+# ---------------------------------------------------------------------------
+
+class TestAdminRateLimitBucket:
+    """`/api/admin` is CEILED, not exempt.
+
+    Every test here asserts BOTH directions (gotcha #43): the ceiling is high
+    enough that real admin traffic is not throttled, AND low enough that it
+    actually stops. A gate proved only in the failing direction can be inverted
+    without anyone noticing — and one proved only in the passing direction is
+    indistinguishable from the exemption it replaced.
+    """
+
+    ADMIN_TOKEN = "test-admin-token-value"
+
+    def _app(self, monkeypatch, admin_rate="5/minute", anon_limit="2/minute"):
+        import app.utils.rate_limit as rl_mod
+        monkeypatch.setenv("ADMIN_TOKEN", self.ADMIN_TOKEN)
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: None)
+        rl_mod.ADMIN_RATE_LIMIT = admin_rate
+        rl_mod._admin_limit = None
+        return _make_test_app(anon_limit=anon_limit)
+
+    def _hdrs(self, token=None, ip="203.0.113.90"):
+        h = {"X-Forwarded-For": ip}
+        if token:
+            h["Authorization"] = f"Bearer {token}"
+        return h
+
+    def test_admin_token_gets_the_admin_ceiling_not_the_anon_bucket(self, monkeypatch):
+        """5 admin calls succeed under a 2/minute ANON limit — proof the request
+        landed in the admin bucket and not the IP bucket (P2's failure mode)."""
+        from starlette.testclient import TestClient
+        client = TestClient(self._app(monkeypatch, admin_rate="5/minute", anon_limit="2/minute"))
+
+        for i in range(5):
+            resp = client.get("/api/admin/status", headers=self._hdrs(self.ADMIN_TOKEN))
+            assert resp.status_code == 200, f"admin request {i + 1} was throttled early"
+
+    def test_the_request_after_the_ceiling_is_429(self, monkeypatch):
+        """...and the 6th is refused. Ceiling, not exemption."""
+        from starlette.testclient import TestClient
+        client = TestClient(self._app(monkeypatch, admin_rate="5/minute"))
+
+        for _ in range(5):
+            assert client.get(
+                "/api/admin/status", headers=self._hdrs(self.ADMIN_TOKEN)
+            ).status_code == 200
+        resp = client.get("/api/admin/status", headers=self._hdrs(self.ADMIN_TOKEN))
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers
+
+    def test_bucket_key_is_a_hash_and_never_contains_the_token(self):
+        """`rl:` keys are plaintext in the Redis keyspace and show up in SCAN
+        output. Keying on the raw secret would copy the live admin credential
+        into an unencrypted store."""
+        from app.utils.rate_limit import _admin_bucket_key
+        import os
+
+        os.environ["ADMIN_TOKEN"] = self.ADMIN_TOKEN
+        try:
+            key = _admin_bucket_key(self.ADMIN_TOKEN)
+        finally:
+            os.environ.pop("ADMIN_TOKEN", None)
+
+        assert key is not None
+        assert key.startswith("admin:")
+        assert self.ADMIN_TOKEN not in key
+
+    def test_non_admin_bearer_on_an_admin_path_gets_no_admin_bucket(self, monkeypatch):
+        """A wrong token on an admin path falls back to the anon IP bucket."""
+        from starlette.testclient import TestClient
+        client = TestClient(self._app(monkeypatch, admin_rate="50/minute", anon_limit="2/minute"))
+
+        hdrs = self._hdrs("not-the-admin-token", ip="203.0.113.91")
+        assert client.get("/api/admin/status", headers=hdrs).status_code == 200
+        assert client.get("/api/admin/status", headers=hdrs).status_code == 200
+        assert client.get("/api/admin/status", headers=hdrs).status_code == 429
+
+    def test_rotating_forged_tokens_cannot_mint_admin_buckets(self, monkeypatch):
+        """Queue 303's bypass in a new coat: if every presented bearer got its own
+        hashed bucket, an attacker could rotate the value and never be limited."""
+        from starlette.testclient import TestClient
+        client = TestClient(self._app(monkeypatch, admin_rate="50/minute", anon_limit="3/minute"))
+
+        codes = [
+            client.get(
+                "/api/admin/status",
+                headers=self._hdrs(f"forged-token-{i}", ip="203.0.113.92"),
+            ).status_code
+            for i in range(5)
+        ]
+        assert 429 in codes, f"rotating tokens escaped the limiter entirely: {codes}"
+
+    def test_no_admin_bucket_when_no_admin_token_is_configured(self, monkeypatch):
+        from app.utils.rate_limit import _admin_bucket_key
+        monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+        monkeypatch.delenv("ADMIN_SECRET", raising=False)
+        assert _admin_bucket_key("anything") is None
+
+    def test_admin_prefix_is_not_in_the_exempt_tuple(self):
+        """A structural guard: re-adding the prefix is the one-line regression
+        that would silently undo this whole item."""
+        from app.utils.rate_limit import _EXEMPT_PREFIXES
+        assert not any(p.startswith("/api/admin") for p in _EXEMPT_PREFIXES)

@@ -27,7 +27,7 @@ from app.utils.sport_keys import (
     KALSHI_LINK_RATE_GAME_TICKER_PREFIXES,
 )
 
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 
 logger = logging.getLogger(__name__)
@@ -2104,7 +2104,7 @@ async def prediction_market_force_link(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Force-link a single unlinked market by running the full matching pipeline."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from datetime import datetime, timezone
     from app.models.models import FuturesMarket
@@ -2460,7 +2460,7 @@ async def unlink_prediction_market(
     Unlink a prediction market from its event. Sets event_id to NULL so the
     matching task can re-link it to the correct event on next run.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.models.models import FuturesMarket
     market_result = await db.execute(
@@ -2785,7 +2785,7 @@ async def trigger_entity_registry_seed(
     land in the task result (poll ``/api/admin/audit/task/{task_id}``) AND in a
     ``seed_diag:persons`` marker row readable via ``/api/admin/db-query``.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.tasks import seed_entity_registry
     task = seed_entity_registry.delay(persons_only)
@@ -2816,7 +2816,7 @@ async def trigger_entity_registry_canonicalize(
     Census-gated (cross-family homonyms left apart), additive-first, idempotent.
     Counts land in the task result AND in a ``seed_diag:canonicalize`` marker row.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.tasks import canonicalize_entities_task
     task = canonicalize_entities_task.delay(dry_run)

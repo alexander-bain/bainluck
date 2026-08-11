@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 
 router = APIRouter()
@@ -298,7 +298,7 @@ async def celery_inspect(
 @router.post("/celery-purge-background")
 async def celery_purge_background(request: Request, secret: str = Query(None)):
     """Purge stale tasks from the background queue."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
     from app.tasks import celery_app
     purged = celery_app.control.purge()
     return {"purged": purged}

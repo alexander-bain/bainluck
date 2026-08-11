@@ -7,7 +7,8 @@ to enforce per-IP and per-user rate limits as ASGI middleware.
 Rate limits:
   - Anonymous:      60 requests / minute  (keyed by client IP)
   - Authenticated: 120 requests / minute  (keyed by user UID from JWT)
-  - Admin:         exempt (already gated by _check_admin_secret)
+  - Admin:         300 requests / minute  (keyed by a HASH of the admin bearer
+                   token) — a CEILING, never an exemption. See Queue 315 Item 1.
   - Docs/health:   exempt
 
 Redis is shared with Celery (same REDIS_URL env var on Heroku).
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -36,6 +39,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ANON_RATE_LIMIT = "60/minute"
 AUTH_RATE_LIMIT = "120/minute"
+# Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
+# BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
+# browser-audit rail and flow_sentinel's nightly self-calls all present the same
+# ADMIN_TOKEN and therefore collide in it. The ceiling is sized against the SUM of
+# concurrent callers, not the max of any one; see the census in the queue report.
+ADMIN_RATE_LIMIT = "300/minute"
 
 # #1197 (r259): hard wall-clock bound on the async rate-limit Redis check. Because
 # the check is awaited (not a sync blocking call), wait_for genuinely cancels the
@@ -47,10 +56,20 @@ _RL_CHECK_TIMEOUT = 0.6
 _RL_WINDOW_SECONDS = 60
 _ANON_MAX = 60
 _AUTH_MAX = 120
+_ADMIN_MAX = 300
 
-# Paths exempt from rate limiting
+# Admin paths get a ceiling instead of the old blanket exemption (Queue 315).
+_ADMIN_PATH_PREFIX = "/api/admin"
+
+# Paths exempt from rate limiting.
+#
+# SECURITY (Queue 315 Item 1): "/api/admin" WAS in this tuple. It is deliberately
+# gone. The old docstring justified it as "already gated by _check_admin_secret",
+# but an auth gate bounds WHO may call, never HOW OFTEN — so a leaked token bought
+# unmetered access to every admin read, including `db-query`. Admin requests now
+# fall through to the admin bucket below. Ceiling, never exemption: if the caller
+# census outgrows 300/min, RAISE `_ADMIN_MAX` — do not re-add the prefix here.
 _EXEMPT_PREFIXES = (
-    "/api/admin",
     "/docs",
     "/openapi.json",
     "/redoc",
@@ -186,9 +205,12 @@ _anon_limit = None
 _auth_limit = None
 
 
+_admin_limit = None
+
+
 def _get_limits():
     """Parse limit strings once and cache."""
-    global _anon_limit, _auth_limit
+    global _anon_limit, _auth_limit, _admin_limit
     if _anon_limit is not None:
         return _anon_limit, _auth_limit
 
@@ -196,7 +218,15 @@ def _get_limits():
 
     _anon_limit = parse_limit(ANON_RATE_LIMIT)
     _auth_limit = parse_limit(AUTH_RATE_LIMIT)
+    _admin_limit = parse_limit(ADMIN_RATE_LIMIT)
     return _anon_limit, _auth_limit
+
+
+def _get_admin_limit():
+    """Parsed admin limit for the dev/CI in-memory fallback path."""
+    if _admin_limit is None:
+        _get_limits()
+    return _admin_limit
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +333,42 @@ def _resolve_trusted_uid(token: str) -> Optional[str]:
     return resolver(token)
 
 
+# ---------------------------------------------------------------------------
+# Admin bucket keying (Queue 315 Item 1)
+# ---------------------------------------------------------------------------
+
+def _admin_bucket_key(token: str) -> Optional[str]:
+    """Return the admin rate-limit bucket key for a bearer token, or None.
+
+    Returns a key ONLY when the presented token is the real ``ADMIN_TOKEN``.
+    Two properties this shape buys, both of them load-bearing:
+
+    1. **The key is a HASH, never the token.** ``rl:`` keys live in plaintext in
+       the Redis keyspace and surface in ``SCAN`` output and in anything that
+       dumps keys, so keying on the raw secret would copy the live admin
+       credential into an unencrypted store — writing the credential down in the
+       one place we monitor least, in order to protect it.
+
+    2. **A non-matching token gets NO admin bucket.** It falls through to the
+       normal uid/IP keying instead. Keying every presented bearer by its own
+       hash would hand an attacker the Queue 303 bypass in a new coat: rotate the
+       token value, mint a fresh 300/min bucket, repeat forever. Only a token
+       that already equals the secret can select the larger bucket, and a caller
+       holding that token can do far worse than spend requests.
+
+    The comparison is constant-time and does no I/O — this runs on every request
+    to an admin path, and the #1197 scar is that any blocking op in this
+    middleware stalls the whole event loop.
+    """
+    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
+    if not expected or not token:
+        return None
+    if not hmac.compare_digest(token, expected):
+        return None
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+    return f"admin:{digest}"
+
+
 def _is_exempt(path: str) -> bool:
     """Return True if the path should skip rate limiting."""
     if os.getenv("BYPASS_RATE_LIMITS") == "1":
@@ -324,7 +390,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     - Anonymous requests: 60/minute keyed by client IP
     - Authenticated requests (Bearer JWT): 120/minute keyed by user UID
-    - Admin / docs / health paths: exempt
+    - Admin paths with the admin token: 300/minute keyed by a hash of that token
+    - Docs / health paths: exempt
 
     Returns 429 with Retry-After header when limit is exceeded.
     """
@@ -340,15 +407,34 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Determine key and limit
         auth_header = request.headers.get("authorization", "")
+        bearer = (
+            auth_header[7:].strip()
+            if auth_header.lower().startswith("bearer ")
+            else ""
+        )
+
+        # Queue 315 Item 1: admin paths get their own (larger) bucket keyed on a
+        # hash of the admin token. Checked BEFORE the uid path because an admin
+        # calling with a verified session token would otherwise land in the
+        # 120/min user bucket and be throttled well below the intended ceiling.
+        admin_key = (
+            _admin_bucket_key(bearer)
+            if bearer and path.startswith(_ADMIN_PATH_PREFIX)
+            else None
+        )
+
         uid = None
-        if auth_header.lower().startswith("bearer "):
+        if bearer and admin_key is None:
             # SECURITY (Queue 303): key the authenticated bucket ONLY on a uid we
             # have actually verified. A forged/unverified token resolves to None
             # and keys by IP, so it cannot select a user bucket or the larger
             # limit — nor rotate uids to mint unlimited buckets.
-            uid = _resolve_trusted_uid(auth_header[7:].strip())
+            uid = _resolve_trusted_uid(bearer)
 
-        if uid:
+        if admin_key:
+            key = admin_key
+            max_requests = _ADMIN_MAX
+        elif uid:
             key = f"user:{uid}"
             max_requests = _AUTH_MAX
         else:
@@ -394,7 +480,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Dev/CI fallback (no REDIS_URL): the in-memory sync limiter is fast and
         # non-blocking (no network), so calling it directly is fine here.
         anon_limit, auth_limit = _get_limits()
-        limit = auth_limit if uid else anon_limit
+        if admin_key:
+            limit = _get_admin_limit()
+        elif uid:
+            limit = auth_limit
+        else:
+            limit = anon_limit
         try:
             rl = _get_rate_limiter()
             if not rl.hit(limit, "rate_limit", key):

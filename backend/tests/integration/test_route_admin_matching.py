@@ -62,12 +62,19 @@ class TestSeedTriggers:
     """#171/#1020/#1021 — triggers enqueue the task and return its id."""
 
     async def test_entity_registry_seed_queues_task(self, client, monkeypatch):
+        """Queue 315 Item 2: the seed rewrites the entity graph, so it needs BOTH
+        tokens. The destructive header is load-bearing, not boilerplate."""
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+        monkeypatch.setenv("ADMIN_TOKEN_DESTRUCTIVE", "test-destructive")
         mock_task = MagicMock()
         mock_task.delay.return_value.id = "fake-seed-task"
         with patch("app.tasks.seed_entity_registry", mock_task):
             resp = await client.post(
-                "/api/admin/entity-registry/seed", headers={"Authorization": "Bearer test-secret"}
+                "/api/admin/entity-registry/seed",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Admin-Destructive-Token": "test-destructive",
+                },
             )
         assert resp.status_code == 200
         body = resp.json()
@@ -80,15 +87,38 @@ class TestSeedTriggers:
         self, client, monkeypatch
     ):
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+        monkeypatch.setenv("ADMIN_TOKEN_DESTRUCTIVE", "test-destructive")
         mock_task = MagicMock()
         mock_task.delay.return_value.id = "fake-seed-task"
         with patch("app.tasks.seed_entity_registry", mock_task):
             resp = await client.post(
-                "/api/admin/entity-registry/seed?persons_only=false", headers={"Authorization": "Bearer test-secret"}
+                "/api/admin/entity-registry/seed?persons_only=false",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Admin-Destructive-Token": "test-destructive",
+                },
             )
         assert resp.status_code == 200
         assert resp.json()["persons_only"] is False
         mock_task.delay.assert_called_once_with(False)
+
+    async def test_entity_registry_seed_refuses_base_token_alone(
+        self, client, monkeypatch
+    ):
+        """The other direction (gotcha #43). An agent lane holds ADMIN_TOKEN and
+        not ADMIN_TOKEN_DESTRUCTIVE, so this 403 is the mechanism that makes the
+        attended-only ruling true instead of remembered."""
+        monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+        monkeypatch.setenv("ADMIN_TOKEN_DESTRUCTIVE", "test-destructive")
+        mock_task = MagicMock()
+        with patch("app.tasks.seed_entity_registry", mock_task):
+            resp = await client.post(
+                "/api/admin/entity-registry/seed",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+        assert resp.status_code == 403
+        assert "ADMIN_TOKEN_DESTRUCTIVE" in resp.json()["detail"]
+        mock_task.delay.assert_not_called()
 
     async def test_polymarket_backfill_matchups_queues_task(
         self, client, monkeypatch

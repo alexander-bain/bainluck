@@ -21,7 +21,12 @@ from app.models.models import WinProbSnapshot
 
 from app.services import get_db, get_db_rw
 
-from app.routes.admin_utils import _check_admin_secret, _safe_send_task
+from app.routes.admin_utils import (
+    _check_admin_destructive,
+    _check_admin_secret,
+    _safe_send_task,
+    audit_admin_call,
+)
 
 import logging
 
@@ -307,7 +312,7 @@ async def cleanup_crypto_futures(
     Dispatch a Celery background task to delete all crypto futures data.
     Returns immediately with a task ID — check Celery logs for progress.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.tasks import cleanup_crypto
     result = cleanup_crypto.delay(batch_size=batch_size)
@@ -331,7 +336,7 @@ async def turbo_collapse(
     Collapses consecutive identical values into single rows with reading_count.
     Prioritizes resolved futures markets. No data is lost — just deduplicated.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.tasks import turbo_collapse_futures, turbo_collapse_odds
 
@@ -358,7 +363,7 @@ async def reclassify_misclassified_events(
     (e.g., tennis events in basketball_other) and moves them to the correct
     sport based on their ticker prefix.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.models.models import Sport
     from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
@@ -453,7 +458,7 @@ async def merge_duplicate_events(
     merges them: migrates any snapshots/futures links from the pm_ event to
     the real event, then deletes the pm_ event.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
     from app.utils.name_normalization import names_match
@@ -578,7 +583,7 @@ async def purge_orphan_pm_events(
     guard blocked discovery. They have no odds snapshots and just clutter
     the database.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
 
@@ -1046,7 +1051,7 @@ async def delete_orphan_futures_snapshots(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete futures_odds_snapshots with no matching outcome."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     if dry_run:
         count_result = (await db.execute(text(
@@ -1090,7 +1095,7 @@ async def vacuum_table(
     VACUUM FULL rewrites the table to reclaim disk space but locks the table.
     Requires sufficient free disk space (~equal to table size) for FULL.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     # Allowlist tables
     allowed = {"futures_odds_snapshots", "odds_snapshots", "win_prob_snapshots",
@@ -1140,7 +1145,7 @@ async def drop_duplicate_index(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Drop a duplicate index by name. Only allows dropping known-safe duplicates."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     # Verify it exists and get its definition
     idx_info = (await db.execute(text(
@@ -2445,7 +2450,7 @@ async def reset_settled_cursors(
     request: Request, secret: str = Query(None),
 ):
     """Reset all settled events series cursors to start from page 1."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
     from app.tasks.redis_state import get_redis_client
     rc = get_redis_client()
     deleted = 0
@@ -4447,6 +4452,12 @@ async def admin_db_query(
     import uuid as _uuid
 
     _check_admin_secret(secret, request=request)
+
+    # Queue 315 Item 3. Logged AFTER auth (an unauthenticated probe is the rate
+    # limiter's business, not the audit log's) and BEFORE the guards, so a query
+    # rejected by sql_read_guard still leaves a trace — a rejected read attempt is
+    # exactly the kind of thing an audit log exists to have recorded.
+    audit_admin_call(request, kind="db_query", sql=body.sql)
 
     try:
         if body.analyze and not body.explain:

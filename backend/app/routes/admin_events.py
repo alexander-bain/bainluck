@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket
 from app.models.models import LineMovementAnalysis
 from app.services import get_db, get_db_rw
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 router = APIRouter()
 
@@ -341,7 +341,7 @@ async def delete_duplicate_events(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete specific duplicate events with FK cleanup."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     ids = [int(x.strip()) for x in event_ids.split(",") if x.strip().isdigit()]
     if not ids:

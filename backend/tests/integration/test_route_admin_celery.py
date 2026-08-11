@@ -218,14 +218,22 @@ class TestCeleryPurgeBackground:
     """POST /api/admin/celery-purge-background."""
 
     async def test_returns_200_with_valid_secret(self, client, monkeypatch):
+        """Queue 315 Item 2: this route is destructive, so BOTH tokens are
+        required. The header below is not boilerplate — dropping it is what the
+        companion test asserts must fail."""
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+        monkeypatch.setenv("ADMIN_TOKEN_DESTRUCTIVE", "test-destructive")
 
         mock_app = MagicMock()
         mock_app.control.purge.return_value = 5
 
         with patch("app.tasks.celery_app", mock_app):
             resp = await client.post(
-                "/api/admin/celery-purge-background", headers={"Authorization": "Bearer test-secret"}
+                "/api/admin/celery-purge-background",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Admin-Destructive-Token": "test-destructive",
+                },
             )
 
         assert resp.status_code == 200

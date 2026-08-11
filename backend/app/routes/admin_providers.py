@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, get_db_rw
 from app.utils import probability_to_american
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 router = APIRouter()
 
@@ -1106,7 +1106,7 @@ async def cleanup_bad_espn_matches(
     scoring, and clears ESPN data (ID, logos, colors) for teams below the
     match threshold. Returns task_id for status checking.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_destructive(secret, request=request)
 
     from app.tasks import cleanup_bad_espn_matches as task
 

@@ -1,5 +1,7 @@
 """Shared utilities for admin endpoints."""
 
+import hashlib
+import hmac
 import logging
 import os
 
@@ -7,6 +9,48 @@ from fastapi import Request
 from sqlalchemy import select
 
 _logger = logging.getLogger(__name__)
+
+# Header carrying the second token for destructive operations (Queue 315 Item 2).
+# A header, not a query param: gotcha-adjacent to Queue #252 Item 3, which removed
+# `?secret=` because a secret in the URL leaks through browser history, the Referer
+# header, access logs and shared links. A second secret must not re-open that.
+DESTRUCTIVE_TOKEN_HEADER = "X-Admin-Destructive-Token"
+
+
+def _hash_for_audit(value: str | None) -> str:
+    """Short sha256 for audit lines. Never log the value itself."""
+    if not value:
+        return "none"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def audit_admin_call(
+    request: Request,
+    *,
+    kind: str,
+    sql: str | None = None,
+) -> None:
+    """Emit exactly ONE structured INFO line for a sensitive admin call.
+
+    Queue 315 Item 3. Logs the route, the method and HASHES of the query string
+    and (for db-query) the SQL — never their contents.
+
+    The hashing is the point, not caution for its own sake: an audit log that
+    recorded SQL text or parameter values would become the exfiltration path that
+    the rate limit and the second token were added to close. Anyone who can read
+    logs would get the data without ever holding a token. Hashes still answer the
+    questions an audit log exists to answer — *was this called, how often, and was
+    it the same call repeated or a new one each time* — which is what you need at
+    3am when a token may have leaked.
+    """
+    _logger.info(
+        "admin_audit kind=%s method=%s route=%s params_hash=%s sql_hash=%s",
+        kind,
+        request.method,
+        request.url.path,
+        _hash_for_audit(request.url.query),
+        _hash_for_audit(sql),
+    )
 
 
 def _safe_send_task(task_name: str, *args, **kwargs):
@@ -69,6 +113,77 @@ def _check_admin_secret(secret: str | None = None, *, request: Request | None = 
         )
 
     raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+
+def _check_admin_destructive(
+    secret: str | None = None, *, request: Request | None = None
+) -> bool:
+    """Auth gate for DESTRUCTIVE admin mutations: ``ADMIN_TOKEN`` **and**
+    ``ADMIN_TOKEN_DESTRUCTIVE``.
+
+    Queue 315 Item 2. The standing ruling is that destructive operations are
+    attended-only. Until now that was enforced by everyone remembering it; this is
+    the mechanism that makes it true. Agent lanes are issued ``ADMIN_TOKEN`` and
+    NOT ``ADMIN_TOKEN_DESTRUCTIVE``, so a lane physically cannot run one of these
+    routes no matter what it decides to do.
+
+    WHY THE TOKEN PATH ONLY (P5 — the queue's central design decision):
+    ``_check_admin_auth`` accepts either the admin token or a Firebase admin
+    identity. Only the token path is gated here. A Firebase identity is Alex in a
+    browser, which is attended *by construction* — gating it would break the admin
+    UI for the one person the attended-only ruling exists to keep in the loop.
+    In practice this is currently moot and worth knowing: **every route in the
+    destructive set authenticates via the token path only** (none of them call
+    ``_check_admin_auth``), so today this gate covers the whole set. If a
+    destructive route ever adopts the identity path, revisit this deliberately
+    rather than discovering it.
+
+    Raises HTTPException(403) on failure, naming the missing/mismatched env var —
+    the failure will be met by Alex mid-operation, and a generic denial would tell
+    him nothing about what to do next. Returns True on success.
+    """
+    from fastapi import HTTPException
+
+    # Base token first: a caller without it learns nothing about the second one.
+    _check_admin_secret(secret, request=request)
+
+    expected = os.getenv("ADMIN_TOKEN_DESTRUCTIVE")
+    if not expected:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This endpoint is destructive and requires a second token, but "
+                "ADMIN_TOKEN_DESTRUCTIVE is not configured on the server. Set it "
+                "with: heroku config:set ADMIN_TOKEN_DESTRUCTIVE=<value> -a bainluck"
+            ),
+        )
+
+    presented = ""
+    if request is not None:
+        presented = (request.headers.get(DESTRUCTIVE_TOKEN_HEADER, "") or "").strip()
+
+    if not presented:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"This endpoint is destructive. ADMIN_TOKEN alone is not "
+                f"sufficient: also send the '{DESTRUCTIVE_TOKEN_HEADER}' header "
+                f"with the value of $ADMIN_TOKEN_DESTRUCTIVE."
+            ),
+        )
+
+    if not hmac.compare_digest(presented, expected):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"The '{DESTRUCTIVE_TOKEN_HEADER}' header does not match "
+                f"ADMIN_TOKEN_DESTRUCTIVE."
+            ),
+        )
+
+    if request is not None:
+        audit_admin_call(request, kind="destructive")
+    return True
 
 
 DEFAULT_ADMIN_USER_IDS = {364}
