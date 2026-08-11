@@ -53,8 +53,23 @@ the residue of a structural problem.
 
 ## What changes
 
-1. **Codex runs in its own worktree on its own branch**, under the `~/bainluck-dev/` container like
-   the program slots.
+1. **Codex runs in its own worktree on its own branch.**
+
+   ⚠️ **AMENDED 2026-08-10 (INT-039) — the location in the original text was wrong and is now
+   corrected.** This clause first said "under the `~/bainluck-dev/` container like the program
+   slots". That container turned out to be **unreachable**: a Codex session's sandbox cannot write
+   `~/bainluck-dev/`, and the Integrator cannot create the directory either (`Operation not
+   permitted`, retested across two cycles). INT-038 shipped the branch half of this ruling and had
+   to leave the worktree half undone for exactly that reason.
+
+   **The canonical location is `~/bainluck/.claude/worktrees/codex`, on branch `codex/main`** —
+   inside the repo, which every lane can write. It exists and is live.
+
+   Recorded as an amendment rather than a silent edit because the wrong path was *quoted from this
+   file* into `CODEX-LANE.md`, into an Integrator handoff, and into a one-command ask to Alex that
+   could never have worked. A location is the load-bearing part of an isolation ruling: the
+   principle survived, but for one cycle the ruling was unexecutable, and anyone reading the
+   original text would have reproduced the same dead end.
 2. **`AGENTS.md` updated** — the codex session-start protocol names the worktree, and the "never
    commit in `~/bainluck`" rule is stated where a codex session actually reads it.
 3. **The review queue updated** — codex work reaches master through the ready-set, reviewed, not by
