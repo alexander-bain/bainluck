@@ -64,6 +64,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Iterable, Optional, Sequence
@@ -88,6 +89,7 @@ __all__ = [
     "STAGED_FUTURES_SCHEMA",
     "UNIT_KEY_VM_ID",
     "StagedFuturesCursor",
+    "UnencodableValueError",
     "UnitChunk",
     "advance",
     "bucket_of",
@@ -95,8 +97,11 @@ __all__ = [
     "collect_unit_results",
     "decode_staged_cursor",
     "decode_staged_cursor_detailed",
+    "decode_unit_rows",
+    "encode_unit_rows",
     "generation_fingerprint",
     "is_complete",
+    "is_encoded_unit_rows",
     "merge_futures_rows",
     "new_staged_cursor",
     "plan_units",
@@ -127,6 +132,14 @@ REASON_POPULATION_VERSION = "population_version_changed"
 #: A deploy touching any SQL function hashed by ``_main_input_fingerprint``.
 REASON_INPUT_FINGERPRINT = "input_fingerprint_changed"
 REASON_MALFORMED_UNITS = "malformed_units"
+#: CAL-P033. The banked rows are not the encoded envelope :func:`encode_unit_rows`
+#: writes — i.e. a cursor written before rows were encoded, whose rows came back
+#: from JSON as ``repr()`` STRINGS. Its own reason token rather than
+#: ``malformed_units`` because it is not corruption: it is a cursor written by
+#: code that could not round-trip, and it will be the ONLY cause that fires for
+#: one generation after this ships. Folding it into ``malformed_units`` would
+#: make that one expected reset indistinguishable from a real one.
+REASON_UNENCODED_UNITS = "unencoded_units"
 REASON_LEASE_HELD = "lease_held_by_other"
 #: The snapshot read itself threw — an unreadable cursor is a fresh one.
 REASON_READ_FAILED = "read_failed"
@@ -261,6 +274,144 @@ def _get(row: Any, name: str, default: Any = None) -> Any:
     if isinstance(row, Mapping):
         return row.get(name, default)
     return getattr(row, name, default)
+
+
+class UnencodableValueError(TypeError):
+    """A banked value has no declared JSON encoding.
+
+    Deliberately fatal, and this module's most expensive lesson (CAL-P033). The
+    durable writer is ``json.dumps(..., default=str)``, so an undeclared type is
+    not rejected there — it is silently stringified, banked, and only discovered
+    when the merge tries to read columns off it. ``str()`` as a fallback is the
+    exact behaviour this class exists to replace, so it is not offered here.
+    """
+
+
+#: Tag keys for the two non-JSON scalars the population statement returns.
+#: Objects rather than bare strings so an encoded value can never be confused
+#: with a genuine string column (``source``, ``category``).
+DECIMAL_TAG = "__decimal__"
+DATETIME_TAG = "__isotime__"
+
+
+def _encode_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, Decimal):
+        # str(), not float(): the SQL returns NUMERIC for the probability sums
+        # and this round-trip must not quietly change the addends the merge
+        # sums. Rounding is the payload builder's decision, not the cursor's.
+        return {DECIMAL_TAG: str(value)}
+    if isinstance(value, (datetime, date)):
+        return {DATETIME_TAG: value.isoformat()}
+    raise UnencodableValueError(
+        f"no declared encoding for a {type(value).__name__} banked into a unit"
+    )
+
+
+def _decode_scalar(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if DECIMAL_TAG in value:
+            return Decimal(str(value[DECIMAL_TAG]))
+        if DATETIME_TAG in value:
+            return datetime.fromisoformat(str(value[DATETIME_TAG]))
+    return value
+
+
+def encode_unit_rows(rows: Iterable[Any]) -> dict[str, Any]:
+    """One unit's rows as a JSON-safe, losslessly decodable envelope.
+
+    **This is CAL-P033's fix, and the bug it closes had nothing to do with the
+    encoding being wrong — it was that there was none.** :func:`advance` used to
+    bank the driver's ``Row`` objects as-is. Within the beat that produced them
+    that works, because a ``Row`` is attribute-access and the merge reads it
+    happily. But the cursor is written durably through
+    ``durable_state.canonical_json``, which is ``json.dumps(..., default=str)``,
+    so every banked row reached Postgres as its ``repr()``::
+
+        "(0, 'kalshi', 'baseball', False, False, 14, 0, Decimal('0.0307...'), ...)"
+
+    and came back on the next beat as a ``str``. The cursor still vouched for
+    those units — they are a list, so ``RESUME``/``resumable`` — and the failure
+    surfaced only at the very end, in finalization, on the first resumed row.
+    Since a beat banks ~19 of 128 units, **every completed build necessarily
+    contains resumed units, so the completion path could never run.** It had
+    never run: the build has not published since 2026-08-02.
+
+    Why the tests did not catch it: they pass ``SimpleNamespace`` rows straight
+    from :func:`advance` to :func:`merge_futures_rows` in one process. **The
+    round trip was the untested edge, and it is the only edge production uses.**
+
+    Columnar — names once, then a value array per row — rather than a dict per
+    row. Not a micro-optimisation: at 547 rows and 38 columns a dict-per-row
+    envelope is ~4x the bytes, the whole cursor is re-serialised after EVERY
+    unit, and the worker peaks at 505 MB against a 512 MB dyno (measured
+    2026-08-11). The compact form keeps the fix from costing what it buys.
+
+    Rows from one unit come from one SELECT and so share a column tuple. If they
+    ever do not, the envelope falls back to presence-preserving pairs, because
+    the merge distinguishes a census column that is *absent* from one that is
+    ``None`` and a columnar form would flatten that distinction into a
+    confident ``None``.
+    """
+    mappings = [_row_mapping(row) for row in (rows or ())]
+    if not mappings:
+        return {"cols": [], "rows": []}
+    columns = tuple(mappings[0].keys())
+    if any(tuple(mapping.keys()) != columns for mapping in mappings[1:]):
+        return {
+            "cols": None,
+            "rows": [
+                {str(name): _encode_scalar(value) for name, value in mapping.items()}
+                for mapping in mappings
+            ],
+        }
+    names = [str(name) for name in columns]
+    return {
+        "cols": names,
+        "rows": [[_encode_scalar(mapping[name]) for name in columns] for mapping in mappings],
+    }
+
+
+def is_encoded_unit_rows(stored: Any) -> bool:
+    """Whether ``stored`` is an :func:`encode_unit_rows` envelope.
+
+    The guard that makes a pre-CAL-P033 cursor refusable. A legacy cursor's
+    units are ``list[str]`` — structurally a perfectly good list, which is
+    exactly why the resumability filter accepted them for nine days.
+    """
+    return (
+        isinstance(stored, Mapping)
+        and isinstance(stored.get("rows"), list)
+        and (stored.get("cols") is None or isinstance(stored.get("cols"), list))
+    )
+
+
+def decode_unit_rows(stored: Any) -> list[SimpleNamespace]:
+    """An encoded envelope back to attribute-access rows the merge accepts.
+
+    ``SimpleNamespace``, the same shape ``calibration_main_build.decode_rows``
+    produces, so a resumed unit and a unit banked this beat are the SAME TYPE.
+    That identity is the invariant whose absence was the bug — not the encoding
+    itself. :func:`advance` therefore encodes on the way IN, so no unit is ever
+    held in a representation that only survives inside one process.
+    """
+    if not is_encoded_unit_rows(stored):
+        return []
+    cols = stored.get("cols")
+    rows = stored.get("rows") or []
+    if cols is None:
+        return [
+            SimpleNamespace(**{str(k): _decode_scalar(v) for k, v in item.items()})
+            for item in rows
+            if isinstance(item, Mapping)
+        ]
+    names = [str(name) for name in cols]
+    return [
+        SimpleNamespace(**{name: _decode_scalar(value) for name, value in zip(names, item)})
+        for item in rows
+        if isinstance(item, (list, tuple))
+    ]
 
 
 def _as_float(value: Any) -> float:
@@ -801,7 +952,12 @@ class StagedFuturesCursor:
         if not self.has(name):
             return None
         stored = self.unit_results.get(name)
-        return list(stored) if isinstance(stored, (list, tuple)) else None
+        # CAL-P033: units are held ENCODED, whether banked this beat or resumed
+        # from a durable read, so this decode is the only way rows come out and
+        # both paths get identical objects. A legacy list-of-``repr`` unit is
+        # refused upstream by :func:`decode_staged_cursor_detailed`; reaching
+        # here with one yields no rows rather than a plausible wrong answer.
+        return decode_unit_rows(stored) if is_encoded_unit_rows(stored) else None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -991,10 +1147,23 @@ def decode_staged_cursor_detailed(
     # and treating it as done would silently drop its buckets from the merge —
     # a payload that is quietly missing a slice of the population is worse than
     # one that has to be recomputed.
+    # CAL-P033. A pre-encoding cursor's units are ``list[str]`` — the driver
+    # ``Row``s stringified by ``canonical_json``'s ``default=str``. That is a
+    # list, so the old filter here vouched for them, and the build carried them
+    # to a finalization that cannot read a column off a ``str``. Refuse the
+    # whole cursor with its own reason: those rows are not recoverable (the
+    # ``repr`` carries no column names), and re-walking is the only honest
+    # answer. It costs the banked units ONCE, and they were worth nothing —
+    # the build they were feeding could not have completed.
+    if any(
+        isinstance(name, str) and name in results and not is_encoded_unit_rows(results[name])
+        for name in committed
+    ):
+        return blank, INVALIDATE, REASON_UNENCODED_UNITS
     resumable = tuple(
         name
         for name in committed
-        if isinstance(name, str) and isinstance(results.get(name), (list, tuple))
+        if isinstance(name, str) and is_encoded_unit_rows(results.get(name))
     )
     stored_digests = raw.get("unit_digests")
     if not isinstance(stored_digests, dict):
@@ -1011,7 +1180,10 @@ def decode_staged_cursor_detailed(
             owner=owner,
             lease_expires_at=lease_expires_at,
             committed_units=resumable,
-            unit_results={name: list(results[name]) for name in resumable},
+            # The envelope is carried through verbatim — ``list()`` here would
+            # turn the encoded mapping into its KEY list, which is the same
+            # class of silent reshaping this whole change exists to remove.
+            unit_results={name: results[name] for name in resumable},
             terminal=str(raw.get("terminal") or TERMINAL_PARTIAL),
             # Only for units we are actually resuming. A digest for a unit whose
             # rows did not survive the resumability filter describes work this
@@ -1156,7 +1328,10 @@ def advance(
         owner=owner,
         lease_expires_at=lease_expires_at,
         committed_units=tuple(list(cursor.committed_units) + [key]),
-        unit_results={**cursor.unit_results, key: list(rows)},
+        # CAL-P033: encode on the way IN. Banking the driver's ``Row`` objects
+        # is what made a unit's representation depend on whether the process
+        # that computed it was still alive — see :func:`encode_unit_rows`.
+        unit_results={**cursor.unit_results, key: encode_unit_rows(rows)},
     )
 
 

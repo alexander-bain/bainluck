@@ -17,10 +17,13 @@ three chunks and merged, compared on every field the payload consumes.
 
 from __future__ import annotations
 
+import json
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
+from app.utils.durable_state import canonical_json
 from app.utils.calibration_phase_ledger import (
     FRESH,
     INVALIDATE,
@@ -36,14 +39,20 @@ from app.utils.calibration_staged_futures import (
     STAGED_FUTURES_SCHEMA,
     UNIT_KEY_VM_ID,
     StagedFuturesCursor,
+    REASON_UNENCODED_UNITS,
     UndeclaredColumnError,
+    UnencodableValueError,
     UnitChunk,
     advance,
     can_advance,
     collect_unit_results,
     decode_staged_cursor,
+    decode_staged_cursor_detailed,
+    decode_unit_rows,
+    encode_unit_rows,
     generation_fingerprint,
     is_complete,
+    is_encoded_unit_rows,
     merge_futures_rows,
     new_staged_cursor,
     plan_units,
@@ -710,11 +719,28 @@ def _raw_cursor(**overrides) -> dict:
         "owner": OWNER,
         "lease_expires_at": 0.0,
         "committed_units": [_chunks()[0].key],
-        "unit_results": {_chunks()[0].key: [{"bucket_idx": 1}]},
+        # CAL-P033 — DECLARED REVERSAL. This helper used to write the rows as a
+        # bare ``[{"bucket_idx": 1}]``, which is what the cursor really stored
+        # and is the shape the durable round trip destroys: production wrote
+        # driver ``Row`` objects, ``canonical_json``'s ``default=str``
+        # stringified them, and the next beat resumed ``list[str]``. Banked rows
+        # are now an ``encode_unit_rows`` envelope, so this helper writes one.
+        "unit_results": {_chunks()[0].key: encode_unit_rows([{"bucket_idx": 1}])},
         "terminal": TERMINAL_PARTIAL,
     }
     raw.update(overrides)
     return raw
+
+
+def _row_dicts(rows) -> list[dict]:
+    """Banked rows as plain dicts.
+
+    Rows come back as ``SimpleNamespace`` now — the same type
+    ``calibration_main_build.decode_rows`` produces and the type finalization
+    already expects — so the tests below compare on contents, not on the
+    container type they used to assert.
+    """
+    return [dict(vars(row)) for row in rows or []]
 
 
 def _decode(raw, *, owner=OWNER, version=VERSION, input_fp=INPUT_FP, gen_fp=GENERATION_FP, now=100.0):
@@ -740,7 +766,7 @@ def test_a_matching_cursor_resumes_with_its_banked_units():
     cursor, action = _decode(_raw_cursor())
     assert action == RESUME
     assert cursor.committed_units == (_chunks()[0].key,)
-    assert cursor.result(_chunks()[0]) == [{"bucket_idx": 1}]
+    assert _row_dicts(cursor.result(_chunks()[0])) == [{"bucket_idx": 1}]
 
 
 @pytest.mark.parametrize(
@@ -928,7 +954,7 @@ def test_advancing_banks_a_unit():
     )
     advanced = advance(cursor, chunks[0], [{"n": 1}], owner=OWNER, lease_expires_at=500.0)
     assert advanced.committed_units == (chunks[0].key,)
-    assert advanced.result(chunks[0]) == [{"n": 1}]
+    assert _row_dicts(advanced.result(chunks[0])) == [{"n": 1}]
     assert advanced.lease_expires_at == 500.0
     # The input cursor is untouched — a new cursor, never a mutation.
     assert cursor.committed_units == ()
@@ -948,7 +974,7 @@ def test_re_advancing_the_same_unit_is_idempotent():
     once = advance(cursor, chunks[0], [{"n": 1}], owner=OWNER, lease_expires_at=100.0)
     twice = advance(once, chunks[0], [{"n": 999}], owner=OWNER, lease_expires_at=200.0)
     assert twice.committed_units == (chunks[0].key,)
-    assert twice.result(chunks[0]) == [{"n": 1}]
+    assert _row_dicts(twice.result(chunks[0])) == [{"n": 1}]
     assert twice.lease_expires_at == 200.0  # the lease still renews
 
 
@@ -1032,7 +1058,7 @@ def test_banked_units_are_collected_in_plan_order_whatever_the_commit_order():
         cursor = advance(
             cursor, chunk, [{"index": chunk.index}], owner=OWNER, lease_expires_at=1.0
         )
-    assert collect_unit_results(cursor, chunks) == [
+    assert [_row_dicts(unit) for unit in collect_unit_results(cursor, chunks)] == [
         [{"index": chunk.index}] for chunk in chunks
     ]
 
@@ -1115,3 +1141,251 @@ def test_the_build_converges_when_the_roster_moves_between_every_beat():
     )
     # It finished, and it finished by ACCUMULATING rather than by luck.
     assert max(progress) > 1
+
+
+# =============================================================================
+# CAL-P033 — the durable round trip, which is the only trip production takes
+# =============================================================================
+#
+# Every test above this line hands rows from ``advance`` to the merge inside one
+# process. That is not what production does. Production writes the cursor
+# through ``durable_state.canonical_json`` — ``json.dumps(..., default=str)`` —
+# and reads it back on the NEXT beat. Under ``default=str`` an unencodable value
+# is not refused, it is stringified, so every banked row reached Postgres as its
+# ``repr()`` and came back a ``str``. The cursor still said RESUME, and the
+# merge only touched those rows in finalization, which needs all 128 units and
+# therefore never ran. The build has not published since 2026-08-02.
+#
+# So the rule these tests encode: a banked unit must survive the SAME trip the
+# real one takes, and ``as_payload()`` alone is not that trip.
+
+
+def _durable_round_trip(cursor):
+    """The cursor as the next beat really receives it: through JSON."""
+    return json.loads(canonical_json(cursor.as_payload()))
+
+
+def _population_row(**overrides):
+    row = {
+        "bucket_idx": 3,
+        "source": "kalshi",
+        "category": "baseball",
+        "price_moved": False,
+        "is_nonexclusive_bundle": False,
+        "n": 14,
+        "winners": 6,
+        # NUMERIC out of Postgres. json.dumps cannot encode a Decimal, which is
+        # what dragged the whole row through ``default=str``.
+        "sum_prob": Decimal("0.03071428571428571429"),
+        "sum_sq_err": 0.0238,
+        "avg_prob": 0.43,
+    }
+    row.update(overrides)
+    return SimpleNamespace(**row)
+
+
+def test_a_banked_unit_survives_the_durable_round_trip():
+    """THE regression. Same unit, merged in-process and after a JSON trip."""
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
+    in_process = merge_futures_rows(collect_unit_results(cursor, chunks[:1]))
+
+    resumed, action = _decode(_durable_round_trip(cursor))
+    assert action == RESUME
+    after_trip = merge_futures_rows(collect_unit_results(resumed, chunks[:1]))
+
+    assert in_process, "the in-process merge produced nothing to compare against"
+    assert [vars(r) for r in after_trip] == [vars(r) for r in in_process]
+
+
+def test_a_resumed_row_is_the_same_type_as_a_freshly_banked_one():
+    """The invariant, stated directly: the bug was two representations, not a
+    wrong one. A unit banked this beat and a unit resumed from disk must be
+    indistinguishable, because finalization reads them out of one list."""
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
+    fresh = cursor.result(chunks[0])
+    resumed, _ = _decode(_durable_round_trip(cursor))
+    assert type(resumed.result(chunks[0])[0]) is type(fresh[0])
+
+
+def test_finalization_can_read_columns_off_a_resumed_row():
+    """``precompute_calibration`` finalization does
+    ``dict(row._mapping) if hasattr(row, "_mapping") else dict(vars(row))`` on
+    every banked row before merging. That is the exact expression that raised on
+    a ``str``, so it is asserted here rather than only through the merge."""
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
+    resumed, _ = _decode(_durable_round_trip(cursor))
+    row = collect_unit_results(resumed, chunks[:1])[0][0]
+    mapping = dict(row._mapping) if hasattr(row, "_mapping") else dict(vars(row))
+    assert mapping["bucket_idx"] == 3
+    assert mapping["n"] == 14
+
+
+def test_a_numeric_column_round_trips_as_a_decimal_not_a_float():
+    """``sum_prob`` is NUMERIC. Encoding it through ``float()`` would change the
+    addends the merge sums before the payload ever rounds them, so the encoding
+    carries the exact digits and gives back a ``Decimal``."""
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    cursor = advance(cursor, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
+    resumed, _ = _decode(_durable_round_trip(cursor))
+    value = resumed.result(chunks[0])[0].sum_prob
+    assert isinstance(value, Decimal)
+    assert value == Decimal("0.03071428571428571429")
+
+
+def test_a_pre_encoding_cursor_is_refused_with_its_own_reason():
+    """The 63 units banked before this shipped are ``list[str]`` and carry no
+    column names, so they are not recoverable. Refusing them is the honest
+    answer, and it gets its own token so the one expected reset is not confused
+    with a real ``malformed_units``."""
+    legacy = _raw_cursor(
+        unit_results={_chunks()[0].key: ["(3, 'kalshi', 'baseball', False, False, 14)"]}
+    )
+    cursor, action, reason = decode_staged_cursor_detailed(
+        legacy,
+        expected_population_version=VERSION,
+        expected_input_fingerprint=INPUT_FP,
+        expected_generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=9,
+        now=100.0,
+    )
+    assert action == INVALIDATE
+    assert reason == REASON_UNENCODED_UNITS
+    assert cursor.committed_units == ()
+
+
+def test_a_legacy_cursor_is_never_partially_resumed():
+    """One good unit next to one legacy unit must not resume the good one. A
+    cursor is vouched for whole; publishing a generation half of whose units
+    were computed under a representation we could not read is worse than
+    re-walking."""
+    chunks = _chunks()
+    good = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    good = advance(good, chunks[0], [_population_row()], owner=OWNER, lease_expires_at=1e12)
+    raw = _durable_round_trip(good)
+    raw["committed_units"] = [chunks[0].key, chunks[1].key]
+    raw["unit_results"][chunks[1].key] = ["(1, 'kalshi')"]
+    _, action, reason = decode_staged_cursor_detailed(
+        raw,
+        expected_population_version=VERSION,
+        expected_input_fingerprint=INPUT_FP,
+        expected_generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=9,
+        now=100.0,
+    )
+    assert action == INVALIDATE
+    assert reason == REASON_UNENCODED_UNITS
+
+
+def test_an_undeclared_value_type_is_refused_loudly_not_stringified():
+    """``default=str`` is the behaviour being replaced, so the encoder must not
+    reimplement it. An unencodable value raises where it is banked, not four
+    hours later in finalization."""
+    class Opaque:
+        pass
+
+    chunks = _chunks()
+    cursor = new_staged_cursor(
+        population_version=VERSION,
+        input_fingerprint=INPUT_FP,
+        generation_fingerprint=GENERATION_FP,
+        owner=OWNER,
+        generation=1,
+    )
+    with pytest.raises(UnencodableValueError):
+        advance(
+            cursor,
+            chunks[0],
+            [SimpleNamespace(bucket_idx=1, weird=Opaque())],
+            owner=OWNER,
+            lease_expires_at=1e12,
+        )
+
+
+def test_rows_with_differing_columns_keep_absent_distinct_from_none():
+    """The merge treats a census column that is ABSENT differently from one
+    reported as ``None``. A columnar envelope would flatten that, so a
+    heterogeneous unit falls back to presence-preserving pairs."""
+    encoded = encode_unit_rows(
+        [SimpleNamespace(bucket_idx=1, n=2), SimpleNamespace(bucket_idx=2, n=3, published_questions=7)]
+    )
+    decoded = decode_unit_rows(encoded)
+    assert not hasattr(decoded[0], "published_questions")
+    assert decoded[1].published_questions == 7
+
+
+def test_an_empty_unit_encodes_and_decodes_as_no_rows():
+    """A chunk that legitimately produced nothing is a real state, not an error."""
+    assert decode_unit_rows(encode_unit_rows([])) == []
+    assert is_encoded_unit_rows(encode_unit_rows([]))
+
+
+def test_the_convergence_walk_still_converges_through_real_json():
+    """The multi-beat test above round-trips through ``as_payload()``, which is a
+    dict and keeps ``Row`` objects alive. THAT is why it stayed green while the
+    build could not finish. This one takes the same walk through JSON."""
+    roster = _roster(*[(i, "kalshi", f"m:{i}", False) for i in range(30)])
+    next_market_id = 1000
+    raw = None
+    published = None
+    for beat in range(40):
+        chunks = plan_units(roster, buckets=6)
+        cursor, action = _decode(raw, gen_fp=generation_fingerprint(roster))
+        assert action in (FRESH, RESUME)
+        cursor, _dropped = retain_planned_units(cursor, chunks)
+        todo = [c for c in chunks if not cursor.has(c.key)]
+        if todo:
+            cursor = advance(
+                cursor,
+                todo[0].key,
+                [_population_row(bucket_idx=todo[0].index, n=beat + 1)],
+                owner=OWNER,
+                lease_expires_at=0.0,
+            )
+        if is_complete(cursor, chunks):
+            published = merge_futures_rows(collect_unit_results(cursor, chunks))
+            break
+        raw = _durable_round_trip(cursor)
+        roster = roster + _roster((next_market_id, "kalshi", f"m:{next_market_id}", False))
+        next_market_id += 1
+
+    assert published, "the build never reached a merge through a real JSON round trip"
+    assert sum(row.n for row in published) > 0

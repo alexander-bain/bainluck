@@ -27,6 +27,7 @@ import pytest
 
 from app.utils.calibration_staged_futures import (
     StagedFuturesCursor,
+    encode_unit_rows,
     plan_units,
     retain_planned_units,
     roster_drift,
@@ -52,7 +53,7 @@ def _banked(chunks, keys) -> StagedFuturesCursor:
         population_version="q267",
         input_fingerprint="fp",
         committed_units=tuple(keys),
-        unit_results={k: [f"rows-for-{k}"] for k in keys},
+        unit_results={k: encode_unit_rows([{"bucket_idx": 1, "n": 1}]) for k in keys},
         unit_digests={k: by_key[k].member_digest for k in keys},
     )
 
@@ -152,7 +153,9 @@ class TestDriftIsMeasuredNotObeyed:
         cursor = StagedFuturesCursor(
             population_version="q267",
             committed_units=tuple(unit_key(c) for c in chunks),
-            unit_results={unit_key(c): ["rows"] for c in chunks},
+            unit_results={
+                unit_key(c): encode_unit_rows([{"bucket_idx": 1}]) for c in chunks
+            },
             unit_digests={},  # pre-CAL-P028
         )
         assert roster_drift(cursor, chunks) == 0
@@ -242,7 +245,7 @@ class TestDecodeCarriesDigests:
             "population_version": "q267",
             "input_fingerprint": "fp",
             "committed_units": ["u1"],
-            "unit_results": {"u1": ["rows"]},
+            "unit_results": {"u1": encode_unit_rows([{"bucket_idx": 1}])},
             "unit_digests": {"u1": "d1"},
             "lease_expires_at": 0.0,
         }
@@ -257,7 +260,9 @@ class TestDecodeCarriesDigests:
         """A digest describing work this cursor is not carrying must not persist."""
         raw = self._raw(
             committed_units=["u1", "u2"],
-            unit_results={"u1": ["rows"]},  # u2 has no rows => not resumable
+            # u2 has no rows at all => not resumable (an absent unit, not an
+            # unencoded one — the two are different refusals since CAL-P033).
+            unit_results={"u1": encode_unit_rows([{"bucket_idx": 1}])},
             unit_digests={"u1": "d1", "u2": "d2"},
         )
         cursor, _action, _reason = self._decode(raw)

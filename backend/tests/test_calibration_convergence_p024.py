@@ -57,6 +57,7 @@ from app.utils.calibration_staged_futures import (
     UNIT_KEY_VM_ID,
     decode_staged_cursor,
     decode_staged_cursor_detailed,
+    encode_unit_rows,
 )
 
 # --- The production beat, in numbers, so the tests are about a real event ----
@@ -165,7 +166,7 @@ def _raw(**overrides):
         "owner": "me",
         "lease_expires_at": 0.0,
         "committed_units": ["u1"],
-        "unit_results": {"u1": [{"bucket_idx": 1}]},
+        "unit_results": {"u1": encode_unit_rows([{"bucket_idx": 1}])},
         "terminal": "partial",
     }
     raw.update(overrides)
