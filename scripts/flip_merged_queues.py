@@ -71,9 +71,14 @@ def content_is_on_master(sha: str) -> tuple[bool, str]:
         return False, f"{sha} touches no files"
     missing = []
     for f in files:
-        on_branch = _git("show", f"{sha}:{f}")
-        on_master = _git("show", f"origin/master:{f}")
-        if on_branch != on_master:
+        # Compare BLOB HASHES, not decoded text. `git show <sha>:<path>` on a PNG
+        # or an .ico raises UnicodeDecodeError under text=True, and a queue flip
+        # must not depend on whether a commit happened to touch a binary. An
+        # empty result means the path is absent on that side, which compares
+        # unequal exactly as it should.
+        on_branch = _git("rev-parse", f"{sha}:{f}")
+        on_master = _git("rev-parse", f"origin/master:{f}")
+        if not on_branch or on_branch != on_master:
             missing.append(f)
     if missing:
         return False, f"{len(missing)}/{len(files)} files differ from master (e.g. {missing[0]})"

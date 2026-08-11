@@ -15,6 +15,7 @@ So the tests that matter here are the two false directions, not the happy path.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -72,24 +73,16 @@ def test_an_unknown_sha_is_not_landed(tmp_path):
     assert "not an object" in why
 
 
-def test_a_commit_on_master_reads_as_landed():
-    """Content, not ancestry — a rebased/cherry-picked commit lands under a
-    different SHA, so `--merged` and `cherry` both lie. The tree is the truth."""
-    mod = _module()
-    head = subprocess.run(
-        ["git", "-C", str(mod.REPO), "rev-parse", "origin/master"],
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    ok, why = mod.content_is_on_master(head)
-    assert ok is True, why
-    assert "match origin/master" in why
+def _repo(tmp_path: Path, name: str):
+    """A throwaway git repo with an `origin/master` stand-in ref.
 
-
-def test_a_commit_whose_content_is_absent_reads_as_not_landed(tmp_path):
-    """The other false direction: do not flip something that has not landed."""
-    mod = _module()
-    repo = tmp_path / "r"
+    Synthetic on purpose. An earlier version of these tests asked the REAL repo
+    about its real `origin/master`, which passed locally and failed in CI — the
+    checkout there is shallow and detached, so the question meant something
+    different. A test about a git predicate should construct the git state it is
+    asserting on.
+    """
+    repo = tmp_path / name
     repo.mkdir()
 
     def git(*a):
@@ -100,21 +93,92 @@ def test_a_commit_whose_content_is_absent_reads_as_not_landed(tmp_path):
     git("init", "-q", "-b", "master")
     git("config", "user.email", "t@t")
     git("config", "user.name", "t")
+    return repo, git
+
+
+@contextlib.contextmanager
+def _pointed_at(mod, repo: Path):
+    saved = mod.REPO
+    mod.REPO = repo
+    try:
+        yield
+    finally:
+        mod.REPO = saved
+
+
+def test_a_binary_file_does_not_crash_the_comparison(tmp_path):
+    """CI caught this one, and it is the right kind of catch.
+
+    The first version decoded every touched file as UTF-8, so a commit touching
+    a PNG or an .ico raised UnicodeDecodeError. It passed locally purely because
+    the commit under test happened to be all text. Whether a queue flip works
+    must not depend on what KIND of file a commit touched, so the comparison is
+    on blob hashes.
+    """
+    mod = _module()
+    repo, git = _repo(tmp_path, "bin")
+    (repo / "img.ico").write_bytes(b"\xff\xd8\xff\xe0binary\x00\x01")
+    git("add", "img.ico")
+    git("commit", "-qm", "binary")
+    git("branch", "-f", "origin/master", "master")
+    sha = git("rev-parse", "HEAD")
+
+    with _pointed_at(mod, repo):
+        ok, why = mod.content_is_on_master(sha)  # must not raise
+    assert ok is True, why
+
+
+def test_a_commit_on_master_reads_as_landed(tmp_path):
+    """Content, not ancestry — a rebased/cherry-picked commit lands under a
+    different SHA, so `--merged` and `cherry` both lie. The tree is the truth.
+
+    Proven by CHERRY-PICKING rather than merging: the replayed commit has a
+    different SHA and is not an ancestor of master, and must still read LANDED.
+    """
+    mod = _module()
+    repo, git = _repo(tmp_path, "landed")
     (repo / "a.txt").write_text("base\n")
     git("add", "a.txt")
     git("commit", "-qm", "base")
-    git("branch", "-f", "origin/master", "master")  # stand-in for the remote ref
+    git("checkout", "-q", "-b", "feature")
+    (repo / "b.txt").write_text("the work\n")
+    git("add", "b.txt")
+    git("commit", "-qm", "the work")
+    original = git("rev-parse", "HEAD")
+
+    git("checkout", "-q", "master")
+    # Master must DIVERGE first, or the cherry-pick replays onto the same parent
+    # with the same tree and git hands back the identical sha — which would make
+    # the test pass for the wrong reason.
+    (repo / "other.txt").write_text("someone else landed this\n")
+    git("add", "other.txt")
+    git("commit", "-qm", "divergence")
+    git("cherry-pick", original)  # now replays under a NEW sha
+    git("branch", "-f", "origin/master", "master")
+    replayed = git("rev-parse", "HEAD")
+    assert original != replayed, "the point of the test is that the sha changed"
+
+    with _pointed_at(mod, repo):
+        ok, why = mod.content_is_on_master(original)
+    assert ok is True, why
+    assert "match origin/master" in why
+
+
+def test_a_commit_whose_content_is_absent_reads_as_not_landed(tmp_path):
+    """The other false direction: do not flip something that has not landed."""
+    mod = _module()
+    repo, git = _repo(tmp_path, "unlanded")
+    (repo / "a.txt").write_text("base\n")
+    git("add", "a.txt")
+    git("commit", "-qm", "base")
+    git("branch", "-f", "origin/master", "master")
     (repo / "a.txt").write_text("unlanded change\n")
     git("add", "a.txt")
     git("commit", "-qm", "not on master")
     unlanded = git("rev-parse", "HEAD")
 
-    monkey = mod.REPO
-    try:
-        mod.REPO = repo
+    with _pointed_at(mod, repo):
         ok, why = mod.content_is_on_master(unlanded)
-    finally:
-        mod.REPO = monkey
 
     assert ok is False, why
     assert "differ from master" in why
