@@ -14,7 +14,7 @@ import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
-import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
+import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -377,9 +377,13 @@ function EventFeedCard({
               <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0 max-w-[140px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse flex-shrink-0" />
                 <span className="truncate">
-                {data.espn?.period || data.espn?.game_clock
-                  ? `${data.espn.period && data.espn.period.length <= 10 ? data.espn.period : ""}${data.espn.period && data.espn.period.length <= 10 && data.espn.game_clock ? " " : ""}${data.espn.game_clock || ""}`.trim() || "LIVE"
-                  : "LIVE"}
+                {/* UX-P051 (#1710): this site's character-count heuristic was the
+                    only guard anywhere, and it was wrong in both directions — it
+                    let the clock through alone ("0.0") when it rejected ESPN's
+                    pre-game sentence, and it silently dropped real long labels
+                    ("1st Quarter", "End of 1st Half", "End of Regulation"). The
+                    shared rule reads the reported state, not the length. */}
+                {formatLiveClockLabel(data.espn?.period, data.espn?.game_clock) || "LIVE"}
                 </span>
               </span>
             )}

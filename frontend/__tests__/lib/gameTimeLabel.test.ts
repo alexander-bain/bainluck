@@ -5,9 +5,12 @@ import {
   formatTournamentResolvesLabel,
   formatTournamentTimingLabel,
   formatTournamentWhenLabel,
+  formatLiveClockLabel,
   isImpossibleFutureFinal,
+  isPregameStatusDetail,
   TOURNAMENT_START_TRUST_DAYS,
   TOURNAMENT_START_TRUST_FUTURE_DAYS,
+  trustedLiveClock,
 } from "../../lib/gameTimeLabel";
 
 /**
@@ -381,5 +384,312 @@ describe("formatTournamentWhenLabel", () => {
         );
       }
     });
+  });
+});
+
+/**
+ * UX-P051 (#1710) — a live game's clock says what period it is, or says nothing.
+ *
+ * The specimens are the real two live games on the default landing page at
+ * 2026-08-10 ~17:00 PT, read from BOTH `/api/feed?limit=60` and
+ * `/api/events/{id}`. One of the two was inside the window this fixes.
+ */
+describe("the live clock — ESPN's PRE-GAME sentence is not a period", () => {
+  /** Event 15192197, Toronto Tempo @ Atlanta Dream (WNBA). status live, 0–0. */
+  const WNBA_PREGAME = {
+    period: "Mon, August 10th at 8:00 PM EDT",
+    game_clock: "0.0",
+  };
+  /** Event 15187586, Phillies @ Cardinals (MLB). Genuinely in progress. */
+  const MLB_INGAME = { period: "Bottom 1st", game_clock: undefined };
+  /**
+   * THE SAME EVENT 15192197, re-read ~20 minutes later, once ESPN caught up.
+   * This is the proof that every game passes through the pre-game window — and
+   * it exposed the opposite defect: basketball details EMBED the clock.
+   */
+  const WNBA_INGAME = { period: "10:00 - 1st Quarter", game_clock: "10:00" };
+
+  describe("isPregameStatusDetail", () => {
+    test("the measured production specimen is recognised", () => {
+      expect(isPregameStatusDetail(WNBA_PREGAME.period)).toBe(true);
+    });
+
+    test.each([
+      "Sun, September 7th at 1:00 PM EDT",
+      "Tue, August 11th at 10:05 PM PDT",
+      "Sat, October 4th at 12:30 AM GMT",
+      "Scheduled",
+      "scheduled",
+    ])("%s reads as pre-game", (detail) => {
+      expect(isPregameStatusDetail(detail)).toBe(true);
+    });
+
+    /**
+     * The other direction, and it is the one that matters — suppression is the
+     * sharp edge. Every real in-game/settled detail ESPN emits must survive.
+     */
+    test.each([
+      "Bottom 1st",
+      "Top 9th",
+      "Q3 4:22",
+      "4:22 - 3rd Quarter",
+      "1st Quarter",
+      "2nd Half",
+      "End of 3rd",
+      "End of 1st Half",
+      "End of Regulation",
+      "Halftime",
+      "Overtime",
+      "Rain Delay",
+      "Delayed",
+      "Postponed",
+      "Final",
+      "Final/OT",
+      "Final/10",
+      "Shootout",
+    ])("%s is NOT pre-game", (detail) => {
+      expect(isPregameStatusDetail(detail)).toBe(false);
+    });
+
+    test("absent, empty and whitespace details are not claimed as pre-game", () => {
+      expect(isPregameStatusDetail(null)).toBe(false);
+      expect(isPregameStatusDetail(undefined)).toBe(false);
+      expect(isPregameStatusDetail("")).toBe(false);
+      expect(isPregameStatusDetail("   ")).toBe(false);
+    });
+  });
+
+  describe("trustedLiveClock — the clock goes with the period", () => {
+    /**
+     * Dropping only the period is exactly what left the Sports tab printing a
+     * bare "0.0": both fields come from the same ESPN status payload, so if the
+     * period says the game has not started, "0.0" is a default and not a clock.
+     */
+    test("a pre-game period takes its 0.0 clock down with it", () => {
+      expect(trustedLiveClock(WNBA_PREGAME.period, WNBA_PREGAME.game_clock)).toEqual({
+        period: "",
+        gameClock: "",
+      });
+    });
+
+    test("a real in-game payload passes through untouched", () => {
+      expect(trustedLiveClock("Q3", "4:22")).toEqual({ period: "Q3", gameClock: "4:22" });
+      expect(trustedLiveClock(MLB_INGAME.period, MLB_INGAME.game_clock)).toEqual({
+        period: "Bottom 1st",
+        gameClock: "",
+      });
+    });
+
+    test("missing fields become empty strings, never 'undefined' on screen", () => {
+      expect(trustedLiveClock(null, null)).toEqual({ period: "", gameClock: "" });
+      expect(trustedLiveClock(undefined, "8:42")).toEqual({ period: "", gameClock: "8:42" });
+    });
+
+    /**
+     * The second rule, from the same event once ESPN caught up. Without this,
+     * joining the two fields would print "10:00 - 1st Quarter 10:00".
+     */
+    test("a clock already spelled inside the period is not repeated", () => {
+      expect(trustedLiveClock(WNBA_INGAME.period, WNBA_INGAME.game_clock)).toEqual({
+        period: "10:00 - 1st Quarter",
+        gameClock: "",
+      });
+      expect(trustedLiveClock("4:22 - 3rd Quarter", "4:22")).toEqual({
+        period: "4:22 - 3rd Quarter",
+        gameClock: "",
+      });
+    });
+
+    /**
+     * And the other direction — the dedup must not eat a real clock on a
+     * coincidental substring. A loose test would delete "1" because "Bottom 1st"
+     * contains the character.
+     */
+    test("a clock that is not clock-shaped is never deleted as a duplicate", () => {
+      expect(trustedLiveClock("Bottom 1st", "1")).toEqual({
+        period: "Bottom 1st",
+        gameClock: "1",
+      });
+      expect(trustedLiveClock("2nd Half", "2")).toEqual({ period: "2nd Half", gameClock: "2" });
+    });
+
+    test("a genuinely distinct clock survives beside its period", () => {
+      expect(trustedLiveClock("1st Quarter", "8:42")).toEqual({
+        period: "1st Quarter",
+        gameClock: "8:42",
+      });
+    });
+  });
+
+  /**
+   * THE ACCEPTANCE, surface by surface, over the one production payload — so a
+   * future change that moves any of the four has to say which and why.
+   *
+   * Each row reproduces its caller's own composition. The BEFORE column is what
+   * the pre-patch expression produced, transcribed from the code it replaced.
+   */
+  describe("the four surfaces, on event 15192197", () => {
+    const discover = (p?: string, c?: string) => formatLiveClockLabel(p, null) || "Live";
+    const sportsTab = (p?: string, c?: string) => formatLiveClockLabel(p, c) || "LIVE";
+    const eventChip = (p?: string, c?: string, hl?: string) =>
+      formatLiveClockLabel(p, c) || hl || "LIVE";
+    const detailPage = (p?: string, c?: string) => formatLiveClockLabel(p, c, " · ") || "LIVE";
+
+    const { period, game_clock } = WNBA_PREGAME;
+
+    test("Discover (default landing page): the 30-character sentence is gone", () => {
+      // BEFORE: "Mon, August 10th at 8:00 PM EDT"
+      expect(discover(period, game_clock)).toBe("Live");
+    });
+
+    test("Sports tab: the orphaned bare clock is gone", () => {
+      // BEFORE: "0.0" — the length<=10 heuristic dropped the period and kept the clock.
+      expect(sportsTab(period, game_clock)).toBe("LIVE");
+    });
+
+    test("search / my-stuff chip: sentence + clock is gone", () => {
+      // BEFORE: "Mon, August 10th at 8:00 PM EDT 0.0"
+      expect(eventChip(period, game_clock)).toBe("LIVE");
+      // The chip's own highlight fallback still wins over the generic word.
+      expect(eventChip(period, game_clock, "Close game")).toBe("Close game");
+    });
+
+    test("event detail page: sentence · clock is gone", () => {
+      // BEFORE: "Mon, August 10th at 8:00 PM EDT · 0.0"
+      expect(detailPage(period, game_clock)).toBe("LIVE");
+    });
+
+    /**
+     * Both directions, gotcha #43. A genuine in-game payload must not move —
+     * this is a suppression, and a suppression that changes a healthy card is a
+     * regression. The one deliberate exception is stated in its own test below.
+     */
+    test("the genuinely-live MLB game is byte-identical on the three cards", () => {
+      expect(discover(MLB_INGAME.period, MLB_INGAME.game_clock)).toBe("Bottom 1st");
+      expect(sportsTab(MLB_INGAME.period, MLB_INGAME.game_clock)).toBe("Bottom 1st");
+      expect(eventChip(MLB_INGAME.period, MLB_INGAME.game_clock)).toBe("Bottom 1st");
+    });
+
+    test("a period-plus-distinct-clock payload is byte-identical on all four", () => {
+      expect(discover("Q3", "4:22")).toBe("Q3");
+      expect(sportsTab("Q3", "4:22")).toBe("Q3 4:22");
+      expect(eventChip("Q3", "4:22")).toBe("Q3 4:22");
+      expect(detailPage("Q3", "4:22")).toBe("Q3 · 4:22");
+    });
+
+    /**
+     * THE ONE DELIBERATE BEHAVIOUR CHANGE, stated rather than buried. The detail
+     * page required BOTH fields before printing either, which was never a
+     * principle — and with duplicate clocks now dropped it would have made the
+     * badge read "LIVE" on every NBA/WNBA game. Both rows below are live
+     * production payloads.
+     */
+    describe("event detail page: the both-required rule is replaced", () => {
+      test("basketball no longer repeats the clock it already spelled", () => {
+        // BEFORE: "10:00 - 1st Quarter · 10:00"
+        expect(detailPage(WNBA_INGAME.period, WNBA_INGAME.game_clock)).toBe("10:00 - 1st Quarter");
+      });
+
+      test("baseball now says the inning instead of the generic word", () => {
+        // BEFORE: "LIVE" — `period && game_clock` was false, so a real period was thrown away.
+        expect(detailPage(MLB_INGAME.period, MLB_INGAME.game_clock)).toBe("Bottom 1st");
+      });
+    });
+
+    /**
+     * The same duplicate, on the two card surfaces that have been printing it all
+     * along — and the reason the Sports tab could not simply start joining the
+     * fields: it would have adopted the duplicate rather than the fix.
+     */
+    test("no surface repeats a clock the period already contains", () => {
+      const { period, game_clock } = WNBA_INGAME;
+      expect(discover(period, game_clock)).toBe("10:00 - 1st Quarter");
+      // BEFORE: "10:00" — the character-count heuristic dropped the period instead.
+      expect(sportsTab(period, game_clock)).toBe("10:00 - 1st Quarter");
+      // BEFORE: "10:00 - 1st Quarter 10:00"
+      expect(eventChip(period, game_clock)).toBe("10:00 - 1st Quarter");
+    });
+
+    /**
+     * The fix in the OTHER direction. The Sports tab's length heuristic silently
+     * dropped every period longer than ten characters, so these games showed a
+     * bare clock with no period at all.
+     */
+    test.each([
+      ["1st Quarter", "8:42", "1st Quarter 8:42"],
+      ["End of 1st Half", "0:00", "End of 1st Half 0:00"],
+      ["End of Regulation", "0:00", "End of Regulation 0:00"],
+    ])("Sports tab now keeps the real long label %s", (p, c, expected) => {
+      expect(p.length).toBeGreaterThan(10); // the old heuristic's cut-off
+      expect(sportsTab(p, c)).toBe(expected);
+    });
+  });
+});
+
+/**
+ * UX-P051 — the anti-drift guard IS the deliverable.
+ *
+ * Four surfaces each grew their own answer to "may I believe this clock", and
+ * they disagreed for as long as all four existed. Extracting the rule only helps
+ * if a fifth copy cannot appear, so this asserts that no renderer reads the raw
+ * fields for display.
+ */
+describe("anti-drift: one home for the live-clock trust rule", () => {
+  const FRONTEND = path.resolve(__dirname, "../..");
+  const LIVE_CLOCK_SITES = [
+    "components/FeedCard.tsx",
+    "components/EventCard.tsx",
+    "components/discover/EventCard.tsx",
+    "app/events/[id]/page.tsx",
+  ];
+
+  const read = (rel: string) => fs.readFileSync(path.join(FRONTEND, rel), "utf8");
+
+  test.each(LIVE_CLOCK_SITES)("%s imports the shared module", (rel) => {
+    expect(read(rel)).toMatch(/from ["']@\/lib\/gameTimeLabel["']/);
+  });
+
+  /**
+   * The raw fields may still be READ — something has to hand them to the module.
+   * What must never happen again is a site reading them and then deciding for
+   * itself, so every occurrence has to sit on a line that passes them straight
+   * through. That is the difference between a delegate and a fifth copy.
+   */
+  const RAW_FIELD_RE = /espn\??\.\s*(?:period|game_clock)/;
+  const DELEGATES_RE = /trustedLiveClock|formatLiveClockLabel/;
+
+  test.each(LIVE_CLOCK_SITES)("%s only reads the raw espn clock to delegate it", (rel) => {
+    const offenders = read(rel)
+      .split("\n")
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ line }) => RAW_FIELD_RE.test(line) && !DELEGATES_RE.test(line))
+      // A comment explaining the rule is not a second implementation of it.
+      .filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+    expect(offenders.map((o) => `${rel}:${o.n}`)).toEqual([]);
+  });
+
+  test("the length heuristic that guessed at this is gone", () => {
+    // The single site that had any guard used the period's character count as a
+    // proxy for its meaning. Nothing may key on that again.
+    expect(read("components/FeedCard.tsx")).not.toMatch(/period\.length/);
+  });
+
+  /**
+   * The rule itself must live in exactly one module. `at 8:00 PM` is the shape
+   * the classifier keys on; a second file matching on it means the rule forked.
+   */
+  test("the pre-game sentence rule lives in exactly one lib module", () => {
+    const owners: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && fs.readFileSync(full, "utf8").includes("PREGAME_START_SENTENCE_RE")) {
+          owners.push(path.relative(FRONTEND, full));
+        }
+      }
+    };
+    walk(path.join(FRONTEND, "lib"));
+    expect(owners).toEqual(["lib/gameTimeLabel.ts"]);
   });
 });

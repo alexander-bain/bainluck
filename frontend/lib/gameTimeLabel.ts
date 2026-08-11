@@ -256,3 +256,141 @@ export function formatTournamentTimingLabel(
     formatTournamentResolvesLabel(resolutionDate, now)
   );
 }
+
+/**
+ * UX-P051 (#1710) — the LIVE clock, which is the same question a fourth time and
+ * the first one where the wire actively lies.
+ *
+ * `Event.espn.period` is ESPN's `status.type.detail`. For a game ESPN still
+ * considers SCHEDULED it is not a period at all — it is a full sentence:
+ * `"Mon, August 10th at 8:00 PM EDT"`, shipped alongside `game_clock: "0.0"`.
+ * Our own `status` flips to `live` on `commence_time`, so every game passes
+ * through a window where we say LIVE and ESPN still says scheduled — which is
+ * exactly the minutes people open the app to watch it start.
+ *
+ * FOUR renderers read that field and each guarded it differently, so one payload
+ * painted four different wrong strings. Production specimen, event 15192197
+ * (Toronto Tempo @ Atlanta Dream, 2026-08-10 ~17:00 PT, `status: "live"`, 0–0):
+ *
+ *   - `components/discover/EventCard.tsx`  "Mon, August 10th at 8:00 PM EDT"
+ *   - `app/events/[id]/page.tsx`           "Mon, August 10th at 8:00 PM EDT · 0.0"
+ *   - `components/EventCard.tsx`           "Mon, August 10th at 8:00 PM EDT 0.0"
+ *   - `components/FeedCard.tsx`            "0.0"
+ *
+ * The first is the default landing page; the second is the event detail page.
+ *
+ * THE ANSWER ALREADY EXISTED SOMEWHERE ELSE, AGAIN. `FeedCard` alone knew the
+ * string could be junk — via a bare `period.length <= 10` heuristic, module-
+ * private, on the one surface that guessed. Seventh instance of the #1620 shape
+ * on this lane. And that heuristic failed in the OTHER direction too: it silently
+ * dropped legitimate long labels ("1st Quarter" 11, "End of 1st Half" 15, "End of
+ * Regulation" 17), leaving those games with a bare clock and no period.
+ *
+ * WHAT THIS DOES NOT DO. It unifies the TRUST DECISION — which of ESPN's two
+ * clock fields may be believed — and nothing else. It does not unify the four
+ * surfaces' wording or separators; each caller keeps composing its own line, so
+ * adopting this module is not an unmeasured restyle of three surfaces to fix a
+ * defect on a fourth (the UX-P045 rule). And it derives no new fact (ruling 003):
+ * every card here already claims LIVE in its own badge, so suppressing a false
+ * clock removes a claim rather than adding one.
+ */
+
+/**
+ * The one shape that cannot occur in an in-game label: a clock time with a
+ * meridiem, introduced by "at". Real details are "Bottom 1st", "Q3 4:22",
+ * "4:22 - 3rd Quarter", "Halftime", "End of 3rd", "Rain Delay", "Final/OT" —
+ * none of which can contain "at 8:00 PM".
+ *
+ * Deliberately narrow. Suppression is the sharp edge on this lane, and the cost
+ * of a false negative here is the status quo while the cost of a false positive
+ * is hiding a real period.
+ */
+const PREGAME_START_SENTENCE_RE = /\bat\s+\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)\b/i;
+
+/**
+ * True when ESPN's detail string describes a game that has not started.
+ *
+ * Two branches, and they are NOT equally evidenced — say so rather than let a
+ * future reader assume both were measured:
+ *   1. the start-sentence shape above, which is the live production specimen;
+ *   2. the bare word "Scheduled", ESPN's own state name. No specimen was
+ *      observed, but it is the same pre-game state and a card that has already
+ *      painted a LIVE badge can never truthfully follow it with "Scheduled", so
+ *      it cannot make anything worse in either direction.
+ */
+export function isPregameStatusDetail(period: string | null | undefined): boolean {
+  if (!period) return false;
+  const trimmed = period.trim();
+  if (!trimmed) return false;
+  if (/^scheduled$/i.test(trimmed)) return true;
+  return PREGAME_START_SENTENCE_RE.test(trimmed);
+}
+
+/** The believable half of ESPN's live clock. Empty string means "say nothing". */
+export interface TrustedLiveClock {
+  period: string;
+  gameClock: string;
+}
+
+/**
+ * A clock-shaped token — "10:00", "4:22", "0.0". Used only to decide whether the
+ * clock is already spelled inside the period, so it is deliberately strict: a
+ * loose test would let a bare "1" match the "1" in "Bottom 1st" and delete a real
+ * field on a coincidence.
+ */
+const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
+
+/**
+ * Which of ESPN's clock fields a card may paint.
+ *
+ * TWO RULES, BOTH MEASURED ON THE SAME EVENT 20 MINUTES APART — 15192197 flipped
+ * from one to the other mid-cycle, which is also the proof that every game passes
+ * through the first state.
+ *
+ * 1. WHEN THE PERIOD SAYS PRE-GAME, THE CLOCK IS NOT A CLOCK EITHER. Both fields
+ *    come from the same ESPN status payload, so a `period` of "Mon, August 10th
+ *    at 8:00 PM EDT" ships `game_clock: "0.0"` — a default, not a countdown.
+ *    Dropping only the period is what left the Sports tab rendering a bare "0.0".
+ *
+ * 2. THE PERIOD OFTEN ALREADY CONTAINS THE CLOCK. Once the same game tipped off
+ *    it reported `period: "10:00 - 1st Quarter"` with `game_clock: "10:00"` —
+ *    ESPN's basketball detail embeds the clock. Two surfaces have been printing
+ *    "10:00 - 1st Quarter · 10:00" the whole time; a third only escaped it
+ *    because its character-count heuristic threw the period away instead. Joining
+ *    them unconditionally would have spread the duplicate rather than fixed it.
+ */
+export function trustedLiveClock(
+  period: string | null | undefined,
+  gameClock: string | null | undefined,
+): TrustedLiveClock {
+  if (isPregameStatusDetail(period)) return { period: "", gameClock: "" };
+  const trimmedPeriod = (period || "").trim();
+  const trimmedClock = (gameClock || "").trim();
+  const alreadySpelledOut =
+    trimmedClock !== "" &&
+    CLOCK_TOKEN_RE.test(trimmedClock) &&
+    trimmedPeriod.includes(trimmedClock);
+  return {
+    period: trimmedPeriod,
+    gameClock: alreadySpelledOut ? "" : trimmedClock,
+  };
+}
+
+/**
+ * The trusted parts joined. Returns "" when there is nothing honest to show,
+ * which is a render instruction: the caller falls back to its own existing word
+ * ("LIVE" / "Live" / its highlight label).
+ *
+ * The separator is the caller's, not this module's — the four surfaces space,
+ * dot-separate and single-field their labels differently, and unifying that would
+ * be an unmeasured restyle of three surfaces to fix a defect on a fourth
+ * (the UX-P045 rule). Only the trust decision is shared.
+ */
+export function formatLiveClockLabel(
+  period: string | null | undefined,
+  gameClock: string | null | undefined,
+  separator: string = " ",
+): string {
+  const trusted = trustedLiveClock(period, gameClock);
+  return [trusted.period, trusted.gameClock].filter(Boolean).join(separator);
+}

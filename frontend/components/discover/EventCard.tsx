@@ -10,7 +10,7 @@ import { feedContextSnippet, feedExpandedContext } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
-import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
+import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -44,7 +44,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const finishedLabel = isDone ? formatFinishedGameLabel(data.commence_time) : "";
   const contextSnippet = feedContextSnippet(item) || headline;
   const expandedContext = feedExpandedContext(item);
-  const timeLabel = isLive ? (data.espn?.period || "Live") : isDone ? "Final" : (() => {
+  // UX-P051 (#1710) — this slot is sized for "Q3", and it was painting ESPN's
+  // PRE-GAME sentence: "Mon, August 10th at 8:00 PM EDT", 30 characters of prose
+  // between two 64px crests, on the default landing page, at kickoff. The clock
+  // is deliberately still not shown here — this card only ever read `period`, and
+  // adding the clock would be a restyle rather than the fix.
+  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : (() => {
     const d = new Date(data.commence_time);
     const diffH = (d.getTime() - Date.now()) / 36e5;
     if (diffH < 1) return `${Math.round(diffH * 60)}m`;

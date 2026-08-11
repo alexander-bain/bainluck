@@ -17,7 +17,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
-import { formatFinishedGameLabel } from "@/lib/gameTimeLabel";
+import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -213,10 +213,12 @@ export default function EventCard({
               {isLive && (
                 <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
                   <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                  {/* Show period/clock if available, otherwise LIVE */}
-                  {event.espn?.period || event.espn?.game_clock
-                    ? `${event.espn.period || ""}${event.espn.period && event.espn.game_clock ? " " : ""}${event.espn.game_clock || ""}`
-                    : highlightLabel || "LIVE"}
+                  {/* Show period/clock if available, otherwise LIVE.
+                      UX-P051 (#1710): "available" now means ESPN is reporting an
+                      in-game state, not merely that the fields are non-empty —
+                      this site printed the whole pre-game sentence followed by
+                      "0.0". Composition and fallback are unchanged. */}
+                  {formatLiveClockLabel(event.espn?.period, event.espn?.game_clock) || highlightLabel || "LIVE"}
                 </span>
               )}
               {!isLive && !isFinished && (

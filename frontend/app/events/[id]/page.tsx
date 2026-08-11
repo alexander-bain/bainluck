@@ -38,6 +38,7 @@ import {
 } from "@/hooks";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
+import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import { SignalBars } from "@/components/discover/shared";
@@ -120,6 +121,12 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Effectively live = event is live status
   const effectivelyLive = isLive;
+
+  // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
+  // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
+  // game as scheduled that detail is a sentence ("Mon, August 10th at 8:00 PM
+  // EDT") shipped with `game_clock: "0.0"` — both untrustworthy together.
+  const liveClockLabel = formatLiveClockLabel(event?.espn?.period, event?.espn?.game_clock, " · ");
 
   // Track page view with event-specific parameters
   usePageTracking({
@@ -505,10 +512,19 @@ export default function EventPage({ params }: EventPageProps) {
             {effectivelyLive ? (
               <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {event.espn?.period && event.espn?.game_clock
-                  ? `${event.espn.period} · ${event.espn.game_clock}`
-                  : "LIVE"
-                }
+                {/* UX-P051 (#1710): the phase badge read both fields raw and
+                    printed "Mon, August 10th at 8:00 PM EDT · 0.0" on a game
+                    ESPN had not started.
+
+                    ITS BOTH-REQUIRED RULE IS DELIBERATELY REPLACED, not
+                    preserved — that is a stated behaviour change. `period &&
+                    game_clock ?` was never a principle, and once a clock already
+                    spelled inside the period is dropped as a duplicate, keeping
+                    it would have made this badge read "LIVE" on every NBA/WNBA
+                    game (measured: "10:00 - 1st Quarter" + "10:00"). It also
+                    means a baseball game whose detail is "Top 2nd" with no clock
+                    now says so instead of the generic word. */}
+                {liveClockLabel || "LIVE"}
               </span>
             ) : isFinished ? (
               <span className="text-[10px] font-semibold text-text-muted">Final</span>
