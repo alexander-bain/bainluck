@@ -518,6 +518,108 @@ queries not allowed"*, because `assert_read_only` checks the raw text and routin
 parser … never to be the thing that makes execution safe"* in charge of the multi-statement boundary.
 The false refusal costs one rewrite; the false acceptance is a second statement.
 
+## 🛑 THE PRODUCER'S "TIMEOUT" IS A LOOP THAT STARTS A UNIT IT CANNOT FINISH (CAL-P038, 2026-08-11, #1597)
+
+Staged by Fable as *"asyncpg.QueryCanceledError on the market_info CTE at the 1500s backstop
+(`_MAIN_COMPUTE_STMT_TIMEOUT_MS`) … ≥2.8x regression in 9 days"*, with one hypothesis to test first:
+that #1698's restoration of ~16,861 eligible futures rows raised the CTE's input cardinality.
+
+**The hypothesis is disconfirmed, by date.** #1698's hotfix is `42bd96e2`, **2026-08-10**. The
+producer's last success is **2026-08-02T03:23:54Z** and `consecutive_failures` is 199. A fix that
+landed eight days after a regression began did not cause it.
+
+**And the named bound is the wrong one.** `_MAIN_COMPUTE_STMT_TIMEOUT_MS` is 1,500,000 ms, but the
+observed failure duration is 1,378,221 ms — which is `PHASE_DEADLINE_MS`, i.e.
+`SOFT_LIMIT_MS 1,500,000 − CLEANUP_MARGIN_MS 120,000 = 1,380,000`. The 1500 s backstop has never
+fired. What fires is the per-phase bound `PhaseRunner.apply_statement_timeout` derives from the time
+left before that deadline.
+
+### What is actually happening, from the live ledger
+
+| reading | value |
+|---|---|
+| `plan.status` | `infeasible`, `infeasible_phases: ["futures"]` |
+| futures phase | `status: timeout`, `duration_ms: 1,376,969`, `committed: false` |
+| `staged:units_banked` / `staged:units_partition` | **108 / 128** |
+| `staged:cursor_resume` · reason | present · `resumable` — the cursor IS resuming |
+| `staged:units_done` / `staged:beats_to_publish` | **absent from every ledger** |
+| `incompletes_24h` vs `consecutive_failures` | **0** vs **199** |
+| beats in 24h | `starts 13` = `thrown 5` + `hard_kills 8` |
+
+The last two rows are the finding. `StagedFuturesIncomplete` exists precisely so a beat that runs out
+of window classifies as `cancelled`, not `failed` — *"a working build does not page anybody RED for
+doing exactly what it was designed to do"*. **`incompletes_24h = 0` says that path has never once
+been reached in 199 attempts.**
+
+It could not be. The unit loop's only gate was `runner.deadline_exceeded()` — *is there any time
+left* — when the question is *is there enough time left for a unit*. A unit costs ~70 s. A beat that
+started one with 30 s left got a `statement_timeout` of 27 s (`_statement_timeout_for` scales the
+inner margin down proportionally rather than refusing), Postgres cancelled it, and the error
+propagated out of the phase. **The last unit of every deadline-reaching beat was guaranteed to be
+cancelled.** The same throw skips `_record_convergence_projection`, which runs after the loop — which
+is why `staged:beats_to_publish`, the one number that says whether the build will ever finish, is
+absent from every ledger this lane has ever read.
+
+**Fixed here.** The loop now stops when the window cannot hold the WORST unit observed this beat
+(× 1.25), records `staged:window_stop:{deadline,unit_too_large}` and `staged:unit_ms_worst`, and
+exits through `StagedFuturesIncomplete`. Proved by a fake database that cancels under the same
+condition PostgreSQL does; the mutation test restores `remaining > 0` and the production throw
+returns.
+
+**The banked units survive this change.** `_main_input_fingerprint()` on the edited tree is
+`e0048938f513e814c72cb35aa8732d65` — **byte-identical to the value the live cursor and ledger both
+carry**. `_run_staged_futures` is not among the four hashed roots (`_calibration_population_ctes`,
+`_main_futures_sql`, `_virtual_market_ctes`, `compute_calibration_payload`), and hashing a function's
+source never covers its callees. So the 108 banked units are not reset.
+
+**What this does NOT do:** it does not turn the SLO green and does not make the build converge. It
+converts a beat that lies (`failed`) into one that tells the truth (`cancelled`, with a projection).
+The convergence blocker is the next section, and it is a different defect.
+
+## 🛑 CHUNKING MULTIPLIED THE WORK — every unit pays a FULL scan of `futures_outcomes` (CAL-P038, 2026-08-11)
+
+Why the build does not converge, measured against production by `EXPLAIN` on the real chunk
+statement (`_main_futures_sql(frozen=True)`) with literal roster arrays at increasing sizes.
+
+| markets in the unit | seq scans of `futures_outcomes` | plan cost | measured runtime |
+|---|---|---|---|
+| 100 | none | 6,844 | 313 ms |
+| 250 | none | 18,211 | 410 ms |
+| 500 | none | 49,293 | 1,368 ms |
+| 1,000 | none | 94,834 | 5,739 ms |
+| 2,000 | none | 174,466 | 8,470 ms |
+| 3,000 | none | 243,402 | >10 s (probe cap) |
+| **3,500** | **ONE (3,309,578 rows)** | 264,417 | >10 s |
+| **5,302 — production's unit size** | **ONE (3,309,578 rows)** | 311,794 | >10 s |
+
+The plan **flips between 3,000 and 3,500 markets**: below it the outcome reads are nested-loop index
+scans on `ix_futures_outcomes_market_id`; above it the planner switches to a hash join over a full
+sequential scan of all 3.3 M `futures_outcomes` rows. Production's units are **5,302 markets**
+(671,373 resolved markets ÷ `STAGED_FUTURES_BUCKETS` 128), i.e. **on the wrong side of the
+crossover** — and the scan does not shrink with the chunk, so it is paid **128 times per generation**.
+
+The monolith, for comparison, plans **two** such scans in total (cost 8,001,081) and last completed
+in **534 s**. So the staged path did not inherit the monolith's cost divided by 128; it inherited a
+per-chunk fixed cost multiplied by it.
+
+**This is also why the switch has never worked.** `STAGED_FUTURES_ENABLED` was flipped on in
+`fa5898aa`, **2026-08-03 10:34 PT** — the day after the last successful publish. The staged build has
+produced **zero successes in eight days**. The monolith was already failing when it was flipped
+(that commit's own message records ten consecutive ~22.5-minute floors), so this is not an argument
+for reverting the switch; it is the reason the switch did not help.
+
+**Not fixed here, and deliberately.** The obvious lever — more, smaller units — changes
+`chunk.key = hash(buckets, index)`, i.e. **unit identity**, which the ruling-009 exception granted
+for this queue explicitly holds frozen. The in-scope alternative (hoisting the chunk's outcomes into
+one materialised CTE so the scan happens once, by index, per chunk) is a restructure of the
+population CTE chain in a truth-touching frozen file and needs a row-identity proof against
+production before it can be trusted. Both are named in the handoff rather than half-taken.
+
+⚠️ **Honest limit on the numbers above.** The probe rosters were built as `m:<id>` / `is_grouped =
+false`, whereas CAL-P037 measured production at **99.96% grouped**. The seq-scan crossover is a
+property of the chunk-scoped scan and is not sensitive to that, but the absolute runtimes are a lower
+bound on production's, not a reproduction of them.
+
 ## 🛑 THE BEATS ARE DYING SOONER AS THE CURSOR GROWS — measured 2026-08-11 (CAL-P033) — ⚠️ REFUTED, see the CAL-P035 correction above
 
 CAL-P024c shipped the RSS instrument and named its own unmet done-bar: *"a measured peak RSS with
