@@ -7,6 +7,9 @@ import type {
   FeedBundleData,
 } from "@/lib/types";
 import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
+// UX-P053 (#1717) — the ONE formatter for "Resolves <date>", shared with the
+// tournament card rather than reimplemented here. See `resolvesLabel` below.
+import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
 // L2-175 Item 1: the single detail destination for a feed card, mirroring each leaf
 // card's own <Link href>. Used for whole-card tap navigation so the hero (which is
@@ -38,17 +41,68 @@ export function feedItemHref(item: FeedItem): string | null {
   }
 }
 
+/**
+ * The timing line on a futures / comparison card.
+ *
+ * UX-P053 (#1717) — BEYOND 7 DAYS IT USED TO SAY NOTHING, AND THE CARD BESIDE IT
+ * SAID SOMETHING.
+ *
+ * The old rule ended `// Beyond 7 days: don't show on the card (available in
+ * detail view)`. That was a defensible choice in isolation and stopped being one
+ * the moment #1708 taught the tournament card to fall back to its resolution
+ * date: one feed, one question ("when does this resolve?"), one wire field, two
+ * opposite answers. Measured on production 2026-08-11T01:10Z at the deployed sha
+ * `8bf7cce5`, across 60 unique futures cards — the dominant card type on the
+ * default landing page now that #1698 is fixed:
+ *
+ *   - 6 printed a timing line (all resolving inside 7 days)
+ *   - 49 carried a `resolution_date` on the wire and printed NOTHING
+ *   - 5 had no `resolution_date` at all
+ *
+ * So 49 of 60 cards on the first screen of every session were silent about a
+ * date they were holding, next to a golf card that printed it.
+ *
+ * THE FIX IS A DELEGATION, NOT A SECOND LADDER. Alex's ruling this cycle was to
+ * use the IDENTICAL formatter, "one formatting authority, so the next drift is
+ * unrepresentable rather than refiled" — so the far-horizon branch calls
+ * `formatResolvesLabel`, the same function the tournament card calls, and this
+ * module constructs no "Resolves" string of its own.
+ *
+ * WHAT DELIBERATELY DID NOT CHANGE. The inside-7-days ladder is untouched:
+ * "Closes in 45m" is a better line than "Resolves Aug 11" for a market closing
+ * today, and rewriting it would have moved the 6 cards that were already correct
+ * in the same commit that fixed the 49 that were silent — making the acceptance
+ * unmeasurable (the UX-P045 rule).
+ *
+ * DECLARED BEHAVIOUR CHANGE: a past `resolution_date` used to print "Resolved".
+ * That is the guess #1700 refused and #1708 explicitly banked against —
+ * `resolution_date` is the SCHEDULED resolution, never an observed one
+ * (`reference_futures_markets_no_transition_timestamp`), so a date merely passing
+ * is not evidence a market settled. It is now silent, and the authority is the
+ * one place that decides. Measured blast radius: ZERO cards. The feed hard-
+ * excludes past-resolution markets in SQL (`feed.py:5043`) and blocks them again
+ * as `past_resolution_date` (`feed.py:3054`), and 0 of 60 live cards reached the
+ * branch — though 8,609 open markets (2,260 of them tier 1-2) are in the class,
+ * so it was a live landmine behind two filters rather than dead code.
+ */
 export function resolvesLabel(d: string | null | undefined): string {
   if (!d) return "";
   const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return "";
   const diffH = (date.getTime() - Date.now()) / 36e5;
-  if (diffH < 0) return "Resolved";
+  // A date already gone is decided FIRST, and by the authority — which answers
+  // "" for it. Ordering matters and is load-bearing: `diffH < 1` is also true of
+  // every negative diff, so letting a past date reach the ladder would print
+  // "Closes in 1m" about a market whose date went by last year. Removing the old
+  // "Resolved" branch without this line replaces one wrong claim with a worse one.
+  if (diffH < 0) return formatResolvesLabel(d);
   if (diffH < 1) return `Closes in ${Math.max(1, Math.round(diffH * 60))}m`;
   if (diffH < 24) return `Closes in ${Math.round(diffH)}h`;
   if (diffH < 48) return "Closes tomorrow";
   if (diffH < 168) return `Closes ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-  // Beyond 7 days: don't show on the card (available in detail view)
-  return "";
+  // Beyond 7 days the shared authority answers. It prints the year — a
+  // multi-year question misread as months away is the failure #1708 named.
+  return formatResolvesLabel(d);
 }
 
 /**
@@ -64,9 +118,17 @@ export function resolvesLabel(d: string | null | undefined): string {
  *  - distribution / heatmap formats — they render a ladder (with "—" for zeros),
  *    not a bare live hero, so a low leader reads fine there.
  *  - settled markets — a resolved flag, a named winner, a settled status, or a
- *    past resolution_date already give the card a "Resolved" label, so the low
- *    number is contextual, not bare-live.
+ *    past resolution_date mean the low number is contextual, not bare-live.
  * Non-futures items are never affected.
+ *
+ * UX-P053 (#1717) — THIS COMMENT USED TO CITE A LABEL THAT NO LONGER EXISTS. It
+ * read "...already give the card a 'Resolved' label", which was true when
+ * `resolvesLabel` printed "Resolved" for a passed date and is not true now that
+ * the shared authority stays silent about one. The BEHAVIOUR here is unchanged —
+ * `settledByDate` below reads `resolution_date` itself and never consulted that
+ * label — but a comment asserting something the code does not do is the exact
+ * defect C185 shipped behind this cycle, so it is corrected rather than left to
+ * mislead the next reader into thinking suppression depends on the label.
  */
 export function suppressBareZeroFuturesCard(
   item: FeedItem,

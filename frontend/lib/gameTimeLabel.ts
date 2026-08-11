@@ -197,6 +197,8 @@ export function formatTournamentWhenLabel(
 }
 
 /**
+ * THE formatting authority for "Resolves <date>" on a Discover card.
+ *
  * UX-P050 — "Resolves Dec 31, 2026", or "" when the wire cannot honestly say it.
  *
  * THE DISCRIMINATOR #1700 CONCLUDED DID NOT EXIST. That queue found season-long
@@ -216,8 +218,28 @@ export function formatTournamentWhenLabel(
  * either: `resolution_date` is the SCHEDULED resolution, not an observed one
  * (`reference_futures_markets_no_transition_timestamp`), so concluding "this is
  * over" from a passed date would be the same class of guess #1700 refused.
+ *
+ * ── UX-P053 (#1717): WHY IT IS NO LONGER CALLED "Tournament" ──
+ *
+ * It was never tournament-specific; it was merely written for the card that
+ * needed it first. One day later the SAME question — "when does this resolve?" —
+ * was being answered two opposite ways on one screen. `resolvesLabel` (the
+ * futures/comparison cards) returned "" beyond 7 days, so 49 of 60 futures cards
+ * on the production landing page printed NOTHING while the tournament card
+ * beside them printed a date. Measured 2026-08-11T01:10Z.
+ *
+ * Alex's ruling this cycle was not merely "extend it" but "use the IDENTICAL
+ * formatter — one formatting authority, so the next drift is unrepresentable
+ * rather than refiled." Hence the rename: a `Tournament` in the name is an
+ * invitation for the next card type to write its own, which is exactly how this
+ * lane arrived at eight instances of the #1620 shape.
+ *
+ * `__tests__/lib/resolvesLabelAuthority.test.ts` enforces it: a NEW construction
+ * of this string anywhere under `components/` or `lib/` fails the suite. Two
+ * legacy sites predate the authority and are recorded there as named debt rather
+ * than restyled unmeasured (the UX-P045 rule).
  */
-export function formatTournamentResolvesLabel(
+export function formatResolvesLabel(
   resolutionDate: string | null | undefined,
   now: number = Date.now(),
 ): string {
@@ -253,7 +275,7 @@ export function formatTournamentTimingLabel(
 ): string {
   return (
     formatTournamentWhenLabel(commenceTime, now) ||
-    formatTournamentResolvesLabel(resolutionDate, now)
+    formatResolvesLabel(resolutionDate, now)
   );
 }
 

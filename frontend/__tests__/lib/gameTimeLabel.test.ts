@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import {
   formatFinishedGameLabel,
-  formatTournamentResolvesLabel,
+  formatResolvesLabel,
   formatTournamentTimingLabel,
   formatTournamentWhenLabel,
   formatLiveClockLabel,
@@ -297,9 +297,9 @@ describe("formatTournamentWhenLabel", () => {
   /**
    * UX-P050 Item 2 — the discriminator #1700 concluded did not exist.
    */
-  describe("formatTournamentResolvesLabel", () => {
+  describe("formatResolvesLabel", () => {
     test("a four-year question says which year decides it", () => {
-      expect(formatTournamentResolvesLabel("2030-07-07T14:00:00+00:00", NOW_T)).toBe(
+      expect(formatResolvesLabel("2030-07-07T14:00:00+00:00", NOW_T)).toBe(
         "Resolves Jul 7, 2030",
       );
     });
@@ -307,7 +307,7 @@ describe("formatTournamentWhenLabel", () => {
     test("the year is printed even when it is the current one", () => {
       // "Resolves Dec 31" invites the reader to supply a year, and on a card whose
       // siblings resolve in 2028 and 2030 that guess is worth stating for them.
-      expect(formatTournamentResolvesLabel("2026-12-31T15:00:00+00:00", NOW_T)).toBe(
+      expect(formatResolvesLabel("2026-12-31T15:00:00+00:00", NOW_T)).toBe(
         "Resolves Dec 31, 2026",
       );
     });
@@ -316,13 +316,13 @@ describe("formatTournamentWhenLabel", () => {
       // The card must not print "Resolves <a date that has gone>" — and must not
       // conclude settlement from it either. `resolution_date` is the SCHEDULED
       // resolution, not an observed one.
-      expect(formatTournamentResolvesLabel("2026-08-01T00:00:00+00:00", NOW_T)).toBe("");
+      expect(formatResolvesLabel("2026-08-01T00:00:00+00:00", NOW_T)).toBe("");
     });
 
     test.each([null, undefined, "", "not-a-date"])(
       "absent or unusable input renders nothing: %p",
       (input) => {
-        expect(formatTournamentResolvesLabel(input as string | null | undefined, NOW_T)).toBe("");
+        expect(formatResolvesLabel(input as string | null | undefined, NOW_T)).toBe("");
       },
     );
   });
