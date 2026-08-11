@@ -93,6 +93,31 @@ def test_the_generation_fingerprint_is_stable_and_order_independent():
     assert len(generation_fingerprint(rows)) == 32
 
 
+def test_the_generation_fingerprint_is_pinned_to_a_known_digest():
+    """A GOLDEN value, because moving this digest wipes every banked unit.
+
+    The two prior tests assert stability and order-independence, which a changed
+    field separator satisfies perfectly while producing a completely different
+    digest — so nothing caught a drift in the encoding itself. CAL-P036 gave the
+    separator a name (:data:`MEMBER_SEPARATOR`) shared with ``plan_units``, which
+    makes an accidental divergence between the two writers possible for the first
+    time; this pins the result.
+
+    The value below was computed against ``origin/master`` before that refactor
+    and verified unchanged after it. If a deliberate encoding change lands, this
+    goes red on purpose: the cursor invalidation it causes should be a decision,
+    not a side effect.
+    """
+    rows = _roster(
+        *[
+            (i, "kalshi" if i % 2 else "polymarket",
+             f"e:{i % 7}" if i % 3 else f"m:{i}", bool(i % 3))
+            for i in range(1, 50)
+        ]
+    )
+    assert generation_fingerprint(rows) == "150464bdc93d2ecea72d84f9d1ccabd9"
+
+
 def test_a_changed_roster_changes_the_generation_fingerprint():
     """The late-arrival detector: a market appearing mid-build is a new roster."""
     base = _roster((1, "kalshi", "e:123", True), (2, "polymarket", "e:123", True))
@@ -306,6 +331,21 @@ def test_a_market_under_two_virtual_questions_is_kept_under_both():
     assert only.vm_ids == ("e:1", "m:7")
 
 
+@pytest.mark.parametrize("field", ["vm_id", "source"])
+def test_a_record_separator_inside_a_roster_field_is_refused(field):
+    """``market_ids`` is recovered by splitting the member rows apart again.
+
+    A separator inside ``vm_id`` or ``source`` would make that split ambiguous.
+    It would ALSO let two different rosters collide on ``member_digest``, so the
+    encoding was already relying on this and nothing said so — CAL-P036 made the
+    reliance explicit rather than introducing it.
+    """
+    bad = {"market_id": 1, "source": "kalshi", "vm_id": "m:1", "is_grouped": False}
+    bad[field] = "a\x1eb"
+    with pytest.raises(ValueError, match="record separator"):
+        plan_units([SimpleNamespace(**bad)], buckets=8)
+
+
 def test_planning_does_not_allocate_a_container_per_virtual_question():
     """The capacity guard — CAL-P036's whole reason to exist.
 
@@ -324,7 +364,7 @@ def test_planning_does_not_allocate_a_container_per_virtual_question():
     The bar is expressed per row against an all-unique roster, where distinct
     ``vm_id`` count equals row count. It sits below the 432 B/row structural
     floor of the old shape plus its payload (measured ~691 B/row here) and well
-    above the bucket-keyed shape (measured ~383 B/row), so it fails on a
+    above the bucket-keyed shape (measured ~278 B/row), so it fails on a
     reintroduced per-``vm_id`` container and passes with real headroom.
     """
     rows = 40_000

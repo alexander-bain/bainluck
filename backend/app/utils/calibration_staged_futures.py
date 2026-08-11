@@ -266,6 +266,17 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
 #: rungs it is not conditional and belongs in the default declared set.
 REPRESENTATIVE_TIE_COLUMN = "representative_tie_broken"
 
+#: Field separator inside one encoded roster-membership row —
+#: ``market_id | source | vm_id | is_grouped``. ASCII RECORD SEPARATOR, chosen
+#: because it cannot occur in the values in practice.
+#:
+#: Named (CAL-P036) rather than repeated as a literal because it is now load
+#: bearing in two directions: :func:`generation_fingerprint` and
+#: :func:`plan_units` both BUILD these rows, and ``plan_units`` also SPLITS them
+#: back apart to recover ``market_ids``. Two copies of a separator is how the
+#: reader and the writer drift.
+MEMBER_SEPARATOR = "\x1e"
+
 #: **The census set the build actually declares, reconstructed here** (CAL-P034).
 #:
 #: :func:`fold_unit_rows` runs the ``UndeclaredColumnError`` guard at BANK time,
@@ -526,7 +537,7 @@ def generation_fingerprint(rows: Iterable[Any]) -> str:
     build even when the roster's membership is identical.
     """
     parts = sorted(
-        "\x1e".join(
+        MEMBER_SEPARATOR.join(
             (
                 str(_get(row, "market_id", "")),
                 _text(_get(row, "source")),
@@ -740,16 +751,20 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     # bucket index instead turns ~2.0M containers into ~384 and makes the
     # overhead independent of population size. The payload is unchanged; only the
     # boxes holding it are.
+    #
+    # TWO accumulators, not three. An earlier draft of this change also kept a
+    # per-bucket set of ``(vm_id, market_id)`` pairs to preserve the dedupe, and
+    # that set costs one tuple PER ROW — which made the whole change a
+    # REGRESSION whenever the roster is heavily grouped, because the shape it
+    # replaces costs per DISTINCT ``vm_id``. Measured across grouping regimes at
+    # 669,383 rows, the pair-set draft ran 84 MB WORSE than the old code at an
+    # average group size of 4. Since the production group-size distribution is
+    # not measurable from here (the roster read alone exceeds the read rail's
+    # 25 s ceiling), a change whose SIGN depends on it is not shippable.
+    # ``market_ids`` is therefore derived from the members below, which the
+    # chunk has to carry anyway.
     by_bucket_vm: dict[int, set[str]] = {}
     by_bucket_members: dict[int, set[str]] = {}
-    # (vm_id, market_id) pairs, per bucket. This preserves the ORIGINAL dedupe
-    # semantics exactly, which are per ``vm_id`` and NOT global: the roster
-    # carries a row per (market, source) and ``vm_id`` is derived with
-    # source-scoped group/event sizes, so one ``market_id`` can legitimately
-    # appear under two different ``vm_id``s. The old code kept it once per
-    # ``vm_id`` list; deduping on ``market_id`` alone here would silently drop
-    # one of them and shrink a chunk's restriction predicate.
-    by_bucket_pairs: dict[int, set[tuple[str, int]]] = {}
     for row in rows:
         raw_vm = _get(row, UNIT_KEY_VM_ID)
         raw_market = _get(row, "market_id")
@@ -757,20 +772,30 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
             raise ValueError("roster row is missing vm_id or market_id; cannot plan units")
         vm_id = str(raw_vm)
         market_id = int(raw_market)
+        source = _text(_get(row, "source"))
+        # ``market_ids`` is recovered by splitting these members apart again, so
+        # a separator inside a field would make the member row ambiguous. Refuse
+        # loudly rather than mis-parse. This is not only a parsing concern: two
+        # different rosters could already collide on ``member_digest`` this way,
+        # so the encoding was always relying on it and nothing said so.
+        if MEMBER_SEPARATOR in vm_id or MEMBER_SEPARATOR in source:
+            raise ValueError(
+                "roster row has a record separator inside vm_id or source; "
+                "the membership encoding cannot represent it unambiguously"
+            )
         # Computed per ROW rather than memoised per ``vm_id``: a memo dict would
         # reintroduce exactly the per-``vm_id`` entry this change removes. It is
         # one short-string hash, and the beat is minutes long.
         index = bucket_of(vm_id, buckets)
         by_bucket_vm.setdefault(index, set()).add(vm_id)
-        by_bucket_pairs.setdefault(index, set()).add((vm_id, market_id))
         # The membership digest is per ROSTER ROW, not per market: source and
         # is_grouped are exactly what generation_fingerprint watches globally,
         # and a unit that resumes must be able to see them change.
         by_bucket_members.setdefault(index, set()).add(
-            "\x1e".join(
+            MEMBER_SEPARATOR.join(
                 (
                     str(market_id),
-                    _text(_get(row, "source")),
+                    source,
                     vm_id,
                     _flag(_get(row, "is_grouped")),
                 )
@@ -779,6 +804,17 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
 
     chunks: list[UnitChunk] = []
     for index in sorted(by_bucket_vm):
+        members = by_bucket_members[index]
+        # The dedupe is per ``vm_id`` and deliberately NOT global. The roster
+        # carries a row per (market, source), and ``vm_id`` is derived with
+        # source-scoped group/event sizes, so one ``market_id`` can legitimately
+        # sit under two different ``vm_id``s — both are real memberships and the
+        # chunk's restriction predicate needs both. Collapsing over SOURCE only
+        # is what reproduces the old per-``vm_id`` list exactly.
+        pairs = set()
+        for member in members:
+            market_text, _source, member_vm, _flagged = member.split(MEMBER_SEPARATOR)
+            pairs.add((member_vm, int(market_text)))
         # ``sorted`` on each set reproduces the old ordering: the previous code
         # appended ``vm_id``s in ``sorted(by_vm)`` order and sorted both
         # ``market_ids`` and ``members`` on the way into the chunk.
@@ -786,8 +822,8 @@ def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
             UnitChunk(
                 index=index,
                 vm_ids=tuple(sorted(by_bucket_vm[index])),
-                market_ids=tuple(sorted(m for _vm, m in by_bucket_pairs[index])),
-                members=tuple(sorted(by_bucket_members[index])),
+                market_ids=tuple(sorted(market for _vm, market in pairs)),
+                members=tuple(sorted(members)),
                 buckets=buckets,
             )
         )
