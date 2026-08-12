@@ -1,4 +1,4 @@
-# RULING 036 — Two defects, two left edges: a sweep reports per defect, never one blended number
+# RULING 040 — Two defects, two left edges: a sweep reports per defect, never one blended number
 
 date: 2026-08-12
 author: Alex
@@ -51,5 +51,5 @@ different game — precisely the gotcha #21 damage class, arriving with impeccab
 - A causal signal visible in the chunking (a clean zero, a step change that never returns) is
   evidence about a *specific* defect. Blending destroys it, and it does not come back.
 - Related: [030](030-census-runs-before-the-staged-work.md) — the census re-decides the brief;
-  [035](035-a-lookup-must-never-throw.md) — the duplicate-id half of the same population, which
+  [039](039-a-lookup-must-never-throw.md) — the duplicate-id half of the same population, which
   likewise turned out not to be one league's problem.

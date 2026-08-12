@@ -1,4 +1,4 @@
-# RULING 035 — A lookup must never throw; and an interim tie-break carries its own expiry
+# RULING 039 — A lookup must never throw; and an interim tie-break carries its own expiry
 
 date: 2026-08-12
 author: Alex
