@@ -89,6 +89,27 @@ def percentile(values, p: float):
     return vals[min(rank, len(vals)) - 1]
 
 
+def _sample_scope(out):
+    """The parenthetical that stops a p95 being read as a window property.
+
+    Empty when the span is unknown (a history written before LAT-P040 carries no
+    timestamps) rather than guessed at — an invented span would be worse than
+    the silence it replaces, because it would look authoritative.
+    """
+    n = out.get("p95_sample_n") or 0
+    span = out.get("p95_window_s")
+    if not n:
+        return ""
+    if span is None:
+        return f" (over the last {n} runs; span unknown)"
+    bits = f" (over the last {n} runs spanning {span/60.0:.0f}min"
+    if out.get("p95_sample_saturated"):
+        # Not decoration: at the cap, older runs existed and were dropped, so
+        # this p95 CANNOT describe the counter window it is printed next to.
+        bits += ", sample saturated — older runs discarded"
+    return bits + ")"
+
+
 def expected_fires(window_s, interval_s):
     """How many times the beat should have fired inside a counter's window."""
     if not window_s or not interval_s or interval_s <= 0:
@@ -105,6 +126,8 @@ def adherence(
     durations_ms=None,
     deliveries=None,
     deliveries_window_s=None,
+    durations_window_s=None,
+    durations_saturated=None,
 ):
     """Grade one task's schedule adherence from its recorded counters.
 
@@ -138,6 +161,16 @@ def adherence(
     entirely; ``never_completes`` flags it so ``find_lapping`` can carry it
     without pre-empting the taxonomy.
 
+    LAT-P040 (#835): ``window_s`` ages the STARTS counter and nothing else. The
+    duration sample is bounded by COUNT, so it carries its own, much shorter and
+    per-task-different span — passed in as ``durations_window_s`` and reported
+    as ``p95_window_s`` rather than left to be read off the field above it. This
+    module's founding defect was a count whose age was unstated; the p95 landed
+    with exactly the same defect one field to the right, and it cost a queue:
+    `poll_all_odds` p95 46.2s (a ~50-minute burst) was recorded as a property of
+    a 19-hour window and staged as the top standing item, then read 5.8s an hour
+    later with nothing changed but the samples.
+
     Returns a dict rather than raising, because this grades the health surface
     and a health surface that throws is a health surface that goes dark.
     """
@@ -162,6 +195,9 @@ def adherence(
         "ratio": None,
         "p95_duration_ms": None,
         "p95_over_interval": None,
+        "p95_sample_n": len(durations_ms or []),
+        "p95_window_s": durations_window_s,
+        "p95_sample_saturated": durations_saturated,
         "verdict": "unmeasurable",
         "reason": "",
     }
@@ -209,9 +245,14 @@ def adherence(
     # the backlog has built. Naming it early is the whole point of the detector.
     if out["p95_over_interval"] is not None and out["p95_over_interval"] >= OVERRUN_RATIO:
         out["verdict"] = "overruns"
+        # The reason states the sample this p95 came from, not just the number.
+        # An `overruns` that reads as a 19-hour property when it describes 50
+        # minutes is a claim the data cannot support, and it is the exact claim
+        # LAT-P039 made in good faith off this string.
         out["reason"] = (
             f"p95 {p95/1000.0:.1f}s is {out['p95_over_interval']:.2f}x its "
             f"{interval_s}s interval"
+            f"{_sample_scope(out)}"
         )
         return out
 

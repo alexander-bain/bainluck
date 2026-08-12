@@ -450,10 +450,26 @@ def _bump_window_counter(pipe, key: str):
 #: Both are true of that task; only the history shows the second one. Fifty is
 #: enough to place a p95 and small enough (~50 short strings per task) that the
 #: whole history for ~200 tasks is a rounding error against a 100MB instance.
+#:
+#: LAT-P040 (#835): fifty is also the reason every duration statistic needs its
+#: OWN window. This is a count of SAMPLES, not a span of time, so the period it
+#: covers is fifty times the task's own cadence and therefore different for
+#: every task — ~50 minutes for a 30s beat, ~2 days for an hourly one. Measured
+#: in production 2026-08-11: `poll_odds` held exactly 50 samples spanning ~50
+#: minutes while the payload displayed them beside `window_s: 68550` (19.1h), a
+#: 23x mismatch. Raising the cap is NOT the fix — it trades the same
+#: misreading for more memory. Stamping each sample is, so the span is measured
+#: rather than inferred from a counter that ages independently.
 DURATION_HISTORY_LEN = 50
 
+#: Separates a sample's duration from the epoch second it was recorded at:
+#: ``"5821@1786500000"``. Entries written before LAT-P040 are bare integers and
+#: are still read (they simply carry no timestamp), so the history does not have
+#: to be discarded on deploy — it refills within one cap-length either way.
+_DURATION_STAMP_SEP = "@"
 
-def _push_duration(pipe, task_name: str, duration_ms: float):
+
+def _push_duration(pipe, task_name: str, duration_ms: float, now_s=None):
     """Append one run's duration to the task's bounded rolling history.
 
     LTRIM keeps it bounded on every write rather than by TTL, so the list cannot
@@ -465,11 +481,48 @@ def _push_duration(pipe, task_name: str, duration_ms: float):
     a lapping task's expensive runs are frequently the ones that end badly, and
     a history of only the happy path would systematically under-report the tail
     this exists to measure.
+
+    LAT-P040 (#835): each sample carries the epoch second it was recorded at, so
+    a reader can compute the span the history actually covers. Without it the
+    only window on the payload belongs to the STARTS counter, which ages on its
+    own 24h TTL and has no relationship to how far back fifty samples reach —
+    and a p95 read against the wrong window is how a ~50-minute burst got
+    reported, and staged, as a 19-hour steady state.
+
+    ``now_s`` is injectable so tests can pin the clock instead of sampling it;
+    an anchor that moves with the wall clock is gotcha #44.
     """
     hist_key = f"{TASK_METRICS_PREFIX}:{task_name}:durations"
-    pipe.lpush(hist_key, str(round(duration_ms)))
+    ts = time.time() if now_s is None else now_s
+    pipe.lpush(
+        hist_key, f"{round(duration_ms)}{_DURATION_STAMP_SEP}{int(ts)}"
+    )
     pipe.ltrim(hist_key, 0, DURATION_HISTORY_LEN - 1)
     pipe.expire(hist_key, TASK_METRICS_TTL)
+
+
+def _parse_duration_entry(raw):
+    """One stored history entry -> ``(duration_ms, recorded_at_s_or_None)``.
+
+    Accepts both the stamped form and the bare-integer form written before
+    LAT-P040, because a reader that rejected the legacy shape would report an
+    EMPTY history for every task for the first cap-length after deploy — which
+    reads as "this task never ran", the precise false absence gotcha #53 is
+    about. Anything unparseable is dropped rather than guessed at.
+    """
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    raw = str(raw)
+    ms_part, _, ts_part = raw.partition(_DURATION_STAMP_SEP)
+    try:
+        ms = int(ms_part)
+    except (TypeError, ValueError):
+        return None
+    try:
+        ts = int(ts_part) if ts_part else None
+    except (TypeError, ValueError):
+        ts = None
+    return ms, ts
 
 
 def record_task_started(task_name: str):
@@ -879,17 +932,40 @@ def get_task_metrics(task_name: str) -> dict:
         # A bounded rolling history, newest first. p95 lives here rather than
         # being precomputed so the reader can pick its own percentile and so a
         # stored aggregate can never drift from the samples behind it.
+        durations = []
+        duration_stamps = []
         try:
             raw_durations = r.lrange(
                 f"{TASK_METRICS_PREFIX}:{task_name}:durations", 0,
                 DURATION_HISTORY_LEN - 1,
             ) or []
-            durations = [
-                int(d.decode() if isinstance(d, bytes) else d)
-                for d in raw_durations
-            ]
+            for d in raw_durations:
+                parsed = _parse_duration_entry(d)
+                if parsed is None:
+                    continue
+                ms, ts = parsed
+                durations.append(ms)
+                if ts is not None:
+                    duration_stamps.append(ts)
         except Exception:
             durations = []
+            duration_stamps = []
+
+        # LAT-P040 (#835): the duration sample's OWN window. Every other window
+        # on this payload ages a counter; none of them ages this list, and the
+        # list is bounded by COUNT, so how far back it reaches depends on the
+        # task's cadence and is different for every task. Reported explicitly
+        # because the alternative is what happened: a p95 computed over ~50
+        # minutes of `poll_odds` was read against `starts_window_s` of 19.1
+        # hours and became a standing claim about a steady state.
+        #
+        # `saturated` is the load-bearing half. At the cap, older runs EXIST and
+        # were discarded, so the p95 provably cannot describe the full counter
+        # window — a reader that sees it can stop treating the number as a
+        # 24h property without needing to know DURATION_HISTORY_LEN.
+        durations_window_s = None
+        if len(duration_stamps) >= 2:
+            durations_window_s = float(max(duration_stamps) - min(duration_stamps))
 
         result = {
             "task": task_name,
@@ -899,6 +975,9 @@ def get_task_metrics(task_name: str) -> dict:
             "starts_24h": starts_24h,
             "hard_kills_24h": hard_kills_24h,
             "recent_durations_ms": durations,
+            "recent_durations_n": len(durations),
+            "recent_durations_window_s": durations_window_s,
+            "recent_durations_saturated": len(durations) >= DURATION_HISTORY_LEN,
             **windows,
         }
 

@@ -39,7 +39,8 @@ class _Redis:
 
     def ttl(self, key):
         """Redis TTL contract: -2 no such key, -1 key exists with no expiry."""
-        if key not in self.strings and key not in self.hashes:
+        if (key not in self.strings and key not in self.hashes
+                and key not in self.lists):
             return -2
         return self.ttls.get(key, -1)
 
@@ -74,7 +75,21 @@ class _Redis:
             target[field.encode()] = str(value).encode()
 
     def expire(self, key, ttl):
+        """Real EXPIRE sets the key's TTL. This used to only record the call.
+
+        LAT-P039 named the cost and Alex ruled it into the record: a test double
+        that cannot express the bug cannot catch it. `M19` — a mutant that
+        removed an `expire` — SURVIVED its first pass here, not because the
+        assertion was weak but because the fake had nothing for the mutation to
+        change. A no-op double does not make a test lenient, it makes the test
+        blind, and blind reads as green.
+
+        `self.calls` is kept as well, so tests that assert on the call itself
+        keep working; the TTL is now also applied so `ttl()` can observe it.
+        """
         self.calls.append(("expire", key, ttl))
+        if key in self.strings or key in self.hashes or key in self.lists:
+            self.ttls[key] = ttl
 
     def set(self, key, value, ex=None, nx=False):
         if nx and key in self.strings:
@@ -266,6 +281,148 @@ class TestDurationHistory:
         # badly; a happy-path-only history under-reports the very tail this
         # exists to measure.
         assert redis_state.get_task_metrics("t")["recent_durations_ms"] == [800, 900]
+
+
+class TestDurationSampleCarriesItsOwnWindow:
+    """LAT-P040 (#835): the p95's span is measured, not read off ``window_s``.
+
+    The defect this file's own module was written to fix — a count whose age is
+    unstated — was still live one field to the right. ``window_s`` ages the
+    STARTS counter on a 24h TTL; the duration history is bounded by COUNT, so it
+    reaches back fifty times the task's cadence and nothing on the payload said
+    so.
+
+    Measured in production 2026-08-11, `poll_odds`: 50 samples (exactly the
+    cap), p95 5,821ms, printed beside ``window_s: 68550`` — 19.1 hours. Its own
+    counters date the sample: 1,149 starts over 68,673s is one run per 59.8s, so
+    fifty of them span ~50 minutes. A 23x mismatch, and the reason an hour-old
+    46.2s burst was recorded as a standing property of the beat and staged as
+    this queue's top item.
+
+    The clock is INJECTED in every test below. An anchor that samples the wall
+    clock is gotcha #44, and a span assertion is precisely the shape that would
+    hide it.
+    """
+
+    def _push(self, fake, samples):
+        """samples: (duration_ms, epoch_s) oldest first."""
+        for ms, ts in samples:
+            pipe = fake.pipeline()
+            redis_state._push_duration(pipe, "t", ms, now_s=ts)
+        fake.hashes.setdefault(
+            f"{TASK_METRICS_PREFIX}:t", {b"consecutive_failures": b"0"})
+
+    def test_span_is_measured_from_the_samples(self, fake):
+        base = 1_786_500_000
+        self._push(fake, [(100, base), (200, base + 600), (300, base + 1800)])
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_ms"] == [300, 200, 100]  # newest first
+        assert m["recent_durations_n"] == 3
+        assert m["recent_durations_window_s"] == 1800.0
+        assert m["recent_durations_saturated"] is False
+
+    def test_a_saturated_sample_says_so(self, fake):
+        """At the cap, older runs existed and were dropped.
+
+        This is the load-bearing flag: it lets a reader conclude the p95 cannot
+        describe the counter window WITHOUT knowing DURATION_HISTORY_LEN.
+        """
+        base = 1_786_500_000
+        n = redis_state.DURATION_HISTORY_LEN
+        self._push(fake, [(i, base + i * 60) for i in range(n + 20)])
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_n"] == n
+        assert m["recent_durations_saturated"] is True
+        # Only the surviving samples define the span — the discarded 20 runs
+        # must not silently widen it.
+        assert m["recent_durations_window_s"] == float((n - 1) * 60)
+
+    def test_the_span_does_not_come_from_the_counter_window(self, fake):
+        """The regression that matters: a long counter, a short sample.
+
+        Reproduces the production shape. If `p95_window_s` ever tracks
+        `window_s` again, this fails.
+        """
+        base = 1_786_500_000
+        self._push(fake, [(5000, base), (46000, base + 3000)])
+        m = redis_state.get_task_metrics("t")
+        graded = adherence(
+            starts=1149,
+            starts_window_s=68673.0,      # 19.1h — the STARTS counter
+            interval_s=30.0,
+            durations_ms=m["recent_durations_ms"],
+            durations_window_s=m["recent_durations_window_s"],
+            durations_saturated=m["recent_durations_saturated"],
+        )
+        assert graded["window_s"] == 68673.0
+        assert graded["p95_window_s"] == 3000.0
+        assert graded["p95_window_s"] != graded["window_s"]
+
+    def test_an_overrun_reason_names_the_sample_it_came_from(self, fake):
+        base = 1_786_500_000
+        n = redis_state.DURATION_HISTORY_LEN
+        self._push(fake, [(46000, base + i * 60) for i in range(n)])
+        m = redis_state.get_task_metrics("t")
+        graded = adherence(
+            starts=1149, starts_window_s=68673.0, interval_s=30.0,
+            durations_ms=m["recent_durations_ms"],
+            durations_window_s=m["recent_durations_window_s"],
+            durations_saturated=m["recent_durations_saturated"],
+        )
+        assert graded["verdict"] == "overruns"
+        # The number alone was readable as a 19-hour property. The scope is now
+        # inseparable from the claim.
+        assert "over the last 50 runs" in graded["reason"]
+        assert "49min" in graded["reason"]
+        assert "saturated" in graded["reason"]
+
+    def test_legacy_unstamped_entries_still_read(self, fake):
+        """A bare-int history predates LAT-P040 and must not read as EMPTY.
+
+        Rejecting it would report "this task never ran" for a cap-length after
+        every deploy — a false absence, gotcha #53.
+        """
+        fake.lists[f"{TASK_METRICS_PREFIX}:t:durations"] = [b"300", b"200"]
+        fake.hashes.setdefault(
+            f"{TASK_METRICS_PREFIX}:t", {b"consecutive_failures": b"0"})
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_ms"] == [300, 200]
+        # Unknown, and said so — never inferred from a counter that ages apart.
+        assert m["recent_durations_window_s"] is None
+        graded = adherence(
+            starts=10, starts_window_s=3600.0, interval_s=30.0,
+            durations_ms=m["recent_durations_ms"],
+            durations_window_s=m["recent_durations_window_s"],
+        )
+        assert "span unknown" in graded["reason"] or graded["verdict"] != "overruns"
+
+    def test_a_mixed_history_across_the_deploy_boundary_reads(self, fake):
+        """The real shape for one cap-length after release: old + new together."""
+        base = 1_786_500_000
+        fake.lists[f"{TASK_METRICS_PREFIX}:t:durations"] = [b"900"]
+        pipe = fake.pipeline()
+        redis_state._push_duration(pipe, "t", 100, now_s=base)
+        pipe2 = fake.pipeline()
+        redis_state._push_duration(pipe2, "t", 200, now_s=base + 300)
+        fake.hashes.setdefault(
+            f"{TASK_METRICS_PREFIX}:t", {b"consecutive_failures": b"0"})
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_ms"] == [200, 100, 900]
+        # Two stamped samples are enough to date the sample; the legacy entry
+        # contributes its duration but cannot widen the span it never carried.
+        assert m["recent_durations_window_s"] == 300.0
+
+    def test_the_durations_key_actually_gets_a_ttl(self, fake):
+        """Guards the fake as much as the code — Alex's ruling, LAT-P039 M19.
+
+        `expire()` was a no-op that only appended to `calls`, so a mutant that
+        deleted the expire survived. With the double modelling the operation,
+        the assertion has something to fail against.
+        """
+        pipe = fake.pipeline()
+        redis_state._push_duration(pipe, "t", 100, now_s=1_786_500_000)
+        key = f"{TASK_METRICS_PREFIX}:t:durations"
+        assert fake.ttl(key) == redis_state.TASK_METRICS_TTL
 
 
 class TestLabelMap:
