@@ -8,7 +8,8 @@ finds it and attaches its source ID. No duplicates.
 Matching cascade:
 1. Exact source ID — check if this source already claimed an event
 2. Cross-source ID — check if ANY source already claimed it via other ID columns
-3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both teams
+3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both teams,
+   skipping candidates that already hold a DIFFERENT game id from the incoming provider (#1779)
 4. Create — no match found, create new event
 """
 
@@ -177,11 +178,55 @@ async def _find_existing(
         session, sport_id,
         identity.home_team_name, identity.away_team_name,
         identity.commence_time,
+        identity.claim,
     )
     if event:
         return event
 
     return None
+
+
+# Which Event column holds each source's own game id. Sources absent from this
+# map (kalshi, polymarket) carry no per-game id column on ``events``, so the
+# disqualification below cannot speak about them at all — see #1779.
+_SOURCE_ID_COLUMN = {
+    "odds_api": "external_id",
+    "statpal": "statpal_fixture_id",
+    "espn": "espn_id",
+}
+
+
+def _holds_distinct_provider_game_id(candidate: Event, claim: EventClaim) -> bool:
+    """True when ``candidate`` already carries a DIFFERENT game id from this same provider.
+
+    #1779. The structured match's ±28h window is wider than the 24h gap between
+    consecutive games of a series, so the second game of a series name-matched the
+    first and was absorbed into it instead of being created. Nine MLB games vanished
+    and three rows were overwritten with the wrong day's score over Aug 10–12, 2026.
+
+    The window is deliberately NOT narrowed (Alex ruling 2026-08-12): it exists for
+    real cross-source date disagreements — a Kalshi settlement date sitting 24h off
+    the game start, UTC/local boundary crossings. Narrowing it would re-open those.
+
+    Instead we disqualify on identity. When the incoming claim's provider has already
+    named a DIFFERENT game id on a candidate row, that provider is itself telling us
+    these are two different games, and no amount of name-and-time similarity can
+    outvote it. Doubleheaders are safe by the same token: both games carry distinct
+    provider ids, so this separates them at least as reliably as the closest-by-time
+    tiebreaker did — and when neither row has an id yet, nothing is disqualified and
+    that tiebreaker still decides.
+
+    Note this can only ever compare a provider against ITSELF. Two ids from different
+    providers live in different id spaces and say nothing about each other, so a
+    candidate holding an odds_api id is not disqualified by an incoming ESPN claim.
+    """
+    column = _SOURCE_ID_COLUMN.get(claim.source)
+    if not column or not claim.source_id:
+        return False
+    existing = getattr(candidate, column, None)
+    if not existing:
+        return False
+    return str(existing) != str(claim.source_id)
 
 
 async def _find_by_source_id(
@@ -214,6 +259,7 @@ async def _find_by_structured_match(
     home_team: str,
     away_team: str,
     commence_time: datetime,
+    claim: Optional[EventClaim] = None,
 ) -> Optional[Event]:
     """Step 3: Find event by sport + date + team names.
 
@@ -221,6 +267,10 @@ async def _find_by_structured_match(
     ±_MATCH_WINDOW (28h), then scores each candidate using names_match().
     Requires BOTH teams to match (either in normal or swapped home/away
     orientation).
+
+    Candidates that already hold a distinct game id from the INCOMING claim's own
+    provider are disqualified first (#1779) — see
+    ``_holds_distinct_provider_game_id``.
 
     Uses a PostgreSQL advisory lock to prevent TOCTOU race conditions when
     concurrent workers (ESPN sync on realtime, Odds API on background) both
@@ -254,6 +304,17 @@ async def _find_by_structured_match(
     # match by team names, but the closer one wins.
     matches = []
     for candidate in candidates:
+        # #1779: the provider has already said this is a different game. Names and
+        # times cannot outvote an id, so drop the candidate before scoring it.
+        if claim is not None and _holds_distinct_provider_game_id(candidate, claim):
+            logger.debug(
+                "Structured match: disqualifying event %s — holds %s id %s, incoming %s",
+                candidate.id, claim.source,
+                getattr(candidate, _SOURCE_ID_COLUMN[claim.source], None),
+                claim.source_id,
+            )
+            continue
+
         matched = False
         # Normal orientation
         if (names_match(home_team, candidate.home_team_name) and
