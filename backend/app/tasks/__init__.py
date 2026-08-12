@@ -1452,9 +1452,27 @@ def check_ground_truth_health(self):
     return _tracked_run("ground_truth_health", _result())
 
 
-@celery_app.task(bind=True, name="app.tasks.precompute_interestingness")
+@celery_app.task(
+    bind=True,
+    name="app.tasks.precompute_interestingness",
+    soft_time_limit=240,
+)
 def precompute_interestingness(self):
-    """Precompute market interestingness scores and cache in Redis (every 2h)."""
+    """Precompute market interestingness scores and cache in Redis (every 2h).
+
+    ``soft_time_limit`` is DEFENCE, NOT THE FIX (LAT-P042, #1716). This task was
+    hard-killed 6/6 runs and the standing diagnosis blamed the global hard
+    ``task_time_limit=300``; measurement says otherwise — the pass takes ~15s
+    and dies at **515 MB RSS** on a 512 MB ``worker-background`` dyno. The real
+    repair is the keyset chunking in ``tasks/precompute_interestingness.py``.
+
+    The soft limit is still worth having, because it is the difference between
+    a future overrun that RAISES ``SoftTimeLimitExceeded`` — catchable, and
+    recorded by the end handler — and one that vanishes into a SIGKILL with no
+    duration, no failure, and no terminal, which is the state that let this go
+    unnoticed for months. 240s leaves 60s of headroom under the hard limit for
+    the handler to actually run.
+    """
     from app.tasks.precompute_interestingness import _precompute_interestingness
     return _tracked_run("precompute_interestingness", _precompute_interestingness())
 
