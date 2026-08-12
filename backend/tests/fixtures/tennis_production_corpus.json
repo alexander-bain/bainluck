@@ -1,0 +1,203 @@
+{
+  "_measured": "production api.bainluck.com, release v3788 (4cc023d3), 2026-08-12 PT",
+  "_query": "the exact corpus TennisEventAdapter.build_event sees: llm_sport_category='tennis' AND (status='open' OR (status IN ('resolved','closed','settled') AND resolution_date >= now() - 30 days)), narrowed to winner-shaped names (is_winner_market's regex, non-matchup).",
+  "_why": "UX-P066/#1793. Built from a MEASURED production payload, never from the code's assumption: cycle 64 shipped a fixture and a bug that were wrong together and the suite certified the agreement.",
+  "markets": [
+    {
+      "id": 58076256,
+      "name": "WTA 1000 Toronto: Winner",
+      "status": "open",
+      "volume_24h": 840,
+      "real_outcome_count": 89
+    },
+    {
+      "id": 57718620,
+      "name": "Cincinnati Open: Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 78
+    },
+    {
+      "id": 57718610,
+      "name": "ATP 1000 Montreal: Winner",
+      "status": "open",
+      "volume_24h": 3294,
+      "real_outcome_count": 69
+    },
+    {
+      "id": 58728642,
+      "name": "ATP Montreal Winner",
+      "status": "open",
+      "volume_24h": 67053,
+      "real_outcome_count": 46
+    },
+    {
+      "id": 114160,
+      "name": "2026 Women’s US Open Winner (Tennis)",
+      "status": "open",
+      "volume_24h": 33208,
+      "real_outcome_count": 41
+    },
+    {
+      "id": 34277822,
+      "name": "US Open Men's Singles Winner",
+      "status": "open",
+      "volume_24h": 17789,
+      "real_outcome_count": 33
+    },
+    {
+      "id": 58728792,
+      "name": "WTA Washington Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 31
+    },
+    {
+      "id": 58036886,
+      "name": "ATP Los Cabos Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 29
+    },
+    {
+      "id": 114159,
+      "name": "2026 Men’s US Open Winner (Tennis)",
+      "status": "open",
+      "volume_24h": 68734,
+      "real_outcome_count": 23
+    },
+    {
+      "id": 34277839,
+      "name": "US Open Women's Singles Winner",
+      "status": "open",
+      "volume_24h": 5855,
+      "real_outcome_count": 23
+    },
+    {
+      "id": 55686637,
+      "name": "2026 WTA Athens Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 58728643,
+      "name": "WTA Toronto Winner",
+      "status": "open",
+      "volume_24h": 42852,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 55686636,
+      "name": "ATP Umag Winner",
+      "status": "resolved",
+      "volume_24h": 2399,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 55686643,
+      "name": "ATP Gstaad Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 55686626,
+      "name": "ATP Bastad Winner",
+      "status": "resolved",
+      "volume_24h": 2501,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 58036887,
+      "name": "ATP Washington Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 16
+    },
+    {
+      "id": 56943666,
+      "name": "ATP Kitzbuhel Winner",
+      "status": "resolved",
+      "volume_24h": 6104,
+      "real_outcome_count": 15
+    },
+    {
+      "id": 55686627,
+      "name": "WTA Iasi Winner",
+      "status": "open",
+      "volume_24h": 280,
+      "real_outcome_count": 15
+    },
+    {
+      "id": 56943667,
+      "name": "WTA Prague Winner",
+      "status": "open",
+      "volume_24h": 1704,
+      "real_outcome_count": 14
+    },
+    {
+      "id": 34278504,
+      "name": "ATP S-Hertogenbosch Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 13
+    },
+    {
+      "id": 58728786,
+      "name": "WTA Memphis Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 12
+    },
+    {
+      "id": 34278501,
+      "name": "WTA London Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 11
+    },
+    {
+      "id": 56943663,
+      "name": "WTA Hamburg Winner",
+      "status": "open",
+      "volume_24h": 4837,
+      "real_outcome_count": 10
+    },
+    {
+      "id": 56943665,
+      "name": "ATP Estoril Winner",
+      "status": "resolved",
+      "volume_24h": 5675,
+      "real_outcome_count": 8
+    },
+    {
+      "id": 55742834,
+      "name": "WTA Nottingham Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 6
+    },
+    {
+      "id": 34278502,
+      "name": "WTA S-Hertogenbosch Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 4
+    },
+    {
+      "id": 52755891,
+      "name": "Serena Williams to Win a Tournament in 2026",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 1
+    },
+    {
+      "id": 55726789,
+      "name": "Serena and Venus Williams to win Wimbledon Doubles this year",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 1
+    }
+  ]
+}

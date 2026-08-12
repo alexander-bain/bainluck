@@ -42,6 +42,12 @@ _TENNIS_STOPWORDS = {
     "2027", "2028", "final", "title",
 }
 
+# A tournament's winner FIELD must have at least this many real competitors.
+# Two is the definition of a field, not a tuned number: one outcome is a yes/no
+# prop about a single named person. Measured production corpus 2026-08-12 —
+# legitimate fields 4..89, novelty props exactly 1. See `is_winner_field`.
+_MIN_FIELD_OUTCOMES = 2
+
 _MATCHUP_RE = re.compile(r"\b(vs\.?|v\.?|def\.?|beats?)\b", re.IGNORECASE)
 _WINNER_RE = re.compile(r"\b(winner|champion|champ|to win)\b", re.IGNORECASE)
 
@@ -62,16 +68,139 @@ def tournament_tokens(name: str | None) -> set[str]:
 
     "2026 Women's Wimbledon Winner" -> {"wimbledon"};
     "ATP S-Hertogenbosch Winner" -> {"hertogenbosch"} (len>=4 kept).
-    Used to associate child markets to the event."""
+    Used to associate CHILD markets to the event.
+
+    ⚠️ This is the CHILD-ASSOCIATION function (`shares_tournament`, and the
+    entrant/token fallback in `build_event`). Do NOT widen it to fix a canonical
+    resolution bug — that changes which props fold into every tennis event, a
+    blast radius no resolution fix needs. Canonical resolution uses
+    `canonical_tokens` below. (UX-P066 / #1793.)"""
     raw = re.sub(r"[^a-z0-9\s]", " ", (name or "").lower())
     toks = {t for t in raw.split() if len(t) >= 4 and t not in _TENNIS_STOPWORDS}
     return toks
+
+
+def canonical_tokens(name: str | None) -> set[str]:
+    """Tokens that IDENTIFY a tournament, for canonical slug resolution.
+
+    Identical to `tournament_tokens` except it does NOT drop short tokens, and
+    that difference is the entire point of this function.
+
+    #1793: `tournament_tokens("US Open Men's Singles Winner")` is `{"open"}` —
+    `us` is two characters so the `len >= 4` filter deletes it, `mens`/`singles`/
+    `winner` are stopwords. The identity of the US Open was therefore NOT
+    REPRESENTABLE: it reduced to the same single token as Cincinnati Open,
+    French Open and Australian Open. Since matching is a subset test
+    (`slug_tokens <= market_tokens`), a slug with FEWER tokens matches MORE
+    tournaments — so degrading the slug WIDENED the blast radius instead of
+    narrowing it, and `event:tennis:us-open-2026` served "Cincinnati Open"
+    (measured in production 2026-08-12; Cincinnati's 78-player draw simply
+    outranked the US Open's own 41).
+
+    A length filter is a reasonable way to drop noise from a display name. It is
+    not a safe way to derive an identity, because short words are exactly where
+    short names live."""
+    raw = re.sub(r"[^a-z0-9\s]", " ", (name or "").lower())
+    return {t for t in raw.split() if t not in _TENNIS_STOPWORDS}
+
+
+def canonical_slug_tokens(slug: str | None) -> set[str]:
+    """`canonical_tokens` for a URL slug (hyphen-separated, already lowercase)."""
+    return {t for t in (slug or "").split("-") if t and t not in _TENNIS_STOPWORDS}
+
+
+def is_winner_field(name: str | None, real_outcome_count: int) -> bool:
+    """True when a market can be a tournament's PRIMARY winner field.
+
+    `is_winner_market` only asks whether the NAME sounds like a win, and its
+    `to win` arm makes any prop about a named person eligible. That is how
+    `event:tennis:wimbledon-2026` came to serve "Serena and Venus Williams to
+    win Wimbledon Doubles this year", and how `/hub/tennis` came to link
+    "Serena Williams to Win a Tournament in 2026" as though it were a
+    tournament (both measured in production 2026-08-12).
+
+    A FIELD needs a field: at least two competitors who could win it. This is a
+    definition, not a tuned threshold — a one-outcome market is a yes/no prop
+    about one named person, which is categorically not a tournament draw.
+    Measured against the full production corpus the same day: every one of the
+    26 legitimate tournament fields had **4 to 89** outcomes, and both novelty
+    props had exactly **1**. (UX-P066 / #1793.)"""
+    return is_winner_market(name) and real_outcome_count >= _MIN_FIELD_OUTCOMES
 
 
 def shares_tournament(name: str | None, tokens: set[str]) -> bool:
     if not tokens:
         return False
     return bool(tournament_tokens(name) & tokens)
+
+
+def select_winner_field(markets, slug: str, real_outcome_count):
+    """Pick the market that IS the tournament named by `slug`, or None.
+
+    Canonical resolution (L2-65 Item 2): collect every winner FIELD whose slug
+    matches (exact `clean_slug` OR identity-token subset), then take the RICHEST.
+    A bare or differently-named-per-source slug ("toronto", "wta-toronto-winner")
+    therefore lands on the fullest field for THAT tournament — e.g. the Polymarket
+    51-player draw rather than a sparse Kalshi one — so shared links converge. A
+    gendered slug never crosses genders (the gender words are stopwords, so it is
+    guarded explicitly).
+
+    Extracted from `build_event` by UX-P066 so the identity rule can be driven
+    directly, without a database, against a real production corpus. `markets` is
+    any iterable of objects carrying `.name`, `.id` and `.volume_24h`;
+    `real_outcome_count` is a callable returning a market's real competitor count.
+
+    Returning None is a first-class answer and the whole point of #1793: a slug
+    that names no tournament we hold must 404, never resolve to a neighbour.
+    """
+    from app.utils.name_normalization import clean_slug
+
+    slug_gender = tennis_gender(slug)
+    # #1793: IDENTITY tokens, not `tournament_tokens`. The child-association token
+    # space drops short words, which deleted the only word identifying the US Open.
+    slug_tokens = canonical_slug_tokens(slug)
+
+    candidates = []
+    for m in markets:
+        if not is_winner_market(m.name):
+            continue
+        exact = clean_slug(m.name or "") == slug
+        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)
+        if not (exact or subset):
+            continue
+        # #1793: the field floor guards INFERENCE, not a direct request.
+        #
+        # An EXACT slug match is the caller naming this market — search and
+        # typeahead both emit `event:tennis:{clean_slug(name)}` for any winner
+        # market (`routes/events.py:3307`, `:4033`, `utils/concept_links.py:235`),
+        # and production really does return
+        # `event:tennis:serena-williams-to-win-a-tournament-in-2026` for the query
+        # "serena". Refusing those would turn a wrong page into a DEAD link — a
+        # broken shelf, which is not an improvement.
+        #
+        # A SUBSET match is the resolver INFERRING that this market represents the
+        # tournament the slug named, and that is where the damage was: a
+        # one-outcome novelty prop stood in as Wimbledon's primary, because
+        # `is_winner_market` only reads the words in a name. Inference has to clear
+        # the higher bar.
+        if not exact and not is_winner_field(m.name, real_outcome_count(m)):
+            continue
+        if slug_gender:
+            mg = tennis_gender(m.name)
+            if mg and mg != slug_gender:
+                continue
+        candidates.append(m)
+
+    if not candidates:
+        return None
+
+    # Richest wins: most real competitors, then higher 24h volume, then an
+    # exact-slug match, then lowest id (stable / deterministic).
+    def _rank(m):
+        vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
+        return (real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
+
+    return max(candidates, key=_rank)
 
 
 def tennis_gender(text: str | None) -> str:
@@ -154,9 +283,16 @@ async def list_tennis_tournament_concepts(
     # (which share the token) stay distinct concepts with distinct slugs.
     groups: dict[frozenset, list] = {}
     for m in markets:
-        if not is_winner_market(m.name):
+        # #1793, both directions: the hub must not LINK what the adapter will not
+        # SERVE. `/hub/tennis` was linking "Serena Williams to Win a Tournament in
+        # 2026" as a tournament (measured in production 2026-08-12); with the
+        # primary guard in `build_event` and no guard here, that link would have
+        # become a 404 — the broken shelf, arriving via the rail.
+        if not is_winner_field(m.name, _real_count(m)):
             continue
-        toks = set(tournament_tokens(m.name))
+        # Group on the IDENTITY tokens the adapter resolves with, so the key this
+        # rail emits still converges with what `build_event` picks (L2-65).
+        toks = set(canonical_tokens(m.name))
         if not toks:
             continue
         g = tennis_gender(m.name)
@@ -242,17 +378,6 @@ class TennisEventAdapter:
         if not markets:
             return None
 
-        # Canonical resolution (L2-65 Item 2): collect ALL winner markets whose
-        # slug matches (exact clean_slug OR token-subset), then pick the RICHEST
-        # field. A bare/ambiguous slug ("wimbledon") — or a specific one whose name
-        # differs across sources — thus lands on the fullest market (e.g. the
-        # Polymarket 51-player field) instead of the first, sparse Kalshi one, so
-        # shared links converge. A gendered slug never crosses genders (the gender
-        # tokens are stopwords, so guard explicitly). The non-winner siblings fold
-        # in as children below via the existing entrant/token association.
-        slug_gender = tennis_gender(slug)
-        slug_tokens = {t for t in slug.split("-") if len(t) >= 4 and t not in _TENNIS_STOPWORDS}
-
         def _real_outcome_count(m) -> int:
             return sum(
                 1 for o in (m.outcomes or [])
@@ -260,27 +385,7 @@ class TennisEventAdapter:
                 and not is_placeholder_outcome_name(o.name)
             )
 
-        candidates = []
-        for m in markets:
-            if not is_winner_market(m.name):
-                continue
-            exact = clean_slug(m.name or "") == slug
-            subset = bool(slug_tokens) and slug_tokens <= tournament_tokens(m.name)
-            if not (exact or subset):
-                continue
-            if slug_gender:
-                mg = tennis_gender(m.name)
-                if mg and mg != slug_gender:
-                    continue
-            candidates.append(m)
-
-        # Richest wins: most real competitors, then higher 24h volume, then an
-        # exact-slug match, then lowest id (stable / deterministic).
-        def _rank(m):
-            vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
-            return (_real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
-
-        winner = max(candidates, key=_rank) if candidates else None
+        winner = select_winner_field(markets, slug, _real_outcome_count)
         if winner is None:
             return None
 
