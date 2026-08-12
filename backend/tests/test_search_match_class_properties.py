@@ -311,6 +311,22 @@ def test_p10_prominence_breaks_same_class_same_kind_ties_only():
     assert rank("bruins", [(prominent_fragment, "frag"), (plain_exact, "exact")])[0] == "exact"
 
 
+def test_p10b_mc2_is_a_PREFIX_match_not_a_containment_match():
+    """Found by a surviving mutation: swapping `startswith` for `in` changed
+    nothing any test could see.
+
+    MC2 exists for the typeahead case — the user is mid-way through the last
+    word — so it must anchor at the START of a name token. Containment would
+    quietly promote interior fragments into a class above MC3, which is the
+    fragment family this ruling exists to demote.
+    """
+    ev = Evidence(name="Super Bowling Night", kind="market")
+    # "bowl" IS a prefix of "bowling": MC2.
+    assert match_class("super bowl", ev) == MC2_LAST_TOKEN_PREFIX
+    # "owl" is INSIDE "bowling" but does not start it: MC2 must not apply.
+    assert match_class("super owl", ev) == MC3_PARTIAL_TOKENS
+
+
 def test_p11_folding_is_confined_to_mc1_and_below():
     plural = Evidence(name="Patriot")
     assert match_class("patriots", plural) == MC1_ALL_TOKENS
