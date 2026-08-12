@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.settledness import settled_under_assigned_state
 from app.utils.winner_field_selection import prefer_graded_winner_field
 
 # --- Name gates -------------------------------------------------------------
@@ -509,6 +510,13 @@ class CyclingEventAdapter:
             # forever. `or`, never a replacement — the race's assigned status can
             # only add settledness, so a stage mid-race decides exactly as before.
             #
+            # UX-P069 (Alex item 4c): this was the one leg fixed by a TRANSCRIBED
+            # expression rather than a shared path, and its test transcribed it
+            # too — so only an `inspect.getsource` assert bound the source. It now
+            # calls `settled_under_assigned_state`, the same authority the other
+            # four adapters use. `cycling_status` is a genuinely ASSIGNED term
+            # (source status + resolution date), not a second price test.
+            #
             # LATENT, NOT MEASURED, and recorded as such: every settled cycling
             # concept 404s in production today (`tour-de-france-2026`, `giro-2026`
             # both 404 on v3792), so unlike golf and combat this leg has no
@@ -522,7 +530,10 @@ class CyclingEventAdapter:
                 "prop_type": prop_type,
                 "source": m.source,  # data-only (audit); not rendered
                 "probability": round(lead_prob, 4) if lead_prob is not None else None,
-                "settled": event_status == "settled" or graded is not None,
+                "settled": settled_under_assigned_state(
+                    inferred=graded is not None,
+                    assigned_settled=event_status == "settled",
+                ),
                 "graded_winner": graded,
                 "outcomes": [
                     {

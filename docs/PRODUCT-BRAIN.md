@@ -1324,3 +1324,4 @@ failure this document already records happening twice.
 - [035](rulings/035-ratification-is-of-priority-never-diagnosis.md) — 2026-08-12 — Ratification is of PRIORITY, never of DIAGNOSIS; a root cause is a hypothesis (Alex)
 - [036](rulings/036-assigned-state-beats-inferred.md) — 2026-08-12 — Assigned STATE beats inferred; part-level inference is monotone and may only add settledness (Alex)
 - [037](rulings/037-a-certified-gate-run-is-not-voided-by-adjacency.md) — 2026-08-12 — A certified gate run is not voided to resolve a textual adjacency; the resolution travels to the Integrator (Alex)
+- [042](rulings/042-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)

@@ -815,6 +815,12 @@ def _completed_round_ceiling(
     **assigned** status, which is authoritative and was simply never consulted —
     ruling 031's assigned-beats-inferred applied to STATE rather than identity.
 
+    UX-P069: this is the same shape as `app.utils.settledness
+    .settled_under_assigned_state`, which the other five adapters now call, but over
+    an `int` ceiling rather than a `bool` — so it keeps its own `max()` instead of
+    being contorted into a shared boolean signature. Read that module for the
+    reasoning; the monotonicity argument below is identical.
+
     Combined with `max()`, never a replacement, and that is load-bearing: the
     terminal case can only ever RAISE the ceiling, so consulting it makes a round
     look MORE settled and never less. A tournament genuinely in play is

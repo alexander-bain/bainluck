@@ -39,6 +39,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.settledness import (
+    market_assigned_settled,
+    price_converged,
+    settled_under_assigned_state,
+)
+
 # Raw price at/above which a SETTLED marquee nominee is the crowned winner during
 # the is_winner grading-lag window (parity with tennis/f1 — display-only, never
 # authoritative, gotcha #21).
@@ -375,6 +381,30 @@ class AwardsEventAdapter:
         if event_status != "settled" and marquee_top >= _WON_PRICE_THRESHOLD:
             event_status = "settled"
 
+        # #1812: the ASSIGNED half of the above, captured BEFORE the price arm on
+        # the line above can contaminate it. `event_status` is not usable as a
+        # ruling-036 term precisely because that arm makes it price-derived — OR-ing
+        # the whole thing into a child would chain two inferences and introduce a
+        # NEW defect: one runaway favourite (a lock for Best Picture) would mark
+        # every other category settled while they are genuinely undecided.
+        # Monotonicity protects the direction, never the truth of the input.
+        #
+        # A graded marquee is authoritative (`is_winner`, gotcha #21) and a ceremony
+        # is ATOMIC IN TIME — one night, one venue, every category awarded together
+        # — so it legitimately settles siblings. The resolution-date arm is
+        # deliberately NOT promoted: this module's own comment above calls Kalshi
+        # award dates placeholders, and L2-88 is the precedent for what a trusted
+        # placeholder date does (it settled a tennis final that was still being
+        # played).
+        #
+        # THE LINE POSITION IS LOAD-BEARING, in both directions. Above it, the price
+        # arm has already contaminated `event_status` (line 375) but not `won`.
+        # BELOW it, the crown block writes `won = True` onto a price-settled leader
+        # — so reading `any(c["won"])` after that block would silently re-admit the
+        # very inference this term exists to exclude. Captured here, between the
+        # two, it is `is_winner` and nothing else. Do not move it.
+        ceremony_graded = any(c["won"] for c in competitors)
+
         # Crown the price-settled marquee leader during the grading-lag window
         # (read the RAW price before normalize dilutes it — parity with tennis/f1).
         if event_status == "settled" and not any(c["won"] for c in competitors):
@@ -392,7 +422,16 @@ class AwardsEventAdapter:
                 if outs and outs[0].current_probability is not None
                 else None
             )
-            settled = lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+            # #1812: assigned state beats inferred (ruling 036). A category that
+            # went to a genuine toss-up never converges, so it is exactly the one
+            # left rendering a live ladder after the ceremony. `ceremony_graded` is
+            # the atomic-in-time term; the market's own status/grade is the precise
+            # per-child one. OR-ed, never substituted — an upcoming ceremony has
+            # both False and this is bit-for-bit the old inference.
+            settled = settled_under_assigned_state(
+                inferred=price_converged(lead_prob),
+                assigned_settled=ceremony_graded or market_assigned_settled(m, outs),
+            )
             row = {
                 "market_id": m.id,
                 "market_name": clean_category_label(m.name),

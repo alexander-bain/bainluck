@@ -40,6 +40,12 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.settledness import (
+    market_assigned_settled,
+    price_converged,
+    settled_under_assigned_state,
+)
+
 # Raw price at/above which a SETTLED marquee candidate is the crowned winner during
 # the is_winner grading-lag window (parity with awards/tennis — display-only).
 _WON_PRICE_THRESHOLD = 0.97
@@ -347,7 +353,26 @@ class ElectionEventAdapter:
                 if outs and outs[0].current_probability is not None
                 else None
             )
-            settled = lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+            # #1812: assigned state beats inferred (ruling 036) — but this adapter
+            # gets the NARROWEST term of the six, and the reason is the interesting
+            # part of the whole class.
+            #
+            # An election is NOT atomic in time. A fight card, a golf tournament, a
+            # grand tour, a slam and a ceremony all conclude as one thing, so the
+            # parent's settlement legitimately settles its children. Races do not:
+            # they are decided independently and runoffs run WEEKS past election
+            # night, so a graded marquee race says nothing whatsoever about a
+            # down-ballot one. Passing the parent here would falsely settle live
+            # races — the exact information loss ruling 036's monotonicity is meant
+            # to prevent, arriving through the input rather than the operator.
+            #
+            # `event_status` is doubly unusable: it is price-derived too (the
+            # `marquee_top >= _WON_PRICE_THRESHOLD` arm above). So the term is this
+            # market's OWN status/grade and nothing else.
+            settled = settled_under_assigned_state(
+                inferred=price_converged(lead_prob),
+                assigned_settled=market_assigned_settled(m, outs),
+            )
             row = {
                 "market_id": m.id,
                 "market_name": clean_race_label(m.name),
