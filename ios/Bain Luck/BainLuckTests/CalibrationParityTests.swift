@@ -23,44 +23,70 @@ import XCTest
 /// diverges silently. Both are published here as data so the parity check reads
 /// numbers, not text."* This is the parity check that comment was written for.
 ///
-/// ## Why the numbers below are hard-coded rather than derived
+/// ## CAL-P043 (#1643): these numbers are now a RECORD, not this file's opinion
 ///
-/// Deriving the expectation from the same fixture the code reads would assert
-/// only that the code equals itself. These constants were computed
-/// INDEPENDENTLY (in Python, replicating `CalibrationMath`'s definitions from
-/// its source) against `CalibrationProdFixture`, and they reconcile with the
+/// The constants below are the contents of
+/// `fixtures/calibration/parity-record-2026-08-02.json`, the language-neutral
+/// artifact web is graded against too. That file is the whole fix for codex
+/// C236: native's figures need Swift to compute and web's need TypeScript, so
+/// the two can never meet inside one process — they meet in the record instead,
+/// and each side asserts in its own runner that it reproduces it.
+///
+/// `frontend/e2e/contract/calibrationSurfaceParity.contract.test.js` parses the
+/// constants below OUT OF THIS FILE and asserts they equal the record, so a
+/// value edited here without the record fails there, and a record edited without
+/// this file fails here. They are mirrored, not merely coincident.
+///
+/// (They are still literals rather than a file read. An XCTest reading a
+/// `#filePath`-relative JSON is host-filesystem-dependent; trading a verifiable
+/// duplicate for an unverifiable load path is a bad trade. Same reasoning as
+/// `CalibrationProdFixture`'s embed, whose byte-equality with the shared payload
+/// that same contract test also checks.)
+///
+/// Their provenance: computed INDEPENDENTLY in Python, replicating
+/// `CalibrationMath`'s definitions from its source, and reconciling with the
 /// figures `docs/CALIBRATION-EXIT-EXAM.md` item 2 reports from the same
 /// production response — 349,310 moved + 263,022 unchanged + 40,075
-/// not-applicable = 652,407 — which CAL-P025 derived separately, in TypeScript,
-/// from the live payload. Three independent routes to the same partition.
+/// not-applicable = 652,407 — which CAL-P025 derived separately in TypeScript.
 ///
 /// So a change that moves any number here is either a real behaviour change or a
 /// real bug, and in both cases the right response is to look, not to re-baseline.
 @MainActor
 final class CalibrationParityTests: XCTestCase {
 
-    // MARK: - What the 2026-08-02 production payload publishes
+    // MARK: - The record: what the 2026-08-02 production payload publishes
 
+    // Toggle-independent — facts about the payload and this build's judgement.
     private static let publishedPopulationVersion = "q267"
     private static let publishedGeneratedAt = "2026-08-02T03:23:54.886392+00:00"
     private static let publishedCacheStatus = "stale"
+    private static let publishedContractState = "match"
     private static let publishedMarkets = 534_269
 
     private static let publishedFullN = 652_407
-    private static let publishedCohortN = 389_385
     private static let publishedMovedN = 349_310
     private static let publishedUnchangedN = 263_022
     private static let publishedNotApplicableN = 40_075
 
-    private static let publishedECE = 1.542547
-    private static let publishedMCE = 1.450000
-    private static let publishedBrier = 0.164935
+    // The default cohort: `price_moved != false`, i.e. moved + not-applicable.
+    private static let defaultCohortN = 389_385
+    private static let defaultECE = 1.542547
+    private static let defaultMCE = 1.450000
+    private static let defaultBrier = 0.164935
 
-    private func prodModel() throws -> CalibrationViewModel {
+    // The toggle ON: every resolved outcome, including the never-moved ones.
+    private static let allCohortN = 652_407
+    private static let allECE = 1.261460
+    private static let allMCE = 1.240000
+    private static let allBrier = 0.163755
+
+    private func prodModel(includeThin: Bool = false) throws -> CalibrationViewModel {
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         let data = try dec.decode(CalibrationData.self, from: Data(CalibrationProdFixture.json.utf8))
-        return CalibrationViewModel(preloaded: data)
+        let vm = CalibrationViewModel(preloaded: data)
+        vm.includeThin = includeThin
+        return vm
     }
 
     // MARK: - The parity set
@@ -71,17 +97,58 @@ final class CalibrationParityTests: XCTestCase {
         XCTAssertEqual(p.populationVersion, Self.publishedPopulationVersion)
         XCTAssertEqual(p.generatedAt, Self.publishedGeneratedAt)
         XCTAssertEqual(p.cacheStatus, Self.publishedCacheStatus)
+        XCTAssertEqual(p.contractState, Self.publishedContractState)
         XCTAssertEqual(p.markets, Self.publishedMarkets)
 
         XCTAssertEqual(p.fullN, Self.publishedFullN)
-        XCTAssertEqual(p.cohortN, Self.publishedCohortN)
+        XCTAssertEqual(p.cohortN, Self.defaultCohortN)
         XCTAssertEqual(p.movedN, Self.publishedMovedN)
         XCTAssertEqual(p.unchangedN, Self.publishedUnchangedN)
         XCTAssertEqual(p.notApplicableN, Self.publishedNotApplicableN)
 
-        XCTAssertEqual(p.ece, Self.publishedECE, accuracy: 1e-6)
-        XCTAssertEqual(p.mce, Self.publishedMCE, accuracy: 1e-6)
-        XCTAssertEqual(p.brier, Self.publishedBrier, accuracy: 1e-6)
+        XCTAssertEqual(p.ece, Self.defaultECE, accuracy: 1e-6)
+        XCTAssertEqual(p.mce, Self.defaultMCE, accuracy: 1e-6)
+        XCTAssertEqual(p.brier, Self.defaultBrier, accuracy: 1e-6)
+    }
+
+    /// CAL-P043 (#1643): the OTHER cohort-toggle state, which nothing graded.
+    ///
+    /// C236 asked for the parity record on both states by name, and the reason
+    /// is concrete: a surface that renders the toggle but publishes the default
+    /// cohort's numbers in both states looks entirely plausible in a screenshot
+    /// and in every single-state assertion. Only a comparison BETWEEN the two
+    /// states shows the toggle is inert.
+    func testParityFiguresMatchTheRecordWithTheToggleOn() throws {
+        let p = try prodModel(includeThin: true).parity
+
+        // Toggle-independent facts must not move.
+        XCTAssertEqual(p.populationVersion, Self.publishedPopulationVersion)
+        XCTAssertEqual(p.contractState, Self.publishedContractState)
+        XCTAssertEqual(p.fullN, Self.publishedFullN)
+        XCTAssertEqual(p.movedN, Self.publishedMovedN)
+        XCTAssertEqual(p.unchangedN, Self.publishedUnchangedN)
+        XCTAssertEqual(p.notApplicableN, Self.publishedNotApplicableN)
+
+        // The cohort figures must.
+        XCTAssertEqual(p.cohortN, Self.allCohortN)
+        XCTAssertEqual(p.cohortN, p.fullN, "the toggle ON cohort IS the full population")
+        XCTAssertEqual(p.ece, Self.allECE, accuracy: 1e-6)
+        XCTAssertEqual(p.mce, Self.allMCE, accuracy: 1e-6)
+        XCTAssertEqual(p.brier, Self.allBrier, accuracy: 1e-6)
+    }
+
+    /// The two states must be distinguishable, or grading both proves nothing.
+    func testTheToggleActuallyMovesThePublishedRecord() throws {
+        let off = CalibrationSurfaceView.provenanceValue(try prodModel(includeThin: false).parity)
+        let on = CalibrationSurfaceView.provenanceValue(try prodModel(includeThin: true).parity)
+
+        XCTAssertNotEqual(off, on)
+        XCTAssertTrue(on.contains("cohort_n=\(Self.allCohortN)"), on)
+        XCTAssertTrue(off.contains("cohort_n=\(Self.defaultCohortN)"), off)
+        XCTAssertNotEqual(
+            Self.defaultECE, Self.allECE,
+            "if the two cohorts had the same ECE this whole comparison would be vacuous"
+        )
     }
 
     /// Web publishes `data-partition-reconciles` because the three activity
@@ -105,10 +172,15 @@ final class CalibrationParityTests: XCTestCase {
 
     /// The version the server sent and this build's JUDGEMENT about it are two
     /// different facts, and web keeps them in two attributes for that reason.
+    ///
+    /// CAL-P043 (#1643): the expected value is `"match"`, not `"matched"`. Native
+    /// used to publish its own spelling of web's vocabulary for the same field —
+    /// a live cross-surface divergence that only survived because the gate
+    /// claiming to compare the two surfaces never read a web value.
     func testContractStateIsPublishedSeparatelyFromTheVersion() throws {
         let p = try prodModel().parity
         XCTAssertEqual(p.populationVersion, Self.publishedPopulationVersion)
-        XCTAssertEqual(p.contractState, "matched")
+        XCTAssertEqual(p.contractState, "match")
     }
 
     func testAnUnknownPopulationIsPublishedAsMismatchedNotAsAbsent() throws {
@@ -121,7 +193,8 @@ final class CalibrationParityTests: XCTestCase {
         let data = try dec.decode(CalibrationData.self, from: Data(json.utf8))
         let p = CalibrationViewModel(preloaded: data).parity
 
-        XCTAssertEqual(p.contractState, "mismatched")
+        // Web's spelling for this state is "incompatible" (CAL-P043 / #1643).
+        XCTAssertEqual(p.contractState, "incompatible")
         // The version still travels. A refusing surface that ALSO hid which
         // population it refused would make the incident undiagnosable from the
         // outside — which is what the 2026-08-02 q299 rollback needed.
@@ -134,12 +207,35 @@ final class CalibrationParityTests: XCTestCase {
         let value = CalibrationSurfaceView.provenanceValue(try prodModel().parity)
 
         XCTAssertTrue(value.contains("population=q267"), value)
-        XCTAssertTrue(value.contains("contract=matched"), value)
+        XCTAssertTrue(value.contains("contract=match"), value)
         XCTAssertTrue(value.contains("cache=stale"), value)
         XCTAssertTrue(value.contains("generated=2026-08-02T03:23:54.886392+00:00"), value)
         XCTAssertTrue(value.contains("cohort_n=389385"), value)
         XCTAssertTrue(value.contains("full_n=652407"), value)
         XCTAssertTrue(value.contains("reconciles=true"), value)
+
+        // CAL-P043 (#1643): the descriptor now carries the whole record, so the
+        // figures a reader most wants to compare across surfaces are readable
+        // without rasterising the view. Web publishes the identical keys in the
+        // identical order as `data-parity`.
+        XCTAssertTrue(value.contains("moved_n=\(Self.publishedMovedN)"), value)
+        XCTAssertTrue(value.contains("unchanged_n=\(Self.publishedUnchangedN)"), value)
+        XCTAssertTrue(value.contains("not_applicable_n=\(Self.publishedNotApplicableN)"), value)
+        XCTAssertTrue(value.contains("markets=\(Self.publishedMarkets)"), value)
+        XCTAssertTrue(value.contains("ece=1.5425"), value)
+        XCTAssertTrue(value.contains("mce=1.4500"), value)
+        XCTAssertTrue(value.contains("brier=0.1649"), value)
+
+        // Raw, never display-formatted: no "pp" UNIT suffix on any value and no
+        // thousands separators anywhere.
+        //
+        // Checked as a suffix rather than as a substring, because the key
+        // `not_applicable_n` legitimately contains "pp" — a substring check here
+        // failed on the real record the first time this test was run.
+        for field in value.split(separator: " ") {
+            XCTAssertFalse(field.hasSuffix("pp"), "\(field) carries a display unit")
+        }
+        XCTAssertFalse(value.contains(","), value)
     }
 
     /// An absent payload must not publish a confident-looking zero. `n=0` and

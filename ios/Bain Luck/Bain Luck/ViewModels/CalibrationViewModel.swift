@@ -534,8 +534,23 @@ final class CalibrationViewModel: ObservableObject {
     var parity: Parity {
         let state: String
         switch populationVersionState {
-        case .matched: state = "matched"
-        case .mismatched: state = "mismatched"
+        // CAL-P043 (#1643): these are WEB'S spellings, not native's own.
+        //
+        // Native published "matched"/"mismatched" while web published
+        // "match"/"incompatible" for the same payload and the same field name —
+        // a real cross-surface divergence that survived because the gate which
+        // claimed to compare the two surfaces never read a web value (codex
+        // C236). Web's vocabulary wins because it is the one that ships
+        // publicly and the one the browser-audit rail grades on
+        // (`e2e/specs/calibration.spec.ts` requires the rendered state to be
+        // "match" or "unverified").
+        //
+        // Web has a fourth state, "malformed", for a `population_version` that
+        // is present but not a string. It is unreachable here: the field
+        // decodes as `String?`, so a non-string payload fails decoding long
+        // before it reaches this switch. Absent by construction, not omitted.
+        case .matched: state = "match"
+        case .mismatched: state = "incompatible"
         case .unverified: state = "unverified"
         }
         return Parity(

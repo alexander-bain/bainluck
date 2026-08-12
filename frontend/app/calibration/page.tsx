@@ -19,6 +19,17 @@ import {
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+// CAL-P043 (#1643): the page's bucket math and its parity record live in one
+// module so a gate can call the code the page actually renders from. They used
+// to be private functions in this file, which is why the cross-surface gate had
+// nothing to compare against but a constant.
+import {
+  aggregateBuckets,
+  brierScore,
+  buildCalibrationParity,
+  cohortFilterFor,
+  parityValue,
+} from "@/lib/calibrationParity";
 import {
   decideCalibrationContract,
   CONTRACT_REFUSAL_MESSAGE,
@@ -116,62 +127,6 @@ interface DrillInState {
   note?: string | null;
 }
 
-interface AggBucket {
-  midpoint: number;
-  n: number;
-  winners: number;
-  avgProb: number;
-  actual: number;
-  error: number;
-  bucket: string;
-  ciLower: number;
-  ciUpper: number;
-}
-
-function wilsonCI(wins: number, total: number, z = 1.96): [number, number] {
-  if (total === 0) return [0, 0];
-  const p = wins / total;
-  const denom = 1 + (z * z) / total;
-  const center = (p + (z * z) / (2 * total)) / denom;
-  const spread = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total)) / denom;
-  return [Math.max(0, center - spread), Math.min(1, center + spread)];
-}
-
-function aggregateBuckets(
-  buckets: CalibrationBucket[],
-  filter?: (b: CalibrationBucket) => boolean
-): AggBucket[] {
-  const agg: Record<number, { n: number; winners: number; sumProb: number; sumSqErr: number }> = {};
-  for (const b of buckets) {
-    if (filter && !filter(b)) continue;
-    const idx = b.bucket_idx;
-    if (!agg[idx]) agg[idx] = { n: 0, winners: 0, sumProb: 0, sumSqErr: 0 };
-    agg[idx].n += b.n;
-    agg[idx].winners += b.winners;
-    agg[idx].sumProb += b.sum_prob;
-    agg[idx].sumSqErr += b.sum_sq_err;
-  }
-  return Object.entries(agg)
-    .map(([idx, a]) => {
-      const i = parseInt(idx);
-      const avgProb = a.sumProb / a.n;
-      const actual = a.winners / a.n;
-      const [ciLo, ciHi] = wilsonCI(a.winners, a.n);
-      return {
-        midpoint: i * 10 + 5,
-        n: a.n,
-        winners: a.winners,
-        avgProb: Math.round(avgProb * 1000) / 10,
-        actual: Math.round(actual * 1000) / 10,
-        error: Math.round((actual - avgProb) * 1000) / 10,
-        bucket: `${i * 10}-${i * 10 + 10}%`,
-        ciLower: Math.round(ciLo * 1000) / 10,
-        ciUpper: Math.round(ciHi * 1000) / 10,
-      };
-    })
-    .sort((a, b) => a.midpoint - b.midpoint);
-}
-
 /** Queue 297: how old a served last-good snapshot is, in plain words. */
 function formatAge(seconds: number): string {
   if (seconds < 90) return "moments";
@@ -180,16 +135,6 @@ function formatAge(seconds: number): string {
   const hours = Math.round(seconds / 3600);
   if (hours < 48) return `${hours} hr`;
   return `${Math.round(seconds / 86400)} days`;
-}
-
-function brierScore(buckets: CalibrationBucket[], filter?: (b: CalibrationBucket) => boolean): number {
-  let n = 0, sq = 0;
-  for (const b of buckets) {
-    if (filter && !filter(b)) continue;
-    n += b.n;
-    sq += b.sum_sq_err;
-  }
-  return n > 0 ? sq / n : 0;
 }
 
 export default function CalibrationPage() {
@@ -275,10 +220,10 @@ export default function CalibrationPage() {
   // consensus (null, always a live line, where "did trading move the price" is
   // not a question the source can answer). The toggle layers the excluded side
   // back in. The predicate is unchanged by L2-236 — only what we CALL it is.
-  const cohortFilter = useMemo<((b: CalibrationBucket) => boolean) | undefined>(() => {
-    if (includeNeverMoved) return undefined;
-    return (b: CalibrationBucket) => b.price_moved !== false;
-  }, [includeNeverMoved]);
+  // CAL-P043: the predicate is `cohortFilterFor`'s, shared with the parity
+  // record and mirrored by native, so the population this page renders and the
+  // population it publishes cannot be two different things.
+  const cohortFilter = useMemo(() => cohortFilterFor(includeNeverMoved), [includeNeverMoved]);
   const fullN = useMemo(() =>
     normalized ? normalized.reduce((s, b) => s + b.n, 0) : 0, [normalized]);
   const cohortBuckets = useMemo(() =>
@@ -365,6 +310,20 @@ export default function CalibrationPage() {
   // and the dated-degraded banner is a tested table rather than the order two
   // JSX conditionals happen to sit in. Last hook before the conditional returns.
   const contract = useMemo(() => decideCalibrationContract(data), [data]);
+
+  // CAL-P043 (#1643): the complete cross-surface parity record, built by the
+  // same module the figures above come from and published below as `data-parity`
+  // in native's grammar. Before this, web published these facts as a dozen
+  // separate attributes and native published a single structured string, so the
+  // two surfaces could not be compared without a translation table — and the
+  // gate that claimed to compare them read neither (codex C236).
+  //
+  // Kept beside `contract` because it consumes the contract decision and both
+  // must sit above the conditional returns.
+  const parity = useMemo(
+    () => (data ? buildCalibrationParity(data, includeNeverMoved, contract.state) : null),
+    [data, includeNeverMoved, contract.state],
+  );
 
   if (error) {
     // Queue 297 Item 1: the backend now answers a genuine outage with a TYPED
@@ -483,6 +442,12 @@ export default function CalibrationPage() {
          means the payload named no population at all and is rendered without
          that claim. A refusal never reaches this element. */
       data-contract-state={contract.state}
+      /* CAL-P043 (#1643): the COMPLETE parity record, in the same `key=value`
+         grammar native publishes as the surface's accessibilityValue. Raw
+         values only — a formatted figure ("1.5pp", "652,407") is a presentation
+         decision, and a cross-surface check that compared those would fail on a
+         thousands separator and pass on a wrong number. */
+      data-parity={parity ? parityValue(parity) : ""}
     >
       {/* Queue 297 Item 1: when we are serving a last-good snapshot rather than a
           current one, say so and date it. A stale curve is fine; a stale curve
@@ -546,11 +511,19 @@ export default function CalibrationPage() {
             testId="calibration-stat-outcomes"
             detail={cohort.statDetail} />
         </div>
-        <StatCard label="Calibration Error (ECE)"
-          testId="calibration-stat-ece"
-          value={`${cohortECE.toFixed(1)}pp`}
-          detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
-          valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
+        {/* CAL-P043 (#1643): MCE used to exist on this surface ONLY inside the
+            detail PROSE — "worst-bucket (MCE) 1.5pp" — while native published
+            ECE and MCE as two raw numbers. Same figure, two incomparable
+            protocols behind matching hook names, which is codex C236's second
+            P1. Both are published as raw data here. */}
+        <div data-testid="calibration-stat-ece-figures"
+          data-ece={cohortECE} data-mce={cohortMCE}>
+          <StatCard label="Calibration Error (ECE)"
+            testId="calibration-stat-ece"
+            value={`${cohortECE.toFixed(1)}pp`}
+            detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
+            valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
+        </div>
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
           testId="calibration-stat-brier"
           detail="0 = oracle, lower = better" />
