@@ -15,15 +15,17 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-final-scores | resolved-shape-census
              | winner-field-coherence | reachability-census
              | prop-threshold-cliff-census | overlap-trading-census
-             | winner-field-repair }
+             | winner-field-repair | statpal-blank-ids }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
-     handoff file over the ref)
+     handoff file over the ref. Re-synced 2026-08-12 with the registry; if you
+     add a repair, add it HERE in the same commit — a third drift would prove
+     the comment above was decoration.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
-``offset`` also accept those as query params; the dispatcher passes through only
-what a given repair's signature actually names.
+``offset`` / ``expected_blank`` also accept those as query params; the dispatcher
+passes through only what a given repair's signature actually names.
 
 Auth: Bearer $ADMIN_TOKEN (or ?secret=). Dry-run is the default — you must pass
 apply=true to write. Each repair's core is a session-taking ``repair()``/
@@ -100,6 +102,20 @@ _REPAIRS = {
     # so the cap cannot be dialled off mid-run. Accepts ?limit=&offset=.
     # ATTENDED ONLY: never wire this to a beat.
     "winner-field-repair": ("app.tasks.repair_winner_field", "repair"),
+    # Queue 340: ``events.statpal_fixture_id = ''`` -> NULL. 8,272 rows spell
+    # "no StatPal id" as an empty string instead of NULL, so every
+    # ``IS NOT NULL`` / ``COUNT(col)`` reader over-reports StatPal coverage and
+    # the column can never carry a unique index. Bounded id-RANGE batches with a
+    # commit each (``events`` is hot). EXACT-MATCH GATE: refuses to apply unless
+    # the live before-census blank count equals ``expected_blank`` (default
+    # 8272, measured 2026-08-12) — a drifted census means a different
+    # population, so the refusal is returned in the result dict, not raised.
+    # A deadline-stopped run must be resumed with the NEW count, which is why
+    # ``expected_blank`` is a passthrough param.
+    # OUT OF SCOPE: the 8 duplicate real statpal ids (16 rows) are REPORTED with
+    # their event ids and never written — clearing them is attended, by-name
+    # work, and until it lands the column still cannot be made unique.
+    "statpal-blank-ids": ("scripts.repair_statpal_fixture_id_blanks", "repair"),
 }
 
 
@@ -113,6 +129,11 @@ async def run_repair(
     sport: str = Query(None, description="Optional sport-key filter, for repairs that accept one"),
     newest_first: bool = Query(None, description="Optional ordering, for repairs that accept it"),
     offset: int = Query(None, description="Optional resume cursor, for repairs that page"),
+    expected_blank: int = Query(
+        None,
+        description="Exact-match census gate, for repairs that require one "
+                    "(statpal-blank-ids). Omit to use the repair's measured default.",
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run a committed data repair and return its before/after census.
@@ -142,6 +163,7 @@ async def run_repair(
         for k, v in (
             ("limit", limit), ("sport", sport),
             ("newest_first", newest_first), ("offset", offset),
+            ("expected_blank", expected_blank),
         )
         if v is not None and k in accepted
     }
