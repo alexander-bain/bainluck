@@ -396,3 +396,113 @@ class TestTheCounterCannotDriftBackIntoTheTaskBody:
         early = [r for r in ast.walk(fn)
                  if isinstance(r, ast.Return) and r.lineno < first_tracked]
         assert early, "poll_all_odds no longer self-gates — re-read LAT-P039"
+
+
+# ---------------------------------------------------------------------------
+# LAT-P043 (codex C-RV-1, #1802) — an ATTEMPT is not a DELIVERY
+#
+# `task_prerun` fires before every execution attempt. LAT-P039 counted all of
+# them, so a retrying beat task manufactured up to `max_retries + 1` deliveries
+# out of one scheduled fire — inflating precisely the denominator that would
+# otherwise have exposed the missed schedule. Three beat-scheduled tasks retry
+# (`sync_sports`, `discover_events`, and the 30s `poll_all_odds`), and
+# `poll_all_odds` is the task this whole surface was built to grade.
+#
+# The same receiver was also blind to `task_always_eager`: an in-process call
+# with no broker and no publication counted as schedule evidence.
+#
+# Both are the original defect wearing a different hat — a fact about the TASK
+# read as a fact about the SCHEDULER (gotcha #53).
+# ---------------------------------------------------------------------------
+
+
+class _FakeRequest:
+    def __init__(self, retries=0, is_eager=False):
+        self.retries = retries
+        self.is_eager = is_eager
+
+
+class _FakeTask:
+    def __init__(self, name="app.tasks.poll_all_odds", request=None):
+        self.name = name
+        if request is not None:
+            self.request = request
+
+
+def _run_handler(monkeypatch, **request_kwargs):
+    """Fire the real `task_prerun` receiver and return what it recorded."""
+    import app.tasks as tasks_module
+    import app.tasks.redis_state as redis_state
+
+    recorded = []
+    monkeypatch.setattr(
+        redis_state, "record_task_delivery", lambda name: recorded.append(name)
+    )
+    sender = _FakeTask(request=_FakeRequest(**request_kwargs))
+    tasks_module._record_delivery(sender=sender, task=sender)
+    return recorded
+
+
+class TestAnAttemptIsNotADelivery:
+    def test_first_attempt_is_recorded(self, monkeypatch):
+        assert _run_handler(monkeypatch) == ["app.tasks.poll_all_odds"]
+
+    def test_retry_attempt_is_not_recorded(self, monkeypatch):
+        # The measured shape: celery emits prerun twice for one retrying task,
+        # same task id, `retries` 0 then 1. Only the first crossed the beat.
+        assert _run_handler(monkeypatch, retries=1) == []
+
+    def test_exhausted_retries_are_not_recorded_either(self, monkeypatch):
+        assert _run_handler(monkeypatch, retries=3) == []
+
+    def test_eager_execution_is_not_recorded(self, monkeypatch):
+        # No broker, no publication — an eager run against a shared Redis must
+        # not write schedule evidence.
+        assert _run_handler(monkeypatch, is_eager=True) == []
+
+    def test_an_unreadable_request_still_records(self, monkeypatch):
+        # Fail toward counting. If celery ever changes the request shape, an
+        # upper bound is a worse number than the truth but a far better one
+        # than a silent zero, which would read as "the beat stopped".
+        import app.tasks as tasks_module
+        import app.tasks.redis_state as redis_state
+
+        recorded = []
+        monkeypatch.setattr(
+            redis_state, "record_task_delivery", lambda name: recorded.append(name)
+        )
+        sender = _FakeTask()  # no `request` attribute at all
+        tasks_module._record_delivery(sender=sender, task=sender)
+        assert recorded == ["app.tasks.poll_all_odds"]
+
+    def test_the_retrying_beat_tasks_this_protects_still_retry(self):
+        # If these stop retrying the guard is not wrong, but the reason it was
+        # written should not vanish silently with them.
+        tree, _ = _tasks_module_ast()
+        retrying = set()
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            for c in ast.walk(fn):
+                if isinstance(c, ast.Call) and getattr(c.func, "attr", None) == "retry":
+                    retrying.add(fn.name)
+        assert {"sync_sports", "discover_events", "poll_all_odds"} & retrying, (
+            "no beat-scheduled task retries any more — re-read C-RV-1"
+        )
+
+
+class TestTheAttemptFilterCannotBeDroppedSilently:
+    def test_the_receiver_consults_retries_and_eager(self):
+        # Structural, because the behavioural tests above pass a fake request:
+        # deleting the filter would be caught by them, but reading the WRONG
+        # celery field would not be, and this pins the field names.
+        tree, _ = _tasks_module_ast()
+        handlers = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef)
+            and any("task_prerun" in ast.dump(d) for d in n.decorator_list)
+        ]
+        assert handlers, "no function is connected to task_prerun"
+        src = " ".join(ast.dump(h) for h in handlers)
+        assert "retries" in src, "the prerun receiver no longer filters retries"
+        assert "is_eager" in src, "the prerun receiver no longer filters eager runs"

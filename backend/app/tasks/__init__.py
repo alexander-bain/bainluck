@@ -374,6 +374,27 @@ except Exception:  # pragma: no cover - defensive
 # Wrapped defensively for the same reason as the heartbeat above: a signal-API
 # change must never block worker startup, and observability must never be why a
 # task fails to start.
+#
+# LAT-P043 (codex C-RV-1, #1802): `task_prerun` fires before every EXECUTION
+# ATTEMPT, and two kinds of attempt are not a beat fire:
+#
+#   * A RETRY. `self.retry()` re-publishes the same task id from inside the
+#     body, so a failing beat task manufactures up to `max_retries + 1`
+#     deliveries out of one scheduled fire — inflating the denominator that
+#     hides the missed schedule. `sync_sports`, `discover_events` and the 30s
+#     `poll_all_odds` all retry, and `poll_all_odds` is the task the surface
+#     exists to grade.
+#   * An EAGER call. `task_always_eager` executes in-process with no broker and
+#     no publication at all. Not enabled in production, but a local or test
+#     run against a shared Redis would write schedule evidence for a fire that
+#     never crossed a wire.
+#
+# Both are the same shape as the defect this counter was built to fix: a fact
+# about the TASK read as a fact about the SCHEDULER. The residual boundary is
+# named rather than papered over — a manual `.delay()` is indistinguishable
+# from a beat publication at this signal, because celery beat stamps nothing on
+# the message that says so. Deliveries are therefore "broker publications this
+# process consumed, first attempt only", which is an upper bound on beat fires.
 try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     from celery.signals import task_prerun as _task_prerun
 
@@ -383,6 +404,16 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
             from app.tasks.redis_state import record_task_delivery
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
+            request = getattr(sender, "request", None)
+            if request is None:
+                request = getattr(task, "request", None)
+            # An unreadable request must not silently zero the counter: the
+            # count is the point, and losing it is worse than an upper bound.
+            if request is not None:
+                if (getattr(request, "retries", 0) or 0) > 0:
+                    return
+                if getattr(request, "is_eager", False):
+                    return
             record_task_delivery(name)
         except Exception:
             pass

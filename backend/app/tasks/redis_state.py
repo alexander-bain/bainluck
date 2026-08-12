@@ -617,6 +617,19 @@ def record_task_delivery(full_task_name: str):
     delivery actually is — before any body, before any gate, for every task —
     so "the beat fired" and "the task worked" stop being the same number.
 
+    What a delivery is NOT — LAT-P043 (codex C-RV-1, #1802). ``task_prerun``
+    fires before every execution ATTEMPT, so the caller filters two of them out
+    before reaching here: a **retry** (``request.retries > 0``) is a re-publish
+    the task body asked for, not a beat fire, and a failing task could otherwise
+    manufacture ``max_retries + 1`` deliveries from one scheduled fire — padding
+    exactly the denominator that would have exposed it; and an **eager** call
+    (``request.is_eager``) never crossed a broker at all. The residual, stated
+    rather than hidden: a manually dispatched run is indistinguishable from a beat
+    publication at this signal, because beat stamps nothing on the message. So
+    this counts *first-attempt broker deliveries*, which is an upper bound on
+    beat fires — and it is an upper bound whose remaining slack is human-driven
+    and rare, not one the scheduler's own failures inflate.
+
     Deliberately the cheapest possible write, and best-effort like every other
     recorder here: it runs before every task in the system, so it must never be
     the reason one fails to start.
