@@ -41,6 +41,20 @@ _SOURCE_PRIORITY = {
 # dates that are 24h off from game start, and UTC/local date boundary issues)
 _MATCH_WINDOW = timedelta(hours=28)  # Wide enough for cross-source date disagreements (Kalshi settlement vs game start)
 
+# How far two SCHEDULE sources may disagree about one game's start before we stop
+# believing they are describing the same game (#1802, Codex C-CERT-1801).
+#
+# The ±28h window above is a statement about SETTLEMENT dates, not start times: a
+# Kalshi settlement date legitimately sits 24h off the first pitch. But once a row
+# has been individuated by a schedule provider, the incoming claim's own start time
+# is real evidence, and 24h of disagreement is not a timezone — it is tomorrow's game.
+#
+# Two hours: comfortably above any genuine cross-provider disagreement (they publish
+# the same scheduled start; a TV move or an early rain-delay correction is the
+# realistic worst case), and comfortably below both the ~3h that separates a
+# doubleheader's second game and the 24h of a consecutive-day series.
+_CROSS_PROVIDER_SAME_GAME_WINDOW = timedelta(hours=2)
+
 # Maximum retries on IntegrityError (race condition between concurrent tasks)
 _MAX_RETRIES = 2
 
@@ -229,6 +243,82 @@ def _holds_distinct_provider_game_id(candidate: Event, claim: EventClaim) -> boo
     return str(existing) != str(claim.source_id)
 
 
+def _individuating_provider_ids(candidate: Event) -> dict[str, str]:
+    """Every schedule provider's game id this candidate already carries.
+
+    A row holding any of these has been *individuated*: some provider looked at the
+    schedule and said "this specific game". Which provider it was does not matter for
+    the question below — only that the row is not an anonymous name-and-time shell.
+    """
+    held: dict[str, str] = {}
+    for source, column in _SOURCE_ID_COLUMN.items():
+        value = getattr(candidate, column, None)
+        if value:
+            held[source] = str(value)
+    return held
+
+
+def _is_a_different_scheduled_game(
+    candidate: Event,
+    claim: Optional[EventClaim],
+    commence_time: datetime,
+) -> bool:
+    """True when an already-individuated candidate is plainly a DIFFERENT game.
+
+    #1802 (Codex C-CERT-1801). ``_holds_distinct_provider_game_id`` can only ever
+    compare a provider against ITSELF, and treats that as a virtue. It is a real
+    guard, but it leaves the incident open from the other side: when the candidate
+    does not yet carry the INCOMING provider's id, the predicate returns False and
+    the structured matcher happily accepts any same-teams row anywhere in ±28h.
+
+    **Absence of the incoming provider's id was being read as evidence of sameness.**
+    It is not. An empty column means "this provider has not spoken about this row",
+    never "this row is the game you are describing" — the same shape as gotcha #53,
+    where an empty 200 was read as a fact about the market instead of a response
+    shape. So an Aug 10 row carrying only ``external_id`` absorbed an Aug 11 StatPal
+    claim, took its id, and was dragged a day forward: #1779 reproduced end to end
+    through a provider ordering nobody had tested.
+
+    The rule, per Alex's ruled bar (2026-08-12) — *no absorption of a distinct
+    scheduled game, regardless of which provider the claim arrives from*:
+
+        A candidate that some schedule provider has already individuated may only
+        take a new claim if the two agree about WHEN the game is.
+
+    Deliberately asymmetric, and the asymmetry is the point. Refusing a true match
+    costs a duplicate row — visible, and already drained by the 30-minute merge task.
+    Accepting a false one destroys a game AND corrupts the survivor, which is #1779:
+    the missing game is never created, and the row that ate it carries the wrong
+    day's score. Those are not comparable, so this errs toward creating.
+
+    Three cases deliberately left alone:
+
+    * **Never-individuated candidates** (no provider id at all) — the wide window and
+      the closest-by-time tiebreaker still decide, exactly as before. Prediction-market
+      auto-creates that collapse onto a shared ``now`` live here.
+    * **The incoming provider's own id, matching** — identity beats the clock. A rain
+      delay that moves a game four hours must still find its own row on the next poll.
+    * **Same provider, different id** — already disqualified by
+      ``_holds_distinct_provider_game_id`` regardless of time. Untouched.
+    """
+    held = _individuating_provider_ids(candidate)
+    if not held:
+        return False
+
+    # Identity beats the clock: the provider naming this exact game outranks any
+    # amount of start-time drift, so a re-poll of a moved game still matches.
+    if claim is not None and claim.source_id:
+        own = held.get(claim.source)
+        if own is not None and own == str(claim.source_id):
+            return False
+
+    candidate_time = candidate.commence_time
+    if candidate_time is None:
+        return False
+    drift = abs((candidate_time - commence_time).total_seconds())
+    return drift > _CROSS_PROVIDER_SAME_GAME_WINDOW.total_seconds()
+
+
 async def _find_by_source_id(
     session: AsyncSession,
     claim: EventClaim,
@@ -312,6 +402,20 @@ async def _find_by_structured_match(
                 candidate.id, claim.source,
                 getattr(candidate, _SOURCE_ID_COLUMN[claim.source], None),
                 claim.source_id,
+            )
+            continue
+
+        # #1802: ...and the same is true when the id belongs to a DIFFERENT provider.
+        # The row was individuated by somebody; a start time a day away means the
+        # claim is describing tomorrow's game, not this one.
+        if _is_a_different_scheduled_game(candidate, claim, commence_time):
+            logger.debug(
+                "Structured match: disqualifying event %s — individuated by %s at %s, "
+                "incoming %s claims %s (%.1fh apart)",
+                candidate.id, sorted(_individuating_provider_ids(candidate)),
+                candidate.commence_time,
+                getattr(claim, "source", None), commence_time,
+                abs((candidate.commence_time - commence_time).total_seconds()) / 3600.0,
             )
             continue
 

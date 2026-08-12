@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 
 from app.models import Event
 from app.services.event_registry import (
+    _is_a_different_scheduled_game,
     EventClaim,
     EventIdentity,
     _find_by_structured_match,
@@ -134,12 +135,48 @@ class TestTheSevenAbsorptions:
 
     @pytest.mark.parametrize("pair", ABSORPTION_PAIRS, ids=_IDS)
     @pytest.mark.asyncio
-    async def test_absorption_still_happens_without_a_provider_id(self, pair):
-        """The window itself is untouched — proof the fix is the id, not a narrowing.
+    async def test_the_window_itself_is_untouched_on_un_individuated_rows(self, pair):
+        """The window is still ±28h — proof the fix is identity, not a narrowing.
 
-        Same geometry, but the incoming claim comes from a source that carries no
-        per-game id column (Kalshi). Nothing can be disqualified, so the candidate
-        still matches. If this ever returns None, someone narrowed the window.
+        REWRITTEN for #1802 (Codex C-CERT-1801). This test previously proved the same
+        point by pointing an id-less Kalshi claim at an absorber carrying BOTH an
+        ``espn_id`` and a ``statpal_fixture_id``, 24h away, and asserting it matched.
+        That is Codex's specimen 6 verbatim: it asserted the defect. Seven green tests
+        were pinning open the exact behaviour Alex's bar forbids — *no absorption of a
+        distinct scheduled game, regardless of which provider the claim arrives from*.
+
+        The legitimate intent survives, with an honest mechanism: an **un-individuated**
+        row — one no schedule provider has named — is still matchable across the full
+        ±28h. If this returns None, someone really did narrow the window.
+        """
+        (_label, away, home, ev_id, _espn_id, _statpal_id,
+         absorber_time, missing_time, _missing_espn) = pair
+
+        # No provider ids: nothing has said which game this row is.
+        shell = _event(
+            event_id=ev_id, away=away, home=home, commence=absorber_time,
+        )
+        session = _FakeRegistrySession(
+            structured_candidates=[shell], sport_id=MLB_SPORT_ID,
+        )
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, home, away, _utc(missing_time),
+            EventClaim("kalshi", "KXMLBGAME-26AUG11BOSTOR"),
+        )
+        assert match is shell, (
+            "the ±28h window must still match a row no provider has individuated"
+        )
+
+    @pytest.mark.parametrize("pair", ABSORPTION_PAIRS, ids=_IDS)
+    @pytest.mark.asyncio
+    async def test_an_idless_claim_cannot_absorb_an_individuated_game(self, pair):
+        """#1802 specimen 6, over all seven real pairs.
+
+        The absorbers carry real production ``espn_id`` + ``statpal_fixture_id``. An
+        id-less Kalshi claim a day away must not take them, even though Kalshi has no
+        id column of its own to be disqualified on. Having no id to offer is not a
+        licence to absorb somebody else's game.
         """
         (_label, away, home, ev_id, espn_id, statpal_id,
          absorber_time, missing_time, _missing_espn) = pair
@@ -156,7 +193,8 @@ class TestTheSevenAbsorptions:
             session, MLB_SPORT_ID, home, away, _utc(missing_time),
             EventClaim("kalshi", "KXMLBGAME-26AUG11BOSTOR"),
         )
-        assert match is absorber
+        assert match is None
+        assert absorber.commence_time == _utc(absorber_time), "row was dragged"
 
 
 class TestDisqualificationPredicate:
@@ -348,3 +386,214 @@ class TestEndToEndThroughFindOrCreate:
         assert created is False
         assert event is existing
         assert event.espn_id == "401816469"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# #1802 — Codex C-CERT-1801: cross-provider arrival order
+#
+# The same-provider disqualification above is a real guard, and it is not the
+# incident's closure. Codex proved the branch still absorbed a distinct game
+# through SIX shapes, all of them turning on one thing: the candidate did not yet
+# carry the INCOMING provider's id, so the predicate returned False and the ±28h
+# window did the rest.
+#
+# These fixtures use the PRODUCTION caller geometry, which the suite above did not:
+# `EventClaim("odds_api", ...)` (backend/app/tasks/sports.py:412,
+# odds_polling.py:671) and `EventClaim("statpal", ...)` (statpal_sync.py:150,260).
+# There is no application `EventClaim("espn", ...)` caller at all — so every test
+# above certifies a claim shape production never emits. That is exactly how 36
+# green tests coexisted with an open P1.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCrossProviderArrivalOrder:
+    """Codex's six specimens. Each MUST fall inside ±28h and STILL not match."""
+
+    # (label, candidate kwargs, incoming claim, incoming commence, hours apart)
+    SPECIMENS = [
+        ("odds_game1_then_statpal_game2_+24h",
+         {"external_id": "odds-game-1"}, EventClaim("statpal", "statpal-game-2"),
+         "2026-08-11T23:07:00", 24.0),
+        ("statpal_game1_then_odds_game2_+24h",
+         {"statpal_id": "statpal-game-1"}, EventClaim("odds_api", "odds-game-2"),
+         "2026-08-11T23:07:00", 24.0),
+        ("cross_provider_doubleheader_game2_+6h",
+         {"external_id": "odds-game-1"}, EventClaim("statpal", "statpal-game-2"),
+         "2026-08-11T05:07:00", 6.0),
+        ("fall_DST_local_boundary_+25h",
+         {"external_id": "odds-game-1"}, EventClaim("statpal", "statpal-game-2"),
+         "2026-08-12T00:07:00", 25.0),
+        ("inclusive_window_edge_exactly_+28h",
+         {"external_id": "odds-game-1"}, EventClaim("statpal", "statpal-game-2"),
+         "2026-08-12T03:07:00", 28.0),
+        ("idless_kalshi_claim_+24h",
+         {"espn_id": "401816469"}, EventClaim("kalshi", "KX-MLB-1"),
+         "2026-08-11T23:07:00", 24.0),
+    ]
+
+    _LABELS = [s[0] for s in SPECIMENS]
+
+    @pytest.mark.parametrize("label,cand_kwargs,claim,incoming,hours",
+                             SPECIMENS, ids=_LABELS)
+    def test_specimen_is_inside_the_window(self, label, cand_kwargs, claim,
+                                           incoming, hours):
+        """Guard: a specimen outside ±28h would pass for the wrong reason.
+
+        Without this, a future widening of the disqualifier could be 'proved' by a
+        fixture the SQL window had already filtered out — green for a reason that
+        has nothing to do with the fix.
+        """
+        delta = abs((_utc(incoming) - _utc("2026-08-10T23:07:00")).total_seconds())
+        assert delta / 3600.0 == pytest.approx(hours)
+        assert delta <= 28 * 3600, f"{label} sits outside ±28h — fixture is wrong"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("label,cand_kwargs,claim,incoming,hours",
+                             SPECIMENS, ids=_LABELS)
+    async def test_cross_provider_claim_does_not_absorb(self, label, cand_kwargs,
+                                                        claim, incoming, hours):
+        candidate = _event(event_id=15187583, away="Boston Red Sox",
+                           home="Toronto Blue Jays",
+                           commence="2026-08-10T23:07:00", **cand_kwargs)
+        session = _FakeRegistrySession(structured_candidates=[candidate],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc(incoming), claim,
+        )
+        assert match is None, (
+            f"{label}: a {claim.source} claim {hours}h away absorbed a game "
+            "individuated by another provider"
+        )
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_the_missing_game_is_created_and_the_row_is_untouched(self):
+        """Codex's exact real-path repro, asserted on every field it reported moving."""
+        absorber = _event(event_id=15187583, away="Boston Red Sox",
+                          home="Toronto Blue Jays",
+                          commence="2026-08-10T23:07:00", external_id="odds-game-1")
+        session = _FakeRegistrySession(structured_candidates=[absorber],
+                                       sport_id=MLB_SPORT_ID)
+
+        event, created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=_utc("2026-08-11T23:07:00"),
+                claim=EventClaim("statpal", "statpal-game-2"),
+                status="scheduled",
+            ),
+        )
+
+        assert created is True, "the Aug 11 game must be CREATED, not absorbed"
+        assert event is not absorber
+        assert event.statpal_fixture_id == "statpal-game-2"
+        assert event.commence_time == _utc("2026-08-11T23:07:00")
+        # The three fields Codex watched move on the branch head:
+        assert absorber.external_id == "odds-game-1"
+        assert absorber.statpal_fixture_id is None, \
+            "the prior game must not wear the missing game's statpal id"
+        assert absorber.commence_time == _utc("2026-08-10T23:07:00"), \
+            "the prior game must not be dragged forward"
+
+
+class TestTheCrossProviderJoinStillWorks:
+    """The fix must not make cross-source joining impossible — only dishonest joining."""
+
+    @pytest.mark.asyncio
+    async def test_same_game_different_providers_still_joins(self):
+        """The whole point of the registry. Same start time, two providers, one row."""
+        existing = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                          commence="2026-08-10T23:07:00", external_id="odds-game-1")
+        session = _FakeRegistrySession(structured_candidates=[existing],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-10T23:07:00"), EventClaim("statpal", "355179"),
+        )
+        assert match is existing
+
+    @pytest.mark.asyncio
+    async def test_modest_start_time_disagreement_still_joins(self):
+        """A TV move / rounding difference is not a different game. 90 min < 2h."""
+        existing = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                          commence="2026-08-10T23:07:00", external_id="odds-game-1")
+        session = _FakeRegistrySession(structured_candidates=[existing],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-11T00:37:00"), EventClaim("statpal", "355179"),
+        )
+        assert match is existing
+
+    @pytest.mark.asyncio
+    async def test_own_id_beats_the_clock_a_rain_delay_still_finds_its_row(self):
+        """Identity outranks time. Same provider, same id, moved 5h — must still match.
+
+        This is the case a pure time rule would break, and it is why the predicate
+        checks the incoming provider's own id BEFORE it looks at the clock.
+        """
+        existing = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                          commence="2026-08-10T23:07:00", external_id="odds-game-1")
+        session = _FakeRegistrySession(structured_candidates=[existing],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-11T04:07:00"), EventClaim("odds_api", "odds-game-1"),
+        )
+        assert match is existing
+
+    @pytest.mark.asyncio
+    async def test_never_individuated_rows_keep_the_wide_window(self):
+        """A row no provider has named is still matchable across the full ±28h.
+
+        Prediction-market auto-creates collapse onto a shared `now` (gotcha #14), so
+        this path must keep working or NCAA-baseball-style duplicate treadmills return.
+        """
+        shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence="2026-08-10T23:07:00")
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-11T23:07:00"), EventClaim("kalshi", "KX-1"),
+        )
+        assert match is shell
+
+
+class TestTheDisqualifierIsNotATautology:
+    """The predicate must turn on real evidence, not always-true conditions."""
+
+    def test_it_returns_FALSE_for_the_cases_that_must_still_join(self):
+        same_time = _event(event_id=1, away="A", home="B",
+                           commence="2026-08-10T23:07:00", external_id="odds-1")
+        assert not _is_a_different_scheduled_game(
+            same_time, EventClaim("statpal", "s-1"), _utc("2026-08-10T23:07:00"))
+
+        shell = _event(event_id=2, away="A", home="B", commence="2026-08-10T23:07:00")
+        assert not _is_a_different_scheduled_game(
+            shell, EventClaim("statpal", "s-1"), _utc("2026-08-11T23:07:00")), \
+            "a row with no provider id must keep the wide window"
+
+    def test_it_returns_TRUE_only_when_individuated_AND_far(self):
+        individuated = _event(event_id=1, away="A", home="B",
+                              commence="2026-08-10T23:07:00", external_id="odds-1")
+        assert _is_a_different_scheduled_game(
+            individuated, EventClaim("statpal", "s-2"), _utc("2026-08-11T23:07:00"))
+
+    def test_the_boundary_is_where_it_says_it_is(self):
+        """Just inside 2h joins; just outside does not. Proves the constant is read."""
+        row = _event(event_id=1, away="A", home="B",
+                     commence="2026-08-10T23:07:00", external_id="odds-1")
+        claim = EventClaim("statpal", "s-2")
+        assert not _is_a_different_scheduled_game(
+            row, claim, _utc("2026-08-11T01:06:00"))   # +1h59m
+        assert _is_a_different_scheduled_game(
+            row, claim, _utc("2026-08-11T01:08:00"))   # +2h01m
