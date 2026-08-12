@@ -217,6 +217,11 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
             durations_ms=(m or {}).get("recent_durations_ms") or [],
             deliveries=d.get("fires"),
             deliveries_window_s=d.get("window_s"),
+            # LAT-P040 (#835): the duration sample's own span, so the p95 is not
+            # read against `window_s` (which ages the starts counter and is up
+            # to ~23x longer — measured on `poll_odds`, 2026-08-11).
+            durations_window_s=(m or {}).get("recent_durations_window_s"),
+            durations_saturated=(m or {}).get("recent_durations_saturated"),
         )
 
     lapping = find_lapping(graded)
