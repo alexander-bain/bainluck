@@ -8,6 +8,7 @@ Enriches with PGA tour schedule from DataGolf for accurate current-event detecti
 
 import logging
 import re
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -777,8 +778,18 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
     return golfer_data
 
 
+# Every round of a concluded tournament is over, including rounds whose own
+# leader market never graded and rounds that were never played. Deliberately a
+# sentinel rather than 4: the round number is parsed out of a free-text market
+# name (`Round\s+(\d+)`), so it is upstream text, not a bounded enum, and a
+# ceiling of 4 would quietly let a "Round 5" playoff market render live on a
+# finished tournament. Terminal means terminal.
+_TERMINAL_ROUND_CEILING = sys.maxsize
+
+
 def _completed_round_ceiling(
     round_markets: list[tuple[str, int | None, bool]],
+    tournament_settled: bool = False,
 ) -> int:
     """Last completed round, inferred from round-market signals (The Open 2026 p0).
 
@@ -789,13 +800,37 @@ def _completed_round_ceiling(
     themselves, so they are settled purely by inference: every round <= this
     ceiling is over. A graded Top-N market does NOT count (only leaders mark a
     round done). Returns 0 when no round has concluded (nothing settles).
+
+    `tournament_settled` is the TERMINAL CASE, and it is the whole of #1803.
+
+    The inference above is **self-referential**: only round N's own leader can
+    mark round N over. The Masters carries no Round 4 Leader market at all, so
+    its ceiling pinned at 2 permanently and "Round 3 Leader" rendered a live
+    ladder (McIlroy 80%, Young 11%) under a SETTLED banner four months after the
+    tournament ended. Nothing in the inference could ever have raised it — the
+    signal that would settle round 3 is precisely the signal that does not exist.
+
+    So the terminal case does NOT come from widening the inference; widening the
+    inference is how this bug got here. It comes from the tournament's
+    **assigned** status, which is authoritative and was simply never consulted —
+    ruling 031's assigned-beats-inferred applied to STATE rather than identity.
+
+    Combined with `max()`, never a replacement, and that is load-bearing: the
+    terminal case can only ever RAISE the ceiling, so consulting it makes a round
+    look MORE settled and never less. A tournament genuinely in play is
+    unreachable by this argument — `tournament_settled` is False there and the
+    value is bit-for-bit the inference it has always been. Suppressing a round
+    that is actually live is the direction that costs a reader real information,
+    and monotonicity is what makes that direction structurally impossible rather
+    than merely unintended.
     """
     completed = [
         rnd
         for (kind, rnd, has_winner) in round_markets
         if kind == "leader" and has_winner and isinstance(rnd, int)
     ]
-    return max(completed) if completed else 0
+    inferred = max(completed) if completed else 0
+    return max(inferred, _TERMINAL_ROUND_CEILING if tournament_settled else 0)
 
 
 def _round_scoped_market_complete(name: str | None, max_completed_round: int) -> bool:
@@ -2628,6 +2663,17 @@ async def get_golf_tournament(
             _m = re.search(r"Round\s+(\d+)", id_to_name.get(_mid, ""), re.I)
             return int(_m.group(1)) if _m else None
 
+        # #1803's terminal case. `_golf_status` is THE assigned-status authority
+        # for a tournament dict and already decides the banner the reader sees, so
+        # it is imported rather than re-derived here — a status rule living in two
+        # places is two rules the moment one is tuned (#1620, filed twelve times by
+        # this lane). Lazy import mirrors the existing golf<->event_concept idiom
+        # and keeps the cycle safe: event_concept imports golf only inside
+        # functions.
+        from app.utils.event_concept import _golf_status
+
+        tournament_settled = _golf_status(tournament) == "settled"
+
         max_completed_round = _completed_round_ceiling(
             [
                 (
@@ -2636,7 +2682,8 @@ async def get_golf_tournament(
                     any(bool(_o.is_winner) for _o in _outs),
                 )
                 for _mid, _outs in rt_by_market.items()
-            ]
+            ],
+            tournament_settled=tournament_settled,
         )
 
         for mid in rt_ids:
@@ -2650,6 +2697,13 @@ async def get_golf_tournament(
             # never show live odds on an in-progress tournament: leaders render
             # WHAT HIT (the graded leader); Top-N projections have no single
             # gradeable winner, so the props body suppresses them.
+            #
+            # #1803: on a CONCLUDED tournament `max_completed_round` is terminal,
+            # so every round-scoped market settles here regardless of whether its
+            # own leader ever graded. The ungraded ones then render settled with
+            # NO winner, which is the honest-empty state (ruling 025) — deliberately
+            # not back-filled from probabilities, because a graded winner is a fact
+            # and the 80% favourite is a guess.
             _mid_name = id_to_name.get(mid, "")
             _mid_round = _round_of(mid)
             graded_winner = next((o.name for o in outs if o.is_winner), None)

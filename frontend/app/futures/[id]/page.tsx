@@ -24,6 +24,7 @@ import {
   categoryPagePath,
   sportPagePath,
 } from "@/lib/eventKey";
+import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -656,7 +657,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             </svg>
             <span>Limited price history available</span>
             <span className="text-xs text-text-muted">
-              Prices update every 1{"–"}2 hours for this market
+              {priceCadenceNote(isResolved, { long: true })}
             </span>
           </div>
         </div>
@@ -675,7 +676,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                   {historyData.auto_extended && historyData.actual_hours
                     ? ` (${Math.round(historyData.actual_hours / 24)}d window)`
                     : ""}
-                  {" · "}Prices update every 1{"-"}2 hours
+                  {" · "}
+                  {priceCadenceNote(isResolved)}
                 </p>
               )}
               {!historyData.sparse && historyData.auto_extended && historyData.actual_hours && (
@@ -725,6 +727,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               onToggleOutcome={toggleOutcomeSelection}
               stepInterpolation={historyData.sparse}
               fixedYAxis
+              settled={isResolved}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed

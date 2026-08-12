@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
+import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -70,6 +71,12 @@ interface FuturesChartProps {
    *  sparklines never get the affordance. Every other caller is unaffected
    *  (default off). */
   allowZoom?: boolean;
+  /** #1803: the question this chart plots is CLOSED. Only affects the sparse-history
+   *  empty state, which otherwise promises the reader that "prices update every 1–2
+   *  hours" on a market whose prices can never move again. Opt-in and defaulted to
+   *  false, so every existing caller renders exactly as before; a caller that knows
+   *  it is settled (SettledPathChart, a resolved futures page) passes it. */
+  settled?: boolean;
 }
 
 export function FuturesChart({
@@ -91,6 +98,7 @@ export function FuturesChart({
   onHoverOutcome,
   showCombinedProbability = false,
   allowZoom = false,
+  settled = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -164,7 +172,7 @@ export function FuturesChart({
         </svg>
         <span>Limited price history available</span>
         <span className="text-xs text-text-muted">
-          Prices update every 1{"–"}2 hours for this market
+          {priceCadenceNote(settled, { long: true })}
         </span>
       </div>
     );

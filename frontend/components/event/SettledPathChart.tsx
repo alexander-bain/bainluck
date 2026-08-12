@@ -130,6 +130,10 @@ export default function SettledPathChart({
           height={260}
           greenTheme={domain === "golf"}
           timeMarkers={timeMarkers}
+          // #1803: this component only ever renders a concluded event's path to
+          // resolution, so the sparse-history footnote must never promise further
+          // price updates. Settled by construction, not by a runtime check.
+          settled
         />
       )}
     </section>

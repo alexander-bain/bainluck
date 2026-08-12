@@ -503,6 +503,18 @@ class CyclingEventAdapter:
             # #249 Item 4c: emit the graded contract so the frontend can render a
             # settled stage/classification as WHAT HIT (the golf by-round pattern).
             graded = stage_graded_winner(outs)
+            # #1803, same class as golf's round ceiling and combat's price test:
+            # a stage's own grade is the ONLY settled signal here, so a concluded
+            # grand tour carrying one ungraded stage renders that stage live
+            # forever. `or`, never a replacement — the race's assigned status can
+            # only add settledness, so a stage mid-race decides exactly as before.
+            #
+            # LATENT, NOT MEASURED, and recorded as such: every settled cycling
+            # concept 404s in production today (`tour-de-france-2026`, `giro-2026`
+            # both 404 on v3792), so unlike golf and combat this leg has no
+            # production specimen and is proven by unit test only. It is fixed here
+            # rather than filed because the Vuelta concludes 2026-09-13 and makes
+            # it reachable — a dated fuse on a one-line guard is not worth a ticket.
             return {
                 "market_id": m.id,
                 "market_name": m.name,
@@ -510,7 +522,7 @@ class CyclingEventAdapter:
                 "prop_type": prop_type,
                 "source": m.source,  # data-only (audit); not rendered
                 "probability": round(lead_prob, 4) if lead_prob is not None else None,
-                "settled": graded is not None,
+                "settled": event_status == "settled" or graded is not None,
                 "graded_winner": graded,
                 "outcomes": [
                     {

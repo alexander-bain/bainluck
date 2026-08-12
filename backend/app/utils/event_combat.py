@@ -310,6 +310,32 @@ def combat_status(latest_commence, now) -> str:
     return "upcoming"
 
 
+def fight_child_settled(lead_prob: float | None, card_settled: bool) -> bool:
+    """Is this fight/prop child settled? (#1803, second reachable instance.)
+
+    Two independent signals, OR-ed — and the order of the argument list is the
+    point: the card's ASSIGNED status comes first because it is authoritative,
+    and the price test is a fallback inference for a card still in play.
+
+    The price test alone — "converged to >=0.97 or <=0.03, so the fight must be
+    over" — was the only settled signal a futures-sourced fight ever got. It
+    fails on exactly the fights it most needs to grade: MEASURED on production
+    v3790, `event:ufc:26aug08` (Fight Night: Gamrot vs Salkilld, fought
+    2026-08-09, card status `settled`) still rendered "Johns vs Rosas" at
+    0.54/0.44 and a KO prop at 0.505/0.495. Both are coin-flips — the furthest a
+    price can be from convergence — so the markets that resolved LEAST cleanly
+    were the ones that kept looking live.
+
+    `or`, never a replacement: a card in play has `card_settled` False and the
+    price test decides exactly as it always did, so this can only ever make a
+    child MORE settled, never less. An in-play fight is unreachable by the new
+    term.
+    """
+    if card_settled:
+        return True
+    return lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+
+
 def derive_concept(
     cfg: CombatSportConfig,
     external_id: str | None,
@@ -581,6 +607,12 @@ class CombatEventAdapter:
         # that already fought reading "upcoming" for days (gotcha #14).
         authoritative_commence = bouts[-1].commence_time if bouts else latest_commence
 
+        # #1803, second reachable instance — found by censusing the class rather
+        # than trusting its golf-shaped scoping. The card's ASSIGNED status is
+        # computed below for `event.status`; it is hoisted here because `_child`
+        # needs it to floor its own settled inference. Same authority, one call.
+        card_settled = combat_status(authoritative_commence, now) == "settled"
+
         def _fight_outcomes(m):
             outs = sorted(
                 (m.outcomes or []),
@@ -624,7 +656,10 @@ class CombatEventAdapter:
         def _child(m, kind, prop_type=None):
             outs = _fight_outcomes(m)
             lead_prob = outs[0]["probability"] if outs else None
-            settled = lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+            # #1803: assigned card status first, price inference as the fallback.
+            # Pure + unit-tested in `fight_child_settled` (this builder is a large
+            # async closure, so the policy lives outside it — ruling 005).
+            settled = fight_child_settled(lead_prob, card_settled)
             row = {
                 "market_id": m.id,
                 "market_name": m.name,
