@@ -1319,5 +1319,6 @@ failure this document already records happening twice.
 - [029](rulings/029-schedule-adherence-grades-deliveries.md) — 2026-08-11 — Schedule adherence grades DELIVERIES; a gate-skip is healthy (Alex)
 - [030](rulings/030-census-runs-before-the-staged-work.md) — 2026-08-12 — The census runs BEFORE the staged work, and may re-decide it (Fable)
 - [031](rulings/031-assigned-identity-beats-inferred.md) — 2026-08-12 — Assigned identity beats inferred, and identity precedes the page (Fable)
+- [032](rulings/032-a-gate-verifies-only-where-it-runs.md) — 2026-08-11 — A gate verifies only where it runs: a branch is evidence, master is verification (Alex)
 - [033](rulings/033-a-go-file-binds-only-its-addressee.md) — 2026-08-12 — A GO file binds only its addressee; others treat it as read-only context (Alex)
 - [034](rulings/034-sweep-by-branch-confirm-by-content.md) — 2026-08-12 — The poll sweeps by branch and confirms by content; the ready token is advisory (Alex)
