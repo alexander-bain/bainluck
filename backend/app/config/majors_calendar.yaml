@@ -34,6 +34,7 @@ majors:
   # ============================ 2026 ============================
   - name: "Tour de France 2026"
     slug: tour-de-france-2026
+    competition: tour-de-france
     concept_key: "event:cycling:tour-de-france-2026"
     domain: cycling
     start: 2026-07-04
@@ -45,6 +46,7 @@ majors:
 
   - name: "FIFA World Cup 2026"
     slug: world-cup-2026
+    competition: fifa-world-cup
     concept_key: "event:soccer:world-cup-2026"
     domain: soccer
     start: 2026-06-11
@@ -59,6 +61,7 @@ majors:
 
   - name: "The Open Championship 2026"
     slug: the-open-championship
+    competition: the-open-championship
     concept_key: "event:golf:the-open-championship"
     domain: golf
     start: 2026-07-16
@@ -72,6 +75,7 @@ majors:
 
   - name: "MLB All-Star Game 2026"
     slug: mlb-all-star-2026
+    competition: mlb-all-star-game
     concept_key: null
     domain: mlb
     start: 2026-07-14
@@ -82,6 +86,7 @@ majors:
 
   - name: "US Open Tennis 2026"
     slug: us-open-tennis-2026
+    competition: us-open-tennis
     concept_key: "event:tennis:us-open-2026"
     domain: tennis
     start: 2026-08-24
@@ -92,6 +97,7 @@ majors:
 
   - name: "Vuelta a España 2026"
     slug: vuelta-2026
+    competition: vuelta-a-espana
     concept_key: "event:cycling:vuelta-2026"
     domain: cycling
     start: 2026-08-22
@@ -102,6 +108,7 @@ majors:
 
   - name: "Emmy Awards 2026"
     slug: emmys-2026
+    competition: emmy-awards
     concept_key: "event:awards:emmys-2026"
     domain: awards
     start: 2026-09-13
@@ -112,6 +119,7 @@ majors:
 
   - name: "Ryder Cup 2027"
     slug: ryder-cup-2027
+    competition: ryder-cup
     concept_key: "event:golf:ryder-cup-2027"
     domain: golf
     start: 2027-09-17
@@ -123,6 +131,7 @@ majors:
 
   - name: "F1 Season Finale 2026 (Abu Dhabi GP)"
     slug: f1-abu-dhabi-2026
+    competition: abu-dhabi-grand-prix
     concept_key: "event:f1:abu-dhabi-2026"
     domain: f1
     start: 2026-12-06
@@ -134,6 +143,7 @@ majors:
   # ============================ 2027 (annual anchors) ============================
   - name: "Grammy Awards 2027"
     slug: grammys-2027
+    competition: grammy-awards
     concept_key: "event:awards:grammys-2027"
     domain: awards
     start: 2027-02-07
@@ -144,6 +154,7 @@ majors:
 
   - name: "Super Bowl LXI"
     slug: super-bowl-61
+    competition: super-bowl
     concept_key: null
     domain: nfl
     start: 2027-02-07
@@ -155,6 +166,7 @@ majors:
 
   - name: "Academy Awards 2027 (Oscars)"
     slug: oscars-2027
+    competition: academy-awards
     concept_key: "event:awards:oscars-2027"
     domain: awards
     start: 2027-03-14
@@ -165,6 +177,7 @@ majors:
 
   - name: "WrestleMania 43"
     slug: wrestlemania-43
+    competition: wrestlemania
     concept_key: null
     domain: wwe
     start: 2027-04-03
@@ -176,6 +189,7 @@ majors:
 
   - name: "NCAA March Madness 2027 (Men's)"
     slug: march-madness-2027
+    competition: march-madness
     concept_key: null
     domain: ncaab
     start: 2027-03-16
@@ -186,6 +200,7 @@ majors:
 
   - name: "The Masters 2027"
     slug: masters-2027
+    competition: the-masters
     concept_key: "event:golf:masters-2027"
     domain: golf
     start: 2027-04-08
@@ -196,6 +211,7 @@ majors:
 
   - name: "Giro d'Italia 2027"
     slug: giro-2027
+    competition: giro-ditalia
     concept_key: "event:cycling:giro-2027"
     domain: cycling
     start: 2027-05-08
@@ -206,6 +222,7 @@ majors:
 
   - name: "Tour de France 2027"
     slug: tour-de-france-2027
+    competition: tour-de-france
     concept_key: "event:cycling:tour-de-france-2027"
     domain: cycling
     start: 2027-07-03
@@ -217,6 +234,7 @@ majors:
   # ============================ QUADRENNIAL ANCHORS (2028-2030) ============================
   - name: "2028 Summer Olympics (Los Angeles)"
     slug: summer-olympics-2028
+    competition: summer-olympics
     concept_key: null
     domain: olympics
     start: 2028-07-14
@@ -228,6 +246,7 @@ majors:
 
   - name: "UEFA Euro 2028"
     slug: euro-2028
+    competition: uefa-european-championship
     concept_key: "event:soccer:euro-2028"
     domain: soccer
     start: 2028-06-09
@@ -239,6 +258,7 @@ majors:
 
   - name: "2030 Winter Olympics (French Alps)"
     slug: winter-olympics-2030
+    competition: winter-olympics
     concept_key: null
     domain: olympics
     start: 2030-02-01
@@ -250,6 +270,7 @@ majors:
 
   - name: "2030 FIFA World Cup"
     slug: world-cup-2030
+    competition: fifa-world-cup
     concept_key: "event:soccer:world-cup-2030"
     domain: soccer
     start: 2030-06-13
@@ -258,3 +279,181 @@ majors:
     marquee: true
     date_confidence: approximate
     notes: "Spain/Portugal/Morocco (+ centenary matches in South America). Window approximate."
+
+# ============================================================================
+# THE COMPETITION REGISTER — the standing competitions the editions above are
+# editions OF. UX-P065 (#1744 step 2a, epic #1741).
+#
+# WHY THIS EXISTS: nothing on disk modelled "an edition of". `entities` has no
+# parent link, no concept adapter config carries a parent slug, and the three
+# mechanisms that faked one all disagree — awards parse a year suffix off a
+# standing slug, cycling aliases hard-pin a standing name to ONE edition, and
+# golf uses year-less slugs (:69-71) in a file that also writes `masters-2027`.
+#
+# ASSIGNED, NEVER INFERRED (standing doctrine, ratified 2026-08-12). A parent is
+# read from the `competition:` field on the edition — it is never derived by
+# stripping `-2027` off a slug. Inference is what produced three disagreeing
+# mechanisms; a wrong assignment is one visible line, a wrong inference is a
+# rule that is wrong everywhere at once and nowhere in particular.
+#
+# Schema per row:
+#   slug                   standing url slug (kebab, NO year)
+#   name                   human label ("The Masters")
+#   domain                 adapter domain, matching the editions'
+#   archetype              expected surface shape of an edition
+#   aliases                other names a reader might type. Globally unique and
+#                          disjoint from every slug (asserted by test).
+#   standing_concept_key   the year-less concept key this competition ALREADY
+#                          resolves at in production, or null. This field
+#                          RECORDS what is true today — it does not repoint
+#                          anything. Where it disagrees with an edition's
+#                          `concept_key`, that disagreement is the finding
+#                          (see the two dated false alarms below).
+#
+# ⚠️ TWO EDITION KEYS IN THIS FILE DO NOT RESOLVE, MEASURED 2026-08-12:
+#   event:golf:masters-2027    -> 404   while event:golf:the-masters   -> 200
+#   event:golf:ryder-cup-2027  -> 404   while event:golf:ryder-cup     -> 200
+# `horizon_sentinel` decides "has a page" by resolving `concept_key`, so each of
+# these is a P1 needs-page alarm scheduled to fire at T-30 (2027-03-09 and
+# 2027-08-18) for a page that already exists. Recorded here, deliberately NOT
+# repaired in this queue: changing a live concept key is routing, and routing
+# needs its own before/after. See #1744.
+# ============================================================================
+
+competitions:
+  - slug: the-masters
+    name: "The Masters"
+    domain: golf
+    archetype: winner_field
+    aliases: ["masters", "masters-tournament", "augusta"]
+    standing_concept_key: "event:golf:the-masters"
+
+  - slug: the-open-championship
+    name: "The Open Championship"
+    domain: golf
+    archetype: winner_field
+    aliases: ["the-open", "british-open", "open-championship"]
+    standing_concept_key: "event:golf:the-open-championship"
+
+  - slug: ryder-cup
+    name: "Ryder Cup"
+    domain: golf
+    archetype: team_match
+    aliases: []
+    standing_concept_key: "event:golf:ryder-cup"
+
+  - slug: tour-de-france
+    name: "Tour de France"
+    domain: cycling
+    archetype: winner_field
+    aliases: ["tdf", "le-tour"]
+    standing_concept_key: null
+
+  - slug: giro-ditalia
+    name: "Giro d'Italia"
+    domain: cycling
+    archetype: winner_field
+    aliases: ["giro"]
+    standing_concept_key: null
+
+  - slug: vuelta-a-espana
+    name: "Vuelta a España"
+    domain: cycling
+    archetype: winner_field
+    aliases: ["vuelta", "la-vuelta"]
+    standing_concept_key: null
+
+  - slug: fifa-world-cup
+    name: "FIFA World Cup"
+    domain: soccer
+    archetype: winner_field
+    aliases: ["world-cup"]
+    standing_concept_key: null
+
+  - slug: uefa-european-championship
+    name: "UEFA European Championship"
+    domain: soccer
+    archetype: bracket
+    aliases: ["euros", "euro"]
+    standing_concept_key: null
+
+  - slug: us-open-tennis
+    name: "US Open (Tennis)"
+    domain: tennis
+    archetype: bracket
+    aliases: ["us-open-tennis-championships"]
+    standing_concept_key: null
+    # NOT aliased to "us-open": golf has one too, and an ambiguous alias that
+    # silently picks a winner is the inference this register exists to refuse.
+    # ⚠️ event:tennis:us-open-2026 resolved to "Cincinnati Open: Winner" on
+    # 2026-08-12 — the tennis adapter never 404s. Filed separately; not ours.
+
+  - slug: academy-awards
+    name: "The Oscars"
+    domain: awards
+    archetype: ceremony
+    aliases: ["oscars", "the-oscars"]
+    standing_concept_key: null
+
+  - slug: grammy-awards
+    name: "The Grammys"
+    domain: awards
+    archetype: ceremony
+    aliases: ["grammys"]
+    standing_concept_key: null
+
+  - slug: emmy-awards
+    name: "The Emmys"
+    domain: awards
+    archetype: ceremony
+    aliases: ["emmys"]
+    standing_concept_key: null
+
+  - slug: super-bowl
+    name: "Super Bowl"
+    domain: nfl
+    archetype: single_event
+    aliases: ["superbowl"]
+    standing_concept_key: null
+
+  - slug: march-madness
+    name: "March Madness"
+    domain: ncaab
+    archetype: bracket
+    aliases: ["ncaa-tournament"]
+    standing_concept_key: null
+
+  - slug: wrestlemania
+    name: "WrestleMania"
+    domain: wwe
+    archetype: card
+    aliases: []
+    standing_concept_key: null
+
+  - slug: mlb-all-star-game
+    name: "MLB All-Star Game"
+    domain: mlb
+    archetype: single_event
+    aliases: ["all-star-game"]
+    standing_concept_key: null
+
+  - slug: summer-olympics
+    name: "Summer Olympics"
+    domain: olympics
+    archetype: single_event
+    aliases: ["olympics"]
+    standing_concept_key: null
+
+  - slug: winter-olympics
+    name: "Winter Olympics"
+    domain: olympics
+    archetype: single_event
+    aliases: []
+    standing_concept_key: null
+
+  - slug: abu-dhabi-grand-prix
+    name: "Abu Dhabi Grand Prix"
+    domain: f1
+    archetype: winner_field
+    aliases: []
+    standing_concept_key: null

@@ -672,6 +672,21 @@ async def build_and_cache(key: str, db, rc=None, adapter=None) -> dict[str, Any]
     # anything is stamped or stored.
     result = strip_competitor_wire_leaks(envelope)
 
+    # UX-P065 (#1744 step 2a): the standing competition this edition belongs to.
+    # Attached HERE rather than per-adapter so every domain gets it from one place
+    # and none of them has to know the register exists. Absolute dates only — this
+    # payload is mirrored for 24h and served stale on a miss, so a countdown baked
+    # in at build time would be wrong for most of its life; the client owns "in 240
+    # days". Best-effort: a bad register edit must never fail a page build.
+    try:
+        from app.utils.competition_identity import competition_block
+
+        block = competition_block(key)
+        if block:
+            result["competition"] = block
+    except Exception:  # pragma: no cover - defensive, config-driven
+        logger.warning("event-concept: competition block failed for %s", key, exc_info=True)
+
     # Take the adapter's own account of what it could not build BEFORE stamping.
     # This also pops the private marker, so it never reaches Redis or the wire.
     quality, quality_reasons = take_build_quality(result)

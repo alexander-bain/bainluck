@@ -1996,4 +1996,28 @@ export interface EventConceptResponse {
     generated_at?: string | null;
     as_of?: string | null;
   } | null;
+  // UX-P065 (#1744 step 2a): the standing competition this page is an EDITION of.
+  // Absent when the concept key maps to no register row, or when the register knows
+  // the competition but has no edition to name (honest-empty, ruling 027).
+  // Dates are absolute and the client computes any countdown — the envelope is
+  // mirrored for up to 24h, so a server-side "in 240 days" would be wrong for most
+  // of its life.
+  competition?: {
+    slug: string;
+    name: string | null;
+    domain?: string | null;
+    next_edition?: CompetitionEdition | null;
+    last_edition?: CompetitionEdition | null;
+  } | null;
+}
+
+export interface CompetitionEdition {
+  name: string | null;
+  slug: string | null;
+  // ⚠️ DECLARED, not guaranteed to resolve. Two edition keys in the calendar 404 in
+  // production today (event:golf:masters-2027, event:golf:ryder-cup-2027) while their
+  // year-less siblings serve. Do NOT turn this into a link without checking it first.
+  concept_key: string | null;
+  start: string | null; // ISO date (YYYY-MM-DD)
+  end: string | null; // ISO date (YYYY-MM-DD)
 }

@@ -323,7 +323,17 @@ async def test_the_envelope_is_purely_additive():
 
     for key, value in original.items():
         assert key in out and out[key] == value, f"the envelope mutated '{key}'"
-    assert set(out) - set(original) == {cache_mod.ENVELOPE_FIELD, "_build_n"}
+    # An EXACT set, deliberately: the point is to know precisely what the cache
+    # layer adds, so a new top-level key has to be added here on purpose rather
+    # than appearing unannounced. UX-P065 added `competition` (the standing
+    # competition this concept is an edition of) — present here because KEY is
+    # The Open, which the register maps; an unmapped key gets no such key at all
+    # (asserted in test_competition_identity.py, both directions).
+    assert set(out) - set(original) == {
+        cache_mod.ENVELOPE_FIELD,
+        "_build_n",
+        "competition",
+    }
 
 
 # ---------------------------------------------------------------------------
