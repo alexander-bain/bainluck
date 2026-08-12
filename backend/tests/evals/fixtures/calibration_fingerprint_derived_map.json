@@ -36,7 +36,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "6d76244158f8ece6",
+      "definition_sha16": "fdc05c2179e78d7e",
       "impact": "sql_shaping",
       "name": "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
       "origin": "app.utils.resolution_authority:CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
@@ -48,7 +48,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "5160a8a72ad34aea",
+      "definition_sha16": "8d8d2143457542d0",
       "impact": "sql_shaping",
       "name": "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
       "origin": "app.utils.resolution_authority:CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",

@@ -1321,3 +1321,4 @@ failure this document already records happening twice.
 - [031](rulings/031-assigned-identity-beats-inferred.md) — 2026-08-12 — Assigned identity beats inferred, and identity precedes the page (Fable)
 - [033](rulings/033-a-go-file-binds-only-its-addressee.md) — 2026-08-12 — A GO file binds only its addressee; others treat it as read-only context (Alex)
 - [034](rulings/034-sweep-by-branch-confirm-by-content.md) — 2026-08-12 — The poll sweeps by branch and confirms by content; the ready token is advisory (Alex)
+- [038](rulings/038-circular-authority-is-never-tier-3.md) — 2026-08-12 — Circular authority: a grade computed from our own data is never tier-3 (Alex)
