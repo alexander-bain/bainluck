@@ -3083,6 +3083,12 @@ async def get_golf_leaderboard(
             "hole": hole_display,
             "win_prob": win_prob,
             "win_prob_change": win_prob_change,
+            # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+            # The positional twin of `win_prob_change` directly above, which IS read.
+            # One of a pair consumed and the other not reads as an unfinished leaderboard
+            # rather than dead weight — "did he move up the board" is the more legible
+            # half of the same story. Whether to render it is a PRODUCT question, so
+            # plumbing does not answer it by deleting the input.
             "position_change": position_change,
             "top_5_prob": round(p.top_5 * 100, 1) if p.top_5 else None,
             "top_10_prob": round(p.top_10 * 100, 1) if p.top_10 else None,

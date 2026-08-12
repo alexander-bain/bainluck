@@ -2226,6 +2226,12 @@ async def _build_upcoming_golf_event_grid(
                 "key": col.key,
                 "label": col.label,
                 "order": col.order,
+                # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+                # NOT dead: the backend reads this itself — `playoff_grid.py:33` selects
+                # `seq_cols` on exactly this attribute — so it is live grid SEMANTICS
+                # that happens also to be serialized. It rides along so a client can
+                # reproduce the same column logic instead of re-deriving it from column
+                # order and getting a different answer.
                 "sequential": col.sequential,
             })
 

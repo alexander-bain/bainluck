@@ -446,6 +446,13 @@ def _build_movies_tv(themed: dict) -> dict:
         "count": len(combined),
         "rt_groups": rt_groups,
         "rt_markets": rt_markets[:12],
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # An asymmetry worth keeping, not weight worth cutting: `rt_groups` above is
+        # consumed and this — its box-office counterpart, built by the same
+        # `_group_threshold_markets` grouping — is not. That is the signature of a
+        # heatmap that shipped for one metric and not the other, so the honest
+        # disposition is "unfinished surface"; finishing it or dropping it is a product
+        # call, not a plumbing cleanup.
         "box_office_groups": box_groups,
         "box_office": box_office[:12],
         "reality_tv": reality_tv[:9],
