@@ -13,7 +13,6 @@
     "DRAW_AUTHORITY_OUTCOME_NAMES",
     "DRAW_AUTHORITY_RULE_TEXT",
     "DRAW_CAPABLE_CATEGORIES",
-    "ESPORTS_MULTI_BUNDLE_CATEGORY",
     "ESPORTS_MULTI_BUNDLE_RULE_TEXT",
     "EXCLUSIVITY_EVIDENCE_RULE_TEXT",
     "EXCLUSIVITY_PROVED_RELATIONS",
@@ -29,6 +28,7 @@
     "MALFORMED_BINARY_RULE_TEXT",
     "MEX_NORMALIZE_RULE_TEXT",
     "MEX_NORMALIZE_THRESHOLD",
+    "MULTI_BUNDLE_EXCLUDED_CATEGORIES",
     "NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
     "NO_WINNER_RULE_TEXT",
     "ORPHAN_PARTITION_RULE_TEXT",
@@ -54,7 +54,8 @@
     "WEATHER_WIDE_SPREAD_RULE_TEXT",
     "_COVERAGE_RUNG_KEYS",
     "_COVERAGE_RUNG_PREDICATES",
-    "_DEFAULT_MIN_CATEGORY_OUTCOMES"
+    "_DEFAULT_MIN_CATEGORY_OUTCOMES",
+    "_MULTI_BUNDLE_EXCLUDED_SQL"
   ],
   "hashed_roots": [
     "_build_coverage_census",
@@ -64,7 +65,7 @@
     "compute_calibration_payload",
     "trade_evidence_sql"
   ],
-  "input_count": 53,
+  "input_count": 54,
   "inputs": [
     {
       "covered_by_source": false,
@@ -180,19 +181,6 @@
       "used_in": [
         "_calibration_population_ctes",
         "compute_calibration_payload"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": null,
-      "impact": "sql_shaping",
-      "name": "ESPORTS_MULTI_BUNDLE_CATEGORY",
-      "origin": "app.tasks.precompute_calibration:ESPORTS_MULTI_BUNDLE_CATEGORY",
-      "sql_interpolated": true,
-      "used_in": [
-        "_build_nonexclusive_bundle_census",
-        "_calibration_population_ctes"
       ]
     },
     {
@@ -374,6 +362,19 @@
       "sql_interpolated": true,
       "used_in": [
         "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "MULTI_BUNDLE_EXCLUDED_CATEGORIES",
+      "origin": "app.tasks.precompute_calibration:MULTI_BUNDLE_EXCLUDED_CATEGORIES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_nonexclusive_bundle_census",
         "compute_calibration_payload"
       ]
     },
@@ -702,6 +703,18 @@
       ]
     },
     {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "_MULTI_BUNDLE_EXCLUDED_SQL",
+      "origin": "app.tasks.precompute_calibration:_MULTI_BUNDLE_EXCLUDED_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
       "covered_by_source": true,
       "covered_by_value": false,
       "definition_sha16": "4cc1d3aa840a061b",
@@ -728,7 +741,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1773f0caadb9acf5e96fd438f9080f724318846ca72c34a5416c398ba056a644",
+  "source_sha256": "b09a64f43f502944809350a58902f7ad463daf8b04c44454cc3e3d1e6032c0cc",
   "uncovered_behavior_or_evidence": 0,
   "uncovered_count": 0,
   "uncovered_sql_shaping": 0

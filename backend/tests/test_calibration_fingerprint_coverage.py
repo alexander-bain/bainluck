@@ -8,9 +8,10 @@ facts out of the real ``_main_input_fingerprint`` body, so the hand map was
 **deleted** rather than kept "for reference" — two derivations of one fact is
 precisely how they drift.
 
-**CAL-P047 applied the fix** inside ruling 024's combined invalidation window.
-The census reads **47 inputs, 46 covered by value, 1 covered by source, 0
-uncovered**. This file previously CHARACTERIZED the hole — it asserted that the
+**CAL-P045/P047 applied the fix** inside ruling 024's combined invalidation
+window. The census reads **54 inputs, 52 covered by value, 2 covered by source,
+0 uncovered** — it was 47 / 3 / 44, and parts (b) and (c) of the same window
+added inputs of their own, each caught UNCOVERED by the ratchet before it passed. This file previously CHARACTERIZED the hole — it asserted that the
 digest sat still while the emitted SQL moved underneath it, and said in its own
 docstring that it would go red the day someone covered the value, "forcing the
 census and the sequencing note to be updated in the same commit as the fix."
@@ -217,7 +218,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             __import__("app.utils.calibration_fingerprint_coverage")
 
     def test_the_census_counts_come_from_the_artifact(self, artifact):
-        """53 inputs, 53 covered, 0 uncovered — CAL-P045/P047 closed it.
+        """54 inputs, 54 covered, 0 uncovered — CAL-P045/P047 closed it.
 
         Was 47 / 3 / 44. CAL-P030/P031 prose said "3 of 43", reading the
         UNCOVERED count as the total; asserting all of them against one another
@@ -233,8 +234,8 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         """
         covered = len(artifact["covered_by_value"]) + len(artifact["covered_by_source"])
 
-        assert artifact["input_count"] == 53
-        assert len(artifact["covered_by_value"]) == 51
+        assert artifact["input_count"] == 54
+        assert len(artifact["covered_by_value"]) == 52
         assert len(artifact["covered_by_source"]) == 2
         assert artifact["uncovered_count"] == 0
         assert artifact["uncovered_count"] == artifact["input_count"] - covered

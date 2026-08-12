@@ -41,7 +41,7 @@ from app.tasks.precompute_calibration import (
     EXCLUSIVITY_PROVED_RELATIONS,
     market_exclusivity_is_proved,
     market_has_no_winner_authority,
-    market_is_esports_multi_bundle,
+    market_is_multi_bundle_excluded,
     market_is_nonexclusive_bundle,
     market_is_orphan_partition,
     market_omits_draw_authority,
@@ -254,10 +254,14 @@ class TestNonexclusiveBundle:
         """C119's contract: one structural test, not two copies. The esports
         CURVE exclusion keeps its measured scope (OPS-557's +9.2pp), but it is
         now expressed as the shared predicate."""
-        assert market_is_esports_multi_bundle("esports", 3, 2) is True
-        assert market_is_esports_multi_bundle("esports", 3, 1) is False
-        for category in ("cricket", "hockey", "tennis", None):
-            assert market_is_esports_multi_bundle(category, 3, 2) is False
+        assert market_is_multi_bundle_excluded("esports", 3, 2) is True
+        assert market_is_multi_bundle_excluded("esports", 3, 1) is False
+        # CAL-P045(c): cricket LEFT this list on its own diagnosis (exam item 3,
+        # verdict `exclusion`). hockey and tennis stay — the same shape is well
+        # calibrated there, and a blanket rule would delete 81% and 47% of them.
+        assert market_is_multi_bundle_excluded("cricket", 3, 2) is True
+        for category in ("hockey", "tennis", None):
+            assert market_is_multi_bundle_excluded(category, 3, 2) is False
             assert market_is_nonexclusive_bundle(3, 2) is True
 
     def test_bundle_can_never_be_normalized_in_any_category(self):

@@ -848,7 +848,32 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
 # malformed-binary filter. Read-side only (gotcha #21). esports-scoped: the same
 # poly bundle shape is well-calibrated in basketball/tennis/hockey (~+1.5pp), so
 # a blanket exclusion would drop good data; the general sweep is #160's sentinel.
-ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
+#: CAL-P045(c) / ruling 024 part (c) — the categories where the multi-winner
+#: non-exclusive bundle is EXCLUDED from the curve rather than merely counted.
+#: A NAMED LIST, never a blanket: the same >=3-outcome/>=2-winner shape is
+#: well-calibrated in hockey and tennis (~+1.5pp), and a category-blind exclusion
+#: would delete 81% of hockey and 47% of tennis. Each member is here because a
+#: diagnosis put it here, and `NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT` says why the
+#: rest stay census-only.
+#:
+#: esports — Queue #159 (#1010), OPS-557: 93,629 outcomes, winrate 0.395 vs cp
+#:   0.487 (+9.2pp), avg per-market cp-sum 17.9.
+#: cricket — CAL-P027 / exam item 3, diagnosed 2026-08-09 and ruled `exclusion`.
+#:   Every multi-winner 3-outcome cricket market has `draw_member_count = 0`
+#:   (1,668 outcomes / 556 markets), while coherently-graded cricket markets carry
+#:   a draw member 7,025 of 7,700. The cohort reaching the curve is exactly the
+#:   set whose THIRD LEG we never captured, so a 3-outcome field is scored as if
+#:   it were 2-outcome — which is the bidirectional mid-band shape the payload
+#:   split predicted independently from the other end (b5 +29.0pp, b2 -16.1pp,
+#:   b3 +0.1pp). Both halves agree and were derived separately. The error appears
+#:   equally on price-moved and price-unchanged rows, so it is a property of the
+#:   POPULATION, not of our capture.
+MULTI_BUNDLE_EXCLUDED_CATEGORIES: tuple[str, ...] = ("cricket", "esports")
+
+#: The same list rendered for SQL, derived rather than typed a second time.
+_MULTI_BUNDLE_EXCLUDED_SQL = ", ".join(
+    f"'{_c}'" for _c in MULTI_BUNDLE_EXCLUDED_CATEGORIES
+)
 
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
@@ -861,14 +886,29 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary "
     "filter and the exclusion complement of #157's counter-class guard. The "
     "many-YES ladder grading is correct, so these are excluded from the curve, "
-    "never re-graded. Read-side only; never mutates resolutions."
+    "never re-graded. Read-side only; never mutates resolutions. "
+    "CAL-P045: CRICKET joins the excluded set on its own diagnosis — every "
+    "multi-winner 3-outcome cricket market reaching the curve has no draw member "
+    "captured (0 of 556 markets), while coherently-graded cricket carries one "
+    "7,025 of 7,700 times, so a 3-outcome field is scored as if it were "
+    "2-outcome (b5 +29.0pp against b2 -16.1pp, equally on moved and unchanged "
+    "rows — a population defect, not a capture artifact). The exclusion stays a "
+    "NAMED list: the same shape is well calibrated in hockey and tennis, where "
+    "a blanket rule would delete 81% and 47% of the cohort respectively."
 )
 
 
-def market_is_esports_multi_bundle(
+def market_is_multi_bundle_excluded(
     category: str | None, n_outcomes: int, n_winners: int
 ) -> bool:
-    """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
+    """True if a resolved multi-winner bundle is EXCLUDED from the curve, not merely counted.
+
+    Renamed from ``market_is_esports_multi_bundle`` at CAL-P045(c) rather than
+    extended under the old name: cricket joined the excluded set, and a predicate
+    called ``..._esports_...`` that returns True for cricket is a name that lies
+    to every future reader. No compatibility alias — a second name for one rule is
+    how the two drift.
+
 
     Canonical, unit-tested definition mirroring the ``esports_multi_bundles`` CTE:
     an esports market with >=3 outcomes that resolved with >=2 winners is a
@@ -882,7 +922,7 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    return category == ESPORTS_MULTI_BUNDLE_CATEGORY and market_is_nonexclusive_bundle(
+    return category in MULTI_BUNDLE_EXCLUDED_CATEGORIES and market_is_nonexclusive_bundle(
         n_outcomes, n_winners
     )
 
@@ -1933,7 +1973,7 @@ def _calibration_population_ctes(
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
-                WHERE mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                WHERE mrs.category IN ({_MULTI_BUNDLE_EXCLUDED_SQL})
                   AND mrs.n_outcomes >= 3
                   AND mrs.win_count >= 2
             ),
@@ -3511,7 +3551,7 @@ def _build_nonexclusive_bundle_census(futures_rows) -> dict:
     by_category.sort(key=lambda x: -x["would_exclude_n"])
     return {
         "rule": NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT,
-        "excluded_from_curve_for": [ESPORTS_MULTI_BUNDLE_CATEGORY],
+        "excluded_from_curve_for": list(MULTI_BUNDLE_EXCLUDED_CATEGORIES),
         "measured_only_for": "all other categories",
         "by_category": by_category,
     }
@@ -4600,8 +4640,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 "field_incomplete_excluded_outcomes": field_incomplete_outcomes,
             },
         },
-        "esports_multi_bundle_filter": {  # Queue #159 (#1010)
-            "applies_to": "esports",
+        # Queue #159 (#1010) + CAL-P045(c). The WIRE KEY keeps its name so no
+        # consumer breaks on a rename, but ``applies_to`` is now the real list —
+        # a block that said "esports" while excluding cricket would be a published
+        # claim that is false, which is worse than an awkward key.
+        "esports_multi_bundle_filter": {
+            "applies_to": list(MULTI_BUNDLE_EXCLUDED_CATEGORIES),
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
@@ -5020,7 +5064,8 @@ def _main_input_fingerprint() -> str:
         f"draw_authority_outcome_names={_canonical_input(DRAW_AUTHORITY_OUTCOME_NAMES)}",
         f"draw_authority_rule_text={_canonical_input(DRAW_AUTHORITY_RULE_TEXT)}",
         f"draw_capable_categories={_canonical_input(DRAW_CAPABLE_CATEGORIES)}",
-        f"esports_multi_bundle_category={_canonical_input(ESPORTS_MULTI_BUNDLE_CATEGORY)}",
+        f"multi_bundle_excluded_categories={_canonical_input(MULTI_BUNDLE_EXCLUDED_CATEGORIES)}",
+        f"multi_bundle_excluded_sql={_canonical_input(_MULTI_BUNDLE_EXCLUDED_SQL)}",
         f"esports_multi_bundle_rule_text={_canonical_input(ESPORTS_MULTI_BUNDLE_RULE_TEXT)}",
         f"exclusivity_evidence_rule_text={_canonical_input(EXCLUSIVITY_EVIDENCE_RULE_TEXT)}",
         f"exclusivity_proved_relations={_canonical_input(EXCLUSIVITY_PROVED_RELATIONS)}",
