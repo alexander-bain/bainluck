@@ -21,6 +21,10 @@ class TestCeleryAuthGuards:
             "/api/admin/celery/task-metrics/some_task?secret=bad",
             "/api/admin/celery/inspect?secret=bad",
             "/api/admin/celery-debug?secret=bad",
+            # #1807: the census had no HTTP-level test at all — not for auth and
+            # not for route shape — which is part of why a 503 on the default
+            # call went unnoticed until someone tried to use it as a rail.
+            "/api/admin/redis-census?secret=bad",
         ],
     )
     async def test_get_rejects_bad_secret(self, client, path):
@@ -40,6 +44,7 @@ class TestCeleryAuthGuards:
             "/api/admin/celery/dashboard",
             "/api/admin/celery/inspect",
             "/api/admin/celery-debug",
+            "/api/admin/redis-census",
         ],
     )
     async def test_missing_secret_returns_403(self, client, path):
