@@ -581,6 +581,23 @@ class TestTypeaheadEndpoint:
         body = resp.json()
         assert set(body.keys()) == {"suggestions", "query"}
 
+    async def test_no_private_scorer_keys_leak_into_suggestions(self, client):
+        """Q325/ruling 041: `_derived` and `_aliases` are scorer evidence only.
+
+        They are attached to pool items so `search_match_class` can read
+        provenance and short names, and popped before the response. If a future
+        pool grows a third private key and forgets the pop, it becomes a public
+        API field by accident.
+
+        HONEST LIMIT: on an empty test DB `suggestions` is `[]`, so this is
+        vacuous here and only bites once a seeded pool exists. The real proof is
+        the deploy check against production — recorded as owed, not as passed.
+        """
+        resp = await client.get("/api/events/typeahead?q=test")
+        for suggestion in resp.json()["suggestions"]:
+            leaked = [k for k in suggestion if k.startswith("_")]
+            assert not leaked, f"private scorer key leaked to the API: {leaked}"
+
     async def test_missing_q_returns_403(self, client):
         resp = await client.get("/api/events/typeahead")
         assert resp.status_code == 422
