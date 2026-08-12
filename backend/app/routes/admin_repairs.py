@@ -15,7 +15,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-final-scores | resolved-shape-census
              | winner-field-coherence | reachability-census
              | prop-threshold-cliff-census | overlap-trading-census
-             | winner-field-repair }
+             | winner-field-repair | event-team-binding }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -100,6 +100,16 @@ _REPAIRS = {
     # so the cap cannot be dialled off mid-run. Accepts ?limit=&offset=.
     # ATTENDED ONLY: never wire this to a beat.
     "winner-field-repair": ("app.tasks.repair_winner_field", "repair"),
+    # #1798: events whose home/away ``team_id`` dereferences to a DIFFERENT club
+    # than the row's own ``*_team_name`` (153 sides measured across the 2026 MLB
+    # season), or to the right club's ``baseball_mlb_preseason`` twin. Detection
+    # joins through the FK — every name-to-name check in the codebase passes on
+    # these rows, which is why nothing saw them. Re-derives from the row's own
+    # name within its own sport_id, exactly one match required; 0 or >1 goes to
+    # ``review`` rather than being guessed. Accepts ?limit=&sport= (``since`` is a
+    # module default, not a query param — the dispatcher passes through only the
+    # four names it declares).
+    "event-team-binding": ("app.tasks.repair_event_team_binding", "repair"),
 }
 
 
