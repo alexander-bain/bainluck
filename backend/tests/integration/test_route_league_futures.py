@@ -417,9 +417,26 @@ def _mock_event(
 ):
     """A stand-in Event for the league rails.
 
-    Carries `win_probability_sources` in the real JSONB shape — the route reads the
-    canonical `aggregate` block rather than rolling its own mean (register E9), so a
-    fake with a flattened probability would certify a read production never does.
+    ⚠️ FIXED (#1776). This fixture used to build
+    `{"aggregate": {"home": p, "away": 1 - p}}`, under a docstring asserting that
+    was "the real JSONB shape" and warning that "a fake with a flattened
+    probability would certify a read production never does".
+
+    **It was itself that fake.** No event has ever carried an `aggregate` member.
+    The real schema is `{source: {value, display_name, type, color}}` and the
+    blend is COMPUTED (`compute_aggregate_probability`). The route read the
+    invented key, this fixture supplied the invented key, and the suite certified
+    the agreement between two things that were wrong together — which is why
+    every league page shipped with a probability-less games rail (118 of 118
+    fixtures in production) and stayed green for a cycle.
+
+    The shape below is the production one, measured on event 15189168. Keep it
+    that way: the only thing that can break a tie between a fixture and the code
+    it tests is real data.
+
+    One source, so the blend is exactly `home_prob` and the expected values in
+    these tests stay legible; `espn_win_prob_home` / `opening_home_probability`
+    are present because the canonical blend reads them as later fallback tiers.
     """
     return SimpleNamespace(
         id=event_id,
@@ -429,8 +446,10 @@ def _mock_event(
         commence_time=datetime.now(timezone.utc) + timedelta(hours=hours_from_now),
         home_score=home_score,
         away_score=away_score,
+        espn_win_prob_home=None,
+        opening_home_probability=None,
         win_probability_sources=(
-            {"aggregate": {"home": home_prob, "away": 1 - home_prob}}
+            {"espn": {"value": home_prob, "display_name": "ESPN", "type": "model"}}
             if home_prob is not None
             else None
         ),

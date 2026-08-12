@@ -109,10 +109,13 @@ export default function LeagueGameRail({
           <GameRow key={g.id} game={g} settled={settled} />
         ))}
       </div>
-      {/* A cap is always DECLARED (spec §4). An uncounted cap reads as coverage. */}
+      {/* A cap is always DECLARED (spec §4). An uncounted cap reads as coverage.
+          The wording follows the rail: this component serves BOTH the upcoming
+          and the settled rail, and "most recent" was printing over future
+          fixtures on the upcoming one. */}
       {hasMore && (
         <p className="mt-2 text-xs text-text-muted">
-          Showing the {games.length} most recent — more exist.
+          Showing the {settled ? `${games.length} most recent` : `next ${games.length}`} — more exist.
         </p>
       )}
     </section>

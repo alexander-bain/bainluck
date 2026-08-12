@@ -39,9 +39,16 @@ argument, one level out: two graders, one input).
 * **This is a snapshot.** Tiers are season-aware and expected to move (spec §2);
   a February run and an August run should disagree. Stamp the date on any
   conclusion drawn from it.
-* **Leagues/teams/players are not wired yet.** Their classes are declared here and
-  report `not_wired` until steps 1/3/4 land, so the shape of the report does not
-  change under those steps — only its numbers.
+* **Teams/players are not wired yet.** Their classes are declared here and report
+  `not_wired` until steps 3/4 land, so the shape of the report does not change
+  under those steps — only its numbers. (Leagues wired at step 1, #1743.)
+* **The tier reported is the tier the ROUTE DECLARED**, not one recomputed here.
+  Recomputing was a real defect (#1776): a route resolves over its own census,
+  which includes the championship grid and the games rail, while this script can
+  only see `sections` — so the recompute reported `T3 = 0, T0 = 0, no_page = 7`
+  against routes declaring `T3 = 6, T0 = 3, no_page = 3`. Three cycles of
+  findings were read off the wrong column. Spec §7 is the rule: the payload
+  carries the counts, clients read them.
 """
 
 from __future__ import annotations
@@ -119,13 +126,58 @@ def _get(url: str, timeout: float = 30.0):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _declared(payload: dict, cards_only: dict) -> dict:
+    """Prefer what the ROUTE declared; fall back to the cards-only recompute.
+
+    #1776 finding 2, and it is the whole reason this helper exists. This script
+    used to REPORT the recompute — `resolve_entity_tier` re-run over the payload's
+    `sections`. But a route resolves over its own census, which is a documented
+    SUPERSET: `league_futures` adds `championship` (the grid) and `games` (the
+    upcoming rail), because Alex's amendment counts event content. So the two
+    numbers were never answers to the same question, and reporting the recompute
+    made the instrument disagree with every page it claims to predict:
+
+        histogram said   T3 = 0   ·   T0 = 0   ·   no_page = 7
+        routes declared  T3 = 6   ·   T0 = 3   ·   no_page = 3
+
+    Spec §7 already settled who is authoritative — every count the page renders
+    arrives IN the payload, and clients never derive it by measuring arrays. This
+    script is a client. It reads.
+
+    The recompute is kept as `cards_*`, which is genuinely informative (it is the
+    share of a tier that comes from market cards alone) but is NEVER the verdict.
+    """
+    declared_tier = payload.get("tier", "__absent__")
+    pool = payload.get("pool_counts")
+    has_declaration = declared_tier != "__absent__" and isinstance(pool, dict)
+
+    if has_declaration:
+        return {
+            "tier": declared_tier,
+            "tier_source": "declared",
+            "answers": pool.get("answers", 0),
+            "dropped": pool.get("dropped", 0),
+            "settled": pool.get("settled", 0),
+        }
+    # A route that declares nothing is a route that has not adopted the envelope
+    # yet. Falling back is right, but it must be VISIBLE — an unlabelled fallback
+    # is how the recompute became the headline number in the first place.
+    return {
+        "tier": cards_only["tier"],
+        "tier_source": "recomputed_fallback",
+        "answers": cards_only["answers"],
+        "dropped": cards_only["pool_counts"]["dropped"],
+        "settled": cards_only["pool_counts"]["settled"],
+    }
+
+
 def measure_competition(api: str, slug: str, *, now: datetime) -> dict:
-    """One hub → its resolved tier plus the counts that explain it."""
+    """One hub → the tier it DECLARES, plus the counts that explain it."""
     payload = _get(f"{api}/api/hub/{slug}")
     sections = payload.get("sections") or {}
     upcoming = payload.get("upcoming") or []
 
-    out = resolve_entity_tier(
+    cards_only = resolve_entity_tier(
         sections,
         now=now,
         entity_is_real=True,
@@ -133,19 +185,20 @@ def measure_competition(api: str, slug: str, *, now: datetime) -> dict:
         next_event_count=len(upcoming),
         season_known=False,
     )
+    verdict = _declared(payload, cards_only)
     return {
         "key": slug,
-        "tier": out["tier"],
-        "answers": out["answers"],
-        "sections_populated": out["sections_populated"],
+        **verdict,
+        "cards_tier": cards_only["tier"],
+        "cards_answers": cards_only["answers"],
+        "sections_populated": cards_only["sections_populated"],
         "rows": sum(len(v or []) for v in sections.values()),
         "upcoming": len(upcoming),
-        "dropped": out["pool_counts"]["dropped"],
-        "settled": out["pool_counts"]["settled"],
-        "unpriced": out["unpriced"],
-        "duplicates": out["duplicates"],
+        "unpriced": cards_only["unpriced"],
+        "duplicates": cards_only["duplicates"],
+        "availability": payload.get("availability"),
         "per_section": {
-            k: v["answers"] for k, v in sorted(out["per_section"].items())
+            k: v["answers"] for k, v in sorted(cards_only["per_section"].items())
         },
     }
 
@@ -159,37 +212,44 @@ def measure_league(api: str, sport_key: str, *, now: datetime) -> dict:
     """
     payload = _get(f"{api}/api/leagues/{sport_key}")
     sections = payload.get("sections") or {}
+    upcoming_games = payload.get("upcoming_games") or []
 
-    out = resolve_entity_tier(
+    cards_only = resolve_entity_tier(
         sections,
         now=now,
         entity_is_real=True,  # it is in SPORT_HIERARCHY; that IS league identity
         record_n=payload.get("record_n") or 0,
-        next_event_count=payload.get("next_event_count") or 0,
+        next_event_count=len(upcoming_games),
         season_known=bool((payload.get("season") or {}).get("state")),
     )
 
-    # Ruling 021, made mechanical. Once the route declares a tier, the histogram
-    # must not quietly compute a second opinion: two graders over one input is
-    # exactly the parity bug the typed field exists to prevent, and it is
-    # unfindable precisely because both sides believe they are correct.
-    declared = payload.get("tier", "__absent__")
+    # Ruling 021 is NOT mechanised by re-running the resolver here — that was the
+    # #1776 mistake. Parity needs ONE input; this side can only see the card
+    # sections, while the route also counts the grid and the games rail. So the
+    # declaration is read, and the cards-only figure rides along as context.
+    verdict = _declared(payload, cards_only)
     return {
         "key": LEAGUE_LABELS.get(sport_key, sport_key),
         "sport_key": sport_key,
-        "tier": out["tier"],
-        "declared_tier": declared,
-        "tier_agrees": declared == "__absent__" or declared == out["tier"],
-        "answers": out["answers"],
-        "sections_populated": out["sections_populated"],
+        **verdict,
+        "cards_tier": cards_only["tier"],
+        "cards_answers": cards_only["answers"],
+        "sections_populated": cards_only["sections_populated"],
         "rows": sum(len(v or []) for v in sections.values()),
-        "upcoming": payload.get("next_event_count") or 0,
-        "dropped": out["pool_counts"]["dropped"],
-        "settled": out["pool_counts"]["settled"],
-        "unpriced": out["unpriced"],
-        "duplicates": out["duplicates"],
+        "upcoming": len(upcoming_games),
+        # How many of those fixtures carry the blended number the rail exists to
+        # show. #1776 measured 0 of 118 league-wide; if this column is 0 while
+        # `upcoming` is not, the games amendment is contributing nothing to the
+        # tier and the census will look frozen no matter what else ships.
+        "upcoming_priced": sum(
+            1 for g in upcoming_games if g.get("home_win_probability") is not None
+        ),
+        "record_n": payload.get("record_n") or 0,
+        "unpriced": cards_only["unpriced"],
+        "duplicates": cards_only["duplicates"],
+        "availability": payload.get("availability"),
         "per_section": {
-            k: v["answers"] for k, v in sorted(out["per_section"].items())
+            k: v["answers"] for k, v in sorted(cards_only["per_section"].items())
         },
     }
 
@@ -254,15 +314,27 @@ def run(api: str, classes: list[str], *, now: datetime) -> dict:
             "errors": errors,
             # Neither a tier nor an error: entities we could not ask about at all.
             "unmeasurable": spec["unmeasurable"](),
-            # Ruling 021: where the route declares a tier, it must match ours.
-            "tier_disagreements": [
+            # Routes that have not adopted the envelope, so their row is a
+            # fallback rather than a reading. Named, because an unlabelled
+            # fallback is exactly how the recompute became the headline (#1776).
+            "undeclared": [
+                e["key"] for e in entities if e.get("tier_source") != "declared"
+            ],
+            # Entities whose tier rests entirely on content this script cannot
+            # see from `sections` (the grid, the games rail). NOT a disagreement
+            # — a census gap, reported so the difference is legible instead of
+            # looking like two graders fighting.
+            "census_gap": [
                 {
                     "key": e["key"],
-                    "declared": e.get("declared_tier"),
-                    "recomputed": e["tier"],
+                    "declared": e["tier"],
+                    "cards_only": e.get("cards_tier"),
+                    "answers": e["answers"],
+                    "cards_answers": e.get("cards_answers"),
                 }
                 for e in entities
-                if not e.get("tier_agrees", True)
+                if e.get("tier_source") == "declared"
+                and e.get("cards_tier") != e["tier"]
             ],
             "histogram": {
                 **{t: hist.get(t, 0) for t in TIERS},
@@ -312,29 +384,46 @@ def render(report: dict) -> str:
             + [len(x["key"]) for x in data["errors"]]
             + [len(x["key"]) for x in (data.get("unmeasurable") or [])]
         ) + 2
-        lines.append(f"   {'entity':<{kw}}{'tier':<10}{'ans':>4}{'secs':>6}{'rows':>6}{'drop':>6}  sections")
+        lines.append(
+            f"   {'entity':<{kw}}{'tier':<10}{'ans':>4}{'cards':>6}{'secs':>6}"
+            f"{'rows':>6}{'drop':>6}{'gm':>4}{'prc':>4}  sections"
+        )
         for e in data["entities"]:
             secs = " ".join(f"{k}={v}" for k, v in e["per_section"].items() if v)
+            flag = "" if e.get("tier_source") == "declared" else "~"
             lines.append(
-                f"   {e['key']:<{kw}}{str(e['tier']):<10}{e['answers']:>4}"
-                f"{e['sections_populated']:>6}{e['rows']:>6}{e['dropped']:>6}  {secs}"
+                f"   {e['key']:<{kw}}{flag + str(e['tier']):<10}{e['answers']:>4}"
+                f"{e.get('cards_answers', ''):>6}{e['sections_populated']:>6}"
+                f"{e['rows']:>6}{e['dropped']:>6}"
+                f"{e.get('upcoming', ''):>4}{e.get('upcoming_priced', ''):>4}  {secs}"
             )
         for err in data["errors"]:
             lines.append(f"   {err['key']:<{kw}}ERROR     {err['error'][:60]}")
         for un in data.get("unmeasurable") or []:
             lines.append(f"   {un['key']:<{kw}}—         unmeasurable: {un['reason']}")
 
-        # Loud on purpose. A silent disagreement here is the ruling-021 parity bug
-        # arriving through the instrument that exists to catch it.
-        for d in data.get("tier_disagreements") or []:
+        if data.get("undeclared"):
             lines.append(
-                f"   !! TIER DISAGREEMENT {d['key']}: route declared "
-                f"{d['declared']!r}, resolver says {d['recomputed']!r}"
+                f"   ~ {len(data['undeclared'])} route(s) declare no tier; the row is a "
+                f"cards-only FALLBACK, not a reading: {', '.join(data['undeclared'])}"
+            )
+        for d in data.get("census_gap") or []:
+            lines.append(
+                f"   · {d['key']}: tier {d['declared']!r} rests on content beyond the "
+                f"card sections (cards alone = {d['cards_only']!r}, "
+                f"{d['cards_answers']} of {d['answers']} answers)"
             )
         lines.append("")
 
     lines.append("READ THIS BEFORE TUNING (spec §11):")
-    lines.append("  `ans` is ANSWERS (deduped, priced, live) — `rows` is raw markets.")
+    lines.append("  `tier`/`ans` are what the ROUTE DECLARED — the same envelope the page")
+    lines.append("  renders from (spec §7). A `~` prefix means the route declared nothing")
+    lines.append("  and the row fell back to a cards-only recompute.")
+    lines.append("  `cards` is answers from market CARDS ALONE. It is context, never the")
+    lines.append("  verdict: it cannot see the championship grid or the games rail, so")
+    lines.append("  `ans` > `cards` is the amendment working, not a discrepancy (#1776).")
+    lines.append("  `gm`/`prc` = upcoming games, and how many carry a blended probability.")
+    lines.append("  `prc` 0 with `gm` > 0 means the games contribute NOTHING to the tier.")
     lines.append("  A big rows-vs-ans gap is the answers-not-rows case working, not a bug.")
     lines.append("  `drop` = unpriced + duplicate. A high drop with low ans means the")
     lines.append("  entity's markets are unpriced, which is a DIFFERENT problem from")

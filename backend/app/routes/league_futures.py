@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, Sport
 from app.services import get_db
+from app.utils.aggregation import compute_aggregate_probability
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -216,18 +217,38 @@ RESULTS_LIMIT = 8
 def _event_probability(event: Event) -> float | None:
     """The blended home win probability, or None when we never measured one.
 
-    Reads the canonical aggregate the way the team page does — it does NOT roll its
-    own mean over sources. Register E9 records a second blend algorithm living in
-    `teams.py::_get_championship_path`; this queue is not adding a third.
+    Calls the canonical blend — it does NOT roll its own mean over sources.
+    Register E9 records a second blend algorithm living in
+    `teams.py::_get_championship_path`; this is not a third.
+
+    #1776: this used to read `win_probability_sources["aggregate"]["home"]`, and
+    THAT KEY HAS NEVER EXISTED. The column's schema is
+    `{source: {value, display_name, type, color}}` — there is no `aggregate`
+    member, because the blend is COMPUTED (`compute_aggregate_probability`, the
+    reader CLAUDE.md names for this JSONB) rather than stored. So the function
+    returned None unconditionally, for every event, and every league rail rendered
+    its fixtures with no number at all: measured 118 of 118 upcoming games across
+    all 29 registered leagues, including a LIVE MLB game holding five sources.
+    The docstring above was already right about the intent; only the read was wrong.
+
+    `status` travels implicitly on the event, and that matters here: the same
+    formatter serves the RECENT RESULTS rail, and the canonical blend deliberately
+    drops Kalshi/Polymarket once a game is completed/closed (their prices go stale
+    post-final). Re-deriving a status rule locally would be the second algorithm
+    this docstring exists to refuse.
+
+    The isinstance guard is KEPT from the pre-#1776 version rather than dropped as
+    dead weight: `compute_aggregate_probability` does `wps.items()` on
+    `win_probability_sources or {}`, so a truthy NON-dict in that JSONB column
+    (a list, a bare string) raises AttributeError rather than returning None. This
+    runs inside a per-item formatter, and a throw here does not blank one row — it
+    empties the entire rail (gotcha #42). The upstream fragility is real and is
+    reported on #1776; guarding at the call site is this queue's business, editing
+    the shared blend every surface depends on is not.
     """
-    src = event.win_probability_sources
-    if not isinstance(src, dict):
+    if not isinstance(event.win_probability_sources, (dict, type(None))):
         return None
-    agg = src.get("aggregate")
-    if not isinstance(agg, dict):
-        return None
-    home = agg.get("home")
-    return float(home) if isinstance(home, (int, float)) else None
+    return compute_aggregate_probability(event)
 
 
 def _format_game_brief(event: Event) -> dict:
