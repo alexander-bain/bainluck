@@ -5268,6 +5268,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # ANNOTATED — queue 333, C272/B4 zero-read census (#1620). Unread by both
+            # clients BY RULING: "the blend is the product" — one number per question,
+            # divergence is a data bug to fix, not a spread to render. It must not reach
+            # the UI, and must stay on the wire, because it is the evidence that says
+            # whether the single number we DO show had agreement behind it.
             "probability_range": {
                 "min": aggregated["min_home_probability"],
                 "max": aggregated["max_home_probability"],
@@ -8142,6 +8147,11 @@ async def get_event_odds_history(
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # ANNOTATED — queue 333, C272/B4 zero-read census (#1620). Unread by both
+            # clients BY RULING: "the blend is the product" — one number per question,
+            # divergence is a data bug to fix, not a spread to render. It must not reach
+            # the UI, and must stay on the wire, because it is the evidence that says
+            # whether the single number we DO show had agreement behind it.
             "probability_range": {
                 "min": aggregated["min_home_probability"],
                 "max": aggregated["max_home_probability"],
@@ -8846,6 +8856,13 @@ async def get_event_odds_history(
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
+        # ANNOTATED — queue 333, from the C272/B4 zero-read census (#1620).
+        # No web or native client reads this, and that is the intended state. It
+        # belongs to the block of counts above it: a self-description of how much
+        # history each SOURCE actually contributed, which is the first thing you
+        # want when a chart looks thin and you need to know whether ESPN went quiet
+        # or the merge dropped it. Retained as a diagnostic — "no UI reads it" is
+        # the point, not a reason to strip it.
         "espn_snapshot_count": len(espn_history),
     }
 
@@ -9618,6 +9635,13 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
 
             ei_data = {
                 "score": display_score,
+                # ANNOTATED — queue 333, from the C272/B4 zero-read census (#1620).
+                # Unread by both clients on purpose. `score` above is the PERCENTILE
+                # when one is available and this raw conversion only as fallback, so
+                # the two being equal is exactly how you tell that the percentile
+                # mapping did not fire. Strip this and that distinction becomes
+                # unobservable from the payload — the calibration of EI against its
+                # own percentile table is not re-derivable after the fact.
                 "raw_score": raw_score,
                 "status": get_ei_status(display_score),
                 "label": get_ei_label(display_score),
@@ -9751,6 +9775,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # ANNOTATED — queue 333, C272/B4 zero-read census (#1620). Unread by both
+            # clients BY RULING: "the blend is the product" — one number per question,
+            # divergence is a data bug to fix, not a spread to render. It must not reach
+            # the UI, and must stay on the wire, because it is the evidence that says
+            # whether the single number we DO show had agreement behind it.
             "probability_range": {
                 "min": aggregated["min_home_probability"],
                 "max": aggregated["max_home_probability"],
