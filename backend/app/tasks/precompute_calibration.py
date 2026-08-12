@@ -149,27 +149,40 @@ def _main_payload_is_publishable(response: Any) -> bool:
 #   4. exclusivity EVIDENCE gating normalization — the default-true
 #      ``mutually_exclusive`` flag is no longer accepted as proof of a partition.
 #
-# THE VERSION IS DELIBERATELY *NOT* BUMPED YET, and that ordering is the point.
+# CAL-P045 / ruling 024 — THE VERSION IS BUMPED, q267 -> q1530, and the caution
+# below is DISCHARGED BY MEASUREMENT rather than dropped.
 #
-# Bumping it first (tried 2026-08-02, reverted the same hour) took /calibration
-# DARK: ``snapshot_verdict`` refuses a cached artifact whose population_version
-# is not the one the deployed build expects, so the moment the web dyno booted
-# expecting "q299" BOTH the live key and the 7-day last-good became
-# ``wrong_version`` — and the replacement could not exist until the next hourly
-# precompute completed. Q297's gate protects against a BAD build replacing a
-# good one; it has no protection against a version bump that invalidates the
-# only good copy before its successor is built. On a task already known to
-# overrun its window (#1479, #1513) that is an unbounded outage of the exact
-# page #1517 exists to keep lit.
+# Ruling 011 ships only with a version bump plus published before/after counts
+# per cohort, and ruling 024 binds the bump into ONE invalidation window with
+# the fingerprint-coverage fix, the two-tier well-traded classifier and the
+# cricket exclusion. Shipped separately each invalidates the last, so three
+# rebuilds produce three incomparable curves and no before/after means anything.
 #
-# So the sequence is: land the population change under the CURRENT version, let
-# the publish gate compare the new candidate against the published q267 baseline
-# and MEASURE the drift it produces (rejecting and preserving last-good if that
-# drift exceeds its bars — the page stays up on good data either way), then bump
-# the version as a deliberate one-line follow-up once the numbers have been
-# reviewed. The gate's rejection report IS the exact-SHA census, obtained
-# without risking the page.
-CALIBRATION_POPULATION_VERSION = "q267"
+# WHAT THE OLD CAUTION SAID, and it was right at the time. Bumping first (tried
+# 2026-08-02, reverted the same hour) took /calibration DARK: ``snapshot_verdict``
+# refuses a cached artifact whose population_version is not the one the deployed
+# build expects, so the moment the web dyno booted expecting "q299" BOTH the live
+# key and the 7-day last-good became ``wrong_version`` — and the replacement
+# could not exist until the next hourly precompute completed. Q297's gate
+# protects against a BAD build replacing a good one; it has no protection
+# against a version bump that invalidates the only good copy before its
+# successor is built. On a task then known to overrun its window (#1479, #1513)
+# that was an UNBOUNDED outage of the exact page #1517 exists to keep lit.
+#
+# WHAT CHANGED, measured 2026-08-12: the beat no longer overruns. The last 16
+# durations are 48-126 s (median ~81 s) against the 1.38 M ms era that produced
+# the original caution, with a fresh publish at 21:16:12Z and
+# ``last_verdict complete``. The outage is now ONE BEAT, not an unbounded wait.
+#
+# ⚠️ BUT IT IS NOT ~80 SECONDS BY ITSELF, and the deploy must know the difference.
+# The beat is hourly at :15. The page goes dark the instant the dyno boots and
+# stays dark until the next beat COMPLETES, so a deploy landing at :16 is dark
+# for ~59 minutes, not ~80 seconds. The bump therefore ships with a required
+# post-deploy step: POST /api/admin/calibration/recompute immediately after the
+# release, which starts the rebuild at once and bounds the darkness to one beat.
+# Quoting "~80 s" without that call would be an SLO claim the deploy does not
+# actually satisfy.
+CALIBRATION_POPULATION_VERSION = "q1530"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.

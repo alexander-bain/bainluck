@@ -438,18 +438,24 @@ class TestPublishOrPark:
     def test_publish_bar_is_the_shipped_sample_gate(self):
         assert pc._DEFAULT_MIN_CATEGORY_OUTCOMES == 1000
 
-    def test_population_version_is_not_bumped_ahead_of_a_built_artifact(self):
-        """A version bump must never precede the artifact it describes.
+    def test_population_version_is_bumped_for_the_combined_window(self):
+        """CAL-P045 / ruling 024: the deliberate follow-up, taken.
 
-        Bumping first (tried and reverted 2026-08-02) makes ``snapshot_verdict``
-        reject BOTH the live key and the 7-day last-good as ``wrong_version``
-        the instant the dyno boots, so /calibration goes dark until the next
-        hourly build completes — unbounded on a task known to overrun its window
-        (#1479/#1513). The population change therefore lands under the CURRENT
-        version so the publish gate measures its drift against a real baseline
-        while the page keeps serving; the bump is a deliberate follow-up.
+        This test previously pinned ``q267`` and said a bump must never precede
+        the artifact it describes — correct at the time. Bumping first (tried and
+        reverted 2026-08-02) makes ``snapshot_verdict`` reject BOTH the live key
+        and the 7-day last-good as ``wrong_version`` the instant the dyno boots,
+        so /calibration goes dark until the next build completes; on a task then
+        overrunning its window (#1479/#1513) that was UNBOUNDED.
+
+        Discharged by measurement, not by decision: the beat now runs 48-126 s
+        (median ~81 s, 2026-08-12) against the 1.38 M ms era behind the caution,
+        so the outage is one beat. The deploy still owes
+        ``POST /api/admin/calibration/recompute`` immediately after release —
+        the beat is hourly at :15, so without it a deploy at :16 is dark ~59
+        minutes rather than ~80 seconds.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q267"
+        assert pc.CALIBRATION_POPULATION_VERSION == "q1530"
 
 
 class TestC119ContractBinding:
