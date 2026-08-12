@@ -350,6 +350,45 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
 except Exception:  # pragma: no cover - defensive
     pass
 
+# LAT-P039 (#1609, #1716): count the DELIVERY of every task here, in celery's
+# own pre-run signal, rather than inside `_tracked_run`.
+#
+# `_tracked_run` is called BY THE TASK BODY, which means the only fires it can
+# count are the ones a body decides to hand it — and a body decides that after
+# its own gate has run. Two whole classes of task were therefore uncountable,
+# and both read as a scheduling fault:
+#
+#   * A self-gating task (`poll_all_odds` -> `should_poll_now()`) returns before
+#     `_tracked_run`, so its deliberate skips presented as missing fires. That
+#     is the entirety of #1609's "the beat is firing at half its schedule": the
+#     beat was firing at exactly 30.0s throughout.
+#   * 30 of 117 beat-scheduled tasks never call `_tracked_run` at all, so they
+#     never reached `record_task_label` and could not be joined to the schedule.
+#     They are 30 of the 34 `unmapped` entries on the adherence surface (#1716).
+#
+# The signal sees every delivery of every task before any body runs, so neither
+# class can hide from it, and — unlike a decorator or a base class — it cannot
+# be forgotten when someone adds task 118. The label map is written here too,
+# from the same request, so a task that never calls `_tracked_run` still joins.
+#
+# Wrapped defensively for the same reason as the heartbeat above: a signal-API
+# change must never block worker startup, and observability must never be why a
+# task fails to start.
+try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
+    from celery.signals import task_prerun as _task_prerun
+
+    @_task_prerun.connect
+    def _record_delivery(sender=None, task=None, **_kwargs):
+        try:
+            from app.tasks.redis_state import record_task_delivery
+
+            name = getattr(sender, "name", None) or getattr(task, "name", None)
+            record_task_delivery(name)
+        except Exception:
+            pass
+except Exception:  # pragma: no cover - defensive
+    pass
+
 # =============================================================================
 # Queue routing: realtime vs background vs heavy workers
 #

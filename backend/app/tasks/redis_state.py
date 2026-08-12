@@ -516,6 +516,97 @@ def record_task_started(task_name: str):
         pass
 
 
+#: Deliveries are counted under their OWN top-level prefix, keyed by the
+#: fully-qualified celery name rather than by the short `_tracked_run` label.
+#:
+#: Two reasons, both load-bearing. First, the beat schedule speaks celery names,
+#: so a delivery counter keyed that way needs no label join at all — and the
+#: label join is exactly what 30 tasks fail (see `record_task_delivery`). A
+#: numerator that depends on the join cannot grade the tasks the join loses.
+#: Second, `get_all_task_metrics` enumerates `TASK_METRICS_PREFIX` and treats
+#: any 3-part key as a task, so a delivery key parked under that prefix would be
+#: read back as a phantom task on the health surface. A separate prefix cannot
+#: be mistaken for one.
+TASK_DELIVERY_PREFIX = "bainluck:task_deliveries"
+
+
+def record_task_delivery(full_task_name: str):
+    """Count one DELIVERY of a celery task — LAT-P039 (#1609, #1716).
+
+    The distinction this draws is the whole point, so it is worth stating
+    exactly. ``record_task_started`` claims to count "fires that BEGAN", and it
+    is called from inside ``_tracked_run`` — a helper the *task body* invokes.
+    So it does not count fires. It counts fires **whose body chose to call it**,
+    and a task decides that after its own gate has already run. Measured in
+    production 2026-08-11:
+
+    * ``poll_all_odds`` returns ``{"skipped": True}`` from ``should_poll_now()``
+      before it ever reaches ``_tracked_run``. Its adaptive gate declines about
+      half of its fires **by design** — ``LIVE_POLL_INTERVAL`` is 32s against a
+      30s beat, so two consecutive fires can never both pass — and every decline
+      was recorded as a fire that did not happen. The surface graded it
+      ``ratio 0.50``, which was read as the ingestion beat running at half speed
+      for two months. The realtime worker's own execution total says otherwise:
+      66 deliveries in the 1,982s since the release, or one per 30.0s exactly.
+      ``sync_statpal_livescores`` — same 30s beat, same worker, same window, no
+      self-gate — reads 65 deliveries and ``ratio 1.00``. Same beat, same
+      infrastructure; the only difference is the gate, so the gate is the cause.
+    * **30 of 117 beat-scheduled tasks never call ``_tracked_run`` at all**, so
+      they never reach ``record_task_label`` either and are invisible to the
+      join. They are precisely 30 of the 34 entries the surface reports as
+      ``unmapped`` — a complete explanation, with no remainder (#1716). The
+      other 4 call it and simply have not fired inside the window, which is an
+      honestly different state and stays reported as one.
+
+    Both failures are the same shape and it is gotcha #53's: a task deciding not
+    to work is a fact about the TASK, and it was being read as a fact about the
+    SCHEDULER. Wiring this to celery's ``task_prerun`` puts the count where the
+    delivery actually is — before any body, before any gate, for every task —
+    so "the beat fired" and "the task worked" stop being the same number.
+
+    Deliberately the cheapest possible write, and best-effort like every other
+    recorder here: it runs before every task in the system, so it must never be
+    the reason one fails to start.
+    """
+    if not full_task_name:
+        return
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        _bump_window_counter(pipe, f"{TASK_DELIVERY_PREFIX}:{full_task_name}")
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def get_all_task_deliveries() -> dict:
+    """``{celery task name: {"fires": int, "window_s": float|None}}``.
+
+    ``window_s`` comes from the counter's own TTL via ``_window_age_s``, so a
+    fire count is never handed to a caller without the window that makes it a
+    rate — the LAT-P024 lesson, applied at birth this time rather than retrofitted.
+    ``None`` is passed through rather than flattened to 0; adherence refuses to
+    grade on it, which is the correct reading of "not measurable".
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{TASK_DELIVERY_PREFIX}:"
+        out = {}
+        for key in r.keys(f"{prefix}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            name = key_str[len(prefix):]
+            if not name:
+                continue
+            try:
+                fires = int(r.get(key_str) or 0)
+            except (TypeError, ValueError):
+                continue
+            out[name] = {"fires": fires, "window_s": _window_age_s(r, key_str)}
+        return out
+    except Exception:
+        return {}
+
+
 #: `app.tasks.<name>` -> the short `_tracked_run` label. One hash, so a reader
 #: joins the beat schedule to the metrics in a single round trip.
 TASK_LABEL_MAP_KEY = f"{TASK_METRICS_PREFIX}:label_map"

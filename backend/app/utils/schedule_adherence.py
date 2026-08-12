@@ -50,6 +50,20 @@ MIN_EXPECTED_FIRES = 2.0
 #: 0.98 gets muted, which is worse than not having it.
 BEHIND_RATIO = 0.6
 
+#: Two counters opened at different moments do not describe the same window, so
+#: subtracting one from the other is the cross-window arithmetic this module was
+#: built to refuse. Comparable within this fraction, or the difference is not
+#: reported at all — and it is reported as ``None`` (unknown), never as 0.
+SELF_GATE_WINDOW_TOLERANCE = 0.1
+
+#: Below this fraction of fires, a start/delivery gap is counter noise at the
+#: window boundary, not a gate. Measured: the ungated control
+#: ``sync_statpal_livescores`` read 2,186 deliveries against 2,177 starts — a
+#: 0.4% gap, from two counters born ~30s apart. The number is still reported;
+#: this only decides whether the surface says a SENTENCE about it, because a
+#: health surface that editorialises about noise is one people stop reading.
+SELF_GATE_MATERIAL_RATIO = 0.1
+
 #: A task whose p95 runtime exceeds this fraction of its own interval is lapping
 #: (at 1.0 it has literally no gap between runs). Flagged below 1.0 because a
 #: task using 80% of its period has no headroom for a slow day and is one
@@ -89,30 +103,86 @@ def adherence(
     interval_s,
     terminals=None,
     durations_ms=None,
+    deliveries=None,
+    deliveries_window_s=None,
 ):
     """Grade one task's schedule adherence from its recorded counters.
 
-    ``starts`` is the numerator on purpose. It counts fires that BEGAN, which is
-    what "is the beat actually running?" asks; completions are a separate
-    question already graded by ``task_verdict`` and by ``hard_kills_24h``. Both
-    are reported so a caller can tell "never started" from "started and died".
+    THE NUMERATOR. ``starts`` used to be it, on the stated grounds that it
+    "counts fires that BEGAN, which is what 'is the beat actually running?'
+    asks". That was wrong, and LAT-P039 measured how wrong. ``starts`` is
+    written by ``record_task_started`` from inside ``_tracked_run`` — a helper
+    the *task body* calls — so it counts fires whose body chose to call it,
+    which a body decides only after its own gate has already run. A task that
+    deliberately declines to work is indistinguishable, in that number, from a
+    beat that never fired.
+
+    ``deliveries`` is the honest numerator: celery's ``task_prerun`` sees every
+    delivery of every task before any body runs. When it is available it is
+    used, and ``starts`` becomes what it always actually was — the count of
+    fires that went on to do work. The gap between them is
+    ``self_gated_fires``, a first-class number rather than a phantom shortfall.
+
+    Measured on production 2026-08-11, which is why this is not a refactor:
+    ``poll_all_odds`` graded ``ratio 0.50`` for two months and was read as the
+    ingestion beat running at half speed. Its realtime worker had executed it 66
+    times in the 1,982s since the release — one per 30.0s, its beat interval, to
+    three significant figures. Every "missing" fire was ``should_poll_now()``
+    declining on purpose, because ``LIVE_POLL_INTERVAL`` (32s) is longer than
+    the beat (30s) and two consecutive fires can therefore never both pass.
+
+    ``terminals`` is still reported rather than graded — whether adherence
+    should own completion is an open product question (#1716) and inventing a
+    verdict here would answer it by accident. What is NOT open, and is fixed, is
+    that a task with fires and zero completions was omitted from the work-list
+    entirely; ``never_completes`` flags it so ``find_lapping`` can carry it
+    without pre-empting the taxonomy.
 
     Returns a dict rather than raising, because this grades the health surface
     and a health surface that throws is a health surface that goes dark.
     """
-    exp = expected_fires(starts_window_s, interval_s)
+    # A delivery count is only usable with a window to age it against — a count
+    # of unknown age is not a rate, which is the whole LAT-P024 lesson and the
+    # reason this falls back rather than guessing.
+    use_deliveries = deliveries is not None and deliveries_window_s
+    fires = deliveries if use_deliveries else starts
+    window_s = deliveries_window_s if use_deliveries else starts_window_s
+
+    exp = expected_fires(window_s, interval_s)
     out = {
         "interval_s": interval_s,
-        "window_s": starts_window_s,
+        "window_s": window_s,
         "expected_fires": round(exp, 2) if exp is not None else None,
         "starts": starts,
+        "deliveries": deliveries,
+        "numerator": "deliveries" if use_deliveries else "starts",
+        "self_gated_fires": None,
         "terminals": terminals,
+        "never_completes": False,
         "ratio": None,
         "p95_duration_ms": None,
         "p95_over_interval": None,
         "verdict": "unmeasurable",
         "reason": "",
     }
+
+    # Clamped at zero: a body can legitimately record a start in one 24h window
+    # while the delivery that produced it was counted in the previous one, and a
+    # negative "self-gated" count would be nonsense reported as fact. Computed
+    # only across COMPARABLE windows — the delivery counter is born at its own
+    # deploy, so for the first day it is much younger than the starts counter it
+    # would be differenced against, and that subtraction means nothing.
+    if use_deliveries and starts is not None and starts_window_s:
+        widest = max(deliveries_window_s, starts_window_s)
+        drift = abs(deliveries_window_s - starts_window_s) / widest
+        if drift <= SELF_GATE_WINDOW_TOLERANCE:
+            out["self_gated_fires"] = max(0, (deliveries or 0) - (starts or 0))
+
+    # A task that fires and never finishes is the sharpest failure there is, and
+    # the surface used to call it healthy (#1716). Gated on having enough fires
+    # for the absence to mean something — the same refusal `unmeasurable` makes.
+    if terminals == 0 and (starts or 0) >= MIN_EXPECTED_FIRES:
+        out["never_completes"] = True
 
     p95 = percentile(durations_ms or [], 0.95)
     out["p95_duration_ms"] = p95
@@ -130,7 +200,7 @@ def adherence(
         )
         return out
 
-    ratio = (starts or 0) / exp
+    ratio = (fires or 0) / exp
     out["ratio"] = round(ratio, 2)
 
     # Runtime-over-interval is checked FIRST and reported even when the fire
@@ -147,13 +217,23 @@ def adherence(
 
     if ratio < BEHIND_RATIO:
         out["verdict"] = "behind"
+        noun = "deliveries" if use_deliveries else "starts"
         out["reason"] = (
-            f"{starts or 0} starts against {exp:.1f} scheduled "
-            f"in {starts_window_s:.0f}s"
+            f"{fires or 0} {noun} against {exp:.1f} scheduled "
+            f"in {window_s:.0f}s"
         )
         return out
 
     out["verdict"] = "on_schedule"
+    gated = out["self_gated_fires"] or 0
+    if fires and gated / fires >= SELF_GATE_MATERIAL_RATIO:
+        # Not a defect and deliberately not a verdict — the beat is on time and
+        # the task chose to skip. Said out loud anyway, because this exact
+        # silence is what let 1,089 intentional skips be read as lateness.
+        out["reason"] = (
+            f"delivered on schedule; {gated} of {fires} fires "
+            f"self-gated before doing work"
+        )
     return out
 
 
@@ -233,17 +313,27 @@ def beat_intervals(beat_schedule):
 
 
 def find_lapping(graded):
-    """The work-list: every task whose verdict is not ``on_schedule``.
+    """The work-list: every task that is not both on schedule AND completing.
 
     Ordered worst-first by how far off schedule it is, so the top of the list is
     the thing to fix. ``unmeasurable`` sorts last and is carried rather than
     dropped — a task nobody can grade is itself a finding.
+
+    ``never_completes`` sorts ABOVE every schedule verdict and is included even
+    when the verdict is ``on_schedule``. #1716: ``precompute_interestingness``
+    had 10 starts, ZERO terminals, graded ``on_schedule`` with an empty reason,
+    and was omitted from this list — a function whose docstring called itself
+    the work-list was hiding the clearest failure a task can have, because the
+    verdict it filtered on is computed from fires alone. Whether *adherence*
+    should own a completion verdict is still open; whether the WORK-LIST may
+    silently drop a task that has never once finished is not.
     """
     order = {"overruns": 0, "behind": 1, "unmeasurable": 3}
 
     def _key(item):
         _name, g = item
         return (
+            0 if g.get("never_completes") else 1,
             order.get(g["verdict"], 2),
             g["ratio"] if g["ratio"] is not None else 99,
         )
@@ -251,5 +341,5 @@ def find_lapping(graded):
     return [
         {"task": name, **g}
         for name, g in sorted(graded.items(), key=_key)
-        if g["verdict"] != "on_schedule"
+        if g["verdict"] != "on_schedule" or g.get("never_completes")
     ]
