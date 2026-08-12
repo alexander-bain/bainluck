@@ -36,6 +36,7 @@ from app.utils.calibration_publish_gate import (
     PublishVerdict,
     census,
     evaluate_publish,
+    payload_age_s,
     rejection_issue_body,
 )
 
@@ -529,6 +530,182 @@ def test_a_usable_volatile_baseline_never_probes_durable():
     assert verdict.ok
     assert verdict.baseline_source == "provided"
     assert verdict.baseline_probe is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario 7c — CAL-P046: this branch's change composed with master's
+#
+# WHY THIS SECTION EXISTS, AND WHY GREEN TESTS WERE NOT ENOUGH WITHOUT IT.
+# CAL-P042 was authored against a base that predates Q324 (#1680, the five-answer
+# availability envelope, `8a14d8f5`) and Q330 (#1680, *a fallback may weaken a
+# declaration, never heal one*, `b2267b72`). Q324 landed +21 lines in THIS file —
+# `payload_age_s`, one function above the gate — while this branch was rewriting
+# the gate's decision boundary underneath it. Git merged the two textually and
+# reported no conflict, which is precisely the case where a green suite proves
+# least: neither side's tests were written with the other side in the tree, so
+# both can pass while the composed semantics are wrong.
+#
+# The tests below are the ones that would go red if the two changes interacted
+# wrongly, so the interaction is asserted rather than assumed.
+# ---------------------------------------------------------------------------
+
+
+def test_an_ancient_durable_baseline_is_still_evidence_of_a_prior_publish():
+    """THE composition test. Age must not disqualify EXISTENCE evidence.
+
+    Q324 put `payload_age_s` into this module, immediately above the gate. The
+    plausible-and-wrong harmonisation is to reach for it here: an artifact from
+    seven months ago *feels* like something a publish gate should not compare
+    against, and now there is a helper sitting right there to reject it with.
+
+    It would rebuild #1768 one layer down. The durable probe deliberately reads
+    with ``max_age_s=float("inf")`` because a snapshot too old to SERVE is still
+    perfect evidence that this build is not the first one — and the whole defect
+    is that the baseline aged out *during the very outage the publish is
+    recovering from*. Age-bound the baseline and the longest outages, the ones
+    whose recoveries most need scrutiny, are exactly the ones that skip it again.
+
+    Freshness is a SERVE-side question (Q324's envelope). Existence is a
+    WRITE-side one. This test fails the moment the two are conflated.
+    """
+    ancient = payload(
+        outcomes=652_407, version="q267", generated_at="2026-01-01T00:00:00+00:00"
+    )
+    candidate = payload(outcomes=703_980, version="q267")
+
+    # The premise, asserted rather than assumed: this baseline really is far
+    # older than anything the serve path would show a reader.
+    age_s = payload_age_s(ancient)
+    assert age_s is not None and age_s > 90 * 86_400, age_s
+
+    verdict = evaluate_publish(candidate, None, durable_probe=_durable(ancient))
+
+    assert not verdict.ok, verdict.summary()
+    assert "population_drift" in verdict.codes, (
+        "rules 2-4 must have RUN against the ancient baseline — if this is empty "
+        "or reads 'baseline_unreadable', the durable baseline has been age-gated"
+    )
+    assert verdict.baseline_source == "durable"
+    assert not verdict.first_publish
+    assert verdict.published["population"] == 652_407
+
+
+def test_payload_age_never_changes_the_publish_decision():
+    """The same pair, seven years apart, must decide identically.
+
+    `payload_age_s` is a read-side helper that now shares a module with the
+    write-side gate. Nothing about how old an artifact is may leak into whether
+    its successor is publishable — a stale baseline is still a baseline, and a
+    recently-stamped one earns no extra trust.
+    """
+    candidate = payload(outcomes=1_020_000)
+
+    verdicts = []
+    for stamp in ("2026-08-12T00:00:00+00:00", "2019-03-04T05:06:07+00:00"):
+        baseline = payload(outcomes=1_000_000, generated_at=stamp)
+        verdicts.append(
+            evaluate_publish(candidate, None, durable_probe=_durable(baseline))
+        )
+
+    recent, old = verdicts
+    assert recent.ok and old.ok, (recent.summary(), old.summary())
+    assert recent.codes == old.codes == []
+    assert recent.baseline_source == old.baseline_source == "durable"
+    assert recent.first_publish == old.first_publish is False
+
+
+def test_the_durable_fallback_can_weaken_the_gate_never_heal_it():
+    """Q330's rule, in the publish vocabulary rather than the serving one.
+
+    Ruling 025's clause is about a fallback tier re-declaring content some
+    earlier tier already classified, and improving the claim. This branch adds a
+    fallback in the WRITE direction — durable history standing in for an absent
+    volatile baseline — and it is governed by the same asymmetry: consulting the
+    fallback may make the gate STRICTER (a baseline is recovered, rules 2-4 run)
+    or make it REFUSE (durable cannot answer), but it must never leave the gate
+    more permissive than the state it was called in.
+
+    `first_publish` IS the permissive state: it short-circuits rules 2-4. So the
+    invariant is that a passing verdict may only claim it on a PROVED cold start.
+    """
+    candidate = payload(outcomes=703_980, version="q267")
+    prior = payload(outcomes=652_407, version="q267")
+
+    granted = {}
+    for name, probe in (
+        ("cold_start", _cold_start()),
+        ("found", _durable(prior)),
+        ("indeterminate", _cannot_tell()),
+    ):
+        verdict = evaluate_publish(candidate, None, durable_probe=probe)
+        granted[name] = verdict
+        if verdict.ok and verdict.first_publish:
+            assert verdict.baseline_source == "none", (
+                f"{name}: rules 2-4 were skipped on a publish that went through, "
+                "without durable having PROVED there is no prior generation"
+            )
+
+    # And concretely, on the one shape that motivated the branch: the +7.91%
+    # candidate publishes only where there is provably nothing to compare it to.
+    assert granted["cold_start"].ok and granted["cold_start"].first_publish
+    assert not granted["found"].ok and "population_drift" in granted["found"].codes
+    assert not granted["indeterminate"].ok
+    assert granted["indeterminate"].codes == ["baseline_unreadable"]
+
+
+def test_an_unprovable_baseline_never_presents_itself_as_a_comparable_one():
+    """`baseline_source` and `published` must not tell a reader different stories.
+
+    Ruling 025 clause 2's shape: two vocabularies describing one object, where
+    the more reassuring reading wins by accident. On the durable path
+    `verdict.published` is overwritten with the recovered census BEFORE that
+    census is tested for usability, so a verdict that ends up declaring
+    `baseline_source == "unknown"` still carries a populated `published` block —
+    and the publisher copies `published_population` straight into the telemetry
+    of the issue it files.
+
+    It must therefore be visibly not-a-baseline: no positive population, and the
+    missing sections named. A reader must not be able to mistake it for a
+    comparison that happened.
+    """
+    verdict = evaluate_publish(
+        payload(),
+        None,
+        durable_probe=_durable({"buckets": [], "total_outcomes": 0}),
+    )
+
+    assert verdict.codes == ["baseline_unreadable"]
+    assert verdict.baseline_source == "unknown"
+
+    population = verdict.published.get("population")
+    assert not (isinstance(population, (int, float)) and population > 0), (
+        "a baseline the gate refused to trust must not report a usable population"
+    )
+    assert verdict.published.get("sections_missing"), (
+        "the reason it was untrustworthy must travel with it"
+    )
+
+
+def test_the_merged_module_still_carries_both_sides_of_the_merge():
+    """A textual auto-merge is exactly how one side's function quietly vanishes.
+
+    Cheap, and it is the assertion nobody writes: both changes are present and
+    functional in the same module, and `payload_age_s` still means what Q324
+    made it mean (``None`` for an unknown age is never zero).
+    """
+    from app.utils import calibration_publish_gate as gate
+
+    assert callable(gate.payload_age_s)
+    assert callable(gate.evaluate_publish)
+
+    assert gate.payload_age_s({}) is None, "an absent stamp is unknown, not fresh"
+    assert gate.payload_age_s(None) is None
+    assert gate.payload_age_s(payload(generated_at="2026-08-01T12:00:00+00:00")) > 0
+
+    # The write side's seam survived alongside it.
+    import inspect
+
+    assert "durable_probe" in inspect.signature(gate.evaluate_publish).parameters
 
 
 # ---------------------------------------------------------------------------
