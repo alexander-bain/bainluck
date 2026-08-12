@@ -6167,11 +6167,33 @@ async def _score_futures(
         from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
         _int_redis = await get_shared_async_redis()
-        # Read blend weight (default 0.2; set to 0 to disable)
-        _weight_res = await bounded_redis_call(
-            lambda: _int_redis.get("interestingness:blend_weight")
-        )
-        raw_weight = _weight_res.value if _weight_res.is_ok else None
+        # A caller may pin the weight for THIS scoring pass only — the
+        # ratification diagnostic (LAT-P043) renders one slate at two weights
+        # and must not touch the live key to do it. Deliberately an in-process
+        # argument rather than a second Redis key: a diagnostic that switches
+        # the blend on for real users, even briefly, is the exact accident
+        # Alex's dark ruling exists to prevent. Absent from the runtime config
+        # defaults, so the served path is byte-identical to before.
+        _weight_override = (config or {}).get("interestingness_blend_weight_override")
+        # Read the blend weight. ABSENT MEANS DARK — LAT-P043, Alex's ruling of
+        # 2026-08-12: the interestingness signal stays off until he has seen a
+        # side-by-side and ratified a weight, so the blend requires an explicit
+        # key and there is no implicit one.
+        #
+        # This used to default to 0.2, which made the ruled-OFF state depend on
+        # a cache entry surviving. The kill switch lives in a 100 MB Redis under
+        # `allkeys-lru` with no TTL (measured 2026-08-12: 36.3 MB used,
+        # evicted_keys 0) — so eviction, a flush, or a plan migration would have
+        # silently turned the blend back ON, and nothing would have reported it.
+        # A switch whose "off" position is the absence of a key fails open.
+        # Fail dark instead: to enable the blend, set the key.
+        if _weight_override is not None:
+            raw_weight = str(_weight_override)
+        else:
+            _weight_res = await bounded_redis_call(
+                lambda: _int_redis.get("interestingness:blend_weight")
+            )
+            raw_weight = _weight_res.value if _weight_res.is_ok else None
         if raw_weight is not None:
             try:
                 _interestingness_blend_weight = float(
@@ -6180,9 +6202,10 @@ async def _score_futures(
                     else str(raw_weight)
                 )
             except (ValueError, TypeError):
-                _interestingness_blend_weight = 0.2
+                # An unparsable weight is not a licence to pick one.
+                _interestingness_blend_weight = 0.0
         else:
-            _interestingness_blend_weight = 0.2  # default
+            _interestingness_blend_weight = 0.0
 
         if _interestingness_blend_weight > 0:
             _int_keys = [f"interestingness:{mid}" for mid in market_ids]
