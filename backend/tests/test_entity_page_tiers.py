@@ -293,12 +293,23 @@ class TestSpecMeasuredDensities:
         out = ept.resolve_entity_tier(sections_of(futures=1), now=NOW)
         assert out["tier"] == ept.TIER_ANSWER
 
-    def test_mlb_35_answers_lands_T2_NOT_the_T3_the_spec_predicted(self):
+    def test_awards_plus_props_alone_is_T2_however_many_answers_it_holds(self):
+        """35 answers across only TWO sections is T2. That is the section gate.
+
+        ⚠️ RENAMED (#1776). This was
+        `test_mlb_35_answers_lands_T2_NOT_the_T3_the_spec_predicted`, and it was
+        cited for a cycle as evidence that the spec's MLB example was wrong. The
+        arithmetic below was always right; the CLAIM attached to it was not.
+        `/api/leagues/baseball_mlb` declares **T3/full** in production, because a
+        route resolves over its census — awards+props PLUS the championship grid
+        and the games rail (Alex's amendment). The spec predicted T3 and got T3.
+
+        What this test actually pins is narrower and still worth pinning: the
+        section gate is real, and answers alone never buy T3. Do not re-attach
+        the old conclusion to it.
+        """
         out = ept.resolve_entity_tier(sections_of(awards=8, props=27), now=NOW)
         assert out["answers"] == 35
-        # Only 2 populated sections, so the spec's own T3 gate is NOT met by
-        # awards+props alone. Recorded here because it is exactly the kind of
-        # threshold surprise the histogram exists to settle (§11's open item).
         assert out["sections_populated"] == 2
         assert out["tier"] == ept.TIER_STANDARD
 
