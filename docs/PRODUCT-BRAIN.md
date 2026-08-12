@@ -1317,3 +1317,4 @@ failure this document already records happening twice.
 - [027](rulings/027-entity-pages-render-a-declared-tier.md) — 2026-08-11 — Entity pages render a backend-declared tier; chrome is earned by counts (Alex)
 - [028](rulings/028-a-hold-is-declared-never-implied.md) — 2026-08-11 — Readiness is a literal token; a hold is DECLARED, never implied by silence (Alex)
 - [029](rulings/029-schedule-adherence-grades-deliveries.md) — 2026-08-11 — Schedule adherence grades DELIVERIES; a gate-skip is healthy (Alex)
+- [032](rulings/032-a-gate-verifies-only-where-it-runs.md) — 2026-08-11 — A gate verifies only where it runs: a branch is evidence, master is verification (Alex)

@@ -19,14 +19,19 @@ so no cycle can finish and then discover its evidence was unobtainable.
 | 2 | Trading-activity section led by matched-bucket comparison | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: browser-audit run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342), manifest `result: pass`, `observed_frontend_sha` = the audited commit | — |
 | 3 | Cricket + entertainment diagnosed to fix / exclusion / "genuinely bad" | 🟡 **Cricket DIAGNOSED** 2026-08-09 (confirms this document's own hypothesis). **Entertainment PARTLY diagnosed — corrected by CAL-P032:** the 0.42x single-quote lift (6.58% vs a 15.76% kalshi baseline) refutes the *single-quote-only* mechanism ONLY. **The settlement-timing rival is UNKNOWN, not refuted** — density says how many quotes, never when; adjudicating timing needs a settlement timestamp the schema does not carry | cricket: the publish (bump). entertainment: **timing is unobtainable without new capture** — it is an Alex scoping call, not pending work |
 | 4 | Source graph redesigned — per-source panels | 🟢 **PASSED 2026-08-10 (CAL-P030)** — merged at INT-031, deployed at `f6a40849`, and **photographed in production**: five per-source panels on a shared 0–100 axis, each labelled n · % of curve · ECE, same run [`31431286342`](https://github.com/alexander-bain/bainluck/actions/runs/31431286342) | — |
-| 5 | Native calibration surface consistent with web | 🟢 **PASSED 2026-08-09 (CAL-P026)** — rendered on both, every headline figure identical, both banner the staleness | — |
+| 5 | Native calibration surface consistent with web | 🟡 **UN-GREENED 2026-08-11 by Alex's ruling 032 (#1643).** CAL-P026's rendered pass stands as *evidence* and nothing in it is retracted — but the durable gate cited behind it was **vacuous** (it compared native to constants beside it in the same file), and the gate that replaces it has so far run only on a branch. **Goes green on a master CI run ID where the parity gate EXECUTED** | `program/calibration-40` merging, then the master CI run ID quoted here |
 | 6 | Monitoring proven by drill — watchdog + sentinel guards observed firing | 🟢 **WATCHDOG HALF PASSED 2026-08-09** — observed firing, issue #1604 | sentinel half is plumbing #1548 |
 | 7 | Backfill recovery progressing vs 786K recoverable; capture-floor re-measure ~Aug 15 | 🟡 **BASELINE ESTABLISHED 2026-08-09** — 797,871 recoverable, measured to exhaustion | a second dated measurement; ~Aug 15 |
 
-**Four items are green** (2, 4, 5, and 6's watchdog half) — up from two, because INT-031 merged
-CAL-P025/26/27 and CAL-P030 photographed the result. Item 7 has its first datapoint and needs a
-second, dated ~Aug 15. Item **3 is diagnosed on its cricket half**; its entertainment timing rival is
-UNKNOWN and unobtainable without new capture (see the CAL-P032 correction below).
+**Three items are green** (2, 4, and 6's watchdog half) — **down one from four, and deliberately**:
+item 5 was un-greened on 2026-08-11 when the gate cited as its durable coverage turned out to read
+no web value at all (#1643, ruling 032). Item 7 has its first datapoint and needs a second, dated
+~Aug 15. Item **3 is diagnosed on its cricket half**; its entertainment timing rival is UNKNOWN and
+unobtainable without new capture (see the CAL-P032 correction below).
+
+A count that only ever goes up is not a scoreboard. This one went down because the *proof* behind an
+item was re-examined, not because the surfaces regressed — the two clients did in fact agree on
+every headline figure CAL-P026 photographed, and still do.
 
 ## 🛑 THE BUILD COULD NEVER HAVE PUBLISHED — a banked unit did not survive its own round trip (CAL-P033, 2026-08-11)
 
@@ -1820,9 +1825,38 @@ visual, and the rail that can take it grades production.
 **Required proof:** side-by-side — native surface and web `/calibration` showing the same
 population version, the same generated-at, and the same headline figures. Rendered on both.
 
-**Status: 🟢 PASSED 2026-08-09 (CAL-P026) — rendered on both surfaces, figures identical.**
+**Status: 🟡 UN-GREENED 2026-08-11 (Alex ruling 032, #1643). Was 🟢 PASSED 2026-08-09 (CAL-P026).**
 
-### The proof
+**The bar for green, verbatim from the ruling:** *"it goes green when the parity gate has EXECUTED
+on a merged master head. After integration, cite the master CI run ID where the gate ran. A gate
+existing on a branch is evidence; a gate running on master is verification."*
+
+So this item now needs **one line added below**: a GitHub Actions run ID, on master, in which
+`calibrationSurfaceParity` executed. Nothing else about it is outstanding — the code is written, the
+gate is mutation-proven (ten mutations, ten killed), and it is sitting on `program/calibration-40`
+waiting for the Integrator.
+
+### Why a green item was taken back
+
+CAL-P026's rendered pass below is **not retracted** — the two surfaces did agree on every headline
+figure, and the pictures are real. What was retracted is the claim that the agreement was *guarded*.
+Codex C236 (#1643) found that `calibrationSurfaceParity.contract.test.js`, the test cited as the
+durable half of this item, never opened web's fixture, never ran web code, and never read a
+web-computed value: it compared the native fixture against constants declared beside it in the same
+file. **Both clients could have disagreed completely while it stayed green.**
+
+And they did disagree, in a field printed on this very page. The native parity line quoted below
+reads `contract=matched`; web publishes `data-contract-state="match"`. Same field, same payload, two
+spellings, both shipped — visible in this document since 2026-08-09 and caught by nothing, because
+no gate read both sides. (Native also spelled web's `"incompatible"` as `"mismatched"`.) CAL-P043
+made web's vocabulary authoritative — it is what ships publicly and what the browser rail grades —
+and the first act of the repaired gate was to fail on that divergence.
+
+The lesson generalises past this item, which is why it is ruling 032 and not a footnote: an item is
+green when its *evidence* is reproducible by a machine on the branch everyone else builds from, not
+when somebody has seen the thing be true once.
+
+### The proof (CAL-P026 — still valid as rendered evidence)
 
 Both surfaces rendered against **the same production response** — `generated_at
 2026-08-02T03:23:54.886392+00:00`, `population_version q267`. That is not a coincidence of timing:
