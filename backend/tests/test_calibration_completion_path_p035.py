@@ -41,6 +41,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks.precompute_calibration import TRADE_EVIDENCE_CLASSES
 from app.utils.calibration_phase_ledger import RESUME
 from app.utils.calibration_staged_futures import (
     GROUP_KEY_COLUMNS,
@@ -69,6 +70,10 @@ POOL = CORE_GROUPS + TAIL_GROUPS  # 1,650, matching the measured saturation
 
 _CATEGORIES = ("baseball", "soccer", "basketball", "hockey", "golf", "tennis", "mma", "politics")
 
+#: CAL-P044 (#1530). The production classes, imported rather than retyped so a
+#: class renamed in the contract fails here instead of drifting silently.
+_TRADE_EVIDENCE = TRADE_EVIDENCE_CLASSES
+
 
 def _group_key(index: int) -> dict:
     """One point in the group space, deterministically.
@@ -84,6 +89,12 @@ def _group_key(index: int) -> dict:
         "category": _CATEGORIES[(index // 200) % len(_CATEGORIES)],
         "price_moved": bool((index // 1_600) % 2),
         "is_nonexclusive_bundle": bool((index // 800) % 2),
+        # CAL-P044 (#1530): the sixth group key. Rotated on a stride coprime with
+        # none of the others so a unit's slice spans several classes and the walk
+        # actually exercises folding ACROSS the new dimension — the oracle would
+        # not notice a merge that blended traded into untraded if every row in
+        # the fixture carried the same class.
+        "trade_evidence": _TRADE_EVIDENCE[(index // 400) % len(_TRADE_EVIDENCE)],
     }
 
 

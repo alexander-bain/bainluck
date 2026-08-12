@@ -1,6 +1,7 @@
 {
   "covered_by_source": [
-    "_build_coverage_census"
+    "_build_coverage_census",
+    "trade_evidence_sql"
   ],
   "covered_by_value": [
     "CALIBRATION_CORRECTIONS",
@@ -39,6 +40,11 @@
     "SOCCER_2WAY_RULE_TEXT",
     "SOURCE_LIQUIDITY_EXCLUSIONS",
     "STAGED_UNIT_WINDOW_SAFETY",
+    "TRADE_EVIDENCE_CLASSES",
+    "TRADE_EVIDENCE_EVIDENCED_CLASSES",
+    "TRADE_EVIDENCE_EXCLUDED_SOURCES",
+    "TRADE_EVIDENCE_RULE_TEXT",
+    "TRADE_EVIDENCE_TRADED_CLASSES",
     "VM_ROSTER_IS_GROUPED_PARAM",
     "VM_ROSTER_MARKET_IDS_PARAM",
     "VM_ROSTER_MARKET_INFO_EXTRA",
@@ -55,9 +61,10 @@
     "_calibration_population_ctes",
     "_main_futures_sql",
     "_virtual_market_ctes",
-    "compute_calibration_payload"
+    "compute_calibration_payload",
+    "trade_evidence_sql"
   ],
-  "input_count": 47,
+  "input_count": 53,
   "inputs": [
     {
       "covered_by_source": false,
@@ -505,6 +512,70 @@
     {
       "covered_by_source": false,
       "covered_by_value": true,
+      "definition_sha16": "d56e1335ccf80de4",
+      "impact": "behavior_or_evidence",
+      "name": "TRADE_EVIDENCE_CLASSES",
+      "origin": "app.utils.calibration_trade_evidence:CLASSES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_trade_evidence_census",
+        "_empty_counts",
+        "_summarise"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": "d72f6136fa918e36",
+      "impact": "behavior_or_evidence",
+      "name": "TRADE_EVIDENCE_EVIDENCED_CLASSES",
+      "origin": "app.utils.calibration_trade_evidence:EVIDENCED_CLASSES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_trade_evidence_census",
+        "_summarise"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": "aee73fb5e7b67d1a",
+      "impact": "behavior_or_evidence",
+      "name": "TRADE_EVIDENCE_EXCLUDED_SOURCES",
+      "origin": "app.utils.calibration_trade_evidence:EXCLUDED_SOURCES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_trade_evidence_census"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": "01efba3961217c57",
+      "impact": "behavior_or_evidence",
+      "name": "TRADE_EVIDENCE_RULE_TEXT",
+      "origin": "app.utils.calibration_trade_evidence:RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_trade_evidence_census"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
+      "definition_sha16": "59d6d7ff23a17dc1",
+      "impact": "behavior_or_evidence",
+      "name": "TRADE_EVIDENCE_TRADED_CLASSES",
+      "origin": "app.utils.calibration_trade_evidence:TRADED_CLASSES",
+      "sql_interpolated": false,
+      "used_in": [
+        "_build_trade_evidence_census",
+        "_summarise"
+      ]
+    },
+    {
+      "covered_by_source": false,
+      "covered_by_value": true,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_IS_GROUPED_PARAM",
@@ -641,11 +712,23 @@
       "used_in": [
         "_coverage_census_or_disabled"
       ]
+    },
+    {
+      "covered_by_source": true,
+      "covered_by_value": false,
+      "definition_sha16": "40334a74673f143e",
+      "impact": "sql_shaping",
+      "name": "trade_evidence_sql",
+      "origin": "app.utils.calibration_trade_evidence:trade_evidence_sql",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
     }
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "9fc17b3cd1aad54365f496e824d2ff936afd1dd87d8f17e2ef145b19ad4179c7",
+  "source_sha256": "1773f0caadb9acf5e96fd438f9080f724318846ca72c34a5416c398ba056a644",
   "uncovered_behavior_or_evidence": 0,
   "uncovered_count": 0,
   "uncovered_sql_shaping": 0

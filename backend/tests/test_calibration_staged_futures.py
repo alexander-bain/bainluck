@@ -942,6 +942,9 @@ def test_the_declared_column_lists_match_the_production_statement():
         "category",
         "price_moved",
         "is_nonexclusive_bundle",
+        # CAL-P044 (#1530). This list is the statement's GROUP BY, so it moves
+        # when the statement does — see the SQL in ``_main_futures_sql``.
+        "trade_evidence",
     )
     assert DISTINCT_CENSUS_COLUMNS <= set(DEFAULT_CENSUS_COLUMNS)
     assert "published_questions" in DISTINCT_CENSUS_COLUMNS

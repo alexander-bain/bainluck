@@ -217,18 +217,25 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             __import__("app.utils.calibration_fingerprint_coverage")
 
     def test_the_census_counts_come_from_the_artifact(self, artifact):
-        """47 inputs, 47 covered, 0 uncovered — CAL-P047 closed it.
+        """53 inputs, 53 covered, 0 uncovered — CAL-P045/P047 closed it.
 
         Was 47 / 3 / 44. CAL-P030/P031 prose said "3 of 43", reading the
         UNCOVERED count as the total; asserting all of them against one another
         makes that class of slip impossible to restate. The identity below is
         what does that work, and it is why the pin is not simply ``== 0``.
+
+        47 -> 53 is ruling 011 part (b) arriving in the same window: importing
+        the trade-evidence rule added five constants and one callable to the
+        input set. **The ratchet caught that unprompted** — the six landed
+        UNCOVERED and had to be covered before this test could pass again, which
+        is the concrete proof that parts (a) and (b) are one invalidation event
+        rather than two changes that happen to ship together.
         """
         covered = len(artifact["covered_by_value"]) + len(artifact["covered_by_source"])
 
-        assert artifact["input_count"] == 47
-        assert len(artifact["covered_by_value"]) == 46
-        assert len(artifact["covered_by_source"]) == 1
+        assert artifact["input_count"] == 53
+        assert len(artifact["covered_by_value"]) == 51
+        assert len(artifact["covered_by_source"]) == 2
         assert artifact["uncovered_count"] == 0
         assert artifact["uncovered_count"] == artifact["input_count"] - covered
         assert (
@@ -246,12 +253,14 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         """
         assert artifact["uncovered_sql_shaping"] == 0
 
-    def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
-        """Four became five: ``_build_coverage_census`` is hashed by SOURCE.
+    def test_the_hashed_roots_are_derived_not_declared_here(self, artifact):
+        """Four became six: two CALLABLE inputs are hashed by SOURCE.
 
-        It is a callable, and ``repr`` of a function is its memory address —
-        stable within a process, different in every worker, and indistinguishable
-        from real coverage in the census.
+        ``repr`` of a function is its memory address — stable within a process,
+        different in every worker, and indistinguishable from real coverage in
+        the census. ``trade_evidence_sql`` is the one that matters most: it
+        EMITS SQL into the population statement, so its text can change the shape
+        of a banked unit.
         """
         assert sorted(artifact["hashed_roots"]) == [
             "_build_coverage_census",
@@ -259,6 +268,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_main_futures_sql",
             "_virtual_market_ctes",
             "compute_calibration_payload",
+            "trade_evidence_sql",
         ]
 
     def test_the_formerly_proven_hole_is_now_covered(self, artifact):
@@ -293,8 +303,14 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
             "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
             "PRICE_DERIVED_SOURCES_SQL",
+            "TRADE_EVIDENCE_CLASSES",
+            "TRADE_EVIDENCE_EVIDENCED_CLASSES",
+            "TRADE_EVIDENCE_EXCLUDED_SOURCES",
+            "TRADE_EVIDENCE_RULE_TEXT",
+            "TRADE_EVIDENCE_TRADED_CLASSES",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
+            "trade_evidence_sql",
         ]
         assert all(cross.values()), f"uncovered cross-module input: {cross}"
 
