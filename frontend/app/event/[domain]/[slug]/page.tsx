@@ -30,6 +30,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import EventHeader from "@/components/event/EventHeader";
 import CommentaryBox from "@/components/event/CommentaryBox";
 import MoversStrip from "@/components/event/MoversStrip";
+import NextEditionStrip from "@/components/event/NextEditionStrip";
 import RaceToTitleChart from "@/components/event/RaceToTitleChart";
 import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
 import SoccerContainerHero from "@/components/event/SoccerContainerHero";
@@ -366,6 +367,13 @@ export default function EventConceptPage() {
           The Open Championship only, LIVE only. Backend emits `commentary` solely
           for that scoped, in-play case; honest-empty otherwise. */}
       <CommentaryBox commentary={data.commentary} live={isLive} />
+
+      {/* UX-P065: a settled edition of a standing competition says when the
+          competition returns. Between editions is the DEFAULT state of a major's
+          page (~51 weeks a year), and until now the page said nothing at all.
+          Sits above the settled hero: it frames the champion, it never replaces
+          them — settled stays settled. Honest-empty when no next edition. */}
+      <NextEditionStrip competition={data.competition} settled={isSettled} />
 
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
 
