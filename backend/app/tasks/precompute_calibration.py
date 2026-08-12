@@ -4629,6 +4629,53 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
     return stages
 
 
+def _canonical_input(value: object) -> str:
+    """Render a fingerprint input to text whose ORDER cannot vary between runs.
+
+    CAL-P047 / ruling 024 part (a). This exists because covering the remaining
+    inputs "in the idiom the function already uses" — bare f-string
+    interpolation, as :data:`COVERAGE_CENSUS_ENABLED` does — would have shipped a
+    build that can never converge, while every test passed.
+
+    Three of the newly covered inputs are ``frozenset`` and one is a ``dict`` of
+    them. ``repr`` of a set iterates in HASH order, and Python randomises string
+    hashing per process (``PYTHONHASHSEED``). Measured on the real constant, four
+    seeds gave four different orderings of
+    :data:`DRAW_AUTHORITY_OUTCOME_NAMES`. Celery workers are separate processes,
+    so a bare interpolation would compute a DIFFERENT digest on every beat, the
+    cursor would be discarded as foreign every single time, and the walk would
+    restart forever — the exact failure this digest exists to prevent, caused by
+    the fix meant to strengthen it.
+
+    It would also have been invisible: a test suite runs in ONE process, so every
+    assertion about digest stability holds inside it and says nothing about the
+    property that matters. That is why the guard is a sorted render rather than a
+    test.
+
+    Sets and dict keys sort; everything else takes ``repr``. Sorting is on the
+    rendered text, so a heterogeneous set cannot raise on incomparable types.
+    """
+    if isinstance(value, (set, frozenset)):
+        return "{" + ", ".join(sorted(_canonical_input(v) for v in value)) + "}"
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ", ".join(
+                sorted(
+                    f"{_canonical_input(k)}: {_canonical_input(v)}"
+                    for k, v in value.items()
+                )
+            )
+            + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        # Order IS meaning for a sequence (rung order is the contract), so it is
+        # preserved rather than sorted. Only the members are canonicalised.
+        rendered = ", ".join(_canonical_input(v) for v in value)
+        return f"[{rendered}]" if isinstance(value, list) else f"({rendered})"
+    return repr(value)
+
+
 def _main_input_fingerprint() -> str:
     """Everything a carried phase output depends on, in one 32-char digest.
 
@@ -4672,6 +4719,33 @@ def _main_input_fingerprint() -> str:
     function's source covers that function, never what it calls — is why new
     SQL-shaping inputs belong on this list explicitly rather than being assumed
     covered.
+
+    CAL-P047 CLOSES THE CENSUS (ruling 024 part (a)). Every input the derived
+    map found is now covered: 42 same-module constants and 5 cross-module ones,
+    the four cross-module CONSTANTS by value and ``_build_coverage_census`` by
+    source, because it is a callable and a callable's value is its text. The
+    census went 3 covered / 44 uncovered -> 47 covered / 0 uncovered.
+
+    **The five cross-module holes were the ones that mattered**, and the reason
+    is structural rather than a matter of degree: ruling 009's freeze covered
+    this module and nothing else, so the 39 in-module inputs were protected
+    incidentally by a freeze designed to lift, while an edit to
+    ``app/utils/resolution_authority.py`` could change the published population
+    with the digest sitting perfectly still. ``tests/test_calibration_fingerprint_coverage.py``
+    proved that hole by value rather than arguing it from source; it now asserts
+    the inverse.
+
+    Two things about HOW, both of which were nearly wrong:
+
+    * Values render through :func:`_canonical_input`, not bare interpolation.
+      Three inputs are ``frozenset``; their ``repr`` order is per-process hash
+      order, so the documented idiom would have produced a digest that differs
+      between Celery workers and invalidates the cursor on every beat. See that
+      function.
+    * ``_build_coverage_census`` joins the hashed ROOTS rather than the by-value
+      list. Hashing ``repr`` of a function object would hash its memory address —
+      stable within a process, different in every worker, and it would have
+      looked exactly as covered in the census.
     """
     from app.utils.calibration_phase_ledger import input_fingerprint
 
@@ -4683,6 +4757,7 @@ def _main_input_fingerprint() -> str:
             + inspect.getsource(_calibration_population_ctes)
             + inspect.getsource(_virtual_market_ctes)
             + inspect.getsource(_main_futures_sql)
+            + inspect.getsource(_build_coverage_census)
         )
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"
@@ -4690,6 +4765,51 @@ def _main_input_fingerprint() -> str:
         CALIBRATION_POPULATION_VERSION,
         REPRESENTATIVE_TIE_AUTHORITY,
         f"coverage_census={COVERAGE_CENSUS_ENABLED}",
+        # ── cross-module (the tier ruling 009's freeze never covered) ──
+        f"truth_eligible_sources_sql={_canonical_input(CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL)}",
+        f"truth_ineligible_sources_sql={_canonical_input(CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL)}",
+        f"price_derived_sources_sql={_canonical_input(PRICE_DERIVED_SOURCES_SQL)}",
+        f"coverage_rung_keys={_canonical_input(_COVERAGE_RUNG_KEYS)}",
+        # ── same-module, alphabetical so a new one has an obvious home ──
+        f"calibration_corrections={_canonical_input(CALIBRATION_CORRECTIONS)}",
+        f"coverage_census_disabled_reason={_canonical_input(COVERAGE_CENSUS_DISABLED_REASON)}",
+        f"coverage_rung_predicates={_canonical_input(_COVERAGE_RUNG_PREDICATES)}",
+        f"default_min_category_outcomes={_canonical_input(_DEFAULT_MIN_CATEGORY_OUTCOMES)}",
+        f"draw_authority_outcome_names={_canonical_input(DRAW_AUTHORITY_OUTCOME_NAMES)}",
+        f"draw_authority_rule_text={_canonical_input(DRAW_AUTHORITY_RULE_TEXT)}",
+        f"draw_capable_categories={_canonical_input(DRAW_CAPABLE_CATEGORIES)}",
+        f"esports_multi_bundle_category={_canonical_input(ESPORTS_MULTI_BUNDLE_CATEGORY)}",
+        f"esports_multi_bundle_rule_text={_canonical_input(ESPORTS_MULTI_BUNDLE_RULE_TEXT)}",
+        f"exclusivity_evidence_rule_text={_canonical_input(EXCLUSIVITY_EVIDENCE_RULE_TEXT)}",
+        f"exclusivity_proved_relations={_canonical_input(EXCLUSIVITY_PROVED_RELATIONS)}",
+        f"field_completeness_rule_text={_canonical_input(FIELD_COMPLETENESS_RULE_TEXT)}",
+        f"golf_placeholder_high_band={_canonical_input(GOLF_PLACEHOLDER_HIGH_BAND)}",
+        f"golf_placeholder_rule_text={_canonical_input(GOLF_PLACEHOLDER_RULE_TEXT)}",
+        f"kalshi_hockey_honest_band_max={_canonical_input(KALSHI_HOCKEY_HONEST_BAND_MAX)}",
+        f"kalshi_liquidity_exists={_canonical_input(KALSHI_LIQUIDITY_EXISTS)}",
+        f"kalshi_liquidity_rule_text={_canonical_input(KALSHI_LIQUIDITY_RULE_TEXT)}",
+        f"kalshi_prop_threshold_degenerate_band={_canonical_input(KALSHI_PROP_THRESHOLD_DEGENERATE_BAND)}",
+        f"kalshi_prop_threshold_name_re={_canonical_input(KALSHI_PROP_THRESHOLD_NAME_RE)}",
+        f"kalshi_prop_threshold_rule_text={_canonical_input(KALSHI_PROP_THRESHOLD_RULE_TEXT)}",
+        f"malformed_binary_rule_text={_canonical_input(MALFORMED_BINARY_RULE_TEXT)}",
+        f"mex_normalize_rule_text={_canonical_input(MEX_NORMALIZE_RULE_TEXT)}",
+        f"mex_normalize_threshold={_canonical_input(MEX_NORMALIZE_THRESHOLD)}",
+        f"nonexclusive_bundle_census_rule_text={_canonical_input(NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT)}",
+        f"no_winner_rule_text={_canonical_input(NO_WINNER_RULE_TEXT)}",
+        f"orphan_partition_rule_text={_canonical_input(ORPHAN_PARTITION_RULE_TEXT)}",
+        f"poly_never_traded={_canonical_input(POLY_NEVER_TRADED)}",
+        f"poly_placeholder_exclude={_canonical_input(POLY_PLACEHOLDER_EXCLUDE)}",
+        f"poly_placeholder_rule_text={_canonical_input(POLY_PLACEHOLDER_RULE_TEXT)}",
+        f"soccer_2way_rule_text={_canonical_input(SOCCER_2WAY_RULE_TEXT)}",
+        f"source_liquidity_exclusions={_canonical_input(SOURCE_LIQUIDITY_EXCLUSIONS)}",
+        f"staged_unit_window_safety={_canonical_input(STAGED_UNIT_WINDOW_SAFETY)}",
+        f"vm_roster_is_grouped_param={_canonical_input(VM_ROSTER_IS_GROUPED_PARAM)}",
+        f"vm_roster_market_ids_param={_canonical_input(VM_ROSTER_MARKET_IDS_PARAM)}",
+        f"vm_roster_market_info_extra={_canonical_input(VM_ROSTER_MARKET_INFO_EXTRA)}",
+        f"vm_roster_vm_ids_param={_canonical_input(VM_ROSTER_VM_IDS_PARAM)}",
+        f"void_filter_rule_text={_canonical_input(VOID_FILTER_RULE_TEXT)}",
+        f"weather_wide_spread_exclude={_canonical_input(WEATHER_WIDE_SPREAD_EXCLUDE)}",
+        f"weather_wide_spread_rule_text={_canonical_input(WEATHER_WIDE_SPREAD_RULE_TEXT)}",
         source,
     )
 

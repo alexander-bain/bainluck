@@ -17,13 +17,19 @@ DEFAULT_MAP=BACKEND/"tests/evals/fixtures/calibration_fingerprint_derived_map.js
 #: the fix may be applied. Ruling 024 answers it — the fix rides the single
 #: combined invalidation window, not on its own.
 FIX_SEQUENCING_NOTE = """\
+APPLIED — CAL-P047, 2026-08-12, inside ruling 024's combined invalidation window.
+The census reads 47 inputs / 0 uncovered. This note is kept, rather than deleted
+with the hole, because the CONSTRAINT it records outlives the fix: the next input
+added to this module faces exactly the same two blockers, and a note that
+disappears the moment it is first obeyed teaches nobody.
+
 Covering these means adding them to `_main_input_fingerprint`, in the idiom that
 function already uses for `COVERAGE_CENSUS_ENABLED` — hashed by NAME and by
 VALUE, so the input is greppable rather than an incidental substring.
 
-TWO CONSTRAINTS, EACH INDEPENDENTLY SUFFICIENT TO BLOCK IT TODAY:
+TWO CONSTRAINTS, EACH INDEPENDENTLY SUFFICIENT TO BLOCK IT AT THE TIME:
 
-1. `precompute_calibration.py` is FROZEN (ruling 009), and ruling 024 places the
+1. `precompute_calibration.py` was FROZEN (ruling 009), and ruling 024 places the
    fix inside the ONE combined invalidation window that opens at the first fresh
    publish — together with ruling 011's two-tier well-traded, the cricket and
    entertainment exclusions, and the population-version bump plus its published
@@ -39,12 +45,36 @@ TWO CONSTRAINTS, EACH INDEPENDENTLY SUFFICIENT TO BLOCK IT TODAY:
 The instinct "we found a correctness bug, fix it now" is wrong here, and it is
 wrong in a way that costs the SLO. That is why this note ships beside the census
 instead of the patch.
+
+WHAT THE APPLICATION TAUGHT, for whoever adds input 48:
+
+* The documented idiom is NOT SAFE BY ITSELF. Three inputs are `frozenset`, whose
+  `repr` iterates in per-process hash order; bare interpolation would have given
+  every Celery worker a different digest, discarded the cursor on every beat, and
+  made convergence impossible — while passing every test, because a test suite
+  runs in one process. Values go through `_canonical_input`.
+* A CALLABLE input is covered by SOURCE, never by value: `repr` of a function is
+  its memory address. Hence `covered_by_source` beside `covered_by_value`, and
+  "uncovered" meaning neither.
+* The detector itself was blind to the fix: `derive_declared` only counted
+  same-module assignments, so covering a CROSS-MODULE constant — the five that
+  ruling 009's freeze never protected, i.e. the only ones that mattered — would
+  still have reported "uncovered". Fixing the census and fixing the hole were one
+  job, not two.
 """
 
 def _functions(tree): return {n.name:n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}
 def _fingerprint_node(tree): return _functions(tree)["_main_input_fingerprint"]
 def derive_declared(source:str)->tuple[set[str],set[str]]:
- tree=ast.parse(source); node=_fingerprint_node(tree); roots=set(); values=set(); module_names=set(_module_defs(tree))
+ # CAL-P047: ``module_names`` must include IMPORTED app.* names, not only
+ # same-module assignments. Before this, a cross-module constant passed by value
+ # to ``input_fingerprint`` was not recognised as covered — so the detector could
+ # not have observed the fix to the very holes it was built to report, and
+ # covering them would have read as "still uncovered". The five cross-module
+ # inputs are the tier ruling 009's freeze never protected, which makes this the
+ # one blind spot with production consequences.
+ tree=ast.parse(source); node=_fingerprint_node(tree); roots=set(); values=set()
+ module_names=set(_module_defs(tree))|set(_imports(tree))
  for call in ast.walk(node):
   if isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute) and call.func.attr=="getsource" and call.args:
    if isinstance(call.args[0],ast.Name): roots.add(call.args[0].id)
@@ -120,9 +150,15 @@ def derive_map(source:str|None=None,module_sources:dict[str,str]|None=None)->dic
    module,origin=imports[name]; path=_module_path(module)
    text=(module_sources or {}).get(module,path.read_text() if path.exists() else "")
    if text: definition_sha=_definition_closure_digest(text,origin)
-  rows.append({"name":name,"origin":f"{module}:{origin}","covered_by_value":name in covered,"used_in":sorted(used.get(name,[])),"sql_interpolated":name in interpolated,"impact":"sql_shaping" if name in interpolated else "behavior_or_evidence","definition_sha16":definition_sha})
- uncovered=[r for r in rows if not r["covered_by_value"]]
- return {"schema":"calibration-fingerprint-derived/v1","source":str(BUILD.relative_to(BACKEND.parent)),"source_sha256":hashlib.sha256(source.encode()).hexdigest(),"hashed_roots":sorted(roots),"covered_by_value":sorted(covered),"input_count":len(rows),"uncovered_count":len(uncovered),"uncovered_sql_shaping":sum(r["sql_interpolated"] for r in uncovered),"uncovered_behavior_or_evidence":sum(not r["sql_interpolated"] for r in uncovered),"inputs":rows}
+  # CAL-P047: a CALLABLE input is covered by hashing its SOURCE, never by value —
+  # ``repr`` of a function is its memory address, which differs in every worker
+  # while looking perfectly covered here. So ``covered_by_source`` is a first-class
+  # second way to be covered, and "uncovered" means neither. Without this the
+  # census would report ``_build_coverage_census`` as a hole forever, and the only
+  # way to close it would be the wrong fix.
+  rows.append({"name":name,"origin":f"{module}:{origin}","covered_by_value":name in covered,"covered_by_source":name in roots,"used_in":sorted(used.get(name,[])),"sql_interpolated":name in interpolated,"impact":"sql_shaping" if name in interpolated else "behavior_or_evidence","definition_sha16":definition_sha})
+ uncovered=[r for r in rows if not (r["covered_by_value"] or r["covered_by_source"])]
+ return {"schema":"calibration-fingerprint-derived/v1","source":str(BUILD.relative_to(BACKEND.parent)),"source_sha256":hashlib.sha256(source.encode()).hexdigest(),"hashed_roots":sorted(roots),"covered_by_value":sorted(covered),"covered_by_source":sorted(r["name"] for r in rows if r["covered_by_source"]),"input_count":len(rows),"uncovered_count":len(uncovered),"uncovered_sql_shaping":sum(r["sql_interpolated"] for r in uncovered),"uncovered_behavior_or_evidence":sum(not r["sql_interpolated"] for r in uncovered),"inputs":rows}
 def main():
  print(json.dumps(derive_map(),indent=2,sort_keys=True)); return 0
 if __name__=="__main__": raise SystemExit(main())
