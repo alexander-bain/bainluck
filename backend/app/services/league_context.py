@@ -295,6 +295,19 @@ async def enrich_event_with_context(
 
     result = {
         "league_slug": config.slug,
+        # STRIPPED — SCHEDULED, not yet executed. Queue 333, C272/B4 census (#1620).
+        # The one field here with no retention argument at all: it is `config.name`, and
+        # `league_slug` sits directly above it on the same object, so every client can
+        # already resolve the display name from its own league config. It is redundancy
+        # on the wire, not information — four months old (2026-04-14, `04899609`) with
+        # zero client reads.
+        # Old-build check RECORDED (Item 0's rule): iOS `leagueName` is `String?` —
+        # OPTIONAL — so removal is decode-safe for shipped builds; the key simply stops
+        # arriving. No crash.
+        # NOT stripped here because a strip is Red and this one has THREE producers
+        # (`events.py:7866`, `playoffs.py:4073`, and here) plus two typed clients, and it
+        # moves the typecheck baseline, which the CI ratchet fails on in both directions
+        # (gotcha #10). Scheduled deliberately rather than taken opportunistically.
         "league_name": config.name,
         "columns": ctx.columns,
         "league_page_url": league_page_url,

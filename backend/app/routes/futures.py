@@ -416,6 +416,14 @@ async def get_futures_movers(
                 "market_name": o.market.name if o.market else None,
                 "current_probability": float(o.current_probability) if o.current_probability else None,
                 "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+                # Deliberately present and deliberately unrendered. The standing
+                # no-price-format ruling bans odds SOLD AS A FEATURE, not odds NAMED
+                # as the thing we refuse to show — so this is a judgment call, not a
+                # mechanical strip. It costs one integer and preserves the ability to
+                # say "-150 means 60%" at the boundary; stripping it forecloses that
+                # framing, and re-deriving it later means re-plumbing a producer
+                # through two typed clients. Revisit only WITH the ruling.
                 "current_american_odds": o.current_american_odds,
                 "rank": o.rank,
                 "rank_change_24h": o.rank_change_24h,
@@ -423,6 +431,14 @@ async def get_futures_movers(
             for o in outcomes
             if not _GARBAGE_OUTCOME_RE.match(o.name or "")
         ],
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # Request-echo: the window actually applied, which is not always the window
+        # asked for. A caller that cannot see this cannot tell a clamped or normalised
+        # response from the one it requested.
+        # ⚠️ STRIP-UNSAFE: `timeframeHours` is a NON-OPTIONAL `Int` in shipped iOS
+        # (Models/SearchModels.swift:146). Removing it throws on decode for every build
+        # already in the wild — a crash, not a cleanup. The App Store does not redeploy
+        # atomically with the backend.
         "timeframe_hours": hours,
     }
 
@@ -883,6 +899,19 @@ async def faceted_futures_search(
             "llm_sport_category": market.llm_sport_category,
             "source": market.source,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            # STRIPPED — SCHEDULED, not yet executed. Queue 333, C272/B4 census (#1620).
+            # Unlike the annotated fields in this file, no retention argument survived:
+            # it is a stored taxonomy column surfaced on browse rows, declared by both
+            # typed clients, read by neither, for five months (introduced 2026-03-01,
+            # `39a70392`). It is not diagnostic, not a request-echo, and not half of a
+            # rendered pair.
+            # Old-build check RECORDED (Item 0's rule — not a grep of the current tree):
+            # iOS `marketTags` is `[String]?` — OPTIONAL — so removal is decode-safe for
+            # builds already shipped; no crash, the key simply stops arriving.
+            # NOT stripped here because a strip is Red: it spans this producer, the web
+            # types, the native model, and it moves the typecheck baseline, which the CI
+            # ratchet fails on in BOTH directions (gotcha #10). Scheduled deliberately
+            # rather than taken opportunistically.
             "market_tags": market.market_tags or [],
             "top_outcomes": top3,
             "outcome_count": len(real_outcomes),
@@ -2618,6 +2647,13 @@ async def get_probability_timeline(
         "hours": requested_hours,
         "actual_hours": actual_hours,
         "top": top,
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # Self-describing payload metadata: it says what one step of `timeline` below
+        # actually spans, which is not recoverable from the series itself. No client
+        # reads it yet; a chart that labels its own x-axis will need it.
+        # ⚠️ STRIP-UNSAFE: `bucketSeconds` is a NON-OPTIONAL `Int` in shipped iOS
+        # (Models/FuturesModels.swift:302) — removing it makes `Decodable` throw on
+        # every build already in the wild.
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
         "outcomes": outcomes_meta,
@@ -2862,6 +2898,13 @@ async def get_cross_source_timeline(
         "source": "merged",
         "hours": hours,
         "top": top,
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # Self-describing payload metadata: it says what one step of `timeline` below
+        # actually spans, which is not recoverable from the series itself. No client
+        # reads it yet; a chart that labels its own x-axis will need it.
+        # ⚠️ STRIP-UNSAFE: `bucketSeconds` is a NON-OPTIONAL `Int` in shipped iOS
+        # (Models/FuturesModels.swift:302) — removing it makes `Decodable` throw on
+        # every build already in the wild.
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
         "outcomes": outcomes_meta,

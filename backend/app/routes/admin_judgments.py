@@ -313,6 +313,14 @@ def _serialize_labeling_candidate(
         "item_type": "futures",
         "id": market.id,
         "market_id": market.id,
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # Admin/labeling surface: a source-stable handle that survives re-ingest, so a
+        # recorded judgment still points at the same question after the row is rebuilt.
+        # 📌 CENSUS CORRECTION: B4 counted this as "declared in a native model", but iOS
+        # `stableId` (Models/DiscoverLabelingModels.swift:69) is a COMPUTED property —
+        # the app derives its own and never decodes this one. The native leg of B4's
+        # four-part intersection is a false positive for this field; only the web side
+        # ever declared it. The zero-read finding still holds, on weaker evidence.
         "stable_id": f"futures:{market.id}",
         "name": market.name,
         "category": category,

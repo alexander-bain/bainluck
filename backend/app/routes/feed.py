@@ -7817,6 +7817,11 @@ async def _score_event_concepts(
                     "start_date": c["start_date"],
                     "is_major": c["is_major"],
                     "fight_count": c.get("fight_count", 0),
+                    # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+                    # NOT dead: this same key is a RANKING INPUT read a few hundred lines
+                    # up (`feed.py:7633,7640,7648`) to size a concept card. It is
+                    # serialized for the same reason `fight_count` beside it is — so the
+                    # card can say "184 in the field" without a second request.
                     "entry_count": c.get("entry_count", 0),
                     # Item 2: calendar-flagged marquee => pinned atop the feed while live.
                     "is_marquee": _is_marquee,
