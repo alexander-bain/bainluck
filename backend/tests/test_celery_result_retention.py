@@ -408,13 +408,25 @@ class _FakeRedis:
         return self._ttls.get(key, -1)
 
 
-async def _run_census(monkeypatch, keys, ttls):
+async def _run_census(monkeypatch, keys, ttls, **overrides):
     import app.routes.admin_celery as mod
     import app.tasks.redis_state as redis_state
 
     monkeypatch.setattr(mod, "_check_admin_secret", lambda *a, **k: None)
     monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **k: _FakeRedis(keys, ttls))
-    return await mod.redis_census(request=None, secret="x", scan_limit=1000, sample_per_class=12)
+    # Every bound is passed explicitly: called outside FastAPI, an omitted
+    # argument arrives as an unresolved `Query(...)` object rather than its
+    # declared default, and the first arithmetic comparison against it raises
+    # into the census's own catch-all — which surfaces as a missing `classes`
+    # key, not as the TypeError it is. #1807 added two more such bounds.
+    params = {
+        "scan_limit": 1000,
+        "sample_per_class": 12,
+        "deadline_s": 12.0,
+        "sample_budget": 4000,
+    }
+    params.update(overrides)
+    return await mod.redis_census(request=None, secret="x", **params)
 
 
 @pytest.mark.asyncio

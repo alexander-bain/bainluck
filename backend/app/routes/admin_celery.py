@@ -1,6 +1,7 @@
 """Admin endpoints for Celery worker health, inspection, and task metrics."""
 
 
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -406,6 +407,31 @@ _REDIS_ID_SUFFIX_PREFIXES = (
     "unacked",
 )
 
+#: A colon segment at least this long, made only of hex digits and dashes, is an
+#: id (uuid, sha) rather than a family name.
+_OPAQUE_HEX_MIN_LEN = 16
+
+
+def _looks_like_opaque_id(segment: str) -> bool:
+    """True when a segment names ONE row/job rather than a family of them.
+
+    #1807: the prefix table above only folds families somebody thought to list.
+    ``interestingness:{market_id}`` was not on it, so 41,152 cache keys became
+    41,152 distinct "classes" — and since each class was under its own sampling
+    quota, the census issued a ``MEMORY USAGE`` **and** a ``TTL`` round trip for
+    every single key. That is what pushed it past the 30 s router timeout. The
+    fix has to be structural rather than another table entry, because the next
+    ``<family>:{id}`` cache to land would reintroduce it silently.
+    """
+    if not segment:
+        return False
+    if segment.isdigit():
+        return True
+    stripped = segment.replace("-", "")
+    return len(stripped) >= _OPAQUE_HEX_MIN_LEN and all(
+        c in "0123456789abcdefABCDEF" for c in stripped
+    )
+
 
 def _redis_key_class(key: str) -> str:
     """Fold a key into the family it belongs to, id suffixes and all."""
@@ -413,16 +439,29 @@ def _redis_key_class(key: str) -> str:
         if key.startswith(prefix):
             return f"{prefix}*"
     # Otherwise: first two colon segments, so `bainluck:calibration:x` and
-    # `bainluck:calibration:y` roll up together.
-    return ":".join(key.split(":")[:2]) or "(root)"
+    # `bainluck:calibration:y` roll up together — with any segment that is an
+    # opaque id collapsed to `*`, so `interestingness:41152` folds to
+    # `interestingness:*` instead of naming itself.
+    segments = [
+        "*" if _looks_like_opaque_id(s) else s for s in key.split(":")[:2]
+    ]
+    return ":".join(segments) or "(root)"
+
+
+#: Indirection so a test can drive the census deadline off a deterministic
+#: counter. A test that measured real elapsed time would be a test that branches
+#: on the clock (gotcha #44), and this one has to assert the deadline fires.
+_census_clock = time.monotonic
 
 
 @router.get("/redis-census")
 async def redis_census(
     request: Request,
     secret: str = Query(None),
-    scan_limit: int = Query(20000, ge=100, le=200000),
+    scan_limit: int = Query(200000, ge=100, le=2000000),
     sample_per_class: int = Query(12, ge=1, le=50),
+    deadline_s: float = Query(12.0, ge=1.0, le=25.0),
+    sample_budget: int = Query(4000, ge=0, le=100000),
 ):
     """Bounded, read-only census of what is actually occupying Redis.
 
@@ -436,11 +475,22 @@ async def redis_census(
 
     * ``SCAN`` with a cursor and a hard ``scan_limit`` ceiling — never
       ``KEYS``, which is O(N) and blocks the single-threaded server.
-    * ``MEMORY USAGE`` is sampled (``sample_per_class`` keys per class), not
-      called per key, and its own ``SAMPLES 0`` estimate is used for
-      collections.
+    * ``MEMORY USAGE`` is sampled (``sample_per_class`` keys per class, and no
+      more than ``sample_budget`` in total), not called per key, and its own
+      ``SAMPLES 0`` estimate is used for collections.
+    * A wall-clock ``deadline_s`` well inside Heroku's 30 s router timeout.
     * The client comes from ``get_redis_client()``, which carries the mandatory
       socket/connect timeouts (gotcha #39).
+
+    #1807 is why the last two of those exist. The per-class sampling quota is
+    only a bound if the number of classes is bounded, and it was not: an
+    unfolded ``<family>:{id}`` keyspace made every key its own class, so the
+    "sampled" path ran per key and the endpoint 503'd at the router timeout —
+    on the DEFAULT call, at the keyspace the endpoint was built to measure.
+    A 503 is indistinguishable from the app being down, so the endpoint now
+    answers with a partial census and says which bound stopped it. **An empty
+    200, a partial 200 and a dead Redis must never read the same** (gotcha #53),
+    hence the explicit ``verdict``.
 
     Strictly read-only: no write, no delete, no ``FLUSH``, no config change.
     Sizing decisions belong to Alex; this endpoint only supplies the numbers.
@@ -451,7 +501,15 @@ async def redis_census(
 
     from app.tasks.redis_state import get_redis_client
 
-    out: dict = {"scan_limit": scan_limit, "truncated": False}
+    started = _census_clock()
+    out: dict = {
+        "scan_limit": scan_limit,
+        "deadline_s": deadline_s,
+        "sample_budget": sample_budget,
+        "truncated": False,
+        "truncated_reason": None,
+        "verdict": "complete",
+    }
     try:
         r = get_redis_client()
         info_mem = r.info("memory")
@@ -514,14 +572,20 @@ async def redis_census(
         )
         scanned = 0
         cursor = 0
+        scan_calls = 0
+        sample_ops = 0
+        budget_exhausted = False
         while True:
             cursor, batch = r.scan(cursor=cursor, count=500)
+            scan_calls += 1
             for raw in batch:
                 key = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
                 cls = _redis_key_class(key)
                 cell = classes[cls]
                 cell["keys"] += 1
-                if cell["sampled"] < sample_per_class:
+                # Two bounds, because the per-class quota alone is not one: it
+                # only limits work if the class count is limited too (#1807).
+                if cell["sampled"] < sample_per_class and sample_ops < sample_budget:
                     try:
                         size = r.memory_usage(key, samples=0)
                         if size:
@@ -534,14 +598,36 @@ async def redis_census(
                         cell["no_ttl"] += 1
                     else:
                         cell["ttls"].append(int(ttl))
+                    sample_ops += 1
+                elif cell["sampled"] < sample_per_class:
+                    budget_exhausted = True
                 scanned += 1
             if cursor == 0:
                 break
             if scanned >= scan_limit:
                 out["truncated"] = True
+                out["truncated_reason"] = "scan_limit"
+                break
+            # Checked per SCAN page, so the overshoot is one page of work.
+            if _census_clock() - started >= deadline_s:
+                out["truncated"] = True
+                out["truncated_reason"] = "deadline"
                 break
 
         out["scanned"] = scanned
+        dbsize = out.get("dbsize") or 0
+        out["coverage_pct"] = round(100.0 * scanned / dbsize, 1) if dbsize else None
+        # The numbers that make a slow census diagnosable instead of mysterious.
+        # `sample_ops` is the one that regressed in #1807: it tracked `scanned`
+        # one-for-one when it should have tracked `classes_seen`.
+        out["cost"] = {
+            "scan_calls": scan_calls,
+            "sample_ops": sample_ops,
+            "classes_seen": len(classes),
+            "sample_budget_exhausted": budget_exhausted,
+        }
+        if out["truncated"]:
+            out["verdict"] = "truncated"
         expires_s = (out.get("celery_results") or {}).get("result_expires_s")
         summary = []
         for cls, cell in classes.items():
@@ -574,13 +660,25 @@ async def redis_census(
                     # Oldest sampled key = the one with the least time left.
                     row["max_sampled_age_s"] = expires_s - min(current)
                     row["min_sampled_age_s"] = expires_s - max(current)
+            # An unsampled class estimates at zero bytes, which would sort it
+            # last — i.e. exactly like a class known to be tiny. Say which it is
+            # rather than letting the ranking imply a measurement never taken.
+            row["est_basis"] = "sampled" if cell["sampled"] else "unsampled"
             summary.append(row)
-        summary.sort(key=lambda c: -c["est_total_bytes"])
+        # Key count breaks the tie so unsampled classes still rank among
+        # themselves instead of landing in arbitrary dict order.
+        summary.sort(key=lambda c: (-c["est_total_bytes"], -c["keys"]))
         out["classes"] = summary[:60]
+        out["classes_omitted"] = max(0, len(summary) - 60)
         out["note"] = (
             "est_total_bytes is avg_sampled_bytes * keys — a ranking estimate, "
-            "not a measurement. Read-only; no keys were written or removed."
+            "not a measurement. Read-only; no keys were written or removed. "
+            "Read `verdict` before any count: `complete` covered the keyspace, "
+            "`truncated` covered `coverage_pct` of it, `error` counted nothing."
         )
     except Exception as e:  # noqa: BLE001
         out["error"] = str(e)[:300]
+        # Without this an unreachable Redis returns a 200 whose class list is
+        # empty — the same body as a genuinely empty keyspace (gotcha #53).
+        out["verdict"] = "error"
     return out

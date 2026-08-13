@@ -3801,8 +3801,20 @@ async def typeahead_search(
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
 
     # 1. Teams
+    #
+    # Ruling 041: `alternate_names` is SELECTED now, not only filtered on. The
+    # recall arms above have always matched it (`_build_expanded_ilike` over
+    # `Team.alternate_names`), but the column never reached the scorer, and the
+    # short name is the whole reason a team can win at all. "Boston Red Sox" is
+    # only an MC1 token match for `red sox`, which loses the within-class kind
+    # tie to any market that also mentions the Red Sox — while the alias
+    # "Red Sox" is an MC0 exact match, which loses to nothing. That is what the
+    # ruling means by "team floor": teams sit at the bottom of kind order and
+    # win by matching BETTER, so withholding the evidence they'd win on turns
+    # the floor into a ceiling. Measured: `red sox` and `yankees` both regressed
+    # to a player-props market without this.
     team_query = (
-        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Sport.key.label("sport_key"))
+        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
         .order_by(Team.name)
@@ -3825,6 +3837,8 @@ async def typeahead_search(
                 "team_id": row.id,
                 "team_slug": row.slug,
                 "sport_key": _normalize_team_sport_key(row.sport_key),
+                # Private: scorer evidence only, popped before the response.
+                "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
             })
 
     # 2. Events (live/upcoming) — with team logos
@@ -4114,6 +4128,22 @@ async def typeahead_search(
             "sport_key": "tennis",
         })
 
+    # OWNED-EVIDENCE-ONLY (ruling 041, Q325). Every concept in the pool at THIS
+    # point was derived from a member market's name/ticker — the loop above reads
+    # `market.external_id` and `market.name`, never the concept's own identity.
+    # So the concept is claiming a match its members earned, and that is exactly
+    # how `super bowl`, `world series`, `wwe` and `stranger things` all came back
+    # with `concept:event:awards:emmys` (measured 2026-08-12 21:48Z, 4 of 14 gold
+    # failures). Marked here, one line, rather than in five dict literals — the
+    # provenance is a property of WHERE the pool was filled, not of each entry.
+    #
+    # The `_detect_query_*` concepts inserted BELOW are query-derived: they
+    # matched `q` itself, so the concept owns that evidence and stays rankable.
+    # They carry no flag and default to not-derived, which is why this loop must
+    # run before them and not after.
+    for _ta_concept in event_concept_pool:
+        _ta_concept["_derived"] = True
+
     # #1063: golf majors are query-derived concepts here too (same never-dead keys
     # as /search). Prepended so "the open"/"british open"/"royal birkdale" surface
     # the golf major in the single event_concept slot the dropdown shows (line ~2097
@@ -4237,23 +4267,53 @@ async def typeahead_search(
     # four built hubs are reachable from search, not only the Browse nav.
     hub_pool = _match_hub_suggestions(q)
 
-    # --- Slot-based assembly ---
-    # Guarantee: 1 hub (when matched), 1 team, up to 2 events, up to 3 futures. Max 7.
-    # Events get priority for extra slots over futures.
-    suggestions = []
-    # A matched hub leads — it's the most direct answer to "golf"/"mma"/etc.
-    suggestions.extend(hub_pool[:1])
-    suggestions.extend(team_pool[:1])
-    suggestions.extend(event_pool[:2])
-    # L2-65: event concepts (tournament pages) rank above individual markets.
-    suggestions.extend(event_concept_pool[:1])
-    suggestions.extend(futures_pool[:2])
+    # --- Tier-lexicographic assembly (ruling 041, Q325) ---
+    #
+    # This REPLACES a fixed-slot merge — 1 hub, 1 team, 2 events, 1 concept, 2
+    # markets, extras by kind — which contained no relevance signal of any kind.
+    # A team therefore held the top slot on every query that produced one,
+    # whatever it had matched on, and that is the whole of the second measured
+    # failure family: `ai` answered "1. FC Kaiserslautern" (k-a-i-s...**ai**...),
+    # `ipo` answered "Asteras Tripolis" (tr-**ipo**-lis), `british open` answered
+    # a team called "Brito". Each pool was internally well ordered; nothing ever
+    # ordered them against each other.
+    #
+    # Now every candidate is scored by match class first and kind second, so the
+    # slot guarantees are gone deliberately: a guaranteed slot is precisely a
+    # promise to show something irrelevant when nothing relevant matched. Recall
+    # is untouched — the pools are exactly as they were, and the scorer only
+    # reorders and drops derived-only concepts (see `search_match_class`).
+    from app.utils.search_match_class import Evidence as _SEv, rank as _s_rank
 
-    remaining = 7 - len(suggestions)
-    if remaining > 0:
-        # Prioritize more events over more futures
-        extras = event_pool[2:4] + event_concept_pool[1:2] + futures_pool[2:3] + team_pool[1:2]
-        suggestions.extend(extras[:remaining])
+    def _ta_evidence(item: dict) -> _SEv:
+        kind = item.get("type") or "market"
+        aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
+        outcomes: tuple[str, ...] = ()
+        if kind == "team" and item.get("abbreviation"):
+            aliases = (*aliases, item["abbreviation"])
+        if kind == "futures":
+            outcomes = tuple(
+                (o or {}).get("name") or ""
+                for o in (item.get("top_outcomes") or [])
+            )
+        return _SEv(
+            name=item.get("text") or "",
+            aliases=aliases,
+            outcomes=outcomes,
+            kind=kind,
+            derived=bool(item.get("_derived")),
+            sport_key=item.get("sport_key"),
+        )
+
+    _ta_candidates = [
+        (_ta_evidence(item), item)
+        for item in (*hub_pool, *team_pool, *event_pool,
+                     *event_concept_pool, *futures_pool)
+    ]
+    suggestions = _s_rank(q, _ta_candidates)[:7]
+    for _s in suggestions:
+        _s.pop("_derived", None)
+        _s.pop("_aliases", None)
 
     result: dict = {"suggestions": suggestions, "query": q}
     if did_you_mean:
