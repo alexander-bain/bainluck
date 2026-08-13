@@ -19,6 +19,11 @@ import {
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import {
+  groupSourcesByProvider,
+  shapeBreakdownIsSymmetric,
+  SHAPE_BREAKDOWN_MIN_N,
+} from "@/lib/calibrationProviders";
 // CAL-P043 (#1643): the page's bucket math and its parity record live in one
 // module so a gate can call the code the page actually renders from. They used
 // to be private functions in this file, which is why the cross-surface gate had
@@ -305,6 +310,51 @@ export default function CalibrationPage() {
     });
   }, [normalized, categories, cohortFilter]);
 
+  // Queue 316 item 2: one row per PROVIDER, not per source key. Three of the
+  // five live keys are the Odds API answering three question shapes, and the
+  // table showed them as three unrelated "sportsbook" lines.
+  //
+  // The parent is computed the SAME way every other row on this page is —
+  // pool the buckets, run the page's own metric over them — so it is a
+  // measurement of the provider's own outcomes, never an average of the three
+  // child summaries. That distinction is the whole reason this is safe: the
+  // forbidden blend is fusing two same-shape sources' published figures, and
+  // pooling buckets does not do that.
+  const providerMetrics = useMemo(() => {
+    if (!normalized) return [];
+    return groupSourcesByProvider(sources).map(group => {
+      const inGroup = (b: { source: string }) => group.sources.includes(b.source);
+      const match = (b: { source: string }) =>
+        inGroup(b) && (!cohortFilter || cohortFilter(b as CalibrationBucket));
+      const groupBuckets = aggregateBuckets(normalized, match);
+      const groupN = normalized
+        .filter(match)
+        .reduce((s, b) => s + b.n, 0);
+      return {
+        provider: group.provider,
+        label: group.label,
+        sources: group.sources,
+        n: groupN,
+        mce: mce(groupBuckets),
+        ece: ece(groupBuckets),
+        brier: brierScore(normalized, match),
+      };
+    });
+  }, [normalized, sources, cohortFilter]);
+
+  // Whether the shape breakdown may appear INLINE (Fable's symmetry addendum).
+  // Measured from the live payload rather than asserted: on today's data Kalshi
+  // and Polymarket publish one shape each, so it is false and the breakdown
+  // lives in the per-source panels annex instead.
+  const shapeInline = useMemo(
+    () =>
+      shapeBreakdownIsSymmetric(
+        groupSourcesByProvider(sources),
+        Object.fromEntries(sourceMetrics.map(sm => [sm.source, sm.n]))
+      ),
+    [sources, sourceMetrics]
+  );
+
   // L2-232: may this build's labels go on this payload's numbers? Decided in one
   // pure place (`lib/calibrationContract.ts`) so the precedence between refusal
   // and the dated-degraded banner is a tested table rather than the order two
@@ -488,6 +538,47 @@ export default function CalibrationPage() {
           Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
+        {/* Queue 316 item 3. The greeting is a sentence a person can check; the
+            precision sits one click away rather than in front of it. The value
+            is read from the payload, never transcribed, so it stays true when
+            the hourly rebuild moves it. */}
+        <p className="text-text-primary max-w-2xl mx-auto" data-testid="calibration-plain-headline"
+          data-plain-ece={cohortECE}>
+          Across every market we track, prices land{" "}
+          <strong>within about {cohortECE.toFixed(1)} percentage points</strong> of what actually
+          happened.
+        </p>
+        <details className="max-w-2xl mx-auto text-left" data-testid="calibration-show-the-math">
+          <summary className="cursor-pointer text-xs text-accent-brand hover:underline text-center list-none">
+            Show the math
+          </summary>
+          <div className="mt-3 space-y-2 text-xs text-text-muted bg-surface-card rounded-lg p-4 border border-surface-border">
+            <p>
+              That figure is <strong className="text-text-secondary">ECE</strong> (expected
+              calibration error), n-weighted: every resolved outcome counts once, so the number
+              reflects what readers actually saw rather than treating a 12-outcome bucket as the
+              equal of a 40,000-outcome one.{" "}
+              {priceCohort === "all" && (
+                <>95% confidence interval on the worst-bucket figure:{" "}
+                <span className="tabular-nums text-text-secondary">
+                  {data.mce_ci_lower.toFixed(1)}&ndash;{data.mce_ci_upper.toFixed(1)}pp
+                </span>.{" "}</>
+              )}
+              Worst-bucket error (MCE, equal-weighted){" "}
+              <span className="tabular-nums text-text-secondary">{cohortMCE.toFixed(1)}pp</span>;
+              Brier <span className="tabular-nums text-text-secondary">{cohortBrier.toFixed(4)}</span>.
+            </p>
+            <p>
+              Population: <span className="tabular-nums text-text-secondary">{cohortN.toLocaleString()}</span>{" "}
+              resolved outcomes{cohortN !== fullN && <> of <span className="tabular-nums text-text-secondary">{fullN.toLocaleString()}</span> total</>}
+              {" "}&middot; {sources.length} sources &middot; {categories.length} categories.{" "}
+              <a href="#methodology" className="text-accent-brand hover:underline">
+                How we measure this
+              </a>{" "}
+              covers which price we use, who we count as the winner, and every exclusion.
+            </p>
+          </div>
+        </details>
         <p className="text-xs text-text-muted" data-testid="calibration-generated-at"
           data-generated-at={data.generated_at ?? ""}>
           {data.date_range?.start && data.date_range?.end
@@ -518,10 +609,15 @@ export default function CalibrationPage() {
             P1. Both are published as raw data here. */}
         <div data-testid="calibration-stat-ece-figures"
           data-ece={cohortECE} data-mce={cohortMCE}>
-          <StatCard label="Calibration Error (ECE)"
+          {/* Queue 316 item 3: the card leads with what the number MEANS. The
+              metric's name, its sibling figures and the CI have not been
+              removed — they moved into the disclosure under the hero, because
+              "Calibration Error (ECE) 1.2pp" is a label only a reader who
+              already knows the answer can parse. */}
+          <StatCard label="How far off, on average"
             testId="calibration-stat-ece"
             value={`${cohortECE.toFixed(1)}pp`}
-            detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
+            detail={`percentage points · ${cohortECE < 3 ? "close" : "wide"} · see “show the math”`}
             valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
         </div>
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
@@ -571,6 +667,22 @@ export default function CalibrationPage() {
           secondary &ldquo;worst-bucket sensitivity&rdquo; stat where a tiny bucket counts as much
           as a huge one. Lower is better.
         </p>
+        {/* Queue 316 item 2. One row per provider, and the row says which source
+            keys it pooled — so the collapse is legible instead of being a
+            relabelling the reader has to take on trust. */}
+        <p className="text-xs text-text-muted mb-4" data-testid="calibration-provider-note">
+          Each row is one <strong className="text-text-secondary">data provider</strong>, measured
+          by pooling its outcomes and running the same calculation used for every other row.
+          {shapeInline ? null : (
+            <>
+              {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
+              prediction markets publish a single shape each, so a per-shape column here would
+              exist for one provider and be blank for the others. The shape-by-shape breakdown is
+              in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
+              below, where all {sources.length} keys are shown separately.
+            </>
+          )}
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -581,27 +693,37 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-4 text-right" title="Max/worst-bucket sensitivity (equal-weighted): a small bucket counts as much as a large one, so it over-reacts to thin samples.">
                   MCE&nbsp;<span className="text-text-muted/60">&#9432;</span>
                 </th>
-                <th className="pb-2 pr-4 text-right">Brier</th>
-                <th className="pb-2 text-right">Buckets within 5pp</th>
+                <th className="pb-2 text-right">Brier</th>
               </tr>
             </thead>
             <tbody>
-              {[...sourceMetrics].sort((a, b) => a.ece - b.ece).map(sm => (
-                <tr key={sm.source} className="border-t border-surface-border">
-                  <td className="py-2.5 pr-4 font-medium text-text-primary">{sourceLabel(sm.source)}</td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">{sm.n.toLocaleString()}</td>
+              {[...providerMetrics].sort((a, b) => a.ece - b.ece).map(pm => (
+                <tr
+                  key={pm.provider}
+                  className="border-t border-surface-border"
+                  data-testid="calibration-provider-row"
+                  data-provider={pm.provider}
+                  data-provider-n={pm.n}
+                  data-provider-sources={pm.sources.join(",")}
+                >
+                  <td className="py-2.5 pr-4 font-medium text-text-primary">
+                    {pm.label}
+                    {pm.sources.length > 1 && (
+                      <span className="block text-xs font-normal text-text-muted">
+                        {pm.sources.map(sourceLabel).join(" · ")}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">{pm.n.toLocaleString()}</td>
                   <td className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
-                    sm.ece < 3 ? "text-green-600" : sm.ece < 5 ? "text-blue-600" : "text-orange-600"
+                    pm.ece < 3 ? "text-green-600" : pm.ece < 5 ? "text-blue-600" : "text-orange-600"
                   }`}>
-                    {sm.ece.toFixed(1)}pp
+                    {pm.ece.toFixed(1)}pp
                   </td>
                   <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
-                    {sm.mce.toFixed(1)}pp
+                    {pm.mce.toFixed(1)}pp
                   </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">{sm.brier.toFixed(4)}</td>
-                  <td className="py-2.5 text-right tabular-nums">
-                    {sm.bucketsInBand}/{sm.totalBuckets}
-                  </td>
+                  <td className="py-2.5 text-right tabular-nums">{pm.brier.toFixed(4)}</td>
                 </tr>
               ))}
               <tr className="border-t-2 border-surface-border font-semibold">
@@ -615,10 +737,7 @@ export default function CalibrationPage() {
                 <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
                   {cohortMCE.toFixed(1)}pp
                 </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
-                <td className="py-2.5 text-right tabular-nums">
-                  {cohortBuckets.filter(b => Math.abs(b.error) <= 5).length}/{cohortBuckets.length}
-                </td>
+                <td className="py-2.5 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
               </tr>
             </tbody>
           </table>
@@ -680,12 +799,24 @@ export default function CalibrationPage() {
           data-testid="calibration-activity-section"
           data-activity-direction={activity.direction}
         >
-          <h2 className="text-title-3 text-text-primary mb-1">Does Trading Activity Matter?</h2>
+          {/* Queue 316 item 4. The heading asked about TRADING; the data is
+              whether a PRICE MOVED. Those are not the same claim, and the gap
+              between them is the whole reason this section needed rewording:
+              we do not receive trade counts, we observe the price. Naming the
+              stand-in as a stand-in is the honest version, and it also keeps
+              the third state speakable — sportsbook lines carry no flag at
+              all, which a "traded / didn't trade" framing cannot express. */}
+          <h2 className="text-title-3 text-text-primary mb-1">
+            Does a price that moves predict better?
+          </h2>
           <p className="text-xs text-text-muted mb-4">
-            Compared <strong>bucket for bucket</strong>, so both cohorts are judged on outcomes we
-            priced the same. That matters: the two cohorts have different predicted-probability
-            mixes, so any gap between their overall figures is partly a difference in what they
-            contain rather than in how they behaved.
+            We don&rsquo;t receive trading volume for most of these markets, so we use{" "}
+            <strong>whether the price changed at all</strong> as the stand-in for whether anyone was
+            actively trading. It is a proxy, not a measurement of activity. Compared{" "}
+            <strong>bucket for bucket</strong>, so both groups are judged on outcomes we priced the
+            same. That matters: the two groups have different predicted-probability mixes, so any
+            gap between their overall figures is partly a difference in what they contain rather
+            than in how they behaved.
           </p>
 
           {/* CAL-P025 / exit-exam item 2. The section used to lead with two
@@ -766,7 +897,7 @@ export default function CalibrationPage() {
               even on the day moved measured 1.7pp against unchanged's 1.0pp,
               so it follows the same direction the sentence below does. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <StatCard label="Active Trading"
+            <StatCard label="Price changed"
               testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
@@ -775,7 +906,7 @@ export default function CalibrationPage() {
                   : activity.direction === "unchanged_higher" ? "text-green-600"
                     : "text-text-primary"
               } />
-            <StatCard label="Opening Price Only"
+            <StatCard label="Price stayed put"
               testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
@@ -864,8 +995,11 @@ export default function CalibrationPage() {
         </div>
       </section>
 
-      {/* By Source */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+      {/* By Source — also the shape-breakdown annex for the provider table
+          above (queue 316 item 2). It was already one panel per source key, so
+          the annex the symmetry rule asks for is an existing element plus the
+          sentence that names it as such, not a second thing to build. */}
+      <section id="by-source" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
         <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
         <p className="text-xs text-text-muted mb-4">
           One panel per source, all on the same 0&ndash;100% axis so the shapes are directly
@@ -877,6 +1011,16 @@ export default function CalibrationPage() {
           behind each point rather than having any hidden. Click any point for example outcomes,
           or select a source tab for the full-width view.
         </p>
+        {!shapeInline && (
+          <p className="text-xs text-text-muted mb-4" data-testid="calibration-shape-annex-note">
+            This is also where the <strong className="text-text-secondary">Sportsbooks (Odds
+            API)</strong> row from Source Comparison breaks apart: moneylines, spreads and totals
+            are separate panels here. They are kept out of that table because the prediction
+            markets have no equivalent split, and a column present for one provider and empty for
+            the others reads as missing data rather than as a difference in what the providers
+            publish.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="All" active={!activeSource} onClick={() => { setActiveSource(null); setDrillIn(null); }} />
           {sources.map(s => (
@@ -1138,6 +1282,45 @@ export default function CalibrationPage() {
           <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
           <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
           <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ bookmakers. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
+          {/* Queue 316 item 1. This was a column in Source Comparison, where it
+              competed with ECE for the reader's attention while being a
+              guardrail rather than a headline: it answers "is the error spread
+              across the curve or concentrated in one bucket", which matters
+              when you already distrust the number and not before. */}
+          <li data-testid="calibration-buckets-in-band-note">
+            <strong className="text-text-primary">&ldquo;Buckets within 5pp&rdquo; &mdash; the
+            guardrail behind the headline.</strong> We split the curve into probability buckets and
+            check how many land within 5 percentage points of perfect. Across the whole page that is{" "}
+            <strong className="text-text-primary">
+              {cohortBuckets.filter(b => Math.abs(b.error) <= 5).length} of {cohortBuckets.length}
+            </strong>{" "}
+            buckets. A good ECE with few buckets in the band would mean the average is being carried
+            by the big buckets while the thin ones swing wildly &mdash; so this is the check that
+            says whether the headline is trustworthy, not the headline itself.
+          </li>
+          {/* Queue 316 item 2b (premise P8). The events/Odds-API path selects
+              COALESCE(closing, opening), so "closing line" was not uniformly
+              true across the table and the fallback was silent. Wording only —
+              nothing about what is computed changes here. */}
+          {data.closing_line_coverage && data.closing_line_coverage.total > 0 && (
+            <li data-testid="calibration-price-basis-note"
+              data-has-closing={data.closing_line_coverage.has_closing}
+              data-needs-closing={data.closing_line_coverage.needs_closing}>
+              <strong className="text-text-primary">Not every row is a closing price, and we say
+              which.</strong> Kalshi and Polymarket are measured on their closing line. Sportsbook
+              rows use the closing line <em>where one exists</em> and fall back to the opening price
+              where it does not &mdash;{" "}
+              <span className="text-text-primary">
+                {data.closing_line_coverage.has_closing.toLocaleString()} of{" "}
+                {data.closing_line_coverage.total.toLocaleString()}
+              </span>{" "}
+              sportsbook rows have a close ({data.closing_line_coverage.needs_closing.toLocaleString()}{" "}
+              do not). The two bases do not measure the same, and we publish both figures rather than
+              one blended number: {data.mce_closing_line?.toFixed(1)}pp on closing-line rows against{" "}
+              {data.mce_opening_price?.toFixed(1)}pp on opening-price rows. A closing line is the
+              stronger test, so the gap is the cost of the fallback, not a finding about the books.
+            </li>
+          )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
           <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
           {data.liquidity_filter && (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded > 0) && (

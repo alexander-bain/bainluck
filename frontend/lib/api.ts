@@ -1913,6 +1913,19 @@ export interface CalibrationData {
   mce_ci_upper: number;
   mce_closing_line: number | null;
   mce_opening_price: number | null;
+  /**
+   * How many sportsbook rows actually have a closing line behind them.
+   *
+   * The events/Odds-API path selects `COALESCE(closing, opening)`, so a row
+   * with no close silently degrades to the opening price. The page states the
+   * basis rather than letting "closing line" stand for the whole table
+   * (queue 316 item 2b). Optional: older cached payloads omit it.
+   */
+  closing_line_coverage?: {
+    has_closing: number;
+    needs_closing: number;
+    total: number;
+  } | null;
   liquidity_filter?: CalibrationLiquidityFilter | null;
   // #997: minimum resolved-outcome count for a chartable sub-category, set
   // server-side (Redis-tunable) so web + native gate on the same bar.
