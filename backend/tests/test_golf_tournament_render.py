@@ -228,3 +228,120 @@ class TestRoundScopedMarketComplete:
     def test_empty_name_is_safe(self):
         assert _round_scoped_market_complete("", 3) is False
         assert _round_scoped_market_complete(None, 3) is False
+
+
+class TestTerminalRoundCeiling1803:
+    """#1803: a concluded tournament's ASSIGNED status is the terminal case.
+
+    The Masters specimen, measured on production v3790/v3792: `event.status` is
+    "settled" and `end_date` is 2026-04-12, yet "Round 3 Leader" rendered a live
+    ladder (McIlroy 80%, Young 11%) because the round ceiling is inferred only
+    from graded round LEADERS, and only round N's own leader can mark round N
+    over. There is no Round 4 Leader market at all, so the ceiling pinned at 2
+    forever — no amount of waiting or re-polling could ever have raised it.
+    """
+
+    # The measured Masters shape: R1 leader ungraded (honest-empty), R2 leader
+    # graded to McIlroy, R3 leader ungraded, R4 leader ABSENT entirely.
+    MASTERS_ROWS = [
+        ("leader", 1, False),
+        ("leader", 2, True),
+        ("leader", 3, False),
+        ("top", 1, False), ("top", 2, False), ("top", 3, False),
+    ]
+
+    def test_masters_round_3_is_unreachable_by_inference(self):
+        # The bug, pinned: inference alone can never settle round 3 here.
+        assert _completed_round_ceiling(self.MASTERS_ROWS) == 2
+        assert _round_scoped_market_complete("The Masters: Round 3 Scores", 2) is False
+        assert _round_scoped_market_complete("The Masters: Round 4 Scores", 2) is False
+
+    def test_settled_tournament_settles_every_round(self):
+        ceiling = _completed_round_ceiling(self.MASTERS_ROWS, tournament_settled=True)
+        # Round 3 settles despite its own leader never grading, and so do the
+        # round-scoped scoring props that #1803 measured rendering live.
+        assert 3 <= ceiling and 4 <= ceiling
+        assert _round_scoped_market_complete("The Masters: Round 3 Scores", ceiling) is True
+        assert _round_scoped_market_complete("The Masters: Round 4 Scores", ceiling) is True
+
+    def test_terminal_ceiling_covers_rounds_beyond_four(self):
+        # The round number is parsed from free upstream text, not a bounded enum.
+        # A sentinel (not 4) is why a stray "Round 5" cannot render live on a
+        # finished tournament.
+        ceiling = _completed_round_ceiling([], tournament_settled=True)
+        assert _round_scoped_market_complete("The Masters: Round 5 Scores", ceiling) is True
+        assert _round_scoped_market_complete("The Masters: Round 99 Scores", ceiling) is True
+
+    def test_tournament_wide_records_still_survive_a_settled_tournament(self):
+        # Terminal or not, a market with no round number is not round-scoped, so
+        # this guard must not become a blanket "hide everything when settled".
+        ceiling = _completed_round_ceiling([], tournament_settled=True)
+        assert _round_scoped_market_complete("The Masters: Lowest Round Score", ceiling) is False
+        assert _round_scoped_market_complete("The Masters: Hole-in-One", ceiling) is False
+
+    # ------------------------------------------------------------------
+    # The sharp edge. Alex's bar for #1803: round-level inference may only
+    # ever make a settled thing MORE settled-looking, never less — and the
+    # mid-tournament case gets its own regression test, because that is when
+    # this bites a live reader rather than an archive.
+    # ------------------------------------------------------------------
+
+    def test_MID_TOURNAMENT_ungraded_leader_stays_LIVE(self):
+        """THE REGRESSION TEST. Sunday afternoon at a live major: R1/R2 leaders
+        graded, R3 finished on the course but its leader market has NOT graded
+        yet (grading lags — that lag is the whole reason the inference exists),
+        R4 in play. Round 3's ladder must STAY LIVE. Suppressing it would hide a
+        real, moving number from a reader watching the tournament — the exact
+        direction of failure that costs information rather than merely showing
+        stale prices."""
+        live_rows = [
+            ("leader", 1, True),
+            ("leader", 2, True),
+            ("leader", 3, False),   # finished on course, grading lags
+            ("leader", 4, False),   # in play
+        ]
+        ceiling = _completed_round_ceiling(live_rows, tournament_settled=False)
+        assert ceiling == 2
+        assert _round_scoped_market_complete("The Masters: Round 3 Scores", ceiling) is False
+        assert _round_scoped_market_complete("The Masters: Round 4 Scores", ceiling) is False
+
+    def test_in_play_result_is_bit_identical_to_the_old_inference(self):
+        # A tournament in play must be UNREACHABLE by the new argument: the
+        # terminal case contributes nothing and the value is exactly what the
+        # inference always returned. Guards against the fix leaking into live play.
+        for rows in (
+            self.MASTERS_ROWS,
+            [("leader", 1, True), ("leader", 2, True), ("leader", 3, True), ("leader", 4, False)],
+            [("leader", 1, False)],
+            [("top", 2, True), ("leader", 1, True)],
+            [],
+        ):
+            assert _completed_round_ceiling(rows, tournament_settled=False) == \
+                _completed_round_ceiling(rows)
+
+    def test_monotone_the_terminal_case_can_only_RAISE_the_ceiling(self):
+        """Monotonicity is the property that makes 'never less settled'
+        structural rather than promised — it holds for every input, including
+        ones no tournament produces, because it comes from `max()` and not from
+        a case analysis somebody has to keep correct."""
+        for rows in (
+            [],
+            [("leader", 1, True)],
+            [("leader", 4, True), ("leader", 1, True)],
+            self.MASTERS_ROWS,
+            [("top", 9, True)],
+            [("leader", None, True), ("leader", 2, True)],
+        ):
+            assert _completed_round_ceiling(rows, tournament_settled=True) >= \
+                _completed_round_ceiling(rows, tournament_settled=False)
+
+    def test_no_clock_anywhere_in_the_terminal_case(self):
+        """Gotcha #44: the terminal case is driven by DECLARED payload state, not
+        by a date comparison, so it cannot swing with the wall clock. Same inputs
+        → same answer, forever; there is nothing here for `clock_sweep` to move."""
+        import inspect
+        from app.routes import golf as golf_mod
+
+        src = inspect.getsource(golf_mod._completed_round_ceiling)
+        for banned in ("datetime", "now(", "today", "utcnow", "time."):
+            assert banned not in src, f"{banned!r} leaked a clock into the ceiling"

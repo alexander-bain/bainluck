@@ -1322,3 +1322,6 @@ failure this document already records happening twice.
 - [032](rulings/032-a-gate-verifies-only-where-it-runs.md) — 2026-08-11 — A gate verifies only where it runs: a branch is evidence, master is verification (Alex)
 - [033](rulings/033-a-go-file-binds-only-its-addressee.md) — 2026-08-12 — A GO file binds only its addressee; others treat it as read-only context (Alex)
 - [034](rulings/034-sweep-by-branch-confirm-by-content.md) — 2026-08-12 — The poll sweeps by branch and confirms by content; the ready token is advisory (Alex)
+- [035](rulings/035-ratification-is-of-priority-never-diagnosis.md) — 2026-08-12 — Ratification is of PRIORITY, never of DIAGNOSIS; a root cause is a hypothesis (Alex)
+- [036](rulings/036-assigned-state-beats-inferred.md) — 2026-08-12 — Assigned STATE beats inferred; part-level inference is monotone and may only add settledness (Alex)
+- [037](rulings/037-a-certified-gate-run-is-not-voided-by-adjacency.md) — 2026-08-12 — A certified gate run is not voided to resolve a textual adjacency; the resolution travels to the Integrator (Alex)

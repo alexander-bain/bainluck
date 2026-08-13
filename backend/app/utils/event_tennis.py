@@ -152,6 +152,21 @@ def select_winner_field(markets, slug: str, real_outcome_count):
 
     Returning None is a first-class answer and the whole point of #1793: a slug
     that names no tournament we hold must 404, never resolve to a neighbour.
+
+    ONE MORE THING, AND IT IS THE REASON THIS DOCSTRING IS LONG. #1793 stated a
+    root cause — "the adapter falls back to the nearest winner-field market rather
+    than returning None; what is missing is a floor" — and it was WRONG in a way
+    that would have produced the wrong fix. There was already a floor, it already
+    worked, and nothing fell back; the defect was that the identity could not be
+    REPRESENTED, so the resolver was choosing confidently among tournaments that
+    should never have been comparable. A lane that had built the stated floor would
+    have shipped, measured nothing, and left `us-open-2026` serving Cincinnati.
+
+    That is why ruling 035 exists (`docs/rulings/035-…`): an issue's root-cause
+    field is a HYPOTHESIS, and ratification approves the PRIORITY of a problem,
+    never the diagnosis of it. Re-derive the mechanism from the running system
+    before you fix anything here, however confidently the ticket states it, and
+    whoever signed it.
     """
     from app.utils.name_normalization import clean_slug
 
@@ -196,6 +211,25 @@ def select_winner_field(markets, slug: str, real_outcome_count):
 
     # Richest wins: most real competitors, then higher 24h volume, then an
     # exact-slug match, then lowest id (stable / deterministic).
+    #
+    # ⚠️ THIS IS A TIE-BREAK, NEVER AN IDENTITY MECHANISM (ruling 031 — assigned
+    # identity beats inferred). It is only sound because `candidates` has already
+    # been filtered to markets that ARE the tournament the slug names. Among four
+    # renderings of one tournament, "most competitors" picks the fullest draw and
+    # that is the L2-65 alias-convergence feature working as designed.
+    #
+    # Weaken the identity filter above and this line silently becomes resolution
+    # BY POPULARITY, which is the #1793 defect exactly: with the US Open reduced to
+    # the token {"open"}, Cincinnati entered the candidate set and won here on a
+    # 78-player draw against the US Open's own 41. Nothing was broken at this
+    # line — it faithfully ranked a set that should never have contained
+    # Cincinnati. That is why the fix went upstream into the token space and not
+    # into `_rank`, and it is why a bigger draw must never be allowed to answer
+    # the question "which tournament is this".
+    #
+    # Corollary, because it was the tempting wrong read on #1793: this does NOT
+    # self-heal when the US Open's own draw fills out. Popularity that happens to
+    # agree with identity is still not identity; it just stops being visibly wrong.
     def _rank(m):
         vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
         return (real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
