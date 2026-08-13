@@ -564,11 +564,21 @@ for _heavy_task in HEAVY_TASKS:
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
+    # #1501: this init had NO before_send, while app/main.py carried one written
+    # to kill exactly the classes that were burning the quota. Workers never
+    # import app.main, so that filter only ever ran in the process that does not
+    # produce the noise. Redis transport churn, worker SIGKILL / WorkerLostError
+    # and SoftTimeLimitExceeded were ~3,800 of the ~6,584 errors accepted in the
+    # 8-day 2026-07-21 cycle. Both processes share one policy now.
+    from app.utils.sentry_filter import before_send as _sentry_before_send
+
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
         send_default_pii=False,
+        before_send=_sentry_before_send,
         integrations=[
             CeleryIntegration(monitor_beat_tasks=True),
         ],

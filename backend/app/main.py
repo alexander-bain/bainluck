@@ -35,19 +35,11 @@ from app.services.database import init_db
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
-    def _before_send(event, hint):
-        exc_info = hint.get("exc_info")
-        if exc_info:
-            exc_type = exc_info[0]
-            exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in (
-                "WorkerLost", "Terminated", "TimeLimitExceeded",
-                "PendingRollbackError", "InvalidRequestError",
-            ):
-                return None
-            if exc_name == "ConnectionError" and "redis" in str(exc_info[1]).lower():
-                return None
-        return event
+    # #1501: the filter that used to live inline here now lives in
+    # app/utils/sentry_filter.py so the CELERY WORKERS get the same policy.
+    # They boot from app.tasks.celery_app and never import this module, which
+    # is why every top quota burner was worker-side and completely unfiltered.
+    from app.utils.sentry_filter import before_send as _before_send
 
     sentry_sdk.init(
         dsn=sentry_dsn,

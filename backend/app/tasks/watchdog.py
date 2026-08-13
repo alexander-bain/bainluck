@@ -72,11 +72,76 @@ def _bounded_rc():
 # deduped board issue per stall episode carries the evidence.
 _WATCHDOG_ALERT_MARKER = "watchdog-alert-fingerprint"
 
+# --- #1501: emission cooldown ------------------------------------------------
+# Fingerprinting (above) collapses many readings into one ISSUE. It does NOT
+# reduce the EVENT count, and Sentry bills events — so a stall that persists for
+# a day still sent one event per watchdog run. Measured over the 8-day
+# 2026-07-21 quota cycle: 1,212 events (~20% of the whole monthly allowance)
+# from this one function, for a handful of distinct conditions repeating.
+#
+# The alert itself must survive: #1158's gap table lists creation-stall and
+# event-loop-block as Sentry-ONLY classes with no board or cockpit equivalent.
+# So this rate-limits REPEATS, never the first occurrence: one Sentry event per
+# [alert_class, provider] per ALERT_COOLDOWN_SECONDS. ``logger.critical`` still
+# fires every run, and the GitHub filing rail (_file_watchdog_issue) is
+# untouched — it has its own search-based dedup and accretes evidence.
+ALERT_COOLDOWN_SECONDS = 6 * 3600
+_ALERT_COOLDOWN_PREFIX = "bainluck:watchdog:alert_cooldown:"
+
+
+def _normalize_provider(provider: str) -> str:
+    """Collapse high-cardinality tokens out of a fingerprint provider.
+
+    ``kalshi_settled:fetch:KXNASDAQ100U:p0`` and
+    ``kalshi_settled:fetch:KXMLBHRR:p1`` are the same condition on two tickers,
+    but they fingerprinted as two issues AND held two independent cooldowns.
+    Ticker-shaped tokens (ALL-CAPS/digits) and ``pN`` page indices are dropped.
+    """
+    parts = []
+    for token in provider.split(":"):
+        if not token:
+            continue
+        if token.startswith("p") and token[1:].isdigit():
+            continue
+        stripped = token.replace("_", "")
+        if stripped.isupper() and any(c.isdigit() for c in token):
+            continue
+        if stripped.isupper() and len(stripped) > 3:
+            continue
+        parts.append(token)
+    return ":".join(parts) or provider
+
+
+def _alert_on_cooldown(alert_class: str, provider: str) -> bool:
+    """True when an identical alert was already sent inside the cooldown window.
+
+    Fails OPEN (returns False → the event is sent) if Redis is unreachable: a
+    telemetry-infra failure must never swallow an alarm, and the redis error
+    class itself is filtered separately in app/utils/sentry_filter.py.
+    """
+    key = f"{_ALERT_COOLDOWN_PREFIX}{alert_class}:{provider}"
+    try:
+        rc = _bounded_rc()
+        # SET NX is the whole test: it succeeds only for the first caller in the
+        # window, so check-then-set cannot race between concurrent watchdog runs.
+        return not bool(rc.set(key, "1", nx=True, ex=ALERT_COOLDOWN_SECONDS))
+    except Exception:
+        return False
+
 
 def _capture_fingerprinted(alert_class: str, provider: str, msg: str) -> None:
     """Send a Sentry event fingerprinted on [alert_class, provider] so all
     readings of the SAME stall episode collapse into ONE issue (not one per
-    hour-value in the message)."""
+    hour-value in the message).
+
+    #1501: suppressed to one event per [alert_class, provider] per
+    ALERT_COOLDOWN_SECONDS. The log line always fires, so nothing is lost from
+    the dyno logs even when the Sentry event is skipped.
+    """
+    provider = _normalize_provider(provider)
+    if _alert_on_cooldown(alert_class, provider):
+        logger.critical("%s [sentry suppressed — cooldown]", msg)
+        return
     try:
         # sentry-sdk 2.x: new_scope replaces the deprecated push_scope.
         with sentry_sdk.new_scope() as scope:
