@@ -35,19 +35,17 @@ from app.services.database import init_db
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
-    def _before_send(event, hint):
-        exc_info = hint.get("exc_info")
-        if exc_info:
-            exc_type = exc_info[0]
-            exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in (
-                "WorkerLost", "Terminated", "TimeLimitExceeded",
-                "PendingRollbackError", "InvalidRequestError",
-            ):
-                return None
-            if exc_name == "ConnectionError" and "redis" in str(exc_info[1]).lower():
-                return None
-        return event
+    # #1501: the filter that used to live inline here now lives in
+    # app/utils/sentry_filter.py, so the CELERY WORKERS get the same policy.
+    # Workers boot from app.tasks.celery_app and never import this module, which
+    # is why every top quota burner was worker-side and completely unfiltered.
+    # The inline version also matched "WorkerLost" (billiard's class is
+    # WorkerLostError), omitted SoftTimeLimitExceeded entirely, and tested
+    # `"redis" in str(exc)` against a message that only ever names the EC2
+    # endpoint — so it dropped almost nothing even in the web dyno.
+    from app.utils.sentry_filter import build_before_send
+
+    _before_send = build_before_send()
 
     sentry_sdk.init(
         dsn=sentry_dsn,

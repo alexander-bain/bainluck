@@ -564,11 +564,21 @@ for _heavy_task in HEAVY_TASKS:
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
+    # #1501: this init had NO before_send, while app/main.py has carried one for
+    # months — and every top quota consumer is worker-side. Measured over the
+    # 2026-07-21 -> 07-29 billing cycle: 6,584 billable events (3,585 `error` +
+    # 2,999 `default`) against a 5,000/MONTH allowance, i.e. the month spent on
+    # day 8. The filter existed; it was wired to the one process that does not
+    # generate the flood. Shared policy, both entry points.
+    from app.utils.sentry_filter import build_before_send
+
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
         send_default_pii=False,
+        before_send=build_before_send(),
         integrations=[
             CeleryIntegration(monitor_beat_tasks=True),
         ],
