@@ -1330,4 +1330,5 @@ failure this document already records happening twice.
 - [040](rulings/040-two-defects-two-left-edges.md) — 2026-08-12 — Two defects, two left edges: a sweep reports per defect, never one blended number (Alex)
 - [041](rulings/041-search-ranks-by-match-class-on-owned-evidence.md) — 2026-08-12 — Search ranks by MATCH CLASS, and an entity ranks only on evidence it OWNS (Alex)
 - [043](rulings/043-taste-enables-a-signal-labels-tune-it.md) — 2026-08-13 — Taste may ENABLE a signal; only labels may TUNE it (Alex)
+- [044](rulings/044-rendered-green-is-not-communicates-green.md) — 2026-08-13 — Rendered-green is not communicates-green (Fable)
 - [045](rulings/045-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)
