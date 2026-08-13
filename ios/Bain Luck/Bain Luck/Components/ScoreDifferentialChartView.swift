@@ -372,51 +372,9 @@ struct ScoreDifferentialChartView: View {
         return filtered
     }
 
+    /// Delegates to `PeriodLabel.normalize` — the single implementation (#1831).
+    /// This file used to carry its own copy; the two had drifted.
     private func normalizePeriodLabel(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-
-        // Reject pre-game date strings
-        let months = "January|February|March|April|May|June|July|August|September|October|November|December"
-        if s.range(of: months, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
-        if s.range(of: #"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*\bat\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
-
-        // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
-        if let dashRange = s.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
-            s = String(s[dashRange.upperBound...])
-        }
-
-        // Strip "End of " / "Start of " prefix
-        if let prefixRange = s.range(of: #"^(?:end|start)\s+of\s+"#, options: [.regularExpression, .caseInsensitive]) {
-            s = String(s[prefixRange.upperBound...])
-        }
-
-        let lower = s.lowercased()
-
-        if lower == "halftime" || lower == "half time" || lower == "ht" { return "HT" }
-        if lower == "overtime" || lower == "ot" { return "OT" }
-        if let match = lower.range(of: #"^(\d+)\w*\s+overtime$"#, options: .regularExpression) {
-            return "OT\(s[match].filter(\.isNumber))"
-        }
-        if let match = s.range(of: #"^(\d+)\w*\s+[Qq]uarter$"#, options: .regularExpression) {
-            return "Q\(s[match].filter(\.isNumber))"
-        }
-        if lower == "1st" { return "Q1" }
-        if lower == "2nd" { return "Q2" }
-        if lower == "3rd" { return "Q3" }
-        if lower == "4th" { return "Q4" }
-        if let match = s.range(of: #"^(\d+)\w*\s+[Pp]eriod$"#, options: .regularExpression) {
-            return "P\(s[match].filter(\.isNumber))"
-        }
-        if let match = s.range(of: #"^(\d+)\w*\s+[Hh]alf$"#, options: .regularExpression) {
-            return "\(s[match].filter(\.isNumber))H"
-        }
-        if let match = s.range(of: #"^(?:top|bottom|mid|middle|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
-            return s[match].filter(\.isNumber)
-        }
-        if s.range(of: #"^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
-            return s.uppercased()
-        }
-        if lower.contains("intermission") { return "INT" }
-        return s
+        PeriodLabel.normalize(raw)
     }
 }

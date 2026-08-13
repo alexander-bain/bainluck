@@ -33,6 +33,10 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
+from app.utils.game_window import (
+    filter_state_bearing_rows as _filter_state_bearing_rows,
+    game_state_window as _game_state_window,
+)
 from app.utils.name_normalization import expand_search_terms
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.feed_market_quality import has_no_real_price
@@ -8291,6 +8295,49 @@ async def get_event_odds_history(
     except Exception:
         # Table may not exist yet
         pass
+
+    # ── Drop in-game state that belongs to a DIFFERENT game (#1828) ──────────
+    # An MLB series plays the same two teams on consecutive nights, and rows
+    # describing last night's innings are landing on tonight's event: 14 of 14
+    # events on the 2026-08-13 slate carried period-bearing snapshots from before
+    # their own first pitch. Alex's Sox–Jays specimen (15192596) held 27 period
+    # markers from the previous night.
+    #
+    # Three downstream readers dedup by FIRST-SEEN label, so the stale rows won
+    # every tie and the real ones were discarded as duplicates — that is where
+    # "2 4 8" and the 22-hour x-axis came from. Filter here, once, before
+    # period_markers / aggregate_line / the espn supplement derive anything from
+    # these lists, so every consumer sees one game's worth of state.
+    #
+    # Narrow on purpose: only STATE-BEARING rows outside the window go. Pre-game
+    # odds history is untouched (it is legitimately days old and is what the
+    # chart's "All" range is made of). See app/utils/game_window.py.
+    _state_window = _game_state_window(event.commence_time, event.completed_at)
+    if _state_window is not None:
+        espn_history, _dropped_espn = _filter_state_bearing_rows(
+            espn_history, _state_window
+        )
+        _dropped_wp = 0
+        for _src in list(win_prob_history):
+            win_prob_history[_src], _n = _filter_state_bearing_rows(
+                win_prob_history[_src], _state_window
+            )
+            _dropped_wp += _n
+            # Keep the advertised snapshot_count honest — it is rendered.
+            if _src in win_prob_sources_meta:
+                win_prob_sources_meta[_src]["snapshot_count"] = len(
+                    win_prob_history[_src]
+                )
+        if _dropped_espn or _dropped_wp:
+            logger.warning(
+                "event %s: dropped cross-game in-game state (espn=%d win_prob=%d) "
+                "outside window %s..%s — writer mis-attribution, see #1828",
+                event_id,
+                _dropped_espn,
+                _dropped_wp,
+                _state_window[0].isoformat(),
+                _state_window[1].isoformat(),
+            )
 
     # Supplement espn_history with score data from win_prob_history sources.
     # ESPN's scoreboard API provides sparse score data for MLB (~2 points/game).

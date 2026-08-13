@@ -16,12 +16,28 @@ struct EventDetailView: View {
               let commenceTime = event.commenceTime,
               let scheduledStart = commenceTime.asDate else { return nil }
 
-        // Use actual game start (first ESPN data point) instead of scheduled time
+        // Use actual game start (first ESPN data point) instead of scheduled
+        // time — a game that starts early/late should anchor to when it really
+        // began, not when it was listed.
+        //
+        // #1833: but `min()` here is unbounded backwards, and in-game rows from
+        // the PREVIOUS NIGHT'S game were landing on this event. On Alex's
+        // 2026-08-13 Sox–Jays specimen the earliest period-bearing ESPN row was
+        // 2026-08-12T23:34, so this opened the x-axis ~20 hours before first
+        // pitch: a 22-hour domain for a 2.5-hour game, which is what reduced the
+        // time labels to unreadable soup on a phone.
+        //
+        // The backend now filters those rows (app/utils/game_window.py), but a
+        // chart domain must not depend on upstream cleanliness to stay legible.
+        // A real early start is minutes, not hours — so accept an earlier anchor
+        // only within a warm-up margin and otherwise trust the schedule.
+        let earliestPlausibleStart = scheduledStart.addingTimeInterval(-2 * 60 * 60)
         let actualStart: Date
         if let espn = vm.history?.espnHistory,
            let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
            let espnDate = firstEspn.timestamp.asDate {
-            actualStart = min(scheduledStart, espnDate.addingTimeInterval(-60))
+            let candidate = min(scheduledStart, espnDate.addingTimeInterval(-60))
+            actualStart = max(candidate, earliestPlausibleStart)
         } else {
             actualStart = scheduledStart
         }
@@ -164,7 +180,11 @@ struct EventDetailView: View {
                             homeTeamColor: teamColors(event).home,
                             awayTeamColor: teamColors(event).away,
                             homeTeamAbbrev: event.homeTeamData?.abbreviation,
-                            awayTeamAbbrev: event.awayTeamData?.abbreviation
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            // #1831: the scoreboard's own totals, so the card can
+                            // never disagree with the hero above it.
+                            finalHomeScore: event.homeScore,
+                            finalAwayScore: event.awayScore
                         )
                     }
                     VStack(spacing: 0) {
@@ -515,13 +535,32 @@ struct EventDetailView: View {
                                 .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.home)
                         }
-                        // Trend indicator (change since opening)
-                        if let opening = event.openingOdds?.homeProbability, abs(home - opening) > 0.02 {
-                            let delta = home - opening
-                            let sign = delta > 0 ? "+" : ""
-                            Text("\(sign)\(Int((delta * 100).rounded()))% since open")
+                        // Trend indicator (change since opening).
+                        //
+                        // #1830. The hero above reads "away – home" ("87 – 13"),
+                        // but this delta is computed on HOME and named no team.
+                        // An unlabelled "-27%" under "87 – 13" attaches, for the
+                        // reader, to whichever number they are tracking — the
+                        // leader — so Alex read it as the Red Sox FALLING 27
+                        // while they had in fact gone 60 → 87, up 27. Red on top
+                        // of that made good news look like bad news.
+                        //
+                        // Fix: name the team the delta belongs to, and state it
+                        // as that team's GAIN. Because away == 1 - home exactly,
+                        // "home fell 27" and "away rose 27" are the same fact;
+                        // reporting the riser means the caption is never a bare
+                        // signed number and its colour always matches its subject.
+                        if let openingHome = event.openingOdds?.homeProbability,
+                           abs(home - openingHome) > 0.02 {
+                            let homeDelta = home - openingHome
+                            let homeGained = homeDelta > 0
+                            let subject = homeGained
+                                ? String(event.homeTeam.split(separator: " ").last ?? "")
+                                : String(event.awayTeam.split(separator: " ").last ?? "")
+                            let points = Int((abs(homeDelta) * 100).rounded())
+                            Text("\(subject) +\(points)% since open")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(delta > 0 ? .green : .red)
+                                .foregroundStyle(homeGained ? colors.home : colors.away)
                         }
                         // #490: hero confidence signal (1-3 bars), computed
                         // client-side from the win-prob source count + whether the
@@ -1001,6 +1040,8 @@ private struct GameSegmentsView: View {
     let awayTeamColor: Color
     var homeTeamAbbrev: String?
     var awayTeamAbbrev: String?
+    var finalHomeScore: Int?
+    var finalAwayScore: Int?
 
     private var homeShort: String {
         homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
@@ -1011,14 +1052,24 @@ private struct GameSegmentsView: View {
     }
 
     var body: some View {
-        if let breakdown = SegmentBreakdown(history: history, sportKey: sportKey) {
+        if let breakdown = SegmentBreakdown(
+            history: history,
+            sportKey: sportKey,
+            finalHomeScore: finalHomeScore,
+            finalAwayScore: finalAwayScore
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Game Segments")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     Spacer()
-                    Text("Score by period")
+                    // Ruling 5: say what the reader is looking at. When some
+                    // splits are unknown the caption must admit it, otherwise a
+                    // `·` reads as a rendering glitch rather than a known gap.
+                    Text(breakdown.hasUnknownSegments
+                         ? "Score by period · · = not recorded"
+                         : "Score by period")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1062,7 +1113,7 @@ private struct GameSegmentsView: View {
         }
     }
 
-    private func segmentRow(team: String, color: Color, scores: [Int], total: Int) -> some View {
+    private func segmentRow(team: String, color: Color, scores: [Int?], total: Int) -> some View {
         GridRow {
             HStack(spacing: 6) {
                 Circle()
@@ -1076,9 +1127,11 @@ private struct GameSegmentsView: View {
             .frame(width: 54, alignment: .leading)
 
             ForEach(Array(scores.enumerated()), id: \.offset) { _, score in
-                Text("\(score)")
+                // `·` for an inning we never observed. Printing `0` there would
+                // assert nobody scored, which we do not know (#1831).
+                Text(score.map(String.init) ?? "·")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(score == nil ? .tertiary : .secondary)
                     .frame(minWidth: 28)
             }
 
@@ -1090,12 +1143,40 @@ private struct GameSegmentsView: View {
     }
 }
 
+/// Per-segment scoring reconstructed from win-probability polling.
+///
+/// #1831. This card is NOT fed a line score — no upstream payload carries one
+/// (`box_score_data.scoring_plays` is `[]` and there is no `linescore` key), so
+/// the splits are inferred from whatever periods the pollers happened to
+/// observe. On Alex's 2026-08-13 Sox–Jays specimen that was innings 2, 4 and 8
+/// out of nine, and the card rendered `2 4 8` with a total of 5 beside a
+/// scoreboard reading 7.
+///
+/// Two rules now hold, and between them the card can be sparse but never wrong:
+///
+/// 1. **A split is only reported when it is knowable.** Inning N's runs are
+///    `cumulative(N) - cumulative(N-1)`, so both must have been observed. With a
+///    gap the runs belong to the *span*, not to the inning that closed it —
+///    attributing them to N is what put four Red Sox runs in the 8th. An
+///    unknowable split renders `·`, never `0`.
+/// 2. **The totals come from the scoreboard**, not from summing observed
+///    segments, so this card cannot contradict the hero above it.
+///
+/// The real fix is ingesting ESPN's linescore; until then this stays honest
+/// rather than complete.
 private struct SegmentBreakdown {
     let segments: [GameSegment]
     let homeTotal: Int
     let awayTotal: Int
+    /// True when at least one rendered segment's split could not be determined.
+    let hasUnknownSegments: Bool
 
-    init?(history: EventHistoryResponse, sportKey: String?) {
+    init?(
+        history: EventHistoryResponse,
+        sportKey: String?,
+        finalHomeScore: Int? = nil,
+        finalAwayScore: Int? = nil
+    ) {
         guard let espnHistory = history.espnHistory else { return nil }
 
         let cumulativeByPeriod = espnHistory
@@ -1130,25 +1211,76 @@ private struct SegmentBreakdown {
             latestByLabel[point.label] = point
         }
 
-        var previousHome = 0
-        var previousAway = 0
-        var segments: [GameSegment] = []
-
-        for label in orderedLabels {
-            guard let point = latestByLabel[label] else { continue }
-            let homeSegmentScore = point.homeScore - previousHome
-            let awaySegmentScore = point.awayScore - previousAway
-            guard homeSegmentScore >= 0, awaySegmentScore >= 0 else { return nil }
-
-            segments.append(GameSegment(label: label, homeScore: homeSegmentScore, awayScore: awaySegmentScore))
-            previousHome = point.homeScore
-            previousAway = point.awayScore
+        // Baseball gets an explicit inning LADDER (1…9, extended for extras)
+        // rather than "whatever the poller saw". Every other sport keeps the
+        // observed-labels behaviour unchanged — this change is scoped to the
+        // sport whose card was wrong.
+        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
+        let renderedLabels: [String]
+        if isBaseball {
+            let observed = orderedLabels.compactMap(Int.init)
+            let lastInning = max(9, observed.max() ?? 9)
+            renderedLabels = (1...lastInning).map(String.init)
+        } else {
+            renderedLabels = orderedLabels
         }
 
-        guard !segments.isEmpty, previousHome + previousAway > 0 else { return nil }
+        var previousCumulative: (home: Int, away: Int)? = (0, 0)
+        var segments: [GameSegment] = []
+        var sawUnknown = false
+        var lastObserved: CumulativeSegment?
+
+        for label in renderedLabels {
+            guard let point = latestByLabel[label] else {
+                // Never observed. The split is unknown, and so is the split of
+                // whichever segment closes the gap — reset the baseline.
+                segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
+                sawUnknown = true
+                previousCumulative = nil
+                continue
+            }
+
+            defer {
+                previousCumulative = (point.homeScore, point.awayScore)
+                lastObserved = point
+            }
+
+            guard let previous = previousCumulative else {
+                // Observed, but the preceding segment was not, so the runs since
+                // then cannot be attributed to this one alone.
+                segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
+                sawUnknown = true
+                continue
+            }
+
+            let homeSegmentScore = point.homeScore - previous.home
+            let awaySegmentScore = point.awayScore - previous.away
+            guard homeSegmentScore >= 0, awaySegmentScore >= 0 else {
+                // A cumulative score that went DOWN means these rows describe
+                // two different games. Refuse the whole card rather than render
+                // a negative inning.
+                return nil
+            }
+            segments.append(
+                GameSegment(label: label, homeScore: homeSegmentScore, awayScore: awaySegmentScore)
+            )
+        }
+
+        // Totals: prefer the scoreboard, so this card can never disagree with
+        // the hero. Fall back to the last cumulative we actually observed.
+        let resolvedHome = finalHomeScore ?? lastObserved?.homeScore ?? 0
+        let resolvedAway = finalAwayScore ?? lastObserved?.awayScore ?? 0
+
+        // A ladder in which nothing is knowable is a row of dots — it tells the
+        // reader nothing and occupies the space where a scoreboard should be.
+        let knownSegments = segments.filter { $0.homeScore != nil }
+        guard !segments.isEmpty, !knownSegments.isEmpty else { return nil }
+        guard resolvedHome + resolvedAway > 0 else { return nil }
+
         self.segments = segments
-        self.homeTotal = previousHome
-        self.awayTotal = previousAway
+        self.homeTotal = resolvedHome
+        self.awayTotal = resolvedAway
+        self.hasUnknownSegments = sawUnknown
     }
 
     private static func formatPeriodLabel(_ rawPeriod: String, sportKey: String?) -> String {
@@ -1205,8 +1337,9 @@ private struct SegmentBreakdown {
 
 private struct GameSegment: Identifiable {
     let label: String
-    let homeScore: Int
-    let awayScore: Int
+    /// `nil` when this segment's split was never observed — rendered `·`, never `0`.
+    let homeScore: Int?
+    let awayScore: Int?
 
     var id: String { label }
 }
