@@ -1828,6 +1828,43 @@ def compute_calibration_prices(self):
     return _tracked_run("calibration_prices", _compute_calibration_prices())
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=600,
+    time_limit=660,
+    name="app.tasks.precompute_bookmaker_calibration",
+)
+def precompute_bookmaker_calibration(self):
+    """Per-bookmaker moneyline calibration → Redis (#1835).
+
+    CAL-P051. The starvation sibling of ``compute_calibration_prices`` directly
+    above, and the one the #180 fix left behind: ``_precompute_bookmaker_
+    calibration`` was reachable ONLY as a ``backfill_winners`` phase, sitting
+    immediately behind that pipeline's FIRST budget guard. Measured 2026-08-13,
+    the guard is where the pipeline stops — ``stopped_before:
+    "bookmaker_closing"``, with ``successes_24h: 0`` and runs pinned at the 840s
+    soft wall — so the writer had not executed, the 24h key had expired, and
+    ``odds_api_bookmaker`` was simply absent from the live payload.
+
+    Its own beat, so it drains regardless of what resolution costs that cycle.
+
+    Idempotent and safe to re-run: one read-only aggregate, then one ``setex``
+    of the whole bucket set. There is no cursor and no partial write — a
+    soft-limit kill loses the run's compute and nothing else, and the next fire
+    recomputes from scratch.
+
+    ⚠️ The query is NOT cheap and its true runtime is UNMEASURED: it exceeded
+    25s on production (db-query's ceiling) so only a lower bound is known. 600s
+    is inherited from the sibling above, not derived from a measurement. This is
+    survivable precisely because of the terminal contract — the task is enrolled
+    in ``task_verdict.ENFORCED_TASKS``, so if 600s turns out to be too short the
+    run reads NOT-GREEN instead of vanishing, and the next step is a bounded or
+    incremental query rather than another silent quarter.
+    """
+    from app.tasks.backfill_winners import _precompute_bookmaker_calibration
+    return _tracked_run("bookmaker_calibration", _precompute_bookmaker_calibration())
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -3171,6 +3208,33 @@ celery_app.conf.beat_schedule = {
         # the integrity beats; ordering vs the resolution beats is preserved.
         "task": "app.tasks.compute_calibration_prices",
         "schedule": crontab(minute=10, hour="2,8,14,20"),
+        "options": {"queue": "background"},
+    },
+    "precompute-bookmaker-calibration": {
+        # #1835 (CAL-P051): the starvation sibling the #180 fix left behind.
+        # `_precompute_bookmaker_calibration` was ONLY a backfill_winners phase
+        # and sat behind that pipeline's FIRST budget guard, so it never ran —
+        # measured `stopped_before: "bookmaker_closing"`, successes_24h 0, runs
+        # pinned at the 840s wall — the 24h Redis key expired, and the
+        # `odds_api_bookmaker` source (the per-bookmaker moneyline, which
+        # dominates Odds API volume) disappeared from the published payload
+        # entirely. Same remedy as compute-calibration-prices above: its own
+        # beat, so a heavy resolution cycle cannot starve it.
+        #
+        # Slot chosen the way #183 Item 3 says to choose one — by checking what
+        # else fires there, not by picking a round number. The background worker
+        # is Standard-1X concurrency=2, so a long co-scheduled task starves a
+        # beat. At :55 the ONLY other background fire is `warm-event-concepts`
+        # (*/5, a fast Redis warmer); :55 is not a multiple of 10, 15, 20 or 30,
+        # so none of the other periodic warmers land on it, and hours 0/6/12/18
+        # are clear of backfill_winners (:45 @ 3,9,15,21), the integrity beats
+        # (:40-:58 @ 5,11,17,23) and compute-calibration-prices (:10 @ 2,8,14,20).
+        #
+        # Cadence matches the 6h refresh the 24h TTL was written for, and lands
+        # 20 minutes before the hourly `precompute-calibration-main` (:15) that
+        # consumes the key.
+        "task": "app.tasks.precompute_bookmaker_calibration",
+        "schedule": crontab(minute=55, hour="0,6,12,18"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

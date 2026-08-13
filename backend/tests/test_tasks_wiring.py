@@ -294,6 +294,7 @@ class TestBeatScheduleCompleteness:
         "null-impossible-both-sides-openings",
         "correct-both-winner-guess-side",
         "compute-calibration-prices",
+        "precompute-bookmaker-calibration",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-espn-win-prob-oldest",

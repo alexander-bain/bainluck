@@ -6594,11 +6594,48 @@ async def _precompute_bookmaker_calibration():
     the game outcome. Resolution is free (home_score > away_score). Devigged
     via home_prob / (home_prob + away_prob). Results stored as aggregated
     calibration buckets in Redis for the calibration endpoint to read.
+
+    #1835 — this function returns TERMINAL TRUTH, and it must keep doing so.
+
+    Until CAL-P051 the summary was ``{"bookmakers", "data_points", "errors"}``
+    with no terminal, so ``task_verdict`` could only classify it as a
+    non-authoritative ``unknown`` — i.e. "it returned" was recorded as "it
+    worked". That is the exact false-GREEN shape Queue 300H exists to kill, and
+    here it hid a total production outage: the reader publishes nothing when the
+    Redis key is missing, so ``odds_api_bookmaker`` — the per-bookmaker
+    moneyline curve, which dominates Odds API volume — was **absent from the
+    live ``/api/calibration`` payload** with no source, no log and no alarm.
+
+    Three different causes produce that same silence (writer starved, key
+    expired, read threw), which is why the terminal is emitted here at the
+    producer rather than inferred at the consumer: only this function knows
+    which of them happened.
+
+    The vocabulary is ``app.utils.task_verdict``'s:
+
+    * ``complete``  — rows computed AND the Redis key written. The only GREEN.
+    * ``no_work``   — the query succeeded and returned ZERO rows. Not a crash,
+      but an empty curve cannot vouch for this task's health (gotcha #53: an
+      empty result is a response shape, not a fact).
+    * ``failed``    — the query raised, or the Redis write raised. Note the
+      Redis case in particular: the buckets were computed correctly and then
+      never landed, so counting it as success would report work that no reader
+      can see.
     """
     import json as _json
     from app.tasks.redis_state import get_redis_client
 
-    stats = {"bookmakers": 0, "data_points": 0, "errors": []}
+    stats = {
+        "bookmakers": 0,
+        "data_points": 0,
+        "errors": [],
+        # Pessimistic default: if any path below returns without setting this,
+        # the run reads NOT-GREEN rather than inheriting a success it did not
+        # earn. A terminal that has to be set to fail is a terminal that fails
+        # open, which is how this defect stayed invisible.
+        "terminal": "failed",
+        "published": False,
+    }
 
     try:
         async with get_task_session() as session:
@@ -6675,20 +6712,56 @@ async def _precompute_bookmaker_calibration():
                 )
                 stats["data_points"] += r.n
 
-            # Store in Redis (expires in 24h, refreshed every 6h)
-            try:
-                redis_client = get_redis_client()
-                redis_client.setex(
-                    "bainluck:bookmaker_calibration",
-                    86400,
-                    _json.dumps(buckets),
+            if not buckets:
+                # The query ran and found nothing. NOT a crash, and NOT green:
+                # the reader publishes no source at all in this state, which is
+                # indistinguishable from the writer never having run. Say which
+                # one it was, here, where it is known.
+                stats["terminal"] = "no_work"
+                stats["errors"].append(
+                    "query returned zero buckets — no eligible pre-game "
+                    "bookmaker moneylines; the published curve will carry no "
+                    "odds_api_bookmaker source"
                 )
-                stats["bookmakers"] = len(set(r.category for r in rows))
-            except Exception as e:
-                stats["errors"].append(f"Redis: {e}")
+                logger.warning(
+                    "Bookmaker calibration: ZERO buckets — odds_api_bookmaker "
+                    "will be absent from the published payload (#1835)"
+                )
+            else:
+                # Store in Redis (expires in 24h, refreshed every 6h).
+                #
+                # The TTL is deliberately left at 24h against a 6h cadence. It
+                # is tempting to raise it so a starved cycle cannot make the
+                # source vanish — but that trades a visible absence for an
+                # invisible staleness, and a stale curve presented as current is
+                # strictly worse than a missing one. The absence is what the
+                # terminal above and below makes loud; the TTL stays honest.
+                try:
+                    redis_client = get_redis_client()
+                    redis_client.setex(
+                        "bainluck:bookmaker_calibration",
+                        86400,
+                        _json.dumps(buckets),
+                    )
+                    stats["bookmakers"] = len(set(r.category for r in rows))
+                    stats["published"] = True
+                    stats["terminal"] = "complete"
+                except Exception as e:
+                    # Computed correctly, then never landed. No reader can see
+                    # this run's work, so it is a failure, not a success with a
+                    # note attached.
+                    stats["errors"].append(f"Redis: {e}")
+                    stats["terminal"] = "failed"
+                    logger.error(
+                        "Bookmaker calibration: %d buckets computed but the "
+                        "Redis write FAILED — source will be absent (#1835): %s",
+                        len(buckets),
+                        e,
+                    )
 
     except Exception as e:
         stats["errors"].append(str(e))
+        stats["terminal"] = "failed"
         logger.error("Bookmaker calibration precomputation error: %s", e)
 
     logger.info(
