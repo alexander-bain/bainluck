@@ -15,6 +15,8 @@ import os
 import time
 from datetime import datetime, timezone
 
+from app.utils.kalshi_market_status import is_terminal
+
 logger = logging.getLogger(__name__)
 
 
@@ -172,7 +174,10 @@ async def _run_kalshi_ws_consumer():
         status = msg.get("status", "")
         result = msg.get("result")
 
-        if status not in ("closed", "settled", "finalized"):
+        # CAL-P049 (#1818): this writes FuturesMarket.status='resolved', so it is
+        # the same class as the poll's inverted tuple — it missed ``determined``.
+        # Reads the one measured set now (app/utils/kalshi_market_status.py).
+        if not is_terminal(status):
             return
 
         parts = ticker.rsplit("-", 1)
