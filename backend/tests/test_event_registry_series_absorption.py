@@ -19,6 +19,17 @@ already carries a **different game id from the incoming claim's own provider**.
 The provider has already said these are two different games; names and times
 cannot outvote that.
 
+Three rounds, because the first two only covered rows that carry ids:
+
+* **R1** — same provider, different id → refuse, at any distance.
+* **R2** (#1802) — individuated by ANY provider, starts >2h apart → refuse.
+  Absence of the incoming provider's id is not evidence of sameness (gotcha #53).
+* **R3** — individuated by NOBODY: two **published start times** (whole-minute,
+  as opposed to the fabricated ``now`` a prediction-market auto-create writes)
+  more than half a day apart → refuse. This is 88% of events and was the largest
+  remaining exposure; R1 and R2 never fire there. Threshold calibrated against
+  production 2026-08-13 — see ``_UNINDIVIDUATED_SAME_GAME_WINDOW``.
+
 WHAT THE FIXTURES ARE
 
 The seven absorption pairs are the real ones, not invented: absorbing-event ids,
@@ -34,6 +45,9 @@ from datetime import datetime, timezone
 from app.models import Event
 from app.services.event_registry import (
     _is_a_different_scheduled_game,
+    _is_a_published_start_time,
+    _unindividuated_clocks_say_different_games,
+    _UNINDIVIDUATED_SAME_GAME_WINDOW,
     EventClaim,
     EventIdentity,
     _find_by_structured_match,
@@ -135,24 +149,33 @@ class TestTheSevenAbsorptions:
 
     @pytest.mark.parametrize("pair", ABSORPTION_PAIRS, ids=_IDS)
     @pytest.mark.asyncio
-    async def test_the_window_itself_is_untouched_on_un_individuated_rows(self, pair):
-        """The window is still ±28h — proof the fix is identity, not a narrowing.
+    async def test_an_idless_row_with_a_real_clock_is_also_refused(self, pair):
+        """The id-less class. REWRITTEN TWICE — both prior versions asserted the defect.
 
-        REWRITTEN for #1802 (Codex C-CERT-1801). This test previously proved the same
-        point by pointing an id-less Kalshi claim at an absorber carrying BOTH an
-        ``espn_id`` and a ``statpal_fixture_id``, 24h away, and asserting it matched.
-        That is Codex's specimen 6 verbatim: it asserted the defect. Seven green tests
-        were pinning open the exact behaviour Alex's bar forbids — *no absorption of a
+        v1 pointed an id-less Kalshi claim at an absorber carrying an ``espn_id`` and a
+        ``statpal_fixture_id`` and asserted it MATCHED (Codex specimen 6). R2 fixed that
+        by making the absorber's ids do the work, and left this test proving the same
+        "the window is untouched" point on a **shell with no ids at all** — asserting
+        that an id-less row ~24h away MUST match, guarded by ``assert 0 < delta < 28``
+        so it could never drift out of range. Seven green tests, pinning open exactly
+        what the file's own docstring forbids six lines above them: *no absorption of a
         distinct scheduled game, regardless of which provider the claim arrives from*.
 
-        The legitimate intent survives, with an honest mechanism: an **un-individuated**
-        row — one no schedule provider has named — is still matchable across the full
-        ±28h. If this returns None, someone really did narrow the window.
+        That was not a smaller version of the bug. It was the LARGER half: 88% of events
+        (63,952 of 72,918 in the last 90 days) carry no schedule-provider id, esports
+        most of all, and for every one of them the guard R1/R2 added never fires.
+
+        What replaces it: an id-less row whose commence_time is a **published start
+        time** may not absorb a claim whose published start is more than half a day
+        away. Every pair below is >12h apart. The legitimate intent — a genuine
+        cross-source date disagreement on a row nothing has individuated — is asserted
+        directly in ``TestTheIdlessRowsThatMustStillJoin``, not implied by this one.
         """
         (_label, away, home, ev_id, _espn_id, _statpal_id,
          absorber_time, missing_time, _missing_espn) = pair
 
-        # No provider ids: nothing has said which game this row is.
+        # No provider ids: nothing has said which game this row is. But its clock is
+        # real — a whole-minute published start, not a fabricated `now`.
         shell = _event(
             event_id=ev_id, away=away, home=home, commence=absorber_time,
         )
@@ -164,9 +187,22 @@ class TestTheSevenAbsorptions:
             session, MLB_SPORT_ID, home, away, _utc(missing_time),
             EventClaim("kalshi", "KXMLBGAME-26AUG11BOSTOR"),
         )
-        assert match is shell, (
-            "the ±28h window must still match a row no provider has individuated"
+        assert match is None, (
+            f"{away} @ {home} on {missing_time} was absorbed into an un-individuated "
+            f"row at {absorber_time} — having no id is not a licence to absorb"
         )
+
+    @pytest.mark.parametrize("pair", ABSORPTION_PAIRS, ids=_IDS)
+    def test_each_idless_pair_is_beyond_the_half_day_rule(self, pair):
+        """Guards the test above: >12h is what makes it a refusal, and <28h keeps it
+        inside the SQL window, so the refusal is the predicate's doing and not the
+        window's. Both bounds, because only asserting the upper one is what let the
+        previous version look rigorous while asserting the defect.
+        """
+        (_label, _away, _home, _ev, _espn, _statpal,
+         absorber_time, missing_time, _missing_espn) = pair
+        delta = abs((_utc(missing_time) - _utc(absorber_time)).total_seconds()) / 3600.0
+        assert 12 < delta < 28, f"fixture no longer exercises the rule: {delta:.1f}h"
 
     @pytest.mark.parametrize("pair", ABSORPTION_PAIRS, ids=_IDS)
     @pytest.mark.asyncio
@@ -550,11 +586,18 @@ class TestTheCrossProviderJoinStillWorks:
         assert match is existing
 
     @pytest.mark.asyncio
-    async def test_never_individuated_rows_keep_the_wide_window(self):
-        """A row no provider has named is still matchable across the full ±28h.
+    async def test_never_individuated_rows_are_not_a_free_pass(self):
+        """REWRITTEN (#1779 R3). This asserted the defect.
 
-        Prediction-market auto-creates collapse onto a shared `now` (gotcha #14), so
-        this path must keep working or NCAA-baseball-style duplicate treadmills return.
+        It previously took a shell with a real 23:07 start, pointed a Kalshi claim
+        24h later at it, and asserted ``match is shell`` under the heading "keeps the
+        wide window". The prediction-market treadmill it cites is real, but the row it
+        used to justify it is not the treadmill's shape: treadmill rows carry a
+        FABRICATED ``now`` timestamp, not a published start. Two published starts a day
+        apart are two games, and no id-lessness changes that.
+
+        The treadmill case it meant to protect is asserted for real, on a fabricated
+        clock, in ``TestTheIdlessRowsThatMustStillJoin``.
         """
         shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
                        commence="2026-08-10T23:07:00")
@@ -565,7 +608,7 @@ class TestTheCrossProviderJoinStillWorks:
             session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
             _utc("2026-08-11T23:07:00"), EventClaim("kalshi", "KX-1"),
         )
-        assert match is shell
+        assert match is None
 
 
 class TestTheDisqualifierIsNotATautology:
@@ -580,7 +623,11 @@ class TestTheDisqualifierIsNotATautology:
         shell = _event(event_id=2, away="A", home="B", commence="2026-08-10T23:07:00")
         assert not _is_a_different_scheduled_game(
             shell, EventClaim("statpal", "s-1"), _utc("2026-08-11T23:07:00")), \
-            "a row with no provider id must keep the wide window"
+            ("this predicate is scoped to INDIVIDUATED rows and must stay silent on "
+             "shells — the id-less case belongs to "
+             "_unindividuated_clocks_say_different_games, which DOES refuse this pair "
+             "(asserted in TestTheIdlessClassPredicate). Read this as 'exactly one "
+             "rule owns each candidate', never as 'a shell keeps the wide window'.")
 
     def test_it_returns_TRUE_only_when_individuated_AND_far(self):
         individuated = _event(event_id=1, away="A", home="B",
@@ -597,3 +644,200 @@ class TestTheDisqualifierIsNotATautology:
             row, claim, _utc("2026-08-11T01:06:00"))   # +1h59m
         assert _is_a_different_scheduled_game(
             row, claim, _utc("2026-08-11T01:08:00"))   # +2h01m
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# #1779 R3 — the id-less class
+#
+# R1 and R2 both need an id to speak. Where the candidate carries none, nothing
+# fired and the ±28h window decided exactly as it did before the incident — the
+# original defect, fully intact, for 88% of events (63,952 of 72,918 in the last
+# 90 days; esports is the single largest league bucket in it).
+#
+# The rule that closes it, and the two directions it must hold in (gotcha #43):
+# an un-individuated row whose commence_time is a PUBLISHED start time (whole
+# minute) refuses a claim whose published start is >12h away, AND every id-less
+# join the wide window legitimately exists for still happens.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# A fabricated `now` — what tasks/prediction_market_matching.py writes when a market
+# has no usable commence_time. Measured in production 2026-08-13: one such instant,
+# 2026-05-13T18:35:00.015358Z, is the commence_time of 3,749 events across 10 sports.
+# Sub-second precision is the tell; a published start is always a whole minute.
+_FABRICATED_NOW = "2026-08-10T23:07:09.958462"
+_FABRICATED_NOW_NEXT_DAY = "2026-08-11T15:05:00.021110"
+
+
+class TestTheIdlessRowsThatMustStillJoin:
+    """The inverse direction. A refusal-only guard would be trivially "correct"."""
+
+    @pytest.mark.asyncio
+    async def test_a_fabricated_clock_keeps_the_full_wide_window(self):
+        """The treadmill case, asserted on the shape it actually has.
+
+        A prediction-market auto-create with no usable market time writes ``now``.
+        That row has NO clock — 3,749 unrelated games shared one such instant in
+        production — so a distance rule cannot speak about it, and must not. A second
+        market for the same game arriving a day later on its own fabricated ``now``
+        has to find this row: Kalshi and Polymarket have no id column, so the
+        structured match is their ONLY path to it. Refuse here and the NCAA-baseball
+        duplicate treadmill (#1085) comes back.
+        """
+        shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence=_FABRICATED_NOW)
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc(_FABRICATED_NOW_NEXT_DAY), EventClaim("polymarket", "pm-1"),
+        )
+        assert match is shell, (
+            "a row with a fabricated clock must keep the full ±28h window — there is "
+            "no start time there to measure a disagreement against"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_real_claim_still_finds_a_fabricated_clock_shell(self):
+        """The valuable join: ESPN arrives at a Kalshi-created placeholder.
+
+        This is how a prediction market ends up on the real event page. The shell's
+        stamp is meaningless, so a full day of "disagreement" proves nothing.
+        """
+        shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence=_FABRICATED_NOW)
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-11T23:07:00"), EventClaim("espn", "401816479"),
+        )
+        assert match is shell
+
+    @pytest.mark.asyncio
+    async def test_a_fabricated_claim_still_finds_a_real_clock_shell(self):
+        """The same join in the other arrival order — one side has no clock either way."""
+        shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence="2026-08-10T23:07:00")
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc(_FABRICATED_NOW_NEXT_DAY), EventClaim("kalshi", "KX-1"),
+        )
+        assert match is shell
+
+    @pytest.mark.asyncio
+    async def test_a_timezone_sized_disagreement_on_two_real_clocks_still_joins(self):
+        """The case the wide window exists for, at a size a clock error can produce.
+
+        A source publishing a US local start as if it were UTC is off by 4–7h. That is
+        one game read off two clocks, and 12h is chosen precisely so it survives.
+        """
+        shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence="2026-08-10T23:07:00")
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-10T19:07:00"), EventClaim("kalshi", "KX-1"),
+        )
+        assert match is shell
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_the_idless_series_game_is_created(self):
+        """Through the real entry point: created, and the id-less row left alone."""
+        shell = _event(event_id=15187583, away="Boston Red Sox",
+                       home="Toronto Blue Jays", commence="2026-08-10T23:07:00")
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        event, created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=_utc("2026-08-11T23:07:00"),
+                claim=EventClaim("kalshi", "KXMLBGAME-26AUG11BOSTOR"),
+                status="scheduled",
+            ),
+        )
+
+        assert created is True
+        assert event is not shell
+        assert shell.commence_time == _utc("2026-08-10T23:07:00"), "row was dragged"
+
+
+class TestTheIdlessClassPredicate:
+    """``_unindividuated_clocks_say_different_games`` — the decision in isolation."""
+
+    def test_two_published_starts_a_day_apart_are_two_games(self):
+        shell = _event(event_id=1, away="A", home="B", commence="2026-08-10T23:07:00")
+        assert _unindividuated_clocks_say_different_games(
+            shell, _utc("2026-08-11T23:07:00"))
+
+    def test_it_is_silent_the_moment_any_provider_individuates_the_row(self):
+        """Disjoint from the id-based guards: exactly one rule owns each candidate."""
+        for kwargs in ({"espn_id": "401816469"}, {"statpal_id": "355179"},
+                       {"external_id": "abc123"}):
+            row = _event(event_id=1, away="A", home="B",
+                         commence="2026-08-10T23:07:00", **kwargs)
+            assert not _unindividuated_clocks_say_different_games(
+                row, _utc("2026-08-11T23:07:00")), kwargs
+
+    def test_a_fabricated_clock_on_either_side_silences_it(self):
+        fabricated = _event(event_id=1, away="A", home="B", commence=_FABRICATED_NOW)
+        assert not _unindividuated_clocks_say_different_games(
+            fabricated, _utc("2026-08-11T23:07:00"))
+
+        real = _event(event_id=2, away="A", home="B", commence="2026-08-10T23:07:00")
+        assert not _unindividuated_clocks_say_different_games(
+            real, _utc(_FABRICATED_NOW_NEXT_DAY))
+
+    def test_the_boundary_is_where_the_constant_says_it_is(self):
+        """Proves the constant is READ, not just declared."""
+        assert _UNINDIVIDUATED_SAME_GAME_WINDOW.total_seconds() == 12 * 3600
+        row = _event(event_id=1, away="A", home="B", commence="2026-08-10T12:00:00")
+        assert not _unindividuated_clocks_say_different_games(
+            row, _utc("2026-08-10T23:59:00"))            # 11h59m
+        assert _unindividuated_clocks_say_different_games(
+            row, _utc("2026-08-11T00:01:00"))            # 12h01m
+
+    def test_it_is_symmetric_in_time(self):
+        """Earlier and later must behave identically — a sign error here is invisible."""
+        row = _event(event_id=1, away="A", home="B", commence="2026-08-11T12:00:00")
+        assert _unindividuated_clocks_say_different_games(
+            row, _utc("2026-08-10T12:00:00"))
+        assert _unindividuated_clocks_say_different_games(
+            row, _utc("2026-08-12T12:00:00"))
+
+    def test_a_null_candidate_time_cannot_disqualify(self):
+        row = _event(event_id=1, away="A", home="B", commence="2026-08-10T23:07:00")
+        row.commence_time = None
+        assert not _unindividuated_clocks_say_different_games(
+            row, _utc("2026-08-11T23:07:00"))
+
+
+class TestPublishedStartTimeDetection:
+    """The signal the whole id-less rule turns on."""
+
+    def test_whole_minute_is_a_published_start(self):
+        assert _is_a_published_start_time(_utc("2026-08-10T23:07:00"))
+        assert _is_a_published_start_time(_utc("2026-08-10T00:00:00"))
+
+    def test_sub_second_precision_is_a_fabricated_now(self):
+        assert not _is_a_published_start_time(_utc(_FABRICATED_NOW))
+        # The real production instant that 3,749 events across 10 sports share.
+        assert not _is_a_published_start_time(_utc("2026-05-13T18:35:00.015358"))
+
+    def test_whole_seconds_are_still_not_a_published_start(self):
+        """Schedules are minute-granular. :09 is a clock reading, not a start time."""
+        assert not _is_a_published_start_time(_utc("2026-08-10T23:07:09"))
+
+    def test_none_is_not_a_published_start(self):
+        assert not _is_a_published_start_time(None)

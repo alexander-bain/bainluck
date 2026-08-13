@@ -503,7 +503,19 @@ class TestCrossSourceEventMatching:
 
     @pytest.mark.asyncio
     async def test_structured_match_respects_timezone_aware_window(self):
-        """The ±28h window includes the boundary across timezone offsets."""
+        """The ±28h SQL window includes the boundary across timezone offsets.
+
+        #1779 R3 note: the boundary row's commence_time is now a FABRICATED stamp
+        (sub-second — what a prediction-market auto-create writes when the market has
+        no usable time), not a published start. Nothing else about this test changed.
+
+        It previously used a whole-minute 05:00, which made it assert that an
+        un-individuated row with a real published start 27h away is the same game —
+        the #1779 defect, in a test whose subject is the SQL window rather than the
+        matching decision. A row with a fabricated clock genuinely does keep the full
+        ±28h (there is no start time there to disagree with), so the window boundary
+        and its timezone-awareness are still exactly what is under test here.
+        """
         incoming_pacific = datetime(
             2026, 4, 15, 19, 0, tzinfo=timezone(timedelta(hours=-7))
         )
@@ -512,7 +524,7 @@ class TestCrossSourceEventMatching:
             sport_id=1,
             home_team_name="Boston Celtics",
             away_team_name="New York Knicks",
-            commence_time=datetime(2026, 4, 17, 5, 0, tzinfo=timezone.utc),
+            commence_time=datetime(2026, 4, 17, 5, 0, 0, 481522, tzinfo=timezone.utc),
             status="scheduled",
         )
         just_outside = Event(

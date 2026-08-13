@@ -9,7 +9,9 @@ Matching cascade:
 1. Exact source ID — check if this source already claimed an event
 2. Cross-source ID — check if ANY source already claimed it via other ID columns
 3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both teams,
-   skipping candidates that already hold a DIFFERENT game id from the incoming provider (#1779)
+   skipping candidates that (a) already hold a DIFFERENT game id from the incoming provider,
+   (b) were individuated by ANY provider and disagree about the start by >2h, or (c) were
+   individuated by nobody but carry a published start time >12h from the claim's (#1779)
 4. Create — no match found, create new event
 """
 
@@ -54,6 +56,84 @@ _MATCH_WINDOW = timedelta(hours=28)  # Wide enough for cross-source date disagre
 # realistic worst case), and comfortably below both the ~3h that separates a
 # doubleheader's second game and the 24h of a consecutive-day series.
 _CROSS_PROVIDER_SAME_GAME_WINDOW = timedelta(hours=2)
+
+# The same question for rows NO schedule provider has individuated (#1779 R3).
+#
+# The two guards above only speak when an id exists. Where the candidate carries
+# none, nothing fires and the full ±28h window plus its closest-by-time tiebreaker
+# decide exactly as they did before #1779 — i.e. the original defect is intact for
+# that population, and that population is the LARGEST one we have: 63,952 of the
+# 72,918 events in the last 90 days (88%) hold no odds_api / ESPN / StatPal id at
+# all. Esports alone contributes 13,773 of them. Alex's bar is not scoped to rows
+# that happen to have ids: *no absorption of a distinct scheduled game, full stop.*
+#
+# WHAT SIGNAL IS LEFT WHEN THERE IS NO ID. With no id, a 24h delta could be (i) one
+# game whose start one source got wrong — the case the wide window exists for — or
+# (ii) game 2 of a series. Names and times cannot tell those apart, so the question
+# is what to do when you cannot tell, and the answer follows from the asymmetry of
+# the two mistakes:
+#
+#   * A wrong CREATE leaves a duplicate event. Visible, mergeable, and the Flow
+#     Sentinel already hunts duplicates (its first catch was 21 of them).
+#   * A wrong ABSORB leaves a vanished game. Invisible to every check we own,
+#     because an absence has no field to be wrong — which is exactly why #1779 ran
+#     for days until Alex personally went looking for a Red Sox game.
+#
+# So we fail closed toward CREATING.
+#
+# A PLAIN DISTANCE FLOOR IS NOT ENOUGH, AND THE MEASUREMENT SAYS WHY. The obvious
+# move is "id-less rows get a smaller window". It is wrong on its own, because most
+# id-less rows have no clock to measure against. The prediction-market auto-create
+# (tasks/prediction_market_matching.py::_create_event_from_prediction_market)
+# substitutes ``now`` when the market has no usable commence_time, so a whole batch
+# of unrelated games lands on one instant — measured in production 2026-08-13:
+#
+#     SELECT commence_time, count(*), count(DISTINCT sport_id) FROM events
+#      WHERE commence_time > now() - interval '120 days'
+#        AND external_id IS NULL AND espn_id IS NULL AND statpal_fixture_id IS NULL
+#        AND commence_time <> date_trunc('minute', commence_time)
+#      GROUP BY 1 ORDER BY 2 DESC;
+#     -- 2026-05-13 18:35:00.015358+00  →  3,749 events across 10 sports
+#
+# 73% of id-less rows (e.g. esports 10,097/13,773) carry such a fabricated stamp.
+# Applying a distance rule to those would refuse the join that #1085 exists to
+# protect and re-open the NCAA-baseball duplicate treadmill. Conversely 16,638 of
+# 16,777 (99.2%) of individuated rows sit on a whole minute, and 98.7% of the
+# whole-minute id-less rows sit on a 5-minute boundary: a published start time is
+# always a whole minute; ``datetime.now()`` essentially never is.
+#
+# THE PREDICATE: a distance rule applies only when BOTH sides actually have a clock
+# — both commence_times are whole-minute, i.e. published start times rather than
+# fabricated ones. Where either side's clock is fabricated the wide window survives
+# untouched, because there is genuinely no information to rule on.
+#
+# THE THRESHOLD, AND HOW IT WAS CHOSEN. Gap histogram of consecutive same-sport,
+# same-matchup id-less events whose times are BOTH whole-minute (120 days,
+# 2026-08-13):
+#
+#     hours: 0    1-7  8-16  17-19  20-25          26+
+#     pairs: 2747 94   24    30     265 (114 @ 24h) 14
+#
+# Two populations with a desert between them. Below ~1h: the same row seen twice.
+# From 20h to 25h, peaking at exactly 24h: the consecutive-day series — the #1779
+# class. Between them, 8–16h averages 2.7 pairs/hour against 44/hour in the 20–25h
+# band, a 16× density step. Twelve hours sits in the deepest part of that desert
+# and has a meaning, not just a percentile: it is the largest disagreement a CLOCK
+# error can produce. Two sources reading the same instant off different clocks can
+# differ by at most a timezone; more than half a day apart is not a clock error, it
+# is a different calendar day, which is a different game. Re-derive with the query
+# above before changing this number.
+#
+# WHAT THIS COSTS. (1) A Kalshi settlement date sitting a full 24h after a real
+# start, on a row nothing has individuated, now creates a duplicate instead of
+# joining — visible and mergeable, per the asymmetry. (2) Timezones beyond ±12
+# (Kiribati, Chatham) would be misread; no league we carry plays there, and the
+# cost is again a duplicate. (3) The 73% of id-less rows whose clock is fabricated
+# are NOT protected by this rule and cannot be, from names and times alone: nothing
+# has scheduled them, so there is no "distinct scheduled game" to observe. The
+# honest fix for that residual is upstream — stop fabricating a timestamp, or carry
+# a trust flag out of the auto-create — not a guess made here.
+_UNINDIVIDUATED_SAME_GAME_WINDOW = timedelta(hours=12)
 
 # Maximum retries on IntegrityError (race condition between concurrent tasks)
 _MAX_RETRIES = 2
@@ -293,9 +373,11 @@ def _is_a_different_scheduled_game(
 
     Three cases deliberately left alone:
 
-    * **Never-individuated candidates** (no provider id at all) — the wide window and
-      the closest-by-time tiebreaker still decide, exactly as before. Prediction-market
-      auto-creates that collapse onto a shared ``now`` live here.
+    * **Never-individuated candidates** (no provider id at all) — handled separately
+      by ``_unindividuated_clocks_say_different_games`` (#1779 R3), which is where the
+      prediction-market auto-creates that collapse onto a shared ``now`` live. Leaving
+      them to the wide window, as this function originally did, left the defect fully
+      intact for 88% of events.
     * **The incoming provider's own id, matching** — identity beats the clock. A rain
       delay that moves a game four hours must still find its own row on the next poll.
     * **Same provider, different id** — already disqualified by
@@ -317,6 +399,53 @@ def _is_a_different_scheduled_game(
         return False
     drift = abs((candidate_time - commence_time).total_seconds())
     return drift > _CROSS_PROVIDER_SAME_GAME_WINDOW.total_seconds()
+
+
+def _is_a_published_start_time(moment: Optional[datetime]) -> bool:
+    """True when this timestamp is a SCHEDULE rather than a fabricated ``now``.
+
+    A published start time is always on a whole minute — every schedule provider we
+    read (Odds API, ESPN, StatPal, Kalshi ticker dates) emits one, and 16,638 of the
+    16,777 individuated events in the last 120 days satisfy this (99.2%); of the
+    whole-minute id-less rows, 98.7% sit on a 5-minute boundary. A
+    ``datetime.now(timezone.utc)`` fallback essentially never does: the odds of a
+    fabricated stamp landing on a whole second AND zero microseconds are ~1e-6.
+
+    Both misreadings are survivable and the safe one is the likely one. Reading a
+    real time as fabricated (a provider that publishes ``:30`` seconds) keeps the
+    wide window — today's behaviour, no new breakage. Reading a fabricated time as
+    real costs a duplicate row, never a vanished game.
+    """
+    if moment is None:
+        return False
+    return moment.second == 0 and moment.microsecond == 0
+
+
+def _unindividuated_clocks_say_different_games(
+    candidate: Event,
+    commence_time: datetime,
+) -> bool:
+    """True when two REAL clocks on an un-individuated row disagree by over half a day.
+
+    #1779 R3 — the id-less class. See ``_UNINDIVIDUATED_SAME_GAME_WINDOW`` above for
+    the full argument and the production measurement that chose 12h. In short: this
+    is the only guard that speaks for the 88% of events no schedule provider has
+    named, it fires only when both sides carry a published start time (a fabricated
+    ``now`` is not a clock and cannot be measured against), and it fails closed
+    toward creating because a duplicate is visible and a vanished game is not.
+
+    Deliberately disjoint from the two id-based guards: it returns False the moment
+    any provider has individuated the row, so exactly one rule ever applies to a
+    given candidate and the 2h window above is never widened by this one.
+    """
+    if _individuating_provider_ids(candidate):
+        return False
+    if not _is_a_published_start_time(candidate.commence_time):
+        return False
+    if not _is_a_published_start_time(commence_time):
+        return False
+    drift = abs((candidate.commence_time - commence_time).total_seconds())
+    return drift > _UNINDIVIDUATED_SAME_GAME_WINDOW.total_seconds()
 
 
 async def _find_by_source_id(
@@ -358,9 +487,12 @@ async def _find_by_structured_match(
     Requires BOTH teams to match (either in normal or swapped home/away
     orientation).
 
-    Candidates that already hold a distinct game id from the INCOMING claim's own
-    provider are disqualified first (#1779) — see
-    ``_holds_distinct_provider_game_id``.
+    Three disqualifications run before scoring (#1779), in order of how much evidence
+    they need: a candidate holding a DIFFERENT game id from the incoming claim's own
+    provider (``_holds_distinct_provider_game_id``); a candidate individuated by ANY
+    provider whose start disagrees by more than 2h (``_is_a_different_scheduled_game``);
+    and a candidate nobody has individuated whose PUBLISHED start time is more than
+    half a day from the claim's (``_unindividuated_clocks_say_different_games``).
 
     Uses a PostgreSQL advisory lock to prevent TOCTOU race conditions when
     concurrent workers (ESPN sync on realtime, Odds API on background) both
@@ -416,6 +548,20 @@ async def _find_by_structured_match(
                 candidate.commence_time,
                 getattr(claim, "source", None), commence_time,
                 abs((candidate.commence_time - commence_time).total_seconds()) / 3600.0,
+            )
+            continue
+
+        # #1779 R3: ...and when NOBODY has individuated the row, two published start
+        # times more than half a day apart are still two games. The id-less class is
+        # 88% of events; leaving it to the ±28h window left the original defect fully
+        # intact there.
+        if _unindividuated_clocks_say_different_games(candidate, commence_time):
+            logger.debug(
+                "Structured match: disqualifying event %s — un-individuated, its "
+                "published start %s is %.1fh from the incoming %s claim's %s",
+                candidate.id, candidate.commence_time,
+                abs((candidate.commence_time - commence_time).total_seconds()) / 3600.0,
+                getattr(claim, "source", None), commence_time,
             )
             continue
 
