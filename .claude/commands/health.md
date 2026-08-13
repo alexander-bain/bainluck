@@ -117,6 +117,48 @@ except Exception as e:
 done
 ```
 
+#### Batch 3b: Schedule completeness (#1796 — the only check with an external denominator)
+
+```bash
+# Every OTHER check on this page verifies that what exists renders. This one
+# verifies that what SHOULD exist, exists — it reconciles our per-league game set
+# against an authoritative external schedule (MLB Stats API / ESPN), so a game
+# that was never created stops being invisible.
+#
+# Read the badge as "N of M leagues have a truth source", NOT as a percentage. A
+# league with no adapter is NOT COVERED, never green — silently scoring an
+# unmeasured league green is the failure mode #1796 was filed about.
+source ~/.claude/.env && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$BAINLUCK_API/api/admin/schedule-sentinel/last" \
+  | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+sc=d.get('scorecard') or {}
+print('COVERAGE:', sc.get('coverage_label','?'), '| generated', d.get('generated_at','?'))
+print('  red:', sc.get('leagues_red'), ' unverified:', sc.get('leagues_unverified'),
+      ' real defects by class:', sc.get('real_defects_by_kind'))
+for lg in sc.get('per_league') or []:
+    if lg.get('verdict') == 'green':
+        continue
+    print(f\"  {lg['league']:6s} {lg['verdict']:15s} truth={lg.get('truth')} \"
+          f\"{lg.get('our_events')}/{lg.get('truth_games')} held \"
+          f\"real={lg.get('real_defects')} {lg.get('kind_counts')}\")
+for u in sc.get('uncovered_leagues') or []:
+    print(f\"  NOT COVERED: {u['league']} — {u.get('reason')}\")
+"
+```
+
+**Thresholds:** any REAL defect on a covered league is RED — file/triage it now. The four classes
+are MISSING (in truth, not ours), EXTRA/DUPLICATE (ours, not in truth), MISATTACHED (the team FK
+dereferences to a different club — #1779's rows had *correct names and wrong ids*, so a name check
+cannot find these) and SCORE DISAGREEMENT on a settled game. `leagues_unverified > 0` means a truth
+source could not be read: that day was **not checked** and must not be read as green. A rising
+`leagues_not_covered` is coverage debt, not a health problem — but it has to stay visible, which is
+why the badge is "N of M" and never a percentage.
+
+Re-run on demand with `POST /api/admin/schedule-sentinel/run?inline=true&file_issues=false`
+(add `&leagues=mlb` to scope it). Cockpit tile: `schedule_sentinel` on `GET /api/admin/cockpit`.
+
 #### Batch 4: Endpoint latency spot-checks
 
 ```bash
@@ -234,6 +276,7 @@ Present a single summary table:
 | Odds API Quota        | ...    | ...                     |
 | Link Rate             | ...    | ...                     |
 | Grid Health           | ...    | ...                     |
+| Schedule Completeness | ...    | N of M leagues covered  |
 | Calibration Pipeline  | ...    | ...                     |
 | Source Coverage        | ...    | ...                     |
 | Feed Quality          | ...    | ...                     |

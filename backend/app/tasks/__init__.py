@@ -544,6 +544,7 @@ HEAVY_TASKS = {
     "app.tasks.flow_sentinel",
     "app.tasks.grid_sentinel",
     "app.tasks.grid_register_sentinel",
+    "app.tasks.schedule_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
@@ -2056,6 +2057,31 @@ def grid_register_sentinel(self, apply=False, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
+                 name="app.tasks.schedule_sentinel")
+def schedule_sentinel(self, file_issues=True, leagues=None):
+    """Schedule Sentinel (#1796, Queue 342): the COMPLETENESS check.
+
+    Every other check verifies that what exists renders; this one verifies that
+    what should exist, exists. It reconciles our per-league game set against an
+    AUTHORITATIVE external schedule (MLB Stats API for MLB, ESPN elsewhere) over a
+    rolling yesterday/today/tomorrow window and reports four classes — MISSING,
+    EXTRA/DUPLICATE, MISATTACHED (dereferencing the team FK, because #1779's rows
+    had correct names and wrong ids), and SCORE DISAGREEMENT on settled games.
+    Classifies REAL vs EXPLAINED (postponement / rain-out / doubleheader
+    re-schedule) vs WATCH so RED means REAL, files ONE deduped issue per league,
+    and states coverage as "N of M leagues have a truth source" — a league with no
+    authority is NOT COVERED, never green. Read-only; files work, never data
+    (gotcha #21). The 840s soft limit (under the 900s hard limit, clear of the
+    global 300s) plus the run's 480s inner deadline keep it from SIGKILLing
+    untracked (#966)."""
+    from app.tasks.schedule_sentinel import _run_schedule_sentinel
+    return _tracked_run(
+        "schedule_sentinel",
+        _run_schedule_sentinel(file_issues=file_issues, leagues=leagues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.horizon_sentinel")
 def horizon_sentinel(self, file_issues=True):
     """Horizon Sentinel (Queue #223): read THE HORIZON CALENDAR
@@ -2969,6 +2995,19 @@ celery_app.conf.beat_schedule = {
         # not publish until apply=True is passed explicitly.
         "task": "app.tasks.grid_register_sentinel",
         "schedule": crontab(minute=32, hour=7),  # Daily 07:32 UTC
+        "options": {"queue": "heavy"},
+    },
+    "schedule-sentinel-daily": {
+        # #1796 (Queue 342): the COMPLETENESS sentinel — reconciles our per-league
+        # game set against an authoritative external schedule so a game that was
+        # never created stops being invisible to every check we have. Runs at
+        # 07:36 UTC: after the grid register sentinel (07:32) and before the
+        # horizon sentinel (07:40), so the heavy dyno is never contended, and
+        # after the 07:05 MLB self-heal so it measures the healed slate. Files one
+        # deduped issue per RED league; a league with no truth source is reported
+        # NOT COVERED rather than scored green. heavy queue (#233).
+        "task": "app.tasks.schedule_sentinel",
+        "schedule": crontab(minute=36, hour=7),  # Daily 07:36 UTC
         "options": {"queue": "heavy"},
     },
     "horizon-sentinel-daily": {
