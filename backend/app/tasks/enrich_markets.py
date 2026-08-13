@@ -31,6 +31,12 @@ DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 # schema shape does not. Consumers still gate on schema_version; re-tag
 # freshness gates on writer_rev so a logic fix re-runs over already-tagged rows.
 CU_WRITER_REV = 4
+CU_V2_SCHEMA_VERSION = 2
+# How long a CU v2 profile keeps ownership of the shared key without being
+# re-tagged. The v2 writer refreshes its own rows every ~24h, so this only
+# fires if the v2 beat is genuinely dead — at which point v1 reclaiming the
+# key is the correct outcome, not a thrash (#1808).
+CU_V2_OWNERSHIP_MAX_AGE_DAYS = 30
 
 
 def _json_from_llm_response(text: str) -> dict[str, Any]:
@@ -175,12 +181,211 @@ def _get_discover_llm_metadata(market_metadata: dict[str, Any] | None) -> dict[s
     return metadata
 
 
+def _get_cu_v2_profile(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the discover_llm profile only when it is a CU v2 (schema_version=2)
+    profile. The judge consumes v2 fields (temporal_class, liveness) natively (#596).
+
+    Feed consumers must NOT call this directly — they go through
+    `_get_discover_llm_view`, the single version-aware decision (#1808)."""
+    if not isinstance(market_metadata, dict):
+        return None
+    metadata = market_metadata.get(DISCOVER_LLM_METADATA_KEY)
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("schema_version") != CU_V2_SCHEMA_VERSION:
+        return None
+    return metadata
+
+
+# v2 `breadth` ("how many ORDINARY people know/care about THIS market's subject",
+# 1-5) is the closest analogue of v1's audience_scope bucket.
+_V2_BREADTH_TO_AUDIENCE_SCOPE = {
+    5: "broad",
+    4: "mainstream",
+    3: "mainstream",
+    2: "niche",
+    1: "niche",
+}
+
+
+def _coerce_v2_rating(value: Any) -> int | None:
+    """Coerce a v2 1-5 rating (stakes/breadth/oddity) or return None."""
+    try:
+        rating = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(5, rating))
+
+
+def _v2_profile_as_v1_shape(profile: dict[str, Any]) -> dict[str, Any]:
+    """Synthesize the v1-shaped fields the feed reads out of a CU v2 profile.
+
+    The feed's three consumers (score adjustment, personalization feature tokens,
+    public card payload) were written against the v1 field set. v2 renamed or
+    split several of those fields, so a v2-tagged market read as "no profile" and
+    silently lost its LLM signal entirely (#1808). This adapter restores the v1
+    contract without changing any ranking formula.
+
+    Field mapping, and why:
+
+    - `salience_score` <- the mean of `stakes` and `breadth`, rounded up on a
+      half, clamped 1-5.
+      v1 asked one question ("would a normal curious person care?", 1-5); v2 split
+      it into consequence magnitude (`stakes`) and subject reach (`breadth`). The
+      mean reproduces v1's endpoints — an esports match (S1 B1) lands on 1, the
+      World Cup final (S4 B5) on 5 — and keeps the v1 neutral point at 3, so an
+      ordinary market gets the same 0 nudge it got before. When only one of the
+      two is present it is used alone; when neither is, v1's default of 3 applies.
+    - `audience_scope` <- `geography` == "local" -> "local", else the breadth
+      bucket above. Reach, not the topic's global fame, is what v1's scope buckets
+      priced. Two deliberate asymmetries: "local" (v1's harshest penalty, -25) is
+      only ever asserted from an explicit v2 `geography: local`, never inferred
+      from a low breadth; and "specialist" has no v2 analogue, so it is never
+      synthesized rather than guessed.
+    - `junk_flags` map 1:1 — the strings pass through untouched. v2's vocabulary
+      (ladder / dated_bucket / social_count / duplicate_phrasing) is not in v1's
+      named-penalty table, so each one costs the generic unknown-flag penalty
+      (-6) in `_discover_llm_score_adjustment`. That is intentional: they are real
+      junk signals, priced conservatively, not silently dropped.
+    - `entities` <- the `name` of each v2 entity object (v2 carries {name, type};
+      v1 carried bare strings). Keeps `llm_entity:*` personalization tokens and
+      the +2 named-card bonus alive.
+    - `archetype` <- `arc` when it names one ("race", "comeback", ...); v2's
+      "none"/missing maps to v1's "other" default.
+    - `topic` / `subtopic` pass through unchanged (same names, same meaning).
+    - `comparison_axes` -> [] — v2 has no analogue, so a v2 profile contributes no
+      pairing axes (it never did; this just makes the absence explicit).
+    - `why_interesting` <- the first `hook_facts` entry's text, truncated to v1's
+      240 chars.
+    """
+    stakes = _coerce_v2_rating(profile.get("stakes"))
+    breadth = _coerce_v2_rating(profile.get("breadth"))
+    if stakes is not None and breadth is not None:
+        # Integer half-up, NOT round() — round(4.5) is 4 under banker's rounding,
+        # which would quietly demote an S4/B5 card.
+        salience_score = (stakes + breadth + 1) // 2
+    else:
+        salience_score = stakes if stakes is not None else breadth
+        if salience_score is None:
+            salience_score = 3
+    salience_score = max(1, min(5, salience_score))
+
+    geography = profile.get("geography")
+    if isinstance(geography, str) and geography.strip().lower() == "local":
+        audience_scope = "local"
+    elif breadth is not None:
+        audience_scope = _V2_BREADTH_TO_AUDIENCE_SCOPE[breadth]
+    else:
+        audience_scope = "broad"
+
+    entity_names: list[Any] = []
+    for entity in profile.get("entities") or []:
+        if isinstance(entity, dict):
+            entity_names.append(entity.get("name"))
+        else:
+            entity_names.append(entity)
+
+    arc = profile.get("arc")
+    archetype = arc if isinstance(arc, str) and arc and arc != "none" else "other"
+
+    why_interesting = ""
+    for fact in profile.get("hook_facts") or []:
+        if isinstance(fact, dict) and str(fact.get("text") or "").strip():
+            why_interesting = str(fact["text"]).strip()[:240]
+            break
+
+    return {
+        "schema_version": DISCOVER_LLM_SCHEMA_VERSION,
+        "adapted_from_schema_version": CU_V2_SCHEMA_VERSION,
+        "generated_at": profile.get("generated_at"),
+        "model": profile.get("model"),
+        "topic": profile.get("topic"),
+        "subtopic": profile.get("subtopic"),
+        "archetype": archetype,
+        "audience_scope": audience_scope,
+        "salience_score": salience_score,
+        "entities": _clean_string_list(entity_names, max_items=8),
+        "junk_flags": _clean_string_list(profile.get("junk_flags"), max_items=6),
+        "comparison_axes": [],
+        "why_interesting": why_interesting,
+    }
+
+
+def _get_discover_llm_view(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The ONE decision about what a feed consumer reads out of `discover_llm`.
+
+    Two writers own this key (v1 `enrich_discover_llm_metadata`, v2
+    `enrich_cu_v2_profiles`), so any consumer that hard-codes a schema version
+    sees roughly half the enriched population as unenriched. Ruling 021: when two
+    consumers must agree about one input, the unit to share is the DECISION, not
+    the ingredient — so every feed consumer (score adjustment, feature tokens,
+    public payload, card archetypes) reads through this function and none of them
+    branches on `schema_version` itself.
+
+    v1 profiles are returned natively; v2 profiles are adapted to the v1 shape by
+    `_v2_profile_as_v1_shape`. Anything else (no profile, an unknown version)
+    reads as None, exactly as before.
+    """
+    if not isinstance(market_metadata, dict):
+        return None
+    metadata = market_metadata.get(DISCOVER_LLM_METADATA_KEY)
+    if not isinstance(metadata, dict):
+        return None
+    version = metadata.get("schema_version")
+    if version == DISCOVER_LLM_SCHEMA_VERSION:
+        return metadata
+    if version == CU_V2_SCHEMA_VERSION:
+        return _v2_profile_as_v1_shape(metadata)
+    return None
+
+
+def _cu_v2_profile_owns_key(
+    market_metadata: dict[str, Any] | None,
+    *,
+    now: datetime,
+    max_age_days: int = CU_V2_OWNERSHIP_MAX_AGE_DAYS,
+) -> bool:
+    """True when a CU v2 profile holds the shared key and the v1 writer must not
+    overwrite it (#1808).
+
+    v2 is NEWER than v1, not missing. The v1 accessor rejects `schema_version=2`,
+    so without this gate the v1 refresh predicate read every v2 profile as absent
+    and re-stamped it back to v1 — while the v2 writer re-tagged v1 back to v2 on
+    its own beat, thrashing the feed's top markets between profile shapes.
+
+    Ownership covers stale `writer_rev` profiles too, not just the current rev:
+    re-tagging its own older revisions is the v2 writer's job, and letting v1
+    grab them in the meantime is exactly the oscillation this closes. The single
+    escape hatch is age — a v2 profile older than `max_age_days` means the v2 beat
+    is dead (it refreshes its own rows every ~24h), and reclaiming an abandoned
+    key is correct.
+    """
+    profile = _get_cu_v2_profile(market_metadata)
+    if not profile:
+        return False
+    generated_at = profile.get("generated_at")
+    if not generated_at:
+        # Un-ageable, but the v2 writer's own skip predicate treats a missing
+        # timestamp as "re-tag me", so it will be refreshed on the next v2 run.
+        return True
+    try:
+        generated = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=timezone.utc)
+    return generated >= now - timedelta(days=max_age_days)
+
+
 def _metadata_needs_discover_llm_refresh(
     market_metadata: dict[str, Any] | None,
     *,
     now: datetime,
     max_age_days: int = 30,
 ) -> bool:
+    if _cu_v2_profile_owns_key(market_metadata, now=now):
+        # #1808: a schema_version=2 blob is a NEWER profile, not a missing one.
+        return False
     metadata = _get_discover_llm_metadata(market_metadata)
     if not metadata:
         return True
@@ -805,6 +1010,35 @@ JSON schema:
 }}"""
 
 
+def _cu_v2_needs_retag(
+    market_metadata: dict[str, Any] | None,
+    *,
+    now: datetime,
+    max_age_seconds: int = 86400,
+) -> bool:
+    """The v2 writer's skip predicate: should this market be (re-)profiled?
+
+    Extracted from the task loop so the split-brain regression test can run BOTH
+    writers' predicates over the same fixture metadata (#1808).
+
+    Only a current-`writer_rev` v2 profile earns the freshness skip: a
+    `writer_rev` bump forces a re-tag of older revisions even when they are
+    younger than `max_age_seconds`. A v1 profile (`schema_version=1`, no
+    `writer_rev`) always needs the tag.
+    """
+    profile = _get_cu_v2_profile(market_metadata)
+    if not profile or profile.get("writer_rev") != CU_WRITER_REV:
+        return True
+    ts = profile.get("generated_at", "")
+    if not ts:
+        return True
+    try:
+        age = (now - datetime.fromisoformat(ts)).total_seconds()
+    except (ValueError, TypeError):
+        return True
+    return age >= max_age_seconds
+
+
 def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> str:
     """Computed liveness signal — is anything in this market still in play?
 
@@ -886,25 +1120,12 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             meta = r["market_metadata"] or {}
             if isinstance(meta, str):
                 meta = json.loads(meta)
-            existing = meta.get(DISCOVER_LLM_METADATA_KEY)
-            if (
-                existing
-                and isinstance(existing, dict)
-                and existing.get("schema_version") == 2
-                and existing.get("writer_rev") == CU_WRITER_REV
-            ):
-                # Only honor the freshness skip when the profile was produced by
-                # the current writer revision. A writer_rev bump forces a re-tag
-                # of older rev profiles even if they are <24h old.
-                ts = existing.get("generated_at", "")
-                if ts:
-                    try:
-                        age = (now - datetime.fromisoformat(ts)).total_seconds()
-                        if age < 86400:
-                            stats["skipped_fresh"] += 1
-                            continue
-                    except (ValueError, TypeError):
-                        pass
+            # Only a current-writer_rev profile earns the freshness skip; a
+            # writer_rev bump forces a re-tag even of <24h profiles (#1808 pins
+            # this predicate against the v1 writer's).
+            if not _cu_v2_needs_retag(meta, now=now):
+                stats["skipped_fresh"] += 1
+                continue
 
             outcomes_raw = r["outcomes"] or []
             if isinstance(outcomes_raw, str):
@@ -978,7 +1199,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
 
                 liveness = _compute_liveness(item["outcome_probs"], item["status"])
                 profile = {
-                    "schema_version": 2,
+                    "schema_version": CU_V2_SCHEMA_VERSION,
                     "writer_rev": CU_WRITER_REV,
                     "model": DISCOVER_LLM_MODEL,
                     "generated_at": now.isoformat(),
@@ -1033,21 +1254,6 @@ async def enrich_cu_v2_profiles(limit: int = 125):
 
     logger.info("CU v2 enrichment: %s", stats)
     return stats
-
-
-def _get_cu_v2_profile(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return the discover_llm profile only when it is a CU v2 (schema_version=2)
-    profile. The judge consumes v2 fields (temporal_class, liveness); the v1
-    reader (_get_discover_llm_metadata) intentionally rejects v2, so this is a
-    separate accessor (#596)."""
-    if not isinstance(market_metadata, dict):
-        return None
-    metadata = market_metadata.get(DISCOVER_LLM_METADATA_KEY)
-    if not isinstance(metadata, dict):
-        return None
-    if metadata.get("schema_version") != 2:
-        return None
-    return metadata
 
 
 def _compact_feed_item_for_llm(

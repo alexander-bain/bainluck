@@ -131,7 +131,11 @@ from app.utils.polymarket_email_ground_truth import (
 from app.tasks.enrich_markets import (
     _discover_llm_feature_tokens,
     _discover_llm_score_adjustment,
-    _get_discover_llm_metadata,
+    # #1808: the ONE version-aware read of market_metadata['discover_llm'].
+    # Two writers own that key; importing the v1-only accessor here made every
+    # v2-profiled market read as unenriched. Never import a version-specific
+    # accessor into the feed path (ruling 021 — share the decision).
+    _get_discover_llm_view,
 )
 from app.utils.eval_promote import (
     EVAL_PROMOTE_ADJ as _EVAL_PROMOTE_ADJ,
@@ -6553,7 +6557,11 @@ async def _score_futures(
                 highlight_result.reasons,
                 is_external_curator_recall=market.id in external_curator_recall_ids,
             )
-            discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
+            # One accessor, four consumers below: the score adjustment, the
+            # personalization feature tokens, the card-archetype axes, and the
+            # public `discover_llm` payload. v1 profiles read natively; v2
+            # profiles are adapted to the v1 shape (#1808).
+            discover_llm_metadata = _get_discover_llm_view(market.market_metadata)
             llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
             if llm_score_adjustment:
                 base_score = max(0, min(98, base_score + llm_score_adjustment))
