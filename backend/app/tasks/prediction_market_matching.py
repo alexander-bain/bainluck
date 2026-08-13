@@ -199,26 +199,241 @@ def _ticker_date_far_from_event(ticker_date, event_commence) -> bool:
     return abs((d - ec).total_seconds()) / 3600 > max_diff_hours
 
 
-async def _check_duplicate_kalshi_linkage(
-    session, event_id: int, market, ticker_game_date,
+# ── #1811: ticker-date vs CANDIDATE-EVENT date ───────────────────────────────
+# Until #1811 the duplicate-linkage guard date-checked a candidate link only
+# when the ticker prefix passed _is_game_winner_kalshi_prefix. Totals, spreads,
+# period markets (F3/F5/F7) and props were skipped by design.
+#
+# THE SHARPEST FACT: the guard protected exactly the markets the venue (Kalshi)
+# grades and settles itself, and skipped exactly the markets we grade from our
+# own `events` scores — the inverse of where protection was needed. Measured on
+# production 2026-08-12: of 21,085 linked MLB Kalshi markets carrying a ticker
+# date, 5,142 (24.4%) across 540 events had ticker date != linked event date,
+# and 2,097 outcomes across 167 markets had been graded from our own scores
+# against the WRONG GAME.
+#
+# That 5,142 / 540 is an EASTERN-calendar-day count and is the acceptance
+# baseline — do not "correct" it to UTC. Whole population, production
+# 2026-08-12: 21,386 linked MLB Kalshi markets carry a parseable ticker date;
+# 8,158 markets / 736 events disagree on the UTC day, 5,142 markets / 540
+# events disagree on the EASTERN day. The UTC reading is the inflated one (by
+# ~3,000 — that surplus IS evening rollover, see below).
+#
+# Fable's ruling (2026-08-13, under rulings 031/036): the provider's ticker
+# defines the market's referent. Where ticker and event link disagree, the LINK
+# is wrong. So the date guard now covers EVERY Kalshi ticker class that carries
+# a parseable ticker date, not just game winners.
+#
+# ── Why this arm does NOT reuse _ticker_date_far_from_event verbatim ─────────
+# That helper compares the ticker's wall clock to the event's UTC commence as
+# if the ticker were UTC. It is not: a Kalshi game ticker embeds the game's US
+# EASTERN date and start time. MEASURED (1,000-row systematic sample of linked
+# MLB Kalshi markets, production, 2026-08-12):
+#   * ticker HHMM read as UTC  → modal delta is -4h (i.e. OUTSIDE the ±3h
+#     window); the helper's rule would refuse 98.0% of currently-linked MLB
+#     markets, and 91.2% across all sports.
+#   * ticker HHMM read as US/Eastern → 744/1000 land at EXACTLY 0h, and the
+#     rule refuses 24.7% — which reproduces the issue's independently measured
+#     24.4% almost exactly.
+# So this arm keeps the SAME ±3h tolerance, applied after the timezone is
+# corrected. For date-only tickers it compares EASTERN CALENDAR DAYS instead of
+# a ±18h window, because ±18h around a midnight-ET anchor wrongly excludes
+# every evening game: a 10pm ET start is 02:00 UTC the NEXT day, so a date-only
+# ticker and the event's UTC commence sit ~22h apart while naming the same
+# game. (This rollover is what inflates the UTC-day census above; it is not a
+# claim about the issue's ET-day baseline, which is correct as published.)
+_EVENT_DATE_MAX_DIFF_HOURS = 3
+# Date-only tickers: refuse only at >=2 Eastern days apart. Eastern is a
+# US-VENUE proxy, not the event's own local zone, so an international match
+# (ITF/ATP/esports) can legitimately sit one ET day off its ticker. Refusing at
+# >=1 would drop those real links; the #1811 long tail is -19d..-80d, far
+# outside this band, so nothing that matters is lost by being generous here.
+_EVENT_DATE_MAX_DIFF_DAYS = 2
+
+# ── Esports carry a WIDER HHMM window, and here is why (measured) ────────────
+# Esports events are almost never scheduled by an upstream schedule provider —
+# they are auto-created FROM the prediction market itself
+# (_create_event_from_prediction_market), so their commence_time is roughly
+# "when we first scraped the market", not a start time. MEASURED, production
+# 2026-08-12, the 120 most recent esports events (381 linked markets):
+#   * 114/119 events (96%) have a commence_time with NONZERO SECONDS — the
+#     ingest-timestamp signature. Real schedule times land on the minute.
+#   * 113/119 events are COHERENT: every Kalshi market on the event shares one
+#     ticker date-token AND one team-code, i.e. there is only one match on the
+#     event and no sibling it could be mislinked to. The 3–12h disagreements
+#     sit on these coherent events, so they measure OUR scrape latency, not a
+#     referent conflict. Refusing them would have the guard deny a market the
+#     link to the very event that market created.
+#
+# NOTE — a plausible-sounding theory that the data REFUTES: "map 2 of a
+# best-of-N legitimately starts hours after the series". It does not show up in
+# the ticker. KXVALORANTMAP-26JUL311400THGX-1 and -2 carry the IDENTICAL
+# date-token; the map number is a suffix. The series winner
+# (KXVALORANTGAME-26JUL311400THGX) sits at the same delta as its maps — which
+# is also why this widening keys on the esports FAMILY, not on a "…map" suffix.
+#
+# Where the cliff goes, from the distribution and not from taste. All-time
+# systematic sample of linked kxcs2/kxlol/kxvalorant markets (n=865 with HHMM),
+# ET-normalised signed delta (ticker − commence):
+#   -8h:7  -7h:7  -6h:10  -5h:21  -4h:32  -3h:69  -2h:96  -1h:47  0h:13
+#   +1h:8  +2h:8  +3h:3  +4h:2  +5h:3  +6h:4  +7h:1  +8h:1  +9h:2
+#   ...then NOTHING until +17h:2 +19h:2 +20h:1 +21h:2 +22h:2 +23h:1 +38h:1,
+#   -12h:2 -14h:3 -15h:1 -19h:1 -21h:1 -23h:1 -27h:1 -30h:2 -31h:1 -33h:1
+#   -48h:16 -52h:1, and 489 beyond ±60h.
+# There is a real gap between roughly +9h and +17h. Cliff sweep (refusal rate):
+#   3h → 71.8%   6h → 63.5%   8h → 61.6%   10h → 61.4%
+#   12h → 61.2%  14h → 60.8%  18h → 60.5%  24h → 59.2%
+# The curve falls steeply to ~10–12h and is flat after: 3h→12h recovers 92
+# markets (10.6% of the sample), 12h→24h recovers only 17 more. So 12h sits in
+# the gap, admits the whole near cluster, and still refuses the 489+ beyond
+# ±60h tournament-dump population that WRONG_GAME_PREFIXES exists to catch.
+# The date-only rule is UNCHANGED for esports (>=2 Eastern days).
+_ESPORTS_TICKER_PREFIXES = ("kxcs2", "kxlol", "kxvalorant")
+_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS = 12
+
+try:  # pragma: no cover - exercised implicitly; only the absence path is dead
+    from zoneinfo import ZoneInfo as _ZoneInfo
+
+    _KALSHI_TICKER_TZ = _ZoneInfo("America/New_York")
+except Exception:  # pragma: no cover - no tzdata on the platform
+    _KALSHI_TICKER_TZ = None
+    logger.warning(
+        "zoneinfo America/New_York unavailable — the #1811 ticker-vs-event date "
+        "guard will fail OPEN (no refusals) rather than refuse real links."
+    )
+
+# Refusal reasons from _check_duplicate_kalshi_linkage_reason. Distinct so a
+# production run can report WHICH mechanism fired (see the funnel keys at the
+# three call sites).
+_REFUSAL_EVENT_DATE = "event_date"      # (a) #1811: ticker date vs the event
+_REFUSAL_SIBLING_DATE = "sibling_date"  # (b) pre-existing: vs a sibling ticker
+
+
+def _is_combat_kalshi_prefix(prefix: str) -> bool:
+    """True for ANY UFC/boxing Kalshi ticker — the bout winner AND its card
+    props (method of finish, rounds, distance, victory round, …).
+
+    Deliberately broader than ``is_combat_fight_ticker`` (fight-WINNER prefixes
+    only), because the widened #1811 guard now covers props too and every
+    ticker on a combat card shares the card's date-only token. Combat is
+    EXEMPT from date-unlinking by design: those date-only tickers legitimately
+    sit up to ~28h from the event's UTC commence (gotcha #14 — Kalshi's
+    close-time is not the start time), and fights are disambiguated by fighter
+    names, not dates.
+    """
+    return prefix.startswith("kxufc") or prefix.startswith("kxboxing")
+
+
+def _event_date_max_diff_hours(prefix: str) -> int:
+    """The HHMM tolerance for a ticker class, in hours.
+
+    Per-class, not a carve-out: an esports event's commence_time is an ingest
+    stamp rather than a schedule time (see the measurement above), so the
+    honest window for that class is wider. Everything else keeps ±3h.
+    """
+    if prefix.startswith(_ESPORTS_TICKER_PREFIXES):
+        return _ESPORTS_EVENT_DATE_MAX_DIFF_HOURS
+    return _EVENT_DATE_MAX_DIFF_HOURS
+
+
+def _ticker_date_conflicts_with_event(
+    ticker_date, event_commence, prefix: str = "",
 ) -> bool:
-    """Check if linking this Kalshi market would create a multi-game conflict.
+    """True when a Kalshi ticker's embedded game date/time cannot be the same
+    game as the candidate event's ``commence_time``.
 
-    Returns True if the link should PROCEED (no conflict), False to SKIP.
+    Timezone-corrected (see the block comment above): the ticker's wall clock
+    is US Eastern. When the ticker carries HHMM the window is ±3h, widened to
+    ±12h for the esports family (``prefix``); when it is date-only the rule is
+    >=2 Eastern calendar days for every class. Returns False whenever there is
+    no signal — a missing ticker date, a missing/NULL commence_time, or no tz
+    database — because a guard that over-refuses silently drops real markets.
+    """
+    if not ticker_date or not event_commence or _KALSHI_TICKER_TZ is None:
+        return False
 
-    Conflict detection: if the event already has a Kalshi game market linked
-    with a different ticker date, this is a different game and should NOT be
-    linked to the same event.
+    ec = (
+        event_commence if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    # extract_game_date_from_ticker returns midnight for a date-only ticker, so
+    # this is the same has-HHMM heuristic _ticker_date_far_from_event uses. A
+    # literal 00:00 start would read as date-only and fall to the LOOSER rule —
+    # it fails open, which is the safe direction.
+    has_hhmm = bool(ticker_date.hour or ticker_date.minute)
+    naive = ticker_date.replace(tzinfo=None)
+
+    if has_hhmm:
+        start_utc = naive.replace(tzinfo=_KALSHI_TICKER_TZ).astimezone(timezone.utc)
+        diff_hours = abs((start_utc - ec).total_seconds()) / 3600
+        return diff_hours > _event_date_max_diff_hours(prefix)
+
+    day_delta = abs((naive.date() - ec.astimezone(_KALSHI_TICKER_TZ).date()).days)
+    return day_delta >= _EVENT_DATE_MAX_DIFF_DAYS
+
+
+async def _event_commence_time(session, event_id: int):
+    """The candidate event's ``commence_time``, or None when there is no usable
+    value. Anything that is not a datetime (NULL column, absent row) is NO
+    SIGNAL and must leave the guard failing open."""
+    from app.models.models import Event
+
+    result = await session.execute(
+        select(Event.commence_time).where(Event.id == event_id)
+    )
+    value = result.scalar_one_or_none()
+    return value if isinstance(value, datetime) else None
+
+
+async def _check_duplicate_kalshi_linkage_reason(
+    session, event_id: int, market, ticker_game_date,
+) -> str | None:
+    """Why linking this Kalshi market to ``event_id`` must be refused, if it must.
+
+    Returns None to PROCEED, or one of ``_REFUSAL_EVENT_DATE`` /
+    ``_REFUSAL_SIBLING_DATE`` to SKIP.
+
+    Two independent comparisons, both live here:
+
+      (a) #1811 — this market's TICKER DATE vs the CANDIDATE EVENT's
+          commence_time. Applies to every Kalshi ticker class with a parseable
+          date (totals, spreads, F3/F5/F7 periods, props), because a mis-linked
+          totals market typically sits on an otherwise-healthy event with no
+          game-winner sibling to compare against. Combat is exempt entirely;
+          esports gets a wider (±12h) window, both for measured reasons stated
+          above the constants.
+
+      (b) pre-existing — this market's ticker date vs an EXISTING SIBLING Kalshi
+          market's ticker date on the same event. Still scoped to game/map
+          WINNER prefixes on both sides, unchanged.
     """
     from app.models.models import FuturesMarket
 
     if market.source != "kalshi":
-        return True  # Only guard Kalshi markets
+        return None  # Only guard Kalshi markets
 
     ext = (market.external_id or "").lower()
     prefix = ext.split("-")[0] if "-" in ext else ext
+
+    # ── (a) #1811: ticker date vs the candidate event ────────────────────────
+    # Derive the ticker date defensively: a caller that passes None must not
+    # silently disable the guard.
+    td = ticker_game_date or extract_game_date_from_ticker(market.external_id)
+    if td is not None and not _is_combat_kalshi_prefix(prefix):
+        event_commence = await _event_commence_time(session, event_id)
+        if _ticker_date_conflicts_with_event(td, event_commence, prefix):
+            logger.warning(
+                "Event-date linkage blocked (#1811): %s ticker=%s would link to "
+                "event %d (commence=%s) — the ticker defines the referent, so "
+                "the link is wrong",
+                market.external_id, td.isoformat(), event_id,
+                event_commence.isoformat() if event_commence else None,
+            )
+            return _REFUSAL_EVENT_DATE
+
+    # ── (b) pre-existing sibling comparison ──────────────────────────────────
     if not _is_game_winner_kalshi_prefix(prefix):
-        return True  # Only guard game/map-level markets
+        return None  # Only guard game/map-level markets
 
     # Find existing Kalshi game markets already linked to this event
     existing_result = await session.execute(
@@ -231,7 +446,7 @@ async def _check_duplicate_kalshi_linkage(
     )
     existing = existing_result.all()
     if not existing:
-        return True  # No existing Kalshi markets — safe to link
+        return None  # No existing Kalshi markets — safe to link
 
     # Check if any existing market is a game market with a different date
     for row in existing:
@@ -251,7 +466,7 @@ async def _check_duplicate_kalshi_linkage(
                     "Duplicate linkage blocked: market %s (date=%s) vs existing market %d '%s' (date=%s) on event %d",
                     market.external_id, td1.date(), row.id, row.external_id, td2.date(), event_id,
                 )
-                return False  # Different game — do NOT link
+                return _REFUSAL_SIBLING_DATE  # Different game — do NOT link
 
         # Same date or unparseable — compare full tickers.
         # If external_ids are different but same prefix, they might be
@@ -266,7 +481,22 @@ async def _check_duplicate_kalshi_linkage(
             # but that's already handled by the devig averaging. For safety, allow
             # the link — the Phase 2 devig logic will handle dual markets correctly.
 
-    return True  # No conflicts detected
+    return None  # No conflicts detected
+
+
+async def _check_duplicate_kalshi_linkage(
+    session, event_id: int, market, ticker_game_date,
+) -> bool:
+    """Boolean form of :func:`_check_duplicate_kalshi_linkage_reason`.
+
+    True to PROCEED, False to SKIP. Kept for callers that do not need to know
+    WHICH mechanism refused; the three production call sites use the reason
+    form so their funnel counters can distinguish (a) from (b).
+    """
+    reason = await _check_duplicate_kalshi_linkage_reason(
+        session, event_id, market, ticker_game_date,
+    )
+    return reason is None
 
 
 # ── Consensus inversion detection ─────────────────────────────────────────────
@@ -525,11 +755,20 @@ async def _try_link_market(
     from app.models.models import FuturesMarket
 
     if matched_event:
-        if not await _check_duplicate_kalshi_linkage(
+        refusal = await _check_duplicate_kalshi_linkage_reason(
             session, matched_event["event_id"], market, ticker_game_date,
-        ):
-            stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
-            stats["funnel"]["duplicate_linkage_blocked"] += 1
+        )
+        if refusal:
+            # Two mechanisms, two counters (#1811): "duplicate_linkage_blocked"
+            # stays the SIBLING-ticker case so its history is comparable;
+            # "event_date_linkage_blocked" is the widened ticker-vs-event case.
+            key = (
+                "event_date_linkage_blocked"
+                if refusal == _REFUSAL_EVENT_DATE
+                else "duplicate_linkage_blocked"
+            )
+            stats["funnel"].setdefault(key, 0)
+            stats["funnel"][key] += 1
             matched_event = None
 
     if matched_event:
@@ -985,12 +1224,18 @@ async def _phase15_revalidate(
             # mismatched market rather than moving the wrong-game link.
             relink_blocked = False
             if better_match and better_match["event_id"] != linked_event.id:
-                if not await _check_duplicate_kalshi_linkage(
+                refusal = await _check_duplicate_kalshi_linkage_reason(
                     session, better_match["event_id"], market, ticker_game_date,
-                ):
+                )
+                if refusal:
                     relink_blocked = True
-                    stats["funnel"].setdefault("phase15_duplicate_linkage_blocked", 0)
-                    stats["funnel"]["phase15_duplicate_linkage_blocked"] += 1
+                    key = (
+                        "phase15_event_date_linkage_blocked"
+                        if refusal == _REFUSAL_EVENT_DATE
+                        else "phase15_duplicate_linkage_blocked"
+                    )
+                    stats["funnel"].setdefault(key, 0)
+                    stats["funnel"][key] += 1
 
             if better_match and better_match["event_id"] != linked_event.id and not relink_blocked:
                 logger.info(
@@ -2907,16 +3152,28 @@ async def _backfill_historical_links(batch_size: int = 100):
                 # past-game market can't pile onto an event that already holds a
                 # different-dated game market. Kalshi ref_time IS the ticker game
                 # date; polymarket short-circuits to True inside the guard.
-                if matched and not await _check_duplicate_kalshi_linkage(
-                    session, matched["event_id"], market,
-                    ref_time if src == "kalshi" else None,
-                ):
+                refusal = None
+                if matched:
+                    refusal = await _check_duplicate_kalshi_linkage_reason(
+                        session, matched["event_id"], market,
+                        ref_time if src == "kalshi" else None,
+                    )
+                if refusal:
                     logger.info(
-                        "Backfill duplicate-linkage blocked: %s %s would collide "
-                        "with a different-dated game on event %d",
-                        src, market.external_id or market.name[:40],
+                        "Backfill linkage blocked (%s): %s %s would collide with "
+                        "a different-dated game on event %d",
+                        refusal, src, market.external_id or market.name[:40],
                         matched["event_id"],
                     )
+                    # This stats dict has no "funnel" sub-dict; the counters are
+                    # top-level here but keep the same (a)/(b) split (#1811).
+                    key = (
+                        "event_date_linkage_blocked"
+                        if refusal == _REFUSAL_EVENT_DATE
+                        else "duplicate_linkage_blocked"
+                    )
+                    stats.setdefault(key, 0)
+                    stats[key] += 1
                     await _mark_backfill_failed(session, market)
                     stats["no_match"] += 1
                     matched = None

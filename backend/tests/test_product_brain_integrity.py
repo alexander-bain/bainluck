@@ -481,3 +481,272 @@ def test_index_section_is_the_last_section_so_appends_do_not_touch_rulings() -> 
         "A ruling section was appended below the index — that is the retired "
         "pattern. Move it to docs/rulings/NNN-<slug>.md and index it."
     )
+
+
+# ---------------------------------------------------------------------------
+# Q340 (2026-08-12) — the ledger gate: a ruling FILE written with no CLAIM.
+#
+# The named failure: rulings 035 and 036 were DOUBLE-WRITTEN. `ux-53`/`ux-54`
+# claimed both numbers in `.claude/handoff/RULING-CLAIMS.md` and wrote their
+# files; a second lane wrote DIFFERENT files at the same two numbers WITHOUT
+# EVER CLAIMING. Neither side could see it — each was green locally, and master
+# would have gone red only on the SECOND merge (in test_ruling_numbers_are_unique
+# above, after the expensive half of the damage is already in ratified prose).
+# It was caught by accident, by a plan window that happened to read both trees.
+# It was the sixth numbering collision of that single day.
+#
+# Every test above compares docs/rulings/ against the PRODUCT-BRAIN index. Both
+# live in the same commit, so a lane that writes its file AND its index line is
+# green no matter who else is holding the number. The ledger is the only
+# artifact that spans lanes, so it is the only thing that can catch this
+# BEFORE a merge instead of at it.
+#
+# WHY THIS GATE SKIPS IN CI, AND WHY THAT IS NOT A DEFANGED TEST
+# `.gitignore` ignores `.claude/`, so RULING-CLAIMS.md is untracked. It does not
+# exist on a CI runner, and it does not exist inside a linked git worktree
+# either (worktrees do not carry ignored files). A test that REQUIRED the ledger
+# would fail 100% of CI runs and would be deleted within the day. So this is a
+# LOCAL gate: it resolves the ledger from the MAIN worktree and skips cleanly
+# when there is none. That still satisfies the instruction it was written for —
+# "this should die before CI red, not at it" — because it fires at AUTHORING
+# time, on the machine of the lane that is about to write the file, which is
+# strictly earlier than CI.
+#
+# Do NOT "fix" the skip by committing the ledger. It is deliberately untracked
+# working state shared by the windows on one machine; a tracked copy would be a
+# single append region edited by every lane, which is the exact conflict class
+# ruling 001 split docs/rulings/ apart to kill.
+# ---------------------------------------------------------------------------
+
+#: Relative to a worktree root. Untracked by design — see the block above.
+RULING_CLAIMS_RELPATH = Path(".claude") / "handoff" / "RULING-CLAIMS.md"
+
+#: `029  claimed-by latency        2026-08-11  — merged   — Short title`
+#: The dash class is deliberately loose (em dash or hyphen): the marker lists at
+#: the top of this file already note that an em-dash encoding difference must
+#: never be the reason a guard fails.
+CLAIM_LINE_RE = re.compile(
+    r"^(?P<num>\d{3})\s+claimed-by\s+(?P<lane>\S+)\s+"
+    r"(?P<date>\d{4}-\d{2}-\d{2})\s+[—-]+\s*"
+    r"(?P<status>claimed|merged|abandoned)\b"
+)
+
+#: Anything in the RULINGS section that opens with three digits is meant to be a
+#: claim. If it does not parse, the parser has drifted from the format and the
+#: gate is silently passing everything — louder to fail here.
+CLAIM_SHAPED_RE = re.compile(r"^\d{3}\s")
+
+
+def _main_worktree_root() -> Path:
+    """The main worktree's root, derived from the git common dir.
+
+    In a LINKED worktree, `<root>/.git` is a FILE reading `gitdir: <path>`, and
+    that dir holds a `commondir` file pointing back at the main `.git`. The main
+    `.git`'s parent is the main worktree root — which is where the untracked
+    ledger actually lives. Done with pathlib rather than a `git` subprocess:
+    nothing else in this file shells out, and a test that shells out fails
+    differently (and more confusingly) when git is absent than when it is.
+    """
+    repo_root = PRODUCT_BRAIN.parents[1]
+    dot_git = repo_root / ".git"
+    if dot_git.is_dir():
+        return repo_root  # already the main worktree
+    if not dot_git.is_file():
+        return repo_root
+    pointer = dot_git.read_text(encoding="utf-8").strip()
+    if not pointer.startswith("gitdir:"):
+        return repo_root
+    worktree_gitdir = Path(pointer.split(":", 1)[1].strip())
+    if not worktree_gitdir.is_absolute():
+        worktree_gitdir = (repo_root / worktree_gitdir).resolve()
+    commondir_file = worktree_gitdir / "commondir"
+    if not commondir_file.is_file():
+        return repo_root
+    common = Path(commondir_file.read_text(encoding="utf-8").strip())
+    if not common.is_absolute():
+        common = (worktree_gitdir / common).resolve()
+    return common.parent
+
+
+def _find_ruling_claims_ledger():
+    """The ledger path, or None. Current tree first, then the main worktree."""
+    for root in (PRODUCT_BRAIN.parents[1], _main_worktree_root()):
+        candidate = root / RULING_CLAIMS_RELPATH
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _require_ruling_claims_ledger() -> Path:
+    ledger = _find_ruling_claims_ledger()
+    if ledger is None:
+        pytest.skip(
+            "LOCAL GATE, NOT A CI GATE — no .claude/handoff/RULING-CLAIMS.md "
+            "found in this tree or in the main worktree. This is expected and "
+            "correct on CI and in a fresh clone: .gitignore ignores `.claude/`, "
+            "so the ledger is untracked and never reaches a runner or a linked "
+            "worktree. The gate is designed to fire at AUTHORING time on the "
+            "lane's own machine — earlier than CI, which is the point. If you "
+            "are a developer about to add docs/rulings/NNN-<slug>.md and you see "
+            "this skip locally, create the ledger in the MAIN worktree "
+            "(~/bainluck/.claude/handoff/RULING-CLAIMS.md) and claim your number "
+            "in it BEFORE writing the file. Do not commit the ledger to fix this."
+        )
+    return ledger
+
+
+def _ledger_rulings_section(text: str) -> list:
+    """Lines of the `## RULINGS` section only.
+
+    Bounded by the next `## ` heading, because the file carries a second
+    monotonic series (`## GOTCHAS`) whose numbers share the same line format and
+    would otherwise be parsed as ruling claims — which would make gotcha 125
+    look like a claim on ruling 125 and silently bless a file that has none.
+    `### ` sub-headings inside the section (the live-collision writeup) do NOT
+    terminate it and carry no claim-shaped lines.
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.startswith("## RULINGS"):
+            start = i + 1
+            break
+    if start is None:
+        return []
+    end = len(lines)
+    for j in range(start, len(lines)):
+        if lines[j].startswith("## "):
+            end = j
+            break
+    return lines[start:end]
+
+
+def _ledger_claims() -> tuple:
+    """((num, status, lane, raw), ...) plus any claim-shaped line that failed."""
+    text = _require_ruling_claims_ledger().read_text(encoding="utf-8")
+    claims = []
+    malformed = []
+    for line in _ledger_rulings_section(text):
+        m = CLAIM_LINE_RE.match(line)
+        if m:
+            claims.append(
+                (int(m.group("num")), m.group("status"), m.group("lane"), line)
+            )
+        elif CLAIM_SHAPED_RE.match(line):
+            malformed.append(line)
+    return claims, malformed
+
+
+def test_ruling_claims_ledger_parses_in_the_documented_format() -> None:
+    """Parser-drift guard, and it runs first for a reason.
+
+    Every other assertion below is vacuously true against a ledger this parser
+    cannot read: zero claims means zero repeats, and a floor derived from
+    nothing waves every file through. A gate that passes hardest when it is
+    broken is the failure this whole file exists to prevent, so the shape of the
+    ledger is asserted before anything is concluded from its contents.
+    """
+    claims, malformed = _ledger_claims()
+    assert not malformed, (
+        "these lines in the RULINGS section of "
+        f"{RULING_CLAIMS_RELPATH} start with a three-digit number but do not "
+        f"match the documented claim format: {malformed}. The format is "
+        "`NNN  claimed-by <lane>  <date>  — <status> — <title>` with status one "
+        "of claimed/merged/abandoned. Fix the line — an unparseable claim is a "
+        "number nobody is holding as far as this gate can tell."
+    )
+    assert claims, (
+        f"{RULING_CLAIMS_RELPATH} exists but its `## RULINGS` section yielded "
+        "zero parseable claims. Either the section heading was renamed (this "
+        "parser keys on a line starting `## RULINGS`) or the line format "
+        "changed. Until it parses, this gate is blessing every ruling file in "
+        "the tree."
+    )
+
+
+def test_ruling_claims_ledger_is_ascending_with_no_repeated_number() -> None:
+    """The same defect one layer up: two live claims on one number.
+
+    `abandoned` lines are excluded from both checks on purpose. The ledger's own
+    rule is append-only — an abandonment is recorded by APPENDING a second line
+    for that number, which is legitimately both a repeat and out of order. It is
+    a burn record, not a claim, so it does not join the monotonic sequence (it
+    still burns the number for the file check below).
+    """
+    claims, _ = _ledger_claims()
+    live = [(num, lane) for num, status, lane, _ in claims if status != "abandoned"]
+    numbers = [num for num, _ in live]
+
+    repeated = sorted({n for n in numbers if numbers.count(n) > 1})
+    assert not repeated, (
+        f"{RULING_CLAIMS_RELPATH} has more than one LIVE claim on ruling "
+        f"number(s) {repeated}: "
+        f"{[(n, lane) for n, lane in live if n in repeated]}. Two lanes are "
+        "holding the same number and one of them is about to write ratified "
+        "prose that cannot merge. The lane that claimed SECOND renumbers "
+        "upward — claim the new number here first, then rename its file and "
+        "its PRODUCT-BRAIN index line. (An abandoned claim is exempt; mark it "
+        "`abandoned` rather than deleting the line.)"
+    )
+    assert numbers == sorted(numbers), (
+        f"{RULING_CLAIMS_RELPATH} claims are out of order: {numbers}. Keep them "
+        "ascending and append-only — the whole value of the ledger is that "
+        "`the last line + 1` is a safe read, and it stops being one the moment "
+        "a number is inserted out of sequence."
+    )
+
+
+def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
+    """docs/rulings/ → ledger. The direction that catches the double-write.
+
+    Only ONE direction is checked. A claimed number with NO file is explicitly
+    LEGAL: the ledger's rule is "claim the number BEFORE you write the file", so
+    status `claimed` means the file may not exist yet, and asserting otherwise
+    would fail every lane during the window the ledger exists to protect.
+
+    The floor is derived from the ledger's own lowest number rather than
+    hardcoded: rulings 001–028 predate the ledger and were never claimed, and a
+    hardcoded floor would need editing the day anyone backfills a claim.
+    """
+    claims, _ = _ledger_claims()
+    assert claims, "no parseable claims; see the parser-drift test above"
+
+    floor = min(num for num, _, _, _ in claims)
+    live_claims = {
+        num: lane for num, status, lane, _ in claims if status != "abandoned"
+    }
+    burned = {num for num, status, _, _ in claims if status == "abandoned"}
+
+    for path in _ruling_files():
+        num = int(path.name[:3])
+        if num < floor:
+            continue  # predates the ledger (rulings 001–028)
+        if num in live_claims:
+            continue
+        if num in burned:
+            pytest.fail(
+                f"docs/rulings/{path.name} sits on ruling number {num:03d}, "
+                f"which is BURNED in {RULING_CLAIMS_RELPATH} — it was claimed "
+                "and then abandoned, and an abandoned number is never reused. "
+                "A file on a burned number is exactly as broken as an unclaimed "
+                "one, because the lane that burned it may already have cited it "
+                "elsewhere. Claim the next free number in the ledger and "
+                "renumber this file plus its PRODUCT-BRAIN index line."
+            )
+        pytest.fail(
+            f"docs/rulings/{path.name} exists but ruling number {num:03d} was "
+            f"NEVER CLAIMED in {RULING_CLAIMS_RELPATH}. This is the 2026-08-12 "
+            "failure verbatim: two lanes wrote different rulings at 035 and 036 "
+            "because one of them never claimed, both were green locally, and "
+            "master would only have gone red on the second merge.\n\n"
+            "FIX: `git fetch`, then APPEND a claim line to the `## RULINGS` "
+            f"section of the ledger:\n"
+            f"  {num:03d}  claimed-by <your-lane>  <YYYY-MM-DD>  — claimed — "
+            "<short title>\n\n"
+            "Append the line — do NOT start by renaming the file. Renumbering "
+            "ratified prose is the expensive fix (the file, its heading, its "
+            "index line, and every citation of it); the ledger line is the "
+            "cheap one. Only renumber if the number turns out to be genuinely "
+            "taken by another lane, in which case the lane that claimed SECOND "
+            "is the one that moves."
+        )

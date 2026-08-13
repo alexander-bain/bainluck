@@ -146,3 +146,10 @@ private/
 # a 272 MiB full-repo snapshot tarball sat here untracked-and-un-ignored (INT-042), one
 # `git add -A` away from permanent history bloat.
 _to_delete/
+
+# Lane-lock flock sidecars written by scripts/claim_lane_lock.py. They are
+# per-machine runtime state, and a stray one at the repo root has now shown up
+# in `git status` across three consecutive session reports (339S, 339T, 340)
+# without ever being actionable — noise that trains readers to skim the untracked
+# list, which is where a real stray file hides.
+*.claimlock

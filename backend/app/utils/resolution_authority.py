@@ -53,16 +53,26 @@ AUTHORITATIVE_SOURCES: frozenset[str] = frozenset({
     "clob_ordinal",
     "datagolf_settlement",
     "settlement_sync",
-    "poly_total_score",
 })
 
 # Tier 2 — deterministic from cited public data (box score / game score / final
 # leaderboard). Recomputes to the same winner; overwrites only guesses/soft.
+#
+# RULING 038 (2026-08-12, docs/rulings/038-circular-authority-is-never-tier-3.md):
+# `poly_total_score` moved here from AUTHORITATIVE_SOURCES. It grades Polymarket
+# full-game Over/Unders from `events.home_score + events.away_score` — OUR OWN
+# columns — so it is circular: a grade computed from our data cannot carry a
+# venue's unoverwritable authority. Its sibling `game_score` takes the same input
+# and produces the same shape of grade and was already tier 2, so this is an
+# inconsistency being closed, not a new judgment. The ruling's invariant — NO
+# tier-3 member reads our own `events` columns — is guarded by
+# tests/test_resolution_authority_038.py (EVENTS_DERIVED_SOURCES).
 DETERMINISTIC_SOURCES: frozenset[str] = frozenset({
     "box_score",
     "box_score_bound",
     "scoring_plays",
     "game_score",
+    "poly_total_score",
     "leaderboard",
     "datagolf_matchup",
     "datagolf_played_lost",

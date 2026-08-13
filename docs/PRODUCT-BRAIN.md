@@ -1325,6 +1325,7 @@ failure this document already records happening twice.
 - [035](rulings/035-ratification-is-of-priority-never-diagnosis.md) — 2026-08-12 — Ratification is of PRIORITY, never of DIAGNOSIS; a root cause is a hypothesis (Alex)
 - [036](rulings/036-assigned-state-beats-inferred.md) — 2026-08-12 — Assigned STATE beats inferred; part-level inference is monotone and may only add settledness (Alex)
 - [037](rulings/037-a-certified-gate-run-is-not-voided-by-adjacency.md) — 2026-08-12 — A certified gate run is not voided to resolve a textual adjacency; the resolution travels to the Integrator (Alex)
+- [038](rulings/038-circular-authority-is-never-tier-3.md) — 2026-08-12 — Circular authority: a grade computed from our own data is never tier-3 (Alex)
 - [039](rulings/039-a-lookup-must-never-throw.md) — 2026-08-12 — A lookup must never throw; an interim tie-break carries its own expiry (Alex)
 - [040](rulings/040-two-defects-two-left-edges.md) — 2026-08-12 — Two defects, two left edges: a sweep reports per defect, never one blended number (Alex)
 - [041](rulings/041-search-ranks-by-match-class-on-owned-evidence.md) — 2026-08-12 — Search ranks by MATCH CLASS, and an entity ranks only on evidence it OWNS (Alex)
