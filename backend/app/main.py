@@ -35,19 +35,16 @@ from app.services.database import init_db
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
-    def _before_send(event, hint):
-        exc_info = hint.get("exc_info")
-        if exc_info:
-            exc_type = exc_info[0]
-            exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in (
-                "WorkerLost", "Terminated", "TimeLimitExceeded",
-                "PendingRollbackError", "InvalidRequestError",
-            ):
-                return None
-            if exc_name == "ConnectionError" and "redis" in str(exc_info[1]).lower():
-                return None
-        return event
+    # #1501: replaced by the shared filter in app/utils/sentry_filter.py. The
+    # inline version had two holes that mattered once the same rules were
+    # applied worker-side: it matched "WorkerLost", but billiard's class is
+    # `WorkerLostError`, so the single largest Celery class never matched; and
+    # `SoftTimeLimitExceeded` was absent entirely. It also dropped chronic
+    # classes outright where the shared filter throttles them, keeping
+    # `lastSeen` honest instead of hiding the class.
+    from app.utils.sentry_filter import build_before_send
+
+    _before_send = build_before_send()
 
     sentry_sdk.init(
         dsn=sentry_dsn,

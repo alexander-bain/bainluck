@@ -564,11 +564,18 @@ for _heavy_task in HEAVY_TASKS:
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
+    # #1501: this init had NO before_send, while main.py (web) has had one for
+    # months — and every top quota consumer is worker-side (Celery task death,
+    # the beat's Redis reconnects). The filter existed; it was just wired to the
+    # process that wasn't generating the flood. Shared filter, both entry points.
+    from app.utils.sentry_filter import build_before_send
+
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
         send_default_pii=False,
+        before_send=build_before_send(),
         integrations=[
             CeleryIntegration(monitor_beat_tasks=True),
         ],
