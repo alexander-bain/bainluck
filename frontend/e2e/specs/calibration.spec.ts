@@ -304,8 +304,11 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
     await readActivityValue(ACTIVITY_UNCHANGED);
   }
 
-  // Which cohort the RENDERED numbers say is worse. "Active Trading" is the
-  // price-moved side; "Opening Price Only" is price-unchanged.
+  // Which cohort the RENDERED numbers say is worse. `ACTIVITY_MOVED` is the
+  // price-moved side; `ACTIVITY_UNCHANGED` is price-unchanged. Named by hook
+  // rather than by card label on purpose — queue 316 reworded both labels
+  // ("Active Trading" → "Price changed", "Opening Price Only" → "Price stayed
+  // put") and this read did not move, which is the property the hooks exist for.
   const moved = activityValues[ACTIVITY_MOVED];
   const unchanged = activityValues[ACTIVITY_UNCHANGED];
   // The page rounds both to 1dp before comparing (that is what the reader sees),

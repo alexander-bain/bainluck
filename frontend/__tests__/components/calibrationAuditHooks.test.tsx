@@ -92,6 +92,15 @@ const SINGLETON_HOOKS = [
   "calibration-source-panels",
   "calibration-category-breakdown",
   "calibration-niche-section",
+  // Queue 316 (CAL-P050) — the comms pass. Every one of these anchors a claim
+  // Alex asked to be made in words, so each is exactly the kind of element a
+  // later reword would otherwise delete without anything going red.
+  "calibration-plain-headline",
+  "calibration-show-the-math",
+  "calibration-provider-note",
+  "calibration-shape-annex-note",
+  "calibration-buckets-in-band-note",
+  "calibration-price-basis-note",
 ] as const;
 
 const COLLECTION_HOOKS = [
@@ -100,6 +109,8 @@ const COLLECTION_HOOKS = [
   // One per matched bucket / per source — lists, rendered in a `.map()`.
   "calibration-matched-row",
   "calibration-source-panel",
+  // Queue 316: one per PROVIDER, so three rows where there were five.
+  "calibration-provider-row",
 ] as const;
 
 describe("the calibration page renders the hooks the audit selects", () => {
