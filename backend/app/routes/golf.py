@@ -290,8 +290,40 @@ _PROP_OUTCOME_RE = re.compile(
     re.I,
 )
 
+# Ordinal words a source may use where another uses a digit. UX-P070: the round-leader
+# exclusion below enumerated Kalshi's digit phrasing ("Round 2 Leader") plus exactly ONE
+# hand-patched word ("first round leader"), so Polymarket's "Second/Third/Final Round
+# Leader" classified as an OUTRIGHT WINNER market. Enumerating a naming convention is
+# only ever complete for the source it was read off; spell both spellings once, here.
+_ORDINAL_WORD = r"first|second|third|fourth|fifth|sixth|seventh|final"
+
+# Round-leader markets in EITHER phrasing and EITHER spelling — "Round 2 Leader",
+# "End of Round 1 Leader", "First Round Leader", "Second Round Leader", "2nd Round
+# Leader". These are placement markets about a single round, never the tournament
+# winner, and must never reach the winner field.
+_ROUND_LEADER_RE_SRC = (
+    r"\bround\s+(?:\d+|" + _ORDINAL_WORD + r")\s+leader\b|"
+    r"\b(?:\d+(?:st|nd|rd|th)|" + _ORDINAL_WORD + r")\s+round\s+leader\b"
+)
+
 # Markets that are NOT outright winner markets — exclude from headline probability.
 # These include field/participation markets, placement, and prop bets.
+#
+# UX-P070 — this pattern was wrong in BOTH directions, and both errors came from
+# reading one source's titles:
+#   * UNDER-exclusion: see `_ROUND_LEADER_RE_SRC` above.
+#   * OVER-exclusion: `\btour\b.*\bwinner\b` was written for the Kalshi prop "Tour of
+#     Winner", but `.*` makes it swallow every tour-PREFIXED title Polymarket uses —
+#     "PGA Tour: FedEx St. Jude Championship Winner", "DP World Tour: … Winner",
+#     "Korn Ferry Tour: … Winner". Measured across futures_markets: 23 golf markets
+#     dropped (20 resolved carrying 1,957 priced outcomes), and ZERO golf true
+#     positives — there is no golf "Tour of Winner" market in the table at all.
+#     The correct phrasing was already derived once, for #955, and is documented in
+#     `app.utils.golf_evolution_market.NON_CONTENDER_WINNER_RE` with a comment naming
+#     this exact over-breadth ("must NOT match a real field like 'PGA Tour: U.S. Open
+#     Winner' … rather than a broad 'tour .* winner'"). It was applied to the CHART
+#     consumer and not to this one, so the two copies disagreed and the aggregation
+#     kept the broken half. Same prop phrasing is used here now.
 _NON_WINNER_MARKET_RE = re.compile(
     r"(?:"
     r"\bcompete\s+(?:in|at)\b|"  # "Golfers to compete in/at The Masters"
@@ -301,9 +333,8 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bmake\s+(?:the\s+)?cut\b|" # "Make Cut" / "Make the Cut" placement markets
     r"\bmade\s+(?:the\s+)?cut\b|" # "Made Cut" / "Made the Cut" (past tense)
     r"\bTop\s+\d+\b|"            # "Top 5/10/20 Finishers"
-    r"\bRound\s+\d+\s+Leader\b|" # "Round 1 Leader"
-    r"\bfirst\s+round\s+leader\b|"
-    r"\b(?:miss|made)\s+the\s+cut\b|"
+    + _ROUND_LEADER_RE_SRC + r"|"  # every round-leader phrasing/spelling (UX-P070)
+    + r"\b(?:miss|made)\s+the\s+cut\b|"
     r"\bfield\s+size\b|"         # "Field size" props
     r"\bnumber\s+of\b|"          # "Number of birdies" etc.
     r"\bhole[- ]in[- ]one\b|"    # Hole-in-one props
@@ -315,8 +346,10 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bcaptain\b|"              # "U.S. Team Captain at 2027 Ryder Cup"
     # Prop market types (Kalshi creates separate events for these)
     r"\bnationality\b|"          # "Nationality of Winner"
-    r"\bcountry\b.*\bwinner\b|"  # "Country of Winner"
-    r"\btour\b.*\bwinner\b|"     # "Tour of Winner"
+    # "Country/Tour/Region of (the) Winner" — the PROP phrasing, not a broad
+    # `country|tour .* winner`, which swallowed real tour-prefixed winner fields
+    # (UX-P070; phrasing proven by #955's NON_CONTENDER_WINNER_RE).
+    r"\b(?:country|tour|region|state)\s+of\s+(?:the\s+)?winner\b|"
     r"\bwinner'?s?\s+tour\b|"    # "Winner's Tour"
     r"\bwinning\s+score\b|"      # "Winning Score"
     r"\bscore\s+range\b|"        # "Score Range"
@@ -354,8 +387,17 @@ def _golf_winner_renorm_factor(
     participation-market skip — but ONLY when there's a positive winner signal,
     ≥4 candidates, and it isn't a participation/threshold/prop market. Markets
     summing <=1.5 are returned with factor 1.0 (used as-is, unchanged — keeps the
-    existing majors like the 1.483-sum U.S. Open winner identical). Genuine
-    participation markets (make-cut, top-N, round-leader, scores) return None.
+    existing majors like the 1.483-sum U.S. Open winner identical).
+
+    THE CONTRACT, STATED HONESTLY (UX-P070). A previous version of this docstring
+    claimed "genuine participation markets (make-cut, top-N, round-leader, scores)
+    return None". **That is only true above the 1.5 threshold.** The `prob_sum <= 1.5`
+    early return fires FIRST and is name-blind, so a one-outcome "Second Round Leader"
+    summing 0.5 returns 1.0 — verified by direct call. This function is a
+    RENORMALIZATION rule, not an exclusion rule; excluding placement markets is the
+    caller's job, via `_NON_WINNER_MARKET_RE`. The docstring mattered: it read as a
+    second line of defence that does not exist, so the ordinal gap in that regex had
+    nothing behind it.
     """
     if prob_sum <= 1.5:
         return 1.0
@@ -1036,6 +1078,55 @@ async def _fetch_24h_snapshots(
     return {row.outcome_id: float(row.probability) for row in snap_result}
 
 
+# An EMPTY ORDER BOOK: nobody is quoting either side, so the best bid sits at/below
+# the floor and the best ask at/above the ceiling. Its midpoint is ~0.5, and that 0.5
+# is an artifact of the emptiness — not a price anyone would trade at (gotcha #19:
+# "if there is no trade and no bid, skip").
+EMPTY_BOOK_BID = 0.01
+EMPTY_BOOK_ASK = 0.99
+
+
+def _kalshi_untraded_mid(source: str | None, prob: float | None) -> bool:
+    """Kalshi's untraded-midpoint sentinel — the historical rule, unchanged (#23).
+
+    Named rather than retyped: this predicate had THREE hand-written copies in this
+    module, and UX-P070 exists because two copies of a *different* golf rule drifted
+    apart and the aggregation path kept the broken half (#1620, this lane's recurring
+    find). One definition cannot disagree with itself.
+    """
+    return (source or "") == "kalshi" and prob is not None and float(prob) == 0.5
+
+
+def _is_placeholder_price(outcome, source: str | None) -> bool:
+    """True when this outcome's number is a placeholder rather than a quote.
+
+    MONOTONE, and that is the whole design: the Kalshi arm is bit-for-bit the rule
+    that has always run, and the empty-book arm can only ever ADD a skip. So no
+    outcome that is priced today becomes unpriced unless its book is provably empty,
+    and Kalshi behaviour is unchanged by construction rather than by inspection.
+
+    FAILS OPEN on absent data. A NULL bid/ask means "we were never told", which is not
+    the same fact as "nobody is quoting" (gotcha #53 — an absence is not a reading).
+    DataGolf carries no book at all, so the model field is untouched.
+
+    Why this is needed NOW: it is the safety half of the tour-prefix fix above. That
+    fix ADMITS Polymarket winner markets which were being dropped wholesale, and 23 of
+    the 25 open golf markets holding a 0.5 outcome hold an empty book behind it. The
+    untraded skip was gated to ``source == "kalshi"``, so admitting Polymarket without
+    this would have traded one wrong number for another.
+    """
+    prob = getattr(outcome, "current_probability", None)
+    if prob is None:
+        return False
+    if _kalshi_untraded_mid(source, prob):
+        return True
+    bid = getattr(outcome, "current_yes_bid", None)
+    ask = getattr(outcome, "current_yes_ask", None)
+    if bid is None or ask is None:
+        return False
+    return float(bid) <= EMPTY_BOOK_BID and float(ask) >= EMPTY_BOOK_ASK
+
+
 def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str, int], set[int]]:
     """Per-source dedup of winner-type markets, keeping the one with most golfer outcomes.
 
@@ -1080,7 +1171,7 @@ def _extract_prop_market(market, source_label: str) -> dict | None:
         if outcome.current_probability is None:
             continue
         p = float(outcome.current_probability)
-        if source == "kalshi" and p == 0.5:
+        if _is_placeholder_price(outcome, source):
             continue
         raw = outcome.name.strip()
         if raw.lower() in ("tie", "field", "other", "the field"):
@@ -1120,7 +1211,10 @@ def _extract_yes_no_prop(market, source_label: str) -> dict | None:
     if yes_p is None:
         return None
     # Kalshi untraded mid (raw 0.5) is a placeholder, not a real price (#23).
-    if (market.source or "") == "kalshi" and yes_p == 0.5:
+    # `yes_p` may be DERIVED (1 - the "No" leg), so there is no single outcome whose
+    # book could be consulted — this arm stays the magic-number rule, but shares its
+    # one definition with the other two call sites.
+    if _kalshi_untraded_mid(market.source, yes_p):
         return None
     return {
         "name": market.name,
@@ -1580,8 +1674,9 @@ async def get_golf(
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
                     continue
-                # Skip Kalshi untraded mid (raw 0.5) before any renormalization.
-                if source == "kalshi" and float(outcome.current_probability) == 0.5:
+                # Skip placeholder prices before any renormalization — an untraded
+                # Kalshi mid, or any source's empty book (UX-P070).
+                if _is_placeholder_price(outcome, source):
                     continue
                 _aggregate_golfer_outcome(
                     outcome, source_label, golfer_data, prob_24h_ago,

@@ -332,7 +332,7 @@ async def test_an_unmapped_key_gets_no_competition_key_at_all():
     a `{"detail": ...}` body, and `"competition" not in body` is **True** of that
     body. An absence assertion against a nonexistent resource passes for the wrong
     reason. It read as a check nobody had got round to running; it was a check that
-    could never have reported anything. See gotcha #126.
+    could never have reported anything. See gotcha #127.
 
     So the key is now a REAL one — `event:ufc:26aug15` resolves in production (a
     33-child card, `330: Makhachev vs Garry`) and is legitimately unmapped today.

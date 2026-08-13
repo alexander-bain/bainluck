@@ -48,7 +48,7 @@ hold for the awards mistake above. The property being guaranteed is real and it 
 property anyone cared about — nobody ever feared the operator, they feared being wrong about
 whether the thing was over.
 
-This is the same shape as gotcha #126, banked the same day: a check can be structurally impeccable
+This is the same shape as gotcha #127, banked the same day: a check can be structurally impeccable
 and still verify nothing. **A guarantee about form is not a guarantee about content**, and the more
 convincing the form, the less anyone re-reads the content.
 
