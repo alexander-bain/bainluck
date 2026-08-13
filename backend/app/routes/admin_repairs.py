@@ -110,6 +110,19 @@ _REPAIRS = {
     # module default, not a query param — the dispatcher passes through only the
     # four names it declares).
     "event-team-binding": ("app.tasks.repair_event_team_binding", "repair"),
+    # CAL-P049 (#1818): adopt Kalshi's OWN finalized settlement status for markets
+    # stuck ``status='open'`` past their resolution date. Venue-declared state —
+    # the ruled settlement authority — not our judgment, but still a stored-value
+    # change, so dry-run by default and capped at APPLY_MARKET_CAP per call.
+    # Bounded by BOTH a row window and a 20s wall clock (one Kalshi fetch per
+    # market against the web dyno's 30s HTTP timeout), so a partial page is a
+    # normal outcome and reports ``stopped_on_time_budget`` rather than pretending
+    # to be exhausted. Re-invoke with ?offset=<next_offset> while ``exhausted`` is
+    # false. Accepts ?limit=&offset=. ATTENDED ONLY: never wire this to a beat.
+    "kalshi-settlement-status": (
+        "scripts.repair_kalshi_settlement_status",
+        "repair",
+    ),
 }
 
 

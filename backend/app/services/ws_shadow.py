@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 
+from app.utils.kalshi_market_status import TERMINAL_STATUSES
+
 logger = logging.getLogger(__name__)
 
 SHADOW_FLAG_KEY = "bainluck:ws_shadow_enabled"
@@ -29,7 +31,11 @@ SHADOW_VERDICT_KEY = "bainluck:ws_shadow_verdict"
 SHADOW_COMPARISON_KEY = "bainluck:ws_shadow_comparison"
 _VERDICT_TTL_S = 14 * 86400  # 14 days — long enough to accumulate a comparison
 
-_SETTLED_STATUSES = ("closed", "settled", "finalized")
+# CAL-P049 (#1818): was a local ("closed", "settled", "finalized") tuple that
+# missed ``determined``. Four modules each held their own copy of this vocabulary
+# and only the poll's copy was catastrophically wrong — so all four now read the
+# one measured set instead. See app/utils/kalshi_market_status.py.
+_SETTLED_STATUSES = TERMINAL_STATUSES
 
 
 async def is_ws_shadow_enabled() -> bool:

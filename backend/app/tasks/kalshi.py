@@ -27,6 +27,7 @@ from app.utils.sport_keys import (
 from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
+from app.utils.kalshi_market_status import all_terminal  # noqa: E402
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -756,11 +757,27 @@ async def _poll_kalshi_markets():
 
                     # Derive market status from Kalshi API data.
                     # A market is "resolved" only when ALL sub-markets in the
-                    # event are closed or settled. This unblocks backfill_winners
-                    # which only processes status='resolved' rows.
-                    all_settled = all(
-                        m.status in ("closed", "settled") for m in event.markets
-                    )
+                    # event are terminal. This unblocks backfill_winners which
+                    # only processes status='resolved' rows.
+                    #
+                    # CAL-P049 ROOT CAUSE (#1818) — NAMED HERE because #1192
+                    # diagnosed the same symptom as rotation starvation and
+                    # shipped a de-starvation boost that could not have helped.
+                    # This line read ``m.status in ("closed", "settled")``. A
+                    # live probe of ~2,000 nested Kalshi markets on 2026-08-13
+                    # (table in app/utils/kalshi_market_status.py) found that
+                    # ``settled`` does not exist as a market status, and that
+                    # ``finalized``/``determined`` — the ONLY two statuses that
+                    # ever carry a ``result`` — were both absent from the tuple.
+                    # Because this UPSERT rewrites ``status`` on EVERY poll, an
+                    # all-``finalized`` event was forced back to 'open' every
+                    # ~2h, overwriting whatever _backfill_from_settled_events
+                    # had just repaired. So the population never converged: a
+                    # REVERT LOOP, not starvation. The measurement that tells
+                    # them apart is ``futures_markets.updated_at`` — all 159
+                    # stuck golf/mma markets had been touched within 6 hours,
+                    # which no starved scan can produce.
+                    all_settled = all_terminal(m.status for m in event.markets)
                     market_status = "resolved" if all_settled else "open"
 
                     # Upsert the FuturesMarket
