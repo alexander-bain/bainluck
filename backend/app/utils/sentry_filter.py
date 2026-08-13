@@ -50,6 +50,8 @@ dropping the first occurrence.
 
 from __future__ import annotations
 
+import re
+
 # Exception CLASS NAMES that are pure infrastructure churn.
 #
 # Note "WorkerLostError", not "WorkerLost": the original list in main.py said
@@ -91,8 +93,33 @@ _DROP_MESSAGE_SUBSTRINGS = (
 )
 
 
+# redis-py renders connection failures as:
+#   "Error 8 connecting to ec2-1-2-3-4.compute-1.amazonaws.com:6379. <detail>"
+_CONNECTING_TO_RE = re.compile(r"connecting to ([^\s:,]+):(\d+)", re.IGNORECASE)
+
+# Managed-broker domains whose transport churn is self-healing. Matched as a
+# host SUFFIX against a parsed host, never as a free substring of the message.
+_BROKER_HOST_SUFFIXES = (".compute-1.amazonaws.com", ".amazonaws.com")
+
+
 def _module_of(exc_type) -> str:
     return getattr(exc_type, "__module__", "") or ""
+
+
+def _is_broker_endpoint_error(text: str) -> bool:
+    """True when ``text`` reports a failed connection to a managed broker host.
+
+    Parses the host out of the message and compares domain suffixes, so a host
+    that merely CONTAINS a broker domain somewhere in it does not match.
+    """
+    match = _CONNECTING_TO_RE.search(text or "")
+    if not match:
+        return False
+    host = match.group(1).lower().rstrip(".")
+    if host.endswith(_BROKER_HOST_SUFFIXES):
+        return True
+    # Local/CI brokers, where the host is literally named for the service.
+    return host in ("redis", "localhost", "127.0.0.1")
 
 
 def should_drop(exc_info, message: str | None) -> bool:
@@ -126,14 +153,16 @@ def should_drop(exc_info, message: str | None) -> bool:
                     return True
 
         if exc_name in _CONNECTION_EXC_NAMES:
-            # redis-py re-raises some socket errors with the builtin class, so
-            # the module is "builtins". Fall back to the address-shaped text
-            # that identifies the Heroku Redis endpoint.
+            # Some socket errors surface with the builtin class (module
+            # "builtins"), so the module test above cannot see them. Fall back to
+            # the address in redis-py's message — but PARSE the host and match a
+            # domain SUFFIX rather than searching for the domain as a substring.
+            # A substring test would also match a host that merely contains the
+            # text somewhere (CodeQL "incomplete URL substring sanitization"),
+            # and here that would silently swallow a real error from an unrelated
+            # endpoint.
             text = str(exc_info[1]) if len(exc_info) > 1 else ""
-            lowered = text.lower()
-            if "connecting to" in lowered and (
-                "compute-1.amazonaws.com" in lowered or "redis" in lowered
-            ):
+            if _is_broker_endpoint_error(text):
                 return True
 
     if message:

@@ -9,8 +9,6 @@ These tests pin BOTH the drop policy and the wiring, because a filter that is
 merely present has already been shown to be worth nothing.
 """
 
-import pytest
-
 from app.utils.sentry_filter import before_send, should_drop
 
 
@@ -74,6 +72,23 @@ def test_our_own_connection_error_is_kept():
     """A ConnectionError from our HTTP clients is signal, not transport churn."""
     exc = ConnectionError("Kalshi API unreachable: connect timeout")
     assert should_drop(_exc_info(exc), None) is False
+
+
+def test_lookalike_host_is_not_swallowed():
+    """CodeQL "incomplete URL substring sanitization", and a real correctness bug:
+    a substring test would drop an error from a host that merely CONTAINS the
+    broker domain. The host is parsed and matched by SUFFIX instead."""
+    exc = ConnectionError(
+        "Error 111 connecting to compute-1.amazonaws.com.evil.example:6379."
+    )
+    assert should_drop(_exc_info(exc), None) is False
+
+
+def test_real_heroku_redis_host_still_matches_by_suffix():
+    exc = ConnectionError(
+        "Error 104 connecting to ec2-3-92-219-100.compute-1.amazonaws.com:6379."
+    )
+    assert should_drop(_exc_info(exc), None) is True
 
 
 def test_ordinary_application_errors_are_kept():
