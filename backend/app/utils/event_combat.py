@@ -30,6 +30,7 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
 from app.utils.name_normalization import clean_slug
+from app.utils.settledness import price_converged, settled_under_assigned_state
 
 # ---------------------------------------------------------------------------
 # Shared (domain-agnostic) grammar — the same for every combat sport.
@@ -330,10 +331,16 @@ def fight_child_settled(lead_prob: float | None, card_settled: bool) -> bool:
     price test decides exactly as it always did, so this can only ever make a
     child MORE settled, never less. An in-play fight is unreachable by the new
     term.
+
+    UX-P069: the shape now lives in `app.utils.settledness`, which is where the
+    other five adapters reach it. `card_settled` is a genuinely ASSIGNED term
+    (`combat_status` off the card's authoritative commence time), not a second
+    price test — that distinction is what the authority's docstring is about.
+    Behaviour here is unchanged; this call site is the reference one.
     """
-    if card_settled:
-        return True
-    return lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+    return settled_under_assigned_state(
+        inferred=price_converged(lead_prob), assigned_settled=card_settled
+    )
 
 
 def derive_concept(

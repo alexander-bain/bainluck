@@ -24,6 +24,12 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.settledness import (
+    market_assigned_settled,
+    price_converged,
+    settled_under_assigned_state,
+)
+
 # L2-81: how long a concluded tournament's resolved winner market stays queryable
 # so the event page survives the tournament ending (renders the settled state)
 # instead of 404-ing the moment Polymarket flips the market to resolved/closed.
@@ -532,7 +538,27 @@ class TennisEventAdapter:
             # mark it settled so the page groups/de-emphasizes it instead of showing
             # a stale 99% as if live (mirrors the L2-53 settled ruling). Kalshi
             # settled markets stay status='open' (gotcha #33), so use the price.
-            settled = lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
+            #
+            # #1812 (#1803's blast radius): the price test was the ONLY signal, and
+            # it fails on exactly the matches it most needs to grade — a three-set
+            # thriller never converges, so the least cleanly resolved matches are the
+            # ones that keep looking live. MEASURED: `event:tennis:wimbledon-2026`
+            # returns `status: settled` with 47 of 75 children unsettled, 45 of them
+            # in the mid-band. Two ASSIGNED terms, OR-ed, never substituted:
+            #   * the tournament's own status — a concluded draw means every match
+            #     was played (a slam is atomic in time), and `event_status` has
+            #     ALREADY been demoted back to "live" above (the L2-88 block) in the
+            #     one case it is known to lie, a placeholder resolution_date. That
+            #     demotion is what makes it safe to trust here.
+            #   * the match market's own status/grade, which is more precise still.
+            # A tournament in play is unreachable by both: they are False there and
+            # the value is bit-for-bit the old inference.
+            settled = settled_under_assigned_state(
+                inferred=price_converged(lead_prob),
+                assigned_settled=(
+                    event_status == "settled" or market_assigned_settled(m, outs)
+                ),
+            )
             child = {
                 "market_id": m.id,
                 "market_name": m.name,

@@ -117,19 +117,41 @@ class TestCyclingStageSettled1803:
     """
 
     def test_the_source_ORs_the_event_status_in(self):
+        """UX-P069: re-pointed from the LITERAL to the CALL, and that is the fix.
+
+        This assertion used to match the transcribed expression
+        `"settled": event_status == "settled" or graded is not None`. UX-P068
+        recorded the limitation honestly — the sibling grid test below
+        re-implements the expression, so this string match was the ONLY thing
+        binding the source. Alex's item 4c asked whether cycling rides the same
+        fixed code path; it did not, it rode a copy. It now calls
+        `settled_under_assigned_state`, so this asserts the CALL and the argument
+        that carries the assigned term.
+        """
         from app.utils import event_cycling
 
         src = inspect.getsource(event_cycling.CyclingEventAdapter)
-        assert '"settled": event_status == "settled" or graded is not None,' in src, (
-            "the cycling stage child must OR the race's assigned status in, not "
-            "replace the per-stage grade with it"
+        assert "settled_under_assigned_state(" in src, (
+            "the cycling stage child no longer calls the settledness authority — "
+            "if the policy was re-inlined here, the next change to it reaches only "
+            "one of six adapters"
+        )
+        assert 'assigned_settled=event_status == "settled"' in src, (
+            "the cycling stage child must pass the race's ASSIGNED status as the "
+            "assigned term, not replace the per-stage grade with it"
         )
 
     @pytest.mark.parametrize("graded", [None, "Tadej Pogacar"])
     @pytest.mark.parametrize("event_status", ["upcoming", "live", "settled"])
     def test_monotone_and_correct_over_the_whole_grid(self, graded, event_status):
-        # The expression under test, transcribed from the adapter.
-        settled = event_status == "settled" or graded is not None
+        # UX-P069: was a transcription of the adapter's expression; now it drives
+        # the REAL authority the adapter calls, so this grid and the source
+        # assertion above bind the same code.
+        from app.utils.settledness import settled_under_assigned_state
+
+        settled = settled_under_assigned_state(
+            inferred=graded is not None, assigned_settled=event_status == "settled"
+        )
         old = graded is not None
 
         # Never LESS settled than the old rule.

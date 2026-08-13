@@ -316,17 +316,51 @@ async def test_the_stored_envelope_carries_the_competition_block():
 
 @pytest.mark.asyncio
 async def test_an_unmapped_key_gets_no_competition_key_at_all():
-    """Absent, not null: an empty block is chrome the client has to special-case."""
+    """Absent, not null: an empty block is chrome the client has to special-case.
+
+    UX-P069 (Alex ruling 2026-08-12, item 2) — THE KEY IN THIS TEST WAS THE BUG.
+
+    It read `event:mma:ufc-320`. There is no `mma` namespace; live cards are
+    `event:ufc:<card>`. That made the assertion **unfalsifiable rather than merely
+    wrong**: `mma` will never be mapped into the competition register, so
+    "competition is absent" is true here by construction, forever, no matter what
+    the register does. The test could not fail, which is indistinguishable from a
+    test that passes.
+
+    The same key shape was also written into UX-P065's owed production check, where
+    it did real damage: `GET /api/event/event:mma:26aug15` returns **HTTP 404** with
+    a `{"detail": ...}` body, and `"competition" not in body` is **True** of that
+    body. An absence assertion against a nonexistent resource passes for the wrong
+    reason. It read as a check nobody had got round to running; it was a check that
+    could never have reported anything. See gotcha #128.
+
+    So the key is now a REAL one — `event:ufc:26aug15` resolves in production (a
+    33-child card, `330: Makhachev vs Garry`) and is legitimately unmapped today.
+    That is what makes this assertion able to fail: if UFC cards are ever given a
+    competition mapping, this test goes red and asks to be updated, which is
+    precisely the service it was supposed to be providing all along.
+    """
     from unittest.mock import AsyncMock, patch
 
     from app.utils import event_concept_cache as cache_mod
+    from app.utils.competition_identity import competition_block
+
+    real_but_unmapped = "event:ufc:26aug15"
+
+    # The precondition, asserted rather than assumed: this key must be UNMAPPED for
+    # the test below to be about anything. Without this line a typo'd namespace
+    # silently restores the vacuous version.
+    assert competition_block(real_but_unmapped, None) is None, (
+        "precondition failed: this key is now MAPPED, so the assertion below would "
+        "pass vacuously. Re-point it at a genuinely unmapped key."
+    )
 
     class _Adapter:
-        build_event = AsyncMock(return_value={"event": {"name": "Some Fight Card"}})
+        build_event = AsyncMock(return_value={"event": {"name": "330: Makhachev vs Garry"}})
 
     with patch.object(cache_mod, "compute_watermark", AsyncMock(return_value=None)):
         built = await cache_mod.build_and_cache(
-            "event:mma:ufc-320", db=None, rc=None, adapter=_Adapter()
+            real_but_unmapped, db=None, rc=None, adapter=_Adapter()
         )
     assert "competition" not in built
 
