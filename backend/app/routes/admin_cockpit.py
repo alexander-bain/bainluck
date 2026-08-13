@@ -462,6 +462,111 @@ def _grid_sentinel_group() -> dict | None:
     }
 
 
+def _schedule_sentinel_group() -> dict | None:
+    """Schedule-completeness VERDICT as a cockpit tile (#1796, Queue 342).
+
+    Reads the scorecard the Schedule Sentinel persists at
+    ``bainluck:schedule_sentinel:last`` and shapes it for the tile. Two rules make
+    this tile different from its siblings, and both come straight from the issue:
+
+    * **The badge is "N of M leagues have a truth source", never a bare
+      percentage.** A completeness check over a league it cannot measure has
+      measured nothing, and rendering that as a share silently launders the gap
+      into a score. ``coverage_label`` is passed through verbatim.
+    * **NOT_COVERED is its own state — it is not green.** Silently scoring an
+      uncovered league green is the failure mode #1796 was filed about; repeating
+      it on the tile would be the same bug wearing a new hat.
+
+    RED if any covered league has REAL defects; AMBER if a covered league could
+    not be fully verified (a truth read failed) or any league is uncovered; GREEN
+    only when every covered league reconciles clean. WATCH items (partial-by-design
+    MISSING, unlinked FKs, result-less EXTRA rows) never escalate the tile —
+    they surface as a count, per the L2-157 lesson. Returns None before the first
+    run is cached, and an explicit unreadable group when the verdict cannot be
+    READ (C102 — a tile must not borrow green from an outage)."""
+    read = _read_state("bainluck:schedule_sentinel:last")
+    if read.degraded:
+        return _unknown_group(read, "Schedule Sentinel verdict", {"per_league": []})
+    raw = read.value if read.ok else None
+    if not raw or "scorecard" not in raw:
+        return None
+    scorecard = raw.get("scorecard") or {}
+    per = scorecard.get("per_league") or []
+    if not per:
+        return None
+
+    filed_by_league: dict[str, int] = {}
+    for f in raw.get("filed") or []:
+        if isinstance(f, dict) and f.get("issue") and f.get("league"):
+            try:
+                filed_by_league[str(f["league"])] = int(f["issue"])
+            except (TypeError, ValueError):
+                continue
+
+    rows = []
+    any_real = False
+    any_unverified = False
+    any_uncovered = False
+    for lg in per:
+        if not isinstance(lg, dict):
+            continue
+        verdict = str(lg.get("verdict") or "")
+        real = int(lg.get("real_defects") or 0)
+        watch = int(lg.get("watch") or 0)
+        covered = bool(lg.get("covered"))
+        unverified = bool(lg.get("days_unverified"))
+        any_real = any_real or real > 0
+        any_unverified = any_unverified or unverified
+        any_uncovered = any_uncovered or not covered
+        league = str(lg.get("league") or "?")
+        issue = filed_by_league.get(league)
+        rows.append({
+            "league": league,
+            "verdict": verdict,
+            "covered": covered,
+            "truth": lg.get("truth"),
+            "partial_by_design": bool(lg.get("partial_by_design")),
+            "window": lg.get("window"),
+            "truth_games": lg.get("truth_games"),
+            "our_events": lg.get("our_events"),
+            "real_defects": real,
+            "explained": int(lg.get("explained") or 0),
+            "watch": watch,
+            "kind_counts": lg.get("kind_counts") or {},
+            "days_unverified": lg.get("days_unverified") or [],
+            "status": (
+                "red" if real
+                else "grey" if not covered
+                else "amber" if unverified
+                else "green"
+            ),
+            "issue": issue,
+            "issue_url": _GH_ISSUE_URL.format(issue) if issue else None,
+        })
+
+    overall = (
+        "red" if any_real
+        else "amber" if (any_unverified or any_uncovered)
+        else "green"
+    )
+    return {
+        "status": overall,
+        "mode": raw.get("mode"),
+        # The badge. "N of M leagues have a truth source" — never a percentage.
+        "coverage_label": scorecard.get("coverage_label"),
+        "leagues_total": scorecard.get("leagues_total"),
+        "leagues_covered": scorecard.get("leagues_covered"),
+        "leagues_not_covered": scorecard.get("leagues_not_covered"),
+        "leagues_red": scorecard.get("leagues_red"),
+        "real_defects_by_kind": scorecard.get("real_defects_by_kind") or {},
+        "uncovered_leagues": scorecard.get("uncovered_leagues") or [],
+        "watch_total": sum(r["watch"] for r in rows),
+        "duration_seconds": raw.get("duration_seconds"),
+        "generated_at": raw.get("generated_at"),
+        "per_league": rows,
+    }
+
+
 def _data_quality_group() -> dict:
     """Data-quality watchdog VERDICT as a cockpit tile (#1132 / L2-140).
 
@@ -1397,6 +1502,7 @@ async def cockpit(
         "eval_queue": await _eval_queue(db),
         "flow_sentinel": _flow_sentinel_group(),
         "grid_sentinel": _grid_sentinel_group(),
+        "schedule_sentinel": _schedule_sentinel_group(),
         "data_quality_watchdog": _data_quality_group(),
     }
 
@@ -1406,7 +1512,8 @@ async def cockpit(
     # served later as an ordinary healthy beat.
     degraded_groups = sorted(
         name
-        for name in ("flow_sentinel", "grid_sentinel", "data_quality_watchdog")
+        for name in ("flow_sentinel", "grid_sentinel", "schedule_sentinel",
+                     "data_quality_watchdog")
         if isinstance(payload.get(name), dict) and payload[name].get("unreadable")
     )
     payload["completeness"] = {
