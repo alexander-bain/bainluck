@@ -18,6 +18,15 @@ import httpx
 from sqlalchemy import select, update, func
 
 from app.tasks.base import get_task_session
+from app.utils.cu_frame import (
+    DROP_ABSENT as CU_FRAME_DROP_ABSENT,
+    DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
+    DROP_VALUE_NOT_IN_TITLE as CU_FRAME_DROP_VALUE_NOT_IN_TITLE,
+    clean_entity_mentions,
+    ground_subjects,
+    is_resolved_ref,
+    sanitize_cu_frame,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +39,10 @@ DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 # existing schema_version=2 profiles when the writer logic changes but the
 # schema shape does not. Consumers still gate on schema_version; re-tag
 # freshness gates on writer_rev so a logic fix re-runs over already-tagged rows.
-CU_WRITER_REV = 4
+# rev 5 (#1809): adds the quantitative `frame` (C1) and the registry-grounded
+# `subjects`/`subject_ref` (C2). Both are additive slots on the same JSONB key —
+# the bump exists to re-tag rev-4 profiles, which carry neither.
+CU_WRITER_REV = 5
 CU_V2_SCHEMA_VERSION = 2
 # How long a CU v2 profile keeps ownership of the shared key without being
 # re-tagged. The v2 writer refreshes its own rows every ~24h, so this only
@@ -978,7 +990,8 @@ CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
 3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
 4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
 5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
-6. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
+6. frame: fill it ONLY from what the title itself states. `value` and `unit` must be copied EXACTLY as the title writes them — title "W7M" -> value "7M" (never 7000000), title "70%" -> unit "%" (never "percent"), title "2.5 goals" -> value "2.5", unit "goals". If the title names no number, return "frame": null. NEVER infer, convert, or round a number the title does not contain: a value that is not literally in the title is discarded, and the frame with it. A title can have a measure with no number ("Who wins the scoring title?" -> measure "points", value null).
+7. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
 
 CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
 - "CS: NaVi vs Legacy (BO3)" -> esports / event_tied / S1 B1 O1
@@ -1004,6 +1017,7 @@ JSON schema:
   "breadth": <1-5, reach of THIS market's subject per rule 4>,
   "oddity": <1-5, baseline 1 per rule 5>,
   "arc": "race|comeback|collapse|milestone|upset_watch|none",
+  "frame": {{"measure": "<lowercase snake, e.g. points, high_temperature, rt_score, fed_funds_rate>", "comparator": "gte|gt|lte|lt|eq|ne|range|null", "value": "<number EXACTLY as the title writes it, or null>", "unit": "<unit token EXACTLY as the title writes it, or null>", "horizon_kind": "intraday|daily|weekly|monthly|quarterly|annual|multi_year|open_ended|null"}} or null,
   "hook_facts": [{{"type": "stat|context|comparison", "text": "<one falsifiable claim>"}}],
   "junk_flags": ["<ladder|dated_bucket|social_count|duplicate_phrasing — empty array if none>"],
   "confidence": <0.0-1.0, your confidence in this classification>
@@ -1062,6 +1076,84 @@ def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> 
     return "active"
 
 
+async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str, Any]]:
+    """Resolve free-text entity mentions to registry refs — string/alias match ONLY.
+
+    No LLM call anywhere in this path (#1809): grounding uses what the registry
+    already knows (`services/entity_registry.py`, seeded from teams and persons)
+    and falls back to `team_identity_mapping` for the source-specific names the
+    registry seed missed — Kalshi abbreviations, Odds API names.
+
+    Three deliberate properties:
+
+    * **No ORM object escapes.** Everything is reduced to plain scalars before
+      returning, so a rollback in the caller's write session cannot expire a row
+      we are still holding (gotcha #6).
+    * **Aliases are never preloaded.** `entity_aliases` is ~52K rows and the
+      background dyno is 512 MB — LAT-P042 was a 515 MB OOM on exactly that
+      dyno. One indexed lookup per market over <=8 names is cheaper than holding
+      the table resident.
+    * **Ambiguity is unresolved, not a guess.** A team name mapping to more than
+      one `team_id` (NCAA school names collide across sources — #1204) resolves
+      to nothing rather than to an arbitrary winner. #1809 forbids an LLM
+      tiebreak, and a wrong subject is worse than an honest `unresolved:`.
+
+    Returns a map of the ORIGINAL mention -> {ref, entity_id, kind, source}.
+    Mentions that did not resolve are simply ABSENT; the caller marks them.
+    """
+    from app.services.entity_registry import resolve_aliases
+
+    out: dict[str, dict[str, Any]] = {}
+    wanted = [n for n in dict.fromkeys(names) if n and n.strip()]
+    if not wanted:
+        return out
+
+    entities = await resolve_aliases(session, wanted)
+    for name, entity in entities.items():
+        out[name] = {
+            "ref": f"entity:{int(entity.id)}",
+            "entity_id": int(entity.id),
+            "kind": entity.kind,
+            "source": "registry_alias",
+        }
+
+    missing = [n for n in wanted if n not in out]
+    if not missing:
+        return out
+
+    # Fallback: exact case-insensitive source_name match in the team index.
+    by_lower: dict[str, str] = {}
+    for name in missing:
+        by_lower.setdefault(name.strip().lower(), name)
+    from sqlalchemy import text as _text
+    rows = await session.execute(
+        _text("""
+            SELECT lower(source_name) AS key,
+                   count(DISTINCT team_id) AS team_count,
+                   min(team_id) AS team_id
+            FROM team_identity_mapping
+            WHERE source_name IS NOT NULL
+              AND lower(source_name) = ANY(:names)
+            GROUP BY lower(source_name)
+        """),
+        {"names": list(by_lower.keys())},
+    )
+    for row in rows.mappings().all():
+        # count > 1 == the name is ambiguous across teams; leave it unresolved.
+        if int(row["team_count"]) != 1:
+            continue
+        original = by_lower.get(row["key"])
+        if not original:
+            continue
+        out[original] = {
+            "ref": f"team:{int(row['team_id'])}",
+            "entity_id": None,
+            "kind": "team",
+            "source": "team_identity_mapping",
+        }
+    return out
+
+
 async def enrich_cu_v2_profiles(limit: int = 125):
     """Generate Content Understanding v2 profiles for feed-shaped markets.
 
@@ -1082,6 +1174,25 @@ async def enrich_cu_v2_profiles(limit: int = 125):
         "processed": 0, "generated": 0, "skipped_fresh": 0,
         "errors": 0, "input_tokens": 0, "output_tokens": 0,
         "estimated_cost_usd": 0.0,
+        # --- #1809 C1: quantitative frame. `frames_absent` (the model saw no
+        # number in the title) and `frames_dropped_*` (it produced one that is
+        # not in the title) are counted apart: the first is coverage, the
+        # second is an invariant violation, and collapsing them would hide a
+        # regression in the prompt behind an honest coverage gap.
+        "frames_written": 0,
+        "frames_absent": 0,
+        "frames_dropped_literal": 0,
+        "frames_dropped_shape": 0,
+        # --- #1809 C2: subject grounding. Resolution rate is the free coverage
+        # metric named in the issue's acceptance; correctness still needs the
+        # post-merge sample.
+        "subjects_total": 0,
+        "subjects_resolved": 0,
+        "subjects_unresolved": 0,
+        "subject_resolution_rate": 0.0,
+        "markets_subject_resolved": 0,
+        "markets_subject_unresolved": 0,
+        "subject_resolve_errors": 0,
     }
     COST_CAP_USD = 30.0
 
@@ -1164,7 +1275,14 @@ async def enrich_cu_v2_profiles(limit: int = 125):
     logger.info("CU v2: %d candidates materialized, %d skipped fresh", len(work_items), stats["skipped_fresh"])
 
     # Phase 2: LLM calls + Core UPDATEs only — no session reads.
-    async with get_task_session() as write_session:
+    #
+    # Subject grounding (#1809) needs a READ per market, so it gets its OWN
+    # session rather than borrowing the write session. Two reasons, both real:
+    # the write session's invariant above stays true, and a failed grounding
+    # SELECT would otherwise poison the write transaction (Postgres refuses
+    # every later statement until rollback) — and since this loop commits ONCE
+    # at the end, that rollback would discard every profile written so far.
+    async with get_task_session() as write_session, get_task_session() as resolve_session:
         for item in work_items:
             if stats["estimated_cost_usd"] >= COST_CAP_USD:
                 logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
@@ -1198,6 +1316,65 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
 
                 liveness = _compute_liveness(item["outcome_probs"], item["status"])
+
+                # --- C1: the quantitative frame, verified against the title.
+                # A frame whose value/unit is not literally in the title is
+                # dropped WHOLE and the rest of the profile still written.
+                frame, frame_drop = sanitize_cu_frame(
+                    raw.get("frame"), title=item["name"] or ""
+                )
+                if frame is not None:
+                    stats["frames_written"] += 1
+                elif frame_drop == CU_FRAME_DROP_ABSENT:
+                    stats["frames_absent"] += 1
+                elif frame_drop in (
+                    CU_FRAME_DROP_VALUE_NOT_IN_TITLE,
+                    CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
+                ):
+                    stats["frames_dropped_literal"] += 1
+                    logger.info(
+                        "CU v2 frame dropped (%s) for market %s: %r not in %r",
+                        frame_drop, item["id"], raw.get("frame"), item["name"],
+                    )
+                else:
+                    stats["frames_dropped_shape"] += 1
+
+                # --- C2: grounded subject. Alias/string match only, no LLM.
+                mentions = clean_entity_mentions(raw.get("entities"))
+                try:
+                    resolved_refs = await _resolve_entity_refs(
+                        resolve_session, [m["name"] for m in mentions]
+                    )
+                except Exception as resolve_exc:
+                    # An empty map here would be indistinguishable from "nothing
+                    # matched" and would silently depress the resolution rate
+                    # (gotcha #53), so the failure gets its own counter.
+                    stats["subject_resolve_errors"] += 1
+                    logger.warning(
+                        "CU v2 subject resolution failed for market %s: %s",
+                        item["id"], resolve_exc,
+                    )
+                    resolved_refs = {}
+                    try:
+                        await resolve_session.rollback()
+                    except Exception:
+                        pass
+
+                subjects, subject_ref, subject_entity_id, subject_resolved = (
+                    ground_subjects(mentions, resolved_refs)
+                )
+                stats["subjects_total"] += len(subjects)
+                stats["subjects_resolved"] += sum(
+                    1 for s in subjects if is_resolved_ref(s["ref"])
+                )
+                stats["subjects_unresolved"] += sum(
+                    1 for s in subjects if not is_resolved_ref(s["ref"])
+                )
+                if subject_resolved:
+                    stats["markets_subject_resolved"] += 1
+                else:
+                    stats["markets_subject_unresolved"] += 1
+
                 profile = {
                     "schema_version": CU_V2_SCHEMA_VERSION,
                     "writer_rev": CU_WRITER_REV,
@@ -1220,6 +1397,14 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "junk_flags": raw.get("junk_flags", []),
                     "confidence": raw.get("confidence"),
                     "liveness": liveness,
+                    # #1809 additive slots. `frame` is explicitly null when the
+                    # title states no number — an absent key would read as "this
+                    # writer never ran" to a frame-first consumer.
+                    "frame": frame,
+                    "subjects": subjects,
+                    "subject_ref": subject_ref,
+                    "subject_entity_id": subject_entity_id,
+                    "subject_resolved": subject_resolved,
                 }
 
                 next_metadata = dict(item["metadata"])
@@ -1252,6 +1437,24 @@ async def enrich_cu_v2_profiles(limit: int = 125):
 
         await write_session.commit()
 
+    # Subject resolution rate — the free coverage metric #1809 asks for, over
+    # mentions (not markets), rounded to a percentage. Reported in the stats
+    # dict AND on its own log line so it is greppable without an endpoint.
+    if stats["subjects_total"]:
+        stats["subject_resolution_rate"] = round(
+            stats["subjects_resolved"] / stats["subjects_total"], 4
+        )
+    logger.info(
+        "CU v2 grounding: subjects %d/%d resolved (%.1f%%), markets %d resolved / "
+        "%d unresolved, resolve_errors %d | frames %d written, %d absent, "
+        "%d dropped-literal, %d dropped-shape",
+        stats["subjects_resolved"], stats["subjects_total"],
+        stats["subject_resolution_rate"] * 100,
+        stats["markets_subject_resolved"], stats["markets_subject_unresolved"],
+        stats["subject_resolve_errors"],
+        stats["frames_written"], stats["frames_absent"],
+        stats["frames_dropped_literal"], stats["frames_dropped_shape"],
+    )
     logger.info("CU v2 enrichment: %s", stats)
     return stats
 
