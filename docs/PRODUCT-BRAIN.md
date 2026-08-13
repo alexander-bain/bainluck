@@ -1327,3 +1327,4 @@ failure this document already records happening twice.
 - [037](rulings/037-a-certified-gate-run-is-not-voided-by-adjacency.md) — 2026-08-12 — A certified gate run is not voided to resolve a textual adjacency; the resolution travels to the Integrator (Alex)
 - [039](rulings/039-a-lookup-must-never-throw.md) — 2026-08-12 — A lookup must never throw; an interim tie-break carries its own expiry (Alex)
 - [040](rulings/040-two-defects-two-left-edges.md) — 2026-08-12 — Two defects, two left edges: a sweep reports per defect, never one blended number (Alex)
+- [042](rulings/042-dereference-the-id-never-the-label.md) — 2026-08-13 — Dereference the id, never the label; a check built on a label measures the labeller (Fable)
