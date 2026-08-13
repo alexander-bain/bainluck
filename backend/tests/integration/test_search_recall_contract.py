@@ -206,6 +206,28 @@ async def _seed(session):
     # exercises the path.
     session.add(Team(sport_id=nba.id, name="Boston Celtics", abbreviation="BOS"))
 
+    # LAT-P046 — the POOL specimen, transcribed from production 2026-08-13.
+    #
+    # `bruins` matches 9 team rows there, and the three that sort FIRST
+    # alphabetically are three sport-variants of one school (Belmont), so the
+    # `ORDER BY Team.name LIMIT 3` pool never fetched Boston Bruins and the
+    # name-dedup then collapsed those three rows into ONE candidate. The scorer
+    # cannot promote a row the query did not return, which is why this is a
+    # recall test and not a ranking one — and why it lives in the only file that
+    # runs the SQL.
+    #
+    # Four rows is the smallest seed that reproduces it: three non-prominent
+    # duplicates that sort before the wanted row, and the wanted row.
+    nhl = Sport(key="icehockey_nhl", name="NHL")
+    ncaab = Sport(key="basketball_ncaab", name="NCAAB")
+    wncaab = Sport(key="basketball_wncaab", name="WNCAAB")
+    ncaa_bb = Sport(key="baseball_ncaa", name="NCAA Baseball")
+    session.add_all([nhl, ncaab, wncaab, ncaa_bb])
+    await session.flush()
+    for _sport in (ncaab, wncaab, ncaa_bb):
+        session.add(Team(sport_id=_sport.id, name="Belmont Bruins", abbreviation="BEL"))
+    session.add(Team(sport_id=nhl.id, name="Boston Bruins", abbreviation="BOS"))
+
     for home, away in [
         ("Federico Coria", "Vitaliy Sachko"),
         ("Connecticut Sun", "Sunrisers Leeds"),
@@ -599,6 +621,31 @@ async def test_typeahead_outcome_recall_survives_above_the_threshold(typeahead):
     texts = _typeahead_texts(await typeahead("caitlin"))
     assert any("Award Winner" in t for t in texts), (
         f"typeahead outcome-name recall lost above the threshold: got {texts!r}"
+    )
+
+
+async def test_typeahead_team_pool_reaches_past_alphabetical_duplicates(typeahead):
+    """LAT-P046 — the wanted team must be FETCHED, not merely rankable.
+
+    Three "Belmont Bruins" rows sort before "Boston Bruins" alphabetically. With
+    the pool query ordered by `Team.name` and capped at 3, all three slots went
+    to Belmont, the name-dedup collapsed them to one, and Boston was never a
+    candidate at any point in the request. Ordering the FETCH by sport
+    prominence — the same signal `search_match_class.rank_key` uses to separate
+    two equally-classed teams — puts it in the pool.
+
+    This asserts recall, not order: Boston has to be REACHABLE. If a later
+    change reorders the suggestions but keeps Boston in them, this still passes,
+    which is correct — ranking is the scorer's job and it has its own tests.
+    """
+    texts = _typeahead_texts(await typeahead("bruins"))
+    assert any("Boston Bruins" in t for t in texts), (
+        "the pool never fetched the prominent team — alphabetical duplicates "
+        f"took every slot again: got {texts!r}"
+    )
+    # And it did not win by evicting the others: recall is widened, not swapped.
+    assert any("Belmont Bruins" in t for t in texts), (
+        f"the duplicate school fell out of the pool entirely: got {texts!r}"
     )
 
 

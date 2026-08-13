@@ -34,6 +34,9 @@ from app.utils import (
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.name_normalization import expand_search_terms
+from app.utils.search_match_class import (
+    PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
+)
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.feed_market_quality import has_no_real_price
 
@@ -3697,6 +3700,21 @@ def _match_hub_suggestions(q: str) -> list[dict]:
 # make — it is carried forward in the report with a recommendation, not fixed here.
 _TYPEAHEAD_MAX_QUERY_CHARS = 200
 
+#: How many team rows the typeahead pool query FETCHES, and how many survive into
+#: the candidate pool the scorer sees. These are deliberately different numbers.
+#: The pool has always been 3; the fetch was also 3, which meant name-duplicates
+#: (one school with a row per sport) and individual-sport rows consumed slots and
+#: were discarded AFTER the limit, so the effective pool could be 1. Widening only
+#: the fetch is free — measured — and leaves the scorer's input size unchanged.
+_TEAM_POOL_SIZE = 3
+_TEAM_POOL_FETCH_LIMIT = 8
+
+#: The sport keys the scorer counts as prominent (`rank_key`'s third term).
+#: Imported rather than re-listed: two copies of this set is one copy that drifts,
+#: and the pool would then order by a definition of "prominent" the scorer no
+#: longer shares.
+_POOL_PROMINENT_SPORT_KEYS = tuple(sorted(_SEARCH_PROMINENT_SPORT_KEYS))
+
 
 @router.get("/typeahead")
 async def typeahead_search(
@@ -3813,12 +3831,56 @@ async def typeahead_search(
     # win by matching BETTER, so withholding the evidence they'd win on turns
     # the floor into a ceiling. Measured: `red sox` and `yankees` both regressed
     # to a player-props market without this.
+    # The ORDER BY is a RECALL decision, not a ranking one, and the distinction
+    # is what makes it safe to differ from ruling 041's tier-lexicographic order:
+    # `_s_rank` re-ranks whatever lands here, so this clause cannot decide the
+    # final order — it can only decide who gets to be a candidate at all.
+    #
+    # It used to be `ORDER BY Team.name LIMIT 3`, and alphabetical order spent
+    # the three slots before reaching the team anyone meant. Measured on
+    # production 2026-08-13 — `bruins` matches 9 rows, and the first three
+    # alphabetically are three sport-variants of ONE school:
+    #
+    #     1 Belmont Bruins   basketball_ncaab  |  4 Boston Bruins  icehockey_nhl
+    #     2 Belmont Bruins   basketball_wncaab |  5 Providence Bruins
+    #     3 Belmont Bruins   baseball_ncaa     |  6-9 UCLA Bruins x4
+    #
+    # so Boston was never FETCHED, and the name-dedup below then collapsed the
+    # three Belmont rows into one — a pool of 3 slots yielding ONE candidate.
+    # `patriots` is the same shape (New England is 7th of 9). No ranking change
+    # can promote a row the query never returned.
+    #
+    # Prominence is the discriminator because match CLASS does not discriminate
+    # here: "Bruins" is an owned alias of Belmont, Boston AND UCLA, so all three
+    # are MC0 and the scorer itself separates them on `prominence` (rank_key's
+    # third term). Ordering the pool by the same signal puts the row the scorer
+    # would pick INTO the pool.
+    #
+    # Priced before it was chosen (EXPLAIN ANALYZE on production, n=7, median
+    # server-side execution): `bruins` 11.20ms -> 12.27ms, and the broadest
+    # 2-char query `an` (355 matched rows) 11.29ms -> 14.19ms. Against a warm
+    # endpoint at ~230-300ms that is under 1%. Two cheaper-than-expected
+    # findings drove the shape: raising the LIMIT is FREE (17.62ms at LIMIT 3 vs
+    # 16.00ms at LIMIT 10 — the sort input is the whole match set either way, so
+    # the limit only trims output), while an alias-exact CASE arm costs +5ms
+    # because it re-casts `alternate_names` to text per row. So the limit rises
+    # and the alias arm stays out.
+    team_prominence_order = case(
+        (Sport.key.in_(_POOL_PROMINENT_SPORT_KEYS), 0),
+        else_=1,
+    )
+    _q_norm = q.strip()
+    team_name_order = case(
+        (func.lower(Team.name) == _q_norm.lower(), 0),
+        (Team.name.ilike(f"{_escape_like(_q_norm)}%", escape="\\"), 1),
+        else_=2,
+    )
     team_query = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
-        .order_by(Team.name)
-        .limit(3)
+        .order_by(team_prominence_order, team_name_order, Team.name)
+        .limit(_TEAM_POOL_FETCH_LIMIT)
     )
     team_result = await db.execute(team_query)
     team_pool = []
@@ -3827,6 +3889,11 @@ async def typeahead_search(
         # Skip individual-sport "teams" (tennis/MMA/golf/boxing players)
         if _is_individual_sport(row.sport_key):
             continue
+        if len(team_pool) >= _TEAM_POOL_SIZE:
+            # The pool the scorer sees is unchanged at 3. Only the FETCH widened,
+            # so name-duplicates and individual-sport rows are absorbed before
+            # they can eat a slot instead of after.
+            break
         if row.name not in teams_seen:
             teams_seen.add(row.name)
             team_pool.append({
