@@ -59,11 +59,31 @@ checkable without a second query.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from datetime import date, datetime
+from typing import Any, Optional, Union
 
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+
+def _as_date(value: Union[str, date, datetime]) -> date:
+    """Coerce ``since`` to a real ``date`` before it is bound as a query param.
+
+    asyncpg binds parameters by TYPE, not by rendering them into SQL text: it
+    rejects ``'2026-03-01'`` for a timestamp column with ``invalid input for
+    query argument $2 ... (expected a datetime.date or datetime.datetime
+    instance, got 'str')``. psycopg2 would have adapted the string silently, so
+    this is asyncpg-specific and invisible to any test that does not bind
+    against the real driver -- which is every test in this module's suite, all
+    of which drive a ``_FakeSession`` double. The rail therefore shipped green
+    (19/19) and 500-ed on its first production call.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.strptime(value, "%Y-%m-%d").date()
 
 # MLB regular season and the duplicate preseason sport that #1798 owns. Kept as
 # the default scope because that is the population measured; ``sport`` widens it.
@@ -154,11 +174,15 @@ async def repair(
         [int(s) for s in sport.split(",") if s.strip()] if sport else list(_DEFAULT_SPORT_IDS)
     )
     scan_limit = int(limit) if limit else _DEFAULT_LIMIT
+    # Coerced ONCE and reused by both scans. Both are bound params; the
+    # after-census one is the more dangerous of the two, because it runs after
+    # the commit and would 500 a run whose writes had already landed.
+    since_date = _as_date(since)
 
     rows = (
         await session.execute(
             _CANDIDATES_SQL,
-            {"sport_ids": sport_ids, "since": since, "lim": scan_limit},
+            {"sport_ids": sport_ids, "since": since_date, "lim": scan_limit},
         )
     ).mappings().all()
 
@@ -258,7 +282,7 @@ async def repair(
         after = (
             await session.execute(
                 _CANDIDATES_SQL,
-                {"sport_ids": sport_ids, "since": since, "lim": scan_limit},
+                {"sport_ids": sport_ids, "since": since_date, "lim": scan_limit},
             )
         ).mappings().all()
         remaining = sum(
@@ -274,7 +298,12 @@ async def repair(
     return {
         "issue": "#1798",
         "apply": apply,
-        "scope": {"sport_ids": sport_ids, "since": since, "limit": scan_limit},
+        # Echo the value actually used, not the caller's spelling of it.
+        "scope": {
+            "sport_ids": sport_ids,
+            "since": since_date.isoformat(),
+            "limit": scan_limit,
+        },
         "census": census,
         "miswired_after": remaining,
         "ledger": ledger,

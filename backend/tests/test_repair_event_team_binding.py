@@ -6,9 +6,11 @@ is wrong — the exact shape that made 153 miswired sides invisible to a codebas
 full of name comparisons.
 """
 
+from datetime import date, datetime
+
 import pytest
 
-from app.tasks.repair_event_team_binding import _classify, _norm, repair
+from app.tasks.repair_event_team_binding import _as_date, _classify, _norm, repair
 
 MLB = 53232
 PRESEASON = 33178
@@ -62,6 +64,11 @@ class _FakeSession:
         self.updates = []
         self.commits = 0
         self._after = None
+        # Params of EVERY candidate scan, kept so a test can assert the TYPES
+        # this double would otherwise erase. There are two such scans and only
+        # the second runs under apply=True, so recording just the first would
+        # have left the after-census unguarded. See TestSinceIsBoundAsADate.
+        self.candidate_scans = []
 
     def set_after(self, rows):
         """Rows the SECOND candidate scan should return (the after-census)."""
@@ -70,6 +77,7 @@ class _FakeSession:
     async def execute(self, statement, params=None):
         sql = str(statement)
         if "FROM events e" in sql:
+            self.candidate_scans.append(dict(params or {}))
             rows = self.candidates
             if self._after is not None and self.updates:
                 rows = self._after
@@ -265,3 +273,81 @@ class TestRegisteredOnTheRail:
         assert list(params)[:2] == ["session", "apply"]
         # The dispatcher only forwards these four names.
         assert "limit" in params and "sport" in params
+
+
+class TestSinceIsBoundAsADate:
+    """Regression guard for the defect this rail shipped with (#1798 follow-up).
+
+    The rail passed 19/19 and then returned HTTP 500 on its first production
+    call: ``invalid input for query argument $2: '2026-03-01' (expected a
+    datetime.date or datetime.datetime instance, got 'str')``.
+
+    Why the whole existing suite was blind to it: every test here drives
+    ``_FakeSession``, which accepts a params dict and never binds it to a
+    driver. asyncpg binds by TYPE rather than rendering values into SQL text,
+    and psycopg2 would have adapted the string silently -- so the bug lives
+    exclusively in the gap between the double and the real driver. A test
+    double cannot check a driver's type contract, but it CAN check the type of
+    what we hand it, and that is enough to pin this class.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_since_is_bound_as_a_date_not_a_string(self):
+        session = _FakeSession([_row()], TEAMS)
+        await repair(session)
+        since = session.candidate_scans[0]["since"]
+        assert isinstance(since, date), (
+            f"since was bound as {type(since).__name__}={since!r}; asyncpg "
+            "rejects a str for a timestamp column and the rail 500s"
+        )
+        assert not isinstance(since, str)
+
+    @pytest.mark.asyncio
+    async def test_explicit_string_since_is_coerced(self):
+        session = _FakeSession([_row()], TEAMS)
+        await repair(session, since="2026-07-04")
+        assert session.candidate_scans[0]["since"] == date(2026, 7, 4)
+
+    @pytest.mark.asyncio
+    async def test_a_real_date_passes_through_unharmed(self):
+        session = _FakeSession([_row()], TEAMS)
+        await repair(session, since=date(2026, 5, 1))
+        assert session.candidate_scans[0]["since"] == date(2026, 5, 1)
+
+    @pytest.mark.asyncio
+    async def test_a_datetime_is_narrowed_to_its_date(self):
+        session = _FakeSession([_row()], TEAMS)
+        await repair(session, since=datetime(2026, 5, 1, 18, 30))
+        assert session.candidate_scans[0]["since"] == date(2026, 5, 1)
+
+    @pytest.mark.asyncio
+    async def test_the_after_census_scan_also_binds_a_date(self):
+        """The second scan is the dangerous one: it runs only under apply=True
+        and only AFTER the commit, so binding a str there 500s a run whose
+        writes have already landed — the operator cannot tell what happened.
+        The first fix missed this occurrence; the mutation proof found it."""
+        row = _row(
+            id=15194469, home_team_name="Boston Red Sox",
+            home_team_id=855, home_bound_name="Minnesota Twins",
+            home_bound_sport=PRESEASON,
+        )
+        session = _FakeSession([row], TEAMS)
+        session.set_after([_row(id=15194469)])
+
+        await repair(session, apply=True)
+
+        assert len(session.candidate_scans) == 2, "expected a before and an after scan"
+        for i, scan in enumerate(session.candidate_scans):
+            assert isinstance(scan["since"], date), (
+                f"scan {i} bound since as {type(scan['since']).__name__}"
+            )
+
+    def test_the_helper_rejects_an_unparseable_string(self):
+        with pytest.raises(ValueError):
+            _as_date("not-a-date")
+
+    @pytest.mark.asyncio
+    async def test_scope_echoes_the_coerced_value(self):
+        session = _FakeSession([_row()], TEAMS)
+        result = await repair(session, since="2026-07-04")
+        assert result["scope"]["since"] == "2026-07-04"
