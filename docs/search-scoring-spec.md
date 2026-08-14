@@ -260,11 +260,18 @@ the change that caused it** (ruling 046).
 | **v3806** | **`-43` concept dedup ALONE** (#1839) | **38/44** | **0.8696** | +4 → 39 | **MISSED by 1** |
 | **v3807** | **`-44` outcome evidence** (#1843) | **38/44** | **0.8696** | none registered | **no movement** — see below |
 | **v3812** | **`-45` `/search` scorer wiring ALONE** — the **ARMED CONTROL** | **38/44** | **0.8696** | **NO movement, with a HALT attached** (ruling 050) | ✅ **HELD — the control fired clean; no HALT** |
-| pending | **`-46` evidence echo** | — | — | none; a test asserts byte-identical ordering | owed |
+| **v3813** | **`-46` evidence echo ALONE** | **38/44** | **0.8696** | none; a test asserts byte-identical ordering | ✅ **HELD — no movement** (LAT-P054) |
 | pending | **#1846 typeahead provenance** (LAT-P051) | — | — | **+1 → 39** (`us open` only) | owed |
 
 Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
 with byte-identical dispositions across all 46 probes.
+
+**Cache state, and it is now a structural claim rather than an observation.**
+Every read in this table was taken with `debug_evidence=1`, and
+`typeahead_search` skips the cache **in both directions** when that flag is set
+(`events.py:4021-4034`). So every gold read is **100% cache-MISS by
+construction** — not "predominantly misses", which is how LAT-P053 could only
+put it. This is also why #1866's miss cost is the cost of every number above.
 
 ### The `-45` ARMED CONTROL fired, and it came out clean (LAT-P053, 2026-08-14)
 
@@ -295,12 +302,14 @@ this one — that reasoning is now paid off rather than merely asserted.
 its fix is `-47`, which has not deployed.
 
 **CACHE STATE, recorded for the first time** (the new standing requirement from
-§8 / #1866): **both reads are predominantly cache MISSES.** `/typeahead`'s Redis
-TTL is 45s; read 2 began 150s after read 1, so every probe's entry from r1 had
-expired before r2 re-queried it. Read 2's wall clock was **113s for 46 probes —
+§8 / #1866): **both reads are cache MISSES.** LAT-P053 could only say
+"predominantly", reasoning from the 45s TTL and a 150s gap between reads;
+LAT-P054 upgraded that to a **structural** claim by reading the route —
+`debug_evidence=1` skips the cache in **both** directions
+(`events.py:4021-4034`), so an evidence-bearing read can never be served warm
+and never warms anything. Read 2's wall clock was **113s for 46 probes —
 2.46s/probe**, which independently corroborates #1866's 1.16–2.29s miss p50 plus
 the ~0.24s sandbox connection tax, on a measurement taken for a different reason.
-A cached read would have completed in a fraction of that.
 
 **`-43`'s missing +1 was a diagnosis error, not noise.** `grammys`, `oscars` and
 `world cup` recovered exactly as projected; `us open` did not, and it had been
@@ -353,6 +362,66 @@ markets, 155 outcomes, v3808 —
 So `-44`'s row stays **"no movement"**, and it now carries a mechanism instead of
 a shrug: *the change was real, and the 46-probe set could not see it because the
 class it lifts, it lifts uniformly.*
+
+### `-46`'s read, and the EXACT-FIDELITY RE-DERIVATION (LAT-P054, 2026-08-14)
+
+`-46` merged alone into `7ffc2911` and deployed as **v3813** at 11:40 PDT. Its
+prediction was a **declared null** — the echo is additive and a test asserts
+byte-identical default ordering — so ruling 050's HALT was attached to it, and
+the read was taken rather than assumed.
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 | **38/44** | 0.8695652173913043 | 46/46 | — |
+| r2 | **38/44** | 0.8695652173913043 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0` on both. **The prediction HELD; the HALT does not fire.**
+
+#### The re-derivation: the harness and the server now agree exactly
+
+This debt was owed for **four windows** and was payable the hour `-46` went
+live. The producer's `evidence_fidelity` flipped `legacy` → **`exact`** on the
+first capture, 46/46 evidence probes.
+
+**The acceptance was the idempotence property, not a number:** at `exact`
+fidelity against a **same-deploy** capture, a rerank must reproduce the
+deployed grade. It does, on both captures independently:
+
+| graded object (all v3813, same hour, same 46 probes) | `entity_top_1` | MRR |
+|---|---|---|
+| production, deployed (capture r1) | **38/44** | 0.8696 |
+| production, deployed (capture r2) | **38/44** | 0.8696 |
+| harness rerank @ **exact** (r1) | **38/44** | 0.8696 |
+| harness rerank @ **exact** (r2) | **38/44** | 0.8696 |
+| harness rerank @ **legacy** (same deploy) | **33/44** | 0.7859 |
+
+**0 probes differ** in code, disposition *or* top entity across every pairwise
+comparison of the first four rows. The instrument no longer models a different
+server.
+
+#### The size of the old instrument's error, measured on ONE deploy
+
+The `−5` was previously known only as a cross-deploy comparison (v3804: 35
+deployed vs 30 reranked). LAT-P054 measured both fidelities against the **same**
+deploy, an hour apart, and the error reproduces **exactly**:
+
+> **38/44 deployed → 33/44 at legacy fidelity: −5, and the five casualties are
+> the same five team probes as the original diagnosis** — `bruins`, `celtics`,
+> `patriots`, `red-sox`, `yankees`. Every one `team → market`: `MC0 → MC1` on
+> aliases the wire never carried, losing the tie on `KIND_ORDER`.
+
+Nine deploys and a different baseline later (35/44 → 38/44), the defect is the
+same size and hits the same five probes. It was never a noisy offset; it was a
+structural blindness to exactly one class, and the echo closes it to **zero**.
+
+**A control fell out of this for free.** The `legacy` capture is a *plain*
+capture — no `debug_evidence` — and it graded **38/44**, identical to the two
+evidence-bearing captures. So the echo does not perturb ranking: the spec's
+"the default response is byte-unchanged" claim is now verified end-to-end on the
+graded cohort, not just asserted by a unit test.
+
+The fidelity gate also demonstrated it refuses: `--require-fidelity exact`
+against the legacy capture **exits 2** rather than producing a number.
 
 ### How this table must be read — and how it must not
 
@@ -637,3 +706,86 @@ sandbox tax as a regression**. The miss-cost finding is now **#1866, p1**, frame
 as Alex required: *no ranking number invalidated, the COST was simply never
 measured.* Consequence 2 is promoted from "should" to an acceptance criterion —
 every read from LAT-P053 onward **records cache state**.
+
+### #1866 measured: the assembly hypothesis dies, and the drift is MONOTONE (LAT-P054, 2026-08-14)
+
+All numbers below are production **v3813**, taken between ~12:15 and ~13:05 PDT
+with no release in the window.
+
+#### Cache state is now a STRUCTURAL claim, not an inference
+
+`debug_evidence=1` skips the cache in **both** directions
+(`events.py:4021-4034`), so an evidence-bearing read can never be served warm
+and never warms anything. **Every gold read in §5 is 100% cache-MISS by
+construction.** LAT-P053 reasoned to "predominantly" from the 45s TTL and a 150s
+gap; it did not have to. This also gives #1866 a free instrument: `debug_evidence=1`
+is a *repeatable* miss that needs no TTL wrangling to reproduce.
+
+#### Step 2 — per-result assembly is REFUTED as the dominant term
+
+`_search_owned_outcome_names` was cleared for #1855 on the grounds that it is not
+on `/search` at all. That is not a conviction *or* an acquittal for `/typeahead`,
+where it genuinely does run. So it was measured, with a **discriminating**
+experiment rather than a plausible one:
+
+> If per-result assembly drives the miss cost, a query returning **zero**
+> suggestions must be cheap — it does zero assembly.
+
+| arm (both guaranteed misses) | p50 | mean | min | max | n |
+|---|---|---|---|---|---|
+| **zero-result** novel tokens (0 assembly) | **1.778s** | 1.783s | 1.366s | 2.455s | 8 |
+| **result-bearing** gold queries | **1.297s** | 1.324s | 1.124s | 1.708s | 8 |
+
+**Zero-result queries are 1.37× SLOWER**, and the zero arm's *minimum* (1.366s)
+sits above the result arm's *median* (1.297s) — the distributions barely overlap
+in the wrong direction. Assembly is not the cost. **The cost is in the match/scan
+phase**, which is where `?debug_timing=1`'s marks are now placed.
+
+#### The miss cost, paired against its own network floor
+
+Pairing miss and hit **on the same query** removes the ~0.26s sandbox connection
+tax that §8 opens with, so this is server work rather than a difference of two
+population medians:
+
+| | p50 | min | max | n |
+|---|---|---|---|---|
+| warm **hit** | **0.262s** | 0.258s | 0.269s | 16 |
+| cold **miss** (novel) | 1.309s | 1.166s | 13.701s | 16 |
+| **paired miss cost** (miss − hit, same query) | **1.049s** | 0.903s | 13.433s | 16 |
+
+**1.049s against a stated `<150ms p50` budget is 7.0×.** The warm-hit arm's
+spread is 11ms across 16 calls, which is what a network floor looks like and is
+why the paired subtraction is trustworthy.
+
+#### Step 3 — the drift REPRODUCES, and it is monotone
+
+The issue reported 1.16 → 2.29s inside one window and could not say whether that
+was noise, query mix, or a real trend. LAT-P054 ran an **identical 8-query arm**
+(same queries, same flag, warmup discarded each round) five times over ~35
+minutes:
+
+| | ~12:35 | ~12:50 | ~12:56 | ~13:00 | ~13:05 |
+|---|---|---|---|---|---|
+| p50 | **1.297s** | **1.808s** | **2.006s** | **2.781s** | **3.098s** |
+
+**Five points, monotonically increasing, 2.39× end to end**, same deploy, no
+release, same queries. Round 4's *minimum* is 2.654s — by then **every** query
+is over `CLAUDE.md`'s 2s investigate bar, and the p50 is **20.7×** the stated
+budget. Two round-opening warmup calls exceeded **10s** and were discarded.
+
+This is no longer "it drifts with load". It is a monotone climb on a fixed
+workload, which is the shape of an accumulating resource rather than of variable
+traffic.
+
+**What is NOT established, stated plainly:** the cause. A monotone climb is
+consistent with connection-pool or plan-cache accumulation, with unrelated load
+arriving on the same database, and with several other stories this lane cannot
+separate from outside the process. That separation is exactly what
+`?debug_timing=1` was built for — and it is **not deployed yet**, so the next
+window's first #1866 act is to re-run this arm against the stage attribution and
+say which stage the 1.8s of climb lands in.
+
+**Sequencing owed to ruling 046:** `debug_timing` is production code on the very
+endpoint `entity_top_1` grades. `-47` (#1846) still owes its own read on its own
+deploy. **`-47` must land, deploy and be read BEFORE `-50` lands**, or `-47`'s
+`+1 → 39/44` projection is measured on a server that also changed underneath it.
