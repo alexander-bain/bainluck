@@ -2877,23 +2877,41 @@ celery_app.conf.beat_schedule = {
     },
     "warm-typeahead": {
         "task": "app.tasks.warm_typeahead",
-        # Every 2 min — keep the head of the `/typeahead` query distribution's
-        # index pages RESIDENT (#1866, LAT-P056).
+        # Every 30s — keep the head of the `/typeahead` distribution warm
+        # (#1866, LAT-P056). THE NUMBER IS MEASURED, and the first draft of this
+        # entry had it wrong at */2 min, which is why the measurement exists.
         #
-        # THE CADENCE IS NOT CHASING THE 45s RESPONSE TTL, and that is the whole
-        # design. The measured cost is not "the cache expired", it is "the
-        # pg_trgm GIN pages were evicted": same query, same plan, same rows,
-        # 1094.5ms with 710 `Shared Read Blocks` vs 27.1ms with 0. Page
-        # residency is SHARED, so re-touching the head every 2 min also keeps
-        # tail queries fast — a sub-45s cadence would buy a little cache-hit
-        # rate for a lot more query load, against the segment that is not the
-        # problem.
+        # The cost being avoided is not compute, it is a cold read: same query,
+        # same plan, same rows, 1094.5ms with 710 `Shared Read Blocks` vs 27.1ms
+        # with 0. So the cadence question is "how long do the pages stay
+        # resident", and that was measured directly with EXPLAIN (ANALYZE,
+        # BUFFERS) on production rather than reasoned about:
         #
-        # Eviction pressure is why it is minutes and not hours:
-        # `ix_futures_outcomes_name_trgm` (406 MB) + `ix_futures_name_trgm`
-        # (172 MB) want 56% of a 1 GB `shared_buffers`, and the prediction-market
-        # matcher sweeps it every 15 min with 13-21s scans over a 977 MB table.
-        "schedule": crontab(minute="*/2"),
+        #     t=0 cold  245 read blocks / 221.7ms
+        #     t=2s        0 / 35.5ms      t=30s   0 / 16.8ms
+        #     t=15s       0 /  7.2ms      t=45s   0 /  9.9ms
+        #     ...and a second query at t=60s: 701 blocks, fully EVICTED.
+        #
+        # Residency survives 45s and is gone by 60s, so a 2-minute cadence would
+        # have left the pages cold for most of every interval — the warmer would
+        # have run, reported success, and delivered nothing. 30s sits inside the
+        # measured window with margin.
+        #
+        # 30s ALSO sits inside the route's 45s response TTL, which is the
+        # stronger of the two effects and the one the head actually rides on: a
+        # head entry refreshed every 30s never expires, so those users never
+        # reach the database at all. Page residency is the weaker, shared
+        # benefit that reaches tail queries too — real, but decaying inside a
+        # minute, so it is not what the head's guarantee rests on.
+        #
+        # Why eviction is that fast: `ix_futures_outcomes_name_trgm` (406 MB) +
+        # `ix_futures_name_trgm` (172 MB) want 56% of a 1 GB `shared_buffers`,
+        # and the prediction-market matcher sweeps it every 15 min with 13-21s
+        # scans over a 977 MB table.
+        #
+        # A cold run cannot pile up behind the next beat: the task takes a Redis
+        # single-run lock and SKIPS if one is already in flight.
+        "schedule": 30.0,
         "options": {"queue": "background"},
     },
     "precompute-discover-candidate-base": {

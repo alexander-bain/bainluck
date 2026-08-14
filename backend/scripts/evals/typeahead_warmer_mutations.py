@@ -103,6 +103,36 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         '        return head[:limit], "db:search_query_logs:30d"\n',
         '        return head[:limit], "redis:search:trending:24h"\n',
     ),
+    (
+        "M7", WARMER,
+        "the single-run lock is ignored, so at a 30s cadence a slow cold run "
+        "gets a second copy piled on top of it doing identical work",
+        "    if not _acquire_run_lock():\n",
+        "    if False:\n",
+    ),
+    (
+        "M8", WARMER,
+        "a SKIPPED run reports `complete` — a wedged lock would then read as a "
+        "healthy warmer forever, on every beat",
+        '            "terminal": "skipped",\n',
+        '            "terminal": "complete",\n',
+    ),
+    (
+        "M9", WARMER,
+        "the lock is never released, so one run wedges the warmer off for the "
+        "whole lock TTL after every beat",
+        "    finally:\n        _release_run_lock()\n",
+        "    finally:\n        pass\n",
+    ),
+    (
+        "M10", WARMER,
+        "the lock fails CLOSED on a Redis blip — the warmer silently stops "
+        "warming and reports a clean skip every beat",
+        '        logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)\n'
+        "        return True\n",
+        '        logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)\n'
+        "        return False\n",
+    ),
 ]
 
 

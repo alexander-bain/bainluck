@@ -69,12 +69,26 @@ def _patch_session(session):
 
 
 class _FakeRedis:
-    def __init__(self, members=()):
+    def __init__(self, members=(), lock_taken=False):
         self._members = list(members)
+        self.store = {}
+        if lock_taken:
+            self.store[warmer._LOCK_KEY] = b"1"
+        self.deleted = []
 
     def zrevrange(self, key, start, stop):
         assert key == "search:trending:24h"
         return [m.encode() for m in self._members[start:stop + 1]]
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value.encode() if isinstance(value, str) else value
+        return True
+
+    def delete(self, key):
+        self.deleted.append(key)
+        self.store.pop(key, None)
 
 
 def _patch_redis(redis):
@@ -244,6 +258,84 @@ class TestHeadResolution:
         assert summary["head_source"] == "redis:search:trending:24h", (
             "which source produced the head changes what the run means; it must "
             "not have to be inferred from the query list"
+        )
+
+
+# --------------------------------------------------------------------------
+# The 30s cadence is faster than a cold run, so overlap must be refused.
+# --------------------------------------------------------------------------
+
+
+class TestSingleRunLock:
+    async def test_a_second_run_skips_while_one_is_in_flight(self):
+        calls = []
+
+        async def _route(*, q, debug_evidence, debug_timing, db):
+            calls.append(q)
+            return {"suggestions": [], "query": q}
+
+        redis = _FakeRedis(lock_taken=True)
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _route), \
+                _patch_redis(redis), _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert calls == [], "a skipped run must not do the work anyway"
+        assert summary["terminal"] == "skipped"
+        assert classify_summary(summary) != "green", (
+            "a run that banked no work cannot vouch for the task's health"
+        )
+
+    async def test_skipped_is_in_the_shared_no_work_vocabulary(self):
+        """`skipped` must be a terminal `task_verdict` already recognises.
+
+        A bespoke string would classify as `unknown/classifier_error` and the
+        distinction between "another run has this" and "the contract broke"
+        would be lost at exactly the moment an operator needs it.
+        """
+        from app.utils.task_verdict import _TERMINAL_NO_WORK
+
+        assert "skipped" in _TERMINAL_NO_WORK
+
+    async def test_the_lock_is_released_even_when_the_run_throws(self):
+        async def _boom(*, q, debug_evidence, debug_timing, db):
+            raise RuntimeError("nope")
+
+        redis = _FakeRedis()
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _boom), \
+                _patch_redis(redis), _patch_session(session):
+            await warmer._warm_typeahead(queries=["red sox"])
+
+        assert warmer._LOCK_KEY in redis.deleted, (
+            "a lock held past a failed run wedges the warmer off for its TTL"
+        )
+
+    async def test_lock_failure_warms_anyway_rather_than_going_quiet(self):
+        """Fails OPEN: a Redis blip must not silently stop the warming."""
+        calls = []
+
+        async def _route(*, q, debug_evidence, debug_timing, db):
+            calls.append(q)
+            return {"suggestions": [], "query": q}
+
+        def _broken(*a, **kw):
+            raise RuntimeError("redis down")
+
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _route), \
+                patch("app.tasks.redis_state.get_redis_client", _broken), \
+                _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert calls == ["red sox"]
+        assert summary["warmed"] == 1
+
+    def test_the_lock_ttl_cannot_wedge_the_warmer_permanently(self):
+        assert warmer._LOCK_TTL_SECONDS > 0, "a lock with no TTL is a permanent outage"
+        assert warmer._LOCK_TTL_SECONDS <= 300, (
+            "must expire well inside the 300s hard SIGKILL, or a killed worker "
+            "leaves the warmer locked off with nobody able to release it"
         )
 
 

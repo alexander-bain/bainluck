@@ -945,7 +945,7 @@ The variance was never a leak; it is who last touched the buffer pool.
 |---|---|---|
 | single-flight on concurrent identical misses (#1767) | **does not address the named segment** | it dedupes N concurrent identical misses into one query; the surviving one still pays the cold read in full, so p50 miss cost is unchanged. Master already has single-flight in `main.py`, `feed.py`, `hub.py`, `league_futures.py` — the utility is not the blocker, the mechanism is |
 | connection reuse | **refuted as the miss-cost fix** | 3.4ms of a 1384.6ms miss cost (0.25%). Worth ~154ms of the warm-hit floor; not this |
-| **warm the head of the query distribution** | **taken** | it moves who pays the cold read. And the mechanism upgrades it: page residency is SHARED, so warming the head also speeds tail queries that touch the same index pages — a bigger effect than the 45s response cache it superficially resembles |
+| **warm the head of the query distribution** | **taken** | it moves who pays the cold read. Two distinct effects, ordered by §9.5's measurement: the head rides on a continuously-refreshed response cache, and page residency is a weaker shared bonus that also reaches tail queries |
 
 The head is **measured, not guessed** — `search_query_logs`, 30 days, 2026-08-14:
 3,423 rows / 210 distinct, **top-20 = 36.0% of volume, top-50 = 68.7%**. The live
@@ -956,15 +956,53 @@ travels in the run summary, because it changes what the run means.
 
 ### 9.5 The fix, and what is deliberately NOT claimed
 
-`app/tasks/typeahead_warmer.py`, beat `warm-typeahead` every 2 min, background
+`app/tasks/typeahead_warmer.py`, beat `warm-typeahead` **every 30s**, background
 queue. It calls **the route function itself** — one implementation, no second
 copy to drift — so the route's own `setex` does the writing and **no ranking code
 is touched**.
 
-The cadence deliberately does not chase the 45s response TTL: with pages resident
-a genuine miss measured 5–27ms in the arm above, so residency is the thing worth
-holding, and a sub-45s cadence would buy a little hit-rate for a lot more load
-against the segment that is not the problem.
+#### The cadence was measured, and the first draft of it was wrong
+
+This section first said *2 minutes*, on the reasoning that page residency is the
+shared resource worth holding and the 45s response TTL was the less interesting
+effect. Then residency was measured directly rather than reasoned about —
+`EXPLAIN (ANALYZE, BUFFERS)` on the same query at increasing gaps:
+
+| gap after a warm touch | `Shared Read Blocks` | total |
+|---|---|---|
+| t=0 (cold) | 245 | 221.7ms |
+| t=2s | **0** | 35.5ms |
+| t=15s | **0** | 7.2ms |
+| t=30s | **0** | 16.8ms |
+| t=45s | **0** | 9.9ms |
+| t=60s *(second query)* | **701** | 360.2ms — fully evicted |
+
+**Residency survives 45s and is gone by 60s.** A 2-minute warmer would have left
+the pages cold for most of every interval: it would have run, reported success,
+and delivered nothing — the precise failure this module's tests are built
+around, arrived at by the design rather than by a bug. Capture A had already
+hinted at it and it was missed on the first pass: its three rounds are 55s apart
+and round 2's miss p50 (1235.9ms) is no better than round 0's (1440.5ms).
+
+**So 30s — and the order of the two effects is the reverse of the first draft:**
+
+* **The head rides on the response cache.** 30s is inside the route's 45s TTL, so
+  a head entry never expires and those users never reach the database at all.
+  That is the guarantee, and it does not depend on the buffer pool's mood.
+* **Page residency is the weaker, shared bonus.** It reaches tail queries that
+  touch the same index pages — which a response cache cannot do — but it decays
+  inside a minute, so nothing is allowed to rest on it.
+
+Because 30s is shorter than a cold run, the task takes a Redis single-run lock
+and reports `terminal: "skipped"` when one is already in flight. `skipped` is
+already in `task_verdict`'s `_TERMINAL_NO_WORK`, so a wedged lock reads as "this
+run banked no work", never as health. The lock fails **open** — a Redis blip
+warms anyway, because a warmer that goes quiet on a dependency failure is the
+bug this whole section is about.
+
+**What is NOT claimed:** the tail still pays. Warming the head does not make an
+arbitrary rare query fast; it makes the 36–69% of volume that IS the head never
+touch the database, and gives everything else a shared-page bonus that decays.
 
 **Not load-bearing.** A cold miss still builds inline in the route, so turning the
 task off makes `/typeahead` slow again — never broken.

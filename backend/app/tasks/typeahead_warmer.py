@@ -36,12 +36,32 @@ resource under periodic eviction pressure — which looks like drift, is not
 monotone, and does not survive a restart, exactly as observed.
 
 WHAT THIS TASK DOES ABOUT IT. It re-touches the head of the query distribution
-often enough that those pages stay resident, so the cold read is paid by a
-background worker instead of by somebody typing. Note the win is NOT mainly the
-45s response cache — it is page residency, which is **shared**, so warming the
-head also speeds up tail queries that touch the same index pages. That is why
-the cadence is not chased down under the 45s TTL: with pages hot, even a genuine
-miss measured 5-27ms in the arm above.
+every 30s, so the cold read is paid by a background worker instead of by
+somebody typing.
+
+THE CADENCE IS MEASURED, AND THE FIRST DRAFT OF IT WAS WRONG. It was written as
+2 minutes on the reasoning that page residency is a shared resource worth
+holding, and that the 45s response TTL was the less interesting of the two
+effects. Then residency was measured directly instead of reasoned about:
+
+    t=0 cold  245 read blocks / 221.7ms
+    t=2s        0 / 35.5ms      t=30s   0 / 16.8ms
+    t=15s       0 /  7.2ms      t=45s   0 /  9.9ms
+    ...and a second query at t=60s: 701 blocks, fully EVICTED.
+
+Residency survives 45s and is gone by 60s. A 2-minute warmer would therefore
+have left the pages cold for most of every interval: it would have run, reported
+success, and delivered nothing — the exact failure this module's tests are
+built around, reached by the design rather than by a bug.
+
+So 30s, and the ORDER OF THE TWO EFFECTS IS THE REVERSE of the first draft:
+
+* **The head rides on the response cache.** 30s is inside the route's 45s TTL,
+  so a head entry never expires and those users never reach the database at all.
+  That is the guarantee.
+* **Page residency is the weaker, shared bonus.** It reaches tail queries that
+  touch the same index pages, which the response cache cannot do — but it decays
+  inside a minute, so nothing is allowed to rest on it.
 
 THE HEAD IS MEASURED, NEVER GUESSED. Three sources, in order, each one real:
 
@@ -90,6 +110,17 @@ _STATIC_FLOOR: tuple[str, ...] = (
 #: `/typeahead` enforces this itself (`min_length=2`). A shorter string would be
 #: rejected by the route, so warming it would burn a slot to raise a 422.
 _MIN_QUERY_CHARS = 2
+
+#: Single-run lock. At a 30s cadence a COLD run (every query paying a real disk
+#: read) can outlast its own interval, and without this the next beat starts a
+#: second copy doing the identical work against the same already-loaded pages —
+#: doubling the load at exactly the moment the database is slowest.
+_LOCK_KEY = "bainluck:typeahead_warmer:running"
+
+#: Longer than a plausible cold run, short enough that a worker killed mid-run
+#: (the 300s hard SIGKILL that records as `no_data`) cannot wedge the warmer
+#: off permanently. A lock nobody can release is worse than no lock.
+_LOCK_TTL_SECONDS = 120
 
 #: `/typeahead`'s `max_length`. Mirrored rather than imported to keep this module
 #: importable without pulling the route in at module scope; the test asserts the
@@ -203,6 +234,33 @@ async def _warm_one(session, q: str) -> dict:
                 "seconds": round(time.monotonic() - started, 3)}
 
 
+def _acquire_run_lock() -> bool:
+    """True if THIS run owns the lock. False means another run is in flight.
+
+    Fails OPEN: if Redis is unreachable we warm anyway. The lock exists to stop
+    duplicate work, not to enforce correctness — a doubled warm is wasteful, a
+    warmer that silently stops warming because Redis blinked is the bug this
+    whole file is about.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        return bool(rc.set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL_SECONDS))
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)
+        return True
+
+
+def _release_run_lock() -> None:
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().delete(_LOCK_KEY)
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: lock release failed", exc_info=True)
+
+
 async def _safe_rollback(session) -> None:
     try:
         await session.rollback()
@@ -225,17 +283,38 @@ async def _warm_typeahead(
     """
     from app.tasks.base import get_task_session
 
-    async with get_task_session() as session:
-        if queries is None:
-            head, source = await resolve_head(session, head_size)
-        else:
-            head, source = [q.strip().lower() for q in queries], "explicit"
+    if not _acquire_run_lock():
+        # A skip is an accounted-for outcome, not a success and not damage: the
+        # head IS being warmed, by the run that holds the lock. It gets its own
+        # terminal value so a warmer that skips every single beat — a wedged
+        # lock — cannot hide inside `complete`.
+        logger.info("typeahead_warmer: another run holds the lock, skipping")
+        return {
+            "terminal": "skipped",
+            "completed": 0,
+            "total": 0,
+            "head_source": "none",
+            "warmed": 0,
+            "timeouts": [],
+            "errors": [],
+            "seconds_total": 0.0,
+            "seconds_max": 0.0,
+        }
 
-        head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
+    try:
+        async with get_task_session() as session:
+            if queries is None:
+                head, source = await resolve_head(session, head_size)
+            else:
+                head, source = [q.strip().lower() for q in queries], "explicit"
 
-        results = []
-        for q in head:
-            results.append(await _warm_one(session, q))
+            head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
+
+            results = []
+            for q in head:
+                results.append(await _warm_one(session, q))
+    finally:
+        _release_run_lock()
 
     warmed = [r for r in results if r["ok"]]
     timeouts = [r for r in results if r["reason"] == "timeout"]
