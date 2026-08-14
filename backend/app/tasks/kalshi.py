@@ -486,6 +486,12 @@ async def _poll_kalshi_markets():
             except Exception:
                 pass
 
+        # #1586/#1845: main-scan telemetry. Filled by the fetch, completed after
+        # the upsert loop, persisted at the end. Read-only — it changes nothing
+        # about how the scan behaves.
+        _scan_tel: dict = {}
+        _scan_started_at = datetime.now(timezone.utc).isoformat()
+
         try:
             events = await asyncio.wait_for(
                 service.get_all_events(
@@ -494,6 +500,7 @@ async def _poll_kalshi_markets():
                     progress_cb=_mark_phase,
                     start_cursor=_start_cursor,
                     save_cursor=_save_main_cursor,
+                    telemetry=_scan_tel,
                 ),
                 timeout=_FETCH_WALL_S,
             )
@@ -1069,6 +1076,61 @@ async def _poll_kalshi_markets():
                         break
 
             await session.commit()
+
+        # #1586/#1845: complete and persist the main-scan report.
+        #
+        # This is the half no existing counter captures. The upsert loop
+        # processes NEW event tickers FIRST (#995's creation fix) and breaks
+        # on a per-event deadline. That ordering is right for creation, and
+        # by construction it starves UPDATES: every event the deadline cuts
+        # off sits in the EXISTING tail — which is exactly the population
+        # that renders on the site and goes stale (KXMLBPLAYOFFS-26 last
+        # updated 2026-07-24). `unreached_existing` is the number that
+        # confirms or refutes that reading, per beat.
+        try:
+            from app.utils.kalshi_scan_report import (
+                KalshiScanReport,
+                save_scan_report,
+            )
+
+            _n_new = int(stats.get("new_events_fetched") or 0)
+            _n_existing = int(stats.get("existing_events_fetched") or 0)
+            _processed = int(stats.get("events_processed") or 0)
+            _total = _n_new + _n_existing
+            _reached_existing = max(0, _processed - _n_new)
+            _report = KalshiScanReport(
+                started_at=_scan_started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                resumed=bool(_scan_tel.get("resumed")),
+                start_cursor_fp=_scan_tel.get("start_cursor_fp"),
+                end_cursor_fp=_scan_tel.get("end_cursor_fp"),
+                wrapped=bool(_scan_tel.get("wrapped")),
+                stop_reason=_scan_tel.get("stop_reason") or "not_run",
+                pages_fetched=int(_scan_tel.get("pages_fetched") or 0),
+                pages_skipped=int(_scan_tel.get("pages_skipped") or 0),
+                skip_reasons=dict(_scan_tel.get("skip_reasons") or {}),
+                events_fetched=int(_scan_tel.get("events_fetched") or 0),
+                events_new=_n_new,
+                events_existing=_n_existing,
+                events_processed=_processed,
+                events_unreached=max(0, _total - _processed),
+                unreached_existing=max(0, _n_existing - _reached_existing),
+                loop_deadline_hit=bool(stats.get("deadline_hit")),
+                duration_s=round(time.monotonic() - _task_started, 1),
+            )
+            save_scan_report(_report)
+            stats["scan_verdict"] = _report.verdict()
+            logger.info(
+                "poll_kalshi scan report: verdict=%s stop=%s pages=%d "
+                "wrapped=%s cursor %s->%s processed=%d/%d "
+                "unreached_existing=%d",
+                _report.verdict(), _report.stop_reason,
+                _report.pages_fetched, _report.wrapped,
+                _report.start_cursor_fp, _report.end_cursor_fp,
+                _processed, _total, _report.unreached_existing,
+            )
+        except Exception as exc:
+            logger.warning("poll_kalshi: scan report failed: %s", exc)
 
         # Post-commit: fix commence_time for golf and hockey markets.
         # Kalshi sets commence_time = market close_time (resolution date), but
