@@ -1343,3 +1343,6 @@ failure this document already records happening twice.
 - [053](rulings/053-a-binary-card-leads-with-the-side-its-question-names.md) — 2026-08-14 — A binary card leads with the side its own question names; series keep both (Alex)
 - [054](rulings/054-honoring-a-remove-ruling-means-measuring-its-sites.md) — 2026-08-14 — Honoring a remove-ruling means measuring its sites, not counting its lines (Alex)
 - [055](rulings/055-a-conflict-resolution-that-changes-a-decision-is-a-decision.md) — 2026-08-14 — A conflict resolution that changes a decision is a decision, and is recorded like one; a duplicate number renumbers, never keep-both (Alex)
+- [061](rulings/061-a-derived-figure-is-an-interim-with-an-expiry.md) — 2026-08-14 — A derived figure is an interim, and an interim carries an expiry: the payload publishes what the client renders, and the derivation is deleted the day it does (Alex, extends 003)
+- [062](rulings/062-branch-where-the-dependency-lives.md) — 2026-08-14 — A branch bases where its dependency lives, and disjointness is measured at content level, never read off merge-tree's conflict count (Alex)
+- [063](rulings/063-a-gate-that-reads-shared-state-names-it.md) — 2026-08-14 — A gate that reads shared mutable state names what it read, and fails only on ambiguity that could change its verdict (Alex)

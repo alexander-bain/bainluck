@@ -13,7 +13,10 @@ explicit Alex ruling — update the marker list below IN THE SAME CHANGE and say
 so in the commit message. Do not delete a marker to make the test pass.
 """
 
+import hashlib
 import re
+import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -516,25 +519,112 @@ def test_index_section_is_the_last_section_so_appends_do_not_touch_rulings() -> 
 # working state shared by the windows on one machine; a tracked copy would be a
 # single append region edited by every lane, which is the exact conflict class
 # ruling 001 split docs/rulings/ apart to kill.
+#
+# ---------------------------------------------------------------------------
+# UX-P079 (2026-08-14) — RULING 063. The gate above is correct about WHERE it
+# reads and was wrong about HOW. Its verdict is a function of an untracked file
+# that six lanes append to and that the Integrator annotates IN PLACE while
+# holding the master-write lock. On 2026-08-14 it answered RED and then GREEN
+# inside a single UX-P078 window with no action from that lane, and at the RED
+# moment it named `docs/rulings/048-an-id-less-claim-never-absorbs.md` — a file
+# merged into master hours earlier and untouched by the branch under test. CI
+# saw neither state, because `.claude/` is gitignored and this gate skips on a
+# runner. Reproduced exactly before it was changed, not taken on report.
+#
+# The offending line was well-formed English and unreadable to the parser:
+#
+#     048  claimed-by lane1  2026-08-14  — **MERGED `a06bf5e5`** (INT-068, …) —
+#
+# Three defects, in the order they did damage:
+#
+#   D1  A PARTIAL PARSE VANISHED INSTEAD OF BURNING. The status token failed, so
+#       the whole line was dropped and its NUMBER went with it. 048 then read as
+#       never-claimed and the file check accused an innocent file. The number
+#       and the status are independent facts; one being unreadable must never
+#       delete the other.
+#   D2  THE PARSER REJECTED MEANING IT COULD PLAINLY READ. Status was anchored
+#       immediately after the dash run, lowercase only, so decoration rejected
+#       the line. A shared prose ledger written by six lanes WILL accrue
+#       decoration — this one's claim lines have grown from one line to full
+#       paragraphs with bold, backticks and bracketed provenance. A parser that
+#       treats punctuation as semantics manufactures shared-state failures at a
+#       steady rate.
+#   D3  THE VERDICT DID NOT NAME THE STATE IT READ. Two runs, two answers, and
+#       nothing in either output identified which snapshot produced it. "The
+#       suite was green" was not a falsifiable claim about anything.
+#
+# THE FIX IS THE SHAPE OF THE WORKTREE INVARIANT (ruling 063, Alex 2026-08-14):
+# that invariant made a command's target EXPLICIT IN THE COMMAND instead of
+# inherited from invisible session state. Here, the shared state becomes
+# explicit in the VERDICT, and the verdict depends only on ambiguity that is
+# real:
+#
+#   F1  Layered parse. A claim-shaped line ALWAYS burns its number, whatever
+#       follows it.
+#   F2  Status is resolved by MEANING: exactly one of claimed/merged/abandoned
+#       as a whole word, case-insensitively, inside the STATUS FIELD (the first
+#       dash-delimited segment after the date). Bounded to that field on
+#       purpose — these paragraphs narrate, and line 060 says "claimed-and-
+#       UNMERGED" in its prose.
+#   F3  An unresolved status counts as a LIVE claim. The permissive reading is
+#       the safe one for the direction that actually did harm: it can never
+#       accuse a file whose claim line is sitting right there.
+#   F4  A line fails the run ONLY IF resolving it could change THIS run's
+#       verdict — i.e. only if a ruling file in this tree sits on that number,
+#       because only then does burned-vs-live change an answer. That single
+#       sentence is what stops one lane's typo from redding every other lane's
+#       suite, and it is the whole of ruling 063 in operational form.
+#   F5  Every ledger-derived verdict NAMES ITS SNAPSHOT — path, mtime, digest,
+#       claim count, deviation count — in its failure messages and once per
+#       session where a PASSING run can see it too.
+#   F6  The parser is separated from the file read, so it can be tested at all.
+#       Until now this gate had zero test coverage precisely because its input
+#       was unmockable shared state. That is not incidental to the defect; it is
+#       the same defect. The self-tests at the bottom of this file pin the
+#       2026-08-14 lines VERBATIM.
+#
+# WHAT WAS DELIBERATELY TRADED AWAY: the old
+# `test_ruling_claims_ledger_parses_in_the_documented_format` asserted that NO
+# claim-shaped line deviates from the canonical shape, and that assertion is
+# gone. It was a PROXY for anti-vacuity, not anti-vacuity itself. The real
+# anti-vacuity properties — the ledger yields claims at all, and no claim-shaped
+# line is ever silently dropped — are asserted directly below and are strictly
+# stronger. Deviations are still counted and still reported in the snapshot
+# notice; they are simply no longer fatal to a lane that did not write them.
 # ---------------------------------------------------------------------------
 
 #: Relative to a worktree root. Untracked by design — see the block above.
 RULING_CLAIMS_RELPATH = Path(".claude") / "handoff" / "RULING-CLAIMS.md"
 
-#: `029  claimed-by latency        2026-08-11  — merged   — Short title`
-#: The dash class is deliberately loose (em dash or hyphen): the marker lists at
-#: the top of this file already note that an em-dash encoding difference must
-#: never be the reason a guard fails.
-CLAIM_LINE_RE = re.compile(
+#: Layer 1 — the NUMBER, parsed alone and first. Anything in the RULINGS section
+#: that opens with three digits is a claim on that number, and F1 says it burns
+#: the number no matter how the rest of the line reads.
+CLAIM_NUMBER_RE = re.compile(r"^(?P<num>\d{3})\s")
+
+#: Layer 2/3 — lane and date, each optional and each parsed independently so a
+#: missing one cannot take the others down with it.
+CLAIM_LANE_RE = re.compile(r"\bclaimed-by\s+(?P<lane>\S+)")
+CLAIM_DATE_RE = re.compile(r"\b(?P<date>\d{4}-\d{2}-\d{2})\b")
+
+#: A dash RUN that is acting as a field delimiter: em dash, en dash or hyphen,
+#: at the start of the remainder or surrounded by whitespace. The whitespace
+#: requirement is what keeps `id-less` and `claimed-by` from splitting.
+DASH_DELIMITER_RE = re.compile(r"(?:\s+|^)[—–\-]+(?:\s+|$)")
+
+#: Layer 4 — the three states a claim can be in. Whole word, case-insensitive.
+STATUS_WORD_RE = re.compile(r"\b(claimed|merged|abandoned)\b", re.IGNORECASE)
+
+#: Status values the parser can return that are NOT one of the three states.
+STATUS_UNKNOWN = "unknown"  # no status word in the status field
+STATUS_AMBIGUOUS = "ambiguous"  # two or more DIFFERENT status words in it
+
+#: The canonical shape, kept ONLY to count deviations for the snapshot notice.
+#: It is no longer a gate — see "WHAT WAS DELIBERATELY TRADED AWAY" above.
+CANONICAL_CLAIM_RE = re.compile(
     r"^(?P<num>\d{3})\s+claimed-by\s+(?P<lane>\S+)\s+"
     r"(?P<date>\d{4}-\d{2}-\d{2})\s+[—-]+\s*"
     r"(?P<status>claimed|merged|abandoned)\b"
 )
-
-#: Anything in the RULINGS section that opens with three digits is meant to be a
-#: claim. If it does not parse, the parser has drifted from the format and the
-#: gate is silently passing everything — louder to fail here.
-CLAIM_SHAPED_RE = re.compile(r"^\d{3}\s")
 
 
 def _main_worktree_root() -> Path:
@@ -577,6 +667,59 @@ def _find_ruling_claims_ledger():
     return None
 
 
+class LedgerSnapshotNotice(UserWarning):
+    """Emitted once per session so a PASSING run also names what it read.
+
+    F5 / ruling 063. A failure message can carry its own provenance, but a pass
+    prints nothing, and "the suite was green" was exactly the claim that turned
+    out to be unfalsifiable on 2026-08-14. pytest shows its warnings summary by
+    default, so this lands in the output of every run that actually consumed the
+    ledger — and in no run that did not.
+    """
+
+
+#: One notice per session, not one per test.
+_SNAPSHOT_ANNOUNCED = False
+
+
+def _ledger_snapshot(ledger: Path) -> str:
+    """A one-line identity for the ledger state a verdict was derived from.
+
+    The digest covers the RULINGS SECTION ONLY, not the whole file: the GOTCHAS
+    section and the prose header change for reasons that cannot affect a ruling
+    verdict, and a digest that moves for irrelevant reasons is one nobody
+    compares.
+    """
+    text = ledger.read_text(encoding="utf-8")
+    section = "\n".join(_ledger_rulings_section(text))
+    digest = hashlib.sha256(section.encode("utf-8")).hexdigest()[:12]
+    mtime = datetime.fromtimestamp(ledger.stat().st_mtime, tz=timezone.utc)
+    claims, dropped = _parse_ledger_claims(text)
+    deviations = sum(1 for c in claims if not c["canonical"])
+    return (
+        f"ledger={ledger} digest={digest} "
+        f"mtime={mtime.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+        f"claims={len(claims)} deviations={deviations} dropped={len(dropped)}"
+    )
+
+
+def _announce_snapshot(ledger: Path) -> None:
+    global _SNAPSHOT_ANNOUNCED
+    if _SNAPSHOT_ANNOUNCED:
+        return
+    _SNAPSHOT_ANNOUNCED = True
+    warnings.warn(
+        "RULING-CLAIMS ledger consumed by this run — "
+        + _ledger_snapshot(ledger)
+        + ". This gate reads SHARED MUTABLE STATE in the main worktree "
+        "(untracked, appended to by every live lane). Ruling 063: a verdict "
+        "names the snapshot it came from, so quote this line rather than "
+        "'the suite was green'.",
+        LedgerSnapshotNotice,
+        stacklevel=2,
+    )
+
+
 def _require_ruling_claims_ledger() -> Path:
     ledger = _find_ruling_claims_ledger()
     if ledger is None:
@@ -592,6 +735,7 @@ def _require_ruling_claims_ledger() -> Path:
             "(~/bainluck/.claude/handoff/RULING-CLAIMS.md) and claim your number "
             "in it BEFORE writing the file. Do not commit the ledger to fix this."
         )
+    _announce_snapshot(ledger)
     return ledger
 
 
@@ -621,46 +765,165 @@ def _ledger_rulings_section(text: str) -> list:
     return lines[start:end]
 
 
-def _ledger_claims() -> tuple:
-    """((num, status, lane, raw), ...) plus any claim-shaped line that failed."""
-    text = _require_ruling_claims_ledger().read_text(encoding="utf-8")
+def _status_field(line: str, after: int) -> str:
+    """The first dash-delimited segment following the date (or the lane).
+
+    Bounded on purpose (F2). Searching the WHOLE line for a status word looks
+    more tolerant and is actually worse: these claim lines are paragraphs that
+    narrate their own provenance, and several of them contain the words
+    "claimed" and "merged" in prose long after the status field. Ruling 048's
+    live line does exactly that — status `merged`, then "Claimed after a
+    `git fetch` in the same turn" further along — so a whole-line search would
+    report it AMBIGUOUS and re-create the failure this parser exists to end.
+    """
+    remainder = line[after:]
+    parts = [p for p in DASH_DELIMITER_RE.split(remainder) if p.strip()]
+    return parts[0] if parts else remainder
+
+
+def _parse_claim_line(line: str):
+    """One claim-shaped line → a dict, parsed in independent layers (F1).
+
+    Returns None only when the line does not open with three digits. Every
+    layer below that is optional: a line that yields a NUMBER yields a claim,
+    because the number is the fact the ledger exists to record and no failure
+    to read the decoration around it may delete that fact.
+    """
+    number_match = CLAIM_NUMBER_RE.match(line)
+    if not number_match:
+        return None
+
+    lane_match = CLAIM_LANE_RE.search(line)
+    date_match = CLAIM_DATE_RE.search(line)
+
+    after = date_match.end() if date_match else (
+        lane_match.end() if lane_match else number_match.end()
+    )
+    field = _status_field(line, after)
+    found = {m.group(1).lower() for m in STATUS_WORD_RE.finditer(field)}
+    if not found:
+        status = STATUS_UNKNOWN
+    elif len(found) == 1:
+        status = found.pop()
+    else:
+        status = STATUS_AMBIGUOUS
+
+    return {
+        "num": int(number_match.group("num")),
+        "lane": lane_match.group("lane") if lane_match else None,
+        "date": date_match.group("date") if date_match else None,
+        "status": status,
+        "canonical": bool(CANONICAL_CLAIM_RE.match(line)),
+        "raw": line,
+    }
+
+
+def _parse_ledger_claims(text: str) -> tuple:
+    """(claims, dropped) from ledger TEXT — no file, no shared state (F6).
+
+    `dropped` should always be empty and is returned so a test can say so out
+    loud. It is the direct assertion of the property D1 violated: a claim-shaped
+    line is never silently discarded.
+    """
     claims = []
-    malformed = []
+    dropped = []
     for line in _ledger_rulings_section(text):
-        m = CLAIM_LINE_RE.match(line)
-        if m:
-            claims.append(
-                (int(m.group("num")), m.group("status"), m.group("lane"), line)
-            )
-        elif CLAIM_SHAPED_RE.match(line):
-            malformed.append(line)
-    return claims, malformed
+        if not CLAIM_NUMBER_RE.match(line):
+            continue
+        parsed = _parse_claim_line(line)
+        if parsed is None:  # pragma: no cover — unreachable by construction
+            dropped.append(line)
+        else:
+            claims.append(parsed)
+    return claims, dropped
+
+
+def _ledger_claims() -> tuple:
+    """(claims, dropped) for the ledger this machine actually holds."""
+    return _parse_ledger_claims(
+        _require_ruling_claims_ledger().read_text(encoding="utf-8")
+    )
+
+
+def _unresolved(claims) -> list:
+    """Claims whose status could not be read as one of the three states."""
+    return [c for c in claims if c["status"] in (STATUS_UNKNOWN, STATUS_AMBIGUOUS)]
 
 
 def test_ruling_claims_ledger_parses_in_the_documented_format() -> None:
-    """Parser-drift guard, and it runs first for a reason.
+    """Anti-vacuity guard, and it runs first for a reason.
 
     Every other assertion below is vacuously true against a ledger this parser
     cannot read: zero claims means zero repeats, and a floor derived from
     nothing waves every file through. A gate that passes hardest when it is
-    broken is the failure this whole file exists to prevent, so the shape of the
-    ledger is asserted before anything is concluded from its contents.
+    broken is the failure this whole file exists to prevent.
+
+    RULING 063 changed WHICH property is asserted here. It used to be "no line
+    deviates from the canonical shape" — a proxy for anti-vacuity that a lane
+    could trip by adding bold to someone else's status field, and did. The two
+    properties asserted now are the real thing and are strictly stronger: the
+    ledger yields claims at all, and NO CLAIM-SHAPED LINE IS EVER DROPPED.
+    Deviations from the canonical shape are still counted, and still reported in
+    the per-session snapshot notice — they are simply not fatal to a lane that
+    did not write them.
     """
-    claims, malformed = _ledger_claims()
-    assert not malformed, (
-        "these lines in the RULINGS section of "
-        f"{RULING_CLAIMS_RELPATH} start with a three-digit number but do not "
-        f"match the documented claim format: {malformed}. The format is "
-        "`NNN  claimed-by <lane>  <date>  — <status> — <title>` with status one "
-        "of claimed/merged/abandoned. Fix the line — an unparseable claim is a "
-        "number nobody is holding as far as this gate can tell."
+    ledger = _require_ruling_claims_ledger()
+    claims, dropped = _ledger_claims()
+
+    assert not dropped, (
+        "these lines in the RULINGS section start with three digits and were "
+        f"DROPPED by the parser rather than burning their number: {dropped}. "
+        "That is defect D1 of 2026-08-14 returning: a dropped line makes a "
+        "claimed number read as unclaimed, and the file check then accuses an "
+        "innocent ruling file. A claim-shaped line must always yield its "
+        f"number.\n  {_ledger_snapshot(ledger)}"
     )
     assert claims, (
         f"{RULING_CLAIMS_RELPATH} exists but its `## RULINGS` section yielded "
-        "zero parseable claims. Either the section heading was renamed (this "
-        "parser keys on a line starting `## RULINGS`) or the line format "
-        "changed. Until it parses, this gate is blessing every ruling file in "
-        "the tree."
+        "zero claims. Either the section heading was renamed (this parser keys "
+        "on a line starting `## RULINGS`) or the section is empty. Until it "
+        "yields claims, this gate is blessing every ruling file in the tree.\n"
+        f"  {_ledger_snapshot(ledger)}"
+    )
+
+
+def test_an_unreadable_status_fails_only_when_it_could_change_this_verdict() -> None:
+    """RULING 063, in operational form. The one sentence the whole fix reduces to.
+
+    An unreadable status means the parser cannot tell LIVE from BURNED. That
+    matters if and only if a ruling file in THIS tree sits on that number,
+    because burned-vs-live is the only answer it changes. When no file occupies
+    the number, the ambiguity is inert here and belongs to whichever lane owns
+    the line — reporting it is right, failing this run for it is not.
+
+    This is the structural half of the fix. Without it, any lane can turn every
+    other lane's suite red by mistyping a status in a shared untracked file, and
+    the reddened lane has no way to tell that from a defect in its own branch.
+    That is precisely what cost the UX-P078 window: RED, then GREEN, with no
+    action in between.
+    """
+    ledger = _require_ruling_claims_ledger()
+    claims, _ = _ledger_claims()
+    unresolved = _unresolved(claims)
+    if not unresolved:
+        return
+
+    occupied = {int(p.name[:3]) for p in _ruling_files()}
+    blocking = [c for c in unresolved if c["num"] in occupied]
+
+    assert not blocking, (
+        "the status field is unreadable on ledger line(s) whose number a ruling "
+        "file in this tree OCCUPIES, so this run cannot tell a live claim from "
+        "a burned one for: "
+        f"{[(c['num'], c['status'], c['lane']) for c in blocking]}.\n\n"
+        "Fix the STATUS FIELD of those lines — it is the first dash-delimited "
+        "segment after the date, and it must contain exactly one of "
+        "claimed / merged / abandoned. Decoration around the word is fine "
+        "(`— **MERGED `sha`** —` reads correctly); two different status words "
+        "in one field is not.\n\n"
+        "Lines whose number NO file occupies are deliberately not fatal — see "
+        f"ruling 063.\n  {_ledger_snapshot(ledger)}\n"
+        + "\n".join(f"    {c['raw'][:160]}" for c in blocking)
     )
 
 
@@ -673,8 +936,11 @@ def test_ruling_claims_ledger_is_ascending_with_no_repeated_number() -> None:
     a burn record, not a claim, so it does not join the monotonic sequence (it
     still burns the number for the file check below).
     """
+    ledger = _require_ruling_claims_ledger()
     claims, _ = _ledger_claims()
-    live = [(num, lane) for num, status, lane, _ in claims if status != "abandoned"]
+    live = [
+        (c["num"], c["lane"]) for c in claims if c["status"] != "abandoned"
+    ]
     numbers = [num for num, _ in live]
 
     repeated = sorted({n for n in numbers if numbers.count(n) > 1})
@@ -686,13 +952,15 @@ def test_ruling_claims_ledger_is_ascending_with_no_repeated_number() -> None:
         "prose that cannot merge. The lane that claimed SECOND renumbers "
         "upward — claim the new number here first, then rename its file and "
         "its PRODUCT-BRAIN index line. (An abandoned claim is exempt; mark it "
-        "`abandoned` rather than deleting the line.)"
+        "`abandoned` rather than deleting the line.)\n"
+        f"  {_ledger_snapshot(ledger)}"
     )
     assert numbers == sorted(numbers), (
         f"{RULING_CLAIMS_RELPATH} claims are out of order: {numbers}. Keep them "
         "ascending and append-only — the whole value of the ledger is that "
         "`the last line + 1` is a safe read, and it stops being one the moment "
-        "a number is inserted out of sequence."
+        "a number is inserted out of sequence.\n"
+        f"  {_ledger_snapshot(ledger)}"
     )
 
 
@@ -708,14 +976,21 @@ def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
     hardcoded: rulings 001–028 predate the ledger and were never claimed, and a
     hardcoded floor would need editing the day anyone backfills a claim.
     """
+    ledger = _require_ruling_claims_ledger()
     claims, _ = _ledger_claims()
-    assert claims, "no parseable claims; see the parser-drift test above"
+    assert claims, "no claims parsed; see the anti-vacuity test above"
 
-    floor = min(num for num, _, _, _ in claims)
+    floor = min(c["num"] for c in claims)
+    # F3: an UNREADABLE status counts as LIVE. The permissive reading is the
+    # safe one for this direction — it can never accuse a file whose claim line
+    # is sitting right there in the ledger, which is the 2026-08-14 failure. The
+    # burned-vs-live ambiguity it defers is caught by
+    # test_an_unreadable_status_fails_only_when_it_could_change_this_verdict,
+    # which fires on exactly the numbers where the deferral would matter.
     live_claims = {
-        num: lane for num, status, lane, _ in claims if status != "abandoned"
+        c["num"]: c["lane"] for c in claims if c["status"] != "abandoned"
     }
-    burned = {num for num, status, _, _ in claims if status == "abandoned"}
+    burned = {c["num"] for c in claims if c["status"] == "abandoned"}
 
     for path in _ruling_files():
         num = int(path.name[:3])
@@ -731,7 +1006,8 @@ def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
                 "A file on a burned number is exactly as broken as an unclaimed "
                 "one, because the lane that burned it may already have cited it "
                 "elsewhere. Claim the next free number in the ledger and "
-                "renumber this file plus its PRODUCT-BRAIN index line."
+                "renumber this file plus its PRODUCT-BRAIN index line.\n"
+                f"  {_ledger_snapshot(ledger)}"
             )
         pytest.fail(
             f"docs/rulings/{path.name} exists but ruling number {num:03d} was "
@@ -748,5 +1024,314 @@ def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
             "index line, and every citation of it); the ledger line is the "
             "cheap one. Only renumber if the number turns out to be genuinely "
             "taken by another lane, in which case the lane that claimed SECOND "
-            "is the one that moves."
+            "is the one that moves.\n\n"
+            "BEFORE YOU CHASE THIS IN YOUR OWN DIFF: this gate reads SHARED "
+            "MUTABLE STATE — an untracked ledger in the MAIN worktree that "
+            "every live lane appends to. Quote the snapshot below in your "
+            "report, and re-read it before concluding anything, because it can "
+            "change under you mid-window (ruling 063).\n"
+            f"  {_ledger_snapshot(ledger)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# UX-P079 / RULING 063 — THE GATE'S OWN SELF-TESTS.
+#
+# Until now the ledger gate had ZERO test coverage, and that was not an
+# oversight: its only input was a file on the machine that no test could supply.
+# `_parse_ledger_claims(text)` exists so the parser can be exercised against
+# text, which is what makes the rest of this section possible. Separating the
+# parser from the shared file IS part of the fix, not preparation for it.
+#
+# The first specimen below is the 2026-08-14 ledger VERBATIM. A synthetic
+# paraphrase would have been easier to write and would prove nothing: the whole
+# lesson is that the real line was readable English the parser refused, so the
+# real line is what must be pinned.
+# ---------------------------------------------------------------------------
+
+#: The exact status field INT-068 wrote while merging 048/049/051, which redded
+#: two tests in every worktree on the machine. Reproduced before it was fixed.
+HISTORICAL_2026_08_14_LEDGER = """# RULING-CLAIMS
+
+## RULINGS — `docs/rulings/NNN-<slug>.md`
+
+047  claimed-by ux-59          2026-08-13  — claimed  — ONE CARD SYSTEM
+048  claimed-by lane1          2026-08-14  — **MERGED `a06bf5e5`** (INT-068, 2026-08-14) — An id-less claim NEVER absorbs
+049  claimed-by calibration    2026-08-14  — **MERGED `a06bf5e5`** (INT-068, 2026-08-14) — A criterion that cannot fail is not evidence
+051  claimed-by lane1          2026-08-14  — **MERGED `a06bf5e5`** (INT-068, 2026-08-14) — Below the floor a source is absent
+
+## GOTCHAS — `docs/gotchas-reference.md`
+125  claimed-by lane1          2026-08-13  — merged   — a gotcha, not a ruling
+"""
+
+
+def _statuses(text: str) -> dict:
+    claims, _ = _parse_ledger_claims(text)
+    return {c["num"]: c["status"] for c in claims}
+
+
+def test_the_2026_08_14_ledger_state_no_longer_accuses_an_innocent_file() -> None:
+    """The regression, pinned to the real specimen (F7).
+
+    On the day, this exact text produced two failures, one of them naming
+    `docs/rulings/048-an-id-less-claim-never-absorbs.md` — a file that had
+    merged into master hours earlier and was untouched by the branch under test.
+    """
+    claims, dropped = _parse_ledger_claims(HISTORICAL_2026_08_14_LEDGER)
+
+    assert not dropped, "a claim-shaped line was dropped — defect D1 is back"
+    assert {c["num"] for c in claims} == {47, 48, 49, 51}, (
+        "every claim-shaped line must burn its number regardless of how its "
+        "status field is decorated (F1)"
+    )
+    assert _statuses(HISTORICAL_2026_08_14_LEDGER)[48] == "merged", (
+        "`— **MERGED `a06bf5e5`** (INT-068, 2026-08-14) —` is unambiguous "
+        "English and must parse as merged (F2). This assertion is the whole "
+        "finding: the parser refused a line whose meaning it could read, and a "
+        "shared prose ledger written by six lanes will always accrue decoration."
+    )
+    live = {c["num"] for c in claims if c["status"] != "abandoned"}
+    assert 48 in live, (
+        "ruling 048 must read as LIVE-CLAIMED against the 2026-08-14 ledger. "
+        "This is the assertion that makes the false accusation structurally "
+        "impossible rather than merely unlikely."
+    )
+
+
+def test_the_gotchas_section_is_still_not_read_as_ruling_claims() -> None:
+    """The section boundary predates this change and must survive it.
+
+    Gotcha 125 sharing the claim line format is why `_ledger_rulings_section`
+    exists; a looser parser is exactly the kind of change that would quietly
+    re-merge the two series and bless a ruling file at 125 that nobody holds.
+    """
+    assert 125 not in _statuses(HISTORICAL_2026_08_14_LEDGER)
+
+
+def test_a_number_burns_even_when_everything_after_it_is_unreadable() -> None:
+    """F1, at its limit: number present, nothing else legible."""
+    text = "## RULINGS\n\n061  \xa1\xa1 who wrote this \xa1\xa1\n"
+    claims, dropped = _parse_ledger_claims(text)
+    assert not dropped
+    assert [c["num"] for c in claims] == [61]
+    assert claims[0]["status"] == STATUS_UNKNOWN
+    assert claims[0]["lane"] is None
+    assert claims[0]["canonical"] is False
+
+
+def test_status_is_read_from_the_status_field_not_from_the_prose() -> None:
+    """F2's bound, and the reason it is a bound rather than a whole-line search.
+
+    Ruling 048's real ledger line says `— merged —` and then, paragraphs later,
+    "Claimed after a `git fetch` in the same turn". A whole-line search finds
+    both words, calls it AMBIGUOUS, and re-creates the failure. Line 060's real
+    text is the mirror image: status `claimed`, prose containing
+    "claimed-and-UNMERGED" — where `merged` must NOT match inside `UNMERGED`.
+    """
+    merged_then_prose = (
+        "## RULINGS\n\n"
+        "048  claimed-by lane1  2026-08-14  — merged — [LANDED `a06bf5e5`] "
+        "An id-less claim NEVER absorbs. Claimed after a `git fetch` in the "
+        "SAME turn: origin/master = `1ac0aa08`.\n"
+    )
+    assert _statuses(merged_then_prose)[48] == "merged"
+
+    claimed_then_unmerged = (
+        "## RULINGS\n\n"
+        "060  claimed-by latency  2026-08-14  — claimed  — NEVER GROW A GRADED "
+        "COHORT IN PLACE. 048, 049 and 051 are all claimed-and-UNMERGED.\n"
+    )
+    assert _statuses(claimed_then_unmerged)[60] == "claimed", (
+        "`merged` must not match inside `UNMERGED` — the word boundary is "
+        "load-bearing, and prose after the status field is not the status"
+    )
+
+
+def test_two_different_status_words_in_one_field_is_ambiguous() -> None:
+    """The one case the parser must refuse to guess at."""
+    text = (
+        "## RULINGS\n\n"
+        "062  claimed-by ux-65  2026-08-14  — claimed then abandoned — title\n"
+    )
+    assert _statuses(text)[62] == STATUS_AMBIGUOUS
+
+
+def test_abandoned_still_burns_and_still_parses_when_decorated() -> None:
+    """The burn record must survive the same decoration a merge note gets."""
+    text = (
+        "## RULINGS\n\n"
+        "030  claimed-by ux-50  2026-08-11  — claimed  — first take\n"
+        "030  claimed-by ux-50  2026-08-11  — **ABANDONED** (renumbered to 032) — first take\n"
+    )
+    claims, _ = _parse_ledger_claims(text)
+    assert [c["status"] for c in claims] == ["claimed", "abandoned"]
+
+
+def test_the_canonical_shape_is_counted_but_never_fatal() -> None:
+    """What ruling 063 traded away, asserted so the trade cannot be undone by
+    accident. A deviation is DATA — it appears in the snapshot notice — and it
+    is not a verdict."""
+    canonical = "029  claimed-by latency  2026-08-11  — merged   — Short title"
+    decorated = "048  claimed-by lane1  2026-08-14  — **MERGED `a06bf5e5`** — t"
+    claims, _ = _parse_ledger_claims(f"## RULINGS\n\n{canonical}\n{decorated}\n")
+    assert [c["canonical"] for c in claims] == [True, False]
+    assert [c["status"] for c in claims] == ["merged", "merged"], (
+        "both lines mean the same thing; only one of them is canonical, and "
+        "that difference must not change the verdict"
+    )
+
+
+def test_the_snapshot_names_the_state_a_verdict_came_from(tmp_path) -> None:
+    """F5. A verdict that cannot name its input is not falsifiable.
+
+    Asserted on the DIGEST specifically: mtime alone moves when a lane rewrites
+    the file identically, and a path alone never moves at all. The digest is
+    scoped to the RULINGS section so that GOTCHAS churn — a different series in
+    the same file — cannot make two identical ruling verdicts look different.
+    """
+    ledger = tmp_path / "RULING-CLAIMS.md"
+    ledger.write_text(HISTORICAL_2026_08_14_LEDGER, encoding="utf-8")
+    first = _ledger_snapshot(ledger)
+
+    assert "digest=" in first and "mtime=" in first
+    assert "claims=4" in first, first
+    assert "dropped=0" in first, first
+    assert "deviations=3" in first, (
+        "the three decorated lines must be COUNTED as deviations even though "
+        "they parse and do not fail — that is the whole shape of the trade"
+    )
+
+    ledger.write_text(
+        HISTORICAL_2026_08_14_LEDGER.replace(
+            "125  claimed-by lane1          2026-08-13  — merged   — a gotcha, not a ruling",
+            "126  claimed-by lane1          2026-08-14  — merged   — another gotcha",
+        ),
+        encoding="utf-8",
+    )
+    assert _ledger_snapshot(ledger).split()[1] == first.split()[1], (
+        "a GOTCHAS-only edit must not move the RULINGS digest, or nobody will "
+        "compare two digests that differ for reasons they do not care about"
+    )
+
+    # Appended INSIDE the RULINGS section. Appending to the END of the file puts
+    # the line under `## GOTCHAS`, where it is correctly not a ruling claim and
+    # correctly does not move the digest — which this test caught on its first
+    # run, and which is the section boundary doing its job.
+    ledger.write_text(
+        HISTORICAL_2026_08_14_LEDGER.replace(
+            "\n\n## GOTCHAS",
+            "\n052  claimed-by latency  2026-08-14  — claimed  — a real new claim"
+            "\n\n## GOTCHAS",
+        ),
+        encoding="utf-8",
+    )
+    assert _ledger_snapshot(ledger).split()[1] != first.split()[1], (
+        "a new RULINGS claim MUST move the digest — otherwise the snapshot "
+        "cannot distinguish the RED state from the GREEN one it became"
+    )
+
+
+def _with_ledger(monkeypatch, text, tmp_path):
+    ledger = tmp_path / "RULING-CLAIMS.md"
+    ledger.write_text(text, encoding="utf-8")
+    monkeypatch.setitem(globals(), "_require_ruling_claims_ledger", lambda: ledger)
+    return ledger
+
+
+def _ledger_with_every_ruling_claimed(extra_line: str = "") -> str:
+    """A ledger that claims every ruling file this tree holds.
+
+    Built from `_ruling_files()` rather than hardcoded, so it cannot go stale the
+    next time a lane banks a ruling — the same staleness trap the ledger's own
+    floor-not-oracle header describes.
+    """
+    body = "\n".join(
+        f"{int(p.name[:3]):03d}  claimed-by lane1  2026-08-12  — merged   — t"
+        for p in _ruling_files()
+    )
+    return f"# L\n\n## RULINGS\n\n{body}{extra_line}\n\n## GOTCHAS\n125  x\n"
+
+
+def test_an_unreadable_status_is_inert_on_a_number_no_file_occupies(
+    monkeypatch, tmp_path
+) -> None:
+    """RULING 063's operational rule, first half — and the half that IS the fix.
+
+    A lane must NOT be failed by ambiguity in shared state that changes no answer
+    on its own branch. Without this, one typo in an untracked file reds every
+    live lane's suite and none of them can tell it from a defect of their own.
+    """
+    unoccupied = max(int(p.name[:3]) for p in _ruling_files()) + 9
+    _with_ledger(
+        monkeypatch,
+        _ledger_with_every_ruling_claimed(
+            f"\n{unoccupied:03d}  claimed-by ux-65  2026-08-14  — ?? illegible ?? — t"
+        ),
+        tmp_path,
+    )
+
+    claims, dropped = _ledger_claims()
+    assert not dropped
+    assert any(
+        c["num"] == unoccupied and c["status"] == STATUS_UNKNOWN for c in claims
+    ), "the line must still be READ and its number still burned (F1/F3)"
+
+    test_an_unreadable_status_fails_only_when_it_could_change_this_verdict()
+    test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed()
+
+
+def test_an_unreadable_status_is_fatal_on_a_number_a_file_occupies(
+    monkeypatch, tmp_path
+) -> None:
+    """The other half. The permissiveness above is SCOPED, not general.
+
+    On an occupied number the parser genuinely cannot tell burned from live, and
+    that ambiguity does change an answer — so it fails, and it names the number.
+    """
+    occupied = min(int(p.name[:3]) for p in _ruling_files())
+    canonical = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — t"
+    illegible = f"{occupied:03d}  claimed-by lane1  2026-08-12  — ?? none ?? — t"
+    _with_ledger(
+        monkeypatch,
+        _ledger_with_every_ruling_claimed().replace(canonical, illegible),
+        tmp_path,
+    )
+
+    with pytest.raises(AssertionError) as exc:
+        test_an_unreadable_status_fails_only_when_it_could_change_this_verdict()
+    assert str(occupied) in str(exc.value)
+    assert "digest=" in str(exc.value), (
+        "even this failure must name the snapshot it came from (F5) — a verdict "
+        "about shared mutable state that cannot identify the state is the "
+        "unfalsifiable-green defect wearing a different hat"
+    )
+
+
+def test_the_snapshot_notice_fires_once_per_session(monkeypatch, tmp_path) -> None:
+    """F5's delivery mechanism, not just its string.
+
+    `_ledger_snapshot` being correct is worthless if nothing emits it on a
+    PASSING run — that is the exact gap that made "the suite was green"
+    unfalsifiable. Pinned so a future cleanup cannot drop the warning and leave
+    the helper behind looking like coverage.
+    """
+    # Patched one layer DOWN from the other tests on purpose: they replace
+    # `_require_ruling_claims_ledger`, which is the function that emits, so
+    # patching it there would test the stub instead of the seam.
+    ledger = tmp_path / "RULING-CLAIMS.md"
+    ledger.write_text(_ledger_with_every_ruling_claimed(), encoding="utf-8")
+    monkeypatch.setitem(globals(), "_find_ruling_claims_ledger", lambda: ledger)
+    monkeypatch.setitem(globals(), "_SNAPSHOT_ANNOUNCED", False)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _require_ruling_claims_ledger()
+        _require_ruling_claims_ledger()
+
+    notices = [w for w in caught if issubclass(w.category, LedgerSnapshotNotice)]
+    assert len(notices) == 1, (
+        f"expected exactly one notice per session, got {len(notices)} — one per "
+        "test would be noise nobody reads, and zero is the defect"
+    )
+    assert "digest=" in str(notices[0].message)
+    assert "SHARED MUTABLE STATE" in str(notices[0].message)
