@@ -15,6 +15,26 @@ from app.utils.kalshi_scan_report import (
 )
 
 
+def _report(*, events_new=0, events_existing=0, supplementary_events=0, **kw):
+    """A report whose counters ADD UP, so a test reads the verdict it means to.
+
+    Queue 355: `events_fetched` is the whole fetched population and
+    `events_new + events_existing` partitions it. Building a report by hand
+    without that identity now yields ``instrument_broken`` — which is the point
+    of the invariant, and would otherwise make every verdict fixture below a
+    test of the invariant instead of a test of the verdict.
+    """
+    total = events_new + events_existing
+    return KalshiScanReport(
+        events_new=events_new,
+        events_existing=events_existing,
+        events_fetched=total,
+        main_scan_events=total - supplementary_events,
+        supplementary_events=supplementary_events,
+        **kw,
+    )
+
+
 class TestCursorFingerprint:
     def test_none_and_empty_are_none(self):
         assert cursor_fingerprint(None) is None
@@ -35,7 +55,7 @@ class TestVerdict:
 
     def test_frozen_when_no_existing_event_was_reached(self):
         # The displayed-market population got zero updates this beat.
-        r = KalshiScanReport(
+        r = _report(
             stop_reason="main_scan_deadline",
             events_new=40,
             events_existing=2000,
@@ -45,7 +65,7 @@ class TestVerdict:
         assert r.verdict() == "frozen"
 
     def test_starved_when_the_deadline_cut_off_existing_events(self):
-        r = KalshiScanReport(
+        r = _report(
             stop_reason="main_scan_deadline",
             events_new=40,
             events_existing=2000,
@@ -55,7 +75,7 @@ class TestVerdict:
         assert r.verdict() == "starved"
 
     def test_partial_when_pages_were_dropped(self):
-        r = KalshiScanReport(
+        r = _report(
             stop_reason="exhausted",
             events_new=10,
             events_existing=100,
@@ -67,7 +87,7 @@ class TestVerdict:
         assert r.verdict() == "partial"
 
     def test_partial_when_the_walk_never_wrapped(self):
-        r = KalshiScanReport(
+        r = _report(
             stop_reason="max_pages",
             events_new=10,
             events_existing=100,
@@ -78,7 +98,7 @@ class TestVerdict:
         assert r.verdict() == "partial"
 
     def test_healthy_only_on_a_clean_exhaustive_walk(self):
-        r = KalshiScanReport(
+        r = _report(
             stop_reason="exhausted",
             events_new=10,
             events_existing=100,
@@ -169,6 +189,17 @@ class TestScanTelemetryIsWired:
         for reason in ("exhausted", "main_scan_deadline", "page_error"):
             assert reason in src, f"stop reason {reason!r} is not recorded"
         assert "parse_timeout" in src, "a dropped page must be counted"
+        # Queue 355: `events_fetched` must be written over the population it
+        # names — the RETURNED list — not snapshotted mid-function before the
+        # supplementary rescue adds to it. The main scan gets its own counter.
+        assert "main_scan_events" in src
+        assert "supplementary_events" in src
+        _main_at = src.index('_tel["main_scan_events"]')
+        _fetched_at = src.index('_tel["events_fetched"]')
+        assert _fetched_at > _main_at, (
+            "events_fetched is written before the supplementary loop again — "
+            "that is the exact defect queue 355 fixed"
+        )
 
     def test_poll_task_records_the_update_starvation_measurement(self):
         import inspect
@@ -184,6 +215,138 @@ class TestScanTelemetryIsWired:
 
         paths = {r.path for r in admin_providers.router.routes}
         assert "/kalshi/scan-report" in paths
+
+
+class TestReconciliationInvariant:
+    """Queue 355 (#1845): the instrument must refuse to name a mechanism it
+    cannot add up.
+
+    Beat 1 of the 350-2b gate printed ``verdict: frozen`` directly above
+    ``events_new 5,335 + events_existing 5,075 = 10,410`` against
+    ``events_fetched 5,000``. The verdict was legible, believable, and derived
+    from counters covering three different populations. Nothing in the artifact
+    said so; a human had to do the addition.
+    """
+
+    def test_beat_ones_exact_numbers_are_refused(self):
+        r = KalshiScanReport(
+            stop_reason="max_pages",
+            events_fetched=5000,
+            main_scan_events=5000,
+            supplementary_events=0,
+            events_new=5335,
+            events_existing=5075,
+            events_processed=252,
+            unreached_existing=5075,
+        )
+        assert r.reconciles() is False
+        assert r.verdict() == "instrument_broken"
+        rec = r.reconciliation()
+        assert rec["new_plus_existing"] == 10410
+        assert rec["new_plus_existing_delta"] == 5410
+
+    def test_instrument_broken_outranks_frozen(self):
+        """The dangerous case is a BELIEVABLE verdict over broken counters."""
+        r = KalshiScanReport(
+            stop_reason="main_scan_deadline",
+            events_fetched=100,
+            main_scan_events=100,
+            events_new=40,
+            events_existing=2000,   # cannot be: 40 + 2000 != 100
+            events_processed=40,
+            unreached_existing=2000,
+        )
+        assert r.verdict() == "instrument_broken"
+
+    def test_halves_must_also_sum_to_the_whole(self):
+        """The main-scan/supplementary split is checked, not just new/existing."""
+        r = KalshiScanReport(
+            stop_reason="exhausted",
+            wrapped=True,
+            events_fetched=110,
+            main_scan_events=50,
+            supplementary_events=10,   # 50 + 10 != 110
+            events_new=10,
+            events_existing=100,
+            events_processed=110,
+        )
+        assert r.reconciles() is False
+        assert r.verdict() == "instrument_broken"
+
+    def test_a_supplemented_scan_reconciles(self):
+        """The real shape: main scan + rescue, partitioned into new/existing."""
+        r = KalshiScanReport(
+            stop_reason="max_pages",
+            events_fetched=10410,
+            main_scan_events=5000,
+            supplementary_events=5410,
+            events_new=5335,
+            events_existing=5075,
+            events_processed=252,
+            unreached_existing=5075,
+        )
+        assert r.reconciles() is True
+        assert r.verdict() == "frozen"
+
+    def test_a_cancelled_fetch_is_not_a_broken_instrument(self):
+        """`fetch_wall` has no population, so the identity is not checked."""
+        r = KalshiScanReport(
+            stop_reason="fetch_wall",
+            events_fetched=5000,   # partial telemetry from the cancelled call
+            main_scan_events=5000,
+            events_new=0,
+            events_existing=0,
+        )
+        assert r.reconciliation()["checked"] is False
+        assert r.reconciles() is True
+        assert r.verdict() == "fetch_wall"
+
+    def test_reconciliation_is_serialized(self):
+        r = KalshiScanReport(stop_reason="exhausted", wrapped=True)
+        assert r.to_dict()["reconciliation"] == r.reconciliation()
+
+    def test_summary_counts_readable_beats_not_bare_runs(self):
+        good = KalshiScanReport(
+            stop_reason="max_pages",
+            events_fetched=10,
+            main_scan_events=10,
+            events_new=4,
+            events_existing=6,
+            events_processed=10,
+        ).to_dict()
+        bad = KalshiScanReport(
+            stop_reason="max_pages",
+            events_fetched=5,
+            main_scan_events=5,
+            events_new=4,
+            events_existing=6,
+            events_processed=10,
+        ).to_dict()
+        s = summarize_history([good, bad])
+        assert s["runs"] == 2
+        assert s["readable_beats"] == 1
+        assert s["runs_not_reconciling"] == 1
+        assert s["arithmetic_ok"] is False
+
+    def test_pre_fix_beats_count_as_unknown_never_as_passing(self):
+        """A beat written before the invariant cannot vouch for itself.
+
+        The >=3-beat gate must not be satisfiable by beats that predate the
+        thing being checked — that is the same false-green the whole report
+        exists to prevent.
+        """
+        legacy = {
+            "stop_reason": "max_pages",
+            "events_fetched": 5000,
+            "events_new": 5335,
+            "events_existing": 5075,
+            "verdict": "frozen",
+        }
+        s = summarize_history([legacy])
+        assert s["runs"] == 1
+        assert s["readable_beats"] == 0
+        assert s["runs_unknown_reconciliation"] == 1
+        assert s["arithmetic_ok"] is False
 
 
 class TestUnreachedExistingArithmetic:

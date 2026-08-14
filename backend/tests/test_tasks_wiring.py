@@ -249,6 +249,7 @@ class TestBeatScheduleCompleteness:
         "daily-digest",
         "backfill-polymarket-price-history",
         "backfill-kalshi-price-history",
+        "kalshi-cliff-drain",
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
         "backfill-box-scores",

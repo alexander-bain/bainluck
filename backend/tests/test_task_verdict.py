@@ -230,6 +230,14 @@ class TestEnforcementScope:
             # left the published payload. Three causes, one identical silence.
             # Terminal comes from `_precompute_bookmaker_calibration` itself.
             "bookmaker_calibration",
+            # #1586 (queue 355): the Kalshi cliff drain, enrolled at BIRTH
+            # rather than after an incident — the only member so far. Its
+            # cohort expires upstream (~7,800 markets/week), so "fetched
+            # nothing" and "nothing left to fetch" are outwardly identical and
+            # mean opposite things; that is precisely the kalshi_trades failure
+            # above, and there is no reason to wait ten weeks to learn it twice.
+            # Terminal comes from `kalshi_cliff._terminal`.
+            "kalshi_cliff_drain",
         }
 
     def test_enforced_task_partial_blocks_success(self):

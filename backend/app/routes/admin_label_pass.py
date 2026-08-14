@@ -22,9 +22,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import DiscoverReviewDecision, FuturesMarket
+from app.models.models import DiscoverReviewDecision, FuturesMarket, FuturesOutcome
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils.card_integrity import card_defects, field_coherence
 from app.utils.eval_promote import (
     APPLIED_DECISIONS,
     EVAL_DOWNRANK_EXACT,
@@ -140,17 +141,59 @@ def _build_lifecycle_row(proposal, market, now, *, superseded, posted_generation
     return row
 
 
-def _partition_candidates(candidates, markets, now):
+#: A proposal older than this is retired unlabelled (#1873). Even when every
+#: authoritative lifecycle signal still says "actionable", a months-old proposal
+#: is a months-old READING of a market — the reason it was interesting has very
+#: likely stopped being true, and Alex's label budget is the scarce resource
+#: here. Twelve days covers a full weekly evaluation cycle with slack.
+MAX_PROPOSAL_AGE_DAYS = 12
+
+
+def _proposal_expired(proposal, now) -> bool:
+    created = _utc(getattr(proposal, "created_at", None))
+    if created is None:
+        return False
+    return (now - created).days > MAX_PROPOSAL_AGE_DAYS
+
+
+def _card_suppression(market, outcomes) -> str | None:
+    """Why this market cannot be rendered as an honest card, if it cannot.
+
+    Deliberately SEPARATE from ``classify_pending``. That function answers "is
+    this proposal still current", is byte-locked to
+    ``scripts/evals/label_pass_lifecycle_contract``, and is about the market's
+    LIFECYCLE. This answers "can the card be drawn truthfully", which is about
+    the market's CONTENT — a live, current, perfectly un-stale market can still
+    be unlabelable because its options are all named ``Person K`` (#1872) or
+    because they cannot form a probability field (#1874).
+    """
+    if market is None or not outcomes:
+        return None
+    defects = card_defects(
+        outcome_names=[o.name for o in outcomes],
+        outcome_probabilities=[o.current_probability for o in outcomes],
+    )
+    return defects[0] if defects else None
+
+
+def _partition_candidates(candidates, markets, now, outcomes_by_market=None):
     """Pure partition of pending proposals into actionable / retired / quarantined.
 
     Duck-typed (proposals expose ``item_type``/``item_id``/``features``/…;
     markets expose ``id``/``status``/``resolution_date``/…) so it is unit-testable
     without a DB. Poison isolation (gotcha #42): a proposal that fails to resolve
-    is quarantined, never allowed to wipe the queue."""
+    is quarantined, never allowed to wipe the queue.
+
+    ``outcomes_by_market`` (queue 355) adds the CARD-INTEGRITY gate on top of the
+    lifecycle gate. Optional so existing callers keep working, but when omitted
+    the anonymized/incoherent suppressions simply do not fire — the caller that
+    serves Alex must pass it."""
+    outcomes_by_market = outcomes_by_market or {}
     seen_targets: set[tuple] = set()
     actionable = []
     retired_reasons: dict[str, int] = {}
     quarantine_reasons: dict[str, int] = {}
+    suppressed_reasons: dict[str, int] = {}
     oldest_gen = None
     newest_gen = None
 
@@ -174,6 +217,25 @@ def _partition_candidates(candidates, markets, now):
             quarantine_reasons[reason] = quarantine_reasons.get(reason, 0) + 1
             continue
 
+        # An age cap the lifecycle gate cannot express: every authoritative
+        # signal can still read "current" on a proposal nobody should spend a
+        # label on.
+        if _proposal_expired(p, now):
+            retired_reasons["proposal_expired"] = (
+                retired_reasons.get("proposal_expired", 0) + 1
+            )
+            continue
+
+        try:
+            defect = _card_suppression(
+                market, outcomes_by_market.get(getattr(market, "id", None)) or []
+            )
+        except Exception:
+            defect = None  # poison isolation: never let one row empty the queue
+        if defect:
+            suppressed_reasons[defect] = suppressed_reasons.get(defect, 0) + 1
+            continue
+
         gen = _effective_generation(p)
         if gen is not None:
             oldest_gen = gen if oldest_gen is None else min(oldest_gen, gen)
@@ -184,6 +246,7 @@ def _partition_candidates(candidates, markets, now):
         "actionable": actionable,
         "retired_reasons": retired_reasons,
         "quarantine_reasons": quarantine_reasons,
+        "suppressed_reasons": suppressed_reasons,
         "oldest_gen": oldest_gen,
         "newest_gen": newest_gen,
     }
@@ -197,6 +260,104 @@ def _verdict_outcome(proposal, market, now, *, verdict, kill_switch, duplicate, 
     row["duplicate_post"] = duplicate
     row["transaction_ok"] = True
     return classify_post(row)
+
+
+async def _load_outcomes(db, market_ids):
+    """Live outcomes for the candidate markets, ordered by probability desc.
+
+    Queue 355 (#1873): the card is derived from THESE, not from the snapshot
+    the proposal was written with. Ordering is stable so the leader is the same
+    row on every read."""
+    ids = {int(i) for i in market_ids if i is not None}
+    if not ids:
+        return {}
+    res = await db.execute(
+        select(FuturesOutcome)
+        .where(FuturesOutcome.market_id.in_(ids))
+        .order_by(
+            FuturesOutcome.market_id,
+            FuturesOutcome.current_probability.desc().nullslast(),
+            FuturesOutcome.id,
+        )
+    )
+    by_market: dict[int, list] = {}
+    for outcome in res.scalars().all():
+        by_market.setdefault(outcome.market_id, []).append(outcome)
+    return by_market
+
+
+def _live_features(proposal, market, outcomes) -> dict:
+    """The card Alex grades, derived from LIVE state (#1873/#1874).
+
+    The write-time snapshot is not discarded — it is nested under
+    ``snapshot_at_write`` so a reader can see what the evaluator originally
+    thought, and ``snapshot_disagrees`` says whether it still holds. That
+    distinction is the whole finding: the pool was never stale, the SNAPSHOT
+    was, and a fix that silently swapped one for the other would have hidden
+    the evidence for its own necessity.
+
+    The probability FIELD is withheld when it cannot be coherent, rather than
+    printed as a row of 100%s (honest-empty, ruling 027).
+    """
+    snapshot = dict(proposal.features or {})
+    features: dict = {}
+
+    if market is not None:
+        features["category"] = market.llm_sport_category
+        features["market_tier"] = market.market_tier
+        features["volume_24h"] = market.volume_24h
+        features["status"] = market.status
+        features["resolution_date"] = (
+            market.resolution_date.isoformat() if market.resolution_date else None
+        )
+
+    coherence = field_coherence([o.current_probability for o in outcomes])
+    features["field_coherent"] = coherence["coherent"]
+    features["field_sum"] = coherence["sum"]
+    if coherence["coherent"]:
+        leader = outcomes[0] if outcomes else None
+        features["probability"] = (
+            float(leader.current_probability)
+            if leader is not None and leader.current_probability is not None
+            else None
+        )
+        features["outcomes"] = [
+            {
+                "name": o.name,
+                "probability": (
+                    float(o.current_probability)
+                    if o.current_probability is not None
+                    else None
+                ),
+            }
+            for o in outcomes[:8]
+        ]
+    else:
+        # Say why, rather than showing a number that cannot be true.
+        features["probability"] = None
+        features["outcomes"] = None
+        features["field_withheld_reason"] = coherence["reason"]
+
+    features["snapshot_at_write"] = snapshot
+    features["snapshot_disagrees"] = _snapshot_disagrees(snapshot, features)
+    return features
+
+
+def _snapshot_disagrees(snapshot: dict, live: dict) -> bool:
+    """Did the write-time reading survive to serve time?
+
+    Reported rather than acted on. It is the measurement that says how much of
+    the label budget the old behaviour was burning, and it should stay visible
+    after the fix so a regression is legible.
+    """
+    old = snapshot.get("probability")
+    new = live.get("probability")
+    if old is None or new is None:
+        return old is not new
+    try:
+        return abs(float(old) - float(new)) > 0.05
+    except (TypeError, ValueError):
+        return True
 
 
 async def _load_markets(db, targets):
@@ -314,20 +475,26 @@ async def label_pass_pending(
     ]
 
     markets = await _load_markets(db, [(p.item_type, p.item_id) for p in candidates])
-    part = _partition_candidates(candidates, markets, now)
+    outcomes_by_market = await _load_outcomes(db, markets.keys())
+    part = _partition_candidates(candidates, markets, now, outcomes_by_market)
 
     items = []
+    snapshot_disagreements = 0
     for p, gen in part["actionable"]:
-        # Build the feature vector for the card.
-        features = dict(p.features or {})
-        if not any(k in features for k in ("probability", "movement_24h", "volume_24h")) and p.item_id:
-            market = markets.get(int(p.item_id)) if _is_market_id(p.item_type, p.item_id) else None
-            if market:
-                features.setdefault("probability", None)
-                features.setdefault("movement_24h", None)
-                features.setdefault("volume_24h", market.volume_24h)
-                features.setdefault("category", market.llm_sport_category)
-                features.setdefault("market_tier", market.market_tier)
+        # Queue 355 (#1873): derive the card from LIVE state. This used to
+        # render `p.features` — the snapshot captured when the proposal was
+        # written — so a card served today could be a months-old reading of a
+        # market that has since resolved and repriced. That is what put 2024-era
+        # copy and a row of 100%s in front of Alex.
+        market = (
+            markets.get(int(p.item_id))
+            if _is_market_id(p.item_type, p.item_id)
+            else None
+        )
+        outcomes = outcomes_by_market.get(getattr(market, "id", None)) or []
+        features = _live_features(p, market, outcomes)
+        if features.get("snapshot_disagrees"):
+            snapshot_disagreements += 1
         # Carry the generation in `features` so the client echoes it back on POST,
         # enabling the transactional GET→POST race check without a client change.
         if gen is not None:
@@ -354,8 +521,24 @@ async def label_pass_pending(
         "total": len(items),
         "retired": {"count": sum(part["retired_reasons"].values()), "reasons": part["retired_reasons"]},
         "quarantined": {"count": sum(part["quarantine_reasons"].values()), "reasons": part["quarantine_reasons"]},
+        # Queue 355: content defects, kept apart from lifecycle staleness. A
+        # market here is CURRENT and still unlabelable — anonymized at source
+        # (#1872) or unable to form a probability field (#1874).
+        "suppressed": {
+            "count": sum(part["suppressed_reasons"].values()),
+            "reasons": part["suppressed_reasons"],
+        },
+        "card_source": "live",
+        "snapshot_disagreements": snapshot_disagreements,
         "generation": {"oldest": part["oldest_gen"], "newest": part["newest_gen"]},
         "stale_applied_review": stale_applied,
+        "note": (
+            "Cards are derived from LIVE market state; the write-time snapshot "
+            "is preserved per item under features.snapshot_at_write. "
+            "`snapshot_disagreements` counts served cards whose snapshot no "
+            "longer matches live — under the old behaviour every one of those "
+            "was a card rendered wrong."
+        ),
     }
 
 

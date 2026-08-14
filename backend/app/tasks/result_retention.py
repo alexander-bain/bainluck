@@ -105,6 +105,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.grid_sentinel",
         "app.tasks.horizon_sentinel",
         "app.tasks.import_external_curator_ground_truth",
+        # #1586 (queue 355): dispatched from POST /admin/kalshi/cliff-drain/run,
+        # so its result must be retained or the status poll hangs.
+        "app.tasks.kalshi_cliff_drain",
         "app.tasks.lookup_and_backfill_extids",
         "app.tasks.match_prediction_markets",
         "app.tasks.merge_degenerate_combat_events",

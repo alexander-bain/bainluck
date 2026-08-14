@@ -46,6 +46,28 @@ and WHY it stopped. In particular:
   that reading, and no existing counter captures it.
 
 Nothing here changes scan behaviour. It is read-only telemetry.
+
+The reconciliation invariant (queue 355, #1845)
+-----------------------------------------------
+Beat 1 of the 350-2b gate read ``events_new 5,335 + events_existing 5,075 =
+10,410`` against ``events_fetched 5,000``. Both halves were honestly computed
+and neither was a partition of the other: ``events_fetched`` was a MID-FUNCTION
+snapshot of the main scan, written before the supplementary rescue loop added
+more events, while new/existing were derived from the full list the fetch
+RETURNS. Three different populations wearing names that implied one.
+
+The lesson is not "that counter was wrong" — it is that a reader had to do the
+addition by hand to find out, and the reading that mattered (``verdict:
+frozen``) sat one line above numbers that could not both be true. So the
+identity is now **checked by the artifact, every beat**:
+
+    events_new + events_existing == events_fetched == main_scan_events
+                                                      + supplementary_events
+
+When it fails, :meth:`KalshiScanReport.verdict` returns ``instrument_broken``
+and refuses to report a mechanism. An instrument that cannot add up does not
+get to name a disease — that is the whole reason the gate asked for three
+beats instead of one.
 """
 
 from __future__ import annotations
@@ -74,8 +96,18 @@ STOP_REASONS = (
     "main_scan_deadline",  # capped deadline hit; cursor saved, tail deferred
     "max_pages",          # page ceiling hit; cursor saved, tail deferred
     "page_error",         # a page fetch failed/timed out; scan stopped early
-    "not_run",            # fetch never started (quota guard, wall timeout, etc.)
+    # Queue 355: the fetch was CANCELLED at poll_kalshi's hard wall. Previously
+    # this left the default `max_pages` in place — a cancelled fetch reported
+    # itself as a page ceiling, i.e. as a scan that ran. It also produced the
+    # one legitimate non-reconciling shape (partial telemetry, zero events),
+    # which would otherwise be indistinguishable from a broken counter.
+    "fetch_wall",
+    "not_run",            # fetch never started (quota guard, etc.)
 )
+
+#: Stop reasons under which no scan population exists, so the reconciliation
+#: invariant has nothing to check and its failure means nothing.
+_NO_POPULATION_STOPS = frozenset({"not_run", "fetch_wall"})
 
 
 def cursor_fingerprint(cursor: Optional[str]) -> Optional[str]:
@@ -109,7 +141,15 @@ class KalshiScanReport:
     pages_fetched: int = 0
     pages_skipped: int = 0
     skip_reasons: Dict[str, int] = field(default_factory=dict)
+    #: The WHOLE population the fetch returned — main scan plus supplementary
+    #: rescue — and therefore the population new/existing partition. Written
+    #: once, at the return, over exactly what it names (queue 355).
     events_fetched: int = 0
+    #: Its two disjoint halves, so a reader can see WHERE the events came from
+    #: without re-deriving it. main_scan_events + supplementary_events must
+    #: equal events_fetched.
+    main_scan_events: int = 0
+    supplementary_events: int = 0
 
     # --- what the upsert loop actually reached ----------------------------
     # The half no existing counter captures. `unreached_existing` is the
@@ -125,16 +165,48 @@ class KalshiScanReport:
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
 
+    def reconciliation(self) -> Dict[str, Any]:
+        """The identity this report must satisfy, stated with its terms.
+
+        Returned whether or not it holds, because the terms are what makes a
+        failure diagnosable — ``ok: false`` on its own is just a second thing
+        to distrust.
+        """
+        partition = self.events_new + self.events_existing
+        halves = self.main_scan_events + self.supplementary_events
+        checked = self.stop_reason not in _NO_POPULATION_STOPS
+        return {
+            "checked": checked,
+            "ok": (not checked)
+            or (partition == self.events_fetched and halves == self.events_fetched),
+            "events_fetched": self.events_fetched,
+            "new_plus_existing": partition,
+            "new_plus_existing_delta": partition - self.events_fetched,
+            "main_plus_supplementary": halves,
+            "main_plus_supplementary_delta": halves - self.events_fetched,
+        }
+
+    def reconciles(self) -> bool:
+        """True when the counters add up (or when there is no population)."""
+        return bool(self.reconciliation()["ok"])
+
     def verdict(self) -> str:
         """A one-word reading. "It returned" is not "it worked" (gotcha #53).
 
+        * ``not_run`` / ``fetch_wall`` — no scan population exists to read.
+        * ``instrument_broken`` — the counters do not add up, so no mechanism
+          may be named off them (queue 355). This outranks every reading below
+          it deliberately: beat 1 reported ``frozen`` sitting directly above
+          ``5,335 + 5,075`` against ``5,000``, and the verdict was believed.
         * ``frozen``   — the scan reached no existing market this beat.
         * ``starved``  — it reached some, but the deadline cut off existing ones.
         * ``partial``  — pages were skipped or the walk did not wrap.
         * ``healthy``  — walked to exhaustion with nothing dropped.
         """
-        if self.stop_reason == "not_run":
-            return "not_run"
+        if self.stop_reason in _NO_POPULATION_STOPS:
+            return self.stop_reason
+        if not self.reconciles():
+            return "instrument_broken"
         reached_existing = self.events_processed - self.events_new
         if self.events_existing > 0 and reached_existing <= 0:
             return "frozen"
@@ -147,6 +219,7 @@ class KalshiScanReport:
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data["verdict"] = self.verdict()
+        data["reconciliation"] = self.reconciliation()
         return data
 
 
@@ -232,6 +305,22 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     unreached_existing = sum(int(h.get("unreached_existing") or 0) for h in history)
     processed = sum(int(h.get("events_processed") or 0) for h in history)
 
+    # Queue 355 (#1845): the gate reads THIS summary, so the arithmetic verdict
+    # has to survive the aggregation — a per-beat `instrument_broken` that gets
+    # averaged into a stop-reason histogram is a check nobody performs. Runs
+    # written before the fix carry no `reconciliation` block; they are counted
+    # as `unknown` rather than silently as passing, because a beat that cannot
+    # prove it adds up is not a beat that adds up.
+    reconciling = not_reconciling = unknown_reconciliation = 0
+    for h in history:
+        state = _history_reconciliation_state(h)
+        if state is True:
+            reconciling += 1
+        elif state is False:
+            not_reconciling += 1
+        else:
+            unknown_reconciliation += 1
+
     return {
         "runs": len(history),
         "distinct_start_cursors": distinct_starts,
@@ -242,7 +331,29 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
         "verdicts": verdict_hist,
         "total_events_processed": processed,
         "total_unreached_existing": unreached_existing,
+        # The gate's readability precondition, stated rather than assumed.
+        "runs_reconciling": reconciling,
+        "runs_not_reconciling": not_reconciling,
+        "runs_unknown_reconciliation": unknown_reconciliation,
+        "readable_beats": reconciling,
+        "arithmetic_ok": not_reconciling == 0 and unknown_reconciliation == 0,
     }
+
+
+def _history_reconciliation_state(h: Dict[str, Any]) -> Optional[bool]:
+    """Did this persisted beat's arithmetic close? ``None`` when unknowable.
+
+    ``None`` is the honest answer for a beat written before the invariant
+    existed: its ``events_fetched`` counted the main scan only, so re-deriving
+    the identity from its stored fields would manufacture a failure that the
+    run itself never claimed either way.
+    """
+    rec = h.get("reconciliation")
+    if isinstance(rec, dict) and "ok" in rec:
+        if not rec.get("checked", True):
+            return True
+        return bool(rec.get("ok"))
+    return None
 
 
 def new_report() -> KalshiScanReport:

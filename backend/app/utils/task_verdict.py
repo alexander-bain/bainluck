@@ -219,6 +219,14 @@ ENFORCED_TASKS = frozenset({
     # source, no log and no alarm. Enrolled so a starved, empty or unwritten run
     # reads NOT-GREEN instead of being recorded as a bare returning invocation.
     "bookmaker_calibration",           # terminal + published + errors
+    # #1586 (queue 355): the cliff drain. Enrolled at birth rather than after
+    # an incident, because its failure mode is already known and is the one
+    # this module exists for: the cohort it sweeps EXPIRES, so a run that
+    # fetched nothing and a run with nothing left to fetch look identical from
+    # outside and mean opposite things. Its `terminal` distinguishes them —
+    # `complete` only when the window is caught up, `failed` when the watermark
+    # could not be persisted (unresumable progress will simply be redone).
+    "kalshi_cliff_drain",              # terminal + errors + watermark
 })
 
 

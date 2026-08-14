@@ -103,8 +103,12 @@ class _Market:
         # malformed row would.
         top_prob = "not-a-number" if poison else 0.55
         self.outcomes = [
-            _Outcome(10 + id, "Candidate A", top_prob, change=0.12, opening=0.43),
-            _Outcome(20 + id, "Candidate B", 0.45, change=-0.12, opening=0.57),
+            # Real-looking names on purpose. "Candidate A"/"Candidate B" is the
+            # anonymized-at-source shape #1872 suppresses from Discover, so
+            # placeholder scaffolding here would suppress every fixture market
+            # and this file would pass vacuously while testing nothing.
+            _Outcome(10 + id, "Kamala Harris", top_prob, change=0.12, opening=0.43),
+            _Outcome(20 + id, "Donald Trump", 0.45, change=-0.12, opening=0.57),
         ]
 
 
