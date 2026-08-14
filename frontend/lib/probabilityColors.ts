@@ -2,7 +2,8 @@
  * Probability heat scale — design-system tokens ONLY.
  *
  * The site is light-mode only and CLAUDE.md forbids raw Tailwind palette classes
- * (`text-green-400`, `bg-amber-500/15`, …). ThresholdGrid and ProgressionLadder
+ * (`text-green-400`, `bg-amber-500/15`, …). ThresholdGrid (deleted UX-P075,
+ * gotcha #133) and ProgressionLadder
  * historically hand-rolled 4-band heat gradients in raw palette (a dark-mode
  * artifact that renders nearly invisible in light mode). This is the single
  * source of truth that replaces them, expressed purely on the accent tokens

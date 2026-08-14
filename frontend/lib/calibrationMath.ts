@@ -105,7 +105,14 @@ export function describeActivityComparison(
 
   const movedText = m.toFixed(ECE_DISPLAY_DP);
   const unchangedText = u.toFixed(ECE_DISPLAY_DP);
-  const lead = `Price moved sits at ${movedText}pp and price unchanged at ${unchangedText}pp`;
+  // UX-P075 item (c), Alex 2026-08-13: one vocabulary on this page. The cohorts
+  // were "price moved"/"price unchanged" here, "Active Trading"/"Opening Price
+  // Only" on the stat cards, and something else again in the toggle banner —
+  // five namings of two cohorts. The PREDICATE is unchanged; only the noun is.
+  // (`lib/calibrationCohort.ts` carries the reversal of L2-236's contrary
+  // decision, in the open, per ruling 055 — and the proxy footnote that Alex
+  // required to travel with the short word.)
+  const lead = `Traded sits at ${movedText}pp and untraded at ${unchangedText}pp`;
 
   if (m === u) {
     return {
@@ -120,8 +127,8 @@ export function describeActivityComparison(
   const movedHigher = m > u;
   const higher = movedHigher ? m : u;
   const lower = movedHigher ? u : m;
-  const higherLabel = movedHigher ? "price-moved" : "price-unchanged";
-  const lowerLabel = movedHigher ? "price-unchanged" : "price-moved";
+  const higherLabel = movedHigher ? "traded" : "untraded";
+  const lowerLabel = movedHigher ? "untraded" : "traded";
 
   // The ratio is suppressed when the smaller side rounds to 0.0pp (division by
   // zero) and when it would print as "1.0x", which reads as "the same" beside

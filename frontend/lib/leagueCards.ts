@@ -136,8 +136,9 @@ function parseLadderOutcome(
  * "the same primitive covers MLB hit props, RT scores, CPI ladders, and
  * temperature buckets", and L2-119 already gave it a `wideLabels` mode built for
  * date/time buckets. So this function produces rungs and produces NOTHING else —
- * no second ladder component. (`components/ThresholdGrid` is the one L2-118
- * replaced; it has no live importer and is deliberately not resurrected here.)
+ * no second ladder component. (`components/ThresholdGrid` was the one L2-118
+ * replaced. It had no live importer and this queue nearly reused it anyway,
+ * believing the name; UX-P075 DELETED it — gotcha #133, Alex ruling 2.)
  *
  * Measured 2026-08-14 on `/api/leagues/baseball_mlb`: six "X: Debut Date"
  * markets, 6–8 outcomes each, shaped "Before Nov 1, 2029". They were rendering

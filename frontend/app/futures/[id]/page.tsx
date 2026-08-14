@@ -764,7 +764,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       )}
 
       {/* Threshold ladder — one question, many rungs, heat-strip.
-          QuantityGroup (Queue L2-118) replaces the old ThresholdGrid: a "≥ N"
+          QuantityGroup (Queue L2-118) replaced the old ThresholdGrid: a "≥ N"
           market is one continuous question, not N yes/no cards. */}
       {thresholdEntries.map(([stem, outcomes]) => (
         <QuantityGroup

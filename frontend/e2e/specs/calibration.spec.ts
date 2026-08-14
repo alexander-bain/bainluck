@@ -17,7 +17,7 @@ import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
  *   1. Did the calibration API actually get called, and did it succeed?
  *   2. Is the hard error state absent, and the loader unmounted?
  *   3. Do the stat cards carry values that are actually finite numbers?
- *   4. Is the well-traded/thin control present (it governs every table below)?
+ *   4. Is the traded/untraded control present (it governs every table below)?
  *   5. Is the methodology section present?
  *   6. Do the stat cards lay out without collapsing or overlapping?
  *
@@ -83,7 +83,7 @@ const STAT_HOOKS = [
   "calibration-stat-categories",
 ] as const;
 
-/** The well-traded / thin toggle, which governs every table and curve below. */
+/** The traded / untraded toggle, which governs every table and curve below. */
 const COHORT_CONTROL = '[data-testid="calibration-cohort-toggle"]';
 
 /** A rendered value that is not a finite number, however it got there. */
@@ -283,6 +283,19 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   // a sentence, and no dependence on how that sentence is worded.
   const activitySection = page.locator(ACTIVITY_SECTION).first();
   const activityPresent = await activitySection.isVisible().catch(() => false);
+
+  // UX-P075 item (b): the two aggregate cohort cards moved inside a `<details>`
+  // that is closed by default. `readActivityValue` uses `innerText`, which
+  // returns "" for a collapsed element — so without this click both reads come
+  // back empty and the "both activity cohort values must render as finite
+  // numbers" assertion below fails on a page that is perfectly healthy.
+  if (activityPresent) {
+    await page
+      .locator('[data-testid="calibration-overall-split"] > summary')
+      .first()
+      .click({ timeout: 5_000 })
+      .catch(() => null);
+  }
   const activityValues: Record<string, number> = {};
   let activityDirection: string | null = null;
 
@@ -306,9 +319,12 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
 
   // Which cohort the RENDERED numbers say is worse. `ACTIVITY_MOVED` is the
   // price-moved side; `ACTIVITY_UNCHANGED` is price-unchanged. Named by hook
-  // rather than by card label on purpose — queue 316 reworded both labels
-  // ("Active Trading" → "Price changed", "Opening Price Only" → "Price stayed
-  // put") and this read did not move, which is the property the hooks exist for.
+  // rather than by card label on purpose, and the labels have now been reworded
+  // TWICE without this read moving — which is the whole property the hooks exist
+  // for. Queue 316: "Active Trading" -> "Price changed", "Opening Price Only" ->
+  // "Price stayed put". UX-P075 item (c): "Price changed" -> "Traded",
+  // "Price stayed put" -> "Untraded". The two cards are keyed by testid, not by
+  // label, so neither rename reaches this assertion.
   const moved = activityValues[ACTIVITY_MOVED];
   const unchanged = activityValues[ACTIVITY_UNCHANGED];
   // The page rounds both to 1dp before comparing (that is what the reader sees),
@@ -351,7 +367,7 @@ test("public calibration renders finite, non-degraded numbers", async ({ page, j
   ).toBeNull();
   expect(loadingVisible, "the loading state must not still be mounted").toBe(false);
   expect(methodologyVisible, "the methodology section must render").toBe(true);
-  expect(cohortControlVisible, "the well-traded/thin control must render").toBe(true);
+  expect(cohortControlVisible, "the traded/untraded control must render").toBe(true);
 
   // L2-231. The hooks themselves are evidence: if the page root is absent, every
   // hook-based read above degraded to null and the run must not be read as green.

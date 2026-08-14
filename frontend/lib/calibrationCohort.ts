@@ -30,11 +30,6 @@
 //
 //   - "well-traded" is a LIQUIDITY claim. The predicate measures MOVEMENT. A
 //     market can trade heavily and close where it opened.
-//   - "thin / untraded" for the excluded side is false twice over. Those rows
-//     are `price_moved === false` — they traded, they just never moved — and
-//     the published population already excludes zero-bid, zero-volume outcomes
-//     upstream (see the page's methodology section). Nothing in the excluded
-//     set is untraded.
 //
 // So every label here names its predicate and nothing else. Where the predicate
 // really does measure trading movement — a payload with no not-applicable rows,
@@ -44,6 +39,39 @@
 // Native's `cohortHeadline` still reads "Showing well-traded markets (N)" and
 // is now the residual divergence, owed a one-line native follow-up. It is out of
 // this queue's gate: reported, not edited.
+//
+// ---------------------------------------------------------------------------
+// UX-P075 — L2-236's SECOND objection is OVERTURNED, in the open (ruling 055)
+// ---------------------------------------------------------------------------
+//
+// This header used to carry a second bullet, deleted above and quoted here so
+// the reversal is legible at the point where the argument lived:
+//
+//   > "thin / untraded" for the excluded side is false twice over. Those rows
+//   > are `price_moved === false` — they traded, they just never moved — and
+//   > the published population already excludes zero-bid, zero-volume outcomes
+//   > upstream. Nothing in the excluded set is untraded.
+//
+// **That is factually correct and it is overruled anyway** — by Alex, 2026-08-13
+// eyeball session, staged as UX-P075 item (a): *rename the excluded cohort
+// "untraded" everywhere; keep the proxy footnote — the rename must not quietly
+// upgrade a proxy into a fact.* Later, and specific to this exact page and this
+// exact word, so it governs (ruling 055's citation test).
+//
+// The reasoning behind the override, recorded so it is not re-litigated: L2-236
+// solved a truth problem by making every label a predicate description, and
+// bought truth with unreadability. "Showing markets whose price moved, plus
+// sportsbook lines" is unimpeachable and nobody parses it. `/calibration`'s
+// entire job is credibility with a non-technical reader (PRD §2; ruling 044 was
+// banked against this page by name), and a sentence that is accurate and unread
+// communicates nothing — which is the failure ruling 044 exists to name.
+//
+// So the resolution is NOT to drop L2-236's point but to relocate it: the short
+// word goes in the label, and the predicate goes in a footnote that travels with
+// it, ALWAYS. `proxyFootnote` below is that footnote, it is non-optional
+// whenever the word appears, and `calibrationCohort.test.ts` asserts the pairing
+// rather than banning the word. A short word with its proxy stated is honest; a
+// short word alone is the thing L2-236 was right about.
 
 /** en-US thousands separators, fixed so tests do not depend on host locale. */
 function fmt(n: number): string {
@@ -89,12 +117,39 @@ export interface CohortCopy {
    */
   partitionNote: string | null;
   /**
+   * The proxy footnote — UX-P075 / Alex 2026-08-14 item (a).
+   *
+   * NON-OPTIONAL wherever the short words appear. "Traded"/"untraded" are the
+   * reader's words for a PRICE test, and this sentence is what stops the rename
+   * from upgrading a proxy into a fact. It states the asymmetry precisely:
+   * movement proves trading, stillness does not prove its absence.
+   *
+   * Derived by TESTING the emitted labels for the word, never by a separate
+   * condition that implies them — so it is null exactly when no label says
+   * "untraded", and the two cannot drift. A footnote about a cohort the page is
+   * not showing is boilerplate, and boilerplate is how a caveat stops being read.
+   */
+  proxyFootnote: string | null;
+  /**
    * `moved + unchanged + notApplicable === fullN`. False means the payload
    * carries a `price_moved` value outside the tri-state, and any cohort count
    * derived from it is describing fewer rows than it claims.
    */
   reconciles: boolean;
 }
+
+/**
+ * The proxy footnote's text. One constant, because the page renders it and the
+ * test asserts it, and a footnote that exists in two spellings is a footnote
+ * one of whose spellings is unguarded.
+ */
+export const PROXY_FOOTNOTE =
+  '"Traded" and "untraded" are shorthand for a price test, not a trade count. ' +
+  "A price that moved off its opening line proves trading happened; a price " +
+  "that never moved does not prove that it didn't. Outcomes with no bid and no " +
+  "volume are already excluded upstream, so nothing in the untraded set is " +
+  "untraded in the literal sense — it is the set whose price never moved off " +
+  "its opening line.";
 
 /**
  * Count the three `price_moved` states over anything bucket-shaped.
@@ -145,55 +200,86 @@ export function describeCohort(
       `= ${fmt(fullN)} resolved outcomes.`
     : null;
 
+  // The footnote rides with the WORD — and that is implemented by TESTING the
+  // emitted labels, not by guessing a condition that implies them.
+  //
+  // The first draft guessed (`unchangedN > 0`) and was wrong twice in a row: the
+  // zero-untraded branch still said "Excluded: 0 untraded outcomes", and after
+  // that was fixed the toggle still said "Include untraded". Both were caught by
+  // the pairing test, both were the same mistake — a second expression that has
+  // to stay in agreement with the strings, i.e. #1620's disease in miniature.
+  // Deriving the footnote FROM the strings makes disagreement unrepresentable.
+  const withFootnote = (copy: Omit<CohortCopy, "proxyFootnote">): CohortCopy => ({
+    ...copy,
+    proxyFootnote: [
+      copy.headline, copy.detail, copy.toggleLabel,
+      copy.statDetail, copy.heroClause, copy.shortLabel,
+    ].some(l => /untraded/i.test(l))
+      ? PROXY_FOOTNOTE
+      : null,
+  });
+
   if (includeNeverMoved) {
-    return {
+    return withFootnote({
       key: "all",
       cohortN,
       fullN,
       shortLabel: "All markets",
       headline: `Showing all markets (${fmt(fullN)})`,
       detail: hasNotApplicable
-        ? `${fmt(movedN)} price moved · ${fmt(unchangedN)} price unchanged · ` +
+        ? `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded · ` +
           `${fmt(notApplicableN)} not applicable (sportsbook lines).`
-        : `${fmt(movedN)} price moved · ${fmt(unchangedN)} price unchanged.`,
-      toggleLabel: "Exclude never-moved",
+        : `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded.`,
+      toggleLabel: unchangedN > 0 ? "Exclude untraded" : "Show every outcome",
       statDetail: `all outcomes · ${fmt(fullN)} total`,
       heroClause: `${fmt(fullN)} resolved predictions`,
       partitionNote,
       reconciles,
-    };
+    });
   }
 
-  // The default cohort. Its name is what it selects: outcomes whose price
-  // moved, plus the rows where that test does not apply.
+  // The default cohort: the traded outcomes, plus the rows where the price test
+  // does not apply. The short word leads; `proxyFootnote` states what it means.
   const shortLabel = hasNotApplicable
-    ? "Price moved + sportsbook lines"
-    : "Price moved";
+    ? "Traded + sportsbook lines"
+    : "Traded";
   const headline = hasNotApplicable
-    ? `Showing markets whose price moved, plus sportsbook lines (${fmt(defaultCohortN)})`
-    : `Showing markets whose price moved (${fmt(defaultCohortN)})`;
-  const excluded = `Excluded: ${fmt(unchangedN)} outcomes whose price never moved off its opening line.`;
+    ? `Showing traded markets, plus sportsbook lines (${fmt(defaultCohortN)})`
+    : `Showing traded markets (${fmt(defaultCohortN)})`;
+  // An empty excluded side excludes NOTHING, so it gets no clause — "Excluded:
+  // 0 untraded outcomes" both states a non-fact and puts the word "untraded" on
+  // screen in the one state where `proxyFootnote` is (correctly) null, breaking
+  // the pairing invariant. Caught by that invariant's own test on its first run,
+  // which is the whole argument for writing the assertion as a pairing rather
+  // than as a word-ban.
+  const excluded = unchangedN > 0
+    ? ` Excluded: ${fmt(unchangedN)} untraded outcomes, whose price never moved off its opening line.`
+    : "";
   const detail = hasNotApplicable
-    ? `${fmt(movedN)} outcomes whose price real trading moved, plus ${fmt(notApplicableN)} ` +
-      `sportsbook lines where that test doesn't apply. ${excluded}`
-    : // No not-applicable rows: the cohort really is "where real trading moved
-      // the price", so the plain claim is measured and may stand.
-      `Every outcome whose price real trading moved. ${excluded}`;
+    ? `${fmt(movedN)} traded outcomes, plus ${fmt(notApplicableN)} ` +
+      `sportsbook lines where that test doesn't apply.${excluded}`
+    : // No not-applicable rows: the cohort really is exactly the traded set.
+      `Every traded outcome.${excluded}`;
 
-  return {
+  return withFootnote({
     key: "excluding_never_moved",
     cohortN,
     fullN,
     shortLabel,
     headline,
     detail,
-    toggleLabel: `Include never-moved (+${fmt(unchangedN)})`,
-    statDetail: `excludes ${fmt(unchangedN)} never-moved · ${fmt(fullN)} total`,
-    heroClause:
-      `${fmt(defaultCohortN)} resolved predictions — every outcome except the ` +
-      `${fmt(unchangedN)} whose price never moved off its opening line ` +
-      `(${fmt(fullN)} in total)`,
+    toggleLabel: unchangedN > 0
+      ? `Include untraded (+${fmt(unchangedN)})`
+      : "Show every outcome",
+    statDetail: unchangedN > 0
+      ? `excludes ${fmt(unchangedN)} untraded · ${fmt(fullN)} total`
+      : `all outcomes · ${fmt(fullN)} total`,
+    heroClause: unchangedN > 0
+      ? `${fmt(defaultCohortN)} resolved predictions — every outcome except the ` +
+        `${fmt(unchangedN)} untraded ones, whose price never moved off its ` +
+        `opening line (${fmt(fullN)} in total)`
+      : `${fmt(defaultCohortN)} resolved predictions`,
     partitionNote,
     reconciles,
-  };
+  });
 }

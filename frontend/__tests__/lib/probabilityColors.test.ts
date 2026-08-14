@@ -1,4 +1,5 @@
 // L2-117: ThresholdGrid + ProgressionLadder carried raw-palette token debt
+// (ThresholdGrid deleted by UX-P075 — see gotcha #133; QuantityGroup took its slot)
 // (`text-green-400`, `bg-amber-500/15`, …) — a dark-mode artifact that renders
 // nearly invisible on the light-mode-only site and violates the CLAUDE.md
 // design-system rule. lib/probabilityColors.ts is the single tokenized heat
@@ -63,7 +64,10 @@ describe("no raw palette in heat components (L2-117)", () => {
       .replace(/\/\/.*$/gm, "");
 
   const COMPONENTS = [
-    "components/ThresholdGrid.tsx",
+    // `components/ThresholdGrid.tsx` sat here until UX-P075 deleted it (gotcha
+    // #133 — no importer since L2-118). Replaced by its live successor, so the
+    // token-debt guard keeps covering a ladder a reader can actually reach.
+    "components/QuantityGroup.tsx",
     "components/ProgressionLadder.tsx",
     "components/event/FinishPositionLadder.tsx",
   ];

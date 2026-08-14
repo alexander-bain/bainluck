@@ -1340,3 +1340,6 @@ failure this document already records happening twice.
 - [050](rulings/050-a-control-that-cannot-fail-is-not-a-control.md) — 2026-08-13 — A control that cannot fail is not a control: read the null prediction, and arm it with a HALT (Alex)
 - [051](rulings/051-below-the-floor-a-source-is-absent-not-stale.md) — 2026-08-14 — Below its evidence floor a source is ABSENT, not stale: sportsbook consensus floors at 3 books, then drops and re-weights — never freezes (Alex)
 - [052](rulings/052-measure-the-instruction-before-you-obey-it.md) — 2026-08-14 — Measure the instruction before you obey it; ship the payoff sentence and name the words you skipped (Alex)
+- [053](rulings/053-a-binary-card-leads-with-the-side-its-question-names.md) — 2026-08-14 — A binary card leads with the side its own question names; series keep both (Alex)
+- [054](rulings/054-honoring-a-remove-ruling-means-measuring-its-sites.md) — 2026-08-14 — Honoring a remove-ruling means measuring its sites, not counting its lines (Alex)
+- [055](rulings/055-a-conflict-resolution-that-changes-a-decision-is-a-decision.md) — 2026-08-14 — A conflict resolution that changes a decision is a decision, and is recorded like one; a duplicate number renumbers, never keep-both (Alex)
