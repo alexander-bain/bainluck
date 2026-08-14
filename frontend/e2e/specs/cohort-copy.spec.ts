@@ -382,9 +382,13 @@ async function commonRenderedClaims(text: string, page: Page): Promise<Claim[]> 
 async function productionNumberClaims(text: string, page: Page): Promise<Claim[]> {
   const claims = await commonRenderedClaims(text, page);
   claims.push(
-    has("copy.headline_names_both_halves", text, "Showing traded markets, plus sportsbook lines (389,385)"),
-    has("copy.moved_half_counted", text, "349,310 traded outcomes"),
-    has("copy.not_applicable_half_named", text, "40,075 sportsbook lines where that test doesn't apply"),
+    // UX-P080 item 3 (#1865): the third category is DISSOLVED. Sportsbook lines
+    // are traded by construction, so the headline names ONE traded number and
+    // the sentence names the sportsbook rows as a subset of it — not as a third
+    // thing sitting outside both cohorts. The arithmetic is unchanged; only the
+    // grouping and the words moved.
+    has("copy.headline_is_one_traded_number", text, "Showing traded markets (389,385)"),
+    has("copy.sportsbook_named_as_a_subset", text, "389,385 traded outcomes (including 40,075 sportsbook lines)"),
     has("copy.excluded_side_counted", text, "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."),
     has("copy.toggle_names_what_it_adds", text, "Include untraded (+263,022)"),
     // UX-P075 item (a): the short word must never be on screen without the
@@ -394,8 +398,12 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     has(
       "copy.activity_partition_reconciles_on_screen",
       text,
-      "349,310 + 263,022 + 40,075 = 652,407 resolved outcomes"
-    )
+      "349,310 price-moved + 40,075 sportsbook = 389,385 traded, plus 263,022 untraded = 652,407 resolved outcomes"
+    ),
+    // The definition did not vanish with the apology — it moved to the footnote.
+    // Without this the page could assert "counted as traded" and never say why,
+    // on the one page whose whole job is not needing to be taken at our word.
+    has("copy.sportsbook_definition_kept_in_footnote", text, "traded by construction")
   );
   const direction = await attr(page, '[data-testid="calibration-activity-section"]', "data-activity-direction");
   claims.push({
@@ -460,13 +468,13 @@ test.describe("calibration cohort copy", () => {
       const claims = await commonRenderedClaims(text, p);
       // Swapped: the moved side is now the 263,022-row cohort.
       claims.push(
-        has("copy.headline_follows_the_swap", text, "Showing traded markets, plus sportsbook lines (303,097)"),
-        has("copy.moved_half_counted", text, "263,022 traded outcomes"),
+        has("copy.headline_follows_the_swap", text, "Showing traded markets (303,097)"),
+        has("copy.sportsbook_named_as_a_subset", text, "303,097 traded outcomes (including 40,075 sportsbook lines)"),
         has("copy.excluded_side_counted", text, "Excluded: 349,310 untraded outcomes, whose price never moved off its opening line."),
         has(
           "copy.activity_partition_reconciles_on_screen",
           text,
-          "263,022 + 349,310 + 40,075 = 652,407 resolved outcomes"
+          "263,022 price-moved + 40,075 sportsbook = 303,097 traded, plus 349,310 untraded = 652,407 resolved outcomes"
         ),
         has("direction.sentence_names_the_other_cohort", text, "untraded cohort carries the higher calibration error")
       );
