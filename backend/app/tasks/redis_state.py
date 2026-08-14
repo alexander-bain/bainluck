@@ -673,6 +673,123 @@ def get_all_task_deliveries() -> dict:
         return {}
 
 
+#: Execution lifecycle, counted at celery's OWN signals and keyed by the
+#: fully-qualified task name — #1501 item 2, from codex C-CERT-SENTRY-R2.
+#:
+#: This exists because the compensating instrument for a dropped Sentry event
+#: STARTED BELOW THE FAILURE BOUNDARY it was supposed to cover.
+#: ``hard_kills_24h`` is ``starts - terminals``, and ``record_task_started``
+#: fires inside ``_tracked_run`` — a helper the *task body* elects to call. So:
+#:
+#: * a child killed BEFORE it reaches that helper records no start, contributes
+#:   zero to the difference, and is therefore invisible to the counter;
+#: * **30 of 117 beat-scheduled tasks never call the helper at all**, so for
+#:   those tasks a hard kill and a healthy no-op delivery are the same
+#:   observation — in the counter AND in Sentry, because the parent-side
+#:   ``WorkerLostError`` is dropped on the premise that the counter sees it.
+#:
+#: A compensating instrument that starts below the failure boundary is not a
+#: compensating instrument. These two counters are written from ``task_prerun``
+#: and ``task_postrun``, which celery emits for **every execution of every
+#: task** with no cooperation from any task body, so no body can opt out and
+#: task 118 cannot forget to join.
+#:
+#: ``attempts - terminals`` is the death count. Two residuals, both named rather
+#: than hidden:
+#:
+#: 1. **In-flight runs** inflate the gap by at most the fleet's total
+#:    concurrency (~14 processes), so a gap of 1-2 is not yet evidence and a
+#:    sustained or large gap is.
+#: 2. **A death before ``task_prerun``** — a child lost while the message is
+#:    being unpacked — is counted by neither. That window is microseconds of
+#:    broker plumbing against a task body's seconds-to-minutes, and closing it
+#:    would need a parent-side ``task_received`` counter whose prefetch makes it
+#:    an upper bound rather than a count. Stated, not closed.
+#:
+#: Unlike ``:starts``, this pair deliberately does NOT filter retries or eager
+#: runs: a retry that dies is a death, and both counters must apply the same
+#: predicate or the difference goes negative and silently reads as healthy.
+TASK_LIFECYCLE_PREFIX = "bainluck:task_lifecycle"
+
+
+def record_task_attempt(full_task_name: str):
+    """Count one EXECUTION ATTEMPT, from ``task_prerun`` (#1501 item 2).
+
+    Cheapest possible write, best-effort, swallowing everything: it runs before
+    every task in the system and must never be the reason one fails to start.
+    """
+    if not full_task_name:
+        return
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        _bump_window_counter(pipe, f"{TASK_LIFECYCLE_PREFIX}:{full_task_name}:attempts")
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def record_task_terminal(full_task_name: str):
+    """Count one TERMINAL, from ``task_postrun`` (#1501 item 2).
+
+    ``task_postrun`` is emitted after the body returns **or raises**, so a
+    handled failure is a terminal exactly like a success. What leaves no
+    terminal is what this pair exists to see: SIGKILL, a hard ``time_limit``
+    teardown, a dyno cycle mid-run — the deaths that reach no ``except`` block.
+    """
+    if not full_task_name:
+        return
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        _bump_window_counter(pipe, f"{TASK_LIFECYCLE_PREFIX}:{full_task_name}:terminals")
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def get_hard_kill_census() -> dict:
+    """``{celery task name: {"attempts", "terminals", "hard_kills", "window_s"}}``.
+
+    Independent of ``_tracked_run`` end to end: nothing here is keyed by the
+    short label, so the 30 tasks that never call the helper appear like any
+    other. ``window_s`` rides along for the LAT-P024 reason — a count handed
+    over without the window that makes it a rate is not a measurement.
+
+    ``hard_kills`` is floored at 0. A negative difference means terminals
+    outran attempts across a window boundary (the two counters expire
+    independently), which is a measurement artifact and not a negative number
+    of deaths.
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{TASK_LIFECYCLE_PREFIX}:"
+        rows: dict = {}
+        for key in r.keys(f"{prefix}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            remainder = key_str[len(prefix):]
+            if ":" not in remainder:
+                continue
+            name, _, kind = remainder.rpartition(":")
+            if not name or kind not in ("attempts", "terminals"):
+                continue
+            try:
+                value = int(r.get(key_str) or 0)
+            except (TypeError, ValueError):
+                continue
+            row = rows.setdefault(
+                name, {"attempts": 0, "terminals": 0, "hard_kills": 0, "window_s": None}
+            )
+            row[kind] = value
+            if kind == "attempts":
+                row["window_s"] = _window_age_s(r, key_str)
+        for row in rows.values():
+            row["hard_kills"] = max(0, row["attempts"] - row["terminals"])
+        return rows
+    except Exception:
+        return {}
+
+
 #: `app.tasks.<name>` -> the short `_tracked_run` label. One hash, so a reader
 #: joins the beat schedule to the metrics in a single round trip.
 TASK_LABEL_MAP_KEY = f"{TASK_METRICS_PREFIX}:label_map"
