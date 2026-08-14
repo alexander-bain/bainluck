@@ -149,7 +149,17 @@ export const PROXY_FOOTNOTE =
   "that never moved does not prove that it didn't. Outcomes with no bid and no " +
   "volume are already excluded upstream, so nothing in the untraded set is " +
   "untraded in the literal sense — it is the set whose price never moved off " +
-  "its opening line.";
+  "its opening line. " +
+  // UX-P080 item 3 (Alex round 2). This is the definition the headline sentence
+  // stopped carrying. It belongs here and not up there for the reason the whole
+  // footnote exists: the short word leads, the precision rides with it. Note it
+  // states the GROUND ("a book moves its line with money"), not just the
+  // conclusion — a reader who is told sportsbook lines count as traded and not
+  // told why has been asked to take our word for it, on the one page whose
+  // entire job is not needing to be taken at our word.
+  "Sportsbook lines carry no price-moved flag and do not need one: a book " +
+  "moves its line with money, so those outcomes are traded by construction " +
+  "and are counted as traded here.";
 
 /**
  * Count the three `price_moved` states over anything bucket-shaped.
@@ -194,9 +204,17 @@ export function describeCohort(
 
   // The activity split's own reconciliation. Identical in shape to native's
   // `activityPartitionNote` so the two surfaces state one arithmetic fact.
+  // UX-P080 item 3. The arithmetic is unchanged; the SENTENCE had to change with
+  // it. This note used to say sportsbook lines "sit in neither cohort" — true of
+  // the old framing, and now a contradiction of the copy directly above it,
+  // where they are counted as traded. A reconciliation note that disagrees with
+  // the sentence it reconciles is worse than none: it is the page arguing with
+  // itself in small print, on the surface whose only job is credibility.
   const partitionNote = hasNotApplicable
-    ? `Sportsbook lines (${fmt(notApplicableN)} outcomes) carry no price-moved flag, so they ` +
-      `sit in neither cohort: ${fmt(movedN)} + ${fmt(unchangedN)} + ${fmt(notApplicableN)} ` +
+    ? `Sportsbook lines (${fmt(notApplicableN)} outcomes) carry no price-moved flag and ` +
+      `need none — a book moves its line with money — so they count as traded: ` +
+      `${fmt(movedN)} price-moved + ${fmt(notApplicableN)} sportsbook = ` +
+      `${fmt(defaultCohortN)} traded, plus ${fmt(unchangedN)} untraded ` +
       `= ${fmt(fullN)} resolved outcomes.`
     : null;
 
@@ -226,9 +244,12 @@ export function describeCohort(
       fullN,
       shortLabel: "All markets",
       headline: `Showing all markets (${fmt(fullN)})`,
+      // Two cohorts, not three. "Not applicable" named a category the ruling
+      // dissolved; the sportsbook count survives as a parenthetical inside the
+      // cohort it actually belongs to.
       detail: hasNotApplicable
-        ? `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded · ` +
-          `${fmt(notApplicableN)} not applicable (sportsbook lines).`
+        ? `${fmt(defaultCohortN)} traded (including ${fmt(notApplicableN)} ` +
+          `sportsbook lines) · ${fmt(unchangedN)} untraded.`
         : `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded.`,
       toggleLabel: unchangedN > 0 ? "Exclude untraded" : "Show every outcome",
       statDetail: `all outcomes · ${fmt(fullN)} total`,
@@ -238,14 +259,30 @@ export function describeCohort(
     });
   }
 
-  // The default cohort: the traded outcomes, plus the rows where the price test
-  // does not apply. The short word leads; `proxyFootnote` states what it means.
-  const shortLabel = hasNotApplicable
-    ? "Traded + sportsbook lines"
-    : "Traded";
-  const headline = hasNotApplicable
-    ? `Showing traded markets, plus sportsbook lines (${fmt(defaultCohortN)})`
-    : `Showing traded markets (${fmt(defaultCohortN)})`;
+  // UX-P080 item 3 — Alex round 2. The default cohort is THE TRADED OUTCOMES,
+  // full stop, and sportsbook lines are part of it rather than an appendix to
+  // it.
+  //
+  // The ruling that collapses the two: **sportsbook lines are traded BY
+  // CONSTRUCTION — a book moves its line with money.** So the absent
+  // `price_moved` flag on those rows was never evidence that the price test
+  // failed on them; it is evidence that the test is unnecessary for them. The
+  // old copy inherited the flag's shape instead of the fact's, and every
+  // sentence it produced had to apologise for a third category that does not
+  // exist: "plus sportsbook lines where that test doesn't apply."
+  //
+  // What that cost the reader is the point. "413,406 traded outcomes" is one
+  // number they can hold; "372,615 traded outcomes, plus 40,791 sportsbook
+  // lines where that test doesn't apply" is two numbers, a caveat, and a
+  // subtraction — and the reader who does the subtraction still does not learn
+  // anything, because the answer is that all of them are traded.
+  //
+  // The definition does not vanish; it moves to `PROXY_FOOTNOTE`, which already
+  // travels with the word wherever the word appears. Same move UX-P075 made for
+  // "untraded" and UX-P078 made for the shape annex: the short true thing leads,
+  // the precision rides underneath it, and neither is dropped.
+  const shortLabel = "Traded";
+  const headline = `Showing traded markets (${fmt(defaultCohortN)})`;
   // An empty excluded side excludes NOTHING, so it gets no clause — "Excluded:
   // 0 untraded outcomes" both states a non-fact and puts the word "untraded" on
   // screen in the one state where `proxyFootnote` is (correctly) null, breaking
@@ -256,9 +293,10 @@ export function describeCohort(
     ? ` Excluded: ${fmt(unchangedN)} untraded outcomes, whose price never moved off its opening line.`
     : "";
   const detail = hasNotApplicable
-    ? `${fmt(movedN)} traded outcomes, plus ${fmt(notApplicableN)} ` +
-      `sportsbook lines where that test doesn't apply.${excluded}`
-    : // No not-applicable rows: the cohort really is exactly the traded set.
+    ? `${fmt(defaultCohortN)} traded outcomes ` +
+      `(including ${fmt(notApplicableN)} sportsbook lines).${excluded}`
+    : // No sportsbook rows in this payload: the cohort is the price-moved set
+      // and there is no second construction to name.
       `Every traded outcome.${excluded}`;
 
   return withFootnote({
