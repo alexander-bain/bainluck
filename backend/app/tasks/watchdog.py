@@ -19,6 +19,7 @@ signal goes bad:
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 import sentry_sdk
@@ -71,6 +72,112 @@ def _bounded_rc():
 # the same event to the GitHub filing rail (#215E's play for freshness) so ONE
 # deduped board issue per stall episode carries the evidence.
 _WATCHDOG_ALERT_MARKER = "watchdog-alert-fingerprint"
+
+
+# --- #1501: alert EMISSION cooldown ------------------------------------------
+# Fingerprinting (above) collapses many readings into one ISSUE. It does NOT
+# reduce the EVENT count, and Sentry bills events — so a stall that persists for
+# a day still billed one event per watchdog run.
+#
+# Measured over the 2026-07-21 -> 07-29 billing cycle, culprit
+# ``app.tasks.run_freshness_watchdog``: **1,579 events, 24% of the entire
+# 6,584-event cycle**, from a handful of distinct conditions repeating. And it
+# is TWO events per reading, not one:
+#
+#   * 805 with no logger  -> ``sentry_sdk.capture_message`` below;
+#   * 774 with logger ``app.tasks.watchdog`` -> the ``logger.critical(msg)`` at
+#     the call sites, which the SDK's LoggingIntegration turns into an event of
+#     its own because its default ``event_level`` is ``logging.ERROR``.
+#
+# Suppressing only the capture_message would therefore have removed roughly half
+# the volume and looked like a fix. ``_alert`` gates BOTH behind one cooldown,
+# and on the suppressed path logs at WARNING — still in the dyno logs, below the
+# LoggingIntegration's event threshold, so it costs no quota.
+#
+# The alert itself must survive: #1158's gap table lists creation-stall and
+# event-loop-block as Sentry-ONLY classes with no board or cockpit equivalent.
+# So this rate-limits REPEATS, never the first occurrence: one emission per
+# [alert_class, normalized provider] per ALERT_COOLDOWN_SECONDS. The GitHub
+# filing rail (_file_watchdog_issue) is untouched — it has its own search-based
+# dedup and accretes evidence onto the open issue.
+ALERT_COOLDOWN_SECONDS = 6 * 3600
+_ALERT_COOLDOWN_PREFIX = "bainluck:watchdog:alert_cooldown:"
+
+#: A page/offset counter token: ``p0``, ``p35``, ``recv50``, ``a0``, ``155``.
+_COUNTER_TOKEN_RE = re.compile(r"[A-Za-z]{0,6}\d+")
+
+
+def _normalize_provider(provider: str) -> str:
+    """Collapse high-cardinality tokens out of a fingerprint provider.
+
+    ``kalshi_settled:fetch:KXNASDAQ100U:p0`` and
+    ``kalshi_settled:fetch:KXMLBHRR:p1`` are the same condition on two tickers,
+    but they fingerprinted as two issues AND held two independent cooldowns.
+
+    Three token shapes are dropped, all of them measured in the real 2026-07-21
+    census, where 31 raw ``[class, provider]`` pairs in 8 days collapse to 13:
+
+    * ticker-shaped: ALL-CAPS, or ALL-CAPS-with-digits
+      (``KXNASDAQ100U``, ``KXNBAGAME``);
+    * a short alpha prefix followed by digits, or bare digits — page and offset
+      counters (``p0``, ``p35``, ``recv50``, ``a0``, ``155``). Without this the
+      SAME stalled phase held a separate cooldown per page of a paginated fetch,
+      which is the fragmentation the cooldown exists to stop.
+
+    Never returns empty — a provider that normalizes away entirely keeps its raw
+    form rather than colliding with every other one.
+    """
+    parts = []
+    for token in provider.split(":"):
+        if not token:
+            continue
+        if _COUNTER_TOKEN_RE.fullmatch(token):
+            continue
+        stripped = token.replace("_", "")
+        if stripped.isupper() and any(c.isdigit() for c in token):
+            continue
+        if stripped.isupper() and len(stripped) > 3:
+            continue
+        parts.append(token)
+    return ":".join(parts) or provider
+
+
+def _alert_on_cooldown(alert_class: str, provider: str) -> bool:
+    """True when an identical alert was already emitted inside the window.
+
+    Fails OPEN (returns False -> the alert is emitted) if Redis is unreachable:
+    a telemetry-infra failure must never swallow an alarm, and the Redis error
+    class itself is filtered separately in ``app/utils/sentry_filter.py``.
+
+    Unlike the filter's in-process throttle this is FLEET-SHARED, which it can
+    afford to be: it runs once per watchdog beat rather than on every exception
+    path, so a bounded Redis round-trip here costs nothing.
+    """
+    key = f"{_ALERT_COOLDOWN_PREFIX}{alert_class}:{provider}"
+    try:
+        rc = _bounded_rc()
+        # SET NX is the whole test: it succeeds only for the first caller in the
+        # window, so check-then-set cannot race between concurrent watchdog runs.
+        return not bool(rc.set(key, "1", nx=True, ex=ALERT_COOLDOWN_SECONDS))
+    except Exception:
+        return False
+
+
+def _alert(alert_class: str, provider: str, msg: str) -> bool:
+    """Emit one watchdog alarm, rate-limited to one emission per cooldown window.
+
+    Returns True when the alarm was emitted at full volume. Both quota-costing
+    channels (the ERROR-level log record and the Sentry message) are inside the
+    gate; the suppressed path still writes the line at WARNING so a persistent
+    stall stays fully visible in ``heroku logs``.
+    """
+    provider = _normalize_provider(provider)
+    if _alert_on_cooldown(alert_class, provider):
+        logger.warning("%s [sentry suppressed — %ss cooldown]", msg, ALERT_COOLDOWN_SECONDS)
+        return False
+    logger.critical(msg)
+    _capture_fingerprinted(alert_class, provider, msg)
+    return True
 
 
 def _capture_fingerprinted(alert_class: str, provider: str, msg: str) -> None:
@@ -224,10 +331,11 @@ async def _run_creation_freshness_watchdog():
                 f"stay fresh, so this creates-specific signal is the only catch "
                 f"(#995)."
             )
-            logger.critical(msg)
             # #219E Item 2(a): fingerprint on [class, provider] — NOT the message
             # (its hours-value spawned one Sentry issue per reading = noise).
-            _capture_fingerprinted("creation_stall", a["source"], msg)
+            # #1501: and rate-limit the EMISSION, since fingerprinting collapses
+            # issues but not billable events. _alert owns the logger.critical.
+            _alert("creation_stall", a["source"], msg)
             # #219E Item 2(b): route to the GitHub board (no alert class may be
             # Sentry/email-only). ONE deduped issue per source per episode.
             title = (
@@ -356,15 +464,14 @@ def _run_phase_heartbeat_watchdog():
                     f"(threshold {PHASE_STUCK_SECONDS}s) — the poll is likely "
                     f"stuck on a synchronous op at this phase (#995)."
                 )
-                logger.critical(msg)
                 # #219E Item 2(a): fingerprint on [class, task] — the phase suffix
                 # carries an elapsed-seconds value ("@174s") + the stuck_seconds in
                 # the message both drift, so message-fingerprinting spawned a new
                 # Sentry issue per reading. Group by the STALLED PHASE instead.
+                # #1501: _alert adds the emission cooldown and owns the
+                # logger.critical (which was itself a billable Sentry event).
                 _stuck_phase = marker.split("@", 1)[0]
-                _capture_fingerprinted(
-                    "phase_block", f"{task_label}:{_stuck_phase}", msg
-                )
+                _alert("phase_block", f"{task_label}:{_stuck_phase}", msg)
                 stuck.append(
                     {
                         "task": task_label,
