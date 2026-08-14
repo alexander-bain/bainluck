@@ -160,19 +160,45 @@ mistake this spec already records once:
 - **Concept provenance is computed per row, via `_query_names_concept`**, not
   set blanket-true the way typeahead sets it.
 
-> ⚠️ **The two surfaces therefore disagree about provenance today, deliberately
-> and temporarily.** Typeahead flags every market-derived concept `_derived`
-> unconditionally, which drops a concept whose OWN NAME IS THE QUERY —
-> `event:cycling:tour-de-france` on the query `tour de france` is dropped from
-> the dropdown right now. That is #1839's shape surviving in the general case
-> after #1839's three named families were fixed.
+> ⚠️ **The two surfaces disagreed about provenance for exactly one cycle,
+> deliberately, and the divergence is now CLOSED (#1846, LAT-P051).** Typeahead
+> flagged every market-derived concept `_derived` unconditionally, which drops a
+> concept whose OWN NAME IS THE QUERY — #1839's shape surviving in the general
+> case after #1839's three named families were fixed.
 >
-> It is **filed as #1846, not fixed here**: repairing it is a ranking change on the
-> MEASURED surface, and two ranking changes (`-43`, `-44`) are already in flight
-> with their reads untaken, which ruling 046 forbids compounding. `/search` gets
-> the correct rule now because it is unmeasured and the correct rule is what the
-> wiring needs; typeahead gets it as its own measured change with its own
-> before/after.
+> It was **filed as #1846, not fixed by LAT-P049**, because repairing it is a
+> ranking change on the MEASURED surface and two ranking changes (`-43`, `-44`)
+> were in flight with their reads untaken, which ruling 046 forbids compounding.
+> `/search` took the correct rule immediately because it is unmeasured and the
+> correct rule was what the wiring needed. Both reads have since been taken
+> (v3806 → 38/44; v3807 → 38/44, no movement), so typeahead got the rule as its
+> own single-change deploy with its own before/after — see §5.
+>
+> **What the blanket flag cost, measured rather than argued.** On the v3807 read
+> the gold probe `us open` expects
+> `concept:event:tennis:2026-women-s-us-open-winner-tennis`. Production minted
+> that exact concept from its winner-field market, flagged it derived, dropped it,
+> and answered with `market:114160` — the market whose name is byte-identical to
+> the concept it had just deleted. That probe was also the +1 missing from `-43`'s
+> projection, miscounted at the time as a #1839 casualty: it has no tennis
+> resolver and therefore never had a query-derived twin for #1839's guard to
+> upgrade (Alex ruling 2, 2026-08-13, which routed it here).
+>
+> **One rule, one implementation, two shapes.** `_query_names_concept_row` takes
+> `key`/`name` as arguments; `_query_names_concept` (`/search`) and
+> `_query_names_typeahead_concept` (`/typeahead`) are thin wrappers over it. The
+> alternative — one rule living in two consumers — is gotcha #129, and #1846 is
+> that gotcha's bill: the rule was correct on the surface someone had just read
+> and wrong on the surface being graded.
+>
+> **A fragility this fix introduces, recorded rather than discovered later.** On
+> `the open championship winner` the golf major and the now-rankable tennis
+> `US Open` concepts produce an EXACT `rank_key` tie (same class, same kind, same
+> absent prominence). The tennis rows previously lost that probe by being dropped,
+> not by being ranked below. `rank()` is a stable sort, so rank 1 is now decided
+> solely by `_upsert_query_derived_concept` inserting the golf major at the front.
+> `TestGolfPrependProtectsTheTie` asserts both halves, including the
+> counterfactual where the prepend is removed and the probe flips.
 
 **AC#1 — the guard went with the scorer.** `/search` carried the same
 first-writer-wins concept guard that produced #1839: `_detect_query_{golf_major,
@@ -230,10 +256,38 @@ the change that caused it** (ruling 046).
 | — | offline projection | 35/44 | 0.800 | — | **NOT a floor — see §6**; an estimate that can err in both directions |
 | **v3800** | **`-41` scorer ALONE** (ruling 041) | **32/44** | 0.7391 | **+11±1 → 39–41** | **MISSED by 7** |
 | **v3802** | **`-42` pool fix ALONE** (#1836) | **35/44** | **0.8043** | +2 → 34 | **HELD, exceeded** |
-| pending | **`-43` concept dedup ALONE** (#1839) | **OWED** | — | +4 → 39 | — |
+| v3804 / v3805 | no latency change (re-measured twice) | 35/44 | 0.8043 | — | corroborates the stack was unlanded |
+| **v3806** | **`-43` concept dedup ALONE** (#1839) | **38/44** | **0.8696** | +4 → 39 | **MISSED by 1** |
+| **v3807** | **`-44` outcome evidence** (#1843) | **38/44** | **0.8696** | none registered | **no movement** — see below |
+| pending | **`-46` evidence echo** | — | — | none; a test asserts byte-identical ordering | owed |
+| pending | **#1846 typeahead provenance** (LAT-P051) | — | — | **+1 → 39** (`us open` only) | owed |
 
 Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
 with byte-identical dispositions across all 46 probes.
+
+**`-43`'s missing +1 was a diagnosis error, not noise.** `grammys`, `oscars` and
+`world cup` recovered exactly as projected; `us open` did not, and it had been
+**miscounted** into #1839's casualty list. Its gold answer is a *tennis* concept,
+there is no tennis resolver among the four `_detect_query_*` sites, so it never
+had a query-derived twin for #1839's guard to upgrade. Alex routed it to #1846 as
+a named sub-case (ruling 2, 2026-08-13); the LAT-P051 row above is that fix.
+
+**`-44` is the first change this program shipped that moved nothing, and it is
+recorded as a result rather than omitted.** It carried a real ranking change
+(#1843: the scorer had been seeing only the 3 *display* outcomes, so a market
+matching on a truncated-away outcome scored MC5 instead of MC4) and the 46 probes
+produced **zero disposition differences** against v3806. Two readings are
+available and they are not equivalent:
+
+1. no gold probe exercises the truncated-outcome path, in which case the fix is
+   real and the instrument is blind to it; or
+2. the fix's effect is smaller than the probe set can resolve.
+
+Either way the honest statement is **"unmeasured", not "ineffective"** — and it
+is a coverage gap in the gold set, filed as such rather than settled here. It
+also functioned as an **unarmed control** that came out clean, which is
+corroboration for the attribution model the `-45` armed control (ruling 050) will
+test deliberately.
 
 ### How this table must be read — and how it must not
 

@@ -798,22 +798,25 @@ def _concept_match_tokens(text: str | None) -> set[str]:
     }
 
 
-def _query_names_concept(q: str | None, concept: dict) -> bool:
-    """True iff the QUERY shares a distinctive token/stem with the concept's own
-    identity (its key slug + display name). Used to gate the market-derived awards
-    concept in the search loop (#1206). Prepended `_detect_query_*` concepts are
-    already query-gated by their resolvers, so this only guards the loop path.
-    Stem match (len>=4, prefix either way) handles emmy↔emmys, oscar↔oscars."""
+def _query_names_concept_row(q: str | None, *, key: str | None, name: str | None) -> bool:
+    """The ONE implementation of "does the query name this concept", shape-free.
+
+    Same arrangement, and the same reason, as `_upsert_query_derived_concept_row`:
+    `/typeahead` and `/search` hold concept rows in different dict shapes
+    (`event_key`/`text` versus `key`/`name`) and are not being unified here, so the
+    SHAPE is an argument and the RULE has one home. Gotcha #129 is what the other
+    arrangement costs — and #1846 is that cost, collected: the rule lived in
+    `/search` as a per-row predicate and in `/typeahead` as a blanket `True`, and
+    the surface nobody was looking at kept the wrong verdict for a whole cycle.
+    """
     if not q:
         return False
     q_tokens = _concept_match_tokens(q)
     if not q_tokens:
         return False
-    key = concept.get("key") or ""
+    key = key or ""
     slug = key.rsplit(":", 1)[-1] if ":" in key else key
-    c_tokens = _concept_match_tokens(slug.replace("-", " ")) | _concept_match_tokens(
-        concept.get("name")
-    )
+    c_tokens = _concept_match_tokens(slug.replace("-", " ")) | _concept_match_tokens(name)
     if not c_tokens:
         return False
     for qt in q_tokens:
@@ -823,6 +826,39 @@ def _query_names_concept(q: str | None, concept: dict) -> bool:
             if len(qt) >= 4 and len(ct) >= 4 and (ct.startswith(qt) or qt.startswith(ct)):
                 return True
     return False
+
+
+def _query_names_concept(q: str | None, concept: dict) -> bool:
+    """True iff the QUERY shares a distinctive token/stem with the concept's own
+    identity (its key slug + display name), for the `/search` concept-row shape.
+    Used to gate the market-derived awards concept in the search loop (#1206).
+    Prepended `_detect_query_*` concepts are already query-gated by their
+    resolvers, so this only guards the loop path. Stem match (len>=4, prefix
+    either way) handles emmy↔emmys, oscar↔oscars."""
+    return _query_names_concept_row(
+        q, key=concept.get("key"), name=concept.get("name")
+    )
+
+
+def _query_names_typeahead_concept(q: str | None, row: dict) -> bool:
+    """`_query_names_concept` for the `/typeahead` dropdown row shape (#1846).
+
+    Typeahead flagged EVERY market-derived concept `_derived = True`
+    unconditionally. Under ruling 041 a derived-only candidate is UNRANKABLE —
+    dropped, not demoted — so a concept whose own name IS the query was deleted
+    from the dropdown whenever the market loop was the path that minted it.
+
+    Ruling 041 is about the evidence a candidate OWNS, not the path we reached it
+    by, and this is the predicate that says so. Measured cost of the blanket
+    flag, on the v3807 read: the gold probe `us open` expects
+    `concept:event:tennis:2026-women-s-us-open-winner-tennis`, production minted
+    exactly that concept from its winner-field market, flagged it derived, and
+    answered with the market whose name is byte-identical to the concept it had
+    just dropped.
+    """
+    return _query_names_concept_row(
+        q, key=row.get("event_key"), name=row.get("text")
+    )
 
 
 def _market_volume(m) -> float:
@@ -3584,24 +3620,17 @@ async def search_events(
     # --- provenance, before any query-derived upsert can clear it (LAT-P049) ---
     #
     # Ruling 041 makes derived-only evidence UNRANKABLE, so this flag decides
-    # whether a concept survives the scorer at all. Typeahead sets it BLANKET —
-    # every row the market loop produced is `_derived = True`, unconditionally —
-    # and that is deliberately NOT copied here. Two reasons, one principled and
-    # one procedural:
+    # whether a concept survives the scorer at all. The ruling is about EVIDENCE
+    # OWNERSHIP, not discovery path: a concept whose own name names the query owns
+    # that evidence however we happened to reach it. `_query_names_concept` is
+    # exactly that predicate, and it is already tested (#1206). Blanket-flagging
+    # would drop `event:cycling:tour-de-france` on the query "tour de france" —
+    # the #1839 shape, freshly minted on the surface LAT-P049 existed to protect.
     #
-    # 1. The ruling is about EVIDENCE OWNERSHIP, not discovery path. A concept
-    #    whose own name names the query owns that evidence however we happened to
-    #    reach it. `_query_names_concept` is exactly that predicate, it already
-    #    exists, and it is already tested (#1206). Blanket-flagging would drop
-    #    `event:cycling:tour-de-france` on the query "tour de france" — the #1839
-    #    shape, freshly minted on the surface this queue is here to protect.
-    # 2. Typeahead's blanket flag has the same hole, and it is LIVE there today
-    #    (#1846). Fixing it is a ranking change on the MEASURED surface while two
-    #    such changes (`-43`, `-44`) are already in flight unread, which ruling
-    #    046 forbids. So it is filed with its specimen, not fixed here. The
-    #    divergence between the two surfaces is real, is temporary, and is
-    #    recorded in `docs/search-scoring-spec.md` §3 rather than left for a
-    #    reader to discover as an inconsistency.
+    # `/typeahead` DID blanket-flag, and the divergence was recorded here rather
+    # than hidden while ruling 046 held its fix behind two unread deploys. Both
+    # reads are now taken (v3806, v3807), so #1846 is fixed and the two surfaces
+    # share `_query_names_concept_row` — one rule, one implementation, two shapes.
     for _c in event_concepts:
         _c["_derived"] = not _query_names_concept(q, _c)
 
@@ -4462,25 +4491,44 @@ async def typeahead_search(
         })
 
     # OWNED-EVIDENCE-ONLY (ruling 041, Q325). Every concept in the pool at THIS
-    # point was derived from a member market's name/ticker — the loop above reads
+    # point was reached from a member market's name/ticker — the loop above reads
     # `market.external_id` and `market.name`, never the concept's own identity.
-    # So the concept is claiming a match its members earned, and that is exactly
-    # how `super bowl`, `world series`, `wwe` and `stranger things` all came back
-    # with `concept:event:awards:emmys` (measured 2026-08-12 21:48Z, 4 of 14 gold
-    # failures). Marked here, one line, rather than in five dict literals — the
-    # provenance is a property of WHERE the pool was filled, not of each entry.
+    # That is how `super bowl`, `world series`, `wwe` and `stranger things` all
+    # came back with `concept:event:awards:emmys` (measured 2026-08-12 21:48Z,
+    # 4 of 14 gold failures), and those four must stay dead.
+    #
+    # But the flag is now PER ROW, not blanket (#1846). The discovery path does
+    # not decide provenance; the evidence does. A concept whose own name names
+    # the query OWNS that match however we happened to reach it, and blanket-
+    # flagging deleted exactly those. Measured on the v3807 read: `us open` minted
+    # `event:tennis:2026-women-s-us-open-winner-tennis` — the gold answer, byte
+    # for byte — flagged it derived, dropped it, and answered with the market
+    # underneath it.
+    #
+    # `/search` has had this rule since LAT-P049; the two surfaces now share one
+    # implementation rather than one rule and one bug. The predicate is the same
+    # `#1206` one that keeps the Emmys family dead, so nothing about the
+    # over-match defence is relaxed to buy this.
     #
     # The `_detect_query_*` concepts inserted BELOW are query-derived: they
     # matched `q` itself, so the concept owns that evidence and stays rankable.
     # They carry no flag and default to not-derived, which is why this loop must
     # run before them and not after.
     for _ta_concept in event_concept_pool:
-        _ta_concept["_derived"] = True
+        _ta_concept["_derived"] = not _query_names_typeahead_concept(q, _ta_concept)
 
     # #1063: golf majors are query-derived concepts here too (same never-dead keys
     # as /search). Prepended so "the open"/"british open"/"royal birkdale" surface
-    # the golf major in the single event_concept slot the dropdown shows (line ~2097
-    # takes event_concept_pool[:1]) rather than a cross-sport "open" tennis concept.
+    # the golf major rather than a cross-sport "open" tennis concept.
+    #
+    # THE PREPEND IS NOW LOAD-BEARING, where before #1846 it was belt-and-braces.
+    # On `the open championship winner` the golf major and the tennis US Open
+    # concepts all score MC3/kind-concept — an exact `rank_key` tie — and the
+    # tennis rows used to lose by being dropped as derived, not by being ranked
+    # below. They are rankable now, `rank()` is a stable sort, and so position in
+    # THIS list is the only thing left deciding that probe. Reordering these
+    # inserts below the loop, or making the sort unstable, silently flips it;
+    # `TestGolfPrependProtectsTheTie` fails when either happens.
     _ta_golf_major = _detect_query_golf_major_concept(q)
     if _ta_golf_major:
         event_concept_pool = _upsert_query_derived_concept(
