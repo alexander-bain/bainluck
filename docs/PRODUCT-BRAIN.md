@@ -1335,3 +1335,4 @@ failure this document already records happening twice.
 - [045](rulings/045-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)
 - [046](rulings/046-a-stacked-change-is-measured-on-its-own-deploy.md) — 2026-08-13 — A stacked change is measured on its OWN deploy; an ungradable measurement is a lost one (Alex)
 - [047](rulings/047-one-card-system.md) — 2026-08-13 — One card system: every surface renders events/markets through the shared cards; league pages get no bespoke variants, and a new card type needs a design ruling first (Alex)
+- [048](rulings/048-an-id-less-claim-never-absorbs.md) — 2026-08-14 — An id-less claim NEVER absorbs; it creates with provenance and id-keyed reconciliation drains the duplicates — design, not thresholds, after five #1801 blocks (Fable)
