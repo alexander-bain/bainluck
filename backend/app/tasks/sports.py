@@ -409,7 +409,10 @@ async def _discover_events():
                             home_team_name=event_data["home_team"],
                             away_team_name=event_data["away_team"],
                             commence_time=espn_commence_time or commence_time,
-                            claim=EventClaim("odds_api", event_data["id"]),
+                            # Ruling 048 arm B: id and teams arrive together in one
+                            # Odds API schedule record (an ESPN commence correction
+                            # may refine the time, but the anchor is the odds_api id).
+                            claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
                             commence_time_source="espn" if espn_commence_time else "odds_api",
                             status=event_status,
                         )
@@ -620,6 +623,51 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                          LOWER(COALESCE(b.home_team_normalized, b.home_team_name))
                          AND LOWER(COALESCE(a.away_team_normalized, a.away_team_name)) =
                              LOWER(COALESCE(b.away_team_normalized, b.away_team_name)))
+                    )
+                    -- ── RULING 048 APPLIES TO THE DRAIN, NOT ONLY THE INGEST ──
+                    -- Everything above this line is name + a 6h window and NO id:
+                    -- the exact predicate 048 forbids, and this task DELETEs the
+                    -- loser and repoints its FKs, so a wrong pairing here destroys
+                    -- data just as surely as a wrong absorption did. A 1:05/6:35
+                    -- doubleheader is 5.5h apart and sits inside that window.
+                    -- Ruling 048 leans on this task to bound the duplicate cost, so
+                    -- it must be the id-keyed drain the ruling actually describes.
+                    AND (
+                        -- Arm A: a genuinely SHARED provider id. Definitive on its
+                        -- own — no window or name reasoning is load-bearing here.
+                        (a.external_id IS NOT NULL AND a.external_id = b.external_id)
+                        OR (a.espn_id IS NOT NULL AND a.espn_id = b.espn_id)
+                        OR (a.statpal_fixture_id IS NOT NULL
+                            AND a.statpal_fixture_id = b.statpal_fixture_id)
+                        -- Or: one side carries NO provider id at all (an unanchored
+                        -- create from the registry's new path) AND the pairing is
+                        -- UNAMBIGUOUS — no third same-matchup row shares the window.
+                        -- Uniqueness is not a softer threshold; it is the statement
+                        -- that there are not two distinct games to confuse. Where a
+                        -- doubleheader IS present the third row exists, this fails,
+                        -- and the pair is left alone and counted by the meter.
+                        OR (
+                            (
+                                (a.external_id IS NULL AND a.espn_id IS NULL
+                                 AND a.statpal_fixture_id IS NULL)
+                                OR (b.external_id IS NULL AND b.espn_id IS NULL
+                                    AND b.statpal_fixture_id IS NULL)
+                            )
+                            AND NOT EXISTS (
+                                SELECT 1 FROM events c
+                                WHERE c.id <> a.id AND c.id <> b.id
+                                  AND c.sport_id = a.sport_id
+                                  AND c.commence_time BETWEEN
+                                      a.commence_time - INTERVAL '6 hours'
+                                      AND a.commence_time + INTERVAL '6 hours'
+                                  AND (
+                                    (LOWER(c.home_team_name) = LOWER(a.home_team_name)
+                                     AND LOWER(c.away_team_name) = LOWER(a.away_team_name))
+                                    OR (LOWER(c.home_team_name) = LOWER(a.away_team_name)
+                                        AND LOWER(c.away_team_name) = LOWER(a.home_team_name))
+                                  )
+                            )
+                        )
                     )
                 )
                 WHERE a.commence_time > NOW() - INTERVAL '30 days'

@@ -437,9 +437,61 @@ async def list_duplicate_events(
             "commence_b": row.commence_b.isoformat() if row.commence_b else None,
         })
 
+    # ── Ruling 048 provenance meter ────────────────────────────────────
+    # 048 declares rising duplicates a BOUNDED cost, bounded because id-keyed
+    # reconciliation drains them. A declared cost with no meter is just a
+    # regression with a good story, so the boundedness gets measured here:
+    # how many rows the id-less path created, and how many of those are still
+    # un-reconciled (created unanchored AND still holding no provider id).
+    #
+    # gotcha #53: an empty read and a broken read must not render identically.
+    # `measured` is what separates "nothing to report" from "the meter did not
+    # run", so a zero below is only trustworthy when measured is true.
+    meter: dict = {"measured": False, "reason": None}
+    try:
+        m = (await db.execute(text("""
+            SELECT
+              COUNT(*) FILTER (
+                WHERE event_tags @> '["provenance:unanchored"]'::jsonb
+              ) AS created_unanchored,
+              COUNT(*) FILTER (
+                WHERE event_tags @> '["provenance:unanchored"]'::jsonb
+                  AND external_id IS NULL
+                  AND espn_id IS NULL
+                  AND statpal_fixture_id IS NULL
+              ) AS unreconciled,
+              COUNT(*) FILTER (
+                WHERE event_tags @> '["provenance:unanchored"]'::jsonb
+                  AND (external_id IS NOT NULL OR espn_id IS NOT NULL
+                       OR statpal_fixture_id IS NOT NULL)
+              ) AS reconciled,
+              COUNT(*) AS window_events
+            FROM events
+            WHERE commence_time > NOW() - INTERVAL '30 days'
+        """))).first()
+        meter = {
+            "measured": True,
+            "reason": None,
+            "window": "30d",
+            # Rows the id-less create path produced (ruling 048's declared cost).
+            "created_unanchored": m.created_unanchored or 0,
+            # Of those, the ones an id has since reached — the drain working.
+            "reconciled": m.reconciled or 0,
+            # Of those, the ones still anonymous — the OUTSTANDING cost. This is
+            # the number that must not grow without bound; if it climbs while
+            # `reconciled` stays flat, reconciliation is not draining.
+            "unreconciled": m.unreconciled or 0,
+            "window_events": m.window_events or 0,
+        }
+    except Exception as exc:  # pragma: no cover - defensive
+        # Never let the meter take the endpoint down, but never let it report a
+        # confident zero either — say plainly that it could not measure.
+        meter = {"measured": False, "reason": str(exc)[:200]}
+
     return {
         "duplicate_count": len(duplicates),
         "duplicates": duplicates,
+        "provenance_meter": meter,
     }
 
 

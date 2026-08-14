@@ -8,8 +8,34 @@ finds it and attaches its source ID. No duplicates.
 Matching cascade:
 1. Exact source ID — check if this source already claimed an event
 2. Cross-source ID — check if ANY source already claimed it via other ID columns
-3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both teams
-4. Create — no match found, create new event
+3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both
+   teams, reachable ONLY for an id-anchored claim (ruling 048; see below)
+4. Create — no match found, create new event, tagged with its provenance
+
+── Ruling 048: an id-less claim never absorbs; it creates ──────────────
+
+Absorption requires an **id-anchored correspondence**. There are exactly two arms:
+
+  A. SHARED id — the claim's provider id is already on the candidate row. That is Step 1,
+     and it needs no window and no names.
+  B. DEREFERENCED id — the claim's id resolves, via *its own provider's schedule*, to the
+     teams and date it presents. The id is not shared with the candidate, but the teams and
+     date being matched carry that id's authority rather than a parsed label. This is the
+     legitimate cross-source join (an ESPN claim finding the row Odds API created), and it
+     is what ``EventClaim.schedule_derived`` attests.
+
+A claim that fits neither arm CREATES. No time window, no name match, no heuristic — because
+for two distinct games between the same clubs in the same window with no id in common there
+is no discriminating signal at all, and any matcher able to join two same-game claims is the
+same operation that destroys a doubleheader. Five certification rounds (C-CERT-1801-R1..R4)
+each moved a threshold inside that design and each produced a new specimen class.
+
+Duplicates therefore go up. That is the declared, bounded cost — bounded because id-keyed
+reconciliation drains them as ids arrive — and it is the right side of an asymmetry: a
+duplicate is visible and reversible, a wrong absorption is neither.
+
+See ``docs/rulings/048-an-id-less-claim-never-absorbs.md`` and ruling 042 (dereference the id,
+never the label). CLAUDE.md gotcha #32 is amended by this ruling.
 """
 
 import logging
@@ -59,11 +85,35 @@ _MAX_RETRIES = 2
 _STRUCTURED_MATCH_CANDIDATE_LIMIT = 500
 
 
+# Provenance tags written to ``Event.event_tags`` on the create path (ruling 048).
+# Namespaced to match the existing tag convention ("sport:basketball", "tier:1").
+# These make a created row a REPAIRABLE FACT rather than an anonymous one: the
+# unanchored tag is what the duplicate meter counts and what reconciliation looks
+# for once an id finally arrives.
+_TAG_UNANCHORED = "provenance:unanchored"
+
+
+def _tag_source(source: str) -> str:
+    return f"provenance:source:{source}"
+
+
 @dataclass
 class EventClaim:
     """A source's claim on an event — its external ID for this source."""
     source: str      # "odds_api", "statpal", "espn", "kalshi", "polymarket"
     source_id: str   # The external ID from that source
+
+    # Ruling 048 arm B. TRUE only when this claim's ``source_id`` was dereferenced
+    # against its OWN provider's schedule to produce the team names and
+    # commence_time on this identity — i.e. the provider was asked "what game is
+    # id X?" and answered. FALSE when the teams were parsed out of a market name,
+    # a ticker, or any other label (ruling 042), and FALSE when the id itself was
+    # synthesized from those labels.
+    #
+    # Defaults to FALSE deliberately: the conservative reading absorbs less, and a
+    # caller that has not thought about provenance must not silently get the
+    # absorbing behaviour. Adding a caller is the moment to answer this question.
+    schedule_derived: bool = False
 
 
 @dataclass
@@ -124,6 +174,14 @@ async def find_or_create_event(
 
             # Step 4: Create new event
             status = identity.status or "scheduled"
+            # Ruling 048: record the claim's provenance ON the created row. A row
+            # that says where it came from is repairable; an anonymous one is not.
+            # The unanchored tag is the declared cost made countable — it is what
+            # the duplicate meter reads and what reconciliation drains against.
+            tags = [_tag_source(identity.claim.source)]
+            if not identity.claim.schedule_derived:
+                tags.append(_TAG_UNANCHORED)
+
             event = Event(
                 sport_id=sport_id,
                 home_team_name=identity.home_team_name,
@@ -131,16 +189,17 @@ async def find_or_create_event(
                 commence_time=identity.commence_time,
                 commence_time_source=identity.commence_time_source or identity.claim.source,
                 status=status,
+                event_tags=tags,
             )
             _attach_claim(event, identity.claim)
             session.add(event)
             await session.flush()
 
             logger.info(
-                "Created event %d: %s vs %s (%s, %s) [source=%s]",
+                "Created event %d: %s vs %s (%s, %s) [source=%s anchored=%s]",
                 event.id, identity.home_team_name, identity.away_team_name,
                 identity.sport_key, identity.commence_time.isoformat(),
-                identity.claim.source,
+                identity.claim.source, identity.claim.schedule_derived,
             )
             return event, True
 
@@ -172,11 +231,28 @@ async def _find_existing(
     # the event created by Odds API)
     # This step is implicit — Step 3 will find it by sport+date+teams
 
-    # Step 3: Structured match — sport + date + teams
+    # Step 3: Structured match — sport + date + teams.
+    #
+    # RULING 048 GATE. Reachable only for an id-anchored claim (arm B — the claim's
+    # id dereferences via its own provider's schedule to the teams and date being
+    # matched). An unanchored claim does not reach the matcher at all; it returns
+    # None here and the caller CREATES. This is a gate on REACHABILITY rather than
+    # a refusal inside the matcher, because a refusal is a behaviour that the next
+    # patch can tune, and five rounds of tuning is what this ruling ended.
+    if not identity.claim.schedule_derived:
+        logger.debug(
+            "Ruling 048: skipping structured match for unanchored %s claim "
+            "(%s vs %s @ %s) — will create with provenance",
+            identity.claim.source, identity.home_team_name,
+            identity.away_team_name, identity.commence_time.isoformat(),
+        )
+        return None
+
     event = await _find_by_structured_match(
         session, sport_id,
         identity.home_team_name, identity.away_team_name,
         identity.commence_time,
+        claim=identity.claim,
     )
     if event:
         return event
@@ -214,8 +290,16 @@ async def _find_by_structured_match(
     home_team: str,
     away_team: str,
     commence_time: datetime,
+    *,
+    claim: EventClaim,
 ) -> Optional[Event]:
-    """Step 3: Find event by sport + date + team names.
+    """Step 3: Find event by sport + date + team names — ID-ANCHORED CLAIMS ONLY.
+
+    ``claim`` is REQUIRED and keyword-only: this matcher may not be invoked without
+    stating whose claim it is acting on, and it raises on an unanchored one. The
+    caller-side gate in ``_find_existing`` means that never happens in the data
+    path; this assertion is what stops a FUTURE caller from re-opening the id-less
+    absorption path by calling the matcher directly (ruling 048).
 
     Queries events with the same sport_id and commence_time within
     ±_MATCH_WINDOW (28h), then scores each candidate using names_match().
@@ -226,6 +310,15 @@ async def _find_by_structured_match(
     concurrent workers (ESPN sync on realtime, Odds API on background) both
     call find_or_create_event() for the same game simultaneously.
     """
+    if not claim.schedule_derived:
+        raise AssertionError(
+            "ruling 048: _find_by_structured_match reached with an unanchored "
+            f"{claim.source} claim ({claim.source_id!r}). An id-less claim never "
+            "absorbs — it creates. Do not add a bypass here; if this provider can "
+            "dereference its id against its own schedule, set schedule_derived on "
+            "the claim at the call site instead."
+        )
+
     from sqlalchemy import text as _text
     lock_key = hash((sport_id, commence_time.date().isoformat())) & 0x7FFFFFFF
     await session.execute(_text(f"SELECT pg_advisory_xact_lock({lock_key})"))

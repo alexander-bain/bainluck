@@ -811,11 +811,40 @@ async def _sample_events(client: httpx.AsyncClient, status: str, limit: int) -> 
         return []
 
 
+async def _run_provenance_meter(client: httpx.AsyncClient) -> dict:
+    """Ruling 048's declared cost, read as a number rather than assumed bounded.
+
+    This does NOT gate the duplicate_events verdict — 048 says duplicates are the
+    expected, accepted price of never eating a real game, so a non-zero count is
+    not a failure. What would be a failure is the count being unknown, or the
+    outstanding backlog growing while nothing drains.
+
+    Reports ``measured: False`` rather than a comfortable zero when it cannot
+    read — the 403-as-PASS history documented on ``_admin_headers`` is precisely
+    the bug this shape avoids.
+    """
+    headers = _admin_headers()
+    if not headers:
+        return {"measured": False, "reason": "ADMIN_TOKEN unset"}
+    try:
+        data = await _get_json(client, "/api/admin/events/duplicates", None, headers)
+    except Exception as exc:
+        return {"measured": False, "reason": _redact(exc)[:200]}
+    meter = (data or {}).get("provenance_meter")
+    if not isinstance(meter, dict) or not meter.get("measured"):
+        return {
+            "measured": False,
+            "reason": (meter or {}).get("reason") or "endpoint returned no meter",
+        }
+    return meter
+
+
 async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
     # A broad live+scheduled slate is where an unmerged duplicate would show.
     events = await _sample_events(client, "live", 200)
     events += await _sample_events(client, "scheduled", 200)
     dups = find_duplicate_events(events)
+    meter = await _run_provenance_meter(client)
     return {
         "flow": "duplicate_events",
         "checked": len(events),
@@ -823,7 +852,13 @@ async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
         "failures": [{"detail": f"{d['sport']}: {d['home_team']} vs {d['away_team']} "
                                 f"appears {len(d['event_ids'])}x (ids {d['event_ids']})"}
                      for d in dups],
-        "evidence": {"sampled": len(events), "duplicates": dups},
+        "evidence": {
+            "sampled": len(events),
+            "duplicates": dups,
+            # Ruling 048: the declared cost, carried alongside the verdict so the
+            # trend is visible night over night.
+            "provenance_meter": meter,
+        },
     }
 
 

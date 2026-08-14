@@ -46,11 +46,13 @@ class TestMedianCannotBeCarriedByOneBook:
         assert median(self.THREE_BOOKS) < mean(self.THREE_BOOKS)
 
     def test_one_surviving_book_is_still_that_book(self):
-        """Honest about what this does NOT fix.
+        """Why the median alone was never enough — and why the floor exists.
 
-        With a single book left, median == mean == that book. Closing the rest
-        needs a minimum-book-count refusal, which is a policy call #1841 marks
-        "not ruled" and this change deliberately does not take.
+        With a single book left, median == mean == that book, so the median
+        cannot be the whole answer. That gap WAS the open policy call; Alex
+        ruled it on 2026-08-14 (ruling 051): below three books `betting` is
+        dropped entirely rather than reported. The arithmetic below is now the
+        JUSTIFICATION for the floor rather than an admitted limitation.
         """
         assert median([0.1347]) == 0.1347
 
@@ -83,8 +85,18 @@ class TestWiring:
 
         assert "betting_book_count" not in SOURCE_WEIGHTS
 
-    def test_a_thin_consensus_is_logged(self):
-        assert "only %d book(s)" in self.src
+    def test_a_thin_consensus_is_dropped_not_merely_logged(self):
+        """SUPERSEDED BY RULING 051 (was: test_a_thin_consensus_is_logged).
+
+        The old test asserted the writer LOGGED a thin consensus while still
+        storing it. Under ruling 051 a below-floor consensus is not stored at
+        all, so a test demanding the warning survive would lock in the very
+        behaviour the ruling removed (ruling 130). The log line it checked is
+        replaced by the DROP log, which reports a stronger fact.
+        """
+        src = self.src
+        assert "BETTING_BOOK_FLOOR" in src
+        assert "betting DROPPED below floor" in src
 
     def test_market_closed_is_distinguished_from_not_polled(self):
         """gotcha #53 in the odds pipeline.
@@ -120,4 +132,91 @@ class TestAggregationStillReadsBetting:
             status = "live"
 
         # 7 must not be read as a probability.
+        assert compute_aggregate_probability(_E()) == pytest.approx(0.60)
+
+
+class TestRuling051BelowTheFloorBettingIsAbsent:
+    """Alex's ruled policy (2026-08-14): floor 3, drop and re-weight, never freeze.
+
+    Both halves of his acceptance are required:
+      1. the 87-13 specimen replayed under the policy yields the fresh-source hero;
+      2. a below-floor game shows the blend WITHOUT `betting`, not a ghost of it.
+    """
+
+    @property
+    def src(self):
+        return inspect.getsource(_ingest_event_odds)
+
+    def test_the_floor_is_three(self):
+        from app.tasks.odds_polling import BETTING_BOOK_FLOOR
+
+        assert BETTING_BOOK_FLOOR == 3
+
+    def test_below_floor_removes_the_key_rather_than_skipping_the_write(self):
+        """The load-bearing distinction.
+
+        `betting` is very likely ALREADY in the JSONB from an earlier poll taken
+        when books were plentiful. Merely skipping the write leaves the frozen
+        0.1347 in place — the exact bug. Only an explicit removal is honest.
+        """
+        src = self.src
+        assert '_current.pop("betting", None)' in src
+
+    def test_the_book_count_is_still_written_when_betting_is_dropped(self):
+        """The absence must be observable AS an absence, not as silence.
+
+        gotcha #53: an empty read and a healthy read must not render
+        identically. `betting` missing with `betting_book_count: 1` says "we
+        looked and there was not enough"; `betting` missing with no count at all
+        would be indistinguishable from never having polled.
+        """
+        src = self.src
+        # the count assignment must sit OUTSIDE the floor branch
+        assert '_current["betting_book_count"] = _book_count' in src
+
+    def test_specimen_15192596_yields_the_fresh_source_hero(self):
+        """Alex's acceptance half 1, as arithmetic on the measured specimen.
+
+        At 1 surviving book (rebet @ 0.1347) the policy drops `betting`, so the
+        blend re-weights over whatever remains fresh — here ESPN's 0.02. The
+        hero must be ESPN's number, NOT 0.1347 (the frozen ghost that rendered
+        87-13) and NOT a re-weighted average that still contains rebet.
+        """
+        from app.utils.aggregation import compute_aggregate_probability
+
+        class _E:
+            # `betting` ABSENT — dropped below the floor. Count retained.
+            win_probability_sources = {
+                "betting_book_count": 1,
+                "espn": 0.02,
+            }
+            espn_win_prob_home = None
+            opening_home_probability = None
+            status = "live"
+
+        blended = compute_aggregate_probability(_E())
+        assert blended == pytest.approx(0.02, abs=0.001)
+        # The specific failure being closed: nowhere near rebet's last quote.
+        assert abs(blended - 0.1347) > 0.10
+        # And nothing between them — no averaging in the ghost.
+        assert blended < 0.05
+
+    def test_above_the_floor_is_unchanged(self):
+        """The other direction (gotcha #43): normal games must not move.
+
+        A healthy slate of books still writes `betting` and still blends it. If
+        this goes red the floor has over-reached into ordinary play, which is
+        the direction that breaks the product.
+        """
+        from app.utils.aggregation import compute_aggregate_probability
+
+        class _E:
+            win_probability_sources = {
+                "betting": 0.60,
+                "betting_book_count": 9,
+            }
+            espn_win_prob_home = None
+            opening_home_probability = None
+            status = "live"
+
         assert compute_aggregate_probability(_E()) == pytest.approx(0.60)

@@ -22,6 +22,12 @@ from app.services.event_registry import (
 from app.models import Event
 from app.utils.name_normalization import names_match
 
+# Ruling 048: _find_by_structured_match is reachable only for an ID-ANCHORED claim
+# and raises otherwise, so the tests that exercise the MATCHER'S MECHANICS (window
+# arithmetic, swapped orientation, #1085 candidate ordering) pass an anchored claim.
+# Those mechanics are unchanged by 048 — what changed is who may reach them.
+_ANCHORED = EventClaim("espn", "test-anchor", schedule_derived=True)
+
 
 class _FakeScalarResult:
     def __init__(self, rows):
@@ -446,6 +452,7 @@ class TestCrossSourceEventMatching:
             "LA Clippers",
             "Golden State Warriors",
             datetime(2026, 4, 16, 2, 5, tzinfo=timezone.utc),
+            claim=_ANCHORED,
         )
 
         assert event is existing
@@ -489,6 +496,7 @@ class TestCrossSourceEventMatching:
             "Air Force",
             "Oregon State",
             collapsed,
+            claim=_ANCHORED,
         )
 
         assert event is sibling
@@ -531,6 +539,7 @@ class TestCrossSourceEventMatching:
             "Boston Celtics",
             "NY Knicks",
             incoming_pacific,
+            claim=_ANCHORED,
         )
         assert event is boundary_match
         assert session.structured_params["commence_time_1"] == incoming_pacific - timedelta(hours=28)
@@ -543,6 +552,7 @@ class TestCrossSourceEventMatching:
             "Boston Celtics",
             "NY Knicks",
             incoming_pacific,
+            claim=_ANCHORED,
         )
         assert event is None
 
@@ -569,7 +579,13 @@ class TestCrossSourceEventMatching:
                 home_team_name="LA Clippers",
                 away_team_name="Golden State Warriors",
                 commence_time=datetime(2026, 4, 16, 2, 10, tzinfo=timezone.utc),
-                claim=EventClaim("espn", "401866758"),
+                # Ruling 048 arm B: the real ESPN caller dereferences this
+                # espn_id against ESPN's own scoreboard to get these teams and
+                # this date, so it is anchored and MAY absorb. This test is the
+                # over-reach guard — if item 1's gate is ever widened to reject
+                # arm B, THIS goes red, which is the direction that breaks the
+                # product (gotcha #43: assert both directions).
+                claim=EventClaim("espn", "401866758", schedule_derived=True),
                 commence_time_source="espn",
             ),
         )
@@ -626,3 +642,194 @@ class TestTeamlessCreationGuard:
         assert was_created is True
         assert event.home_team_name == "Spain"
         assert len(session.added) == 1
+
+
+# ============================================================================
+# Ruling 048 — an id-less claim never absorbs; it creates
+# ============================================================================
+
+class TestRuling048IdLessNeverAbsorbs:
+    """The R1–R4 specimen classes, now UNREACHABLE rather than merely refused.
+
+    Five certification rounds each moved a threshold (window size, name
+    normalizer, tie-break) inside a design that cannot be made safe, and each
+    round produced a NEW specimen class. These tests therefore assert the
+    property the ruling actually establishes — that an unanchored claim never
+    reaches the matcher at all — rather than asserting a particular refusal.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gap_minutes,label", [(90, "90 minutes"), (360, "6 hours")])
+    async def test_idless_doubleheader_creates_instead_of_absorbing(self, gap_minutes, label):
+        """R3's specimen: BOS@TOR game 2 arrives id-lessly with only game 1 present.
+
+        Game 1 and game 2 are DISTINCT GAMES. An id-less claim carries nothing
+        that can tell them apart, so absorbing is a coin flip that silently
+        destroys one game's data. Both the 90-minute and 6-hour separations are
+        checked because the patch cycle's answer was repeatedly to move that
+        number, and the point of 048 is that no value of it is safe.
+        """
+        game_one = Event(
+            id=41,
+            sport_id=1,
+            external_id="odds-bos-tor-g1",
+            home_team_name="Toronto Blue Jays",
+            away_team_name="Boston Red Sox",
+            commence_time=datetime(2026, 8, 16, 17, 5, tzinfo=timezone.utc),
+            status="scheduled",
+            commence_time_source="odds_api",
+        )
+        session = _FakeRegistrySession(structured_candidates=[game_one])
+        _sport_id_cache.clear()
+
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=game_one.commence_time + timedelta(minutes=gap_minutes),
+                # Kalshi: teams parsed from a market name, no dereferenceable id.
+                claim=EventClaim("kalshi", "KXMLBGAME-26AUG16TORBOS"),
+            ),
+        )
+
+        assert was_created is True, f"id-less claim absorbed game 1 at {label}"
+        assert event is not game_one
+        assert len(session.added) == 1
+        # The matcher was never consulted — this is the reachability property.
+        assert session.structured_params is None
+
+    @pytest.mark.asyncio
+    async def test_idless_claim_against_individuated_candidate_creates(self):
+        """R4's specimen: an Odds-individuated esports row + an id-less Kalshi market."""
+        individuated = Event(
+            id=42,
+            sport_id=9,
+            external_id="odds-navi-g2-map1",
+            home_team_name="NAVI",
+            away_team_name="G2",
+            commence_time=datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
+            status="scheduled",
+            commence_time_source="odds_api",
+        )
+        session = _FakeRegistrySession(structured_candidates=[individuated], sport_id=9)
+        _sport_id_cache.clear()
+
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="esports_csgo",
+                home_team_name="NAVI",
+                away_team_name="G2",
+                commence_time=individuated.commence_time + timedelta(minutes=45),
+                claim=EventClaim("polymarket", "pm_polymarket_0xdeadbeef"),
+            ),
+        )
+
+        assert was_created is True
+        assert event is not individuated
+        assert session.structured_params is None
+
+    @pytest.mark.asyncio
+    async def test_matcher_raises_if_a_future_caller_reaches_it_unanchored(self):
+        """The path is closed structurally, not by politeness.
+
+        ``_find_existing`` gates on the claim, so the data path never gets here.
+        This asserts the SECOND lock: a future caller that invokes the matcher
+        directly with an unanchored claim gets an exception, not a match. That is
+        what makes the specimen classes above unreachable rather than merely
+        currently-unreached.
+        """
+        candidate = Event(
+            id=43,
+            sport_id=1,
+            home_team_name="Toronto Blue Jays",
+            away_team_name="Boston Red Sox",
+            commence_time=datetime(2026, 8, 16, 17, 5, tzinfo=timezone.utc),
+            status="scheduled",
+        )
+        session = _FakeRegistrySession(structured_candidates=[candidate])
+
+        with pytest.raises(AssertionError, match="ruling 048"):
+            await _find_by_structured_match(
+                session, 1, "Toronto Blue Jays", "Boston Red Sox",
+                candidate.commence_time,
+                claim=EventClaim("kalshi", "KXMLBGAME-sneaky"),
+            )
+
+    @pytest.mark.asyncio
+    async def test_unanchored_create_records_provenance(self):
+        """A created row must say where it came from — that is what makes it repairable."""
+        session = _FakeRegistrySession()
+        _sport_id_cache.clear()
+
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=datetime(2026, 8, 16, 17, 5, tzinfo=timezone.utc),
+                claim=EventClaim("kalshi", "KXMLBGAME-26AUG16TORBOS"),
+            ),
+        )
+
+        assert was_created is True
+        assert "provenance:unanchored" in event.event_tags
+        assert "provenance:source:kalshi" in event.event_tags
+
+    @pytest.mark.asyncio
+    async def test_anchored_create_is_not_tagged_unanchored(self):
+        """The meter counts the id-less path only — an anchored create is not a cost."""
+        session = _FakeRegistrySession()
+        _sport_id_cache.clear()
+
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=datetime(2026, 8, 16, 17, 5, tzinfo=timezone.utc),
+                claim=EventClaim("odds_api", "odds-real-id", schedule_derived=True),
+            ),
+        )
+
+        assert was_created is True
+        assert "provenance:unanchored" not in event.event_tags
+        assert "provenance:source:odds_api" in event.event_tags
+
+    @pytest.mark.asyncio
+    async def test_shared_id_still_absorbs_without_any_anchoring(self):
+        """Arm A is untouched: a SHARED provider id absorbs on Step 1.
+
+        Step 1 needs no window and no names, so it needs no schedule_derived
+        either — the id being present on the row IS the correspondence.
+        """
+        existing = Event(
+            id=44,
+            sport_id=1,
+            external_id="odds-shared-999",
+            home_team_name="Boston Celtics",
+            away_team_name="New York Knicks",
+            commence_time=datetime(2026, 4, 17, 0, 0, tzinfo=timezone.utc),
+            status="scheduled",
+            commence_time_source="odds_api",
+        )
+        session = _FakeRegistrySession(source_matches={"odds-shared-999": existing})
+        _sport_id_cache.clear()
+
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="basketball_nba",
+                home_team_name="Boston Celtics",
+                away_team_name="New York Knicks",
+                commence_time=datetime(2026, 4, 17, 0, 0, tzinfo=timezone.utc),
+                claim=EventClaim("odds_api", "odds-shared-999"),
+            ),
+        )
+
+        assert was_created is False
+        assert event is existing
