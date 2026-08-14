@@ -25,10 +25,13 @@ export interface CurrentOdds {
   projected_away_score: number | null;
   bookmaker_count?: number;
   source?: string;
-  probability_range?: {
-    min: number | null;
-    max: number | null;
-  };
+  // #1854 (UX-P077): `probability_range` was declared here and rendered by
+  // nothing. The backend served the SPORTSBOOK min/max beside a hero that is the
+  // multi-source blend, so the number this type describes sat outside its own
+  // stated range (measured: 0.2813 in 0.6117–0.626). Declaring an unrendered
+  // field is what made it a trap — the next person to reach for it would have
+  // drawn a hero outside its envelope with every reason to trust the payload.
+  // The field is gone from both hero payloads; the type goes with it.
 }
 
 export interface HighlightFlags {

@@ -104,13 +104,13 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     let projectedHomeScore: Double?
     let projectedAwayScore: Double?
     let bookmakerCount: Int?
-    let probabilityRange: ProbabilityRange?
-}
-
-/// Bookmaker spread around the lowest and highest observed probabilities.
-nonisolated struct ProbabilityRange: Decodable, Sendable {
-    let min: Double?
-    let max: Double?
+    // #1854 (UX-P077): `probabilityRange` was decoded here and displayed by
+    // nothing. It carried the SPORTSBOOK min/max beside `homeProbability`, which
+    // has been the multi-source blend since #1829 — so the number this struct
+    // holds sat OUTSIDE its own stated range (measured on production: 0.2813
+    // against 0.6117–0.626). Removed from the payload and from here. An optional
+    // field's removal is safe in both directions for a Decodable, so an older
+    // build still decodes a payload that carries it and this build ignores it.
 }
 
 /// Opening market probabilities and favorite metadata for an event.
