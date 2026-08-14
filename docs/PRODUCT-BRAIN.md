@@ -1326,3 +1326,4 @@ failure this document already records happening twice.
 - [046](rulings/046-a-stacked-change-is-measured-on-its-own-deploy.md) — 2026-08-13 — A stacked change is measured on its OWN deploy; an ungradable measurement is a lost one (Alex)
 - [050](rulings/050-a-control-that-cannot-fail-is-not-a-control.md) — 2026-08-13 — A control that cannot fail is not a control: read the null prediction, and arm it with a HALT (Alex)
 - [052](rulings/052-measure-the-instruction-before-you-obey-it.md) — 2026-08-14 — Measure the instruction before you obey it; ship the payoff sentence and name the words you skipped (Alex)
+- [056](rulings/056-unmeasured-is-not-ineffective.md) — 2026-08-14 — Unmeasured is not ineffective: a null read indicts the instrument until the probe set is shown to discriminate that change class — and the fix is an OUTCOME-EVIDENCE probe class, not a caveat (Alex)
