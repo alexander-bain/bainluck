@@ -17,7 +17,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | prop-threshold-cliff-census | overlap-trading-census
              | winner-field-repair | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
-             | kalshi-fabricated-loss-census | kalshi-fabricated-loss }
+             | kalshi-fabricated-loss-census | kalshi-fabricated-loss
+             | polymarket-evidence-census | polymarket-evidence }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -184,6 +185,31 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
+        "repair",
+    ),
+    # CAL-P060 (#1870): the Polymarket trading-evidence hole. Read-only census
+    # of FOUR states — not the three #1870 asked for, because the probe found a
+    # market class the venue will not address at any URL, and folding that into
+    # "confirmed zero" is the exact error being fixed. Never writes.
+    "polymarket-evidence-census": (
+        "app.tasks.repair_polymarket_evidence",
+        "census",
+    ),
+    # CAL-P060 (#1870): the WRITE half. Fetches trading evidence for the NULL
+    # cohort and records a CONFIRMED ZERO (`volume = 0` + a receipt carrying
+    # `fetched_at`) when the venue confirms zero trading, so NULL means
+    # "never asked" and nothing else. Writes NOTHING on UNADDRESSABLE (clob 404)
+    # or INDETERMINATE (429/5xx/timeout) — gotcha #53 and #36 respectively.
+    # Addresses `gamma/events/{id}`, NOT `gamma/markets?offset=`, because that
+    # pager caps at offset 2000 and its `order=volume` sorts lexicographically.
+    # Oldest-first WITHIN a floor (gotcha #41 / CAL-P009): the ~999 rows
+    # measured permanently unaddressable sort first and are excluded by the
+    # floor, or they would consume every run forever.
+    # Paging is a keyset: `?after_date=&after_id=` from `next_cursor`.
+    # Accepts ?limit=&after_id=&after_date=.
+    # ATTENDED ONLY: never wire this to a beat.
+    "polymarket-evidence": (
+        "app.tasks.repair_polymarket_evidence",
         "repair",
     ),
 }
