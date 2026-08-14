@@ -508,6 +508,9 @@ async def redis_census(
         "sample_budget": sample_budget,
         "truncated": False,
         "truncated_reason": None,
+        # `partial` = full coverage, incomplete sampling. Always present so a
+        # consumer can read it without a key check (gotcha #53).
+        "partial_reason": None,
         "verdict": "complete",
     }
     try:
@@ -575,10 +578,31 @@ async def redis_census(
         scan_calls = 0
         sample_ops = 0
         budget_exhausted = False
+        stop_reason: str | None = None
         while True:
             cursor, batch = r.scan(cursor=cursor, count=500)
             scan_calls += 1
             for raw in batch:
+                # BOTH bounds are checked per KEY, before the expensive work —
+                # not at the page boundary, where they used to sit.
+                #
+                # The loop broke on `cursor == 0` ABOVE these two checks, so the
+                # terminal page never consulted either. For any keyspace smaller
+                # than one SCAN count that is the ONLY page, and its full cost —
+                # up to 500 x (MEMORY USAGE + TTL) synchronous round trips — had
+                # already been paid by the time the break ran. Measured on the
+                # unfixed endpoint: 50 s of sampling against `deadline_s=12`,
+                # returned as `verdict="complete"`, and 300 keys scanned against
+                # a `scan_limit` of 100 reported as 100% coverage.
+                #
+                # Per-key also makes the overshoot one key's work instead of one
+                # page's, which is what this endpoint's docstring always claimed.
+                if scanned >= scan_limit:
+                    stop_reason = "scan_limit"
+                    break
+                if _census_clock() - started >= deadline_s:
+                    stop_reason = "deadline"
+                    break
                 key = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
                 cls = _redis_key_class(key)
                 cell = classes[cls]
@@ -602,16 +626,11 @@ async def redis_census(
                 elif cell["sampled"] < sample_per_class:
                     budget_exhausted = True
                 scanned += 1
+            if stop_reason:
+                out["truncated"] = True
+                out["truncated_reason"] = stop_reason
+                break
             if cursor == 0:
-                break
-            if scanned >= scan_limit:
-                out["truncated"] = True
-                out["truncated_reason"] = "scan_limit"
-                break
-            # Checked per SCAN page, so the overshoot is one page of work.
-            if _census_clock() - started >= deadline_s:
-                out["truncated"] = True
-                out["truncated_reason"] = "deadline"
                 break
 
         out["scanned"] = scanned
@@ -627,7 +646,25 @@ async def redis_census(
             "sample_budget_exhausted": budget_exhausted,
         }
         if out["truncated"]:
+            # Incomplete COVERAGE subsumes incomplete sampling: if the scan
+            # stopped early, "partial" would understate what was missed.
             out["verdict"] = "truncated"
+        elif budget_exhausted:
+            # Coverage is genuinely complete — every key was scanned and
+            # counted — but the BYTE RANKING stopped early, and ranking classes
+            # by bytes is the only reason this endpoint exists. An unsampled
+            # class estimates as zero bytes, so a run that sampled 10 of 1,000
+            # classes was reporting `complete` while its headline numbers were
+            # mostly zeros. `sample_budget_exhausted` recorded the debt in
+            # `cost`, but nothing propagated it to the field the #1807 live
+            # proof actually reads.
+            #
+            # A third value rather than reusing `truncated`, because coverage
+            # IS complete and saying otherwise is its own false statement —
+            # gotcha #53 applied to our own verdict vocabulary: three different
+            # facts, three different bodies.
+            out["verdict"] = "partial"
+            out["partial_reason"] = "sample_budget"
         expires_s = (out.get("celery_results") or {}).get("result_expires_s")
         summary = []
         for cls, cell in classes.items():
@@ -673,8 +710,11 @@ async def redis_census(
         out["note"] = (
             "est_total_bytes is avg_sampled_bytes * keys — a ranking estimate, "
             "not a measurement. Read-only; no keys were written or removed. "
-            "Read `verdict` before any count: `complete` covered the keyspace, "
-            "`truncated` covered `coverage_pct` of it, `error` counted nothing."
+            "Read `verdict` before any count: `complete` covered the keyspace "
+            "AND sampled it, `partial` covered it all but stopped sampling "
+            "early (see `partial_reason` — unsampled classes estimate as zero "
+            "bytes and must not be read as small), `truncated` covered only "
+            "`coverage_pct` of it, `error` counted nothing."
         )
     except Exception as e:  # noqa: BLE001
         out["error"] = str(e)[:300]

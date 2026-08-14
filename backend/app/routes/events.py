@@ -36,6 +36,7 @@ from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter
 from app.utils.name_normalization import expand_search_terms
 from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
+    Evidence as _SearchEvidence,
 )
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.feed_market_quality import has_no_real_price
@@ -4158,6 +4159,11 @@ async def typeahead_search(
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
             # dropdown shows "Lakers 62% · Cavs 18%", not just a title to click.
             "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
+            # RANKING evidence, private and stripped before the response. The
+            # three rows above are a DISPLAY cut; using them as the market's
+            # owned-outcome evidence made display truncation silently truncate
+            # ranking evidence. See `_search_owned_outcome_names`.
+            "_outcome_names": _search_owned_outcome_names(market),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
@@ -4396,30 +4402,10 @@ async def typeahead_search(
     # promise to show something irrelevant when nothing relevant matched. Recall
     # is untouched — the pools are exactly as they were, and the scorer only
     # reorders and drops derived-only concepts (see `search_match_class`).
-    from app.utils.search_match_class import Evidence as _SEv, rank as _s_rank
-
-    def _ta_evidence(item: dict) -> _SEv:
-        kind = item.get("type") or "market"
-        aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
-        outcomes: tuple[str, ...] = ()
-        if kind == "team" and item.get("abbreviation"):
-            aliases = (*aliases, item["abbreviation"])
-        if kind == "futures":
-            outcomes = tuple(
-                (o or {}).get("name") or ""
-                for o in (item.get("top_outcomes") or [])
-            )
-        return _SEv(
-            name=item.get("text") or "",
-            aliases=aliases,
-            outcomes=outcomes,
-            kind=kind,
-            derived=bool(item.get("_derived")),
-            sport_key=item.get("sport_key"),
-        )
+    from app.utils.search_match_class import rank as _s_rank
 
     _ta_candidates = [
-        (_ta_evidence(item), item)
+        (_typeahead_evidence(item), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
@@ -4427,6 +4413,9 @@ async def typeahead_search(
     for _s in suggestions:
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
+        # Ranking evidence, never a payload: a 40-outcome market would other-
+        # wise ship 40 strings on every keystroke.
+        _s.pop("_outcome_names", None)
 
     result: dict = {"suggestions": suggestions, "query": q}
     if did_you_mean:
@@ -10122,6 +10111,75 @@ def _build_search_top_outcomes(
         out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
     )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
+
+
+def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
+    """EVERY real outcome name the market owns — ranking evidence, not display.
+
+    Deliberately separate from `_build_search_top_outcomes`, and deliberately
+    unbounded, because conflating the two was a defect:
+
+    The recall SQL admits a futures market when **any** of its outcomes matches
+    the query. The pool item then carried only `top_outcomes` — the three
+    highest-probability outcomes, chosen for a dropdown — and the scorer read
+    those three as the market's complete owned-outcome evidence. So the market
+    could be fetched BECAUSE of an outcome the scorer was then prevented from
+    seeing. Measured: query "Miami Heat" against "NBA Championship Winner"
+    displaying Celtics/Thunder/Nuggets scored MC5 (fragment); with the fourth,
+    already-owned outcome visible it scores MC4 (outcome-only). A market that
+    owns the answer was losing to unrelated substring accidents.
+
+    **Do not add a limit here.** A cap would reintroduce the same bug one
+    threshold further out — and this program has now shipped that exact shape
+    three times (#1836's team pool, #1839's dedup guard, and this). The correct
+    bound is the one the SQL already applied: it decided this market is a
+    candidate, so the scorer gets the evidence that decision was made on.
+
+    Cost is nil: `FuturesMarket.outcomes` is `selectinload`ed by the typeahead
+    query, so this walks a list already in memory — no extra round trip and no
+    lazy load (which in an async context would be a crash, not a slow path).
+    """
+    return tuple(
+        o.name for o in market.outcomes
+        if o.name and not _is_placeholder_outcome_name(o.name)
+    )
+
+
+def _typeahead_evidence(item: dict) -> "_SearchEvidence":
+    """Convert a typeahead pool item into the `Evidence` the scorer scores.
+
+    Module-level, and that is the point: this was a closure inside
+    `typeahead_search`, which made the seam between "what the route collected"
+    and "what the scorer was told" unreachable from any test. The scorer's
+    property suite builds `Evidence` directly (so it cannot see this), and the
+    route tests assert on ranked output against a near-empty DB (so a candidate
+    that never reached the scorer looks the same as one that lost). Two defects
+    lived in that gap; `tests/test_typeahead_evidence_boundary.py` now owns it.
+    """
+    kind = item.get("type") or "market"
+    aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
+    outcomes: tuple[str, ...] = ()
+    if kind == "team" and item.get("abbreviation"):
+        aliases = (*aliases, item["abbreviation"])
+    if kind == "futures":
+        # The full owned set when the route supplied it, falling back to the
+        # display rows so this stays correct for any caller that has not been
+        # taught about `_outcome_names`.
+        owned = item.get("_outcome_names")
+        if owned is None:
+            owned = tuple(
+                (o or {}).get("name") or ""
+                for o in (item.get("top_outcomes") or [])
+            )
+        outcomes = tuple(owned)
+    return _SearchEvidence(
+        name=item.get("text") or "",
+        aliases=aliases,
+        outcomes=outcomes,
+        kind=kind,
+        derived=bool(item.get("_derived")),
+        sport_key=item.get("sport_key"),
+    )
 
 
 def _format_futures_for_search(market: FuturesMarket) -> dict:

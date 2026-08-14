@@ -25,6 +25,20 @@ first:
 Nothing here measures elapsed time. The deadline is driven off an injected
 counter, because a test that branches on the real clock is the bug in gotcha
 #44, not a test of one.
+
+**Amended 2026-08-13 (LAT-P048), after a Codex post-merge audit found two
+honesty bugs in the very rail this file was written to keep honest — and found
+them THROUGH this file's own double.** Both are recorded at the bottom under
+"the terminal page and the budget". The lesson generalises past the census:
+
+*A test double that cannot express the cost of the thing under test will
+certify the bound that fails to charge it.* ``_PagingFakeRedis.memory_usage``
+and ``.ttl`` returned instantly, so no test in this file could describe a page
+that is slow rather than merely long. All 20 tests passed against an endpoint
+that could burn 50 simulated seconds against a 12-second deadline and then
+report ``verdict="complete"``. The fix is ``_ClockedFakeRedis``, whose sampling
+costs time, and the rule is that a bound expressed in SECONDS needs a double
+that can spend them.
 """
 
 import pytest
@@ -90,6 +104,47 @@ class _PagingFakeRedis:
     def ttl(self, key):
         self.ttl_calls += 1
         return self._ttls.get(key, -1)
+
+
+class _Clock:
+    """An injected monotonic clock that only moves when something spends it."""
+
+    def __init__(self, start: float = 0.0):
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
+
+
+class _ClockedFakeRedis(_PagingFakeRedis):
+    """A Redis whose SAMPLING COSTS TIME — the double this file was missing.
+
+    ``_PagingFakeRedis`` answers ``MEMORY USAGE`` and ``TTL`` for free, so the
+    only way it could ever trip the deadline was by being handed a tick
+    iterator that jumped. That made every deadline test implicitly a test of
+    *many cheap pages*, and left *one expensive page* — the actual production
+    shape, 500 keys x 2 synchronous round trips — inexpressible.
+
+    Here each sample call advances the injected clock, so elapsed time is a
+    function of the work requested rather than of a scripted sequence. Nothing
+    reads the wall clock (gotcha #44).
+    """
+
+    def __init__(self, keys, *, clock, cost_s=0.0, **kwargs):
+        super().__init__(keys, **kwargs)
+        self._clock = clock
+        self._cost_s = cost_s
+
+    def memory_usage(self, key, samples=0):
+        self._clock.advance(self._cost_s)
+        return super().memory_usage(key, samples=samples)
+
+    def ttl(self, key):
+        self._clock.advance(self._cost_s)
+        return super().ttl(key)
 
 
 class _DeadRedis:
@@ -173,13 +228,23 @@ async def test_the_1807_keyspace_costs_one_class_not_forty_thousand(monkeypatch)
 async def test_a_pathological_class_explosion_still_stops_at_the_budget(monkeypatch):
     """Belt and braces: if some future keyspace defeats the fold anyway, the
     global sample budget — not the class count — is what keeps the endpoint
-    inside the router timeout."""
+    inside the router timeout.
+
+    **Contract amended 2026-08-13 (LAT-P048).** This test previously asserted
+    ``verdict == "complete"`` on the same line as ``sample_budget_exhausted is
+    True``, which contract-LOCKED the false green Codex later found: it made
+    "the census stopped ranking after 500 of 20,000 classes" and "the census
+    finished" the same answer, and any fix would have had to break this test to
+    land. The budget still bounds the work — that is what this test is for —
+    but the verdict now says the sampling was cut short.
+    """
     keys = [f"weird{i}:thing{i}" for i in range(20_000)]
     fake = _PagingFakeRedis(keys)
 
     out = await _census(monkeypatch, fake, sample_budget=500)
 
-    assert out["verdict"] == "complete"
+    assert out["verdict"] == "partial"
+    assert out["partial_reason"] == "sample_budget"
     assert out["scanned"] == 20_000
     assert out["cost"]["sample_ops"] == 500
     assert out["cost"]["sample_budget_exhausted"] is True
@@ -231,12 +296,25 @@ async def test_deadline_truncation_is_named_and_does_not_503(monkeypatch):
 
     gotcha #44: a test that reads the real clock to prove a timeout fires is a
     test that will one day fire on its own.
-    """
-    ticks = iter([0.0, 0.5, 99.0] + [199.0] * 50)
-    monkeypatch.setattr(mod, "_census_clock", lambda: next(ticks))
 
+    **Rewritten 2026-08-13 (LAT-P048) onto ``_ClockedFakeRedis``.** It used to
+    drive a hand-written ``ticks`` iterator, which was fragile in a way that
+    mattered: the script assumed the clock is read once per PAGE, so it encoded
+    the very page-boundary behaviour that turned out to be the bug. Moving the
+    checks per-key exhausted the iterator. Time is now spent by the sampling
+    that actually costs it, so this test no longer has an opinion about WHERE
+    the endpoint chooses to look at the clock — only that it stops when the
+    budget of seconds is gone.
+    """
+    clock = _Clock()
+    monkeypatch.setattr(mod, "_census_clock", clock)
+
+    # One class, so per-class sampling stops after 12 keys and the remaining
+    # time is spent scanning — a MANY CHEAP PAGES shape, deliberately the
+    # opposite of the slow-terminal-page specimen below.
     keys = [f"a:{i}" for i in range(10_000)]
-    out = await _census(monkeypatch, _PagingFakeRedis(keys), deadline_s=12.0)
+    fake = _ClockedFakeRedis(keys, clock=clock, cost_s=0.6)
+    out = await _census(monkeypatch, fake, deadline_s=12.0)
 
     assert out["verdict"] == "truncated"
     assert out["truncated_reason"] == "deadline"
@@ -284,3 +362,146 @@ async def test_default_call_covers_the_current_production_keyspace(monkeypatch):
     assert out["verdict"] == "complete"
     assert out["scanned"] == 59_871
     assert out["coverage_pct"] == 100.0
+
+
+# ---------------------------------------------------------------------------
+# The terminal page and the budget — two ways a bounded rail said "complete"
+# about work it had not done. Both found by a Codex post-merge audit of #1807,
+# 2026-08-13, and both invisible to the 20 tests above.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_slow_terminal_page_cannot_report_complete_after_the_deadline(monkeypatch):
+    """THE GUARD. One page, 500 classes, every key sampled, 50 ms per call.
+
+    The bug: the loop checked ``cursor == 0`` and broke BEFORE it consulted
+    either the scan limit or the deadline, so the LAST page — which for any
+    keyspace under 500 keys is the only page — was exempt from both bounds.
+    Every sample in it had already been paid for by the time the break ran.
+
+    Measured on the unfixed endpoint: **50.0 simulated seconds** against
+    ``deadline_s=12``, 500 MEMORY + 500 TTL round trips, and a returned
+    ``verdict="complete"`` with ``truncated_reason=None``. That is the exact
+    failure the verdict field exists to make impossible — a rail built so a
+    census "must never 503" burning past Heroku's 30 s router deadline and
+    then calling the result complete.
+    """
+    clock = _Clock()
+    monkeypatch.setattr(mod, "_census_clock", clock)
+    # 500 distinct classes so the per-class quota never throttles sampling.
+    keys = [f"fam{i}:key{i}" for i in range(500)]
+    fake = _ClockedFakeRedis(keys, clock=clock, cost_s=0.05)
+
+    out = await _census(monkeypatch, fake, deadline_s=12.0)
+
+    assert out["verdict"] == "truncated"
+    assert out["truncated"] is True
+    assert out["truncated_reason"] == "deadline"
+    # It stopped ON the deadline, not after four times it.
+    assert clock.t < 13.0, f"spent {clock.t}s against a 12s deadline"
+    # Overshoot is bounded to ONE key's work, not one page's.
+    assert clock.t <= 12.0 + 2 * 0.05
+    # It answered with what it had, and said so honestly.
+    assert 0 < out["scanned"] < 500
+    assert 0 < out["coverage_pct"] < 100.0
+    assert out["classes"]
+
+
+@pytest.mark.asyncio
+async def test_the_terminal_page_honours_the_scan_limit_too(monkeypatch):
+    """The same exemption, reached by the other bound and with no clock at all.
+
+    A 300-key single-page keyspace with ``scan_limit=100`` returned
+    ``complete``, ``scanned=300``, ``coverage_pct=100.0`` — three times the
+    ceiling it was given, reported as full coverage.
+    """
+    keys = [f"fam{i}:key{i}" for i in range(300)]
+
+    out = await _census(monkeypatch, _PagingFakeRedis(keys), scan_limit=100)
+
+    assert out["verdict"] == "truncated"
+    assert out["truncated_reason"] == "scan_limit"
+    assert out["scanned"] == 100
+    assert out["coverage_pct"] < 100.0
+
+
+@pytest.mark.asyncio
+async def test_exhausting_the_sample_budget_is_not_a_complete_census(monkeypatch):
+    """A census that ranked 10 classes out of 1,000 has not finished ranking.
+
+    ``sample_budget_exhausted`` was recorded in ``cost`` but could not move the
+    top-level verdict — only scan-limit and deadline truncation could. So the
+    headline field read ``complete`` while 990 classes were never sampled and
+    therefore estimate as **zero bytes**, on an endpoint whose entire purpose
+    is ranking classes BY bytes. The live-proof acceptance for #1807 reads that
+    headline.
+
+    ``partial`` is deliberately a third value rather than ``truncated``:
+    coverage genuinely IS complete — every key was scanned and counted — so
+    calling it truncated would be its own false statement. What stopped early
+    is the sampling, and the verdict now says which (gotcha #53: three
+    different facts, three different bodies).
+    """
+    keys = [f"fam{i}:key{i}" for i in range(1_000)]
+
+    out = await _census(monkeypatch, _PagingFakeRedis(keys), sample_budget=10)
+
+    assert out["verdict"] == "partial"
+    assert out["partial_reason"] == "sample_budget"
+    assert out["cost"]["sample_budget_exhausted"] is True
+    assert out["cost"]["sample_ops"] == 10
+    # Coverage is real and must not be understated either.
+    assert out["truncated"] is False
+    assert out["scanned"] == 1_000
+    assert out["coverage_pct"] == 100.0
+    # 990 of the 1,000 classes were never sampled. The response caps the class
+    # list at 60, so the debt is asserted where it is actually visible: the
+    # class count, the omitted count, and every returned unsampled row saying
+    # so rather than estimating zero bytes.
+    assert out["cost"]["classes_seen"] == 1_000
+    assert out["classes_omitted"] == 1_000 - len(out["classes"])
+    unsampled = [c for c in out["classes"] if c["sampled"] == 0]
+    assert len(unsampled) >= 50
+    assert all(c["est_basis"] == "unsampled" for c in unsampled)
+    assert all(c["est_total_bytes"] == 0 for c in unsampled)
+
+
+@pytest.mark.asyncio
+async def test_truncated_outranks_partial_when_both_bounds_are_hit(monkeypatch):
+    """One verdict field, so the stronger statement has to win.
+
+    Incomplete COVERAGE subsumes incomplete sampling: if the scan stopped
+    early, saying "partial" would understate what was missed.
+    """
+    keys = [f"fam{i}:key{i}" for i in range(1_000)]
+
+    out = await _census(monkeypatch, _PagingFakeRedis(keys),
+                        scan_limit=100, sample_budget=5)
+
+    assert out["verdict"] == "truncated"
+    assert out["truncated_reason"] == "scan_limit"
+    # The weaker fact is still reported, just not as the headline.
+    assert out["cost"]["sample_budget_exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_fast_terminal_page_inside_both_bounds_is_still_complete(monkeypatch):
+    """The control. Charging for sampling must not make everything truncated.
+
+    Without this, the two fixes above could be 'passing' because the endpoint
+    now reports truncation unconditionally.
+    """
+    clock = _Clock()
+    monkeypatch.setattr(mod, "_census_clock", clock)
+    keys = [f"fam{i}:key{i}" for i in range(200)]
+    fake = _ClockedFakeRedis(keys, clock=clock, cost_s=0.001)
+
+    out = await _census(monkeypatch, fake, deadline_s=12.0)
+
+    assert out["verdict"] == "complete"
+    assert out["truncated"] is False
+    assert out["truncated_reason"] is None
+    assert out["scanned"] == 200
+    assert out["coverage_pct"] == 100.0
+    assert clock.t < 12.0
