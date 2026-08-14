@@ -1,37 +1,31 @@
-"""CAL-P047 — the fingerprint coverage census, now CLOSED rather than reported.
+"""CAL-P032 — the fingerprint coverage census, now DERIVED rather than hand-kept.
 
-CAL-P031 shipped this census as a hand-maintained map: four hashed roots, three
+CAL-P031 shipped this census as a hand-maintained map in
+``app/utils/calibration_fingerprint_coverage.py``: four hashed roots, three
 covered-by-value names, five cross-module holes and thirty-eight same-module
-ones, typed out by a human reading the source. C258's generated artifact
-(``scripts/evals/calibration_fingerprint_derived_map``) parses every one of those
-facts out of the real ``_main_input_fingerprint`` body, so the hand map was
-**deleted** rather than kept "for reference" — two derivations of one fact is
-precisely how they drift.
+ones, all typed out by a human reading the source. C258's generated artifact
+(``scripts/evals/calibration_fingerprint_derived_map``) parses every one of
+those facts out of the real ``_main_input_fingerprint`` body, so the hand map
+was **deleted** rather than kept "for reference" — two derivations of one fact
+is precisely how they drift, and this lane has paid for that repeatedly.
 
-**CAL-P045/P047 applied the fix** inside ruling 024's combined invalidation
-window. The census reads **54 inputs, 52 covered by value, 2 covered by source,
-0 uncovered** — it was 47 / 3 / 44, and parts (b) and (c) of the same window
-added inputs of their own, each caught UNCOVERED by the ratchet before it passed. This file previously CHARACTERIZED the hole — it asserted that the
-digest sat still while the emitted SQL moved underneath it, and said in its own
-docstring that it would go red the day someone covered the value, "forcing the
-census and the sequencing note to be updated in the same commit as the fix."
-
-That is what happened: six tests here went red on the fix and are inverted below.
-Recorded rather than quietly rewritten, because a characterization test that is
-edited without saying why is indistinguishable from one that was wrong.
+What survives here is the part the artifact cannot express: **the proof that the
+hole is real**, taken by value against the live digest rather than argued from
+source. The artifact can say ``CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL`` is
+uncovered; only this can show the digest sitting still while the emitted SQL
+moves underneath it.
 
 Numbers are asserted against the artifact, not restated, so there is exactly one
 place they live. The artifact's own both-directions ratchet is
 ``tests/evals/test_calibration_fingerprint_derived_map.py::test_generated_map_matches_real_source``
 — ``derive_map() == frozen()`` fails on one more input AND on one fewer, which is
-gotcha #10's lesson (a one-directional baseline becomes silent headroom).
+gotcha #10's lesson (a one-directional baseline becomes silent headroom) applied
+without having to hand-maintain either side of it.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 
 import pytest
 
@@ -46,16 +40,20 @@ def artifact() -> dict:
     return json.loads(DEFAULT_MAP.read_text())
 
 
-class TestTheHoleIsClosed:
-    """The digest now MOVES when a cross-module population value changes.
+class TestTheHoleIsReal:
+    """The digest does not move when a cross-module population value changes.
 
-    The inverse of this lane's longest-standing characterization test. It is
-    still taken by VALUE against the live digest rather than argued from source,
-    for the same reason it always was: the artifact can say a name is covered;
-    only this can show the digest moving when the value does.
+    This is a CHARACTERIZATION test: it asserts what production does TODAY, not
+    what it should do. It is deliberately not an xfail and not skipped, because
+    the point is that it goes RED the day someone covers the value — forcing the
+    census and the sequencing note to be updated in the same commit as the fix.
+    A fix that leaves stale documentation behind is this lane's recurring cost.
+
+    Importing the frozen build module to MEASURE its digest is a read, not a
+    commit (ruling 009).
     """
 
-    def test_digest_tracks_the_eligible_sources_value(self, monkeypatch):
+    def test_digest_is_blind_to_the_eligible_sources_value(self, monkeypatch):
         from app.tasks import precompute_calibration as pc
 
         before = pc._main_input_fingerprint()
@@ -67,18 +65,18 @@ class TestTheHoleIsClosed:
         )
         after = pc._main_input_fingerprint()
 
-        assert after != before, (
-            "The digest did NOT move — CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL has "
-            "lost its coverage. This is the CAL-P031 hole reopening: an edit to "
-            "the eligible-source list would change the published population while "
-            "a resumed beat carried units built under the old one."
+        assert after == before, (
+            "The digest MOVED — someone covered CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL. "
+            "That is the fix landing (ruling 024's combined invalidation window), which "
+            "is good. Now regenerate the derived map so the artifact stops listing it as "
+            "uncovered, and update FIX_SEQUENCING_NOTE."
         )
 
     def test_the_changed_value_really_does_reach_the_emitted_sql(self, monkeypatch):
         """Guards the test above from being vacuous.
 
-        If the value never reached the SQL, a moved digest would prove only that
-        we hash a string nobody uses.
+        If the value never reached the SQL, an unmoved digest would be correct
+        rather than a hole, and the test above would pass for the wrong reason.
         """
         from app.tasks import precompute_calibration as pc
 
@@ -89,127 +87,6 @@ class TestTheHoleIsClosed:
 
         assert "a_different_population" in emitted
 
-    @pytest.mark.parametrize(
-        "name,replacement",
-        [
-            ("CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL", "('probe')"),
-            ("PRICE_DERIVED_SOURCES_SQL", "('probe')"),
-            ("DRAW_AUTHORITY_OUTCOME_NAMES", frozenset({"probe"})),
-            ("SOURCE_LIQUIDITY_EXCLUSIONS", {"probe": ("x",)}),
-            ("STAGED_UNIT_WINDOW_SAFETY", 0.123456),
-            ("_COVERAGE_RUNG_PREDICATES", (("probe", "1=1"),)),
-        ],
-    )
-    def test_every_covered_class_actually_moves_the_digest(
-        self, monkeypatch, name, replacement
-    ):
-        """One representative of each value SHAPE, not just the famous one.
-
-        A str, a frozenset, a dict, a float and a tuple-of-tuples. The shapes are
-        the point: ``_canonical_input`` renders each differently, and a renderer
-        that silently returned a constant for an unhandled type would leave that
-        whole class uncovered while the census reported it green.
-        """
-        from app.tasks import precompute_calibration as pc
-
-        before = pc._main_input_fingerprint()
-        monkeypatch.setattr(pc, name, replacement)
-
-        assert pc._main_input_fingerprint() != before, f"{name} does not reach the digest"
-
-
-class TestTheDigestIsStableAcrossProcesses:
-    """The trap that would have shipped green, and the only test that can see it.
-
-    Three covered inputs are ``frozenset``. ``repr`` of a set iterates in hash
-    order and Python randomises string hashing PER PROCESS, so the documented
-    idiom (bare f-string interpolation) yields a different digest in every Celery
-    worker. The cursor would be read as foreign on every beat and the build could
-    never converge.
-
-    A single-process test cannot observe this — every assertion inside one
-    interpreter shares one hash seed. So this test spawns interpreters.
-    """
-
-    def _digest_under_seed(self, seed: str) -> str:
-        return subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import app.tasks.precompute_calibration as pc;"
-                "print(pc._main_input_fingerprint())",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            env={"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin"},
-        ).stdout.strip()
-
-    def test_the_digest_is_identical_under_different_hash_seeds(self):
-        digests = {self._digest_under_seed(s) for s in ("1", "2", "3")}
-
-        assert len(digests) == 1, (
-            "The fingerprint differs between processes. Some input is being "
-            "rendered in hash order — almost certainly a set or dict interpolated "
-            "directly instead of through _canonical_input. Every beat would "
-            "discard the cursor as foreign."
-        )
-
-    def test_the_naive_idiom_really_is_unstable(self):
-        """Proves the test above is not vacuous.
-
-        If bare interpolation happened to be stable, the guard would pass for the
-        wrong reason and ``_canonical_input`` would look like ceremony.
-        """
-        naive = {
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    "import app.tasks.precompute_calibration as pc;"
-                    "print(f'{pc.DRAW_AUTHORITY_OUTCOME_NAMES}')",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-                env={"PYTHONHASHSEED": s, "PATH": "/usr/bin:/bin"},
-            ).stdout.strip()
-            for s in ("1", "2", "3", "4")
-        }
-
-        assert len(naive) > 1, (
-            "Bare frozenset interpolation was stable across seeds — either Python "
-            "changed, or this constant is no longer a set. Re-derive whether "
-            "_canonical_input is still load-bearing before trusting the guard above."
-        )
-
-
-class TestCanonicalRenderIsOrderIndependent:
-    def test_sets_render_sorted_regardless_of_construction_order(self):
-        from app.tasks.precompute_calibration import _canonical_input
-
-        a = _canonical_input(frozenset({"b", "a", "c"}))
-        b = _canonical_input(frozenset({"c", "b", "a"}))
-
-        assert a == b == "{'a', 'b', 'c'}"
-
-    def test_sequence_order_is_PRESERVED_not_sorted(self):
-        """Order is meaning for a sequence — the rung order IS the contract.
-
-        Sorting these would make two different rung orderings hash identically,
-        which is the same class of blindness as not hashing them at all.
-        """
-        from app.tasks.precompute_calibration import _canonical_input
-
-        assert _canonical_input(("b", "a")) != _canonical_input(("a", "b"))
-
-    def test_a_dict_of_sets_is_stable_all_the_way_down(self):
-        from app.tasks.precompute_calibration import _canonical_input
-
-        assert _canonical_input({"k": frozenset({"y", "x"})}) == _canonical_input(
-            {"k": frozenset({"x", "y"})}
-        )
-
 
 class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
     def test_the_hand_maintained_module_no_longer_exists(self):
@@ -218,121 +95,96 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             __import__("app.utils.calibration_fingerprint_coverage")
 
     def test_the_census_counts_come_from_the_artifact(self, artifact):
-        """54 inputs, 54 covered, 0 uncovered — CAL-P045/P047 closed it.
+        """47 inputs, 3 covered, 44 uncovered — the C258 figures, +1 at CAL-P038.
 
-        Was 47 / 3 / 44. CAL-P030/P031 prose said "3 of 43", reading the
-        UNCOVERED count as the total; asserting all of them against one another
-        makes that class of slip impossible to restate. The identity below is
-        what does that work, and it is why the pin is not simply ``== 0``.
+        CAL-P030/P031 prose said "3 of 43", reading the UNCOVERED count as the
+        total. The lists were right; the sentence was not. Asserting all three
+        against one another makes that class of slip impossible to restate.
 
-        47 -> 53 is ruling 011 part (b) arriving in the same window: importing
-        the trade-evidence rule added five constants and one callable to the
-        input set. **The ratchet caught that unprompted** — the six landed
-        UNCOVERED and had to be covered before this test could pass again, which
-        is the concrete proof that parts (a) and (b) are one invalidation event
-        rather than two changes that happen to ship together.
+        CAL-P038 moved the totals 46/43 -> 47/44 by adding
+        ``STAGED_UNIT_WINDOW_SAFETY``, the unit-window margin. The pin is
+        deliberately kept as a pin — it is a tripwire, and a tripwire that is
+        loosened when it fires is not one. What matters is WHICH number moved:
+        ``uncovered_sql_shaping`` is asserted separately below precisely because
+        a behaviour-only input must not touch it, and this one does not.
         """
-        covered = len(artifact["covered_by_value"]) + len(artifact["covered_by_source"])
-
-        assert artifact["input_count"] == 54
-        assert len(artifact["covered_by_value"]) == 52
-        assert len(artifact["covered_by_source"]) == 2
-        assert artifact["uncovered_count"] == 0
-        assert artifact["uncovered_count"] == artifact["input_count"] - covered
+        assert artifact["input_count"] == 47
+        assert len(artifact["covered_by_value"]) == 3
+        assert artifact["uncovered_count"] == 44
+        assert artifact["uncovered_count"] == artifact["input_count"] - len(
+            artifact["covered_by_value"]
+        )
         assert (
             artifact["uncovered_sql_shaping"]
             + artifact["uncovered_behavior_or_evidence"]
             == artifact["uncovered_count"]
         )
 
-    def test_no_input_shapes_the_sql_without_being_hashed(self, artifact):
+    def test_a_behaviour_only_input_does_not_widen_the_sql_shaping_hole(self, artifact):
         """The count with correctness consequences, pinned on its own.
 
-        It was 21 and is now 0. This is the class that can silently change the
-        published population, so it keeps its own assertion even at zero —
-        a total reaching zero is exactly when a combined pin stops discriminating.
+        The totals above move whenever the module gains any named input. This
+        one moves only when an input reaches the emitted SQL, which is the only
+        class that can silently change the published population — so separating
+        them is what stops a routine +1 from being read as "the unguarded
+        surface grew".
         """
-        assert artifact["uncovered_sql_shaping"] == 0
+        assert artifact["uncovered_sql_shaping"] == 21
 
-    def test_the_hashed_roots_are_derived_not_declared_here(self, artifact):
-        """Four became six: two CALLABLE inputs are hashed by SOURCE.
-
-        ``repr`` of a function is its memory address — stable within a process,
-        different in every worker, and indistinguishable from real coverage in
-        the census. ``trade_evidence_sql`` is the one that matters most: it
-        EMITS SQL into the population statement, so its text can change the shape
-        of a banked unit.
-        """
+    def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
-            "_build_coverage_census",
             "_calibration_population_ctes",
             "_main_futures_sql",
             "_virtual_market_ctes",
             "compute_calibration_payload",
-            "trade_evidence_sql",
         ]
 
-    def test_the_formerly_proven_hole_is_now_covered(self, artifact):
+    def test_the_proven_hole_is_listed_uncovered_and_sql_shaping(self, artifact):
         """The one with production consequences must never lose its entry."""
         row = next(
             r
             for r in artifact["inputs"]
             if r["name"] == "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL"
         )
-        assert row["covered_by_value"] is True
+        assert row["covered_by_value"] is False
         assert row["sql_interpolated"] is True
         assert row["origin"].startswith("app.utils.resolution_authority")
         # The external definition digest is what makes the artifact a tripwire
         # rather than a list: editing the eligible-source list moves this.
         assert row["definition_sha16"]
 
-    def test_the_five_cross_module_inputs_are_all_covered_now(self, artifact):
-        """These were THE unguarded tier and the reason the fix mattered.
+    def test_the_five_cross_module_holes_are_the_unguarded_tier(self, artifact):
+        """Ruling 009 freezes the build module and NOTHING else, so these are
+        live today. The other 39 are protected only incidentally, by a freeze
+        that is designed to lift (ruling 024's named failure).
 
-        Ruling 009 froze the build module and nothing else, so the other 42 were
-        protected incidentally by a freeze designed to lift. These five were live
-        the whole time. The membership is pinned as well as the coverage, so
-        dropping one from the census cannot read as closing it.
-        """
-        cross = {
-            r["name"]: (r["covered_by_value"] or r["covered_by_source"])
+        The cross-module FIVE is the assertion that carries the meaning and it
+        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038),
+        which is the direction that costs nothing — an in-module input is behind
+        the freeze."""
+        cross = sorted(
+            r["name"]
             for r in artifact["inputs"]
-            if not r["origin"].startswith("app.tasks.precompute_calibration")
-        }
-
-        assert sorted(cross) == [
+            if not r["covered_by_value"]
+            and not r["origin"].startswith("app.tasks.precompute_calibration")
+        )
+        assert cross == [
             "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
             "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
             "PRICE_DERIVED_SOURCES_SQL",
-            "TRADE_EVIDENCE_CLASSES",
-            "TRADE_EVIDENCE_EVIDENCED_CLASSES",
-            "TRADE_EVIDENCE_EXCLUDED_SOURCES",
-            "TRADE_EVIDENCE_RULE_TEXT",
-            "TRADE_EVIDENCE_TRADED_CLASSES",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
-            "trade_evidence_sql",
         ]
-        assert all(cross.values()), f"uncovered cross-module input: {cross}"
-
-    def test_the_callable_is_covered_by_source_and_NOT_by_value(self, artifact):
-        row = next(
-            r for r in artifact["inputs"] if r["name"] == "_build_coverage_census"
-        )
-
-        assert row["covered_by_source"] is True
-        assert row["covered_by_value"] is False, (
-            "A function hashed by value hashes its memory address. That reads as "
-            "covered here and differs in every worker."
-        )
+        assert len(cross) + 39 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:
     """CAL-P032: the build assembles SQL with ``+`` and ``%``, not only f-strings.
 
     An f-string-only detector under-counted ``uncovered_sql_shaping`` — the
-    number that says how many unguarded values shape the population predicate.
-    Measured against CAL-P031's broader detector, it missed exactly one name.
+    number that says how many unguarded values shape the population predicate,
+    which is the safety-relevant half of the census. Measured against CAL-P031's
+    broader detector, it missed exactly one name.
     """
 
     def test_concatenated_sql_values_are_classified_as_sql_shaping(self, artifact):
@@ -380,69 +232,8 @@ class TestInterpolationDetectionCoversNonFStringSql:
         assert row["impact"] == "behavior_or_evidence"
 
 
-class TestTheDetectorSeesCrossModuleCoverage:
-    """CAL-P047: the census could not have observed its own fix.
-
-    ``derive_declared`` built its ``module_names`` from same-module assignments
-    only, so a cross-module constant passed by value to ``input_fingerprint`` was
-    not recognised as covered. The five cross-module inputs are exactly the tier
-    the freeze never protected — so the detector was blind in precisely the place
-    where blindness cost something.
-    """
-
-    def test_an_imported_constant_passed_by_value_counts_as_covered(self):
-        from scripts.evals.calibration_fingerprint_derived_map import derive_declared
-
-        source = (
-            "import inspect\n"
-            "from app.utils.resolution_authority import IMPORTED_SQL\n"
-            "from app.utils.input_fingerprint import input_fingerprint\n"
-            "def _main_futures_sql():\n"
-            "    return 'SELECT ' + IMPORTED_SQL\n"
-            "def compute_calibration_payload(): pass\n"
-            "def _calibration_population_ctes(): pass\n"
-            "def _virtual_market_ctes(): pass\n"
-            "def _main_input_fingerprint():\n"
-            "    return input_fingerprint(f'x={IMPORTED_SQL}',"
-            " inspect.getsource(_main_futures_sql))\n"
-        )
-        _roots, values = derive_declared(source)
-
-        assert "IMPORTED_SQL" in values
-
-    def test_a_non_app_import_is_not_treated_as_a_population_input(self):
-        """Scope guard: only ``app.*`` names are build inputs.
-
-        Without this the census would grow an entry every time the module
-        imported a stdlib name, and the counts would stop meaning anything.
-        """
-        from scripts.evals.calibration_fingerprint_derived_map import derive_declared
-
-        source = (
-            "import inspect\n"
-            "from os import sep\n"
-            "from app.utils.input_fingerprint import input_fingerprint\n"
-            "def _main_futures_sql():\n"
-            "    return 'SELECT ' + sep\n"
-            "def compute_calibration_payload(): pass\n"
-            "def _calibration_population_ctes(): pass\n"
-            "def _virtual_market_ctes(): pass\n"
-            "def _main_input_fingerprint():\n"
-            "    return input_fingerprint(f'x={sep}',"
-            " inspect.getsource(_main_futures_sql))\n"
-        )
-        _roots, values = derive_declared(source)
-
-        assert "sep" not in values
-
-
-class TestTheSequencingConstraintSurvivedTheFix:
-    """The note is the only thing the artifact cannot carry: WHEN to apply the fix.
-
-    It is kept after application because the constraint binds input 48 exactly as
-    it bound these — and a note deleted the moment it is first obeyed teaches
-    nobody.
-    """
+class TestTheSequencingConstraintSurvivedTheMove:
+    """The note is the only thing the artifact cannot carry: WHEN to apply the fix."""
 
     def test_it_names_both_independently_sufficient_blockers(self):
         assert "ruling 009" in FIX_SEQUENCING_NOTE
@@ -455,14 +246,3 @@ class TestTheSequencingConstraintSurvivedTheFix:
 
     def test_it_states_the_ordering_that_is_counter_intuitive(self):
         assert "never during a convergence" in FIX_SEQUENCING_NOTE
-
-    def test_it_records_that_the_fix_has_been_applied(self):
-        """Otherwise the next reader re-plans work that is already done —
-        which is the cost CAL-P044 paid finding CAL-P045 had never been written.
-        """
-        assert "APPLIED" in FIX_SEQUENCING_NOTE
-        assert "CAL-P047" in FIX_SEQUENCING_NOTE
-
-    def test_it_carries_the_traps_forward_for_input_48(self):
-        assert "_canonical_input" in FIX_SEQUENCING_NOTE
-        assert "covered_by_source" in FIX_SEQUENCING_NOTE

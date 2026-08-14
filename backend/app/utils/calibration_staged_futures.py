@@ -174,23 +174,14 @@ REASON_NOTHING_BANKED = "nothing_banked"
 # Read off the production SELECT list in ``precompute_calibration``'s futures
 # query (its GROUP BY / ORDER BY are the same five columns, in this order).
 
-#: ``GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle,
-#: trade_evidence`` — and the identical ``ORDER BY``. Rows sharing this key merge
-#: into one.
-#:
-#: ``trade_evidence`` joined the key in CAL-P044 (#1530) and it MUST be a key
-#: rather than a passthrough: it is a per-outcome classification, so folding two
-#: chunks' rows across it would silently blend traded and untraded mass into one
-#: bucket and the census built from the merged rows would read a single blurred
-#: class. A passthrough would be worse still — the fold would freeze one chunk's
-#: value and broadcast it over every other chunk's outcomes.
+#: ``GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle``
+#: — and the identical ``ORDER BY``. Rows sharing this key merge into one.
 GROUP_KEY_COLUMNS: tuple[str, ...] = (
     "bucket_idx",
     "source",
     "category",
     "price_moved",
     "is_nonexclusive_bundle",
-    "trade_evidence",
 )
 
 #: The bucket mass. Summed across chunks; each is a plain per-group aggregate,

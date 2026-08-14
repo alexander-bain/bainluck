@@ -25,47 +25,47 @@ import inspect
 from app.tasks import precompute_calibration
 from app.tasks.precompute_calibration import (
     CALIBRATION_CORRECTIONS,
-    MULTI_BUNDLE_EXCLUDED_CATEGORIES,
+    ESPORTS_MULTI_BUNDLE_CATEGORY,
     ESPORTS_MULTI_BUNDLE_RULE_TEXT,
-    market_is_multi_bundle_excluded,
+    market_is_esports_multi_bundle,
 )
 
 
 class TestEsportsMultiBundlePredicate:
     def test_esports_multi_winner_bundle_excluded(self):
         # >=3 outcomes AND >=2 winners in esports = the match-bundle cohort.
-        assert market_is_multi_bundle_excluded("esports", 73, 71) is True
-        assert market_is_multi_bundle_excluded("esports", 3, 2) is True
-        assert market_is_multi_bundle_excluded("esports", 98, 22) is True
+        assert market_is_esports_multi_bundle("esports", 73, 71) is True
+        assert market_is_esports_multi_bundle("esports", 3, 2) is True
+        assert market_is_esports_multi_bundle("esports", 98, 22) is True
 
     def test_single_winner_partition_kept(self):
         # A genuine single-winner partition (e.g. tournament winner) is NOT a
         # bundle — it is the class #157 normalizes, not excludes.
-        assert market_is_multi_bundle_excluded("esports", 16, 1) is False
-        assert market_is_multi_bundle_excluded("esports", 3, 1) is False
+        assert market_is_esports_multi_bundle("esports", 16, 1) is False
+        assert market_is_esports_multi_bundle("esports", 3, 1) is False
 
     def test_zero_winner_not_a_bundle(self):
         # Zero winners is a void (handled elsewhere), not the >=2-winner class.
-        assert market_is_multi_bundle_excluded("esports", 10, 0) is False
+        assert market_is_esports_multi_bundle("esports", 10, 0) is False
 
     def test_two_outcome_market_is_binary_not_multi(self):
         # 2-outcome markets are the malformed_binary filter's job, not this one.
-        assert market_is_multi_bundle_excluded("esports", 2, 2) is False
+        assert market_is_esports_multi_bundle("esports", 2, 2) is False
 
     def test_other_categories_untouched(self):
         # esports-scoped: the same poly bundle shape is well-calibrated in
         # basketball/tennis/hockey (~+1.5pp), so a blanket exclusion would drop
         # good data. The general sweep is #160's sentinel.
-        assert market_is_multi_bundle_excluded("basketball", 73, 71) is False
-        assert market_is_multi_bundle_excluded("tennis", 10, 5) is False
-        assert market_is_multi_bundle_excluded("soccer", 20, 8) is False
+        assert market_is_esports_multi_bundle("basketball", 73, 71) is False
+        assert market_is_esports_multi_bundle("tennis", 10, 5) is False
+        assert market_is_esports_multi_bundle("soccer", 20, 8) is False
 
     def test_none_and_empty_safe(self):
-        assert market_is_multi_bundle_excluded(None, 73, 71) is False
-        assert market_is_multi_bundle_excluded("", 73, 71) is False
+        assert market_is_esports_multi_bundle(None, 73, 71) is False
+        assert market_is_esports_multi_bundle("", 73, 71) is False
 
     def test_category_constant(self):
-        assert MULTI_BUNDLE_EXCLUDED_CATEGORIES == ("cricket", "esports")
+        assert ESPORTS_MULTI_BUNDLE_CATEGORY == "esports"
 
 
 class TestRuleText:

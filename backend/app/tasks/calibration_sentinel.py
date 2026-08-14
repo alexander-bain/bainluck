@@ -47,7 +47,7 @@ from app.tasks.precompute_calibration import (
     _compute_horizon_mce,
     binary_is_malformed,
     kalshi_prop_threshold_exclude_sql,
-    market_is_multi_bundle_excluded,
+    market_is_esports_multi_bundle,
     market_needs_mex_normalization,
 )
 

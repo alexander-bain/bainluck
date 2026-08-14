@@ -1,75 +1,19 @@
 {
-  "covered_by_source": [
-    "_build_coverage_census",
-    "trade_evidence_sql"
-  ],
   "covered_by_value": [
-    "CALIBRATION_CORRECTIONS",
     "CALIBRATION_POPULATION_VERSION",
-    "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
-    "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
-    "COVERAGE_CENSUS_DISABLED_REASON",
     "COVERAGE_CENSUS_ENABLED",
-    "DRAW_AUTHORITY_OUTCOME_NAMES",
-    "DRAW_AUTHORITY_RULE_TEXT",
-    "DRAW_CAPABLE_CATEGORIES",
-    "ESPORTS_MULTI_BUNDLE_RULE_TEXT",
-    "EXCLUSIVITY_EVIDENCE_RULE_TEXT",
-    "EXCLUSIVITY_PROVED_RELATIONS",
-    "FIELD_COMPLETENESS_RULE_TEXT",
-    "GOLF_PLACEHOLDER_HIGH_BAND",
-    "GOLF_PLACEHOLDER_RULE_TEXT",
-    "KALSHI_HOCKEY_HONEST_BAND_MAX",
-    "KALSHI_LIQUIDITY_EXISTS",
-    "KALSHI_LIQUIDITY_RULE_TEXT",
-    "KALSHI_PROP_THRESHOLD_DEGENERATE_BAND",
-    "KALSHI_PROP_THRESHOLD_NAME_RE",
-    "KALSHI_PROP_THRESHOLD_RULE_TEXT",
-    "MALFORMED_BINARY_RULE_TEXT",
-    "MEX_NORMALIZE_RULE_TEXT",
-    "MEX_NORMALIZE_THRESHOLD",
-    "MULTI_BUNDLE_EXCLUDED_CATEGORIES",
-    "NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
-    "NO_WINNER_RULE_TEXT",
-    "ORPHAN_PARTITION_RULE_TEXT",
-    "POLY_NEVER_TRADED",
-    "POLY_PLACEHOLDER_EXCLUDE",
-    "POLY_PLACEHOLDER_RULE_TEXT",
-    "PRICE_DERIVED_SOURCES_SQL",
-    "REPRESENTATIVE_TIE_AUTHORITY",
-    "SOCCER_2WAY_RULE_TEXT",
-    "SOURCE_LIQUIDITY_EXCLUSIONS",
-    "STAGED_UNIT_WINDOW_SAFETY",
-    "TRADE_EVIDENCE_CLASSES",
-    "TRADE_EVIDENCE_EVIDENCED_CLASSES",
-    "TRADE_EVIDENCE_EXCLUDED_SOURCES",
-    "TRADE_EVIDENCE_RULE_TEXT",
-    "TRADE_EVIDENCE_TRADED_CLASSES",
-    "VM_ROSTER_IS_GROUPED_PARAM",
-    "VM_ROSTER_MARKET_IDS_PARAM",
-    "VM_ROSTER_MARKET_INFO_EXTRA",
-    "VM_ROSTER_VM_IDS_PARAM",
-    "VOID_FILTER_RULE_TEXT",
-    "WEATHER_WIDE_SPREAD_EXCLUDE",
-    "WEATHER_WIDE_SPREAD_RULE_TEXT",
-    "_COVERAGE_RUNG_KEYS",
-    "_COVERAGE_RUNG_PREDICATES",
-    "_DEFAULT_MIN_CATEGORY_OUTCOMES",
-    "_MULTI_BUNDLE_EXCLUDED_SQL"
+    "REPRESENTATIVE_TIE_AUTHORITY"
   ],
   "hashed_roots": [
-    "_build_coverage_census",
     "_calibration_population_ctes",
     "_main_futures_sql",
     "_virtual_market_ctes",
-    "compute_calibration_payload",
-    "trade_evidence_sql"
+    "compute_calibration_payload"
   ],
-  "input_count": 54,
+  "input_count": 47,
   "inputs": [
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "CALIBRATION_CORRECTIONS",
@@ -80,7 +24,6 @@
       ]
     },
     {
-      "covered_by_source": false,
       "covered_by_value": true,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
@@ -92,8 +35,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": "fdc05c2179e78d7e",
       "impact": "sql_shaping",
       "name": "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
@@ -105,8 +47,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": "8d8d2143457542d0",
       "impact": "sql_shaping",
       "name": "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
@@ -117,8 +58,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "COVERAGE_CENSUS_DISABLED_REASON",
@@ -129,7 +69,6 @@
       ]
     },
     {
-      "covered_by_source": false,
       "covered_by_value": true,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
@@ -146,8 +85,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "DRAW_AUTHORITY_OUTCOME_NAMES",
@@ -159,8 +97,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "DRAW_AUTHORITY_RULE_TEXT",
@@ -171,8 +108,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "DRAW_CAPABLE_CATEGORIES",
@@ -184,8 +120,19 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "ESPORTS_MULTI_BUNDLE_CATEGORY",
+      "origin": "app.tasks.precompute_calibration:ESPORTS_MULTI_BUNDLE_CATEGORY",
+      "sql_interpolated": true,
+      "used_in": [
+        "_build_nonexclusive_bundle_census",
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "ESPORTS_MULTI_BUNDLE_RULE_TEXT",
@@ -196,8 +143,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "EXCLUSIVITY_EVIDENCE_RULE_TEXT",
@@ -208,8 +154,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "EXCLUSIVITY_PROVED_RELATIONS",
@@ -221,8 +166,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "FIELD_COMPLETENESS_RULE_TEXT",
@@ -233,8 +177,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "GOLF_PLACEHOLDER_HIGH_BAND",
@@ -245,8 +188,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "GOLF_PLACEHOLDER_RULE_TEXT",
@@ -257,8 +199,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "KALSHI_HOCKEY_HONEST_BAND_MAX",
@@ -269,8 +210,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "KALSHI_LIQUIDITY_EXISTS",
@@ -281,8 +221,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "KALSHI_LIQUIDITY_RULE_TEXT",
@@ -293,8 +232,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "KALSHI_PROP_THRESHOLD_DEGENERATE_BAND",
@@ -305,8 +243,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "KALSHI_PROP_THRESHOLD_NAME_RE",
@@ -317,8 +254,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "KALSHI_PROP_THRESHOLD_RULE_TEXT",
@@ -329,8 +265,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "MALFORMED_BINARY_RULE_TEXT",
@@ -341,8 +276,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "MEX_NORMALIZE_RULE_TEXT",
@@ -353,8 +287,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "MEX_NORMALIZE_THRESHOLD",
@@ -366,21 +299,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": null,
-      "impact": "behavior_or_evidence",
-      "name": "MULTI_BUNDLE_EXCLUDED_CATEGORIES",
-      "origin": "app.tasks.precompute_calibration:MULTI_BUNDLE_EXCLUDED_CATEGORIES",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_nonexclusive_bundle_census",
-        "compute_calibration_payload"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
@@ -391,8 +310,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "NO_WINNER_RULE_TEXT",
@@ -403,8 +321,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "ORPHAN_PARTITION_RULE_TEXT",
@@ -415,8 +332,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "POLY_NEVER_TRADED",
@@ -427,8 +343,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "POLY_PLACEHOLDER_EXCLUDE",
@@ -439,8 +354,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "POLY_PLACEHOLDER_RULE_TEXT",
@@ -451,8 +365,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": "32f94286545f48f6",
       "impact": "sql_shaping",
       "name": "PRICE_DERIVED_SOURCES_SQL",
@@ -463,7 +376,6 @@
       ]
     },
     {
-      "covered_by_source": false,
       "covered_by_value": true,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
@@ -475,8 +387,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "SOCCER_2WAY_RULE_TEXT",
@@ -487,8 +398,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "SOURCE_LIQUIDITY_EXCLUSIONS",
@@ -499,8 +409,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "STAGED_UNIT_WINDOW_SAFETY",
@@ -511,72 +420,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": "d56e1335ccf80de4",
-      "impact": "behavior_or_evidence",
-      "name": "TRADE_EVIDENCE_CLASSES",
-      "origin": "app.utils.calibration_trade_evidence:CLASSES",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_trade_evidence_census",
-        "_empty_counts",
-        "_summarise"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": "d72f6136fa918e36",
-      "impact": "behavior_or_evidence",
-      "name": "TRADE_EVIDENCE_EVIDENCED_CLASSES",
-      "origin": "app.utils.calibration_trade_evidence:EVIDENCED_CLASSES",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_trade_evidence_census",
-        "_summarise"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": "aee73fb5e7b67d1a",
-      "impact": "behavior_or_evidence",
-      "name": "TRADE_EVIDENCE_EXCLUDED_SOURCES",
-      "origin": "app.utils.calibration_trade_evidence:EXCLUDED_SOURCES",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_trade_evidence_census"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": "01efba3961217c57",
-      "impact": "behavior_or_evidence",
-      "name": "TRADE_EVIDENCE_RULE_TEXT",
-      "origin": "app.utils.calibration_trade_evidence:RULE_TEXT",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_trade_evidence_census"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": "59d6d7ff23a17dc1",
-      "impact": "behavior_or_evidence",
-      "name": "TRADE_EVIDENCE_TRADED_CLASSES",
-      "origin": "app.utils.calibration_trade_evidence:TRADED_CLASSES",
-      "sql_interpolated": false,
-      "used_in": [
-        "_build_trade_evidence_census",
-        "_summarise"
-      ]
-    },
-    {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_IS_GROUPED_PARAM",
@@ -588,8 +432,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_MARKET_IDS_PARAM",
@@ -602,8 +445,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_MARKET_INFO_EXTRA",
@@ -614,8 +456,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_VM_IDS_PARAM",
@@ -627,8 +468,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "VOID_FILTER_RULE_TEXT",
@@ -639,8 +479,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "WEATHER_WIDE_SPREAD_EXCLUDE",
@@ -651,8 +490,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "WEATHER_WIDE_SPREAD_RULE_TEXT",
@@ -663,8 +501,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": "6d3548c2ffd1eba9",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
@@ -678,8 +515,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "_COVERAGE_RUNG_PREDICATES",
@@ -690,8 +526,7 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "_DEFAULT_MIN_CATEGORY_OUTCOMES",
@@ -703,19 +538,6 @@
       ]
     },
     {
-      "covered_by_source": false,
-      "covered_by_value": true,
-      "definition_sha16": null,
-      "impact": "sql_shaping",
-      "name": "_MULTI_BUNDLE_EXCLUDED_SQL",
-      "origin": "app.tasks.precompute_calibration:_MULTI_BUNDLE_EXCLUDED_SQL",
-      "sql_interpolated": true,
-      "used_in": [
-        "_calibration_population_ctes"
-      ]
-    },
-    {
-      "covered_by_source": true,
       "covered_by_value": false,
       "definition_sha16": "4cc1d3aa840a061b",
       "impact": "behavior_or_evidence",
@@ -725,24 +547,12 @@
       "used_in": [
         "_coverage_census_or_disabled"
       ]
-    },
-    {
-      "covered_by_source": true,
-      "covered_by_value": false,
-      "definition_sha16": "40334a74673f143e",
-      "impact": "sql_shaping",
-      "name": "trade_evidence_sql",
-      "origin": "app.utils.calibration_trade_evidence:trade_evidence_sql",
-      "sql_interpolated": true,
-      "used_in": [
-        "_calibration_population_ctes"
-      ]
     }
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "f5083c18dc81ddfb8315633a5a501275e09cdc61638516a8c38264c349aef8a8",
-  "uncovered_behavior_or_evidence": 0,
-  "uncovered_count": 0,
-  "uncovered_sql_shaping": 0
+  "source_sha256": "a46618d0aaed89600578ebadbc01ee6f0364325f3af73007c81a0dde47440fb9",
+  "uncovered_behavior_or_evidence": 23,
+  "uncovered_count": 44,
+  "uncovered_sql_shaping": 21
 }
