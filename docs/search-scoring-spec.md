@@ -227,7 +227,7 @@ the change that caused it** (ruling 046).
 | deploy | change | `entity_top_1` | MRR | prediction | verdict |
 |---|---|---|---|---|---|
 | v3792 / v3795 / v3798 | **BEFORE** — measured three times, identical | **30/44** | 0.7572 | — | — |
-| — | offline projection, biased low | 35/44 | 0.800 | — | a floor, not a read |
+| — | offline projection | 35/44 | 0.800 | — | **NOT a floor — see §6**; an estimate that can err in both directions |
 | **v3800** | **`-41` scorer ALONE** (ruling 041) | **32/44** | 0.7391 | **+11±1 → 39–41** | **MISSED by 7** |
 | **v3802** | **`-42` pool fix ALONE** (#1836) | **35/44** | **0.8043** | +2 → 34 | **HELD, exceeded** |
 | pending | **`-43` concept dedup ALONE** (#1839) | **OWED** | — | +4 → 39 | — |
@@ -263,10 +263,93 @@ Expected misses that **do not** count against the prediction: `celtics`,
 exactly that scope. (`celtics` remains an undiagnosed pool miss, recorded when
 #1836 closed.)
 
-`search_offline_rerank.py` re-ranks captured producer output with the same
-scorer and grades it with the unmodified grader. It is a **projection biased
-low**, for two structural reasons stated in its own docstring: it can only
-reorder candidates the old slot assembly already admitted, and the capture
-carries no aliases, outcomes or derived flags — so MC0-by-alias, MC4 and the
-owned-evidence exclusion are all invisible to it. Quote it as a floor. Replace
-it with the deployed measurement when the branch lands.
+## 6. The instrument — and why it is NOT a floor (LAT-P050, 2026-08-13)
+
+Everything above was measured with `search_offline_rerank.py`, and the sentence
+that used to close this document said it was a **projection biased low** — "quote
+it as a floor". That was wrong, it was load-bearing, and it is the best available
+explanation for how a `+11±1 → 39–41` band came to be ratified against an actual
+**32/44**.
+
+### The measurement that settles it
+
+Production v3804, the same 46 probes, the same grader, the same day:
+
+| what was graded | `entity_top_1` | MRR |
+|---|---|---|
+| **production, deployed** | **35/44** | 0.8043 |
+| the harness re-ranking **production's own output** | **30/44** | 0.7207 |
+
+Re-ranking a capture of the scorer's own output, with the same scorer, should be
+approximately **idempotent**. Instead it destroyed five passes — `bruins`,
+`celtics`, `patriots`, `red-sox`, `yankees`. Every one a **team**, and every one
+for the same reason:
+
+> `typeahead_search` ranks a team on its aliases (`alternate_names` +
+> `abbreviation`) and then **strips them before responding**, because evidence is
+> not payload. The harness re-ranked the response. So it re-ranked every team
+> with its aliases withheld: **MC0 → MC1**, tie with a market, lost on
+> `KIND_ORDER` (team 4, market 2).
+
+The instrument committed the **withheld-evidence** defect — the same class the
+route has now been repaired for three times (#1836, #1839, #1843) — against the
+very fixes it was grading. An instrument cannot be trusted to measure a bug class
+it contains.
+
+### The bias is two-sided. Both directions, named.
+
+* **Understates** — it can only reorder candidates the deployed assembly already
+  admitted, so a correct answer that never reached the response is invisible and
+  stays a failure in the projection. (Measured above: −5.)
+* **Overstates** — it scores a **7-candidate** field where production scores the
+  whole pool. Winning a seven-way contest is not winning a three-hundred-way one.
+  (Consistent with the historical +7 overstatement; not separately measured.)
+
+A quantity that can err in both directions is not a floor. It is an estimate, and
+it must be quoted as one.
+
+### What the fix actually required
+
+Better field-mapping is **not** sufficient, and this was measured rather than
+assumed. Re-capturing with adapter v2 — which preserves the wire suggestion
+verbatim and rebuilds evidence through the endpoint's own `_typeahead_evidence` —
+still scored **30/44**, the same five team probes. The deciding evidence
+(`alternate_names`) is simply **not on the wire**, and no amount of care on the
+harness side can reconstruct what the response does not contain.
+
+So the endpoint now **echoes the evidence it ranked on**, behind
+`GET /api/events/typeahead?debug_evidence=1`:
+
+* the echo is taken from the same `Evidence` objects the scorer consumed, keyed
+  by payload identity, and is built **after** the private-key strip so that a
+  rebuild-from-suggestion cannot reproduce it — the provenance is structural, not
+  a matter of care;
+* it is **never cached in either direction** — a debug answer must not be served
+  from a normal entry (it would arrive without the echo and be captured as low
+  fidelity) and must never be written to one (a user typing that prefix would be
+  served the eval payload for the full 45 s TTL);
+* the default response is **byte-unchanged**: no new key, no ordering change.
+
+One wire form, `evidence_to_wire`/`evidence_from_wire`, lives in the module that
+owns `Evidence`. Both consumers import it, and a field added to `Evidence`
+without a wire decision fails a test rather than silently not crossing.
+
+### Fidelity is a property of the capture, and must be read
+
+`metadata.evidence_fidelity` is `exact`, `partial` or `legacy`, and
+`--require-fidelity exact` refuses in any pipeline whose number will be quoted.
+An unlabelled capture resolves to `legacy`, never to the flattering reading. A
+`legacy` run is a different experiment wearing the same filename.
+
+### The armed control
+
+`tests/test_offline_rerank_fidelity.py` asserts the idempotence property
+directly: at `exact` fidelity, re-ranking the scorer's own output returns the
+same order. That test is the instrument's own control, and it is the check that
+would have caught this before a band was published.
+
+**Still owed, and not claimable until the echo deploys:** the re-derived floor at
+`exact` fidelity against production. Until then every projection in §5 stands as
+recorded, with the two-sided caveat above attached to it — the old numbers are
+not retracted, because they were honestly taken; only the claim that they were
+floors is withdrawn.

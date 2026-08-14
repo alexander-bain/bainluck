@@ -789,14 +789,58 @@ class TestTypeaheadIsBoundedAndIndexable:
 
         Without this, a single futures timeout writes a futures-less dropdown
         into Redis and everyone typing that prefix gets it for the full TTL.
+
+        AMENDED BY LAT-P050, and the amendment is the point. This asserted the
+        exact substring ``if not _ta_degraded:``. When the guard was STRENGTHENED
+        to ``if not _ta_degraded and not debug_evidence:`` — same promise, plus a
+        second answer shape that must never be cached — the test went red while
+        the contract it names got stronger.
+
+        Read the assertion as a sentence and ask whether you would sign it as a
+        product claim (gotcha #130). "The source contains this exact substring"
+        is not signable. "A degraded answer is never cached" is. So the sentence
+        is what is asserted now: the cache write is guarded, and ``_ta_degraded``
+        is part of that guard, however many other conditions join it.
         """
-        assert "if not _ta_degraded:" in TYPEAHEAD_CODE, (
-            "CACHE_DECISION_DISHONEST: a degraded typeahead answer is being "
-            "written to Redis and will be served for the full 45s TTL"
-        )
         setex_at = TYPEAHEAD_CODE.find("setex(_cache_key")
-        guard_at = TYPEAHEAD_CODE.find("if not _ta_degraded:")
-        assert 0 < guard_at < setex_at, "the cache write is not under the guard"
+        assert setex_at > 0, "the cache write disappeared entirely"
+
+        # The nearest `if` above the write, whatever its full condition.
+        guard_at = TYPEAHEAD_CODE.rfind("\n    if ", 0, setex_at)
+        assert guard_at > 0, "the cache write is not under any guard"
+        guard_line = TYPEAHEAD_CODE[guard_at:TYPEAHEAD_CODE.find(":", guard_at)]
+
+        assert "not _ta_degraded" in guard_line, (
+            "CACHE_DECISION_DISHONEST: a degraded typeahead answer is being "
+            "written to Redis and will be served for the full 45s TTL. "
+            f"guard found: {guard_line.strip()!r}"
+        )
+
+    def test_a_debug_evidence_answer_is_never_cached(self):
+        """The mirror image, LAT-P050. A debug answer is not incomplete, it is
+        EXTRA — and caching it would serve `_evidence` to every normal user
+        typing that prefix for the full TTL. It must also never READ the cache,
+        or it returns a normal entry with no echo and the eval capture silently
+        records low fidelity while believing it asked for high.
+
+        Behaviour is covered by
+        `tests/integration/test_route_typeahead_evidence_echo.py::TestCacheIsolation`
+        against a seeded route; this is the cheap structural companion.
+        """
+        setex_at = TYPEAHEAD_CODE.find("setex(_cache_key")
+        guard_at = TYPEAHEAD_CODE.rfind("\n    if ", 0, setex_at)
+        guard_line = TYPEAHEAD_CODE[guard_at:TYPEAHEAD_CODE.find(":", guard_at)]
+        assert "not debug_evidence" in guard_line, (
+            "a debug-evidence answer is being written to the shared cache"
+        )
+
+        read_at = TYPEAHEAD_CODE.find("_rc.get(_cache_key)")
+        assert read_at > 0, "the cache read disappeared"
+        read_guard = TYPEAHEAD_CODE.rfind("if not debug_evidence:", 0, read_at)
+        assert 0 < read_guard, (
+            "the cache READ is not gated on debug_evidence — a debug request "
+            "can be served a normal cached answer with no `_evidence`"
+        )
 
     def test_timeout_recovery_is_present_because_queries_follow(self):
         """Two fuzzy-fallback queries run after the futures stage.
