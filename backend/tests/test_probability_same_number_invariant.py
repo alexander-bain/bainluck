@@ -51,32 +51,51 @@ class _FakeEvent:
 
 
 class TestAlexSpecimenReproduces:
-    def test_the_hero_renders_87_13(self):
-        """The header Alex photographed, derived rather than asserted by hand."""
+    """FIXED IN UX-P072 (#1829, Alex ruling 2026-08-13: recency decay + cap).
+
+    These two tests used to assert the DEFECT — that the hero rendered 87-13 and
+    equalled the betting source verbatim. They now assert the arithmetic that
+    PRODUCED it, and the number the same payload renders today. The derivation
+    is kept rather than deleted: it is the only place the 42%-weight-share
+    mechanism is written down as executable, and it is what justifies the value
+    of ``MAX_SOURCE_WEIGHT_SHARE``.
+
+    The fix's own evidence lives in ``test_probability_recency_and_cap.py``.
+    """
+
+    def test_the_header_that_was_87_13_now_reads_99_1(self):
         home = compute_aggregate_probability(_FakeEvent(ALEX_SPECIMEN_SOURCES))
-        assert home == pytest.approx(0.1347, abs=1e-6)
         # Rendered: away – home, rounded to whole points.
-        assert round((1 - home) * 100) == 87
-        assert round(home * 100) == 13
+        assert (round((1 - home) * 100), round(home * 100)) == (99, 1)
+        # Toronto lost 0-7. The header now agrees with the game.
 
-    def test_the_hero_IS_the_betting_source_verbatim(self):
-        """Not "influenced by" — the weighted median lands exactly ON it.
+    def test_the_weight_share_that_caused_it_is_recorded_and_now_capped(self):
+        """Why it happened, kept executable.
 
-        ``betting`` carries 3.0 of 7.1 total weight (42%), so once the values are
-        sorted the cumulative weight crosses the midpoint inside that single
-        source's own mass. A weighted median is outlier-resistant only when no
-        source holds near half the weight; this one does, so the median
-        degenerates to "whatever the sportsbook last said".
+        ``betting`` carried 3.0 of 7.1 total weight (42%), so once the values
+        were sorted the cumulative weight crossed the midpoint inside that
+        single source's own mass — the median did not get "dragged" toward the
+        sportsbook, it landed exactly ON it. A weighted median is
+        outlier-resistant only when no source can straddle the midpoint alone.
 
         #240 Item 1 switched this function from mean to median specifically to
-        stop a stale sportsbook dragging the hero. It did not stop it — it made
-        the hero EQUAL to it.
+        stop a stale sportsbook dragging the hero. It did not stop it; it made
+        the hero EQUAL to it. #1829's cap is what actually closes the mechanism.
         """
-        home = compute_aggregate_probability(_FakeEvent(ALEX_SPECIMEN_SOURCES))
-        assert home == pytest.approx(ALEX_SPECIMEN_SOURCES["betting"], abs=1e-9)
-        assert SOURCE_WEIGHTS["betting"] / sum(
+        base_share = SOURCE_WEIGHTS["betting"] / sum(
             SOURCE_WEIGHTS[k] for k in ALEX_SPECIMEN_SOURCES
-        ) > 0.40
+        )
+        assert base_share > 0.40  # the uncapped reality that produced 87-13
+
+        from app.utils.aggregation import MAX_SOURCE_WEIGHT_SHARE, cap_weight_shares
+
+        capped = cap_weight_shares(
+            [SOURCE_WEIGHTS[k] for k in ALEX_SPECIMEN_SOURCES]
+        )
+        assert max(capped) / sum(capped) <= MAX_SOURCE_WEIGHT_SHARE + 1e-9
+
+        home = compute_aggregate_probability(_FakeEvent(ALEX_SPECIMEN_SOURCES))
+        assert home != pytest.approx(ALEX_SPECIMEN_SOURCES["betting"], abs=1e-6)
 
     def test_the_three_live_aware_models_all_said_the_game_was_over(self):
         """mlb / espn / stat_model agreed on ~0. They were out-voted."""
@@ -188,22 +207,53 @@ class TestTheResidualContradiction:
             is not aggregation.compute_aggregated_probability
         ), "unified — close #1829 and remove TestTheResidualContradiction"
 
-    def test_the_point_in_time_blend_still_cannot_see_staleness(self):
-        """Two events, identical values, one of them hours old: same answer.
+    def test_the_point_in_time_blend_CAN_now_see_staleness(self):
+        """CLOSED by UX-P072. The predecessor of this test was the defect in one
+        assertion — and note how it was written, because that is the lesson:
 
-        This is the defect in one assertion. When it fails, the hero has learned
-        about time and #1829 is fixed.
+            fresh = _FakeEvent(ALEX_SPECIMEN_SOURCES)
+            stale = _FakeEvent(ALEX_SPECIMEN_SOURCES)   # identical!
+            assert compute_aggregate_probability(fresh) == ...(stale)
+
+        Both events were the SAME bare-float dict, because at the time there was
+        nowhere in the JSONB to express "this reading is 40 minutes old". So the
+        assertion held trivially and would have gone on holding trivially after
+        the fix shipped — a ratchet that could never fire. It passed green on
+        the very run that broke its two siblings.
+
+        A ratchet whose two states are indistinguishable is not a ratchet. This
+        replacement can only pass if the stamps actually change the answer.
+
+        NOT written on the five-source specimen, and the reason is worth having:
+        on that payload the CAP alone already moves the hero off ``betting``, so
+        aging ``betting`` further changes nothing and the test passes for the
+        wrong reason. Two sources put the cap below its own three-source gate,
+        which leaves the decay as the only thing that can move the number.
         """
-        fresh = _FakeEvent(ALEX_SPECIMEN_SOURCES)
-        stale = _FakeEvent(ALEX_SPECIMEN_SOURCES)
-        # There is nowhere to even EXPRESS "this reading is 40 minutes old":
-        # the JSONB holds bare floats.
-        assert all(
-            isinstance(v, (int, float)) for v in ALEX_SPECIMEN_SOURCES.values()
-        )
-        assert compute_aggregate_probability(fresh) == compute_aggregate_probability(
-            stale
-        )
+        from datetime import datetime, timedelta, timezone
+
+        t0 = datetime(2026, 8, 13, 21, 33, 34, tzinfo=timezone.utc)
+        pair = {k: ALEX_SPECIMEN_SOURCES[k] for k in ("betting", "espn")}
+
+        def _at(offsets):
+            return _FakeEvent(
+                {
+                    k: {
+                        "value": v,
+                        "updated_at": (t0 - timedelta(seconds=offsets[k])).isoformat(),
+                    }
+                    for k, v in pair.items()
+                }
+            )
+
+        fresh = compute_aggregate_probability(_at({"betting": 0, "espn": 0}))
+        stale_book = compute_aggregate_probability(_at({"betting": 3600, "espn": 0}))
+
+        # Fresh: betting (3.0) outweighs espn (1.5) and carries the hero.
+        assert fresh == pytest.approx(pair["betting"], abs=1e-9)
+        # An hour behind: it cannot out-vote the source still reporting.
+        assert stale_book == pytest.approx(pair["espn"], abs=1e-9)
+        assert fresh != stale_book, "the hero is still blind to per-source age"
 
     def test_the_dict_form_is_already_accepted_so_the_fix_is_additive(self):
         """The reader already handles ``{"value": x, ...}``.

@@ -42,6 +42,18 @@ Dry-run by default; pass --apply to commit.
 
     python3 scripts/fix_209_mlb_series_flip.py            # dry-run (ledger only)
     python3 scripts/fix_209_mlb_series_flip.py --apply    # commit the correction
+
+#1829 SHAPE WARNING - THIS SCRIPT'S SQL IS NOW WRONG IF RE-RUN.
+Every ``(win_probability_sources->>'<src>')::float`` below predates the stamped
+entry shape ``{"value": x, "updated_at": "..."}``. ``->>`` on an OBJECT member
+returns the object's JSON *text*, so the cast RAISES; the ``IS NOT NULL`` guards
+alongside it do not help.
+This is a one-off historical repair that has already run and is referenced by
+nothing (no import, no beat schedule, no CI). It is therefore left as-is rather
+than rewritten - but before ANY re-run, port each read to
+``app.utils.aggregation.wps_numeric_sql(<src>)``, which is the same CASE the
+production ``source_intelligence._BETTING_CTE`` uses. The residual is pinned by
+``tests/test_probability_recency_and_cap.py::TestSqlShapeRatchet``.
 """
 import asyncio
 import os

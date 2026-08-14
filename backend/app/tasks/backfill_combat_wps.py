@@ -111,8 +111,11 @@ async def _backfill_combat_wps(limit: int = 500, dry_run: bool = False) -> dict:
                 home_prob = prob if yes_is_home else 1.0 - prob
 
                 if not dry_run:
-                    new_wps = dict(wps)
-                    new_wps["kalshi"] = round(home_prob, 4)
+                    # #1829: value + write time, same as the live writers.
+                    from app.utils.aggregation import stamp_source_reading
+                    new_wps = stamp_source_reading(
+                        wps, "kalshi", round(home_prob, 4)
+                    )
                     await session.execute(
                         update(Event)
                         .where(Event.id == eid)

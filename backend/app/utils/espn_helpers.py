@@ -476,8 +476,12 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     # in one atomic Core update. espn_id was previously set via ORM
     # attribute assignment which could fail to flush when mixed with
     # Core updates on the same row.
-    _wps = dict(event.win_probability_sources or {})
-    _wps["espn"] = round(ee.home_win_probability, 4)
+    # #1829: value + write time, so the hero can age this reading against the
+    # other sources on the event instead of trusting it forever.
+    from app.utils.aggregation import stamp_source_reading
+    _wps = stamp_source_reading(
+        event.win_probability_sources, "espn", round(ee.home_win_probability, 4)
+    )
     _update_vals: dict = {
         "win_probability_sources": _wps,
         "espn_win_prob_home": ee.home_win_probability,
@@ -589,8 +593,13 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             opening_home_probability=opening_prob,
         )
         if stat_wp is not None:
-            _wps2 = dict(event.win_probability_sources or {})
-            _wps2["stat_model"] = round(stat_wp, 4)
+            # #1829: `stat_model` has TWO writers — this one and
+            # odds_polling.py's. Both stamp, or the source's age depends on
+            # which task happened to write last.
+            from app.utils.aggregation import stamp_source_reading as _stamp2
+            _wps2 = _stamp2(
+                event.win_probability_sources, "stat_model", round(stat_wp, 4)
+            )
             await session.execute(
                 _sql_update(Event)
                 .where(Event.id == event.id)
@@ -717,8 +726,15 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
             # Write win probability snapshot (#1207: skip the pregame win-prob when
             # ESPN reports "in" but the game hasn't started — same premature leak).
             if ee.home_win_probability is not None and not _espn_premature:
-                _wps3 = dict(event.win_probability_sources or {})
-                _wps3["espn"] = round(ee.home_win_probability, 4)
+                # #1829: value + write time (see the sibling writer above).
+                from app.utils.aggregation import (
+                    stamp_source_reading as _stamp3,
+                )
+                _wps3 = _stamp3(
+                    event.win_probability_sources,
+                    "espn",
+                    round(ee.home_win_probability, 4),
+                )
                 await session.execute(
                     _sql_update(Event)
                     .where(Event.id == event.id)

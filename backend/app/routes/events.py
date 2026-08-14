@@ -9605,7 +9605,23 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         if event.espn_win_prob_home is not None:
             espn_data["win_probability"] = float(event.espn_win_prob_home)
         if event.win_probability_sources:
-            espn_data["probability_sources"] = event.win_probability_sources
+            # #1829: serialise NUMBERS here, never raw JSONB entries. iOS types
+            # this `[String: WinProbValue]?` and `WinProbValue` THROWS on
+            # anything that is not a Double or a String — and a throw inside
+            # `decodeIfPresent` propagates, so one bad member fails the whole
+            # `ESPNData`, which fails the whole `Event`. Passing the column
+            # through raw was already latently broken (`statpal_plays` /
+            # `statpal_injuries` live in this same JSONB as ARRAYS); stamping
+            # `{"value": ..., "updated_at": ...}` would have made it fire on
+            # essentially every event. Normalising fixes both.
+            from app.utils.aggregation import parse_source_entry as _parse_src
+            _norm_sources = {}
+            for _sk, _sv in event.win_probability_sources.items():
+                _num, _ = _parse_src(_sv)
+                if _num is not None:
+                    _norm_sources[_sk] = _num
+            if _norm_sources:
+                espn_data["probability_sources"] = _norm_sources
 
         if espn_data:
             response["espn"] = espn_data
@@ -9614,17 +9630,29 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         if event.win_probability_sources:
             try:
                 from app.config.win_prob_sources import WIN_PROB_SOURCES
+                from app.utils.aggregation import parse_source_entry
                 wp_sources = {}
                 for src_key, src_value in event.win_probability_sources.items():
                     if src_key.startswith("_"):
                         continue
+                    # #1829: `value` stays a bare NUMBER on the wire. The column
+                    # now holds `{"value": x, "updated_at": ...}`, and assigning
+                    # the raw entry here would double-nest it —
+                    # `{"value": {"value": x, ...}}` — silently breaking every
+                    # reader that does `sources[k].value` (web Models page, the
+                    # #1640 untraded-placeholder suppression) and hard-failing
+                    # the iOS decoder. The write time is exposed as a SIBLING,
+                    # never inside `value`.
+                    numeric, updated_at = parse_source_entry(src_value)
                     source_config = WIN_PROB_SOURCES.get(src_key, {})
                     wp_sources[src_key] = {
-                        "value": src_value,
+                        "value": numeric if numeric is not None else src_value,
                         "display_name": source_config.get("display_name", src_key),
                         "type": source_config.get("source_type", "model"),
                         "color": source_config.get("color", "#6b7280"),
                     }
+                    if updated_at is not None:
+                        wp_sources[src_key]["updated_at"] = updated_at.isoformat()
                 if wp_sources:
                     response["win_probability_sources"] = wp_sources
             except Exception:

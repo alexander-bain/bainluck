@@ -167,11 +167,15 @@ async def _sync_mlb_win_probability():
                     # Write MLB win prob to win_probability_sources
                     # via select+update to avoid ORM session caching
                     from sqlalchemy import update as _sql_upd, select as _sql_sel
+                    from app.utils.aggregation import stamp_source_reading
                     _mlb_r = await session.execute(
                         _sql_sel(Event.win_probability_sources).where(Event.id == event.id)
                     )
-                    _mlb_wps = _mlb_r.scalar_one_or_none() or {}
-                    _mlb_wps[WIN_PROB_SOURCE_KEY] = home_wp
+                    # #1829: value + write time, so a source that goes quiet
+                    # can be aged against the ones that did not.
+                    _mlb_wps = stamp_source_reading(
+                        _mlb_r.scalar_one_or_none(), WIN_PROB_SOURCE_KEY, home_wp
+                    )
                     await session.execute(
                         _sql_upd(Event)
                         .where(Event.id == event.id)

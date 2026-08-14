@@ -59,31 +59,65 @@ class TestIsBogusFutureSettled:
 
 class TestApplyFinalPmWinProb:
     """#1000: bare-float win_probability_sources entries must not crash the
-    live→closed transition (TypeError: 'float' object item assignment)."""
+    live→closed transition (TypeError: 'float' object item assignment).
+
+    #1829 (UX-P072) changed the OUTPUT shape deliberately: every rewritten
+    entry is normalised to the stamped dict ``{"value": x, "updated_at": ...}``.
+    The input side still accepts both shapes — that is what #1000 bought and it
+    is unchanged. What is asserted below is that a rewritten value ALWAYS
+    carries a fresh write time, because a new number under an old timestamp is
+    a wrong answer to "how old is this?" and the hero's recency decay believes
+    the timestamp.
+    """
+
+    @staticmethod
+    def _value(entry):
+        """Read a value out of either shape, so these tests assert the
+        CONTRACT (the number, and that it is stamped) rather than the wrapper."""
+        return entry["value"] if isinstance(entry, dict) else entry
 
     def test_bare_float_entry_does_not_crash(self):
         wps = {"kalshi": 0.62, "polymarket": 0.58}
         out = _apply_final_pm_win_prob(wps, 1.0)
-        assert out["kalshi"] == 1.0
-        assert out["polymarket"] == 1.0
-        assert out["final_result"] == 1.0
+        assert self._value(out["kalshi"]) == 1.0
+        assert self._value(out["polymarket"]) == 1.0
+        assert self._value(out["final_result"]) == 1.0
+
+    def test_every_rewritten_entry_is_stamped(self):
+        """#1829: the resolved value is new, so its write time must be too."""
+        out = _apply_final_pm_win_prob({"kalshi": 0.62, "polymarket": 0.58}, 1.0)
+        for key in ("kalshi", "polymarket", "final_result"):
+            assert "updated_at" in out[key], key
+
+    def test_a_stale_stamp_is_not_carried_onto_a_new_value(self):
+        wps = {"kalshi": {"value": 0.62, "updated_at": "2020-01-01T00:00:00+00:00"}}
+        out = _apply_final_pm_win_prob(wps, 1.0)
+        assert out["kalshi"]["value"] == 1.0
+        assert out["kalshi"]["updated_at"] != "2020-01-01T00:00:00+00:00"
 
     def test_dict_entry_sets_value_key(self):
         wps = {"kalshi": {"value": 0.62, "weight": 0.8}}
         out = _apply_final_pm_win_prob(wps, 0.0)
         assert out["kalshi"]["value"] == 0.0
-        assert out["kalshi"]["weight"] == 0.8  # preserved
+        # PRESERVED, and this assertion is load-bearing: the first draft of
+        # `stamp_source_reading` assigned a fresh two-key dict and silently
+        # dropped every sibling key it did not know about. This test is what
+        # caught it.
+        assert out["kalshi"]["weight"] == 0.8
 
     def test_mixed_shapes(self):
         wps = {"kalshi": {"value": 0.7}, "polymarket": 0.4, "espn": {"value": 0.5}}
         out = _apply_final_pm_win_prob(wps, 1.0)
         assert out["kalshi"]["value"] == 1.0
-        assert out["polymarket"] == 1.0
+        assert self._value(out["polymarket"]) == 1.0
         assert out["espn"] == {"value": 0.5}  # untouched (not a PM source)
 
     def test_missing_sources_and_none_input(self):
-        assert _apply_final_pm_win_prob(None, 1.0) == {"final_result": 1.0}
-        assert _apply_final_pm_win_prob({}, 0.5) == {"final_result": 0.5}
+        for sources, resolved in ((None, 1.0), ({}, 0.5)):
+            out = _apply_final_pm_win_prob(sources, resolved)
+            assert set(out) == {"final_result"}
+            assert out["final_result"]["value"] == resolved
+            assert "updated_at" in out["final_result"]
 
     def test_does_not_mutate_input(self):
         wps = {"kalshi": {"value": 0.62}}
