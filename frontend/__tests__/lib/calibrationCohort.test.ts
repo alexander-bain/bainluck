@@ -259,12 +259,41 @@ describe("every cohort label names the predicate it actually selects", () => {
     }
   });
 
-  test("the default cohort names BOTH halves, with their counts", () => {
-    expect(dflt.headline).toBe(
-      "Showing traded markets, plus sportsbook lines (389,385)"
+  // REWRITTEN, not added — UX-P080 item 3 (Alex round 2), recorded as a
+  // deliberate contract change rather than silenced. The old assertions pinned
+  // "Showing traded markets, plus sportsbook lines" and "…where that test
+  // doesn't apply", which is exactly the copy the ruling removes: sportsbook
+  // lines are traded BY CONSTRUCTION (a book moves its line with money), so
+  // they are part of the traded cohort, not an appendix to it.
+  test("the default cohort is ONE traded number, with the sportsbook subset named", () => {
+    expect(dflt.headline).toBe("Showing traded markets (389,385)");
+    expect(dflt.detail).toContain(
+      "389,385 traded outcomes (including 40,075 sportsbook lines)"
     );
-    expect(dflt.detail).toContain("349,310 traded outcomes");
-    expect(dflt.detail).toContain("40,075 sportsbook lines where that test doesn't apply");
+    expect(dflt.shortLabel).toBe("Traded");
+  });
+
+  test("the dissolved third category is gone from EVERY emitted label", () => {
+    // Written over the emitted STRINGS, not over the branch that produced them
+    // — the lesson this module already carries twice (the proxy-footnote
+    // pairing). A future edit that reintroduces the apology anywhere in the
+    // copy reds here, not only in the one sentence changed today.
+    for (const label of [dflt.headline, dflt.detail, dflt.shortLabel,
+                         dflt.statDetail, dflt.heroClause, dflt.partitionNote ?? "",
+                         all.headline, all.detail]) {
+      expect(label).not.toContain("doesn't apply");
+      expect(label).not.toContain("not applicable");
+      expect(label).not.toContain("neither cohort");
+    }
+  });
+
+  test("the definition did not vanish with the apology — it moved to the footnote", () => {
+    // Alex: "with the definition in the footnote". Deleting the sentence would
+    // satisfy the first half of the ruling while losing the reason a reader
+    // should believe it, on the page whose entire job is not being taken at our
+    // word.
+    expect(dflt.proxyFootnote).toContain("traded by construction");
+    expect(dflt.proxyFootnote).toContain("a book moves its line with money");
   });
 
   test("the excluded side is described by what it is, with its count", () => {
@@ -279,7 +308,7 @@ describe("every cohort label names the predicate it actually selects", () => {
   test("the all-markets view publishes the whole partition", () => {
     expect(all.headline).toBe("Showing all markets (652,407)");
     expect(all.detail).toBe(
-      "349,310 traded · 263,022 untraded · 40,075 not applicable (sportsbook lines)."
+      "389,385 traded (including 40,075 sportsbook lines) · 263,022 untraded."
     );
     expect(all.toggleLabel).toBe("Exclude untraded");
   });
@@ -287,8 +316,10 @@ describe("every cohort label names the predicate it actually selects", () => {
   test("the activity note reconciles the two cards to the page total", () => {
     // Identical arithmetic, and identical shape, to native's partition note.
     expect(dflt.partitionNote).toBe(
-      "Sportsbook lines (40,075 outcomes) carry no price-moved flag, so they sit in " +
-        "neither cohort: 349,310 + 263,022 + 40,075 = 652,407 resolved outcomes."
+      "Sportsbook lines (40,075 outcomes) carry no price-moved flag and need none — " +
+        "a book moves its line with money — so they count as traded: " +
+        "349,310 price-moved + 40,075 sportsbook = 389,385 traded, plus " +
+        "263,022 untraded = 652,407 resolved outcomes."
     );
     expect(all.partitionNote).toBe(dflt.partitionNote);
   });
