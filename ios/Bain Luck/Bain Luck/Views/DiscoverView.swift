@@ -313,13 +313,28 @@ struct DiscoverView: View {
         }
     }
 
-    private func itemId(_ item: FeedItem) -> String {
+    private func itemId(_ item: FeedItem) -> String { Self.feedItemId(item) }
+
+    /// Stable dismiss key for one feed item. Static + internal so the group-swipe
+    /// fan-out below is unit-testable without standing up a `View` (#1773).
+    static func feedItemId(_ item: FeedItem) -> String {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
         if let t = item.tournament { return "tournament-\(t.key)" }
         if let c = item.concept { return "concept-\(c.key)" }
         if let b = item.bundle { return "bundle-\(b.id)" }
         return UUID().uuidString
+    }
+
+    /// Every dismiss key ONE swipe on a rendered card must suppress (#1773).
+    ///
+    /// A group card is a single card to the user but N feed items to
+    /// `filteredItems`, which filters by item id. Suppressing only the primary
+    /// child would let the group immediately re-form from the remaining N-1 —
+    /// the card visibly returns and the swipe reads as ignored. A swipe on a
+    /// group therefore dismisses the whole group.
+    static func dismissKeys(forGroupOf items: [FeedItem]) -> [String] {
+        items.map(feedItemId)
     }
 
     private func itemType(_ item: FeedItem) -> String {
@@ -849,7 +864,30 @@ struct DiscoverView: View {
                             Group {
                                 switch gi {
                                 case .group(let title, let items, let kind, let theme):
-                                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
+                                    // #1773: group cards were the largest of three
+                                    // archetypes rendered with NO swipe wrapper at all
+                                    // (group / tournament / concept — 10 of 30 cards on
+                                    // a measured production feed). They are not "swipe
+                                    // is flaky"; they are swipe-absent by construction,
+                                    // so no like/unlike signal could ever be produced
+                                    // for them and the feed could not learn from a third
+                                    // of what it showed.
+                                    SwipeToDismiss(
+                                        onSwipeLeft: {
+                                            if let primary = items.first {
+                                                recordInteraction(for: primary, action: .unlike, source: "swipe")
+                                            }
+                                            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+                                        },
+                                        onSwipeRight: {
+                                            if let primary = items.first {
+                                                recordInteraction(for: primary, action: .like, source: "swipe")
+                                            }
+                                            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+                                        }
+                                    ) {
+                                        NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
+                                    }
                                 case .single(let item):
                                     if isGuessSlot, item.type == "futures", let f = item.futures,
                                        f.discoverCard?.suggestedFormat != "threshold_heatmap",
@@ -979,24 +1017,49 @@ struct DiscoverView: View {
                                         }
                                         .contextMenu { discoverCardMenu(item) }
                                     } else if item.type == "tournament", let t = item.tournament {
-                                        NativeTournamentDiscoverCard(
-                                            data: t,
-                                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
-                                            navigationPath: $navigationPath
-                                        )
+                                        // #1773: was rendered bare — no swipe wrapper.
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            }
+                                        ) {
+                                            NativeTournamentDiscoverCard(
+                                                data: t,
+                                                feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                                                navigationPath: $navigationPath
+                                            )
+                                        }
+                                        .contextMenu { discoverCardMenu(item) }
                                     } else if item.type == "concept", let c = item.concept {
                                         // L2-179: event-concept marquee card (Tour de France,
                                         // World Cup, UFC card). Previously dropped at decode; now
                                         // rendered so the marquee finally appears on device.
-                                        NativeConceptDiscoverCard(
-                                            data: c,
-                                            headline: item.headline,
-                                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
-                                            navigationPath: $navigationPath,
-                                            onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                        // #1773: was rendered bare — no swipe wrapper.
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
                                             }
-                                        )
+                                        ) {
+                                            NativeConceptDiscoverCard(
+                                                data: c,
+                                                headline: item.headline,
+                                                feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                                                navigationPath: $navigationPath,
+                                                onOpen: {
+                                                    recordInteraction(for: item, action: .detailOpen, source: "card")
+                                                }
+                                            )
+                                        }
                                         .contextMenu { discoverCardMenu(item) }
                                     }
                                 }
@@ -1076,32 +1139,12 @@ struct DiscoverView: View {
                             await vm.loadMoreIfNeeded()
                         }
                     } else {
-                        VStack(spacing: 16) {
-                            NativeFeedEndCard()
-                            Button {
-                                Task {
-                                    visibleCount = 20
-                                    dismissedAt.removeAll()
-                                    dismissVersion &+= 1
-                                    seenImpressions.removeAll()
-                                    await vm.load()
-                                    if let r = try? await APIClient.shared.fetchResolutions() {
-                                        resolutions = r.resolutions
-                                    }
-                                }
-                            } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.blue)
-                                    .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Refresh feed")
-                            .accessibilityHint("Checks for newly surfaced markets")
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal)
-                        .padding(.vertical, 24)
+                        // The end card owns its own Refresh control now (#1773),
+                        // so this branch no longer pairs it with a separate button.
+                        NativeFeedEndCard(onRefresh: { Task { await refreshFeed() } })
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal)
+                            .padding(.vertical, 24)
                     }
                 }
 
@@ -1116,7 +1159,10 @@ struct DiscoverView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
                     } else if !vm.hasMore {
-                        NativeFeedEndCard()
+                        // #1773: this is the bottom-of-feed call site — the one
+                        // Alex hit. Pull-to-refresh is unreachable here, so the
+                        // card must carry the action it is asking for.
+                        NativeFeedEndCard(onRefresh: { Task { await refreshFeed() } })
                             .padding(.horizontal)
                             .padding(.bottom, 24)
                     }
@@ -1170,16 +1216,7 @@ struct DiscoverView: View {
             }
         }
         .refreshable {
-            visibleCount = 20
-            // Pull-to-refresh shows a full feed this session (in-memory clear);
-            // the persisted, decaying store on disk is intact for the next launch.
-            dismissedAt.removeAll()
-            dismissVersion &+= 1
-            seenImpressions.removeAll()
-            await vm.load()
-            if let r = try? await APIClient.shared.fetchResolutions() {
-                resolutions = r.resolutions
-            }
+            await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
             WelcomeView()
@@ -1222,8 +1259,30 @@ struct DiscoverView: View {
         }
     }
 
+    /// One refresh path shared by pull-to-refresh and both end-card Refresh
+    /// buttons (#1773), so the bottom-of-feed button does exactly what the
+    /// gesture it replaced would have done — not an approximation of it.
+    @MainActor
+    private func refreshFeed() async {
+        visibleCount = 20
+        // Refresh shows a full feed this session (in-memory clear); the
+        // persisted, decaying store on disk is intact for the next launch.
+        dismissedAt.removeAll()
+        dismissVersion &+= 1
+        seenImpressions.removeAll()
+        await vm.load()
+        if let r = try? await APIClient.shared.fetchResolutions() {
+            resolutions = r.resolutions
+        }
+    }
+
     private func hideForSession(_ id: String) {
-        dismissedAt[id] = Date().timeIntervalSince1970
+        hideForSession(ids: [id])
+    }
+
+    private func hideForSession(ids: [String]) {
+        let now = Date().timeIntervalSince1970
+        for id in ids { dismissedAt[id] = now }
         Self.saveDismissed(dismissedAt)
         // Bump BEFORE the groupedItems read below so the count reflects the
         // just-dismissed card (the memo would otherwise return the pre-dismiss
@@ -2183,65 +2242,54 @@ private struct SwipeToDismiss<Content: View>: View {
     let onSwipeLeft: () -> Void
     let onSwipeRight: () -> Void
     @ViewBuilder let content: () -> Content
-    @State private var offset: CGFloat = 0
-    @State private var removing = false
-    @State private var isHorizontalDrag = false
-
-    private var overlayOpacity: Double {
-        min(abs(offset) / 150, 1.0)
-    }
+    // #1773: the whole gesture is a pure, unit-tested state machine
+    // (`DiscoverSwipeState`) so the axis latch and the post-commit reset are
+    // provable without a device. See that type's doc comment for the two
+    // defects this replaced.
+    @State private var swipe = DiscoverSwipeState()
 
     var body: some View {
         content()
-            .offset(x: offset)
-            .opacity(removing ? 0 : 1.0 - abs(offset) / 300)
-            .overlay(alignment: offset > 0 ? .leading : .trailing) {
-                if isHorizontalDrag && abs(offset) > 20 {
+            .offset(x: swipe.offset)
+            .opacity(swipe.opacity)
+            .overlay(alignment: swipe.overlayIsLeading ? .leading : .trailing) {
+                if swipe.showsOverlay {
                     ZStack {
                         Capsule()
-                            .fill(offset > 0 ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
-                            .frame(width: offset > 0 ? 122 : 116, height: 44)
-                        Text(offset > 0 ? "More like this" : "Less like this")
+                            .fill(swipe.overlayIsLeading ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
+                            .frame(width: swipe.overlayIsLeading ? 122 : 116, height: 44)
+                        Text(swipe.overlayIsLeading ? "More like this" : "Less like this")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(offset > 0 ? .green : .red)
+                            .foregroundStyle(swipe.overlayIsLeading ? .green : .red)
                     }
-                    .opacity(overlayOpacity)
+                    .opacity(swipe.overlayOpacity)
                     .padding(.horizontal, 24)
                 }
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
+                DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
                     .onChanged { v in
-                        if !isHorizontalDrag && offset == 0 {
-                            isHorizontalDrag = abs(v.translation.width) > abs(v.translation.height)
-                        }
-                        if isHorizontalDrag {
-                            offset = v.translation.width
-                        }
+                        swipe.change(width: v.translation.width, height: v.translation.height)
                     }
                     .onEnded { v in
-                        if isHorizontalDrag && abs(v.translation.width) > 120 {
-                            if v.translation.width > 0 {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    offset = 400
-                                    removing = true
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    onSwipeRight()
-                                }
-                            } else {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    offset = -400
-                                    removing = true
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    onSwipeLeft()
-                                }
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.3)) { offset = 0 }
+                        // Same predicate `end` uses, so the curve can never drift
+                        // from the decision: fly-out on commit, spring on release.
+                        let curve: Animation = swipe.commits(width: v.translation.width)
+                            ? .easeOut(duration: 0.2)
+                            : .spring(response: 0.3)
+                        let outcome = withAnimation(curve) {
+                            swipe.end(width: v.translation.width)
                         }
-                        isHorizontalDrag = false
+                        guard outcome != .none else { return }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                            // Unconditional. If the row really left the feed this
+                            // is a no-op on a dead view; if it came back via the
+                            // feed-floor backfill or pull-to-refresh, this is the
+                            // only thing that restores it from an invisible,
+                            // un-swipeable slot.
+                            swipe.settleAfterCommit()
+                        }
                     }
             )
     }
