@@ -1324,3 +1324,4 @@ failure this document already records happening twice.
 - [041](rulings/041-search-ranks-by-match-class-on-owned-evidence.md) — 2026-08-12 — Search ranks by MATCH CLASS, and an entity ranks only on evidence it OWNS (Alex)
 - [043](rulings/043-taste-enables-a-signal-labels-tune-it.md) — 2026-08-13 — Taste may ENABLE a signal; only labels may TUNE it (Alex)
 - [046](rulings/046-a-stacked-change-is-measured-on-its-own-deploy.md) — 2026-08-13 — A stacked change is measured on its OWN deploy; an ungradable measurement is a lost one (Alex)
+- [050](rulings/050-a-control-that-cannot-fail-is-not-a-control.md) — 2026-08-13 — A control that cannot fail is not a control: read the null prediction, and arm it with a HALT (Alex)
