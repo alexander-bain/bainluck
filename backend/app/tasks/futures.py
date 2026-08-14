@@ -88,8 +88,9 @@ def _aggregate_futures_outcomes(markets_data) -> dict:
         }
     }
     """
-    from statistics import mean
     from collections import defaultdict
+
+    from app.utils.odds_math import devig_consensus
 
     # First pass: group outcomes by bookmaker to calculate per-bookmaker totals
     bookmaker_outcomes = defaultdict(list)  # bookmaker -> [(name, probability, american_odds)]
@@ -101,35 +102,34 @@ def _aggregate_futures_outcomes(markets_data) -> dict:
                 (outcome.name, outcome.probability, outcome.american_odds)
             )
 
-    # Second pass: normalize each bookmaker's probabilities to sum to 1.0
-    # This removes the vig/overround
-    outcomes = {}
+    # Second pass: de-vig each bookmaker's column on its own outcome set, then
+    # average across books. Both steps live in odds_math.devig_consensus — ONE
+    # normalization implementation, shared with the historical reconstruction in
+    # `_compute_movers` (app/routes/playoffs.py). #1844: a second copy written to
+    # serve the historical side re-creates exactly the divergence that fixed.
+    book_columns: dict[str, dict[str, float]] = {}
+    raw_by_outcome: dict[str, dict[str, dict]] = defaultdict(dict)
 
     for bookmaker, bm_outcomes in bookmaker_outcomes.items():
-        total_prob = sum(prob for _, prob, _ in bm_outcomes)
-
+        column: dict[str, float] = {}
         for name, raw_prob, american_odds in bm_outcomes:
-            # Normalize: divide by total so all outcomes sum to 1.0
-            normalized_prob = raw_prob / total_prob if total_prob > 0 else raw_prob
-
-            if name not in outcomes:
-                outcomes[name] = {
-                    "normalized_probabilities": [],
-                    "bookmakers": {},
-                }
-
-            outcomes[name]["normalized_probabilities"].append(normalized_prob)
-            outcomes[name]["bookmakers"][bookmaker] = {
-                "probability": raw_prob,  # Keep raw implied prob for bookmaker display
+            column[name] = raw_prob
+            raw_by_outcome[name][bookmaker] = {
+                # Keep the RAW implied prob for per-bookmaker display. It is
+                # vig-inclusive by design; it must never be compared against a
+                # consensus (that is the #1844 defect).
+                "probability": raw_prob,
                 "american_odds": american_odds,
             }
+        book_columns[bookmaker] = column
 
-    # Calculate average normalized probability for each outcome
+    consensus = devig_consensus(book_columns, method="mean")
+
     result = {}
-    for name, data in outcomes.items():
+    for name, probability in consensus.items():
         result[name] = {
-            "probability": mean(data["normalized_probabilities"]),
-            "bookmakers": data["bookmakers"],
+            "probability": probability,
+            "bookmakers": raw_by_outcome[name],
         }
 
     return result

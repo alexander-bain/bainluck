@@ -29,6 +29,7 @@ from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
+from app.utils.odds_math import devig_consensus
 
 logger = logging.getLogger(__name__)
 
@@ -936,73 +937,148 @@ async def _build_register_column_data(
     return column_data, outcome_entity, stats
 
 
+class MoversResult(dict):
+    """``{outcome_id: de-vigged consensus probability at t-N hours}``.
+
+    A ``dict`` subclass so every existing ``old_probs.get(outcome_id)`` call site
+    keeps working unchanged, while carrying the metadata a caller needs to say
+    "this read was partial" out loud.
+
+    #1844 acceptance 2: a degraded read must DECLARE itself. The old code
+    swallowed a statement timeout and returned partial results, so the set of
+    teams that got a delta depended on the query plan and a truncated read was
+    indistinguishable from "nothing moved" — gotcha #53 in the grid.
+    """
+
+    __slots__ = ("degraded", "requested", "covered", "markets_normalized")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.degraded: bool = False
+        self.requested: int = 0
+        self.covered: int = 0
+        self.markets_normalized: int = 0
+
+
 async def _compute_movers(
     session: AsyncSession,
     outcome_ids: list[int],
     hours: int = 24,
-) -> dict[int, float]:
-    """Compute probability change over the last N hours for a set of outcomes.
+) -> MoversResult:
+    """Reconstruct the de-vigged consensus as of N hours ago, per outcome.
 
-    Returns {outcome_id: change_24h}.
+    Returns a :class:`MoversResult` mapping ``{outcome_id: consensus_then}``.
+    Callers subtract it from today's merged probability to get ``trend_24h``.
 
-    Gracefully handles query timeouts — returns whatever results were gathered
-    before the timeout, or an empty dict if the first batch fails. The grid
-    renders fine without mover data; it just won't show 24h trend arrows.
+    **Both sides of that subtraction must be the same quantity.** They were not
+    (#1844). This function used to return ``fos.probability`` from ONE row per
+    outcome — and ``futures_odds_snapshots`` is per-BOOKMAKER, so that was a
+    single arbitrary book's RAW, vig-inclusive price. Subtracting it from a
+    de-vigged consensus is negative by construction and proportional to each
+    outcome's probability: the MLB grid rendered 29 of 30 teams falling, every
+    day, deterministically. LAD's headline "-7.6 in 24h" was
+    ``0.3153 x 0.245`` — the betrivers overround — not a market move.
+
+    Three defects, all closed here:
+
+    1. **Vig basis mismatch.** We now de-vig the historical column per book and
+       average across books, through the SAME ``odds_math.devig_consensus`` the
+       live path uses. The reconstructed column sums to ~1.0, like the now side.
+    2. **Single book vs consensus.** Every book present at the reference capture
+       contributes, so a mover can no longer be one book's disagreement.
+    3. **Non-deterministic tie-break.** All books share an identical
+       ``captured_at``, and the old ``ORDER BY captured_at ASC LIMIT 1`` had no
+       tie-break — a plan change silently swapped a 32.5%-vig book for a
+       16.6%-vig one and halved every published mover with zero market movement.
+       ``DISTINCT ON`` here carries an explicit ``fos.id`` tie-break.
+
+    The naming trap that hid all of this: ``FuturesOddsSnapshot.probability`` is
+    commented "Normalized probability (always calculated)". It is normalized
+    from American odds and is PER BOOKMAKER — never de-vigged, never a consensus.
     """
+    empty = MoversResult()
     if not outcome_ids:
-        return {}
+        return empty
 
     # Deduplicate outcome IDs to reduce query load
     unique_ids = list(set(outcome_ids))
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    empty.requested = len(unique_ids)
 
-    # Use LATERAL for efficient index seeks on
-    # idx_fos_outcome_captured(outcome_id, captured_at).
-    # The ORM GROUP BY version times out on 130+ outcome IDs.
+    # One row per (outcome, bookmaker): that bookmaker's EARLIEST snapshot since
+    # the cutoff. DISTINCT ON rides idx_fos_outcome_captured(outcome_id,
+    # captured_at) the same way the old LATERAL did, but keeps the whole book
+    # column instead of collapsing to one arbitrary row.
     #
-    # Batch into chunks of 40 to keep each query fast and avoid
-    # overwhelming the planner with 100+ LATERAL lookups at once.
+    # `fos.id ASC` is the deterministic tie-break (#1844 acceptance 3): books
+    # written in the same poll share a captured_at to the microsecond.
+    #
+    # Batch by outcome id to keep each query fast and bound the planner's work.
     _BATCH_SIZE = 40
-    old_probs: dict[int, float] = {}
+    # market_id -> bookmaker -> outcome_id -> raw vig-inclusive probability
+    columns: dict[int, dict[str, dict[int, float]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
+    degraded = False
 
     from sqlalchemy import text
 
-    try:
-        for i in range(0, len(unique_ids), _BATCH_SIZE):
-            batch = unique_ids[i : i + _BATCH_SIZE]
+    for i in range(0, len(unique_ids), _BATCH_SIZE):
+        batch = unique_ids[i : i + _BATCH_SIZE]
+        try:
             result = await session.execute(
                 text("""
-                    SELECT fo.id AS outcome_id, snap.probability AS old_prob
+                    SELECT DISTINCT ON (fo.id, fos.bookmaker)
+                           fo.id AS outcome_id,
+                           fo.market_id AS market_id,
+                           fos.bookmaker AS bookmaker,
+                           fos.probability AS raw_prob
                     FROM futures_outcomes fo
-                    CROSS JOIN LATERAL (
-                        SELECT fos.probability
-                        FROM futures_odds_snapshots fos
-                        WHERE fos.outcome_id = fo.id
-                          AND fos.captured_at >= :cutoff
-                        ORDER BY fos.captured_at ASC
-                        LIMIT 1
-                    ) snap
+                    JOIN futures_odds_snapshots fos
+                      ON fos.outcome_id = fo.id
+                     AND fos.captured_at >= :cutoff
                     WHERE fo.id = ANY(:ids)
+                    ORDER BY fo.id, fos.bookmaker, fos.captured_at ASC, fos.id ASC
                 """),
                 {"ids": batch, "cutoff": cutoff},
             )
-            old_probs.update(
-                {row.outcome_id: float(row.old_prob) for row in result}
+            for row in result:
+                columns[row.market_id][row.bookmaker][row.outcome_id] = float(
+                    row.raw_prob
+                )
+        except Exception as exc:
+            # Statement timeout or other DB error. We keep the batches that DID
+            # land, but the result is flagged degraded so the response can say
+            # so — a partial read must never render as "no movement".
+            degraded = True
+            logger.warning(
+                "_compute_movers: batch %d failed after gathering %d/%d "
+                "outcome ids: %s",
+                i // _BATCH_SIZE, len(unique_ids) - len(batch), len(unique_ids),
+                exc,
             )
-    except Exception as exc:
-        # Statement timeout or other DB error — log and return partial results.
-        # The grid renders fine without movers; trend_24h will just be None.
-        logger.warning(
-            "_compute_movers: query failed after gathering %d/%d results: %s",
-            len(old_probs), len(unique_ids), exc,
-        )
-        # After a cancelled statement the connection is in an error state;
-        # rollback so subsequent queries on this session still work.
-        try:
-            await session.rollback()
-        except Exception:
-            pass
+            # After a cancelled statement the connection is in an error state;
+            # rollback so subsequent queries on this session still work.
+            try:
+                await session.rollback()
+            except Exception:
+                pass
 
+    # De-vig each book's column on its own market, then average across books —
+    # the SAME helper the live path uses (app/tasks/futures.py).
+    old_probs = MoversResult()
+    old_probs.requested = len(unique_ids)
+    for _market_id, book_columns in columns.items():
+        # Keys are outcome ids; devig_consensus is key-agnostic.
+        consensus = devig_consensus(book_columns, method="mean")
+        if consensus:
+            old_probs.markets_normalized += 1
+        old_probs.update(consensus)
+
+    old_probs.covered = len(old_probs)
+    # A partial read is degraded whether the cause was a timeout or a market
+    # whose column could not be normalized at all.
+    old_probs.degraded = degraded
     return old_probs
 
 
@@ -1359,6 +1435,7 @@ async def _build_golf_grid_from_datagolf(
             "teams": primary.get("teams", []),
             "grouped_teams": None,
             "movers": primary.get("movers", []),
+            "movers_degraded": primary.get("movers_degraded", False),
             "team_count": primary.get("team_count", 0),
             "field_count": primary.get("field_count", 0),
             "last_updated": datetime.now(timezone.utc).isoformat(),
@@ -1881,6 +1958,9 @@ async def _build_golf_tour_grid(
             "trend_chart": trend_chart,
             "teams": teams,
             "movers": movers,
+            # #1844 acceptance 2: a partial mover read declares itself rather
+            # than rendering as "no movement".
+            "movers_degraded": getattr(old_probs, "degraded", False),
             "team_count": len(teams),
             "field_count": len(dg_field),
             "sources_available": sorted(sources_seen),
@@ -2252,6 +2332,9 @@ async def _build_upcoming_golf_event_grid(
         "trend_chart": trend_chart,
         "teams": teams,
         "movers": movers,
+        # #1844 acceptance 2: a partial mover read declares itself rather than
+        # rendering as "no movement".
+        "movers_degraded": getattr(old_probs, "degraded", False),
         "team_count": len(teams),
         "field_count": len(teams),
         "sources_available": sorted(sources_seen),
@@ -3636,6 +3719,9 @@ async def get_playoff_grid(
         "teams": teams,
         "grouped_teams": grouped_teams,
         "movers": movers,
+        # #1844 acceptance 2: a partial mover read declares itself rather than
+        # rendering as "no movement".
+        "movers_degraded": getattr(old_probs, "degraded", False),
         "team_count": len(teams),
         "last_updated": datetime.now(timezone.utc).isoformat(),
         "sources_available": sorted(sources_seen),
@@ -4084,4 +4170,7 @@ async def _get_team_progression_for_event_uncached(
         ],
         "home_team": home_row,
         "away_team": away_row,
+        # #1844 acceptance 2: a partial mover read declares itself rather than
+        # rendering as "no movement".
+        "movers_degraded": getattr(old_probs, "degraded", False),
     }
