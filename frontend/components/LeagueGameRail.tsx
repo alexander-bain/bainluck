@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import type { LeagueGameBrief } from "@/lib/api";
-import { probabilityBarWidth } from "@/lib/entityPageChrome";
+import { leagueGameToEvent } from "@/lib/leagueCards";
+import EventCard from "./EventCard";
 
 /**
  * The league page's games rails (UX-P062 / #1743, Alex's 2026-08-11 amendment).
@@ -18,66 +18,32 @@ import { probabilityBarWidth } from "@/lib/entityPageChrome";
  * amendment), sourcing the render from the feed would let the backend count eight
  * games while the reader sees two: the broken shelf, arriving through the census
  * instead of the template. Same route declares the tier and supplies the rail.
+ *
+ * ── UX-P074 (#1860), RULING 047: THE CARD IS THE SHARED ONE ──
+ *
+ * This rail used to draw its own `GameRow` — a two-line variant with a bar and a
+ * single percentage. It was a perfectly reasonable local choice and that is the
+ * whole problem ruling 047 names: "a bespoke variant spends the reader's
+ * accumulated fluency to save one queue an afternoon." A reader who learned the
+ * event card on /sports or in search had to learn a second one here, on the same
+ * content.
+ *
+ * So the rail is now a LAYOUT and the card is `components/EventCard` — the same
+ * component /sports/[key], search, My Stuff and Preferences render. What the
+ * variant used to draw and the shared card draws instead:
+ *
+ *   both sides of the blend (not just home) · team colours and logos · the live
+ *   period/clock · the settled score block · the opening line on a live game
+ *
+ * None of that is new invention: the league envelope was extended to carry it
+ * (ruling 047's scope clause — extend the contract, do not fork the card), and
+ * every field is one `/api/events` already serves under the same name.
+ *
+ * The two invariants this rail was already right about are unchanged and still
+ * pinned by `__tests__/components/leagueGameRail.test.tsx`: the cap declaration
+ * follows the rail (upcoming vs settled), and an unpriced game renders NO number
+ * rather than a fabricated 0%/50%.
  */
-
-function scoreLine(game: LeagueGameBrief): string | null {
-  if (game.home_score == null || game.away_score == null) return null;
-  return `${game.away_score}–${game.home_score}`;
-}
-
-function timeLabel(game: LeagueGameBrief): string | null {
-  if (!game.commence_time) return null;
-  const d = new Date(game.commence_time);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function GameRow({ game, settled }: { game: LeagueGameBrief; settled: boolean }) {
-  // Register E2 / doctrine A3: a null probability must not become a 0%-wide bar.
-  // `probabilityBarWidth` returns null and we withhold the whole track — a
-  // 0%-width bar inside a visible track is the same lie with extra steps.
-  const width = probabilityBarWidth(game.home_win_probability);
-  const score = scoreLine(game);
-  const when = timeLabel(game);
-  const isLive = game.status === "live";
-
-  return (
-    <Link
-      href={`/events/${game.id}`}
-      className="block rounded-xl border border-surface-border bg-surface-card p-3 hover:border-text-muted transition-colors"
-    >
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm text-text-primary truncate">
-          {game.away_team} @ {game.home_team}
-        </span>
-        {isLive ? (
-          <span className="text-xs font-medium text-accent-live shrink-0">LIVE</span>
-        ) : score ? (
-          <span className="text-xs font-medium text-text-primary shrink-0">{score}</span>
-        ) : when ? (
-          <span className="text-xs text-text-muted shrink-0">{when}</span>
-        ) : null}
-      </div>
-
-      {/* Settled means settled: a finished game shows its result, not a forecast. */}
-      {!settled && width != null && (
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-1 flex-1 rounded-full bg-surface-border overflow-hidden">
-            <div className="h-full bg-accent-brand" style={{ width: `${width}%` }} />
-          </div>
-          <span className="text-xs text-text-secondary tabular-nums shrink-0">
-            {width}%
-          </span>
-        </div>
-      )}
-    </Link>
-  );
-}
-
 export default function LeagueGameRail({
   title,
   games,
@@ -105,8 +71,16 @@ export default function LeagueGameRail({
         {title}
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {games.map((g) => (
-          <GameRow key={g.id} game={g} settled={settled} />
+        {games.map((g, i) => (
+          <EventCard
+            key={g.id}
+            event={leagueGameToEvent(g)}
+            // The league page IS the league context — repeating "MLB" on eight
+            // cards is the chrome the entity-page grammar makes pages earn.
+            showSport={false}
+            sourceSection="sport_category"
+            positionIndex={i}
+          />
         ))}
       </div>
       {/* A cap is always DECLARED (spec §4). An uncounted cap reads as coverage.
