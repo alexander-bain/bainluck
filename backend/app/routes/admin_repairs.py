@@ -16,7 +16,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | winner-field-coherence | reachability-census
              | prop-threshold-cliff-census | overlap-trading-census
              | winner-field-repair | event-team-binding
-             | kalshi-settlement-status | statpal-blank-ids }
+             | kalshi-settlement-status | statpal-blank-ids
+             | kalshi-fabricated-loss-census | kalshi-fabricated-loss }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -140,6 +141,34 @@ _REPAIRS = {
     # their event ids and never written — clearing them is attended, by-name
     # work, and until it lands the column still cannot be made unique.
     "statpal-blank-ids": ("scripts.repair_statpal_fixture_id_blanks", "repair"),
+    # CAL-P056 (#1852): the BACKWARD half of CAL-P053. Dry-run-ONLY census of the
+    # standing all-loser population — Kalshi markets (2+ legs) where every
+    # outcome carries `api_settlement` and NONE is a winner — split by source x
+    # mutually_exclusive x retention band, so ruling 054's exclusions are a
+    # published number rather than a silent denominator change. One whole-table
+    # aggregate over futures_outcomes; bounded by a statement timeout, and a
+    # timeout returns `measured: false` with a reason, NEVER a zero. Never
+    # writes: `apply` is accepted and ignored.
+    "kalshi-fabricated-loss-census": (
+        "app.tasks.repair_kalshi_fabricated_loss",
+        "census",
+    ),
+    # CAL-P056 (#1852): the WRITE half. For each market in that population it
+    # asks Kalshi for the per-leg declaration and acts PER LEG: `yes` restores
+    # the winner, `no` confirms our loss and is left alone (150 of 152 legs in
+    # the live specimen — a per-MARKET repair would have corrupted them),
+    # `scalar`/""/no-result retracts the fabricated `api_settlement` loss to
+    # `ungradeable_result` so it leaves the published curve, and a leg the venue
+    # has no ticker for is the ticker-mismatch mechanism: counted, sampled,
+    # NEVER written. Retracting is the one permitted authority downgrade and it
+    # is guarded to the exact badge being corrected. Writes no prices. Dry-run by
+    # default, capped at APPLY_MARKET_CAP markets per call, bounded by BOTH a row
+    # window and a wall clock. Accepts ?limit=&offset=&sport=.
+    # ATTENDED ONLY: never wire this to a beat.
+    "kalshi-fabricated-loss": (
+        "app.tasks.repair_kalshi_fabricated_loss",
+        "repair",
+    ),
 }
 
 

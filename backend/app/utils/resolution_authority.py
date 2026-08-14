@@ -86,6 +86,23 @@ DETERMINISTIC_SOURCES: frozenset[str] = frozenset({
 # NOT happen by the stated date, so No wins. It is deterministic-from-the-clock but
 # NOT the venue's own settlement, so it lives in the terminal tier — a later
 # authoritative Gamma/CLOB settlement (tier 3) may overwrite it.
+#
+# CAL-P056 (#1852): `ungradeable_result` is a RETRACTION, not a grade — the state
+# of a leg whose stored `api_settlement` loss the venue never declared (a Kalshi
+# `result` of "scalar" or ""). It asserts no winner, so it is structurally
+# no-winner and calibration-truth INELIGIBLE, which is the whole point: it takes
+# a fabricated loss OUT of the published curve instead of re-grading it.
+#
+# It lives at tier 1, deliberately BELOW the api_settlement it replaces, so the
+# ordinary Kalshi graders overwrite it the moment the venue declares a real side
+# — the retraction is reversible by evidence and by nothing else. Writing it over
+# a tier-3 badge is therefore a downgrade by `is_downgrade`, and the ONE place
+# that is permitted is `app/tasks/repair_kalshi_fabricated_loss.py`, per leg,
+# licensed by the venue's own answer for that exact ticker.
+#
+# It is NOT in OVERWRITABLE_WINNER_SOURCES: the re-resolution HAVING guards ask
+# "may a price-derived crowner supersede this?", and the answer for a row we have
+# just declared unknowable is no.
 TERMINAL_SOURCES: frozenset[str] = frozenset({
     "clean_resolution",
     "pass2_loser",
@@ -94,6 +111,7 @@ TERMINAL_SOURCES: frozenset[str] = frozenset({
     "withdrew",
     "no_pregame_trading",
     "date_passed",
+    "ungradeable_result",
 })
 
 # Tier 0 — guess-family: heuristic inferences with no cited authority. These are
