@@ -2268,21 +2268,36 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # ── Unified event matching via Event Registry ──
     # Determine commence_time: use market's commence_time if reasonable,
     # otherwise use now (the market is probably live)
+    #
+    # #1779 R4 (ruling 042, Codex C-CERT-1801-R3 [P2]). This is THE line in the
+    # codebase that fabricates a start time — 73% of id-less events carry one, and
+    # 3,749 of them share a single instant. Until now it recorded
+    # ``commence_time_source = market.source``, i.e. "kalshi", about a value Kalshi
+    # never published; the registry was then left to infer whether the clock was
+    # real from how the datetime happened to be FORMATTED, which is a fact about the
+    # formatter and not about the schedule. Say it instead of leaving it to be
+    # guessed. Rows written before this still fall back to the shape heuristic —
+    # that is why the heuristic survives rather than being deleted.
+    from app.services.event_registry import (
+        find_or_create_event, EventIdentity, EventClaim,
+        _INGEST_FALLBACK_TIME_SOURCE,
+    )
+
     commence_time = market.commence_time
+    commence_time_source = market.source
     if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
         commence_time = now
+        commence_time_source = _INGEST_FALLBACK_TIME_SOURCE
 
     status = "live" if commence_time <= now else "scheduled"
     external_id = f"pm_{market.source}_{market.external_id}"
 
-    from app.services.event_registry import (
-        find_or_create_event, EventIdentity, EventClaim,
-    )
     identity = EventIdentity(
         sport_key=sport_key,
         home_team_name=team_a,
         away_team_name=team_b,
         commence_time=commence_time,
+        commence_time_source=commence_time_source,
         claim=EventClaim(market.source, external_id),
         status=status,
     )

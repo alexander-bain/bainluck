@@ -19,16 +19,31 @@ already carries a **different game id from the incoming claim's own provider**.
 The provider has already said these are two different games; names and times
 cannot outvote that.
 
-Three rounds, because the first two only covered rows that carry ids:
+Four rounds, because each of the first three only covered rows the one before it
+could not speak about:
 
 * **R1** — same provider, different id → refuse, at any distance.
 * **R2** (#1802) — individuated by ANY provider, starts >2h apart → refuse.
   Absence of the incoming provider's id is not evidence of sameness (gotcha #53).
-* **R3** — individuated by NOBODY: two **published start times** (whole-minute,
-  as opposed to the fabricated ``now`` a prediction-market auto-create writes)
-  more than half a day apart → refuse. This is 88% of events and was the largest
-  remaining exposure; R1 and R2 never fire there. Threshold calibrated against
-  production 2026-08-13 — see ``_UNINDIVIDUATED_SAME_GAME_WINDOW``.
+* **R3** — individuated by NOBODY: two **published start times** more than half a
+  day apart → refuse. This is 88% of events and was the largest remaining
+  exposure; R1 and R2 never fire there.
+* **R4** (ruling 042, Codex C-CERT-1801-R3) — R3's two answers were both read off
+  a *label* rather than an identifier, and each one let a distinct scheduled game
+  be absorbed:
+
+  - its separate 12h window left the whole 0–12h band open, and a same-day
+    doubleheader's second game lives there. Two real clocks are now held to the
+    same ``_CROSS_PROVIDER_SAME_GAME_WINDOW`` an individuated row gets — one bar,
+    no more forgiving number for id-less rows;
+  - "is this a published start time?" was answered from the datetime's
+    **formatting**. It is now answered from recorded provenance
+    (``commence_time_source``), with the shape kept only as the fallback for rows
+    written before the provenance existed — and the fallback says so when it runs.
+
+  Both R4 specimens are Codex's, and both are asserted through the production
+  entry point: R3's doubleheader test pre-populated BOTH rows and so never
+  exercised the create path, which is exactly where the defect lived.
 
 WHAT THE FIXTURES ARE
 
@@ -40,14 +55,15 @@ branch runs; these prove the incident does not recur.
 """
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.models import Event
 from app.services.event_registry import (
+    _CROSS_PROVIDER_SAME_GAME_WINDOW,
+    _INGEST_FALLBACK_TIME_SOURCE,
     _is_a_different_scheduled_game,
     _is_a_published_start_time,
     _unindividuated_clocks_say_different_games,
-    _UNINDIVIDUATED_SAME_GAME_WINDOW,
     EventClaim,
     EventIdentity,
     _find_by_structured_match,
@@ -65,7 +81,7 @@ def _utc(text: str) -> datetime:
 
 
 def _event(*, event_id, away, home, commence, espn_id=None, statpal_id=None,
-           external_id=None, status="completed") -> Event:
+           external_id=None, status="completed", commence_time_source=None) -> Event:
     return Event(
         id=event_id,
         sport_id=MLB_SPORT_ID,
@@ -76,6 +92,7 @@ def _event(*, event_id, away, home, commence, espn_id=None, statpal_id=None,
         espn_id=espn_id,
         statpal_fixture_id=statpal_id,
         external_id=external_id,
+        commence_time_source=commence_time_source,
         completed_at=None,
     )
 
@@ -731,11 +748,25 @@ class TestTheIdlessRowsThatMustStillJoin:
         assert match is shell
 
     @pytest.mark.asyncio
-    async def test_a_timezone_sized_disagreement_on_two_real_clocks_still_joins(self):
-        """The case the wide window exists for, at a size a clock error can produce.
+    async def test_a_timezone_sized_disagreement_on_two_real_clocks_now_creates(self):
+        """REWRITTEN (R4). This test asserted the mechanism of the doubleheader defect.
 
-        A source publishing a US local start as if it were UTC is off by 4–7h. That is
-        one game read off two clocks, and 12h is chosen precisely so it survives.
+        It read: "A source publishing a US local start as if it were UTC is off by
+        4–7h. That is one game read off two clocks, and 12h is chosen precisely so it
+        survives." The premise is true and the conclusion does not follow, because a
+        4h gap between two id-less rows with real clocks is ALSO what the second game
+        of a doubleheader looks like. The two hypotheses are the same distance apart,
+        so no threshold separates them — this test was pinning open the exact band
+        Codex's game-2 specimen absorbs through.
+
+        The bar has no distance in it. When we cannot tell, we create: the timezone
+        case now costs one mergeable duplicate, which the 30-minute merge task drains
+        and the Flow Sentinel already hunts. The vanished game it buys off is
+        invisible to every check we own.
+
+        The join that genuinely must survive is the one where a clock is FABRICATED —
+        the treadmill — and that is asserted for real, on fabricated clocks, in the
+        three tests above.
         """
         shell = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
                        commence="2026-08-10T23:07:00")
@@ -746,7 +777,10 @@ class TestTheIdlessRowsThatMustStillJoin:
             session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
             _utc("2026-08-10T19:07:00"), EventClaim("kalshi", "KX-1"),
         )
-        assert match is shell
+        assert match is None, (
+            "4h between two published id-less starts is indistinguishable from "
+            "game 2 of a doubleheader; the asymmetry says create"
+        )
 
     @pytest.mark.asyncio
     async def test_end_to_end_the_idless_series_game_is_created(self):
@@ -800,13 +834,41 @@ class TestTheIdlessClassPredicate:
             real, _utc(_FABRICATED_NOW_NEXT_DAY))
 
     def test_the_boundary_is_where_the_constant_says_it_is(self):
-        """Proves the constant is READ, not just declared."""
-        assert _UNINDIVIDUATED_SAME_GAME_WINDOW.total_seconds() == 12 * 3600
+        """Proves the constant is READ, not just declared.
+
+        REWRITTEN (R4): there is no longer a separate un-individuated window to
+        read. R3 had one at 12h and a same-day doubleheader's second game sat
+        inside it. Two real clocks are now held to the SAME bar as two real clocks
+        on an individuated row, so this asserts the shared constant — and that it
+        is the shared one, which is the property that stops the two from drifting
+        apart again.
+        """
+        assert _CROSS_PROVIDER_SAME_GAME_WINDOW.total_seconds() == 2 * 3600
         row = _event(event_id=1, away="A", home="B", commence="2026-08-10T12:00:00")
         assert not _unindividuated_clocks_say_different_games(
-            row, _utc("2026-08-10T23:59:00"))            # 11h59m
+            row, _utc("2026-08-10T13:59:00"))            # 1h59m
         assert _unindividuated_clocks_say_different_games(
-            row, _utc("2026-08-11T00:01:00"))            # 12h01m
+            row, _utc("2026-08-10T14:01:00"))            # 2h01m
+
+    def test_the_un_individuated_bar_is_the_individuated_bar(self):
+        """One bar, applied to both. Not two numbers that happen to be equal today.
+
+        The same specimen, run through both predicates with the only difference
+        being whether a provider has named the row. Same verdict at every distance —
+        which is what "id-lessness does not buy a more forgiving definition of the
+        same game" means operationally.
+        """
+        for gap_hours, expected in ((1.5, False), (2.5, True), (6, True), (24, True)):
+            bare = _event(event_id=1, away="A", home="B",
+                          commence="2026-08-10T12:00:00")
+            named = _event(event_id=2, away="A", home="B",
+                           commence="2026-08-10T12:00:00", espn_id="401816469")
+            incoming = _utc("2026-08-10T12:00:00") + timedelta(hours=gap_hours)
+
+            assert _unindividuated_clocks_say_different_games(
+                bare, incoming) is expected, gap_hours
+            assert _is_a_different_scheduled_game(
+                named, EventClaim("statpal", "355179"), incoming) is expected, gap_hours
 
     def test_it_is_symmetric_in_time(self):
         """Earlier and later must behave identically — a sign error here is invisible."""
@@ -841,3 +903,242 @@ class TestPublishedStartTimeDetection:
 
     def test_none_is_not_a_published_start(self):
         assert not _is_a_published_start_time(None)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# R4 — Codex C-CERT-1801-R3's two BLOCK findings, as tests that fail first.
+#
+# R3 shipped 129 green tests over an implementation that still absorbed a
+# distinct scheduled game. Both specimens below are Codex's, reproduced
+# unchanged; each one is written through the PRODUCTION entry point, because
+# the false green R3 shipped was false precisely at that boundary.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestTheSameDayDoubleheaderIsNotAbsorbed:
+    """[P1] Game 2 of a same-day doubleheader, arriving when only game 1 exists.
+
+    WHY R3'S TEST PASSED WHILE THE IMPLEMENTATION WAS BROKEN. The R3 suite's
+    doubleheader case (``test_idless_doubleheader_still_picks_the_closest_in_time``)
+    PRE-POPULATED BOTH rows and then proved the closest-by-time tiebreaker selects
+    game 2. That is not the production failure. In production game 2 is the row that
+    does not exist yet — it is the thing arriving — so the only question that matters
+    is whether the matcher hands back game 1 and suppresses the create. It did.
+
+    Both clocks here are whole-minute published starts and both rows are id-less, so
+    R3's 12h rule is silent at 6h and the ±28h window decides exactly as it did
+    before #1779. Codex measured the boundary: 12h00m absorbed, 12h01m refused.
+
+    Alex's bar does not have a distance in it — *no absorption of a distinct
+    scheduled game, full stop.*
+    """
+
+    @pytest.mark.asyncio
+    async def test_game_two_is_created_when_only_game_one_exists(self):
+        """THE production path. Only game 1 is in the table; game 2 arrives."""
+        game1 = _event(event_id=15187583, away="Boston Red Sox",
+                       home="Toronto Blue Jays", commence="2026-08-10T17:07:00")
+        session = _FakeRegistrySession(structured_candidates=[game1],
+                                       sport_id=MLB_SPORT_ID)
+
+        event, created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=_utc("2026-08-10T23:07:00"),
+                claim=EventClaim("kalshi", "KXMLBGAME-26AUG101907BOSTOR"),
+                status="scheduled",
+            ),
+        )
+
+        assert created is True, (
+            "game 2 of the 08-10 BOS@TOR doubleheader was absorbed into game 1 "
+            "(17:07 vs 23:07, 6h). Both are published whole-minute starts; a "
+            "same-day second game is a distinct scheduled game."
+        )
+        assert event is not game1
+        assert game1.commence_time == _utc("2026-08-10T17:07:00"), (
+            "game 1 was dragged onto game 2's start — the #1779 corruption half"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_matcher_itself_refuses_game_one(self):
+        """The same specimen one layer down, so a create-path change cannot mask it."""
+        game1 = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence="2026-08-10T17:07:00")
+        session = _FakeRegistrySession(structured_candidates=[game1],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-10T23:07:00"), EventClaim("kalshi", "KX-G2"),
+        )
+        assert match is None
+
+    @pytest.mark.parametrize(
+        "gap_hours", [2.5, 4, 6, 9, 12],
+        ids=["2h30m", "4h", "6h", "9h", "12h"],
+    )
+    @pytest.mark.asyncio
+    async def test_no_gap_below_the_old_threshold_absorbs(self, gap_hours):
+        """Codex found 12h00m absorbing and 12h01m refusing. The whole band is the bug.
+
+        Parametrized rather than pinned at 6h so that "move the constant down a bit"
+        is not a passing fix.
+        """
+        game1 = _event(event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+                       commence="2026-08-10T11:00:00")
+        session = _FakeRegistrySession(structured_candidates=[game1],
+                                       sport_id=MLB_SPORT_ID)
+
+        match = await _find_by_structured_match(
+            session, MLB_SPORT_ID, "Toronto Blue Jays", "Boston Red Sox",
+            _utc("2026-08-10T11:00:00") + timedelta(hours=gap_hours),
+            EventClaim("kalshi", "KX-G2"),
+        )
+        assert match is None, f"{gap_hours}h apart still absorbed"
+
+
+class TestProvenanceNotShapeDecidesWhatIsPublished:
+    """[P2] A real schedule that publishes seconds must not reopen +24h absorption.
+
+    ``_is_a_published_start_time`` read authority off the FORMATTING of a datetime:
+    ``second == 0 and microsecond == 0``. That is a label about the value, not a
+    fact about where the value came from (ruling 042). Two consequences, both of
+    which Codex reproduced:
+
+    * a provider that publishes ``:00.5`` is read as fabricated, the id-less rule
+      goes silent, and a game a full day away is absorbed;
+    * a fabricated stamp that happens to land on an exact minute is read as
+      published.
+
+    The fix is to consult the provenance we already record — ``commence_time_source``
+    — and to fall back to the shape heuristic ONLY where no provenance exists, saying
+    so when it does.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_sub_minute_real_schedule_a_day_away_is_not_absorbed(self):
+        """Codex's specimen: both sides at ``:00.500000``, 24h apart, both real."""
+        shell = _event(
+            event_id=1, away="Boston Red Sox", home="Toronto Blue Jays",
+            commence="2026-08-10T23:07:00.500000",
+            commence_time_source="statpal",
+        )
+        session = _FakeRegistrySession(structured_candidates=[shell],
+                                       sport_id=MLB_SPORT_ID)
+
+        event, created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="baseball_mlb",
+                home_team_name="Toronto Blue Jays",
+                away_team_name="Boston Red Sox",
+                commence_time=_utc("2026-08-11T23:07:00.500000"),
+                commence_time_source="espn",
+                claim=EventClaim("espn", "401816479"),
+                status="scheduled",
+            ),
+        )
+
+        assert created is True, (
+            "a genuine schedule that carries seconds was read as a fabricated "
+            "ingest stamp, so the id-less guard fell silent and tomorrow's game "
+            "was absorbed — timestamp SHAPE is not provenance"
+        )
+        assert event is not shell
+
+    def test_recorded_provenance_outranks_the_shape_in_both_directions(self):
+        assert _is_a_published_start_time(
+            _utc("2026-08-10T23:07:00.500000"), "statpal"), (
+            "a schedule provider's start is published however it is formatted")
+        assert not _is_a_published_start_time(
+            _utc("2026-08-10T23:07:00"), _INGEST_FALLBACK_TIME_SOURCE), (
+            "a stamp we KNOW we invented is not published just because it "
+            "rounded to a whole minute")
+
+    def test_an_unrecorded_provenance_still_falls_back_to_the_shape(self):
+        """The 88% of rows written before provenance was recorded keep today's rule."""
+        assert _is_a_published_start_time(_utc("2026-08-10T23:07:00"), None)
+        assert not _is_a_published_start_time(_utc(_FABRICATED_NOW), None)
+
+    def test_a_prediction_market_source_is_not_evidence_of_a_published_start(self):
+        """``commence_time_source`` records WHO claimed the row, not that the clock is real.
+
+        The prediction-market auto-create writes ``commence_time_source='kalshi'``
+        even on the batch-shared ``now`` it substitutes, so reading that value as
+        provenance would declare all 63,952 fabricated-clock rows published and turn
+        the guard loose on them. Those must keep falling back to the shape.
+        """
+        assert not _is_a_published_start_time(_utc(_FABRICATED_NOW), "kalshi")
+        assert _is_a_published_start_time(_utc("2026-08-10T23:07:00"), "kalshi")
+
+    @pytest.mark.asyncio
+    async def test_the_auto_create_records_that_it_invented_the_clock(self):
+        """The provenance has to be WRITTEN, or the read above has nothing to find.
+
+        Through the real function, not a grep of its source: the one code path in
+        the codebase that fabricates a ``commence_time`` must store that fact, so a
+        later matcher dereferences a recorded value instead of inferring one from
+        the timestamp's formatting.
+        """
+        from types import SimpleNamespace
+
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+
+        now = _utc("2026-08-13T18:35:00.015358")
+        session = _FakeRegistrySession(sport_id=99)
+        market = SimpleNamespace(
+            source="kalshi",
+            external_id="KXCS2GAME-26AUG13NAVIG2",
+            name="NAVI vs G2",
+            commence_time=None,          # the trigger: no usable start time
+            llm_sport_category=None,
+        )
+        matchup = SimpleNamespace(team_a="NAVI", team_b="G2", yes_team="NAVI")
+
+        result = await _create_event_from_prediction_market(
+            session, matchup, market, now,
+        )
+
+        assert result is not None, "fixture no longer reaches the create path"
+        assert len(session.added) == 1
+        created = session.added[0]
+        assert created.commence_time == now
+        assert created.commence_time_source == _INGEST_FALLBACK_TIME_SOURCE, (
+            "the fabricated clock was recorded as if the market had published it"
+        )
+        assert not _is_a_published_start_time(
+            created.commence_time, created.commence_time_source
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_auto_create_keeps_a_real_market_start_as_the_source(self):
+        """The inverse. A recorded fabrication flag that is ALWAYS set says nothing."""
+        from types import SimpleNamespace
+
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+
+        now = _utc("2026-08-13T18:35:00.015358")
+        session = _FakeRegistrySession(sport_id=99)
+        market = SimpleNamespace(
+            source="kalshi",
+            external_id="KXCS2GAME-26AUG13NAVIG2",
+            name="NAVI vs G2",
+            commence_time=_utc("2026-08-13T20:00:00"),   # a real published start
+            llm_sport_category=None,
+        )
+        matchup = SimpleNamespace(team_a="NAVI", team_b="G2", yes_team="NAVI")
+
+        await _create_event_from_prediction_market(session, matchup, market, now)
+
+        assert len(session.added) == 1
+        created = session.added[0]
+        assert created.commence_time == _utc("2026-08-13T20:00:00")
+        assert created.commence_time_source == "kalshi"
