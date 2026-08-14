@@ -640,6 +640,81 @@ def _detect_query_awards_concept(q: str | None) -> dict | None:
     }
 
 
+def _upsert_query_derived_concept_row(
+    pool: list[dict],
+    seen: set[str],
+    *,
+    key: str,
+    key_field: str,
+    name_field: str,
+    name: str,
+    updates: dict,
+    new_row: dict,
+    limit: int,
+) -> list[dict]:
+    """The ONE implementation of query-derived-concept upsert. Shape-parameterised.
+
+    `/typeahead` and `/search` hold concept rows in different dict shapes — the
+    dropdown's `{type, text, event_key, sport_key}` versus the results page's
+    `{key, name, domain, market_id}` — and they are NOT going to be unified in
+    this queue. What must be unified is the SEMANTICS, and that is what lives
+    here: same key + better provenance is an upgrade of the row already present,
+    never a duplicate to discard.
+
+    Two copies of these six lines is the arrangement gotcha #129 names: a rule
+    living in two consumers has two verdicts, and fixing the one you were looking
+    at leaves the other wrong forever. #1839 is what the wrong verdict costs, and
+    `/search` carried the unfixed twin of it until this change. So the shapes are
+    arguments, not a reason to fork the rule.
+    """
+    for idx, existing in enumerate(pool):
+        if existing.get(key_field) != key:
+            continue
+        existing["_derived"] = False
+        existing[name_field] = name
+        existing.update({k: v for k, v in updates.items() if v is not None})
+        pool.insert(0, pool.pop(idx))
+        seen.add(key)
+        return pool[:limit]
+
+    seen.add(key)
+    pool.insert(0, new_row)
+    return pool[:limit]
+
+
+def _upsert_search_query_derived_concept(
+    pool: list[dict],
+    seen: set[str],
+    concept: dict,
+    *,
+    limit: int = 5,
+) -> list[dict]:
+    """`_upsert_query_derived_concept` for the `/search` concept-bucket row shape.
+
+    `/search` had the SAME first-writer-wins guard typeahead had — three
+    `_detect_query_*` sites plus the `#206` team-bridge insertion, each a bare
+    `if key not in _seen_concept_keys`, each with a comment claiming the concept
+    is "prepended so it leads top-1" while the guard silently declines to prepend
+    it whenever the market-derived loop minted the key first.
+
+    It was milder here only because no scorer read the rows, so the concept still
+    displayed — it just failed to lead, contradicting its own comment. Wiring the
+    scorer in without this would have converted that mild ordering miss into
+    #1839's disappearing-concept bug on a second surface, which is why Alex made
+    this acceptance criterion #1 of the wiring rather than a follow-up.
+    """
+    return _upsert_query_derived_concept_row(
+        pool, seen,
+        key=concept["key"],
+        key_field="key",
+        name_field="name",
+        name=concept["name"],
+        updates={"domain": concept.get("domain")},
+        new_row=dict(concept),
+        limit=limit,
+    )
+
+
 def _upsert_query_derived_concept(
     pool: list[dict],
     seen: set[str],
@@ -674,25 +749,25 @@ def _upsert_query_derived_concept(
     upgrade of the row already present, not a duplicate to discard, so this
     clears `_derived`, adopts the canonical query-derived display name, and
     moves the row to the front. Returns the (possibly truncated) pool.
-    """
-    for idx, existing in enumerate(pool):
-        if existing.get("event_key") != key:
-            continue
-        existing["_derived"] = False
-        existing["text"] = name
-        existing["sport_key"] = sport_key
-        pool.insert(0, pool.pop(idx))
-        seen.add(key)
-        return pool[:limit]
 
-    seen.add(key)
-    pool.insert(0, {
-        "type": "event_concept",
-        "text": name,
-        "event_key": key,
-        "sport_key": sport_key,
-    })
-    return pool[:limit]
+    The six lines that do that now live in `_upsert_query_derived_concept_row`,
+    shared with `/search` — see its docstring for why sharing them is the point.
+    """
+    return _upsert_query_derived_concept_row(
+        pool, seen,
+        key=key,
+        key_field="event_key",
+        name_field="text",
+        name=name,
+        updates={"sport_key": sport_key},
+        new_row={
+            "type": "event_concept",
+            "text": name,
+            "event_key": key,
+            "sport_key": sport_key,
+        },
+        limit=limit,
+    )
 
 
 # #1206 (r260/r262): a loop-derived event concept must share a DISTINCTIVE token
@@ -3506,6 +3581,30 @@ async def search_events(
         if len(event_concepts) >= 5:
             break
 
+    # --- provenance, before any query-derived upsert can clear it (LAT-P049) ---
+    #
+    # Ruling 041 makes derived-only evidence UNRANKABLE, so this flag decides
+    # whether a concept survives the scorer at all. Typeahead sets it BLANKET —
+    # every row the market loop produced is `_derived = True`, unconditionally —
+    # and that is deliberately NOT copied here. Two reasons, one principled and
+    # one procedural:
+    #
+    # 1. The ruling is about EVIDENCE OWNERSHIP, not discovery path. A concept
+    #    whose own name names the query owns that evidence however we happened to
+    #    reach it. `_query_names_concept` is exactly that predicate, it already
+    #    exists, and it is already tested (#1206). Blanket-flagging would drop
+    #    `event:cycling:tour-de-france` on the query "tour de france" — the #1839
+    #    shape, freshly minted on the surface this queue is here to protect.
+    # 2. Typeahead's blanket flag has the same hole, and it is LIVE there today
+    #    (#1846). Fixing it is a ranking change on the MEASURED surface while two
+    #    such changes (`-43`, `-44`) are already in flight unread, which ruling
+    #    046 forbids. So it is filed with its specimen, not fixed here. The
+    #    divergence between the two surfaces is real, is temporary, and is
+    #    recorded in `docs/search-scoring-spec.md` §3 rather than left for a
+    #    reader to discover as an inconsistency.
+    for _c in event_concepts:
+        _c["_derived"] = not _query_names_concept(q, _c)
+
     # #1063: prepend the golf-major concept when the QUERY names a major (by phrase
     # or current host-venue). Prepended so the major outranks a cross-sport "open"
     # winner-field market surfaced above (e.g. the tennis US Open, which matches
@@ -3513,32 +3612,41 @@ async def search_events(
     # the intended target for "the open"/"british open"/"royal birkdale". The
     # concept page is never-dead (resolves to the latest edition), so this is honest
     # even when no in-result market name contains the phrase.
+    #
+    # LAT-P049 / AC#1: routed through the shared upsert, NOT a `key not in seen`
+    # skip. Golf was the one family typeahead's #1839 spared, and only by luck —
+    # no market-derived path mints a golf key, so its query-derived concept hit
+    # no collision. "The exemption worked exactly where it happened not to be
+    # tested" is not a property to rely on twice.
     _golf_major_concept = _detect_query_golf_major_concept(q)
-    if _golf_major_concept and _golf_major_concept["key"] not in _seen_concept_keys:
-        _seen_concept_keys.add(_golf_major_concept["key"])
-        event_concepts.insert(0, _golf_major_concept)
-        event_concepts = event_concepts[:5]
+    if _golf_major_concept:
+        event_concepts = _upsert_search_query_derived_concept(
+            event_concepts, _seen_concept_keys, _golf_major_concept,
+        )
 
     # #205: prepend the World Cup concept when the QUERY names it ("world cup" /
     # "world cup final" / "fifa"). Prepended so it outranks the placeholder-riddled
     # Polymarket "World Cup Winner" market and any cross-sport noise — a fan
     # searching "world cup" must land on the concept FIRST (Lisa's acceptance test).
     _wc_concept = _detect_query_world_cup_concept(q)
-    if _wc_concept and _wc_concept["key"] not in _seen_concept_keys:
-        _seen_concept_keys.add(_wc_concept["key"])
-        event_concepts.insert(0, _wc_concept)
-        event_concepts = event_concepts[:5]
+    if _wc_concept:
+        event_concepts = _upsert_search_query_derived_concept(
+            event_concepts, _seen_concept_keys, _wc_concept,
+        )
 
     # Queue #246 Item 1b: prepend the awards-ceremony concept when the QUERY names a
     # ceremony ("grammys" / "the oscars" / "academy awards"). The same never-dead
     # `event:awards:<slug>` the market-name loop emits above, but reachable even when
     # no in-result market carries the bare phrase (a bare "grammys" query returns 0
     # markets today). Prepended so it leads top-1.
+    # This is the exact collision that produced #1839 on typeahead: a
+    # "Grammy Winner: Best New Artist" market derives `event:awards:grammys`,
+    # byte-identical to what `_detect_query_awards_concept("grammys")` returns.
     _awards_concept = _detect_query_awards_concept(q)
-    if _awards_concept and _awards_concept["key"] not in _seen_concept_keys:
-        _seen_concept_keys.add(_awards_concept["key"])
-        event_concepts.insert(0, _awards_concept)
-        event_concepts = event_concepts[:5]
+    if _awards_concept:
+        event_concepts = _upsert_search_query_derived_concept(
+            event_concepts, _seen_concept_keys, _awards_concept,
+        )
 
     # Search teams — FTS-gated (see _build_team_search_filter): the dedicated Teams
     # surface must be a genuine token match, not a substring-ILIKE artifact. A
@@ -3549,9 +3657,15 @@ async def search_events(
     _mark("futures_format_concepts")
     team_rank = _search_rank(_team_search_vector(), q).label("team_rank")
     team_search_q = (
+        # `alternate_names` is SELECTed for the scorer, not for the payload — the
+        # same correction typeahead needed (spec §3). The recall arms had always
+        # FILTERED on this column while never handing it to whatever ranked the
+        # rows, so `Boston Red Sox` was only MC1 for `red sox` and lost the kind
+        # tie to any market that mentioned the Red Sox. Withholding the evidence
+        # a team would win on turns the floor into a ceiling.
         select(Team.id, Team.name, Team.slug, Team.abbreviation,
                Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
-               team_rank)
+               Team.alternate_names, team_rank)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(_build_team_search_filter(q))
         .order_by(team_rank.desc(), Team.name)
@@ -3598,6 +3712,10 @@ async def search_events(
             "logo": row.logo_url_small,
             "record": row.current_record,
             "sport_key": _normalize_team_sport_key(row.sport_key),
+            # Ranking evidence, never a payload — popped before the response,
+            # same as typeahead. Guarded on `isinstance(str)` because the column
+            # is JSON and has been observed holding non-string members.
+            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
         })
         if len(matched_teams) >= 5:
             break
@@ -3611,11 +3729,65 @@ async def search_events(
     if "soccer_fifa_world_cup" in sports_found and any(
         t.get("sport_key") == "soccer_fifa_world_cup" for t in matched_teams
     ):
+        #
+        # The FOURTH call site with the first-writer-wins shape. Alex's ruling
+        # named three; this one is identical in mechanism and is routed with
+        # them, because a guard fixed at three of four sites is a guard that
+        # still decides provenance at the fourth.
+        #
+        # It also NEEDS the upsert more than the other three do, for a reason
+        # specific to it: the query here ("france") does not name the concept
+        # ("FIFA World Cup"), so under ruling 041 this row owns no evidence
+        # against the query and would score UNRANKABLE — dropped, not demoted —
+        # if it were left flagged derived. Its rankability comes from being
+        # query-gated (a WC national team matched AND a WC game is in the
+        # results), and the upsert is precisely how a row records that.
         _wc_team_concept = _wc_concept_dict()
-        if _wc_team_concept and _wc_team_concept["key"] not in _seen_concept_keys:
-            _seen_concept_keys.add(_wc_team_concept["key"])
-            event_concepts.insert(0, _wc_team_concept)
-            event_concepts = event_concepts[:5]
+        if _wc_team_concept:
+            event_concepts = _upsert_search_query_derived_concept(
+                event_concepts, _seen_concept_keys, _wc_team_concept,
+            )
+
+    # --- The scorer, WITHIN each unpaginated bucket (LAT-P049, ruling 041) ---
+    #
+    # THE DESIGN DECISION, recorded here and in `docs/search-scoring-spec.md` §3
+    # because the spec required it be written down rather than inferred from the
+    # diff: `/search` adopts the scorer as an ordering function INSIDE each
+    # bucket. It does NOT impose a cross-bucket order. The bucket contract is
+    # unchanged — same keys, same caps, same sections — so no frontend change is
+    # implied and no consumer has to be migrated.
+    #
+    # Wired: `event_concepts` and `teams`. Both are unpaginated, both cap at 5,
+    # and both are where ruling 041's two measured failure families live.
+    #
+    # NOT wired, named rather than omitted:
+    #   * `results` — game events, ordered live -> upcoming -> completed. That
+    #     order is a ruled product decision, not an unranked accident, and it is
+    #     paginated.
+    #   * `futures` / `futures_families` — paginated. Reordering the rows of page
+    #     N by relevance yields an order that is correct within the page and
+    #     incoherent across pages, which is worse than the honest FTS order it
+    #     would replace. Ranking a paginated bucket means ranking it in the SQL,
+    #     which is a different change with a different risk profile.
+    #
+    # `rank()` reorders and drops only UNRANKABLE rows, and only derived-only
+    # evidence is UNRANKABLE — a non-derived row that matches nothing lands in
+    # MC5 and still ships. Recall belongs to the SQL that built the candidate set.
+    from app.utils.search_match_class import rank as _search_rank_candidates
+
+    event_concepts = _search_rank_candidates(
+        q, [(_search_concept_evidence(c), c) for c in event_concepts]
+    )[:5]
+    matched_teams = _search_rank_candidates(
+        q, [(_search_team_evidence(t), t) for t in matched_teams]
+    )[:5]
+    # Private ranking evidence never reaches the wire. Typeahead learned this by
+    # nearly shipping 40 outcome strings per keystroke; here it is two keys, and
+    # the discipline is the same one either way.
+    for _c in event_concepts:
+        _c.pop("_derived", None)
+    for _t in matched_teams:
+        _t.pop("_aliases", None)
 
     # #239 Item 4: persist the query (best-effort, never blocks the response on
     # failure). top_result_id = the leading game result; identity is best-effort
@@ -10179,6 +10351,40 @@ def _typeahead_evidence(item: dict) -> "_SearchEvidence":
         kind=kind,
         derived=bool(item.get("_derived")),
         sport_key=item.get("sport_key"),
+    )
+
+
+def _search_concept_evidence(row: dict) -> "_SearchEvidence":
+    """Convert a `/search` event-concept row into the `Evidence` the scorer scores.
+
+    Module-level for the reason `_typeahead_evidence` is: the seam between what
+    the route collected and what the scorer was told is where both of this
+    program's ranking defects lived, and a closure puts that seam out of reach of
+    every test. `tests/test_search_scorer_wiring.py` owns this one.
+
+    `sport_key` is deliberately NOT populated from `domain`. A concept's domain
+    ("awards", "cycling", "ufc") is not a sport key, and mapping one onto the
+    other to fill a field would feed the scorer's prominence term a value nothing
+    computed. Left None, prominence is constant across concepts and therefore
+    cannot perturb an ordering the match classes already settled.
+    """
+    return _SearchEvidence(
+        name=row.get("name") or "",
+        kind="concept",
+        derived=bool(row.get("_derived")),
+    )
+
+
+def _search_team_evidence(row: dict) -> "_SearchEvidence":
+    """Convert a `/search` team row into the `Evidence` the scorer scores."""
+    aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
+    if row.get("abbreviation"):
+        aliases = (*aliases, row["abbreviation"])
+    return _SearchEvidence(
+        name=row.get("name") or "",
+        aliases=aliases,
+        kind="team",
+        sport_key=row.get("sport_key"),
     )
 
 
