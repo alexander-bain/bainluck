@@ -223,6 +223,13 @@ class TestEnforcementScope:
             # fetched, 500 empty, 0 snapshots created, recorded as a success every
             # 6h for ten weeks. Terminal comes from `_trade_backfill_terminal`.
             "kalshi_trades",
+            # CAL-P051 (#1835): enrolled after a measured TOTAL SILENCE — the
+            # writer sat behind backfill_winners' first budget guard and never
+            # ran (`stopped_before: "bookmaker_closing"`, successes_24h 0), its
+            # 24h Redis key expired, and the `odds_api_bookmaker` source simply
+            # left the published payload. Three causes, one identical silence.
+            # Terminal comes from `_precompute_bookmaker_calibration` itself.
+            "bookmaker_calibration",
         }
 
     def test_enforced_task_partial_blocks_success(self):

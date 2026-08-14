@@ -212,6 +212,13 @@ ENFORCED_TASKS = frozenset({
     # covered: 500 fetched, 500 empty, 0 snapshots, recorded healthy, every 6h
     # for ten weeks while the P0 it serves stayed open.
     "kalshi_trades",                   # terminal + errors
+    # #1835 (CAL-P051): terminal from `_precompute_bookmaker_calibration`.
+    # Same shape as kalshi_trades above and the same cost: the writer sat behind
+    # backfill_winners' first budget guard and never ran, its 24h key expired,
+    # and an entire moneyline source vanished from the published curve with no
+    # source, no log and no alarm. Enrolled so a starved, empty or unwritten run
+    # reads NOT-GREEN instead of being recorded as a bare returning invocation.
+    "bookmaker_calibration",           # terminal + published + errors
 })
 
 
