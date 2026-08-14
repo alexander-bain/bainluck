@@ -181,3 +181,35 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
     `its own published error and its own per-bucket examples.`
   );
 }
+
+/**
+ * The Sources KPI's subtext — UX-P080 / Alex round 2, item 2.
+ *
+ * The ruling: *"The SOURCES KPI counts providers, not shapes: 3, with shapes
+ * named in the subtext."* The provider merge that By Source and Source
+ * Comparison already agree on **reaches the KPI card**, which was the last
+ * surface on this page still counting source KEYS and therefore still saying
+ * "5" directly above two tables that say "3".
+ *
+ * The shapes are NOT dropped in the process — a KPI that says 3 with no way to
+ * see what the third one is made of trades one confusion for another. They move
+ * into the subtext, which is the same move the shape annex made inside its
+ * provider panel (ruling: the annex moves inside the provider it describes).
+ *
+ * Derived from the SAME `ProviderGroup[]` the panels and the table are built
+ * from, so the card cannot count something the tables do not. That is the
+ * pairing discipline this page keeps re-learning: agreement is guaranteed by
+ * shared derivation, never by two expressions that must be kept in step.
+ */
+export function providerKpiDetail(
+  groups: readonly { label: string; sources: readonly string[] }[],
+  shapeLabel: (source: string) => string,
+): string {
+  return groups
+    .map(g =>
+      g.sources.length > 1
+        ? `${g.label} (${g.sources.map(shapeLabel).join(", ")})`
+        : g.label,
+    )
+    .join(" · ");
+}
