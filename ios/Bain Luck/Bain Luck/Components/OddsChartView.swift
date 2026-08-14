@@ -1092,90 +1092,9 @@ struct OddsChartView: View {
 
     /// Normalize ESPN period strings to user-friendly labels.
     /// Matches web's normalizePeriodLabel() in periodMarkers.ts
+    /// Delegates to `PeriodLabel.normalize` — the single implementation (#1831).
+    /// This file used to carry its own copy; the two had drifted.
     private func normalizePeriodLabel(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-
-        // Reject pre-game date strings like "Wed, March 25th at 10:00 PM EDT"
-        // These leak from ESPN status_detail during game transitions
-        let months = "January|February|March|April|May|June|July|August|September|October|November|December"
-        if s.range(of: months, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
-        if s.range(of: #"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*\bat\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
-
-        // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
-        if let dashRange = s.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
-            s = String(s[dashRange.upperBound...])
-        }
-
-        // Strip "End of " / "Start of " prefix
-        if let prefixRange = s.range(of: #"^(?:end|start)\s+of\s+"#, options: [.regularExpression, .caseInsensitive]) {
-            s = String(s[prefixRange.upperBound...])
-        }
-
-        let lower = s.lowercased()
-
-        // Halftime
-        if lower == "halftime" || lower == "half time" || lower == "ht" { return "HT" }
-
-        // Overtime variants
-        if lower == "overtime" || lower == "ot" { return "OT" }
-        if let match = lower.range(of: #"^(\d+)\w*\s+overtime$"#, options: .regularExpression) {
-            let digits = s[match].filter(\.isNumber)
-            return "OT\(digits)"
-        }
-
-        // Basketball / Football quarters: "1st Quarter" → "Q1"
-        if let match = s.range(of: #"^(\d+)\w*\s+[Qq]uarter$"#, options: .regularExpression) {
-            let digits = s[match].filter(\.isNumber)
-            return "Q\(digits)"
-        }
-        // Plain ordinals for quarters
-        if lower == "1st" { return "Q1" }
-        if lower == "2nd" { return "Q2" }
-        if lower == "3rd" { return "Q3" }
-        if lower == "4th" { return "Q4" }
-
-        // Hockey periods: "1st Period" → "P1"
-        if let match = s.range(of: #"^(\d+)\w*\s+[Pp]eriod$"#, options: .regularExpression) {
-            let digits = s[match].filter(\.isNumber)
-            return "P\(digits)"
-        }
-
-        // Soccer halves: "1st Half" → "1H"
-        if let match = s.range(of: #"^(\d+)\w*\s+[Hh]alf$"#, options: .regularExpression) {
-            let digits = s[match].filter(\.isNumber)
-            return "\(digits)H"
-        }
-
-        // Baseball innings: "Top 3rd" / "Bottom 3rd" / "Middle 3rd" → "3"
-        if let match = s.range(of: #"^(?:top|bottom|mid|middle|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
-            let digits = s[match].filter(\.isNumber)
-            return digits
-        }
-
-        // Plain ordinal inning: "3rd" → "3"
-        if let match = s.range(of: #"^(\d+)(?:st|nd|rd|th)$"#, options: [.regularExpression, .caseInsensitive]) {
-            let digits = s[match].filter(\.isNumber)
-            return digits
-        }
-
-        // Golf round labels: "R1", "R2", "R3", "R4", "PO" (playoff)
-        if s.range(of: #"^R\d$"#, options: [.regularExpression, .caseInsensitive]) != nil {
-            return s.uppercased()
-        }
-        if let rMatch = s.range(of: #"^[Rr]ound\s+(\d+)$"#, options: .regularExpression) {
-            let digits = s[rMatch].filter(\.isNumber)
-            return "R\(digits)"
-        }
-        if lower == "playoff" { return "PO" }
-
-        // Already short: "Q1", "P2", "1H", "OT", "OT1", etc.
-        if s.range(of: #"^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
-            return s.uppercased()
-        }
-
-        // Intermission
-        if lower.contains("intermission") { return "INT" }
-
-        return s
+        PeriodLabel.normalize(raw)
     }
 }

@@ -406,10 +406,39 @@ class TestEventDetailShape:
         resp = await event_detail_client.get("/api/events/1")
         body = resp.json()
         betting = body["win_probability_sources"]["betting"]
-        assert betting["value"]["home_probability"] == 0.65
+        # #1829: `value` is a bare NUMBER on the wire.
+        #
+        # This assertion used to read `betting["value"]["home_probability"]`,
+        # which is to say it PINNED the double-nesting: the serializer assigned
+        # the raw JSONB entry, so a dict-shaped entry arrived as
+        # `{"value": {"value": 0.65, ...}}`. iOS types the field
+        # `[String: WinProbValue]?` and `WinProbValue` THROWS on an object; the
+        # throw propagates out of `decodeIfPresent` and fails the whole `Event`.
+        #
+        # MEASURED, so the severity is not overstated: production held ZERO
+        # dict-shaped entries on 2026-08-13 (46,224 events, every entry
+        # `jsonb_typeof` = number), so this was LATENT, not live. #1829's
+        # writers are what would have made it universal — which is why the
+        # serializer normalises rather than the writers backing off.
+        assert betting["value"] == 0.65
         assert betting["display_name"] == "Betting Odds"
         assert betting["type"] == "market"
         assert betting["color"].startswith("#")
+
+    async def test_espn_probability_sources_are_plain_numbers(
+        self, event_detail_client
+    ):
+        """`espn.probability_sources` passed the raw JSONB column through.
+
+        That column also holds `statpal_plays` / `statpal_injuries` as ARRAYS,
+        so the raw pass-through could hand the iOS decoder a list and fail the
+        whole event. Numbers only.
+        """
+        resp = await event_detail_client.get("/api/events/1")
+        sources = resp.json()["espn"]["probability_sources"]
+        assert sources, "expected at least one source"
+        for key, value in sources.items():
+            assert isinstance(value, (int, float)), f"{key} -> {value!r}"
 
     async def test_optional_nested_detail_blocks(self, event_detail_client):
         resp = await event_detail_client.get("/api/events/1")

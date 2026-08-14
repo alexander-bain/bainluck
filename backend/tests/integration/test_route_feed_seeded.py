@@ -337,6 +337,10 @@ class TestFeedSeededBasics:
     async def test_futures_item_nested_fields_are_stable(self, seeded_client):
         resp = await seeded_client.get("/api/feed?include_events=false&limit=5")
         body = resp.json()
+        # gotcha #53: an error body is a response SHAPE, not an absence. Without
+        # this line a 429 surfaced as a bare `KeyError: 'items'` in a futures
+        # test, which reads as "the feed payload changed" and is not.
+        assert "items" in body, f"HTTP {resp.status_code}: {str(body)[:300]}"
 
         futures = next(
             item

@@ -530,12 +530,14 @@ def _peer_consensus_side(win_probability_sources: dict, exclude_source: str):
     for ps in _PEER_CONSENSUS_SOURCES:
         if ps == exclude_source:
             continue
-        pv = win_probability_sources.get(ps)
+        # #1829: read through the shared parser. `float({"value": 0.9})` raises
+        # TypeError, and the except below SWALLOWS it — so once the writers
+        # started stamping, every peer would have dropped out silently,
+        # `_PEER_MIN_VOTES` would never be reached, and the #1112 inversion
+        # guard would have stopped firing forever with nothing in any log.
+        from app.utils.aggregation import parse_source_entry
+        pv, _ = parse_source_entry(win_probability_sources.get(ps))
         if pv is None:
-            continue
-        try:
-            pv = float(pv)
-        except (TypeError, ValueError):
             continue
         if pv >= _PEER_EXTREME_HI:
             home_votes += 1
@@ -1654,11 +1656,15 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["snapshots_deduped"] += 1
 
                 from sqlalchemy import update as _sql_upd
+                from app.utils.aggregation import stamp_source_reading
                 _pm_r = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == market.event_id)
                 )
-                _pm_wps = _pm_r.scalar_one_or_none() or {}
-                _pm_wps[source_key] = round(home_prob, 4)
+                # #1829: value + write time (a linked market can stop updating
+                # long before anything notices it has).
+                _pm_wps = stamp_source_reading(
+                    _pm_r.scalar_one_or_none(), source_key, round(home_prob, 4)
+                )
                 await session.execute(
                     _sql_upd(Event)
                     .where(Event.id == market.event_id)
@@ -2777,11 +2783,14 @@ async def _poll_live_prediction_market_prices():
 
                 # Write to win_probability_sources on the event
                 from sqlalchemy import update as _sql_upd2
+                from app.utils.aggregation import stamp_source_reading as _stamp2
                 _pm_r2 = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == event.id)
                 )
-                _pm_wps2 = _pm_r2.scalar_one_or_none() or {}
-                _pm_wps2[market.source] = round(home_prob, 4)
+                # #1829: value + write time.
+                _pm_wps2 = _stamp2(
+                    _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4)
+                )
                 await session.execute(
                     _sql_upd2(Event)
                     .where(Event.id == event.id)

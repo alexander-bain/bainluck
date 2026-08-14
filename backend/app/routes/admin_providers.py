@@ -932,10 +932,18 @@ async def sync_espn_live_events(
                 # Update ESPN win probability
                 if espn_event.home_win_probability is not None:
                     event.espn_win_prob_home = espn_event.home_win_probability
-                    # Also update win_probability_sources
-                    sources = event.win_probability_sources or {}
-                    sources["espn"] = espn_event.home_win_probability
-                    event.win_probability_sources = sources
+                    # Also update win_probability_sources (#1829: stamped like
+                    # every other writer). NOTE the pre-existing gotcha #4 here:
+                    # this is ORM attribute assignment on a JSONB column, which
+                    # can silently fail to flush. Left as-is — changing the
+                    # write mechanism on an admin repair path is not this
+                    # queue's change — but do not copy this shape.
+                    from app.utils.aggregation import stamp_source_reading
+                    event.win_probability_sources = stamp_source_reading(
+                        event.win_probability_sources,
+                        "espn",
+                        espn_event.home_win_probability,
+                    )
                     changed = True
 
                 # Handle venue
@@ -1276,9 +1284,16 @@ async def backfill_espn_ids(
                             # Also update win prob if ESPN has it
                             if ee.home_win_probability is not None:
                                 event.espn_win_prob_home = ee.home_win_probability
-                                sources = event.win_probability_sources or {}
-                                sources["espn"] = ee.home_win_probability
-                                event.win_probability_sources = sources
+                                # #1829: stamped (same gotcha #4 caveat as the
+                                # sibling writer above).
+                                from app.utils.aggregation import (
+                                    stamp_source_reading as _stamp_espn,
+                                )
+                                event.win_probability_sources = _stamp_espn(
+                                    event.win_probability_sources,
+                                    "espn",
+                                    ee.home_win_probability,
+                                )
 
                         matched += 1
                         break

@@ -13,6 +13,34 @@ from app.dependencies.auth import get_optional_user
 from app.services.database import get_db, get_db_rw
 
 
+@pytest.fixture(autouse=True)
+def _bypass_rate_limits(monkeypatch):
+    """Turn the rate limiter off for EVERY integration test, not just the ones
+    whose fixture remembered to.
+
+    Found by UX-P072 (#1829), and the way it was found is the point. The suite
+    was sitting exactly at the limiter's `60 per 1 minute`. Adding ONE ordinary
+    test — one more GET, in a different file, against a different fixture —
+    tipped it, and the red landed on
+
+        test_route_feed_seeded.py::test_futures_item_nested_fields_are_stable
+        KeyError: 'items'
+
+    an unrelated FUTURES test, with no mention of a rate limit anywhere. The
+    actual response was `429 {"detail": "Rate limit exceeded: 60 per 1 minute"}`
+    and the test read the error body as data (gotcha #53: an error body is a
+    response shape, not an absence). Baseline was green, so the natural reading
+    was "the blend change broke the feed" — a whole cycle's diagnosis pointed at
+    the wrong file by a counter nobody knew was full.
+
+    `BYPASS_RATE_LIMITS` was already being set — but only inside the `client`
+    fixture in this file, so `seeded_client` and `event_detail_client`, which
+    are defined in their own test modules, never got it. Autouse is what makes
+    that class of miss impossible: a new fixture cannot forget to opt in.
+    """
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
+
 def _make_mock_result():
     """Create a mock SQLAlchemy Result that returns empty data."""
     result = MagicMock()

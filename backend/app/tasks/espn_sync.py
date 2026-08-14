@@ -1189,21 +1189,21 @@ def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> d
     aggregation.py accepts both. The old inline code did
     ``wp_sources[src]["value"] = ...`` unconditionally, which raised
     "TypeError: 'float' object does not support item assignment" on the bare-float
-    entries (2,245 events, stalling live→closed transitions). This preserves each
-    entry's existing shape.
+    entries (2,245 events, stalling live→closed transitions).
+
+    #1829: entries are now normalised to the stamped dict form on the way out,
+    and — the part that matters — a REWRITTEN value always gets a FRESH
+    ``updated_at``. Carrying an old stamp forward onto a new number is worse
+    than having no stamp at all: it is a wrong answer to "how old is this?",
+    and the hero's recency decay believes it.
     """
-    wp_sources = dict(wp_sources or {})
-    wp_sources["final_result"] = resolved_home
+    from app.utils.aggregation import stamp_source_reading
+
+    wp_sources = stamp_source_reading(wp_sources, "final_result", resolved_home)
     for src_key in ("kalshi", "polymarket"):
         if src_key not in wp_sources:
             continue
-        entry = wp_sources[src_key]
-        if isinstance(entry, dict):
-            entry = dict(entry)
-            entry["value"] = resolved_home
-            wp_sources[src_key] = entry
-        else:
-            wp_sources[src_key] = resolved_home
+        wp_sources = stamp_source_reading(wp_sources, src_key, resolved_home)
     return wp_sources
 
 

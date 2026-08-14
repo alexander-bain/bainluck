@@ -512,10 +512,19 @@ async def _ingest_event_odds(
 
         # Write betting consensus to win_probability_sources so the multi-source
         # aggregation system sees it. Reuse the loaded event object (N+1 fix).
+        # #1829: stamp the write time alongside the value. `betting` is the
+        # source this matters most for, and for a reason visible right here —
+        # `all_home_probs` is only non-empty while at least one book still
+        # quotes a moneyline. Books PULL the line when a game is out of reach,
+        # so this branch simply stops running and the key freezes at whatever
+        # it last said, with nothing in the JSONB to admit it. That frozen
+        # number is what rendered "87 - 13" for a team trailing 5-0 in the 9th.
         from sqlalchemy import update as _update
+        from app.utils.aggregation import stamp_source_reading
         betting_val = round(avg_home, 4)
-        _current = dict(event.win_probability_sources or {})
-        _current["betting"] = betting_val
+        _current = stamp_source_reading(
+            event.win_probability_sources, "betting", betting_val
+        )
         await session.execute(
             _update(Event)
             .where(Event.id == event_id)
@@ -1227,8 +1236,14 @@ async def _poll_all_odds():
                                         # Write stat_model to win_probability_sources.
                                         # Use event object from batch pre-load (N+1 fix).
                                         from sqlalchemy import update as _sql_upd
-                                        _sm_wps = dict(event_obj.win_probability_sources or {})
-                                        _sm_wps["stat_model"] = round(stat_wp, 4)
+                                        from app.utils.aggregation import (
+                                            stamp_source_reading as _stamp,
+                                        )
+                                        _sm_wps = _stamp(
+                                            event_obj.win_probability_sources,
+                                            "stat_model",
+                                            round(stat_wp, 4),
+                                        )
                                         await session.execute(
                                             _sql_upd(Event)
                                             .where(Event.id == event_obj.id)
