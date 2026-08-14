@@ -45,7 +45,14 @@ outcome-only                 ``_outcome_id_match`` subquery
 nba (league only)            bare-league arm (``league_only_explicit``)
 us recession (both arms)     the LAT-P006 ``UNION`` returns EVERY arm
 us recession (control row)   a sub-3-char term still FILTERS
+wimbledon                    concept provenance, POSITIVE — LAT-P053
+swiatek                      concept provenance, NEGATIVE — LAT-P053
 ===========================  ==========================================
+
+The last two are not recall cases and are labelled so deliberately. They are the
+**behavioural** half of concept provenance (#1846, ruling 041), which lived only
+as an ``inspect.getsource`` assertion until LAT-P053 seeded the corpus that lets
+the market-derived concept loop produce a row. See ``_CONCEPT_FUTURES_SEEDS``.
 
 ``nfl mvp`` and the outcome-only case are the subtle ones: in both, the market
 NAME does not contain the whole query, so a predicate change that looks
@@ -159,6 +166,45 @@ _FUTURES_SEEDS = [
      ["Winner of the d'Or", "Award vacated"]),
 ]
 
+# LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
+# CI by Alex on 2026-08-14: *"a corpus carried five times is either an instrument
+# or clutter, and it just got called an instrument."*
+#
+# What it unlocks that `_FUTURES_SEEDS` cannot: the market-derived **event-concept
+# loop** (`events.py:3483`). That loop only mints a row when the market's
+# `llm_sport_category` is in `_EVENT_CONCEPT_DOMAINS` AND its name is a
+# winner-field, and no row above satisfies either condition — so every assertion
+# about concept provenance has, until now, been a source assertion.
+#
+# `TestEveryConceptCallSiteIsRouted` in `tests/test_search_scorer_wiring.py` says
+# so in its own docstring: *"The behavioural version needs the market-derived
+# concept loop to produce a row, which needs a seeded futures corpus with outcomes
+# and sports; that belongs to the real-Postgres contract suite and is recorded as
+# owed."* This is that corpus. The source guard stays — it catches a fourth
+# unrouted call site, which behaviour cannot — but it is no longer the only
+# instrument.
+#
+# One market is enough, because the property under test is a per-ROW decision and
+# the two directions are two QUERIES against the same row:
+#
+#   "wimbledon" — the query names the concept  -> not derived -> ranks -> present
+#   "swiatek"   — reaches the same market by its OUTCOME only, so the query does
+#                 NOT name the concept -> derived -> UNRANKABLE -> absent, while
+#                 the market itself still comes back
+#
+# Verified against the real predicates before being encoded (not assumed):
+# `is_winner_market("2026 Wimbledon Winner")` is True, `clean_slug` gives
+# `2026-wimbledon-winner`, the label strips to "2026 Wimbledon", and
+# `_query_names_concept` returns True for "wimbledon" / False for "swiatek".
+# Tennis deliberately, not awards: no `_detect_query_*` resolver fires on
+# "wimbledon", so the upsert path cannot clear `_derived` behind the loop's back
+# and make the positive case pass for the wrong reason. ("us open" would have —
+# it is also a golf major.)
+_CONCEPT_FUTURES_SEEDS = [
+    # (external_id, name, llm_sport_category, [outcome names])
+    ("kalshi-wimbledon-2026", "2026 Wimbledon Winner", "tennis", ["Iga Swiatek"]),
+]
+
 
 async def _seed(session):
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
@@ -262,6 +308,29 @@ async def _seed(session):
                     name=outcome_name,
                 )
             )
+
+    # LAT-P053 Item 5: the concept corpus. Same shape, plus the one column the
+    # concept loop reads and the loop above never sets.
+    for external_id, name, category, outcomes in _CONCEPT_FUTURES_SEEDS:
+        market = FuturesMarket(
+            source="kalshi",
+            external_id=external_id,
+            name=name,
+            status="open",
+            llm_sport_category=category,
+            resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+        )
+        session.add(market)
+        await session.flush()
+        for outcome_name in outcomes:
+            session.add(
+                FuturesOutcome(
+                    market_id=market.id,
+                    external_id=f"{external_id}:{outcome_name}",
+                    name=outcome_name,
+                )
+            )
+
     await session.commit()
 
 
@@ -804,4 +873,91 @@ async def test_a_genuinely_unmatched_query_still_gets_its_correction(search):
         f"{payload.get('did_you_mean')!r}. `%celtcs%` matches no event by "
         "substring, so the guard must let the fallback run — otherwise "
         "did-you-mean is dead for every query, not just the filtered ones."
+    )
+
+
+# --------------------------------------------------------------------------
+# LAT-P053 Item 5 — concept provenance, BEHAVIOURALLY (#1846, ruling 041)
+# --------------------------------------------------------------------------
+# The fifth carry, ruled into CI rather than restaged: Alex, 2026-08-14 —
+# *"a corpus carried five times is either an instrument or clutter, and it just
+# got called an instrument."*
+#
+# `TestEveryConceptCallSiteIsRouted` asserts these properties over
+# `inspect.getsource(search_events)`. That guard is honest about being the weaker
+# kind and names its own blind spot: *"What it CANNOT catch: a routed call site
+# that passes the wrong concept."* These three cases run the SQL and read the
+# wire, so they catch exactly that.
+#
+# Both directions, deliberately, per the standing rule that a cap's guard tests
+# must assert the flood stays capped AND the adjacent surface stays populated
+# (gotcha #43). A strip that deleted every concept row would pass a
+# strip-only test.
+
+
+def _concept_keys(payload: dict) -> list[str]:
+    return [
+        str(c.get("key") or "") for c in (payload.get("event_concepts") or [])
+    ]
+
+
+async def test_private_ranking_evidence_never_reaches_the_wire(search):
+    """The behavioural twin of the `.pop("_derived", None)` source assertion.
+
+    `_derived` and `_aliases` are ranking INPUTS. Typeahead learned this by
+    nearly shipping 40 outcome strings per keystroke; on `/search` it is two
+    keys, and the discipline is the same. A source assertion proves the `.pop`
+    is written; this proves it runs on a row that actually exists.
+    """
+    payload = await search("wimbledon")
+    concepts = payload.get("event_concepts") or []
+    assert concepts, (
+        "the concept corpus did not reach the loop — this test proves nothing "
+        "about the strip if there is no row to strip. Check that "
+        "`_CONCEPT_FUTURES_SEEDS` still sets `llm_sport_category='tennis'` and "
+        "that the name is still a winner-field."
+    )
+    for row in concepts:
+        assert "_derived" not in row, f"private ranking evidence on the wire: {row!r}"
+        assert "_aliases" not in row, f"private ranking evidence on the wire: {row!r}"
+    for row in payload.get("teams") or []:
+        assert "_aliases" not in row, f"private ranking evidence on the wire: {row!r}"
+
+
+async def test_a_concept_the_query_names_survives_the_scorer(search):
+    """#1846's positive direction, on `/search`.
+
+    Ruling 041 makes derived-only evidence UNRANKABLE — dropped, not demoted —
+    so blanket-flagging every market-derived concept deletes concepts whose own
+    name IS the query. That is the bug typeahead shipped and `/search` did not,
+    and this is the assertion that keeps the divergence from being 'fixed' in
+    the wrong direction by a later consistency edit.
+    """
+    keys = _concept_keys(await search("wimbledon"))
+    assert any("wimbledon" in k.lower() for k in keys), (
+        f"`wimbledon` names the concept its own market minted, so the concept "
+        f"OWNS that evidence and must rank. Got {keys!r}. A blanket "
+        "`_derived = True` on the market-derived loop is what this catches."
+    )
+
+
+async def test_a_concept_the_query_does_not_name_is_dropped(search):
+    """The negative direction — and the one that makes the pair meaningful.
+
+    `swiatek` reaches the SAME market through the outcome arm, so the loop mints
+    the same concept. But the query names an outcome, not the ceremony, so the
+    concept holds only derived evidence and ruling 041 drops it.
+
+    The market itself must still come back. If both vanish, recall broke and the
+    provenance rule is not what this test measured.
+    """
+    payload = await search("swiatek")
+    assert "2026 Wimbledon Winner" in _futures_names(payload), (
+        "the outcome arm stopped reaching the market — this case tests "
+        "provenance, and it cannot do that if recall is what failed"
+    )
+    keys = _concept_keys(payload)
+    assert not any("wimbledon" in k.lower() for k in keys), (
+        f"`swiatek` does not name the Wimbledon concept, so that concept holds "
+        f"derived-only evidence and is UNRANKABLE under ruling 041. Got {keys!r}."
     )

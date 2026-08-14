@@ -508,13 +508,23 @@ class TestEveryConceptCallSiteIsRouted:
 
     The behavioural version needs the market-derived concept loop to produce a
     row, which needs a seeded futures corpus with outcomes and sports; that
-    belongs to the real-Postgres contract suite and is recorded as owed. Until it
-    exists, the thing that can actually regress is someone reintroducing a bare
-    `key not in seen` skip at one of four sites, and a source assertion is the
-    honest instrument for exactly that — the same reasoning that makes a
-    beat-schedule allowlist a real test (gotcha #12).
+    belongs to the real-Postgres contract suite. **It now EXISTS** — LAT-P053
+    built the corpus (`_CONCEPT_FUTURES_SEEDS` in
+    `tests/integration/test_search_recall_contract.py`) and the three cases at
+    the bottom of that file, wired into the CI `search-recall` job, which fails
+    on a skip. This class is therefore no longer the only instrument, and the
+    "recorded as owed" note above is discharged.
+
+    It is still kept, and not folded into the behavioural pair, because the two
+    catch different things. What a source assertion catches and behaviour cannot:
+    someone reintroducing a bare `key not in seen` skip at ONE of four sites —
+    behaviour would need a specimen per site to see that, and three of the four
+    have no seedable specimen. Same reasoning that makes a beat-schedule
+    allowlist a real test (gotcha #12).
 
     What it CANNOT catch: a routed call site that passes the wrong concept.
+    **That gap is now covered** by
+    `test_a_concept_the_query_does_not_name_is_dropped`, which reads the wire.
     """
 
     @staticmethod

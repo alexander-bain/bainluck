@@ -481,9 +481,10 @@ measured against a frozen production capture in
 1. **MC3 is genuinely ungraded.** Nothing in the set isolates partial-token
    coverage, so `PARTIAL_MIN_COVERAGE` could be retuned in either direction and
    every published number would be unchanged. That is the largest remaining
-   blind spot and it is not filed anywhere else.
+   blind spot. **Filed as #1867** (LAT-P053) — a table cell reading "NO" is a
+   spec note, not a queue, which is why the filing was owed.
 2. **MC2 is graded only by accident.** Typeahead's defining behaviour — the user
-   is still typing — has no dedicated probe.
+   is still typing — has no dedicated probe. **Also #1867.**
 3. **A null read is now interpretable.** Under ruling 056, "no movement" on a
    class marked **NO** or **partially** above is a statement about the
    instrument. On a class marked **YES** it is a statement about the change.
@@ -591,3 +592,11 @@ Two consequences this lane owns:
    miss.
 2. The `-45`/`-46`/`-47` reads should record cache state, because a 45s TTL and a
    46-probe sequential producer run interact.
+
+**Dispositions, LAT-P053 (2026-08-14).** Alex closed #1855 on the decomposition
+above — *accepted trade, ≤60ms server time for +3 recall* — and the closing
+comment carries the TLS and cold/warm arithmetic **so nobody re-discovers the
+sandbox tax as a regression**. The miss-cost finding is now **#1866, p1**, framed
+as Alex required: *no ranking number invalidated, the COST was simply never
+measured.* Consequence 2 is promoted from "should" to an acceptance criterion —
+every read from LAT-P053 onward **records cache state**.
