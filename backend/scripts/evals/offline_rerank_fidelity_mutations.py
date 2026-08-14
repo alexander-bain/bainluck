@@ -48,7 +48,14 @@ ORACLES = [
     # change turned this file red by STRENGTHENING the guard it asserts — the
     # test pinned a literal substring rather than the contract (gotcha #130).
     # It is amended and now belongs in the oracle set, not outside it.
+    #
+    # LAT-P054: it went red a SECOND time for the same reason — the read-guard
+    # assertion was still pinned to a literal after LAT-P050 fixed only the
+    # write-guard one. Both now read the nearest `if` and substring-match, so a
+    # guard that gets STRONGER can no longer fail the test that keeps it strong.
     "tests/test_search_latency_contract.py",
+    # LAT-P054/#1866: behavioural cover for the debug_timing guards (M13/M14).
+    "tests/integration/test_route_typeahead_debug_timing.py",
 ]
 
 #: (id, target, description, old, new). `old` must appear EXACTLY once.
@@ -68,14 +75,34 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
     (
         "M2", ROUTE,
         "a debug answer IS written to the cache — normal users get `_evidence`",
-        "    if not _ta_degraded and not debug_evidence:\n",
+        "    if not _ta_degraded and not debug_evidence and not debug_timing:\n",
         "    if not _ta_degraded:\n",
     ),
     (
         "M3", ROUTE,
         "a debug request READS the cache, silently returning no echo",
-        "    if not debug_evidence:\n        try:\n            _rc = get_redis_client()\n",
+        "    if not debug_evidence and not debug_timing:\n        try:\n"
+        "            _rc = get_redis_client()\n",
         "    if True:\n        try:\n            _rc = get_redis_client()\n",
+    ),
+    # LAT-P054/#1866: `debug_timing` joined both guards, so both need their own
+    # mutant. Dropping only the debug_timing conjunct leaves `debug_evidence`
+    # intact, so M2/M3 above would still be killed by the echo oracles and the
+    # new guard would be unprotected — a gap that looks like coverage.
+    (
+        "M13", ROUTE,
+        "a debug-TIMING answer is written to the cache — normal users get "
+        "per-stage server timings for the full TTL",
+        "    if not _ta_degraded and not debug_evidence and not debug_timing:\n",
+        "    if not _ta_degraded and not debug_evidence:\n",
+    ),
+    (
+        "M14", ROUTE,
+        "a debug-TIMING request READS the cache, so it is answered with a "
+        "payload carrying no `debug_timing` key — silence read as a free request",
+        "    if not debug_evidence and not debug_timing:\n        try:\n"
+        "            _rc = get_redis_client()\n",
+        "    if not debug_evidence:\n        try:\n            _rc = get_redis_client()\n",
     ),
     (
         "M4", ROUTE,

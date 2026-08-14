@@ -833,13 +833,35 @@ class TestTypeaheadIsBoundedAndIndexable:
         assert "not debug_evidence" in guard_line, (
             "a debug-evidence answer is being written to the shared cache"
         )
+        assert "not debug_timing" in guard_line, (
+            "a debug-timing answer is being written to the shared cache — every "
+            "normal user typing that prefix would be served per-stage server "
+            f"timings for the full TTL (#1866). guard found: {guard_line.strip()!r}"
+        )
 
+        # Read the CONTRACT, not a literal — gotcha #130, and this is its second
+        # instance in the same test. LAT-P050 converted the WRITE assertion above
+        # to "nearest `if`, whatever its full condition, then substring" after a
+        # strengthening turned it red; it left this one pinned to
+        # `"if not debug_evidence:"`, and LAT-P054 turned it red again by adding
+        # `and not debug_timing`. A guard that gets STRONGER must never fail the
+        # test that exists to keep it strong, so this now uses the same shape.
         read_at = TYPEAHEAD_CODE.find("_rc.get(_cache_key)")
         assert read_at > 0, "the cache read disappeared"
-        read_guard = TYPEAHEAD_CODE.rfind("if not debug_evidence:", 0, read_at)
-        assert 0 < read_guard, (
+        guard_at = TYPEAHEAD_CODE.rfind("\n    if ", 0, read_at)
+        assert guard_at > 0, "the cache read is not under any guard"
+        read_guard = TYPEAHEAD_CODE[guard_at:TYPEAHEAD_CODE.find(":", guard_at)]
+        assert "not debug_evidence" in read_guard, (
             "the cache READ is not gated on debug_evidence — a debug request "
-            "can be served a normal cached answer with no `_evidence`"
+            f"can be served a normal cached answer with no `_evidence`. "
+            f"guard found: {read_guard.strip()!r}"
+        )
+        assert "not debug_timing" in read_guard, (
+            "the cache READ is not gated on debug_timing (#1866) — a cached "
+            "entry carries no `debug_timing` key, so serving one answers a "
+            "timing request with SILENCE, which reads exactly like a stage that "
+            "cost nothing (gotcha #53), on the very miss path #1866 measures. "
+            f"guard found: {read_guard.strip()!r}"
         )
 
     def test_timeout_recovery_is_present_because_queries_follow(self):

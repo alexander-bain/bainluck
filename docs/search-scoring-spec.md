@@ -261,7 +261,7 @@ the change that caused it** (ruling 046).
 | **v3807** | **`-44` outcome evidence** (#1843) | **38/44** | **0.8696** | none registered | **no movement** — see below |
 | **v3812** | **`-45` `/search` scorer wiring ALONE** — the **ARMED CONTROL** | **38/44** | **0.8696** | **NO movement, with a HALT attached** (ruling 050) | ✅ **HELD — the control fired clean; no HALT** |
 | **v3813** | **`-46` evidence echo ALONE** | **38/44** | **0.8696** | none; a test asserts byte-identical ordering | ✅ **HELD — no movement** (LAT-P054) |
-| pending | **#1846 typeahead provenance** (LAT-P051) | — | — | **+1 → 39** (`us open` only) | owed |
+| **v3814** | **`-47` #1846 typeahead provenance ALONE** (LAT-P051) | **39/44** | **0.8913** | **+1 → 39** (`us open` only) | ✅ **HELD — exactly, and on the named probe** |
 
 Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
 with byte-identical dispositions across all 46 probes.
@@ -422,6 +422,43 @@ graded cohort, not just asserted by a unit test.
 
 The fidelity gate also demonstrated it refuses: `--require-fidelity exact`
 against the legacy capture **exits 2** rather than producing a number.
+
+### `-47`'s read: the first projection this program has hit EXACTLY (LAT-P054)
+
+`-47` merged **alone** into `92f66962` and deployed as **v3814** at 12:01 PDT —
+ruling 046 honoured by the Integrator without being asked. The projection on
+record was **+1 → 39/44, `us open` only**.
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 | **39/44** | 0.8913043478260869 | 46/46 | — |
+| r2 | **39/44** | 0.8913043478260869 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0`. Against v3813, **exactly one probe moved**, and it is the named
+one:
+
+```
+search-gold-us-open-001   ENTITY_NOT_TOP/fail  market:114160
+                       →  PASS/pass            concept:event:tennis:2026-women-s-us-open-winner-tennis
+```
+
+**+1 predicted, +1 delivered, on the predicted probe.** The prior record was
+`-41` missed by 7, `-42` held and exceeded, `-43` missed by 1, `-44` no movement,
+`-45` and `-46` declared nulls that held. This is the first row where the
+mechanism, the magnitude *and* the specific probe were all called in advance.
+
+Idempotence was re-asserted on this deploy too, so the instrument's agreement is
+not a one-deploy accident: rerank @ `exact` = **39/44**, MRR identical to 16
+decimals, **0 probes differing** from the deployed grade.
+
+**The standing honesty note, which still applies and is Alex's text:** 39/44 sits
+inside the originally ratified **39–41** band — but that band was a claim about
+`-41` **alone**, and `-41` missed it by 7. Several changes summing to a number
+predicted for one is **not** the prediction holding. What holds here is `-47`'s
+own `+1`, nothing wider.
+
+**The stack's read debt is now fully discharged.** Every ranking change from
+`-41` to `-47` has a number attributed to its own deploy.
 
 ### How this table must be read — and how it must not
 
@@ -757,33 +794,63 @@ population medians:
 spread is 11ms across 16 calls, which is what a network floor looks like and is
 why the paired subtraction is trustworthy.
 
-#### Step 3 — the drift REPRODUCES, and it is monotone
+#### Step 3 — the drift is REAL and LARGE, but its direction is NOT stable
 
 The issue reported 1.16 → 2.29s inside one window and could not say whether that
-was noise, query mix, or a real trend. LAT-P054 ran an **identical 8-query arm**
-(same queries, same flag, warmup discarded each round) five times over ~35
-minutes:
+was noise, query mix, or a trend. LAT-P054 ran an **identical 8-query arm** (same
+queries, same flag, round-opening warmup discarded) five times. All five landed
+after the **v3814** release at **12:01:33 PDT**, so the series starts on freshly
+restarted dynos:
 
-| | ~12:35 | ~12:50 | ~12:56 | ~13:00 | ~13:05 |
+| minutes after the v3814 restart | +1.7 | +3.8 | +8.1 | +12.5 | +17.0 |
 |---|---|---|---|---|---|
-| p50 | **1.297s** | **1.808s** | **2.006s** | **2.781s** | **3.098s** |
+| **p50** | **1.297s** | **1.808s** | **2.006s** | **2.781s** | **3.098s** |
 
-**Five points, monotonically increasing, 2.39× end to end**, same deploy, no
-release, same queries. Round 4's *minimum* is 2.654s — by then **every** query
-is over `CLAUDE.md`'s 2s investigate bar, and the p50 is **20.7×** the stated
-budget. Two round-opening warmup calls exceeded **10s** and were discarded.
+Within that series: **monotonically increasing, 2.39× end to end**, same deploy,
+same queries. Round 4's *minimum* is 2.654s — by then **every** query is over
+`CLAUDE.md`'s 2s investigate bar, and the p50 is **20.7×** the stated budget.
+Two round-opening warmup calls exceeded **10s**.
 
-This is no longer "it drifts with load". It is a monotone climb on a fixed
-workload, which is the shape of an accumulating resource rather than of variable
-traffic.
+**Two confounds were chased. One is cleared; the other kills the tidy story.**
 
-**What is NOT established, stated plainly:** the cause. A monotone climb is
-consistent with connection-pool or plan-cache accumulation, with unrelated load
-arriving on the same database, and with several other stories this lane cannot
-separate from outside the process. That separation is exactly what
-`?debug_timing=1` was built for — and it is **not deployed yet**, so the next
-window's first #1866 act is to re-run this arm against the stage attribution and
-say which stage the 1.8s of climb lands in.
+**Cleared — it is not this machine.** The mutation harness and then the full
+13,916-test suite were running locally during rounds 2–4, at load average ~12,
+so client CPU contention was the obvious alternative explanation. The warm-**hit**
+arm is the control that settles it: a hit does ~0 server work, so its wall clock
+is network plus local cost. Measured under load average 11.9 it was **p50 0.264s
+(min 0.259, max 0.274, n=8)** against a low-load baseline of **p50 0.262s (min
+0.258, max 0.269, n=16)** — an inflation factor of **1.01×**. The client is not
+the cause.
+
+**Not cleared — the climb did NOT replicate.** `v3815` restarted the dynos again
+at 12:20:51, which is a free second trial, and two independent 46-probe captures
+across that window trend the *other* way. Per-probe fetch cost, derived from
+capture wall clocks (46 probes, 45 × 1.1s of deliberate spacing removed):
+
+| capture | window | per-probe |
+|---|---|---|
+| v3813 r1 | 11:48–11:51 | 2.10s |
+| v3813 r2 | 11:53–11:56 | 1.78s |
+| v3813 legacy | 11:56–11:58 | 1.56s |
+| v3814 r1 | ~12:27–12:29 (+6 min from restart) | 1.91s |
+| v3814 r2 | ~12:31–12:33 (+10.5 min) | 1.71s |
+
+Both series **decline**. So the honest verdict is narrower than the one this
+section first drafted:
+
+> **The miss cost is real, is 7–20× its stated budget, and swings between roughly
+> 1.3s and 3.1s within a single hour on identical queries. It is NOT established
+> that it climbs monotonically, and the accumulating-resource reading is NOT
+> supported** — one identical-arm series climbed, two capture series over
+> comparable windows fell. The variance itself is the SLO defect; the direction
+> is not yet a finding.
+
+**What would settle it:** stage attribution, not more black-box timing. Four
+independent black-box series have now produced three different shapes. That is
+the signature of a measurement that cannot resolve its own subject, which is
+precisely why step 1 was step 1. `?debug_timing=1` is built and **not deployed**;
+the next window's first #1866 act is to re-run these arms against per-stage
+numbers and name the stage that moves.
 
 **Sequencing owed to ruling 046:** `debug_timing` is production code on the very
 endpoint `entity_top_1` grades. `-47` (#1846) still owes its own read on its own
