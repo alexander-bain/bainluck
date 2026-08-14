@@ -18,8 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, Sport
+from app.routes.events import _build_team_lookup, _format_team_data
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
+from app.utils.game_state import normalize_live_game_state
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -251,24 +253,115 @@ def _event_probability(event: Event) -> float | None:
     return compute_aggregate_probability(event)
 
 
-def _format_game_brief(event: Event) -> dict:
-    """Compact league-rail shape for one game.
+def _format_game_brief(
+    event: Event,
+    sport_key: str | None = None,
+    team_lookup: dict | None = None,
+) -> dict:
+    """League-rail shape for one game — the SHARED event card's contract.
 
     Deliberately NOT the team page's `_format_event_brief`: that one takes a team
     and renders from that team's perspective ("we had them at 72%"). A league rail
     has no home side to speak from, so the probability is stated as the home team's
     and named as such rather than left ambiguous.
+
+    ── UX-P074 (#1860), ruling 047 ──
+    The rail now renders through the SAME event card as `/sports/[key]`, search and
+    My Stuff, so this payload has to carry what that card draws: the league chip,
+    both sides of the blend, team colours/logos, and the live clock. Ruling 047's
+    scope clause is explicit that the answer to "the shared card needs a field this
+    page does not send" is to EXTEND THE CONTRACT, not to fork the card — so these
+    keys are added under the names `_format_event` already uses on every other
+    surface, rather than under rail-local ones a second reader would have to learn.
+
+    `sport_key` is passed in rather than read off `event.sport`: the rails' query
+    joins Sport for the WHERE clause without eager-loading the relationship, and a
+    lazy attribute access inside an async request is a MissingGreenlet, not a slow
+    read. The route knows the key — it is the argument the whole payload is built
+    for.
+
+    `home_win_probability` is KEPT alongside the new `current_odds`. It is what the
+    tier census reads (a game with no blend is a fixture, not an answer) and what
+    the iOS decoder already types; dropping it to "clean up" would silently retier
+    every league.
     """
-    return {
+    home_prob = _event_probability(event)
+    away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
+
+    brief: dict = {
         "id": event.id,
+        "external_id": getattr(event, "external_id", None),
+        "sport": sport_key,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        # A FINAL card prefers this over commence_time for its date (gotcha #22
+        # family): a Kalshi-sourced commence_time can be a close/resolution stamp.
+        "completed_at": (
+            event.completed_at.isoformat()
+            if getattr(event, "completed_at", None)
+            else None
+        ),
         "status": event.status,
         "home_score": event.home_score,
         "away_score": event.away_score,
-        "home_win_probability": _event_probability(event),
+        "home_win_probability": home_prob,
     }
+
+    # THE ONE BLEND. `home_probability` here is the same number
+    # `home_win_probability` carries — the same `compute_aggregate_probability`
+    # call, not a second derivation — because the shared card reads `current_odds`
+    # and the census reads the flat key, and the two must never be able to differ.
+    if home_prob is not None:
+        brief["current_odds"] = {
+            "home_probability": home_prob,
+            "away_probability": away_prob,
+        }
+
+    # Opening line — the card's live footer says "Opened 62/38" from this, and a
+    # settled card falls back to it. Both columns are on the row already.
+    opening_home = getattr(event, "opening_home_probability", None)
+    if opening_home is not None:
+        opening_away = getattr(event, "opening_away_probability", None)
+        brief["opening_odds"] = {
+            "home_probability": float(opening_home),
+            "away_probability": (
+                float(opening_away)
+                if opening_away is not None
+                else round(1.0 - float(opening_home), 6)
+            ),
+        }
+
+    if team_lookup:
+        home_team = team_lookup.get(event.home_team_name)
+        away_team = team_lookup.get(event.away_team_name)
+        if home_team and (home_team.primary_color or home_team.logo_url_small):
+            brief["home_team_data"] = _format_team_data(home_team)
+        if away_team and (away_team.primary_color or away_team.logo_url_small):
+            brief["away_team_data"] = _format_team_data(away_team)
+
+    # Live clock, normalised by the SAME helper the event route uses — the card
+    # prints this string verbatim, and #1710's lesson was that an un-normalised
+    # period field puts a pre-game sentence where "Q3" belongs.
+    espn: dict = {}
+    try:
+        display_period, display_clock = normalize_live_game_state(
+            sport_key,
+            getattr(event, "period", None),
+            getattr(event, "game_clock", None),
+        )
+        if display_period:
+            espn["period"] = display_period
+        if display_clock:
+            espn["game_clock"] = display_clock
+        if getattr(event, "broadcast_info", None):
+            espn["broadcast"] = event.broadcast_info
+    except Exception:  # pragma: no cover - defensive, a rail must not die on chrome
+        logger.exception("league page: espn chrome failed for event %s", event.id)
+    if espn:
+        brief["espn"] = espn
+
+    return brief
 
 
 def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
@@ -798,12 +891,58 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             .limit(RESULTS_LIMIT + 1)
         )
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
-        _grows = [_format_game_brief(e) for e in _g.scalars().all()]
+        _g_events = list(_g.scalars().all())
+        _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
+        _r_events = list(_r.scalars().all())
+
+        # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
+        # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
+        # helper the events and feed routes use (a ~500-row table, 5-minute TTL),
+        # so this is one small query at worst and zero at best — not N per game.
+        # getattr, because this loop runs OUTSIDE the per-item guard below: a row
+        # that cannot answer for its own team names would otherwise take both
+        # rails down from here, one statement before the guard that exists to
+        # stop exactly that (gotcha #42).
+        _team_names: list[str] = []
+        for _e in (*_g_events, *_r_events):
+            for _n in (
+                getattr(_e, "home_team_name", None),
+                getattr(_e, "away_team_name", None),
+            ):
+                if _n:
+                    _team_names.append(_n)
+        _teams: dict = {}
+        if _team_names:
+            try:
+                _teams = await asyncio.wait_for(
+                    _build_team_lookup(db, _team_names), timeout=10
+                )
+            except Exception:
+                # Chrome, not content: a game with no logo is still a game.
+                logger.exception("league page: team lookup failed for %s", sport_key)
+
+        # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a
+        # whole scoring pass"). This formatter reads twice as many columns since
+        # UX-P074, and the whole rails block sits under ONE except — so a single
+        # unreadable row used to take all sixteen games with it.
+        def _format_all(events: list) -> list[dict]:
+            out: list[dict] = []
+            for _e in events:
+                try:
+                    out.append(_format_game_brief(_e, sport_key, _teams))
+                except Exception:
+                    logger.exception(
+                        "league page: game %s failed to format for %s",
+                        getattr(_e, "id", "?"),
+                        sport_key,
+                    )
+            return out
+
+        _grows = _format_all(_g_events)
         more_games = len(_grows) > UPCOMING_GAMES_LIMIT
         upcoming_games = _grows[:UPCOMING_GAMES_LIMIT]
 
-        _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
-        _rrows = [_format_game_brief(e) for e in _r.scalars().all()]
+        _rrows = _format_all(_r_events)
         more_results = len(_rrows) > RESULTS_LIMIT
         recent_results = _rrows[:RESULTS_LIMIT]
     except Exception:

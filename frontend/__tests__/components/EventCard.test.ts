@@ -130,3 +130,44 @@ describe("EventCard", () => {
     expect(html).not.toContain("45%");
   });
 });
+
+// UX-P074 (#1860) — a shared card must not depend on how its callers spell
+// absence.
+//
+// The league rails started feeding this card a `current_odds` that carries a
+// blend and no projection. The footer guard was `projected_home_score !== null`,
+// which an ABSENT key passes (`undefined !== null` is true), so the card printed
+// "Proj NaN-NaN" on every league fixture. The adapter now also sends explicit
+// nulls — but that is the CALLER being polite, and this test is here because the
+// card's own guard has to hold for the next caller that is not.
+describe("EventCard — absence is absence, however it is spelled", () => {
+  it("prints no projection when the projected-score keys are simply missing", () => {
+    const partial = makeEvent();
+    // Exactly the shape a producer that has a probability and no projection
+    // sends: the two projected keys are not present at all.
+    partial.current_odds = {
+      captured_at: "2030-01-01T11:00:00.000Z",
+      home_probability: 0.62,
+      away_probability: 0.38,
+      spread: null,
+      over_under: null,
+    } as unknown as Event["current_odds"];
+
+    const html = renderToStaticMarkup(
+      React.createElement(EventCard, { event: partial })
+    );
+
+    expect(html).not.toContain("NaN");
+    expect(html).not.toContain("Proj");
+  });
+
+  it("still prints the projection when it is actually there", () => {
+    // The other direction (gotcha #43): loosening the guard must not have
+    // deleted the feature it guards.
+    const html = renderToStaticMarkup(
+      React.createElement(EventCard, { event: makeEvent() })
+    );
+    expect(html).toContain("Proj");
+    expect(html).toContain("111-104");
+  });
+});

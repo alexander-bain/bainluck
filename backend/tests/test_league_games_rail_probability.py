@@ -48,19 +48,43 @@ PRODUCTION_SOURCES = {
 
 
 class FakeEvent:
-    """Duck-typed Event. `compute_aggregate_probability` reads exactly these."""
+    """Duck-typed Event. `compute_aggregate_probability` reads exactly these.
 
-    def __init__(self, *, sources=None, status="scheduled", espn=None, opening=None):
+    UX-P074 widened it to the columns the SHARED event card's payload reads
+    (`external_id`, `completed_at`, the opening pair, the live-clock trio). A
+    fixture narrower than the row is how a formatter comes to depend on an
+    attribute nothing in the suite has — which is exactly what happened when the
+    rail's payload grew.
+    """
+
+    def __init__(
+        self,
+        *,
+        sources=None,
+        status="scheduled",
+        espn=None,
+        opening=None,
+        opening_away=None,
+        period=None,
+        game_clock=None,
+        broadcast=None,
+        scores=(None, None),
+    ):
         self.id = 15189168
+        self.external_id = "odds-api-15189168"
         self.home_team_name = "Miami Marlins"
         self.away_team_name = "Pittsburgh Pirates"
         self.commence_time = datetime(2026, 8, 11, 22, 40, tzinfo=timezone.utc)
+        self.completed_at = None
         self.status = status
-        self.home_score = None
-        self.away_score = None
+        self.home_score, self.away_score = scores
         self.win_probability_sources = sources
         self.espn_win_prob_home = espn
         self.opening_home_probability = opening
+        self.opening_away_probability = opening_away
+        self.period = period
+        self.game_clock = game_clock
+        self.broadcast_info = broadcast
 
 
 class TestTheRegression:
@@ -168,3 +192,112 @@ class TestTheRailPayload:
         out = resolve_entity_tier(census, now=datetime.now(timezone.utc))
         assert out["pool_counts"]["answers"] == 0
         assert out["pool_counts"]["dropped"] == 1
+
+
+class FakeTeam:
+    """The columns `_format_team_data` reads. Values are the Marlins' real ones."""
+
+    def __init__(self, name, primary="#00A3E0", logo="marlins.png"):
+        self.id = 1
+        self.slug = name.lower().replace(" ", "-")
+        self.abbreviation = None
+        self.primary_color = primary
+        self.secondary_color = "#EF3340"
+        self.logo_url_small = logo
+        self.logo_url_large = None
+        self.current_record = "60-58"
+
+
+class TestTheSharedCardContract:
+    """UX-P074 (#1860), ruling 047 — the rail renders the SHARED event card.
+
+    "League pages get no bespoke variants." The card is not this file's business;
+    what IS, is that the payload carries the card's contract, under the SAME key
+    names `/api/events` uses. A rail-local synonym for `current_odds` would leave
+    the shared card rendering a blank where it has a number, which is the
+    silently-degraded version of the fork the ruling forbids.
+    """
+
+    def test_the_card_gets_both_sides_of_the_blend(self):
+        brief = _format_game_brief(
+            FakeEvent(sources=PRODUCTION_SOURCES, status="live"), "baseball_mlb"
+        )
+        assert brief["current_odds"]["home_probability"] == brief["home_win_probability"]
+        assert brief["current_odds"]["away_probability"] == pytest.approx(
+            1.0 - brief["home_win_probability"]
+        )
+
+    def test_the_flat_key_and_current_odds_can_never_disagree(self):
+        """One blend, stated twice, from ONE call.
+
+        `home_win_probability` feeds the tier census and `current_odds` feeds the
+        card. If these were computed separately the page could show a number the
+        census did not count — the divergence #1776's second half was about.
+        """
+        brief = _format_game_brief(FakeEvent(sources=PRODUCTION_SOURCES), "baseball_mlb")
+        assert brief["current_odds"]["home_probability"] == brief["home_win_probability"]
+
+    def test_an_unpriced_game_carries_NO_current_odds(self):
+        """Absent, not zeroed. The card withholds on absence; a `{"home": null}`
+        would be a measured null, and a 0.0 would be a claim."""
+        brief = _format_game_brief(FakeEvent(sources=None), "baseball_mlb")
+        assert "current_odds" not in brief
+        assert brief["home_win_probability"] is None
+
+    def test_the_census_key_survives_the_widening(self):
+        """The flat key is what `resolve_entity_tier` reads. Dropping it while
+        adding `current_odds` would silently retier all 29 leagues."""
+        brief = _format_game_brief(FakeEvent(sources=PRODUCTION_SOURCES), "baseball_mlb")
+        assert "home_win_probability" in brief
+
+    def test_the_league_chip_comes_from_the_route_not_a_lazy_relationship(self):
+        """`sport` is passed in. Reading `event.sport.key` here would be a
+        MissingGreenlet: the rails' query joins Sport for the WHERE clause and
+        never eager-loads the relationship."""
+        brief = _format_game_brief(FakeEvent(sources=None), "baseball_mlb")
+        assert brief["sport"] == "baseball_mlb"
+        assert not hasattr(FakeEvent(sources=None), "sport")
+
+    def test_team_colours_and_logos_ride_the_envelope(self):
+        lookup = {
+            "Miami Marlins": FakeTeam("Miami Marlins"),
+            "Pittsburgh Pirates": FakeTeam("Pittsburgh Pirates", "#FDB827", "pirates.png"),
+        }
+        brief = _format_game_brief(FakeEvent(sources=None), "baseball_mlb", lookup)
+        assert brief["home_team_data"]["primary_color"] == "#00A3E0"
+        assert brief["away_team_data"]["logo_small"] == "pirates.png"
+
+    def test_a_team_we_have_no_media_for_is_simply_absent(self):
+        """Chrome degrades; content does not. No colour is no key, not a
+        placeholder colour the card would draw as if it were the team's."""
+        lookup = {"Miami Marlins": FakeTeam("Miami Marlins", primary=None, logo=None)}
+        brief = _format_game_brief(FakeEvent(sources=None), "baseball_mlb", lookup)
+        assert "home_team_data" not in brief
+        assert "away_team_data" not in brief
+
+    def test_the_live_clock_is_normalised_not_passed_raw(self):
+        """#1710: an un-normalised period field put ESPN's pre-game sentence
+        where "Q3" belongs. The rail goes through the same helper the event route
+        does rather than forwarding the column."""
+        brief = _format_game_brief(
+            FakeEvent(status="live", period="7", game_clock="Top 7th", broadcast="MLBN"),
+            "baseball_mlb",
+        )
+        assert brief["espn"]["broadcast"] == "MLBN"
+        assert "Mon, August" not in str(brief["espn"].get("period", ""))
+
+    def test_the_opening_line_rides_along_and_derives_its_other_side(self):
+        brief = _format_game_brief(FakeEvent(opening=0.55), "baseball_mlb")
+        assert brief["opening_odds"]["home_probability"] == pytest.approx(0.55)
+        assert brief["opening_odds"]["away_probability"] == pytest.approx(0.45)
+
+    def test_no_opening_line_means_no_opening_key(self):
+        brief = _format_game_brief(FakeEvent(), "baseball_mlb")
+        assert "opening_odds" not in brief
+
+    def test_the_signature_still_works_with_one_argument(self):
+        """The task path and any other caller keep working. A required new
+        parameter would have moved the failure to import time somewhere else."""
+        brief = _format_game_brief(FakeEvent(sources=PRODUCTION_SOURCES))
+        assert brief["sport"] is None
+        assert brief["home_win_probability"] is not None

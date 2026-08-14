@@ -129,6 +129,11 @@ export default function EventCard({
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
+  // UX-P074: an unparseable/absent commence_time renders NO time chip. The
+  // league rail now feeds this card and types that field nullable, and
+  // `toLocaleTimeString` on an invalid Date prints the literal string
+  // "Invalid Date" — a card is allowed to say nothing, never to say that.
+  const hasGameTime = !Number.isNaN(gameTime.getTime());
   const now = new Date();
   const isToday = gameTime.toDateString() === now.toDateString();
   const tomorrow = new Date(now);
@@ -221,7 +226,7 @@ export default function EventCard({
                   {formatLiveClockLabel(event.espn?.period, event.espn?.game_clock) || highlightLabel || "LIVE"}
                 </span>
               )}
-              {!isLive && !isFinished && (
+              {!isLive && !isFinished && hasGameTime && (
                 <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (
@@ -415,7 +420,12 @@ export default function EventCard({
           {/* Footer — contextual info (hide for finished games) */}
           {!isFinished && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
-              {!isLive && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+              {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
+                  strict test with `undefined !== null` → true, and the card then
+                  printed "Proj NaN-NaN". Found the moment the league rail — a
+                  producer that carries a blend and no projection — started
+                  feeding this shared card. */}
+              {!isLive && odds && odds.projected_home_score != null && odds.projected_away_score != null ? (
                 <span className="text-text-muted">
                   Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
                 </span>

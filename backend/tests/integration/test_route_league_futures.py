@@ -440,6 +440,12 @@ def _mock_event(
     """
     return SimpleNamespace(
         id=event_id,
+        # UX-P074: the columns the shared event card's payload reads. The
+        # docstring above is about a fake that was NARROWER than the row and
+        # certified a read production never does — so when the payload grew, the
+        # fixture grew with it rather than leaning on the formatter's getattrs.
+        external_id=f"odds-api-{event_id}",
+        completed_at=None,
         home_team_name=home,
         away_team_name=away,
         status=status,
@@ -448,6 +454,10 @@ def _mock_event(
         away_score=away_score,
         espn_win_prob_home=None,
         opening_home_probability=None,
+        opening_away_probability=None,
+        period=None,
+        game_clock=None,
+        broadcast_info=None,
         win_probability_sources=(
             {"espn": {"value": home_prob, "display_name": "ESPN", "type": "model"}}
             if home_prob is not None
@@ -456,19 +466,57 @@ def _mock_event(
     )
 
 
-def _three_call_db(mock_db, markets, games=(), results=()):
-    """Sequence the route's THREE queries: markets, then games, then results.
+def _mock_team(name, *, sport_id=1, primary="#BD3039", logo="redsox.png"):
+    """A Team row as `_build_team_lookup` / `_format_team_data` read it."""
+    return SimpleNamespace(
+        id=abs(hash(name)) % 10_000,
+        name=name,
+        alternate_names=[],
+        sport_id=sport_id,
+        slug=name.lower().replace(" ", "-"),
+        abbreviation=None,
+        primary_color=primary,
+        secondary_color="#0C2340",
+        logo_url_small=logo,
+        logo_url_large=None,
+        current_record="60-58",
+        standings_data=None,
+        season_stats=None,
+    )
+
+
+def _league_db(mock_db, markets, games=(), results=(), teams=()):
+    """Sequence the route's FOUR queries: markets, games, results, team media.
 
     The existing seeded tests set a single `return_value`, so every query — including
     the two rail queries this queue added — receives the MARKET rows. That silently
     routes real work into the rails' exception guard, which is exactly the shape that
     makes a guard hide a bug instead of surviving one. Anything asserting on the
     rails must sequence the calls.
+
+    UX-P074 (#1860) added the FOURTH: the rails now render the shared event card,
+    which draws team colours and logos, so the route calls the same
+    `_build_team_lookup` the events and feed routes use. Two consequences the
+    caller does not get to ignore:
+
+    1. The count in this helper's NAME is load-bearing — it was `_three_call_db`,
+       and every rail assertion in this file went red the moment the route asked
+       one more question than the mock had answers for. That is the helper working.
+    2. `_build_team_lookup` holds a PROCESS-WIDE 5-minute cache. Left alone, whether
+       the fourth call is consumed depends on which test warmed the cache first —
+       the sequencing would be order-dependent, which is a flake that reads as a
+       real failure. So the cache is reset here, every time.
     """
+    import app.routes.events as _events_module
+
+    _events_module._team_cache = {}
+    _events_module._team_cache_time = 0.0
+
     mock_db.execute.side_effect = [
         _scalars_result(list(markets)),
         _scalars_result(list(games)),
         _scalars_result(list(results)),
+        _scalars_result(list(teams)),
     ]
 
 
@@ -476,7 +524,7 @@ class TestLeagueEntityEnvelope:
     """Spec §7: tier, availability and every count arrive IN the payload."""
 
     async def test_envelope_fields_present(self, client, mock_db):
-        _three_call_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
+        _league_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
         body = (await client.get("/api/leagues/basketball_nba")).json()
 
         for field in ("tier", "availability", "pool_counts", "section_counts"):
@@ -485,7 +533,7 @@ class TestLeagueEntityEnvelope:
 
     async def test_availability_is_the_ruled_vocabulary(self, client, mock_db):
         """Ruling 025 / register E10: never live | stale_ok | unavailable."""
-        _three_call_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
+        _league_db(mock_db, [_mock_market(market_id=1, market_tier=3)])
         body = (await client.get("/api/leagues/basketball_nba")).json()
         assert body["availability"] in {"fresh", "stale", "degraded", "empty"}
 
@@ -524,7 +572,7 @@ class TestLeaguePriceSkipIsCounted:
             llm_sport_category="basketball",
             llm_league="nba",
         )
-        _three_call_db(mock_db, [resolved, live])
+        _league_db(mock_db, [resolved, live])
         body = (await client.get("/api/leagues/basketball_nba")).json()
 
         awards = body["section_counts"]["awards"]
@@ -541,7 +589,7 @@ class TestLeagueGamesAndGridAmendment:
     event content and the championship grid."""
 
     async def test_games_rails_are_served_by_this_route(self, client, mock_db):
-        _three_call_db(
+        _league_db(
             mock_db,
             [_mock_market(market_id=1, market_tier=3)],
             games=[_mock_event(event_id=11), _mock_event(event_id=12)],
@@ -573,7 +621,7 @@ class TestLeagueGamesAndGridAmendment:
             market_id=81, name="Cy Young Winner", market_tier=3,
             llm_sport_category="baseball", llm_league="mlb", external_id="KXMLB-CY",
         )
-        _three_call_db(mock_db, [champ, award])
+        _league_db(mock_db, [champ, award])
         body = (await client.get("/api/leagues/baseball_mlb")).json()
 
         # Still not rendered as cards — the grid is its rendering.
@@ -587,7 +635,7 @@ class TestLeagueGamesAndGridAmendment:
     ):
         """A game with a blended number answers "who wins tonight?"; one without
         is a fixture. The ONE resolver makes that call, not this route."""
-        _three_call_db(
+        _league_db(
             mock_db,
             [],
             games=[
@@ -605,7 +653,7 @@ class TestLeagueGamesAndGridAmendment:
     ):
         """Doctrine A4 + spec §6: settled content feeds the RECORD, so a registered
         league between seasons is a statement page, not a generation-gate hole."""
-        _three_call_db(
+        _league_db(
             mock_db,
             [],
             results=[_mock_event(event_id=31, status="completed", hours_from_now=-72,
@@ -662,7 +710,7 @@ class TestLeagueGamesAndGridAmendment:
             ]
         )
         games = [_mock_event(event_id=400 + i, home_prob=0.5 + i / 100) for i in range(4)]
-        _three_call_db(mock_db, markets, games=games)
+        _league_db(mock_db, markets, games=games)
 
         body = (await client.get("/api/leagues/baseball_mlb")).json()
 
@@ -675,3 +723,103 @@ class TestLeagueGamesAndGridAmendment:
             f"expected the rich tier on real content; got {body['tier']} "
             f"with populated sections {sorted(populated)}"
         )
+
+
+class TestTheRailsServeTheSharedCard:
+    """UX-P074 (#1860), ruling 047 — end to end, through the route.
+
+    `test_league_games_rail_probability.py` pins the formatter. This pins that
+    the ROUTE assembles it: that the team lookup actually happens, that its
+    output reaches both rails, and that a league with no team media still serves
+    its games. The unit test cannot see any of that, because the wiring — one
+    lookup, two rails — is the part that lives here.
+    """
+
+    async def test_games_carry_the_cards_contract_not_just_a_number(self, client, mock_db):
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[_mock_event(event_id=11, home="Boston Red Sox", away="New York Yankees")],
+            teams=[_mock_team("Boston Red Sox"), _mock_team("New York Yankees",
+                                                            primary="#132448", logo="yankees.png")],
+        )
+        game = (await client.get("/api/leagues/baseball_mlb")).json()["upcoming_games"][0]
+
+        assert game["sport"] == "baseball_mlb"
+        assert game["current_odds"]["home_probability"] == 0.55
+        assert game["current_odds"]["away_probability"] == pytest.approx(0.45)
+        assert game["home_team_data"]["primary_color"] == "#BD3039"
+        assert game["away_team_data"]["logo_small"] == "yankees.png"
+        # The census key survives beside the card's.
+        assert game["home_win_probability"] == 0.55
+
+    async def test_one_lookup_serves_BOTH_rails(self, client, mock_db):
+        """The results rail gets the same chrome from the same query.
+
+        Sequencing exactly four results is the assertion: a second lookup would
+        exhaust the mock and fail, and no lookup would leave the results rail
+        bare while the upcoming rail was decorated.
+        """
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[_mock_event(event_id=11)],
+            results=[_mock_event(event_id=12, status="completed", hours_from_now=-48,
+                                 home_score=5, away_score=3)],
+            teams=[_mock_team("Boston Red Sox"), _mock_team("New York Yankees")],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        assert body["upcoming_games"][0]["home_team_data"]["primary_color"] == "#BD3039"
+        assert body["recent_results"][0]["home_team_data"]["primary_color"] == "#BD3039"
+        assert body["recent_results"][0]["home_score"] == 5
+
+    async def test_no_team_media_still_serves_the_games(self, client, mock_db):
+        """Chrome degrades, content does not. A league whose teams we have no
+        colours for renders its fixtures — the card falls back to initials."""
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[_mock_event(event_id=11)],
+            teams=[],
+        )
+        game = (await client.get("/api/leagues/baseball_mlb")).json()["upcoming_games"][0]
+
+        assert "home_team_data" not in game
+        assert game["current_odds"]["home_probability"] == 0.55
+
+    async def test_an_unpriced_game_carries_no_current_odds_through_the_route(
+        self, client, mock_db
+    ):
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[_mock_event(event_id=11, home_prob=None)],
+            teams=[],
+        )
+        game = (await client.get("/api/leagues/baseball_mlb")).json()["upcoming_games"][0]
+
+        assert "current_odds" not in game
+        assert game["home_win_probability"] is None
+
+    async def test_ONE_BAD_GAME_DOES_NOT_EMPTY_THE_RAIL(self, client, mock_db):
+        """Gotcha #42, at the exact place it bites.
+
+        The formatter reads twice as many columns since UX-P074 and the whole
+        rails block sits under ONE except — so before the per-item guard, a
+        single unreadable row took all sixteen games with it. The broken row
+        below is missing `home_team_name`, which is what a partially-loaded ORM
+        row looks like.
+        """
+        broken = _mock_event(event_id=99)
+        del broken.home_team_name
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[broken, _mock_event(event_id=11)],
+            teams=[],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        ids = [g["id"] for g in body["upcoming_games"]]
+        assert ids == [11], "one unformattable game emptied the whole rail"

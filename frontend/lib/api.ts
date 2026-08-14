@@ -43,6 +43,7 @@ import type {
   EventConceptResponse,
   Event,
   GolfLeaderboardResponse,
+  TeamData,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
 import { formatProbabilityPercent } from "./probabilityDisplay";
@@ -1539,6 +1540,20 @@ export interface LeagueGameBrief {
   away_score: number | null;
   /** Null when we never measured one — render nothing, never a 0% claim. */
   home_win_probability: number | null;
+  // ── UX-P074 (#1860), ruling 047 ──
+  // The rail renders the SHARED event card, so the envelope carries what that
+  // card draws. These use the SAME key names `/api/events` uses, because a
+  // second name for the same field is a second thing to learn and a second
+  // thing to get wrong. All optional: an older cached payload (the league
+  // mirror lives up to 24h) still renders, just without the chrome.
+  external_id?: string | null;
+  sport?: string | null;
+  completed_at?: string | null;
+  current_odds?: { home_probability: number | null; away_probability: number | null };
+  opening_odds?: { home_probability: number; away_probability: number };
+  home_team_data?: TeamData;
+  away_team_data?: TeamData;
+  espn?: { period?: string; game_clock?: string; broadcast?: string };
 }
 
 export interface LeagueFuturesResponse {
