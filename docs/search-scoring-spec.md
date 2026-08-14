@@ -289,6 +289,34 @@ also functioned as an **unarmed control** that came out clean, which is
 corroboration for the attribution model the `-45` armed control (ruling 050) will
 test deliberately.
 
+**RESOLVED, LAT-P052 (2026-08-14): it was reading 1, and the mechanism is now
+measured.** Alex adopted the distinction as this ledger's standing reading law
+(**ruling 056**) and required a fix rather than a filing. Both landed; the answer
+is more specific than either reading above.
+
+#1843's lift is **conditionally uniform**, and the rival set decides, not the
+change. Measured with the real scorer over a frozen production capture — 7 Oscar
+markets, 155 outcomes, v3808 —
+`backend/tests/test_search_outcome_evidence_discrimination.py`:
+
+* **When every candidate owns the queried outcome below its own display cut**,
+  they all move MC5 → MC4 *together*. `entity_top_1` reads relative order only,
+  so the lift is **invisible**. Four of five new specimens behave this way, and
+  this is why 46 probes produced byte-identical dispositions on v3807.
+* **When the lift is unequal, top-1 moves.** `club kid` is the specimen:
+  "Oscars 2027: Best Original Screenplay Winner" displays it at outcome rank
+  **3 of 17**, inside its cut, so it already scored MC4 and did not move while
+  the others did.
+* **The substring accident is the shape #1843 named.** Query `fjord`: the Best
+  Picture market owns the film at outcome rank 7, while "FH Hafnarfjordur vs.
+  Vikingur Reykjavik" merely contains the letters and sits on the MC5 floor.
+  Pre-#1843 the accident won on input order; post-#1843 it cannot. Both rows are
+  real production data.
+
+So `-44`'s row stays **"no movement"**, and it now carries a mechanism instead of
+a shrug: *the change was real, and the 46-probe set could not see it because the
+class it lifts, it lifts uniformly.*
+
 ### How this table must be read — and how it must not
 
 **Recorded by Alex, 2026-08-13, as this ledger's standing text.**
@@ -407,3 +435,159 @@ would have caught this before a band was published.
 recorded, with the two-sided caveat above attached to it — the old numbers are
 not retracted, because they were honestly taken; only the claim that they were
 floors is withdrawn.
+
+---
+
+## 7. What the probe set can and cannot DISCRIMINATE (LAT-P052, ruling 056, #1861)
+
+The 46-probe gold set was assembled for **coverage** of Alex's approved query
+set. Nothing has ever asked the separate question — *which classes of ranking
+change can it tell apart?* — and the two are not the same property. A set can
+cover the query space perfectly and still be blind to a whole tier.
+
+`-44` is what forced the question: a real ranking change, deployed alone under
+ruling 046, that moved zero probes. This section is the answer, and it is
+maintained rather than one-off — a change class that lands here as "cannot"
+is a queue item, not a footnote.
+
+| match class | what a change to it looks like | can `entity_top_1` grade it? | evidence |
+|---|---|---|---|
+| **MC0** exact alias | a team's alias is withheld or restored | **YES** | `-42` (#1836) moved **+3**; five team probes turn on aliases the response strips |
+| **MC1** all tokens in own name | the name pool widens or narrows | **YES** | the majority of the 46 probes resolve here |
+| **MC2** last-token prefix | typeahead prefix behaviour | **partially** | no probe is *specifically* a prefix probe; the class is exercised only incidentally |
+| **MC3** partial tokens | coverage-threshold tuning | **NO probe isolates it** | untested class — the nearest is `full_question`, which conflates it with scaffolding-strip |
+| **MC4** outcome-only | #1843's widening | **ONLY when the lift is unequal** | see below — this is the #1861 finding |
+| **MC5** fragment / fuzzy | the trigram floor | **indirectly** | graded only as the thing better classes must beat |
+| **UNRANKABLE** derived-only | #1846's provenance fix | **YES** | `us open`; projection **+1 → 39** registered pre-deploy |
+
+### The MC4 rule, stated once so it is not re-derived
+
+> An outcome-evidence change moves `entity_top_1` **only when the candidates do
+> not all gain the class together.**
+
+Because `entity_top_1` is a function of *relative* order, and #1843 lifts every
+market that owns the queried outcome at the same instant. Three regimes, all
+measured against a frozen production capture in
+`backend/tests/test_search_outcome_evidence_discrimination.py`:
+
+| regime | pre-#1843 winner | post | graded? |
+|---|---|---|---|
+| all candidates own the outcome below their cut | the same market | unchanged | **no** — uniform lift |
+| a rival displays the outcome inside its top 3 | that rival (already MC4) | **moves** | **yes** — `club kid` |
+| the winner never owns the outcome (substring accident) | the accident, on input order | **moves** | **yes** — `fjord` |
+
+### Consequences worth acting on
+
+1. **MC3 is genuinely ungraded.** Nothing in the set isolates partial-token
+   coverage, so `PARTIAL_MIN_COVERAGE` could be retuned in either direction and
+   every published number would be unchanged. That is the largest remaining
+   blind spot and it is not filed anywhere else.
+2. **MC2 is graded only by accident.** Typeahead's defining behaviour — the user
+   is still typing — has no dedicated probe.
+3. **A null read is now interpretable.** Under ruling 056, "no movement" on a
+   class marked **NO** or **partially** above is a statement about the
+   instrument. On a class marked **YES** it is a statement about the change.
+   That distinction is the whole point of keeping this table.
+
+### The class lives in `canary`, deliberately
+
+The outcome-evidence probes are `--split canary`, not `test`. The §5 ledger is
+written against a 46-probe cohort graded 44-wide; growing `test` would move the
+denominator and silently make every prior read incomparable — a measurement
+defect committed while fixing one.
+`test_the_canary_split_never_grows_the_ledger_cohort` asserts the separation, so
+the ledger cannot be invalidated by a well-meant registry edit.
+
+---
+
+## 8. The recall/latency trade, priced (#1855, LAT-P052, 2026-08-14)
+
+#1855 asked whether **+3 `entity_top_1` was worth ~170ms of warm `/search` p50**
+(0.48s → 0.65s), and routed it here for a measured verdict rather than a
+recovery. Measured on **v3808 (`d4b7309c`)**, ~1h after release so no post-deploy
+artifact (gotcha: a read inside ~5 min of a release scans as a regression).
+
+### First: ~0.24s of every number ever quoted here is the measuring instrument
+
+`GET /api/health` — an endpoint that does no work — costs **p50 0.239s** (n=8)
+from an agent sandbox, of which **~0.148s is the TLS handshake**. Every `curl`
+opens a fresh connection, so that tax is paid per reading.
+
+On a **reused** connection the same endpoint costs **p50 0.086s** (n=9). The
+difference is not the server.
+
+| surface | fresh conn | keep-alive | server work |
+|---|---|---|---|
+| `/api/health` (floor) | 0.239s | 0.086s | ~0 |
+| `/api/events/search?q=chiefs` warm | **0.476s** (n=12) | **0.213s** (n=9) | **~0.127s** |
+| `/api/feed` (control, untouched by this program) | 0.368s (n=8) | — | — |
+
+Server-side, from `?debug_timing=1` (n=11): **total p50 163ms**, of which
+`teams` **p50 60ms** and `futures` **p50 35ms**.
+
+### The 170ms is the cold/warm boundary, not a code cost
+
+Same deploy, no code change between the two readings:
+
+| `/api/events/search`, novel queries | p50 |
+|---|---|
+| **cold** (first touch, n=6) | **0.692s** |
+| **warm** (second touch, n=5) | **0.468s** |
+
+The gap is **0.224s** — and #1855's claimed regression is **0.17s**. Its two
+numbers are a warm read (v3800, 0.48s) compared against reads that were
+effectively cold, at n=1–4, over a distribution whose server-side total spans
+**105ms to 399ms across eleven consecutive reads of the same query**. A
+four-sample median cannot resolve 170ms on that distribution.
+
+Today's warm `/search?q=chiefs` p50 is **0.476s** — the v3800 baseline number.
+
+### The verdict, as two numbers and a recommendation
+
+* **Cost of the recall: ≤ 60ms of server time.** That is the *entire* `teams`
+  stage, which is an **upper bound** — there is no pre-`-42` stage measurement to
+  subtract, so this deliberately charges the widening for work the stage was
+  always doing.
+* **Benefit: +3 `entity_top_1`** (`-42`, #1836, v3802: 32 → 35/44).
+
+**Recommendation: keep the recall, and close #1855 as premise-not-supported.**
+There is no trade to make. 60ms is 3% of the 2s bar and ~37% of a stage that is
+itself 13% of a warm request's wall clock; the 170ms it was weighed against is a
+cache-state artifact reproducible today with no code change at all.
+
+### `_search_owned_outcome_names` is not the suspect — stop suspecting it
+
+The queue asked whether #1843's deliberately-unbounded outcome walk is free.
+**It is not on `/search` at all.** Its only call site is `typeahead_search`
+(`events.py:4400`); `/search` never invokes it. It cannot be any part of #1855.
+On typeahead it walks a list already `selectinload`ed into memory — 38 strings
+for the largest specimen in §7.
+
+### The finding that is bigger than #1855: typeahead's cache miss
+
+`/api/events/typeahead` is Redis-fronted at `bainluck:typeahead:{q}` with a
+**45s TTL**. That changes what every measurement of this surface means — and
+typeahead is **the surface `entity_top_1` grades**.
+
+| typeahead | p50 |
+|---|---|
+| cache **hit** (n=10) | **0.235s** — *at the 0.239s network floor; server ≈ 0* |
+| cache **miss**, novel queries (n=6) | **1.158s** |
+| cache **miss**, same batch ~25 min later (n=8) | **2.289s**, max **7.67s** |
+
+The code states a **`<150ms p50` budget** for this endpoint. A cache miss is
+7–15× that. The second row is not query-specific: re-reading the *first* batch's
+queries after their TTL expired moved `packers` 1.072s → 1.797s and `nvidia`
+1.126s → 2.164s, and three never-used controls all landed at ~2.1s — so the
+surface drifts with load, and it drifts across the **2s investigate bar** in
+`CLAUDE.md`.
+
+Two consequences this lane owns:
+
+1. **Every gold-set read this program has taken is a read of a cache-fronted
+   surface.** That does not invalidate any ranking number — ordering is cached
+   along with the payload — but it means the lane has never once measured
+   typeahead's true cost, and `<150ms p50` has never been verified against a
+   miss.
+2. The `-45`/`-46`/`-47` reads should record cache state, because a 45s TTL and a
+   46-probe sequential producer run interact.

@@ -305,6 +305,103 @@ MC_CANDIDATES: list[tuple[list[str], str]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# THE OUTCOME-EVIDENCE PROBE CLASS (ruling 056, #1861) — LAT-P052
+# ---------------------------------------------------------------------------
+#
+# WHY THIS CLASS EXISTS. `-44` (#1843) deployed alone as v3807, carried a real
+# ranking change, and moved ZERO of the 46 gold probes — with byte-identical
+# per-probe dispositions against v3806. Ruling 056 forbids reading that as
+# "ineffective": it says the INSTRUMENT could not see it, and it requires the
+# gap be closed with a probe class rather than a caveat.
+#
+# #1843 widened the ranking evidence a futures market carries from its THREE
+# DISPLAY outcomes to EVERY outcome it owns. So the class this set was missing
+# is: **a query whose correct answer is a market that owns it on an outcome
+# OUTSIDE the top-3 display cut.** Not one of the 46 probes had that shape.
+#
+# ---- SPLIT: `canary`, and that is a measurement decision, not a filing one --
+#
+# These probes are deliberately NOT in the `test` split. The entire §5 ledger of
+# `docs/search-scoring-spec.md` is written against a 46-probe registry graded
+# 44-wide; adding rows to `test` would silently move the denominator and make
+# every prior read incomparable — a measurement defect committed in the name of
+# fixing one. `--split canary` grades this class; `--split test` is untouched
+# and still reads 46/44.
+#
+# ---- WHAT THESE PROBES CAN AND CANNOT GRADE (measured, not assumed) ---------
+#
+# LAT-P052 ran the REAL scorer (`app.utils.search_match_class.rank`) over REAL
+# production evidence — 7 Oscar markets, 155 outcomes pulled from the production
+# DB — under two regimes: `outcomes` = every owned outcome (post-#1843) versus
+# `outcomes` = the top 3 only (pre-#1843). The answer is NOT uniform across the
+# class, and the split is the real content of #1861:
+#
+#   * **4 of 5 specimens: the class moves, top-1 does not.** Every candidate owns
+#     the queried outcome BELOW its own display cut, so all of them go MC5 -> MC4
+#     together. `entity_top_1` reads relative order only, so a uniform lift is
+#     invisible to it. **This is why 46 probes returned byte-identical
+#     dispositions on v3807.**
+#   * **`club kid`: top-1 MOVES.** "Oscars 2027: Best Original Screenplay Winner"
+#     displays "Club Kid" at outcome rank 3 of 17 — INSIDE its cut — so it
+#     already scored MC4 and did not move while the others did. An unequal lift
+#     changes order. This specimen was found by building the discrimination test,
+#     not by predicting it, and it is the existence proof that an
+#     outcome-evidence change CAN be graded top-1.
+#
+# The general rule that falls out: top-1 moves only when the pre-change winner
+# is a market that did NOT gain the class — one that already had it, or one that
+# never owns the outcome at all (a substring accident, which is #1843's own
+# stated specimen: "a market that owns the answer was losing to unrelated
+# substring accidents").
+#
+# So these probes are (a) a REGRESSION GUARD on the outcome-evidence path — re-cap
+# `_search_owned_outcome_names` and they drop MC4 -> MC5 — (b) the only probes in
+# the set that turn on a non-top-3 outcome at all, and (c) in ONE case, a genuine
+# top-1 discriminator. `tests/test_search_outcome_evidence_discrimination.py`
+# asserts all three, INCLUDING the limit, so no future reader has to rediscover
+# which is which.
+#
+# (query, expected_entity_id, allowed_entity_ids, outcome_rank, note)
+OUTCOME_EVIDENCE_ROWS: list[tuple[str, str, list[str], int, str]] = [
+    ("werwulf", "market:6173044", ["market:5165726", "market:57313556"], 17,
+     "'Werwulf' is a Best Picture nominee sitting at outcome rank 17 of 38 — far outside the "
+     "three rows the dropdown displays. The market's NAME ('Oscar winner: Best Picture') contains "
+     "no query token, so the only evidence that can rank it is the owned outcome. Verified on "
+     "production v3808 (2026-08-14): market 6173044 returns at rank 1."),
+    ("elsinore", "market:6173044", ["market:5165726", "market:57313556"], 35,
+     "Outcome rank 35 of 38 — the deepest specimen in the class, and the strongest demonstration "
+     "that the evidence is genuinely unbounded rather than merely wider. Verified rank 1 on "
+     "production v3808 (2026-08-14)."),
+    ("behemoth", "market:6173044", ["market:5165726", "market:57313556"], 9,
+     "Outcome rank 9 of 38. Verified rank 1 on production v3808 (2026-08-14)."),
+    ("minotaur", "market:6173044", ["market:5165726", "market:57313556"], 31,
+     "Outcome rank 31 of 38. Verified rank 1 on production v3808 (2026-08-14)."),
+    ("club kid", "market:6173044", ["market:5165726", "market:57313556", "market:58492236"], 37,
+     "THE DISCRIMINATING SPECIMEN, and the most valuable probe in this class. Outcome rank 37 of "
+     "38 here, but rank 3 of 17 — INSIDE the display cut — in 'Oscars 2027: Best Original "
+     "Screenplay Winner' (58492236). That rival therefore already scored MC4 before #1843 and did "
+     "not move while every other candidate went MC5 -> MC4, so the lift is UNEQUAL and top-1 "
+     "genuinely changes. It is the existence proof that an outcome-evidence change can be graded "
+     "top-1 at all; the other four specimens cannot show that, because their lift is uniform. "
+     "58492236 is recorded as an ALLOWED answer rather than a rival precisely because it owns the "
+     "film too. Also the only MULTI-TOKEN query in the class, which exercises MC4's multi-token "
+     "PATH — but NOT its conjunction: every candidate owning 'kid' here also owns 'club', so "
+     "flipping MC4's `all()` to `any()` survives this specimen untouched. That was found by the "
+     "mutation gate (M5) and the conjunction is now asserted separately, on a synthetic partial "
+     "owner, in test_mc4_requires_every_query_token_not_merely_one. Recorded because the earlier "
+     "version of this note claimed the specimen covered it. Verified rank 1 on production v3808 "
+     "(2026-08-14)."),
+]
+
+# The films above are nominees in a live awards market, so this class has a
+# SHELF LIFE the coverage half does not: when the 2027 Oscars settle, these
+# markets resolve and the probes go stale. That is recorded here rather than
+# discovered as a mystery failure — `valid_at` carries the capture date, and the
+# class should be re-specimened against a live market when it next reads red.
+OUTCOME_EVIDENCE_CAPTURED_AT = "2026-08-14T00:00:00Z"
+
+
 def _slug(query: str) -> str:
     out = "".join(char if char.isalnum() else "-" for char in query.lower())
     while "--" in out:
@@ -387,6 +484,102 @@ def build_probes() -> list[dict[str, Any]]:
             },
             "presentation": presentation,
         })
+    probes.extend(build_outcome_evidence_probes())
+    return probes
+
+
+def build_outcome_evidence_probes() -> list[dict[str, Any]]:
+    """The OUTCOME-EVIDENCE class (ruling 056, #1861) — `canary` split.
+
+    Same schema as the gold probes, three deliberate differences:
+
+    * ``isolation.split`` is ``canary``, so the historical ``test`` cohort keeps
+      its denominator (see the block comment on ``OUTCOME_EVIDENCE_ROWS``).
+    * ``gold_half`` is ``outcome_evidence`` — these are NOT from Alex's draft and
+      must never be counted as coverage of it (P10: keep the halves
+      distinguishable).
+    * ``lifecycle.difficulty`` is ``discrimination``: the class exists to tell
+      changes APART, which is a different job from covering the query space, and
+      the set had never been assembled for it.
+    """
+
+    probes: list[dict[str, Any]] = []
+    for query, expected, allowed, outcome_rank, note in OUTCOME_EVIDENCE_ROWS:
+        kind = expected.split(":", 1)[0]
+        surface, item_type = KIND_SHAPE[kind]
+        presentation = {"query": query}
+        probes.append({
+            "identity": {
+                "probe_key": f"search-outcome-evidence-{_slug(query)}-001",
+                "probe_version": 1,
+                "schema_version": SCHEMA_VERSION,
+                "surface": "search_typeahead",
+                "task_type": "search_entity",
+                "item_type": item_type,
+                "entity_ids": [expected, *allowed],
+                "gold_half": "outcome_evidence",
+                "gold_family": "outcome_evidence",
+            },
+            "evidence": {
+                "fixture_hash": fixture_sha256(presentation),
+                "hash_scope": "presentation/v1",
+                "source": (
+                    "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, "
+                    "specimened from the production futures_outcomes table"
+                ),
+                "provenance": (
+                    f"outcome-evidence half; the expected market owns this query at outcome rank "
+                    f"{outcome_rank}, outside the top-3 display cut, and matches on NO name token. "
+                    f"Verified against {EVIDENCE_SURFACE}"
+                ),
+                "captured_at": OUTCOME_EVIDENCE_CAPTURED_AT,
+                "valid_at": OUTCOME_EVIDENCE_CAPTURED_AT,
+                "license_usage_note": "internal product query set; queries name public film titles only",
+                "pii_redacted": True,
+            },
+            "oracle": {
+                "oracle_kind": "known_answer",
+                "label_schema": "search_entity/v1",
+                "label_schema_version": 1,
+                "authority": (
+                    "product judgment: the product's ONLY representation of this film is as an "
+                    "outcome of the Best Picture markets, so a market that owns it is the correct "
+                    "referent — there is no rival surface to prefer"
+                ),
+                "evidence": note,
+                "adjudication_history": [],
+                "answer": {
+                    "expected_entity_id": expected,
+                    "allowed_entity_ids": list(allowed),
+                    "expected_surfaces": [surface],
+                    "expected_item_type": item_type,
+                    "query_class": "outcome_evidence",
+                },
+            },
+            "lifecycle": {
+                "state": "active",
+                "owner": "search-evals",
+                "difficulty": "discrimination",
+                "failure_family": "search-entity-top-1",
+                "issue_gotcha": "#1861",
+                "known_failure_status": "pass",
+            },
+            "audience_safety": {
+                "reviewer_audience": "engineer",
+                "kid_facing": False,
+                "guardian_safety_authority": None,
+                "privacy_sensitivity": "none",
+            },
+            "isolation": {
+                "split": "canary",
+                "real_world_group_key": "market:oscars-best-picture",
+                "contamination_lineage": ["lineage:outcome-evidence-v1:market:oscars-best-picture"],
+                "prompt_version": None,
+                "model_version": None,
+                "scorer_version": "search-entity/v1",
+            },
+            "presentation": presentation,
+        })
     return probes
 
 
@@ -401,7 +594,23 @@ def build_registry() -> dict[str, Any]:
             ),
             "gold_set_source": GOLD_SET_SOURCE,
             "gold_set_unique_queries": 71,
-            "migrated": len(probes),
+            # `migrated` counts ONLY probes migrated FROM Alex's gold draft, and
+            # it is derived from GOLD_ROWS rather than from len(probes) for that
+            # reason. The outcome-evidence class (ruling 056) is not from the
+            # draft, so folding it in here would have quietly restated 46 as 51
+            # and overclaimed coverage of a set that did not grow.
+            "migrated": len(GOLD_ROWS),
+            "outcome_evidence_probes": len(OUTCOME_EVIDENCE_ROWS),
+            "split_counts": {
+                "test": len(GOLD_ROWS),
+                "canary": len(OUTCOME_EVIDENCE_ROWS),
+            },
+            "split_note": (
+                "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is "
+                "written against — 46 probes graded 44-wide — and it MUST NOT grow without "
+                "restating every prior read. The outcome-evidence discrimination class "
+                "(ruling 056, #1861) is therefore in `canary`."
+            ),
             "mc_candidates": sum(len(queries) for queries, _ in MC_CANDIDATES),
             "results_producer": "scripts/evals/search_results_producer.py",
             "fixture_hash_convention": (
