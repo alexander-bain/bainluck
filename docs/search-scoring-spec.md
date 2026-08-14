@@ -889,6 +889,30 @@ server segment lands under 150ms is disclosed as pre-warmed and excluded.
 Total miss cost p50 **1384.6ms** (min 949.8, max 5195.4); miss wall p50 1627.3ms.
 Response body 1875 bytes.
 
+#### The hourly swing lands in `server`, and in nothing else
+
+Capture B ran the identical arm **74 minutes later** (A 13:12:48 PDT, B 14:27:18
+PDT), same instrument, n=24, 0 pre-warmed either time. #1866's defining symptom
+is that the miss cost moves within the hour, so the point of two captures is not
+a better average — it is **which segment carries the movement**:
+
+| segment | A miss p50 | B miss p50 | Δ | share of the swing |
+|---|---|---|---|---|
+| dns | 0.011ms | 0.011ms | 0.000ms | 0.0% |
+| connect | 0.165ms | 0.228ms | +0.063ms | 0.0% |
+| tls | 157.644ms | 146.815ms | −10.829ms | 3.7% |
+| **server** | **1455.496ms** | **1165.312ms** | **−290.184ms** | **96.3%** |
+| transfer | 0.516ms | 0.312ms | −0.204ms | 0.1% |
+
+Miss cost p50 fell 1384.6ms → 1086.2ms; `server`'s share of it went **99.74% →
+99.85%**. The only non-server movement is 10.8ms of TLS, which is 6.9% of a
+network segment and ordinary jitter.
+
+The dispersion moved with it: `server`'s miss range narrowed from
+**1028–5273ms** (A) to **882–1934ms** (B). A swing that is 96% one segment, and
+whose tail contracts by a factor of three between two readings an hour apart,
+is a contention signal — which is what §9.3 identifies it as.
+
 **Two things this settles immediately.**
 
 *Serialization is not a suspect.* FastAPI's `JSONResponse` serializes fully
