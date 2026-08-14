@@ -57,7 +57,11 @@ except ImportError:  # Direct ``python scripts/evals/search_results_producer.py`
     from probe_registry import filter_probes, load_registry
 
 DEFAULT_API = "https://api.bainluck.com"
-ADAPTER_VERSION = "typeahead-adapter/v1"
+#: v2 preserves the ranking EVIDENCE alongside the identity mapping. v1 captures
+#: are still readable by every consumer; they simply carry no evidence, and the
+#: reranker labels a run built from one as `legacy` fidelity rather than
+#: pretending it reproduces production (LAT-P050).
+ADAPTER_VERSION = "typeahead-adapter/v2"
 
 # suggestion ``type`` -> (id field, entity_id prefix, surface, item_type).
 # Every entry maps to an identifier the API itself returns. Display text is
@@ -71,45 +75,93 @@ TYPE_MAP: dict[str, tuple[str, str, str, str]] = {
 }
 
 
-def map_suggestion(suggestion: dict[str, Any], rank: int) -> dict[str, Any]:
-    """Map one typeahead suggestion onto the scorer's row shape."""
+def map_suggestion(
+    suggestion: dict[str, Any],
+    rank: int,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Map one typeahead suggestion onto the scorer's row shape.
+
+    `suggestion` is preserved VERBATIM under ``suggestion`` and, when the
+    endpoint was asked for it, the evidence it ranked on under ``evidence``.
+
+    Both are new in v2 and both are the same lesson. The v1 row kept five keys —
+    ``entity_id``, ``surface``, ``item_type``, ``rank``, ``display_name`` — which
+    is everything the GRADER reads and nothing the SCORER reads. So the offline
+    reranker, handed a v1 row, could only invent evidence from display text, and
+    a projection built on invented evidence was published as a floor and missed
+    its band by 7. A capture that discards the inputs to the thing it is
+    projecting is not a cheaper capture; it is a different experiment.
+    """
 
     kind = suggestion.get("type")
     mapping = TYPE_MAP.get(kind)
     if mapping is None:
         # An unmapped type is reported as unresolved rather than coerced: a
         # coerced id could collide with a real expected id and score a pass.
-        return {
+        row = {
             "entity_id": f"unresolved:unmapped_type:{kind}",
             "surface": str(kind),
             "item_type": str(kind),
             "rank": rank,
             "display_name": suggestion.get("text"),
         }
-    id_field, prefix, surface, item_type = mapping
-    raw_id = suggestion.get(id_field)
-    entity_id = (
-        f"{prefix}:{raw_id}"
-        if raw_id not in (None, "")
-        else f"unresolved:{kind}:missing_{id_field}"
-    )
-    return {
-        "entity_id": entity_id,
-        "surface": surface,
-        "item_type": item_type,
-        "rank": rank,
-        "display_name": suggestion.get("text"),
-    }
+    else:
+        id_field, prefix, surface, item_type = mapping
+        raw_id = suggestion.get(id_field)
+        entity_id = (
+            f"{prefix}:{raw_id}"
+            if raw_id not in (None, "")
+            else f"unresolved:{kind}:missing_{id_field}"
+        )
+        row = {
+            "entity_id": entity_id,
+            "surface": surface,
+            "item_type": item_type,
+            "rank": rank,
+            "display_name": suggestion.get("text"),
+        }
+    row["suggestion"] = suggestion
+    if evidence is not None:
+        row["evidence"] = evidence
+    return row
 
 
-def fetch_typeahead(query: str, *, api: str, timeout: float) -> list[dict[str, Any]]:
+def fetch_typeahead(
+    query: str, *, api: str, timeout: float, debug_evidence: bool = True
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """Fetch one typeahead answer as ``(suggestions, evidence_or_None)``.
+
+    ``evidence`` is None when the endpoint did not return it — an older deploy
+    that predates the echo. That is reported as reduced fidelity, never silently
+    filled in: an absent echo and an echo of empty evidence must not read the
+    same (gotcha #53).
+    """
     url = f"{api.rstrip('/')}/api/events/typeahead?q={urllib.parse.quote(query)}"
+    if debug_evidence:
+        url += "&debug_evidence=1"
     with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed host
         payload = json.load(response)
     suggestions = payload.get("suggestions")
     if not isinstance(suggestions, list):
         raise ValueError(f"SEARCH_SOURCE_INVALID: no suggestions list for {query!r}")
-    return suggestions
+    return suggestions, aligned_evidence(payload, suggestions)
+
+
+def aligned_evidence(
+    payload: dict[str, Any], suggestions: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """The echo, but only if it is positionally alignable. Otherwise None.
+
+    Positional alignment is the ENTIRE contract of `_evidence`. A length
+    mismatch means the pairing is unknowable, so the whole echo is dropped
+    rather than zipped into a plausible-looking lie — a misaligned echo is worse
+    than no echo, because it would be labelled `exact` and believed.
+    """
+    evidence = payload.get("_evidence")
+    if not isinstance(evidence, list) or len(evidence) != len(suggestions):
+        return None
+    return evidence
 
 
 def produce(
@@ -119,6 +171,7 @@ def produce(
     sleep: float,
     timeout: float,
     retries: int = 2,
+    debug_evidence: bool = True,
 ) -> dict[str, Any]:
     """Run each ``(probe_key, query)`` against Search and map the ranked rows.
 
@@ -128,23 +181,34 @@ def produce(
     """
 
     rows: list[dict[str, Any]] = []
+    evidence_probes = 0
     for index, (probe_key, query) in enumerate(items):
         error: str | None = None
         suggestions: list[dict[str, Any]] = []
+        evidence: list[dict[str, Any]] | None = None
         for attempt in range(retries + 1):
             try:
-                suggestions = fetch_typeahead(query, api=api, timeout=timeout)
+                suggestions, evidence = fetch_typeahead(
+                    query, api=api, timeout=timeout, debug_evidence=debug_evidence
+                )
                 error = None
                 break
             except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 if attempt < retries:
                     time.sleep(sleep * (attempt + 2))
+        if evidence is not None:
+            evidence_probes += 1
         row: dict[str, Any] = {
             "probe_key": probe_key,
             "query": query,
+            "has_evidence": evidence is not None,
             "candidates": [
-                map_suggestion(item, rank)
+                map_suggestion(
+                    item,
+                    rank,
+                    evidence[rank - 1] if evidence is not None else None,
+                )
                 for rank, item in enumerate(suggestions, 1)
                 if isinstance(item, dict)
             ],
@@ -158,6 +222,14 @@ def produce(
         if index + 1 < len(items):
             time.sleep(sleep)
     fetched = sum(1 for row in rows if row.get("fetch_ok"))
+    if not debug_evidence:
+        fidelity = "legacy"
+    elif evidence_probes == fetched and fetched:
+        fidelity = "exact"
+    elif evidence_probes:
+        fidelity = "partial"
+    else:
+        fidelity = "legacy"
     return {
         "metadata": {
             "adapter_version": ADAPTER_VERSION,
@@ -165,6 +237,14 @@ def produce(
             "probes": len(rows),
             "fetch_ok": fetched,
             "fetch_failed": len(rows) - fetched,
+            # How much of what the scorer ranked on this capture actually holds.
+            # `exact` = every fetched probe carries the endpoint's own echo, so a
+            # rerank reproduces production's evidence. `legacy` = none does, and
+            # any projection from it is a different experiment wearing the same
+            # filename. Consumers must branch on this, not on presence.
+            "evidence_fidelity": fidelity,
+            "evidence_probes": evidence_probes,
+            "debug_evidence_requested": bool(debug_evidence),
         },
         "results": rows,
     }
@@ -192,6 +272,15 @@ def main() -> int:
     parser.add_argument("--api", default=DEFAULT_API)
     parser.add_argument("--sleep", type=float, default=1.1, help="seconds between calls (public API is 60/min)")
     parser.add_argument("--timeout", type=float, default=25.0)
+    parser.add_argument(
+        "--no-evidence",
+        action="store_true",
+        help=(
+            "Capture without the endpoint's evidence echo (v1 behaviour). "
+            "Only for reproducing a legacy capture — the result cannot be "
+            "reranked faithfully and is labelled `legacy` fidelity."
+        ),
+    )
     args = parser.parse_args()
 
     if bool(args.registry) == bool(args.queries_file):
@@ -207,7 +296,13 @@ def main() -> int:
         ]
         items = [(f"explore-{index:03d}", query) for index, query in enumerate(queries, 1)]
 
-    payload = produce(items, api=args.api, sleep=args.sleep, timeout=args.timeout)
+    payload = produce(
+        items,
+        api=args.api,
+        sleep=args.sleep,
+        timeout=args.timeout,
+        debug_evidence=not args.no_evidence,
+    )
     Path(args.out).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     meta = payload["metadata"]
     print(json.dumps(meta, indent=2))

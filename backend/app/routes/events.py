@@ -3952,6 +3952,14 @@ async def typeahead_search(
         max_length=_TYPEAHEAD_MAX_QUERY_CHARS,
         description="Search query",
     ),
+    debug_evidence: bool = Query(
+        False,
+        description=(
+            "Eval-only. Echo the Evidence each suggestion was RANKED on under "
+            "`_evidence`. Never cached, in either direction. Adds no field to "
+            "the default response and changes no ordering."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -3959,17 +3967,42 @@ async def typeahead_search(
 
     Returns up to 8 suggestions: matching teams, upcoming events, and futures.
     Much faster than the full search endpoint — no aggregation or pagination.
+
+    `debug_evidence=1` additionally returns `_evidence`: the exact `Evidence`
+    tuples the scorer ranked on, positionally aligned with `suggestions`.
+
+    WHY THE ECHO EXISTS. The offline harness
+    (`scripts/evals/search_offline_rerank.py`) projects a ranking change by
+    re-ranking a captured production response. But this endpoint STRIPS its
+    ranking inputs before responding — `_derived`, `_aliases` and
+    `_outcome_names` are evidence, not payload, and shipping 40 outcome strings
+    per keystroke is the reason they go. So a response capture could never
+    reconstruct what was ranked, and the harness silently substituted
+    `name` + `kind` and called the result a floor. Measured on v3804 it was not
+    a floor: it re-ranked production's own output DOWN from 35/44 to 30/44,
+    losing five team probes whose MC0 lived in the stripped aliases.
+
+    An eval flag is the honest fix. The alternative — the harness inferring
+    evidence from display text — is a second implementation of
+    `_typeahead_evidence` that drifts, which is the defect one layer up.
     """
     import json as _json
     from app.tasks.redis_state import get_redis_client
     _cache_key = f"bainluck:typeahead:{q.lower().strip()}"
-    try:
-        _rc = get_redis_client()
-        _cached = _rc.get(_cache_key)
-        if _cached:
-            return _json.loads(_cached)
-    except Exception:
-        pass
+    # A debug-evidence answer NEVER touches the cache, in either direction. It
+    # must not read a normal entry (it would return without `_evidence` and the
+    # harness would silently capture a low-fidelity row), and it must not write
+    # one (a user typing that prefix would be served the eval payload for the
+    # full 45s TTL). Same reasoning as LAT-P007's degraded-answer rule: an
+    # answer produced under different rules is never interchangeable in a cache.
+    if not debug_evidence:
+        try:
+            _rc = get_redis_client()
+            _cached = _rc.get(_cache_key)
+            if _cached:
+                return _json.loads(_cached)
+        except Exception:
+            pass
 
     # LAT-P007: start the request budget AFTER the cache read — a cache hit has
     # already returned above and never touches the database.
@@ -4582,6 +4615,7 @@ async def typeahead_search(
                      *event_concept_pool, *futures_pool)
     ]
     suggestions = _s_rank(q, _ta_candidates)[:7]
+
     for _s in suggestions:
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
@@ -4589,7 +4623,29 @@ async def typeahead_search(
         # wise ship 40 strings on every keystroke.
         _s.pop("_outcome_names", None)
 
+    # The echo is taken from the SAME `Evidence` objects `_s_rank` just consumed,
+    # keyed by payload identity — never rebuilt from the suggestion. A rebuild
+    # would be a second construction path, and a second path that can disagree
+    # with the first is the bug this echo exists to eliminate, one level up.
+    #
+    # It is built AFTER the strip deliberately. `Evidence` is frozen, so the pops
+    # cannot reach it, and running in this order makes the provenance STRUCTURAL:
+    # by now the suggestion no longer carries `_aliases`/`_derived`, so a rebuild
+    # from `_s` cannot reproduce this and the difference is a failing test rather
+    # than a matter of care. Placed before the strip, the two were byte-identical
+    # and the mutation proving it mattered scored SURVIVED — which is how this
+    # ordering was found.
+    _evidence_echo: list[dict] | None = None
+    if debug_evidence:
+        from app.utils.search_match_class import evidence_to_wire as _ev_wire
+        _by_payload = {id(_item): _ev for _ev, _item in _ta_candidates}
+        _evidence_echo = [
+            _ev_wire(_by_payload[id(_s)]) for _s in suggestions
+        ]
+
     result: dict = {"suggestions": suggestions, "query": q}
+    if _evidence_echo is not None:
+        result["_evidence"] = _evidence_echo
     if did_you_mean:
         result["did_you_mean"] = did_you_mean
 
@@ -4604,7 +4660,11 @@ async def typeahead_search(
     # prefix gets the wrong answer for the full 45s TTL — a transient becomes a
     # sticky one. Caching an answer you know is incomplete is worse than not
     # caching at all.
-    if not _ta_degraded:
+    #
+    # LAT-P050: nor is a debug-evidence answer, for the mirror-image reason. It
+    # is not incomplete, it is EXTRA — and writing it here would serve
+    # `_evidence` to every normal user typing that prefix for the full TTL.
+    if not _ta_degraded and not debug_evidence:
         try:
             from app.tasks.redis_state import get_redis_client as _get_rc
             _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))

@@ -318,6 +318,70 @@ def rank_key(query: str, ev: Evidence) -> tuple | None:
     return (mc, kind_rank(ev.kind), prominence, fragment, *ev.within_tier)
 
 
+# --- the evidence wire form ------------------------------------------------
+#
+# ONE definition of how an `Evidence` crosses a process boundary, owned by the
+# module that owns `Evidence`. Both consumers import it: the endpoint echoes
+# with `evidence_to_wire`, the offline harness rebuilds with
+# `evidence_from_wire`. That is what "the harness and the endpoint agree by
+# construction" means operationally — not two mappings kept in sync by care.
+#
+# WHY THIS EXISTS, MEASURED (LAT-P050, 2026-08-13, production v3804):
+# the harness used to hand-roll `Evidence(name=display_name, kind=kind)` — two
+# of six fields — off the typeahead RESPONSE. But the response is not the
+# evidence: `typeahead_search` pops `_derived`, `_aliases` and `_outcome_names`
+# before returning, precisely because they are ranking inputs and not payload.
+# So the harness re-ranked production's own output with the evidence removed and
+# scored 30/44 against production's measured 35/44 — it DEMOTED five correct
+# answers (bruins, celtics, patriots, red-sox, yankees), every one a team that
+# production had ranked MC0 on an alternate name the response strips. A team
+# with its aliases withheld drops MC0 -> MC1, ties with a market, and loses on
+# `KIND_ORDER` (team 4, market 2).
+#
+# That is the same withheld-evidence defect the ROUTE has now been fixed for
+# three times (#1836, #1839, #1843) — committed by the instrument that grades
+# the fixes, which is why a projected 39-41 band was published against an actual
+# 32. An instrument cannot be trusted to measure a class of bug it contains.
+#
+#: Keys of the wire form. Frozen as data so a field added to `Evidence` without
+#: a decision here fails the round-trip test instead of silently not crossing.
+EVIDENCE_WIRE_KEYS: tuple[str, ...] = (
+    "name",
+    "aliases",
+    "outcomes",
+    "kind",
+    "derived",
+    "sport_key",
+    "within_tier",
+)
+
+
+def evidence_to_wire(ev: Evidence) -> dict:
+    """Serialize the evidence a candidate was actually ranked on, JSON-safely."""
+    return {
+        "name": ev.name,
+        "aliases": list(ev.aliases),
+        "outcomes": list(ev.outcomes),
+        "kind": ev.kind,
+        "derived": bool(ev.derived),
+        "sport_key": ev.sport_key,
+        "within_tier": list(ev.within_tier),
+    }
+
+
+def evidence_from_wire(payload: dict) -> Evidence:
+    """Rebuild an `Evidence` from `evidence_to_wire`. Round-trip exact."""
+    return Evidence(
+        name=payload.get("name") or "",
+        aliases=tuple(payload.get("aliases") or ()),
+        outcomes=tuple(payload.get("outcomes") or ()),
+        kind=payload.get("kind") or "market",
+        derived=bool(payload.get("derived")),
+        sport_key=payload.get("sport_key"),
+        within_tier=tuple(payload.get("within_tier") or ()),
+    )
+
+
 def rank(query: str, candidates: list[tuple[Evidence, object]]) -> list[object]:
     """Rank `(evidence, payload)` pairs, dropping every UNRANKABLE one.
 
