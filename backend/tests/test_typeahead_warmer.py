@@ -127,6 +127,43 @@ class TestTheWarmerActuallyWarms:
         )
         assert seen["debug_timing"] is False
 
+    def test_the_warmer_passes_every_marker_defaulted_route_parameter(self):
+        """A NEW flag on `/typeahead` would silently re-break the warmer.
+
+        The bug this file exists for is not "we forgot two arguments once" — it
+        is that FastAPI marker defaults are truthy, so ANY parameter the warmer
+        does not pass arrives as a truthy sentinel. Adding a third debug flag to
+        the route would reintroduce the exact failure with no test noticing,
+        because every existing test would keep passing.
+
+        So the guard is structural: enumerate the route's marker-defaulted
+        parameters and require the warmer to name each one.
+        """
+        import inspect
+
+        from app.routes import events
+
+        sig = inspect.signature(events.typeahead_search)
+        marker_params = {
+            name
+            for name, p in sig.parameters.items()
+            # A FastAPI marker (Query/Depends/Body/...) rather than a plain
+            # Python default. `Depends(get_db)` is included deliberately: the
+            # warmer must pass a real session for it too.
+            if p.default is not inspect.Parameter.empty
+            and type(p.default).__module__.startswith("fastapi")
+        }
+
+        warmer_src = inspect.getsource(warmer._warm_one)
+        missing = {n for n in marker_params if f"{n}=" not in warmer_src}
+
+        assert not missing, (
+            f"/typeahead grew marker-defaulted parameter(s) {sorted(missing)} "
+            f"that `_warm_one` does not pass. A FastAPI marker default is "
+            f"TRUTHY, so the route will take a branch meant for a debug caller "
+            f"and the warmer will silently stop warming."
+        )
+
     async def test_route_write_guard_would_reject_the_defaults(self):
         """Pin the reason the test above exists, against the route's real guard.
 
