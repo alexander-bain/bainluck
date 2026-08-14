@@ -10,8 +10,42 @@ an endpoint that returns its own census, never an incantation):
 
     POST /api/admin/repairs/kalshi-fabricated-loss-census        # never writes
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=false   # dry-run plan
-    POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&limit=40
-    ...re-invoke with ?offset=<next_offset> while ``exhausted`` is false
+    ...returns ``plan_hash`` and persists the plan artifact
+    POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
+    ...then drain with ?after_date=<..>&after_id=<..> from ``next_cursor``
+
+CAL-P058 — WHAT C-CERT-1852 CHANGED HERE, and it is the write protocol, not the
+judgment. The certification confirmed the judgment is genuinely per-leg and that
+the four venue specimens reproduce; it BLOCKED the branch on five defects in how
+the attended pass is driven. Four of them are answered in this file:
+
+1. **The cursor is a KEYSET, not an OFFSET.** Every successful page removes its
+   own rows from ``POPULATION_HAVING_SQL``, so ``OFFSET cursor + examined``
+   stepped over exactly as many untouched markets as it had just repaired. A
+   100-row model produced page 1 = 1–40, page 2 at offset 40 = 81–100,
+   ``exhausted: true``, rows 41–80 never examined. The cursor now names the
+   position ``(resolution_date, market_id)`` the walk REACHED, which is stable
+   under deletion, and the rail scores its own telemetry against the canonical
+   ``repair-cap-cursor-skip`` contract before returning.
+2. **Apply is bound to the dry-run somebody read.** ``apply=true`` no longer
+   re-derives anything: it loads the content-addressed plan artifact the
+   dry-run wrote, refuses unless the operator's ``plan_hash`` matches the
+   artifact's own re-derived address, and writes ONLY the leg ids that plan
+   names. No work SQL, no venue call, no classification at apply time.
+3. **Both write forms are compare-and-set.** The restore carried no guard, so a
+   concurrent grader replacing ``api_settlement`` between the read and the write
+   would have been overwritten by a stale ``api_settlement``. Every statement
+   now carries the EXACT prior ``(is_winner, resolution_source)`` the dry-run
+   read, and a rowcount of zero is a named ``concurrent_drift`` that reports and
+   skips — never a silent overwrite and never a silent success.
+4. **The calibration invalidation is EXECUTED, not declared in prose.** See
+   :func:`invalidate_calibration_generation`. A run that wrote rows and could not
+   invalidate returns ``success: false``.
+
+The fifth finding is answered in ``app/utils/kalshi_fabricated_loss.py``: the
+venue-to-stored-leg join now lives in :func:`~app.utils.kalshi_fabricated_loss.plan_market_legs`,
+which is the path production takes AND the path the specimen replay enters
+through — there is no second mapping written in the test file.
 
 RULING 054 — the exclusions are COUNTED, not skipped. Every market this rail
 cannot repair leaves with a named verdict and a number: ``provably_purged``
@@ -53,13 +87,27 @@ from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
     RETENTION_BAND_SQL,
     RETRACTION_SOURCE,
-    classify_leg,
+    WRITING_VERDICTS,
     classify_market,
+    plan_market_legs,
 )
 from app.utils.kalshi_retention import (
     AT_RISK_AGE_DAYS,
     MEASURED_ON,
     PROVABLY_PURGED_AGE_DAYS,
+)
+from app.utils.repair_apply_plan import (
+    APPLY_PLAN_SCHEMA,
+    REASON_CONCURRENT_DRIFT,
+    REASON_OUTSIDE_APPROVED,
+    PlannedLeg,
+    approved_leg_index,
+    bind_apply,
+    build_plan,
+    decode_plan,
+    evaluate_repair_contract,
+    keyset_after,
+    mutations_outside_approved,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +129,22 @@ _MAX_SECONDS = 25.0
 #: the read-only rail (EXPLAIN ANALYZE): the census plan ran 10.8s over 3,354,623
 #: outcome rows, and the work selection shares its scan. The budgets are those
 #: numbers plus headroom, and an expiry returns a verdict rather than a 500.
+#:
+#: RE-MEASURED 2026-08-14 ~19:5x UTC on the KEYSET form, and the number MOVED —
+#: recorded rather than smoothed over, because a stale measured claim in
+#: shipping code is the thing this rail keeps catching in other people's work.
+#: Four executions of the exact shipping string (`explain+analyze`, so it really
+#: ran), 6,816 rows in the population subquery, LIMIT 5:
+#:
+#:     cold  17.99s   ·   17.57s        warm  5.03s   ·   5.72s
+#:     plus ONE contended run that exceeded the 25s ceiling entirely
+#:
+#: So a COLD first page sits within ~0.1s of ``_SELECT_TIMEOUT_MS`` and can trip
+#: it. That is left as-is on purpose. Raising the budget past the web dyno's 30s
+#: HTTP wall converts an honest ``measured: false`` — which arrives WITH the
+#: ``?sport=`` shard hint the operator needs — into a dead request that says
+#: nothing. The keyset did not cause this: it removed an OFFSET, which only ever
+#: made the sort more expensive. An attended drain should expect to shard.
 _CENSUS_TIMEOUT_MS = 22_000
 _SELECT_TIMEOUT_MS = 18_000
 
@@ -88,6 +152,68 @@ _SELECT_TIMEOUT_MS = 18_000
 #: affected event (a PGA round-leader field) carried 152.
 _VENUE_PAGE = 1000
 _VENUE_MAX_PAGES = 3
+
+#: Durable identity of the reviewed plan artifact. ONE slot: a dry-run
+#: overwrites it, and the content address is what stops an operator applying the
+#: page they read two pages ago.
+PLAN_IDENTITY = "calibration:repair:kalshi_fabricated_loss:plan"
+
+
+def declared_curve_movement(
+    *, winners_restored: int, losses_retracted: int
+) -> dict[str, Any]:
+    """Ruling 050's armed control, in the direction CAL-P057 MEASURED.
+
+    An armed control is a prediction made BEFORE the write, stated precisely
+    enough that being wrong is visible. The rail's own docstring used to predict
+    the wrong sign, so the numbers replace it:
+
+    **The retraction arm moves the published curve by ZERO.** This rail's
+    population is the same predicate as the curve's own ``no_winner_markets``
+    exclusion (a resolved market with ``n_outcomes >= 2`` and ``win_count = 0``),
+    and CAL-P057 measured the whole 0–86 day work band in 15 shards with none
+    skipped: **2,887 of 2,887 target markets — 100%, 18,688 legs — are already
+    excluded.** A row that is not on the curve cannot be removed from it.
+
+    **The movement, if any, is an ADDITION.** A ``restore_winner`` flips
+    ``win_count`` 0 → 1, the market LEAVES ``no_winner_markets``, and its whole
+    surviving leg set is ADMITTED. So the predicted sign is **positive n**, and
+    the magnitude to declare is the count of admitted legs, never retracted ones.
+
+    **A curve that moves on the retraction arm is a HALT, not a success.** It
+    would mean the population predicate and the exclusion predicate have drifted
+    apart, which invalidates the reason this repair was safe to run at all.
+    """
+    return {
+        "ruling": "050 — armed control, declared BEFORE the recompute",
+        "retraction_arm": {
+            "legs_retracted": losses_retracted,
+            "predicted_curve_delta": 0,
+            "why": (
+                "the rail's population IS the curve's own no_winner_markets "
+                "exclusion — measured 2,887/2,887 markets (100%), 18,688 legs, "
+                "already excluded (CAL-P057, 15 shards, none skipped)"
+            ),
+            "if_it_moves": (
+                "HALT. A non-zero delta on this arm means the population and "
+                "exclusion predicates have drifted apart, which is the premise "
+                "the repair's safety rests on."
+            ),
+        },
+        "restore_arm": {
+            "winners_restored": winners_restored,
+            "predicted_sign": "positive — an ADDITION, not a subtraction",
+            "why": (
+                "win_count 0 -> 1 makes the market leave no_winner_markets, "
+                "ADMITTING its whole surviving leg set to the curve"
+            ),
+            "declare": "the count of admitted legs, never the retracted ones",
+        },
+        "measure_after": (
+            "recompute, then compare the published curve's n and "
+            "no_winner_filter.excluded against the pre-apply census"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +342,19 @@ async def census(session, apply: bool = False) -> dict[str, Any]:
 #: exactly the population the venue can still answer for, and it reaches the
 #: at-risk band before the cliff does.
 #:
+#: CAL-P058 REPLACED THE OFFSET WITH A KEYSET, and the reason is that this rail
+#: DELETES FROM ITS OWN POPULATION. A repaired market stops satisfying
+#: ``POPULATION_HAVING_SQL`` — that is the whole point of repairing it — so
+#: ``OFFSET n`` on the next call counts n rows into a result set that is now n
+#: rows shorter, and steps over exactly the markets it just failed to reach.
+#: C-CERT-1852 modelled it at 100 rows: page 1 = 1–40, page 2 at offset 40 =
+#: 81–100, ``exhausted: true``, and rows 41–80 never examined by anything. The
+#: keyset predicate names a POSITION in the sort order instead of a COUNT of
+#: rows behind it, and a position is invariant under deletion. It also composes
+#: with the wall-clock stop: the cursor is the last row EXAMINED, not the last
+#: row returned, so a page that ran out of budget resumes inside its own page
+#: rather than past it.
+#:
 #: ⚠️ CAL-P057 MEASURED A THIRD ORDERING TRAP IN THIS SAME ``ORDER BY``, and it is
 #: gotcha #41's own closing line — "ordering is never the whole answer; ask what
 #: the ordering starts on." Oldest-first-within-a-floor is correct for the PAST.
@@ -244,6 +383,7 @@ _WORK_SQL = f"""
            fm.mutually_exclusive AS mutex,
            fm.llm_sport_category AS sport,
            fm.status AS our_status,
+           fm.resolution_date AS resolution_date,
            EXTRACT(EPOCH FROM (NOW() - fm.resolution_date)) / 86400.0 AS age_days
     FROM (
       SELECT fo.market_id,
@@ -257,8 +397,13 @@ _WORK_SQL = f"""
       AND fm.resolution_date IS NOT NULL
       AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
       AND (:sport IS NULL OR fm.llm_sport_category = :sport)
+      AND (
+            CAST(:after_date AS timestamptz) IS NULL
+         OR (fm.resolution_date, fm.id)
+              > (CAST(:after_date AS timestamptz), CAST(:after_id AS bigint))
+          )
     ORDER BY fm.resolution_date ASC, fm.id ASC
-    LIMIT :lim OFFSET :off
+    LIMIT :lim
 """
 
 
@@ -300,24 +445,296 @@ async def _fetch_venue(service, event_ticker: str) -> tuple[list[dict] | None, s
         status = getattr(getattr(e, "response", None), "status_code", None)
         return None, f"lookup_failed:{status or type(e).__name__}"
 
+# ---------------------------------------------------------------------------
+# The reviewed-plan artifact (C-CERT-1852 finding 2)
+# ---------------------------------------------------------------------------
+
+
+async def _save_plan(plan) -> tuple[bool, str]:
+    """Persist the dry-run's plan. ``(ok, note)`` — a failure is REPORTED.
+
+    On the durable snapshot rail rather than Redis, deliberately: the sentinel
+    evidence lesson (a 14-day SETEX on a 49.5/50 MB allkeys-lru instance is
+    evicted, and the swallowed write failure let a run record evidence that no
+    longer existed). An operator who cannot be handed a plan hash must be told
+    so, because the next thing they will do is try to apply.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=PLAN_IDENTITY,
+                schema_version=APPLY_PLAN_SCHEMA,
+                payload=plan.as_payload(),
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        return False, f"plan persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"plan persist rejected: {result.get('status')}"
+
+
+async def _load_plan():
+    """``(plan, reason)`` — the artifact, re-digested from its own content."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            PLAN_IDENTITY, expected_version=APPLY_PLAN_SCHEMA, max_age_s=14 * 86400
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"plan read raised: {type(exc).__name__}"
+    if not read.ok or read.envelope is None:
+        return None, f"plan artifact unreadable: {read.status}"
+    return decode_plan(read.envelope.payload)
+
+
+# ---------------------------------------------------------------------------
+# Executable calibration invalidation (C-CERT-1852 finding 4)
+# ---------------------------------------------------------------------------
+
+
+async def invalidate_calibration_generation(session, market_ids) -> dict[str, Any]:
+    """Discard every banked calibration unit, and PROVE it. Not a docstring.
+
+    C-CERT-1852's fourth finding was that the branch's precondition — "someone
+    must answer whether banked calibration units invalidate on this" — supplied
+    no command, no expected value, no refusal condition and no endpoint gate.
+    CAL-P057 then measured the answer, and the answer makes the gap worse rather
+    than better: the generation fingerprint digests
+    ``(market_id, source, vm_id, is_grouped)``, every field of which comes from
+    ``market_info``/``virtual_market``, sized by ``group_sizes``/``event_sizes``
+    which **count markets, not outcomes**. The roster never reads
+    ``futures_outcomes`` at all, so a repair that writes only to
+    ``futures_outcomes`` is **structurally invisible** to the one mechanism that
+    invalidates banked units. Units banked before the repair would resume beside
+    units computed after it, under one generation, and nothing would notice.
+
+    So this is the declaration, executed.
+
+    **IT IS WHOLESALE, AND THAT IS FORCED — twice over, both measured.**
+
+    1. *Per-unit invalidation is not expressible on this cursor.* CAL-P034
+       replaced the cursor's per-unit rows with a single running ``accumulator``
+       fold (~1,650 rows instead of ~62,300). A unit's contribution has already
+       been summed in and cannot be subtracted, so dropping one key from
+       ``committed_units`` while keeping the accumulator would DOUBLE-COUNT that
+       unit when it re-runs. "Invalidate unit K" has no correct implementation
+       here; "invalidate everything" does.
+    2. *Resolving the affected ``vm_id`` in-request is not affordable.* The
+       ``vm_id`` of a market depends on its group's and event's cardinality
+       across the whole eligible population, so it cannot be looked up for 40
+       ids in isolation — a filtered roster would compute a group size over the
+       filter and return a WRONG ``vm_id``. The canonical unfiltered roster read
+       (``_futures_generation_sql``) was measured against production on
+       2026-08-14 through the read-only rail: it **exceeded the 10 s statement
+       timeout**, inside a request that already budgets 25 s. An approximated
+       ``vm_id`` in a report is the invented-fact class this program exists to
+       stop, so the tuples are reported as ``(market_id, source)`` with the
+       ``vm_id`` named unresolved and the reason attached.
+
+    Discarding the superset is strictly safer than discarding a subset, and the
+    cost is bounded: the staged build re-banks its units on the following beats.
+
+    Returns a verdict dict. ``status`` is ``invalidated`` ONLY when the re-read
+    proves the cursor is empty — the after-read discipline, because a mutation
+    that fails to apply reports green.
+    """
+    from app.tasks.calibration_main_build import (
+        CHECKPOINT_IDENTITY,
+        MAIN_CHECKPOINT_SCHEMA,
+        STAGED_FUTURES_IDENTITY,
+        save_staged_cursor,
+    )
+    from app.utils.calibration_staged_futures import (
+        STAGED_FUTURES_SCHEMA,
+        new_staged_cursor,
+    )
+
+    ids = sorted({int(i) for i in market_ids})
+    verdict: dict[str, Any] = {
+        "status": "not_run",
+        "mechanism": "discard staged-futures cursor + main build checkpoint",
+        "scope": "WHOLESALE — a superset of the affected units, by necessity",
+        "why_not_per_unit": (
+            "CAL-P034 folds every banked unit into one accumulator (a unit's "
+            "contribution cannot be subtracted), and the canonical roster read "
+            "that resolves vm_id exceeded the 10s statement timeout in "
+            "production on 2026-08-14."
+        ),
+        "affected_markets": [],
+        "vm_id": "not resolved in-request (see why_not_per_unit)",
+    }
+    if not ids:
+        verdict["status"] = "nothing_written"
+        return verdict
+
+    # The (market_id, source) half of the tuple IS cheap and IS exact.
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, source FROM futures_markets WHERE id = ANY(:ids)"
+                ),
+                {"ids": ids},
+            )
+        ).all()
+        verdict["affected_markets"] = [
+            {"market_id": r.id, "source": r.source} for r in rows
+        ]
+    except Exception as exc:  # noqa: BLE001 — provenance, never the gate
+        verdict["affected_markets_error"] = f"{type(exc).__name__}"
+
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    async def _banked() -> int | None:
+        try:
+            read = await read_snapshot_standalone(
+                STAGED_FUTURES_IDENTITY,
+                expected_version=STAGED_FUTURES_SCHEMA,
+                max_age_s=14 * 86400,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if not read.ok or read.envelope is None:
+            return 0 if read.status == "missing" else None
+        units = (read.envelope.payload or {}).get("committed_units")
+        return len(units) if isinstance(units, list) else None
+
+    before = await _banked()
+    verdict["banked_units_before"] = before
+
+    blank = new_staged_cursor(
+        population_version="",
+        input_fingerprint="",
+        generation_fingerprint="",
+        owner="repair:kalshi-fabricated-loss",
+        generation=0,
+    )
+    staged_ok = await save_staged_cursor(blank, terminal="invalidated")
+    verdict["staged_cursor_write_ok"] = staged_ok
+
+    # The main checkpoint banks whole PHASES, and the futures phase's output is
+    # built from futures_outcomes too. Clearing the unit cursor while leaving a
+    # banked phase output behind would invalidate the finer state and resume the
+    # coarser one — the same mixed generation, one level up.
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.tasks.calibration_main_build import new_main_checkpoint
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        blank_main = new_main_checkpoint(
+            version="", fingerprint="", owner="repair:kalshi-fabricated-loss",
+            generation=0,
+        )
+        payload = blank_main.as_payload()
+        payload["terminal"] = "invalidated"
+        res = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=CHECKPOINT_IDENTITY,
+                schema_version=MAIN_CHECKPOINT_SCHEMA,
+                payload=payload,
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            )
+        )
+        checkpoint_ok = res.get("status") in ("ok", "superseded")
+    except Exception as exc:  # noqa: BLE001
+        checkpoint_ok = False
+        verdict["checkpoint_error"] = f"{type(exc).__name__}"
+    verdict["main_checkpoint_write_ok"] = checkpoint_ok
+
+    after = await _banked()
+    verdict["banked_units_after"] = after
+    verdict["banked_units_discarded"] = (
+        before - after if isinstance(before, int) and isinstance(after, int) else None
+    )
+
+    if staged_ok and checkpoint_ok and after == 0:
+        verdict["status"] = "invalidated"
+    else:
+        verdict["status"] = "failed"
+        verdict["note"] = (
+            "The write did not prove itself on re-read. The rows ARE repaired; "
+            "the published curve may still resume banked pre-repair units. Do "
+            "not run another page until this is cleared."
+        )
+    return verdict
+
+
+# ---------------------------------------------------------------------------
+# Repair
+# ---------------------------------------------------------------------------
+
 
 async def repair(
     session,
     apply: bool = False,
     limit: int | None = None,
     offset: int | None = None,
+    after_id: int | None = None,
+    after_date: str | None = None,
     sport: str | None = None,
+    plan_hash: str | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
 
-    Dry-run by default. See the module docstring for the contract and
+    Two halves, and they no longer share a derivation:
+
+    * ``apply=false`` walks one KEYSET page of the population, asks the venue,
+      judges per leg through the shipping mapper, and emits a content-addressed
+      plan. It writes nothing to ``futures_outcomes``.
+    * ``apply=true`` writes ONLY what that plan named, under compare-and-set on
+      the exact prior row state the plan recorded, and then invalidates the
+      calibration generation. It never re-selects, never re-asks the venue and
+      never re-classifies.
+
+    See the module docstring for the contract and
     ``app/utils/kalshi_fabricated_loss.py`` for the judgment.
     """
+    started = time.monotonic()
+
+    if offset is not None:
+        # Named refusal rather than a silent ignore: an operator draining this
+        # rail with the old parameter would otherwise re-read page one forever
+        # and call it exhausted.
+        return {
+            "measured": False,
+            "refused": "OFFSET_CURSOR_RETIRED",
+            "reason": (
+                "?offset= is gone (C-CERT-1852 finding 1): this rail deletes "
+                "from its own population, so an offset skips as many untouched "
+                "markets as the previous page repaired. Drain with "
+                "?after_date=&after_id= from the previous call's next_cursor."
+            ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    if apply:
+        return await _apply_reviewed_plan(session, plan_hash, started)
+
+    return await _dry_run(session, limit, after_id, after_date, sport, started)
+
+
+async def _dry_run(session, limit, after_id, after_date, sport, started):
+    """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
 
-    started = time.monotonic()
     window = min(int(limit or APPLY_MARKET_CAP), APPLY_MARKET_CAP)
-    cursor = max(int(offset or 0), 0)
+    if (after_id is None) != (after_date is None):
+        return {
+            "measured": False,
+            "refused": "PARTIAL_CURSOR",
+            "reason": (
+                "after_date and after_id are ONE position and must be passed "
+                "together — half a keyset is a different walk, not a resume."
+            ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
 
     try:
         await session.execute(
@@ -325,7 +742,13 @@ async def repair(
         )
         rows = (
             await session.execute(
-                text(_WORK_SQL), {"lim": window, "off": cursor, "sport": sport}
+                text(_WORK_SQL),
+                {
+                    "lim": window,
+                    "sport": sport,
+                    "after_date": after_date,
+                    "after_id": after_id,
+                },
             )
         ).all()
     except Exception as e:  # noqa: BLE001
@@ -345,13 +768,12 @@ async def repair(
     market_verdicts: dict[str, int] = {}
     leg_verdicts: dict[str, int] = {}
     examined = 0
-    markets_written = 0
-    winners_restored = 0
-    losses_retracted = 0
     timed_out = False
     excluded: dict[str, int] = {}
     samples: list[dict[str, Any]] = []
     mismatch_samples: list[dict[str, Any]] = []
+    planned_legs: list[PlannedLeg] = []
+    planned_markets: set[int] = set()
 
     def _bump(d: dict[str, int], k: str, n: int = 1) -> None:
         d[k] = d.get(k, 0) + n
@@ -361,6 +783,12 @@ async def repair(
         for row in rows:
             if time.monotonic() - started > _MAX_SECONDS:
                 timed_out = True
+                break
+            if len(planned_markets) >= APPLY_MARKET_CAP:
+                # The plan is what the apply will execute, so the cap belongs
+                # HERE — capping at write time would emit a plan larger than any
+                # apply could honour, and the operator would review a set the
+                # rail had already decided to truncate.
                 break
             examined += 1
 
@@ -385,100 +813,221 @@ async def repair(
                     )
                 continue
 
-            by_ticker = {m.get("ticker"): m for m in (venue_markets or [])}
             legs = await _legs(session, row.market_id)
+            judged = plan_market_legs(legs, venue_markets)
 
-            planned: list[tuple[int, str]] = []
-            for leg in legs:
-                vm = by_ticker.get(leg.external_id)
-                leg_verdict = classify_leg(
-                    bool(leg.is_winner),
-                    leg.resolution_source,
-                    (vm or {}).get("status"),
-                    (vm or {}).get("result"),
-                    present_at_venue=vm is not None,
-                )
-                _bump(leg_verdicts, leg_verdict)
-                if leg_verdict == "not_at_venue" and len(mismatch_samples) < 12:
+            for item in judged:
+                _bump(leg_verdicts, item["verdict"])
+                if item["verdict"] == "not_at_venue" and len(mismatch_samples) < 12:
                     # Mechanism 2. Recorded so it stops being a sample nobody
                     # reads, and deliberately never written.
                     mismatch_samples.append(
                         {
                             "market_id": row.market_id,
                             "event_ticker": row.event_ticker,
-                            "our_ticker": leg.external_id,
-                            "venue_tickers_sample": sorted(by_ticker)[:3],
-                            "venue_legs": len(by_ticker),
+                            "our_ticker": item["external_id"],
+                            "venue_legs": len(venue_markets or []),
                         }
                     )
-                if leg_verdict in ("restore_winner", "retract_fabricated"):
-                    planned.append((leg.id, leg_verdict))
-
-            if not planned:
-                continue
-
-            if not apply:
-                markets_written += 1
-                winners_restored += sum(
-                    1 for _, v in planned if v == "restore_winner"
-                )
-                losses_retracted += sum(
-                    1 for _, v in planned if v == "retract_fabricated"
-                )
-                continue
-
-            if markets_written >= APPLY_MARKET_CAP:
-                break
-
-            for leg_id, leg_verdict in planned:
-                if leg_verdict == "restore_winner":
-                    r = await session.execute(
-                        text(
-                            """
-                            UPDATE futures_outcomes
-                            SET is_winner = true,
-                                resolution_source = 'api_settlement',
-                                last_updated = NOW()
-                            WHERE id = :id AND NOT is_winner
-                            """
-                        ),
-                        {"id": leg_id},
+                if item["verdict"] in WRITING_VERDICTS:
+                    planned_legs.append(
+                        PlannedLeg(
+                            leg_id=item["leg_id"],
+                            market_id=row.market_id,
+                            verdict=item["verdict"],
+                            expected_is_winner=item["prior_is_winner"],
+                            expected_source=item["prior_source"],
+                            external_id=item["external_id"],
+                        )
                     )
-                    winners_restored += r.rowcount
-                else:
-                    # The one permitted authority downgrade, and it is guarded to
-                    # the exact badge being retracted: if a concurrent grader has
-                    # already replaced api_settlement with a real result, this is
-                    # a no-op rather than a clobber.
-                    r = await session.execute(
-                        text(
-                            """
-                            UPDATE futures_outcomes
-                            SET resolution_source = :retraction,
-                                last_updated = NOW()
-                            WHERE id = :id
-                              AND resolution_source = 'api_settlement'
-                              AND NOT is_winner
-                            """
-                        ),
-                        {"id": leg_id, "retraction": RETRACTION_SOURCE},
-                    )
-                    losses_retracted += r.rowcount
-            markets_written += 1
+                    planned_markets.add(row.market_id)
     finally:
         try:
             await service.close()
         except Exception:  # noqa: BLE001
             pass
 
-    if apply and markets_written:
+    cursor = keyset_after(rows, examined)
+    plan = build_plan(
+        planned_legs,
+        context={
+            "rail": "kalshi-fabricated-loss",
+            "sport": sport,
+            "window": window,
+            "resumed_from": {"after_date": after_date, "after_id": after_id},
+            "next_cursor": cursor,
+            "examined": examined,
+        },
+    )
+    plan_ok, plan_note = await _save_plan(plan)
+
+    contract = evaluate_repair_contract(
+        candidate_ids=[r.market_id for r in rows],
+        processed_ids=[r.market_id for r in rows[:examined]],
+        approved_ids=plan.market_ids,
+        mutated_ids=[],
+        dry_run_ids=None,
+        next_cursor=(cursor or {}).get("after_id"),
+    )
+
+    return {
+        "apply": False,
+        "window": {
+            "limit": window,
+            "returned": len(rows),
+            "sport": sport,
+            "resumed_from": {"after_date": after_date, "after_id": after_id},
+        },
+        "examined": examined,
+        "market_verdicts": market_verdicts,
+        "leg_verdicts": leg_verdicts,
+        "markets_would_write": len(plan.market_ids),
+        "winners_would_restore": plan.verdict_counts().get("restore_winner", 0),
+        "losses_would_retract": plan.verdict_counts().get("retract_fabricated", 0),
+        # Ruling 054: an exclusion is a number with a name, never a silent skip.
+        "declared_exclusions": excluded,
+        "excluded_examples": samples,
+        "ticker_mismatch_examples": mismatch_samples,
+        # C-CERT-1852 finding 2. THIS is what an apply must present.
+        "plan_hash": plan.plan_hash if plan_ok else None,
+        "plan_persisted": plan_ok,
+        "plan_note": plan_note,
+        "plan_leg_ids": list(plan.leg_ids),
+        "plan_market_ids": list(plan.market_ids),
+        "apply_instruction": (
+            f"POST …/kalshi-fabricated-loss?apply=true&plan_hash={plan.plan_hash}"
+            if plan_ok
+            else "NO PLAN PERSISTED — apply is impossible until a dry-run banks one."
+        ),
+        # Ruling 050: the operator reads the armed control as part of the plan
+        # they are approving, not afterwards in a report.
+        "declared_curve_movement": declared_curve_movement(
+            winners_restored=plan.verdict_counts().get("restore_winner", 0),
+            losses_retracted=plan.verdict_counts().get("retract_fabricated", 0),
+        ),
+        "next_cursor": cursor,
+        "exhausted": (not timed_out) and len(rows) < window,
+        "stopped_on_time_budget": timed_out,
+        "cursor_contract": contract,
+        "elapsed_s": round(time.monotonic() - started, 1),
+        "apply_market_cap": APPLY_MARKET_CAP,
+        "retraction_source": RETRACTION_SOURCE,
+        "prices_touched": False,
+        "success": contract["action"] != "REFUSE" and plan_ok,
+    }
+
+
+async def _apply_reviewed_plan(session, plan_hash, started):
+    """Execute the reviewed plan, and NOTHING else. Compare-and-set throughout."""
+    plan, reason = await _load_plan()
+    ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
+    if not ok:
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": refusals,
+            "decode_reason": reason,
+            "presented_plan_hash": plan_hash,
+            "artifact_plan_hash": plan.plan_hash if plan is not None else None,
+            "reason": (
+                "An apply is bound to the dry-run an operator actually read "
+                "(C-CERT-1852 finding 2). Run ?apply=false, read the plan, then "
+                "pass its plan_hash back."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    index = approved_leg_index(plan)
+    written: list[int] = []
+    drift: list[dict[str, Any]] = []
+    winners_restored = 0
+    losses_retracted = 0
+
+    for leg_id in plan.leg_ids:
+        item = index[leg_id]
+        if item.verdict == "restore_winner":
+            # C-CERT-1852 finding 3. The retraction below always carried an
+            # exact-source guard; the restore carried only `NOT is_winner`, so a
+            # concurrent grader replacing api_settlement with a real result
+            # between the plan and the write would have been overwritten by a
+            # stale api_settlement. Both forms now compare on the EXACT prior
+            # (is_winner, resolution_source) the plan recorded.
+            stmt = """
+                UPDATE futures_outcomes
+                SET is_winner = true,
+                    resolution_source = 'api_settlement',
+                    last_updated = NOW()
+                WHERE id = :id
+                  AND is_winner = :prior_winner
+                  AND resolution_source IS NOT DISTINCT FROM :prior_source
+            """
+            params = {
+                "id": leg_id,
+                "prior_winner": item.expected_is_winner,
+                "prior_source": item.expected_source,
+            }
+        else:
+            stmt = """
+                UPDATE futures_outcomes
+                SET resolution_source = :retraction,
+                    last_updated = NOW()
+                WHERE id = :id
+                  AND is_winner = :prior_winner
+                  AND resolution_source IS NOT DISTINCT FROM :prior_source
+            """
+            params = {
+                "id": leg_id,
+                "retraction": RETRACTION_SOURCE,
+                "prior_winner": item.expected_is_winner,
+                "prior_source": item.expected_source,
+            }
+
+        r = await session.execute(text(stmt), params)
+        if r.rowcount == 1:
+            written.append(leg_id)
+            if item.verdict == "restore_winner":
+                winners_restored += 1
+            else:
+                losses_retracted += 1
+        else:
+            # Rowcount zero is NOT a no-op to shrug at: the row moved under the
+            # plan. Report it by id and skip it — never widen the predicate,
+            # never retry without a fresh plan.
+            drift.append(
+                {
+                    "leg_id": leg_id,
+                    "market_id": item.market_id,
+                    "verdict": item.verdict,
+                    "expected_is_winner": item.expected_is_winner,
+                    "expected_source": item.expected_source,
+                    "rows_affected": r.rowcount,
+                    "reason": REASON_CONCURRENT_DRIFT,
+                }
+            )
+
+    stray = mutations_outside_approved(plan, written)
+    if stray:
+        # Cannot happen while the loop iterates plan.leg_ids — asserted anyway,
+        # because "cannot happen" is what every check-then-act bug said first.
+        await session.rollback()
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": [REASON_OUTSIDE_APPROVED],
+            "stray_leg_ids": stray,
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    if written:
         await session.commit()
 
+    # Re-READ rather than trust the rowcounts: a mutation that fails to apply
+    # reports green, so the proof is the database's own answer.
     after = None
-    if apply and rows:
-        # Re-READ the rows rather than trusting the rowcounts: a mutation that
-        # fails to apply reports green, so the proof is the database's answer.
-        after = (
+    if written:
+        row = (
             await session.execute(
                 text(
                     """
@@ -489,42 +1038,71 @@ async def repair(
                     WHERE market_id = ANY(:ids)
                     """
                 ),
-                {
-                    "retraction": RETRACTION_SOURCE,
-                    "ids": [r.market_id for r in rows],
-                },
+                {"retraction": RETRACTION_SOURCE, "ids": list(plan.market_ids)},
             )
         ).one()
         after = {
-            "retracted_now": after.retracted_now,
-            "winners_now": after.winners_now,
-            "scope": "the markets in THIS window only",
+            "retracted_now": row.retracted_now,
+            "winners_now": row.winners_now,
+            "scope": "the markets in THIS plan only",
         }
 
+    invalidation = await invalidate_calibration_generation(
+        session, {index[i].market_id for i in written}
+    )
+
+    # Every planned leg must have been ATTEMPTED — that is the identity the
+    # binding buys, and it is a different claim from "every planned leg was
+    # written". A leg the row moved under is attempted, reported and skipped;
+    # a leg silently dropped from the loop would be neither, and only this
+    # equality can tell the two apart.
+    attempted = sorted(written + [d["leg_id"] for d in drift])
+    attempted_equals_plan = attempted == list(plan.leg_ids)
+    contract = evaluate_repair_contract(
+        candidate_ids=list(plan.leg_ids),
+        processed_ids=attempted,
+        approved_ids=list(plan.leg_ids),
+        mutated_ids=written,
+        dry_run_ids=None,
+        next_cursor=None,
+    )
+
+    invalidation_ok = invalidation["status"] in ("invalidated", "nothing_written")
     return {
-        "apply": apply,
-        "window": {
-            "limit": window,
-            "offset": cursor,
-            "returned": len(rows),
-            "sport": sport,
-        },
-        "examined": examined,
-        "market_verdicts": market_verdicts,
-        "leg_verdicts": leg_verdicts,
-        "markets_written" if apply else "markets_would_write": markets_written,
-        "winners_restored" if apply else "winners_would_restore": winners_restored,
-        "losses_retracted" if apply else "losses_would_retract": losses_retracted,
-        # Ruling 054: an exclusion is a number with a name, never a silent skip.
-        "declared_exclusions": excluded,
-        "excluded_examples": samples,
-        "ticker_mismatch_examples": mismatch_samples,
+        "apply": True,
+        "measured": True,
+        "plan_hash": plan.plan_hash,
+        "plan_leg_count": len(plan.leg_ids),
+        "markets_written": len({index[i].market_id for i in written}),
+        "legs_written": len(written),
+        "winners_restored": winners_restored,
+        "losses_retracted": losses_retracted,
+        "concurrent_drift": drift,
+        "concurrent_drift_count": len(drift),
         "after_reread": after,
-        "next_offset": cursor + examined,
-        "exhausted": (not timed_out) and len(rows) < window,
-        "stopped_on_time_budget": timed_out,
-        "elapsed_s": round(time.monotonic() - started, 1),
-        "apply_market_cap": APPLY_MARKET_CAP,
+        # C-CERT-1852 finding 4: executed, counted, and it GATES success.
+        "calibration_invalidation": invalidation,
+        "invalidated_units": invalidation.get("banked_units_discarded"),
+        # Ruling 050: the prediction travels WITH the write, in the direction
+        # CAL-P057 measured — zero on the retraction arm, an ADDITION on restore.
+        "declared_curve_movement": declared_curve_movement(
+            winners_restored=winners_restored, losses_retracted=losses_retracted
+        ),
+        "cursor_contract": contract,
+        "attempted_leg_ids_equal_plan": attempted_equals_plan,
         "retraction_source": RETRACTION_SOURCE,
         "prices_touched": False,
+        "apply_market_cap": APPLY_MARKET_CAP,
+        "next_cursor": (plan.context or {}).get("next_cursor"),
+        "success": (
+            invalidation_ok
+            and attempted_equals_plan
+            and contract["action"] != "REFUSE"
+        ),
+        "success_note": (
+            "success is FALSE unless the calibration invalidation executed and "
+            "proved itself on re-read. Rows may be repaired while success is "
+            "false; that is the honest state, not a contradiction."
+        ),
+        "elapsed_s": round(time.monotonic() - started, 1),
     }

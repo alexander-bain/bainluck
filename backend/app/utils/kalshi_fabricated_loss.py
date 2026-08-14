@@ -96,16 +96,25 @@ invalidate on an apply. Three measurements, not a judgment call:
    text is the UNEXPANDED f-string, and a data change moves no source at all.
 
 **Conclusion: nothing invalidates banked units on an apply pass.** That is the
-first arm of ruling 2, so the affected cohorts are DECLARED invalidated by the
-operator and counted by the sentinel; they will not invalidate themselves. The
-apply pass must either run against a drained cursor or declare its window.
+first arm of ruling 2 — the operator declares — and CAL-P058 makes the
+declaration EXECUTABLE rather than prose, because C-CERT-1852's fourth finding
+is precisely that "someone must answer" supplies no command, no expected value,
+no refusal condition and no gate. See
+:func:`app.tasks.repair_kalshi_fabricated_loss.invalidate_calibration_generation`:
+the apply rail's final step discards the banked state, re-reads to prove it, and
+the run returns ``success: false`` if it cannot. The invalidation is WHOLESALE
+and that is forced, not lazy — CAL-P034 folds every banked unit into one
+accumulator, so a single unit's contribution cannot be subtracted, and the
+canonical roster read that would resolve the affected ``vm_id`` exceeded the
+10 s statement timeout in production. Both reasons are recorded in that
+function's docstring and in its return value.
 
 Pure module: no DB, no network. Safe to import from tasks and tests alike.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from app.utils import kalshi_market_status as kms
 from app.utils.kalshi_retention import AT_RISK_AGE_DAYS, PROVABLY_PURGED_AGE_DAYS
@@ -194,6 +203,70 @@ def classify_leg(
     if declared:
         return "already_winner" if our_is_winner else "restore_winner"
     return "confirmed_loss"
+
+
+def map_venue_by_ticker(venue_markets: list[dict] | None) -> dict[Any, dict]:
+    """The venue's markets, keyed by their EXACT ticker. Pure.
+
+    Extracted from the task in CAL-P058 because C-CERT-1852's fifth finding is
+    that the committed "live replay" never crossed this line: the fixture test
+    classified each venue row directly, so replacing
+    ``by_ticker.get(leg.external_id)`` with "the first venue record" — a mapper
+    that applies one venue leg to every stored leg — left every specimen
+    assertion green. The join is the part most able to be wrong and was the one
+    part no test executed.
+
+    It is trivial, and that is the point: the test must enter through THIS
+    function, not through a second copy of it written in the test file.
+    """
+    return {m.get("ticker"): m for m in (venue_markets or [])}
+
+
+def plan_market_legs(
+    stored_legs: Iterable[Any],
+    venue_markets: list[dict] | None,
+) -> list[dict[str, Any]]:
+    """Judge one market's stored legs against the venue. THE production path.
+
+    ``stored_legs`` is any iterable of objects carrying ``id``, ``external_id``,
+    ``is_winner`` and ``resolution_source`` — a DB row, or a fixture row shaped
+    like one. Returns one record per stored leg::
+
+        {"leg_id", "external_id", "verdict", "prior_is_winner",
+         "prior_source", "venue_status", "venue_result", "present_at_venue"}
+
+    The prior state travels WITH the verdict on purpose. It is the compare half
+    of the apply's compare-and-set, and re-reading it at write time would be
+    asking the same question twice and trusting the second answer — the
+    stale-read clobber C-CERT-1852 found in the restore path.
+
+    ``repair()`` calls this and nothing else; there is no second mapping in the
+    task. A test that exercises the specimens therefore exercises the shipping
+    join, including the ticker identity, rather than a paraphrase of it.
+    """
+    by_ticker = map_venue_by_ticker(venue_markets)
+    planned: list[dict[str, Any]] = []
+    for leg in stored_legs:
+        vm = by_ticker.get(leg.external_id)
+        planned.append(
+            {
+                "leg_id": leg.id,
+                "external_id": leg.external_id,
+                "verdict": classify_leg(
+                    bool(leg.is_winner),
+                    leg.resolution_source,
+                    (vm or {}).get("status"),
+                    (vm or {}).get("result"),
+                    present_at_venue=vm is not None,
+                ),
+                "prior_is_winner": bool(leg.is_winner),
+                "prior_source": leg.resolution_source,
+                "venue_status": (vm or {}).get("status"),
+                "venue_result": (vm or {}).get("result"),
+                "present_at_venue": vm is not None,
+            }
+        )
+    return planned
 
 
 def classify_market(

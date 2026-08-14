@@ -26,8 +26,17 @@ transactional session and RETURNS its own before/after census in the response bo
      the comment above was decoration.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
-``offset`` / ``expected_blank`` also accept those as query params; the dispatcher
-passes through only what a given repair's signature actually names.
+``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank``
+also accept those as query params; the dispatcher passes through only what a
+given repair's signature actually names.
+
+``after_id`` + ``after_date`` are a KEYSET cursor, added in CAL-P058 because a
+repair that removes rows from its own population cannot be paged with an offset
+— the offset skips as many untouched rows as the last page repaired
+(C-CERT-1852). ``plan_hash`` is the content address of a reviewed dry-run: for a
+repair that declares it, an ``apply=true`` without it is refused, because a
+dispatcher that cannot tell an attended plan from a first-ever call is not a
+gate.
 
 Auth: Bearer $ADMIN_TOKEN (or ?secret=). Dry-run is the default — you must pass
 apply=true to write. Each repair's core is a session-taking ``repair()``/
@@ -163,7 +172,15 @@ _REPAIRS = {
     # NEVER written. Retracting is the one permitted authority downgrade and it
     # is guarded to the exact badge being corrected. Writes no prices. Dry-run by
     # default, capped at APPLY_MARKET_CAP markets per call, bounded by BOTH a row
-    # window and a wall clock. Accepts ?limit=&offset=&sport=.
+    # window and a wall clock.
+    # CAL-P058 (C-CERT-1852): the dry-run emits a content-addressed PLAN and
+    # `apply=true` consumes it — `?plan_hash=` is REQUIRED, nothing is re-derived
+    # at apply time, both write forms are compare-and-set on the exact prior row
+    # state the plan recorded, and the run's final step EXECUTES the calibration
+    # generation invalidation and reports `success: false` if it cannot prove it.
+    # Paging is a keyset: `?after_date=&after_id=` from `next_cursor`; `?offset=`
+    # is refused BY NAME because this rail deletes from its own population.
+    # Accepts ?limit=&sport=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
@@ -182,6 +199,22 @@ async def run_repair(
     sport: str = Query(None, description="Optional sport-key filter, for repairs that accept one"),
     newest_first: bool = Query(None, description="Optional ordering, for repairs that accept it"),
     offset: int = Query(None, description="Optional resume cursor, for repairs that page"),
+    after_id: int = Query(
+        None,
+        description="Keyset resume cursor (id half), for repairs that page over a "
+                    "population their own writes remove rows from. Pass WITH after_date.",
+    ),
+    after_date: str = Query(
+        None,
+        description="Keyset resume cursor (date half). Half a keyset is a different "
+                    "walk, not a resume, so the repair refuses one without the other.",
+    ),
+    plan_hash: str = Query(
+        None,
+        description="Content address of the reviewed dry-run plan, for repairs whose "
+                    "apply is bound to a plan an operator actually read. An apply "
+                    "without it, or with a stale one, is REFUSED.",
+    ),
     expected_blank: int = Query(
         None,
         description="Exact-match census gate, for repairs that require one "
@@ -216,6 +249,8 @@ async def run_repair(
         for k, v in (
             ("limit", limit), ("sport", sport),
             ("newest_first", newest_first), ("offset", offset),
+            ("after_id", after_id), ("after_date", after_date),
+            ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
         )
         if v is not None and k in accepted
