@@ -129,28 +129,65 @@ whenever nothing relevant matched.
 `/search` follows the same order. **[P7, ratified]** query-class vocabularies are
 scoped per registry.
 
-> **`/search` does NOT yet adopt the scorer — still true as of 2026-08-13, and
-> now with a diagnosis attached.** It is scheduled as its own measured change
-> (Alex, 2026-08-13: *same scorer, second surface, one change in flight, its own
-> before/after*), so it is not a gap to close opportunistically inside another
-> queue.
+### `/search` adopts the scorer WITHIN each bucket (LAT-P049, 2026-08-13)
+
+The design step is decided, and this is the record of the decision the previous
+revision of this section demanded be written down rather than inferred from a
+diff.
+
+**`/search` uses the scorer as an ordering function INSIDE each bucket. It does
+not impose a cross-bucket order.** The response contract is unchanged — same
+keys, same caps, same sections — so no consumer migrates and no frontend change
+is implied.
+
+| bucket | wired | why |
+|---|---|---|
+| `event_concepts` | **yes** | unpaginated, caps at 5, and the surface where ruling 041's owned-evidence rule has teeth |
+| `teams` | **yes** | unpaginated, caps at 5, and where the fragment-win family lives (`brito` for `british open`) |
+| `results` | no | game events, ordered live → upcoming → completed. That order is a ruled product decision, not an unranked accident — and it is paginated |
+| `futures`, `futures_families` | no | paginated. Reordering page *N* by relevance is coherent within the page and incoherent across pages, which is worse than the honest FTS order it replaces. Ranking a paginated bucket means ranking it in the SQL: different change, different risk |
+
+A cross-bucket order was considered and rejected on the contract, not on taste:
+`results` and `futures` are paginated, so a single merged ranking cannot be
+computed from one page of each without lying about what page 2 contains.
+
+Two evidence corrections travelled with the wiring, both of them the same
+mistake this spec already records once:
+
+- **`/search` now SELECTs `Team.alternate_names`.** It had always *filtered* on
+  the column and never handed it to whatever ranked the rows — the identical
+  floor-into-a-ceiling error typeahead had.
+- **Concept provenance is computed per row, via `_query_names_concept`**, not
+  set blanket-true the way typeahead sets it.
+
+> ⚠️ **The two surfaces therefore disagree about provenance today, deliberately
+> and temporarily.** Typeahead flags every market-derived concept `_derived`
+> unconditionally, which drops a concept whose OWN NAME IS THE QUERY —
+> `event:cycling:tour-de-france` on the query `tour de france` is dropped from
+> the dropdown right now. That is #1839's shape surviving in the general case
+> after #1839's three named families were fixed.
 >
-> Two things are known about it in advance, both worth having before the design
-> step:
->
-> 1. **It is a design step, not a copy.** `/search` answers in parallel buckets
->    and asserts no cross-bucket order. Whoever wires it must decide and write
->    down which is being built: the scorer WITHIN each bucket, or a cross-bucket
->    order that changes the bucket contract.
-> 2. **It carries the same first-writer-wins concept guard** that produced #1839
->    on typeahead — three call sites, `_detect_query_{golf_major,world_cup,awards}`
->    at `events.py`, each skipping when a member-derived row already claimed the
->    key. The consequence is milder here *only because there is no scorer yet*:
->    the concept still displays, it just fails to lead, which contradicts the
->    call sites' own "prepended so it leads top-1" comments. **Wiring the scorer
->    into `/search` without also routing these through
->    `_upsert_query_derived_concept` would convert a mild ordering miss into
->    #1839's disappearing-concept bug on a second surface.**
+> It is **filed as #1846, not fixed here**: repairing it is a ranking change on the
+> MEASURED surface, and two ranking changes (`-43`, `-44`) are already in flight
+> with their reads untaken, which ruling 046 forbids compounding. `/search` gets
+> the correct rule now because it is unmeasured and the correct rule is what the
+> wiring needs; typeahead gets it as its own measured change with its own
+> before/after.
+
+**AC#1 — the guard went with the scorer.** `/search` carried the same
+first-writer-wins concept guard that produced #1839: `_detect_query_{golf_major,
+world_cup,awards}` plus a **fourth** site, the `#206` team-bridge insertion, each
+a bare `if key not in seen` skip sitting under a comment claiming the concept is
+"prepended so it leads top-1". All four now route through
+`_upsert_search_query_derived_concept`, which shares its six-line core with the
+typeahead wrapper (`_upsert_query_derived_concept_row`) so the two surfaces
+cannot drift into two verdicts of one rule.
+
+The fourth site needed it most: on `france` the query does not name the concept
+(`FIFA World Cup`), so that row owns no evidence against the query and would
+score UNRANKABLE — **dropped, not demoted** — if left flagged derived. Its
+rankability comes from being query-gated, and the upsert is how a row records
+that.
 
 Two evidence changes were required to make the ruling operable:
 
