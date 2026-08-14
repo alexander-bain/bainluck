@@ -16,6 +16,7 @@ from app.utils.kalshi_market_status import (
     RESULT_CARRYING_STATUSES,
     TERMINAL_STATUSES,
     all_terminal,
+    gradeable_winner,
     has_declared_result,
     is_terminal,
 )
@@ -248,3 +249,86 @@ class TestRepairIsAttendedAndCapped:
 )
 def test_all_terminal_table(statuses, expected):
     assert all_terminal(statuses) is expected
+
+
+# ---------------------------------------------------------------------------
+# CAL-P053 (codex C-RV-5, followed into the writer) — `result` has three states
+# ---------------------------------------------------------------------------
+
+
+class TestGradeableWinner:
+    """`is_winner = (result == "yes")` wrote losses the venue never declared.
+
+    C-RV-5's specimen is an event whose markets are all `closed` with an empty
+    result. Following it into the two Kalshi graders found the consequence: both
+    read `result is None` as the only absence, so `""` and `"scalar"` fell to the
+    `else` branch and were written as LOSERS — with `resolution_source =
+    'api_settlement'`, the top authority rung, which `is_downgrade` then protects
+    from every later correction.
+
+    Measured in production 2026-08-14: 94 Kalshi markets settled in the last two
+    days carry `api_settlement` on every outcome and ZERO winners, and a live
+    probe of six of them found `KXBRASILEIRO1H-26JUL30SPASAN` and
+    `KXATPDOUBLES-26JUL30CASGLADOUREB` `finalized` with `result: "scalar"` on
+    every leg. Those outcomes are `calibration_truth_eligible`, so they grade the
+    published curve with losses nobody lost.
+    """
+
+    def test_a_declared_binary_result_grades(self):
+        assert gradeable_winner("finalized", "yes") is True
+        assert gradeable_winner("finalized", "no") is False
+        assert gradeable_winner("determined", "yes") is True
+        assert gradeable_winner("determined", "no") is False
+
+    def test_a_scalar_result_is_not_a_loss(self):
+        """The specimen that was corrupting production, pinned."""
+        assert gradeable_winner("finalized", "scalar") is None
+
+    def test_an_empty_result_is_not_a_loss(self):
+        """`result is None` never caught this: Kalshi returns the empty STRING."""
+        assert gradeable_winner("closed", "") is None
+        assert gradeable_winner("finalized", "") is None
+        assert gradeable_winner("finalized", "   ") is None
+
+    def test_a_result_less_status_cannot_grade_even_with_a_stray_result(self):
+        """`closed` is terminal and carries no result — the measured table says so.
+
+        A value arriving on a status that never carries one is not evidence, it
+        is a surprise, and a grader that trusts it is trusting the field it just
+        measured to be empty.
+        """
+        assert gradeable_winner("closed", "yes") is None
+        assert gradeable_winner("active", "yes") is None
+        assert gradeable_winner(None, "yes") is None
+
+    def test_none_means_do_not_write_not_loser(self):
+        """The three states must stay three. Two of them are not 'False'."""
+        assert gradeable_winner("finalized", "no") is False
+        assert gradeable_winner("finalized", "scalar") is not False
+        assert gradeable_winner("finalized", "scalar") is None
+
+    def test_both_graders_route_through_the_mapper(self):
+        """Neither call site may keep its own `== "yes"`.
+
+        Two sites drifted apart once already (one counts `no_result`, the other
+        batched tickers), so the guard is over the source of both.
+        """
+        # `from app.tasks import backfill_winners` returns the Celery TASK
+        # proxy, not the module — the package attribute shadows it (gotcha #7's
+        # shadowing family). `inspect.getsource` on the proxy silently returns
+        # one function's source, so this guard would have passed over an
+        # unfixed file. importlib returns the real module.
+        import importlib
+
+        source = inspect.getsource(importlib.import_module("app.tasks.backfill_winners"))
+        assert 'is_winner = result == "yes"' not in source, "inline mapper back"
+        assert 'if result == "yes":' not in source, "inline mapper back"
+        assert source.count("gradeable_winner(") >= 2
+
+    def test_an_ungradeable_result_is_counted_not_silently_skipped(self):
+        """A skip that nobody counts is how a population disappears (gotcha #53)."""
+        import importlib
+
+        source = inspect.getsource(importlib.import_module("app.tasks.backfill_winners"))
+        assert '"ungradeable_result"' in source
+        assert '"ungradeable_result_samples"' in source

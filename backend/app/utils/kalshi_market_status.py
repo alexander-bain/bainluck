@@ -59,9 +59,58 @@ TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"closed", "settled"} | RESULT_CARRYING_STATUSES
 )
 
+#: Result values a binary grader can map to a winner. MEASURED (CAL-P053,
+#: 2026-08-14): a live probe of 46 settled events returned ``result`` values
+#: ``no`` (126), ``yes`` (39) and **``scalar`` (39)** — so roughly one settled
+#: market in five on that sample carries a result this codebase has never
+#: understood. A scalar market settles on a NUMBER, not on a side.
+GRADEABLE_RESULTS: frozenset[str] = frozenset({"yes", "no"})
+
 #: Date the table above was measured. Re-probe with
 #: ``scripts/probe_kalshi_market_status.py`` and update the table WITH the sets.
 MEASURED_ON = "2026-08-13"
+
+
+def gradeable_winner(status: str | None, result: str | None) -> bool | None:
+    """The winner the venue declared, or ``None`` when it declared none we can read.
+
+    THE THREE-STATE RETURN IS THE WHOLE POINT, and it exists because the
+    two-state version corrupted production data. Both Kalshi graders in
+    ``backfill_winners`` read ``result`` as ``is_winner = (result == "yes")``,
+    which silently maps EVERY unrecognised value onto "this outcome lost" — and
+    then writes it as ``api_settlement``, the top authority rung, which
+    ``is_downgrade`` protects from any later correction.
+
+    Two values reach that branch in production:
+
+    * ``""`` — an empty result. ``result is None`` does not catch it, because
+      Kalshi returns the empty STRING for a market it has not called. A
+      ``closed`` market (terminal, no result — see the table above) therefore
+      graded every leg as a loser.
+    * ``"scalar"`` — a market that settles on a numeric value. Measured
+      2026-08-14 on live events whose every leg we had recorded as a loser:
+      ``KXBRASILEIRO1H-26JUL30SPASAN`` (3 legs, all ``finalized``/``scalar``),
+      ``KXATPDOUBLES-26JUL30CASGLADOUREB`` (2 legs, same). The venue settled
+      them; we recorded that nobody won.
+
+    ``None`` means **do not write**. It is not "loser" and it is not an error —
+    it is the absence of a mappable declaration, and gotcha #53's rule is that
+    an absence must never be recorded as a fact. Callers should count it in a
+    counter of its own so the population stays visible rather than becoming a
+    silent skip.
+
+    Requires ``has_declared_result(status)`` as well as a known result value: a
+    ``closed`` market with a stray non-empty result is not evidence, because the
+    measured table says that state does not carry one.
+    """
+    if not has_declared_result(status):
+        return None
+    if result is None:
+        return None
+    value = str(result).strip().lower()
+    if value not in GRADEABLE_RESULTS:
+        return None
+    return value == "yes"
 
 
 def is_terminal(status: str | None) -> bool:
