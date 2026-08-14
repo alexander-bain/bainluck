@@ -1,0 +1,50 @@
+{
+  "captured_utc": "2026-08-14T22:28:35Z",
+  "api": "https://api.bainluck.com",
+  "deployed_commit": "f6dc46ca",
+  "heroku_release": "v3817",
+  "samples": {
+    "grammys": [
+      403.1,
+      412.1,
+      476.7,
+      402.9,
+      411.1
+    ],
+    "red sox": [
+      743.8,
+      640.1,
+      789.6,
+      639.0,
+      632.8
+    ],
+    "vuelta a espana": [
+      327.5,
+      310.6,
+      340.1,
+      315.8,
+      319.1
+    ],
+    "italian grand prix": [
+      418.4,
+      379.8,
+      663.3,
+      383.9,
+      395.1
+    ]
+  },
+  "control": {
+    "endpoint": "/api/health",
+    "samples_ms": [
+      236.2,
+      239.5,
+      235.4,
+      231.3,
+      239.0
+    ],
+    "p50_ms": 236.2
+  },
+  "p50_ms_all": 407.1,
+  "p90_ms_all": 663.3,
+  "n_total": 20
+}

@@ -1,0 +1,429 @@
+{
+  "api": "https://api.bainluck.com",
+  "deployed_commit": "f6dc46ca",
+  "heroku_release": "v3817",
+  "matcher_crontab": "minute=5,20,35,50 UTC",
+  "note": "no warmer deployed (-51 unmerged)",
+  "samples": [
+    {
+      "utc": "2026-08-14T22:33:07Z",
+      "minute_of_hour": 33,
+      "q": "borussia",
+      "http": 200,
+      "ms": 6352.7
+    },
+    {
+      "utc": "2026-08-14T22:33:31Z",
+      "minute_of_hour": 33,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 4329.0
+    },
+    {
+      "utc": "2026-08-14T22:33:54Z",
+      "minute_of_hour": 33,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 3055.2
+    },
+    {
+      "utc": "2026-08-14T22:34:17Z",
+      "minute_of_hour": 34,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 2997.5
+    },
+    {
+      "utc": "2026-08-14T22:34:39Z",
+      "minute_of_hour": 34,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1921.4
+    },
+    {
+      "utc": "2026-08-14T22:35:09Z",
+      "minute_of_hour": 35,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 10295.1
+    },
+    {
+      "utc": "2026-08-14T22:35:32Z",
+      "minute_of_hour": 35,
+      "q": "borussia",
+      "http": 200,
+      "ms": 2605.5
+    },
+    {
+      "utc": "2026-08-14T22:35:55Z",
+      "minute_of_hour": 35,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 3026.0
+    },
+    {
+      "utc": "2026-08-14T22:36:19Z",
+      "minute_of_hour": 36,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 3914.6
+    },
+    {
+      "utc": "2026-08-14T22:36:42Z",
+      "minute_of_hour": 36,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 2666.5
+    },
+    {
+      "utc": "2026-08-14T22:37:04Z",
+      "minute_of_hour": 37,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 2633.5
+    },
+    {
+      "utc": "2026-08-14T22:37:27Z",
+      "minute_of_hour": 37,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 2366.1
+    },
+    {
+      "utc": "2026-08-14T22:37:50Z",
+      "minute_of_hour": 37,
+      "q": "borussia",
+      "http": 200,
+      "ms": 3855.1
+    },
+    {
+      "utc": "2026-08-14T22:38:13Z",
+      "minute_of_hour": 38,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 3012.0
+    },
+    {
+      "utc": "2026-08-14T22:38:35Z",
+      "minute_of_hour": 38,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1892.3
+    },
+    {
+      "utc": "2026-08-14T22:38:57Z",
+      "minute_of_hour": 38,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1609.0
+    },
+    {
+      "utc": "2026-08-14T22:39:19Z",
+      "minute_of_hour": 39,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 2474.4
+    },
+    {
+      "utc": "2026-08-14T22:39:42Z",
+      "minute_of_hour": 39,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 2834.5
+    },
+    {
+      "utc": "2026-08-14T22:40:04Z",
+      "minute_of_hour": 40,
+      "q": "borussia",
+      "http": 200,
+      "ms": 1522.4
+    },
+    {
+      "utc": "2026-08-14T22:40:27Z",
+      "minute_of_hour": 40,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 3182.6
+    },
+    {
+      "utc": "2026-08-14T22:40:51Z",
+      "minute_of_hour": 40,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 3838.4
+    },
+    {
+      "utc": "2026-08-14T22:41:12Z",
+      "minute_of_hour": 41,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1295.7
+    },
+    {
+      "utc": "2026-08-14T22:41:34Z",
+      "minute_of_hour": 41,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1977.3
+    },
+    {
+      "utc": "2026-08-14T22:41:56Z",
+      "minute_of_hour": 41,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1624.8
+    },
+    {
+      "utc": "2026-08-14T22:42:17Z",
+      "minute_of_hour": 42,
+      "q": "borussia",
+      "http": 200,
+      "ms": 1386.2
+    },
+    {
+      "utc": "2026-08-14T22:42:39Z",
+      "minute_of_hour": 42,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 1273.4
+    },
+    {
+      "utc": "2026-08-14T22:43:00Z",
+      "minute_of_hour": 43,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1237.9
+    },
+    {
+      "utc": "2026-08-14T22:43:21Z",
+      "minute_of_hour": 43,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1152.0
+    },
+    {
+      "utc": "2026-08-14T22:43:42Z",
+      "minute_of_hour": 43,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1219.4
+    },
+    {
+      "utc": "2026-08-14T22:44:03Z",
+      "minute_of_hour": 44,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1117.2
+    },
+    {
+      "utc": "2026-08-14T22:44:25Z",
+      "minute_of_hour": 44,
+      "q": "borussia",
+      "http": 200,
+      "ms": 1545.5
+    },
+    {
+      "utc": "2026-08-14T22:44:48Z",
+      "minute_of_hour": 44,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 1375.8
+    },
+    {
+      "utc": "2026-08-14T22:45:10Z",
+      "minute_of_hour": 45,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 2290.1
+    },
+    {
+      "utc": "2026-08-14T22:45:32Z",
+      "minute_of_hour": 45,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1648.6
+    },
+    {
+      "utc": "2026-08-14T22:45:53Z",
+      "minute_of_hour": 45,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1337.1
+    },
+    {
+      "utc": "2026-08-14T22:46:15Z",
+      "minute_of_hour": 46,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1642.7
+    },
+    {
+      "utc": "2026-08-14T22:46:39Z",
+      "minute_of_hour": 46,
+      "q": "borussia",
+      "http": 200,
+      "ms": 3803.7
+    },
+    {
+      "utc": "2026-08-14T22:47:04Z",
+      "minute_of_hour": 47,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 5214.3
+    },
+    {
+      "utc": "2026-08-14T22:47:26Z",
+      "minute_of_hour": 47,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1727.7
+    },
+    {
+      "utc": "2026-08-14T22:47:47Z",
+      "minute_of_hour": 47,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1232.0
+    },
+    {
+      "utc": "2026-08-14T22:48:08Z",
+      "minute_of_hour": 48,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1198.7
+    },
+    {
+      "utc": "2026-08-14T22:48:30Z",
+      "minute_of_hour": 48,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1452.3
+    },
+    {
+      "utc": "2026-08-14T22:48:51Z",
+      "minute_of_hour": 48,
+      "q": "borussia",
+      "http": 200,
+      "ms": 1688.5
+    },
+    {
+      "utc": "2026-08-14T22:49:14Z",
+      "minute_of_hour": 49,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 2250.1
+    },
+    {
+      "utc": "2026-08-14T22:49:35Z",
+      "minute_of_hour": 49,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1674.3
+    },
+    {
+      "utc": "2026-08-14T22:49:57Z",
+      "minute_of_hour": 49,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1046.7
+    },
+    {
+      "utc": "2026-08-14T22:50:20Z",
+      "minute_of_hour": 50,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 3025.0
+    },
+    {
+      "utc": "2026-08-14T22:50:41Z",
+      "minute_of_hour": 50,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1588.2
+    },
+    {
+      "utc": "2026-08-14T22:51:03Z",
+      "minute_of_hour": 51,
+      "q": "borussia",
+      "http": 200,
+      "ms": 1399.6
+    },
+    {
+      "utc": "2026-08-14T22:51:24Z",
+      "minute_of_hour": 51,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 1296.5
+    },
+    {
+      "utc": "2026-08-14T22:51:45Z",
+      "minute_of_hour": 51,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1568.6
+    },
+    {
+      "utc": "2026-08-14T22:52:07Z",
+      "minute_of_hour": 52,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1507.7
+    },
+    {
+      "utc": "2026-08-14T22:52:29Z",
+      "minute_of_hour": 52,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1635.3
+    },
+    {
+      "utc": "2026-08-14T22:52:50Z",
+      "minute_of_hour": 52,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1271.0
+    },
+    {
+      "utc": "2026-08-14T22:53:12Z",
+      "minute_of_hour": 53,
+      "q": "borussia",
+      "http": 200,
+      "ms": 2309.2
+    },
+    {
+      "utc": "2026-08-14T22:53:34Z",
+      "minute_of_hour": 53,
+      "q": "sacramento",
+      "http": 200,
+      "ms": 1754.7
+    },
+    {
+      "utc": "2026-08-14T22:53:55Z",
+      "minute_of_hour": 53,
+      "q": "eurovision",
+      "http": 200,
+      "ms": 1050.1
+    },
+    {
+      "utc": "2026-08-14T22:54:16Z",
+      "minute_of_hour": 54,
+      "q": "reykjavik",
+      "http": 200,
+      "ms": 1053.4
+    },
+    {
+      "utc": "2026-08-14T22:54:37Z",
+      "minute_of_hour": 54,
+      "q": "kilkenny",
+      "http": 200,
+      "ms": 1057.4
+    },
+    {
+      "utc": "2026-08-14T22:54:58Z",
+      "minute_of_hour": 54,
+      "q": "wolverhampton",
+      "http": 200,
+      "ms": 1066.0
+    }
+  ]
+}
