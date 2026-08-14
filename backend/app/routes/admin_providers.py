@@ -26,6 +26,44 @@ router = APIRouter()
 # =============================================================================
 
 
+@router.get("/kalshi/scan-report")
+async def kalshi_scan_report(
+    request: Request,
+    history: int = Query(24, ge=1, le=48, description="Recent runs to summarize"),
+):
+    """Main-scan telemetry for ``poll_kalshi_markets`` (#1586 / #1845).
+
+    Answers, from measurement rather than hypothesis: where the cursor walk
+    starts, where it ends, what it drops, why it stops — and how many EXISTING
+    (i.e. already-displayed) events the upsert loop never reached because the
+    per-event deadline fired after the NEW ones.
+
+    Read the ``summary`` block first. A single beat cannot distinguish "this run
+    was slow" from "the walk never advances"; ``cursor_appears_stuck`` and
+    ``never_wrapped`` are the two readings that can only be taken across runs.
+    """
+    _check_admin_secret(request)
+
+    from app.utils.kalshi_scan_report import (
+        load_scan_history,
+        load_scan_report,
+        summarize_history,
+    )
+
+    last = load_scan_report()
+    rows = load_scan_history(history)
+    return {
+        "last": last,
+        "summary": summarize_history(rows),
+        "history": rows,
+        "note": (
+            "No report yet means poll_kalshi_markets has not completed a beat "
+            "since this instrumentation deployed (2h schedule). An empty read "
+            "is not a healthy read — gotcha #53."
+        ),
+    }
+
+
 @router.post("/kalshi/poll")
 async def trigger_kalshi_poll(
     request: Request,
