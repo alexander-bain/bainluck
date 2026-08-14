@@ -44,6 +44,11 @@ BACKUP_DIR = Path("/tmp/lat_p050_backups")
 ORACLES = [
     "tests/test_offline_rerank_fidelity.py",
     "tests/integration/test_route_typeahead_evidence_echo.py",
+    # The structural companion. Included because LAT-P050's cache-isolation
+    # change turned this file red by STRENGTHENING the guard it asserts — the
+    # test pinned a literal substring rather than the contract (gotcha #130).
+    # It is amended and now belongs in the oracle set, not outside it.
+    "tests/test_search_latency_contract.py",
 ]
 
 #: (id, target, description, old, new). `old` must appear EXACTLY once.
