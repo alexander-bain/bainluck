@@ -10,11 +10,39 @@ always means measured-and-observed, never claimed.
 
 ## Gate 1 — Calibration credibility (the ruled gate for #678)
 
-| item | state 2026-08-12 | evidence / what's between it and green |
+### 🔴 RED. Definition REPLACED 2026-08-13 (Alex) — read this before reading the rows.
+
+**The gate is: the cohort calibration health sentinel is GREEN at full granularity.**
+
+It is **not** producer health. It is **not** a combined ECE number. It is **not** a count of
+green exam items. Those are the three definitions this gate has lied under, and the lie was
+caught the only way it could be — by an eyeball. Alex's skeptical read of the live page on
+2026-08-13 returned **COMMUNICATES (pass)** on the presentation and **the data does not survive
+the audit** underneath it: defects a machine should have computed were found by a human looking
+at a chart.
+
+That is the failure. A gate whose evidence is a person remembering a webpage cannot be green,
+because nothing enumerates what it did not look at. So the gate now reads a machine verdict:
+
+> **GREEN only when EVERY cell in the cohort grid is GREEN, NOT-PROVABLE-with-a-plan, or a
+> registered exception.** Any RED cell, or any NOT-PROVABLE cell without a plan, holds the gate.
+
+Alex adjudicates cell health **never again** — his eyeball returns to taste only.
+
+The sentinel does not exist yet, so the gate is **RED by definition, not by measurement**, and
+that is the honest state: an unbuilt instrument is not a passing one. This is the same
+NOT_COVERED discipline the completeness sentinel already applies — an unmeasured cell is
+explicitly not-provable, never silently green.
+
+| item | state 2026-08-13 | evidence / what's between it and green |
 |---|---|---|
-| Producer health | 🟢 RECOVERED | Fresh publish 18:16Z, 13 clean beats, ruling 009 freeze lifted with numbers |
+| **Cohort health sentinel** | 🔴 **NOT BUILT** | **THE gate.** Grid = category × source × market-shape × probability-band, granularity chosen by "could a broken subcohort hide inside this cell", not by what renders nicely. Per cell: ECE/MCE/Brier, n, and a verdict — GREEN (within the ruled ≤5pp guardrail) / RED / NOT-PROVABLE (below min-n, explicit). Reds auto-file P2 + `needs-triage` at birth with the cell's evidence attached. Its first full run's red list REPLACES all standing category worklists |
+| Exceptions registry | 🔴 NOT BUILT | Ruled no-authority markets (MLB total bases, NCAAB 1H, …) live in a NAMED registry the sentinel reads. An exception is visible and cited, never implicit — an implicit exclusion is indistinguishable from a miss |
+| Producer health | 🟢 RECOVERED | Fresh publish 18:16Z, 13 clean beats, ruling 009 freeze lifted with numbers. **Demoted from gate evidence to a precondition** — it was never the thing being asked |
 | Settlement contamination | 🔴 COUNTING | 85 wrong-scored games found by 339S census; 339T is censusing which settled markets graded against them. Every contaminated grade gets an Alex MC before correction — never unattended |
-| Sub-category charts | 🟡 OPEN | Ruled bar: every /calibration chart survives skeptical audit, ≤5pp guardrail, Alex eyeball. Blocked behind contamination count |
+| Sub-category charts | 🟡 SUPERSEDED | Was "survives skeptical audit + Alex eyeball". The audit happened and the eyeball is what found the warts, which is the argument for the sentinel. Folded into the sentinel row above |
+| Kalshi settlement sync (#1818) | 🟢 **APPLIED 2026-08-13** | 417 stuck markets flipped attended, 100% exact match, population to **0**; `settled_by_result_only` 2,300 → 0. Becomes the sentinel's **first before/after specimen** — golf was 89% of the original population, and 11,837 golf outcomes flipped with only 29% carrying a cal_prob, so ~8,380 are newly unblocked for cal-price backfill |
+| 40–50% band capture | 🔴 OPEN | Traded cohort −5.5pp over 45k outcomes, plus baseball's 50% bucket — likely ONE investigation into stale final pre-resolution price capture. Upstream of every cohort, so it runs in parallel with building the sentinel rather than behind it. Our-bug-first order: capture → linkage → grading → denominator → only then market blame |
 
 ## Gate 2 — Data completeness (added 2026-08-12; the Sox class)
 
