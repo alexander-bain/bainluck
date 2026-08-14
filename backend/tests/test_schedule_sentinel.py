@@ -68,15 +68,29 @@ def _truth(home, away, *, start, state="final", hs=None, aws=None, key="g1",
 
 
 def _ours(eid, home, away, *, start, status="completed", hs=None, aws=None,
-          home_fk=None, away_fk=None, home_id=1, away_id=2):
+          home_fk=None, away_fk=None, home_id=1, away_id=2,
+          espn_id=None, statpal_id=None, external_id=None, individuated=True):
     """Our event. ``home_fk``/``away_fk`` default to the row's own names — the
-    healthy case where the FK dereferences to the club the row claims."""
+    healthy case where the FK dereferences to the club the row claims.
+
+    ``individuated`` defaults True for the same reason: a real MLB/NBA row has
+    been named by some schedule provider, and a helper's default should be the
+    healthy shape. When no explicit id is given it synthesizes a StatPal fixture
+    id — deliberately StatPal, because that id space is neither ESPN's nor MLB
+    StatsAPI's, so these fixtures still pair on NAMES (which is what the older
+    tests are about) without tripping the un-individuated finding.
+
+    Codex's C-SEN-1 specimen is the anonymous shell: pass ``individuated=False``.
+    """
+    if individuated and not (espn_id or statpal_id or external_id):
+        statpal_id = f"fx{eid}"
     return ss.OurEvent(
         id=eid, home_name=home, away_name=away,
         home_team_id=home_id, away_team_id=away_id,
         home_fk_name=home if home_fk is None else home_fk,
         away_fk_name=away if away_fk is None else away_fk,
         status=status, home_score=hs, away_score=aws, commence_time=start,
+        espn_id=espn_id, statpal_fixture_id=statpal_id, external_id=external_id,
     )
 
 
@@ -824,3 +838,191 @@ class TestKnownAnswerShape:
         # Every missing game is named individually — the issue body has to be
         # actionable, not a rate.
         assert all(f["truth_key"] for f in classified["real"])
+
+
+# ---------------------------------------------------------------------------
+# C-SEN-1 [P1] — pairing keyed on names+time, so an id-less create can consume
+# authoritative truth and report literal GREEN. Ruling 042: dereference the id.
+# ---------------------------------------------------------------------------
+NBA = next(s for s in ss.SCHEDULE_LEAGUES if s.slug == "nba")
+
+
+class TestPairingIsKeyedOnIdentity:
+    """Codex's specimen: a row nothing individuated, paired 1:1 and called green.
+
+    THE DEFECT. ``pair_events`` scored candidates on ``name_similarity`` and a
+    time bound, and ``OurEvent`` did not carry a provider id at all — so the model
+    *could not express* the identity needed to reject a row. A shell with the right
+    two names, the right start and correctly-wired team FKs paired against official
+    truth, produced no REAL finding, no WATCH finding, and a literal ``green``.
+
+    That is the sentinel reporting on the name-matcher. The sentinel exists to
+    verify that what should exist EXISTS; a name-and-time pairing verifies that
+    something SHAPED LIKE the game exists, which is the weaker claim the whole rail
+    was built to stop trusting (#1796's numerator, one layer down).
+
+    THE FIX. Three states, and the middle one is the point:
+
+    * the truth source's id space is one we store (ESPN) and the ids agree →
+      ``paired_by='id'``, verified, green;
+    * our row carries SOME provider id but not in the truth's id space (MLB truth
+      is a ``gamePk``, which we do not hold) → we cannot cross-reference, but the
+      row is not an anonymous shell. Counted and named in the output, not a finding;
+    * our row carries NO provider id at all → the pairing is UNVERIFIED. Not RED
+      (nothing shows a defect) and not GREEN (nothing shows correctness) —
+      ``green_unverified``, the state this module already defines for exactly this,
+      and for the same LAT-P017 reason.
+    """
+
+    HOME, AWAY = "Toronto Blue Jays", "Boston Red Sox"
+
+    def test_an_unindividuated_row_cannot_report_green(self):
+        """CODEX'S SPECIMEN, unchanged: right names, right time, right team ids."""
+        truth = [_truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                        key="777001")]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      individuated=False)]
+
+        findings, stats = ss.reconcile(truth, ours, MLB, NOW)
+        classified = ss.classify_findings(findings, MLB, NOW)
+        verdict = ss.schedule_verdict(classified, covered=True)
+
+        assert stats["paired"] == 1, "the specimen must still PAIR — that is its point"
+        assert verdict != "green", (
+            "a row no schedule provider has ever named was paired against official "
+            "truth on names and a clock, and the sentinel called it green"
+        )
+        assert verdict == ss.GREEN_UNVERIFIED
+        assert "schedule_unverified_pairing" in _checks(findings)
+
+    def test_the_finding_names_the_identity_it_could_not_reach(self):
+        """Ruling 042 obligation 1: if only a label was available, SAY SO in the output."""
+        truth = [_truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                        key="777001")]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      individuated=False)]
+
+        f = next(f for f in ss.reconcile(truth, ours, MLB, NOW)[0]
+                 if f["check"] == "schedule_unverified_pairing")
+        assert f["paired_by"] == "names"
+        assert f["our_row_individuated"] is False
+        assert f["truth_key"] == "777001"
+
+    def test_an_id_paired_row_is_green(self):
+        """Gotcha #43, the other direction. ESPN truth key ↔ our ``espn_id``."""
+        truth = [_truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                        key="401816469")]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      espn_id="401816469")]
+
+        findings, stats = ss.reconcile(truth, ours, NBA, NOW)
+        classified = ss.classify_findings(findings, NBA, NOW)
+
+        assert stats["paired"] == 1
+        assert stats["paired_by_id"] == 1
+        assert ss.schedule_verdict(classified, covered=True) == "green"
+        assert "schedule_unverified_pairing" not in _checks(findings)
+
+    def test_an_individuated_row_in_a_foreign_id_space_is_not_flagged(self):
+        """No crying wolf. MLB truth is a ``gamePk``; we hold ESPN/StatPal/Odds ids.
+
+        We cannot cross-reference those, but the row is NOT an anonymous shell —
+        some provider looked at the schedule and named it. Reporting every MLB pair
+        as unverified would make the state constant, and a constant is not a signal.
+        """
+        truth = [_truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                        key="777001")]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      espn_id="401816469", statpal_id="355179")]
+
+        findings, stats = ss.reconcile(truth, ours, MLB, NOW)
+        classified = ss.classify_findings(findings, MLB, NOW)
+
+        assert "schedule_unverified_pairing" not in _checks(findings)
+        assert ss.schedule_verdict(classified, covered=True) == "green"
+        assert stats["paired_by_names_foreign_id_space"] == 1
+
+    def test_the_id_is_consumed_before_names_ever_run(self):
+        """The ordering IS the fix, not a tiebreak.
+
+        Two ESPN truth games for the same matchup on the same day — a doubleheader.
+        Our two rows carry the ESPN ids, but the CLOSER-IN-TIME row holds game 2's
+        id. A names+time pass pairs each row to its nearest truth game and gets
+        both backwards; identity pairs them correctly regardless of the clock.
+        """
+        t1 = _truth(self.HOME, self.AWAY, start=_ago(12), hs=4, aws=2,
+                    key="401816469", dh=True, gnum=1)
+        t2 = _truth(self.HOME, self.AWAY, start=_ago(6), hs=1, aws=0,
+                    key="401816470", dh=True, gnum=2)
+        # Deliberately cross-wired against the clock.
+        o1 = _ours(1, self.HOME, self.AWAY, start=_ago(12), hs=1, aws=0,
+                   espn_id="401816470")
+        o2 = _ours(2, self.HOME, self.AWAY, start=_ago(6), hs=4, aws=2,
+                   espn_id="401816469")
+
+        paired = ss.pair_events([t1, t2], [o1, o2], "espn_id")
+        by_event = {p["ours"].id: p["truth"].key for p in paired["pairs"]}
+
+        assert by_event == {1: "401816470", 2: "401816469"}, (
+            "pairing followed the clock instead of the id"
+        )
+        assert all(p["paired_by"] == "id" for p in paired["pairs"])
+
+    def test_a_doubleheader_paired_only_by_names_is_never_verified(self):
+        """``game_number`` is the provider's own doubleheader marker.
+
+        When truth says two games share a matchup and a day, a names+time pairing
+        is ambiguous BY CONSTRUCTION — there is no clock reading that makes it
+        sound. Even an otherwise-individuated row cannot claim a verified pair.
+        """
+        t1 = _truth(self.HOME, self.AWAY, start=_ago(12), hs=4, aws=2,
+                    key="777001", dh=True, gnum=1)
+        t2 = _truth(self.HOME, self.AWAY, start=_ago(6), hs=1, aws=0,
+                    key="777002", dh=True, gnum=2)
+        ours = [
+            _ours(1, self.HOME, self.AWAY, start=_ago(12), hs=4, aws=2,
+                  statpal_id="355179"),
+            _ours(2, self.HOME, self.AWAY, start=_ago(6), hs=1, aws=0,
+                  statpal_id="355180"),
+        ]
+
+        findings, _ = ss.reconcile([t1, t2], ours, MLB, NOW)
+        classified = ss.classify_findings(findings, MLB, NOW)
+
+        assert _checks(findings) >= {"schedule_unverified_pairing"}
+        assert ss.schedule_verdict(classified, covered=True) == ss.GREEN_UNVERIFIED
+        assert classified["real"] == [], "ambiguity is not a defect — it is unverified"
+
+    def test_unverified_pairing_never_outranks_a_real_defect(self):
+        """RED still wins. An unverified pairing must not launder a MISSING game."""
+        truth = [
+            _truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2, key="777001"),
+            _truth("New York Mets", "Atlanta Braves", start=_ago(7), hs=3, aws=1,
+                   key="777002"),
+        ]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      individuated=False)]
+
+        findings, _ = ss.reconcile(truth, ours, MLB, NOW)
+        classified = ss.classify_findings(findings, MLB, NOW)
+
+        assert ss.schedule_verdict(classified, covered=True) == "red"
+
+    def test_the_filed_issue_states_how_many_pairings_rest_on_a_label(self):
+        """Ruling 042 obligation 1 lands in the OUTPUT, not a comment in the code."""
+        truth = [
+            _truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2, key="777001"),
+            _truth("New York Mets", "Atlanta Braves", start=_ago(7), hs=3, aws=1,
+                   key="777002"),
+        ]
+        ours = [_ours(1, self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
+                      individuated=False)]
+        findings, stats = ss.reconcile(truth, ours, MLB, NOW)
+        body = ss.build_schedule_issue_body({
+            "classified": ss.classify_findings(findings, MLB, NOW),
+            "coverage": {"truth": "mlb_statsapi"}, "window": "3d",
+            "truth_games": 2, "our_events": 1,
+        })
+        assert "could NOT be dereferenced" in body
+        assert "Unverified pairings" in body
+        assert stats["truth_id_space"] == "mlb_statsapi (not stored)"

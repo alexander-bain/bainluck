@@ -465,12 +465,43 @@ class OurEvent:
     home_score: Optional[int]
     away_score: Optional[int]
     commence_time: Optional[datetime]
+    # The schedule providers' own game ids (ruling 042, Codex C-SEN-1). Before
+    # these existed the model could not EXPRESS identity, so pairing had nothing
+    # to reach for and reached for names — see ``pair_events``.
+    espn_id: Optional[str] = None
+    statpal_fixture_id: Optional[str] = None
+    external_id: Optional[str] = None
+
+    @property
+    def individuated(self) -> bool:
+        """True when SOME schedule provider has named this specific game.
+
+        Deliberately provider-agnostic, exactly as the event registry's
+        ``_individuating_provider_ids`` is: which provider spoke does not matter
+        for this question, only that the row is not an anonymous name-and-time
+        shell. An id-less row is the population Codex's specimen lives in and the
+        one no name comparison can ever verify.
+        """
+        return bool(self.espn_id or self.statpal_fixture_id or self.external_id)
 
     @property
     def label(self) -> str:
         when = (self.commence_time.strftime("%Y-%m-%d %H:%MZ")
                 if self.commence_time else "?")
         return f"event {self.id} — {self.away_name} @ {self.home_name} [{when}] ({self.status})"
+
+
+# Which of OUR id columns lives in the same id space as a truth source's
+# ``TruthGame.key``, so the two can actually be compared.
+#
+# ESPN's scoreboard ``event.id`` is precisely what we store in ``Event.espn_id``,
+# so an ESPN-truth league can be paired on identity outright. MLB StatsAPI's key
+# is a ``gamePk``, which we hold on no event column — ``mlb_sync`` writes it into
+# a ``win_prob_snapshots.game_state`` blob for LIVE games only. That is a real
+# limit and it is reported as one (``paired_by_names_foreign_id_space``) rather
+# than papered over: a pair we could not verify by id is not the same thing as a
+# pair we verified, and it is not the same thing as a defect either.
+_TRUTH_ID_ATTR: dict[str, str] = {"espn": "espn_id"}
 
 
 def _finding(check: str, severity: str, detail: str, *,
@@ -502,15 +533,29 @@ def _hours_apart(o: OurEvent, t: TruthGame) -> Optional[float]:
     return abs((o.commence_time - t.start).total_seconds()) / 3600.0
 
 
-def pair_events(truth: list[TruthGame], ours: list[OurEvent]) -> dict:
-    """One-to-one greedy pairing of truth games against our events. Pure.
+def pair_events(truth: list[TruthGame], ours: list[OurEvent],
+                truth_id_attr: Optional[str] = None) -> dict:
+    """One-to-one pairing of truth games against our events. Pure.
 
-    Stage 1 takes only confident pairs (both names above the bar AND within
-    ``STRICT_PAIR_HOURS``). Stage 2 re-runs over the leftovers with
-    ``LOOSE_PAIR_HOURS`` and flags each pair it makes as mis-dated. Splitting the
-    stages is what stops a three-game series (same matchup on consecutive days)
+    **Stage 0 — IDENTITY (ruling 042, Codex C-SEN-1).** When the truth source's
+    ``key`` lives in an id space we store (``truth_id_attr`` names our column),
+    exact id equality pairs first and its pairs are CONSUMED before any name is
+    compared. This is not a tiebreak on top of the name score, and the ordering is
+    the whole fix: a name-and-time pass ranks a doubleheader's two games by the
+    clock, so a row whose id says "game 2" but whose stored start is nearer game 1
+    pairs backwards, silently, with a high name score. The id cannot be outvoted
+    by how close two clocks happen to be.
+
+    Stage 1 then takes only confident NAME pairs (both names above the bar AND
+    within ``STRICT_PAIR_HOURS``). Stage 2 re-runs over the leftovers with
+    ``LOOSE_PAIR_HOURS`` and flags each pair it makes as mis-dated. Splitting those
+    two stages is what stops a three-game series (same matchup on consecutive days)
     from cross-pairing: the exact-time pairs are consumed before the loose pass
     ever runs.
+
+    Every pair records ``paired_by`` — ``"id"`` or ``"names"``. A caller that acts
+    on a pair is entitled to know whether the pairing was dereferenced or inferred,
+    and per ruling 042 that fact travels ON the pair rather than in a comment here.
 
     Returns ``{pairs, unmatched_truth, unmatched_ours, near_miss_ours}`` where a
     near-miss is one of our events that WOULD have paired to an already-taken
@@ -518,6 +563,39 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent]) -> dict:
     taken_t: set[int] = set()
     taken_o: set[int] = set()
     pairs: list[dict] = []
+
+    # --- Stage 0: identity. ------------------------------------------------
+    if truth_id_attr:
+        by_our_id: dict[str, int] = {}
+        for oi, o in enumerate(ours):
+            try:
+                val = getattr(o, truth_id_attr, None)
+            except Exception:  # gotcha #42
+                continue
+            if val:
+                # A duplicated id is not an identity; refuse to pair on it rather
+                # than pick one arbitrarily. Those rows fall through to the name
+                # stages and surface as DUPLICATE/EXTRA on their own merits.
+                by_our_id[str(val)] = -1 if str(val) in by_our_id else oi
+        for ti, t in enumerate(truth):
+            try:
+                oi = by_our_id.get(str(t.key or ""))
+                if t.key in (None, "") or oi is None or oi < 0 or oi in taken_o:
+                    continue
+                o = ours[oi]
+                score, orient = _pair_score(o, t)
+            except Exception as exc:  # gotcha #42
+                logger.warning("schedule sentinel id pairing failed: %s", exc)
+                continue
+            taken_t.add(ti)
+            taken_o.add(oi)
+            pairs.append({"truth": t, "ours": o, "score": score,
+                          "orientation": orient, "hours_apart": _hours_apart(o, t),
+                          # Deliberately NOT mis_dated: an id-paired row whose clock
+                          # disagrees is a WRONG_DATE finding on a correctly paired
+                          # row, which _check_pair already raises. Marking it
+                          # mis_dated here would relabel it as a pairing compromise.
+                          "mis_dated": False, "paired_by": "id"})
 
     def _run(bound: float, mis_dated: bool) -> None:
         cands = []
@@ -545,7 +623,7 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent]) -> dict:
             taken_o.add(oi)
             pairs.append({"truth": truth[ti], "ours": ours[oi], "score": score,
                           "orientation": orient, "hours_apart": dt,
-                          "mis_dated": mis_dated})
+                          "mis_dated": mis_dated, "paired_by": "names"})
 
     _run(STRICT_PAIR_HOURS, False)
     _run(LOOSE_PAIR_HOURS, True)
@@ -610,8 +688,56 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
     (gotcha #42): one poison game can never void the rest of the reconcile."""
     now = now or datetime.now(timezone.utc)
     out: list[dict] = []
-    paired = pair_events(truth, ours)
+    truth_id_attr = _TRUTH_ID_ATTR.get(spec.truth or "")
+    paired = pair_events(truth, ours, truth_id_attr)
     L = spec.slug.upper()
+
+    # --- Which pairs did we actually VERIFY? (ruling 042, Codex C-SEN-1) -------
+    # A pair made on names and a clock is a claim about the name-matcher. Three
+    # outcomes, and only the third is a finding:
+    #   id                       — dereferenced, verified;
+    #   names, row individuated  — the truth source's id space is not one we hold
+    #                              (MLB's gamePk), so we could not cross-reference.
+    #                              Counted and named; NOT a defect and NOT verified;
+    #   names, row un-individuated — nothing has ever named this game. The pairing
+    #                              cannot be verified even in principle, so it may
+    #                              not borrow GREEN's authority. Not RED either:
+    #                              nothing here shows a defect.
+    # A doubleheader paired by name is always in the third bucket regardless of
+    # individuation — the provider's own game_number says two games share this
+    # matchup and this day, so no clock reading disambiguates them.
+    paired_by_id = 0
+    foreign_id_space = 0
+    for p in paired["pairs"]:
+        try:
+            if p.get("paired_by") == "id":
+                paired_by_id += 1
+                continue
+            t, o = p["truth"], p["ours"]
+            ambiguous_dh = t.doubleheader
+            if o.individuated and not ambiguous_dh:
+                foreign_id_space += 1
+                continue
+            out.append(_finding(
+                "schedule_unverified_pairing", "info",
+                f"{L} {o.label} was paired to the official {t.label} on NAMES and a "
+                f"clock, not on an identifier"
+                + (" — the authority reports a DOUBLEHEADER on this matchup and day, "
+                   "so two official games share these names and no start time "
+                   "separates them"
+                   if ambiguous_dh else
+                   " — no schedule provider has ever named this row (no espn_id, "
+                   "statpal_fixture_id or external_id), so the pairing cannot be "
+                   "verified and this row cannot be reported as checked"),
+                kind="UNVERIFIED", tier="provenance", event_id=o.id,
+                truth_key=t.key, paired_by="names",
+                our_row_individuated=o.individuated,
+                truth_is_doubleheader=t.doubleheader,
+                truth_game_number=t.game_number,
+            ))
+        except Exception as exc:  # gotcha #42
+            logger.warning("schedule sentinel pairing provenance failed (%s): %s",
+                           L, exc)
 
     # --- MISSING: in truth, not in ours. The class with no prior detector. -----
     for t in paired["unmatched_truth"]:
@@ -676,6 +802,14 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
         "paired": len(paired["pairs"]),
         "unmatched_truth": len(paired["unmatched_truth"]),
         "unmatched_ours": len(paired["unmatched_ours"]),
+        # Ruling 042 obligation 1: a count of a population states, in the OUTPUT,
+        # how much of it was chosen by identifier and how much by label.
+        "paired_by_id": paired_by_id,
+        "paired_by_names_foreign_id_space": foreign_id_space,
+        "paired_unverified": sum(
+            1 for f in out if f["check"] == "schedule_unverified_pairing"
+        ),
+        "truth_id_space": truth_id_attr or f"{spec.truth or 'none'} (not stored)",
     }
     return out, stats
 
@@ -810,10 +944,16 @@ def classify_findings(findings: list[dict], spec: LeagueSpec,
     phase = season_windows.league_phase(season_slug, now)
     quiet = phase in ("offseason", "break")
     note = season_windows.seasonal_note(season_slug, now)
-    real, explained, watch = [], [], []
+    real, explained, watch, unverified = [], [], [], []
     for f in findings:
         try:
-            if f.get("explain_hint"):
+            if f.get("kind") == "UNVERIFIED":
+                # Its own bucket, and deliberately neither `real` nor `watch`.
+                # `real` would make an absent identifier a defect (it is not — it
+                # is an absent measurement), and `watch` is ignored by the verdict,
+                # which is the exact laundering Codex C-SEN-1 blocked on.
+                unverified.append(f)
+            elif f.get("explain_hint"):
                 explained.append({**f, "explained_by": f["explain_hint"]})
             elif f.get("seasonal_ok") and quiet:
                 explained.append({**f, "explained_by": note or f"{spec.slug} {phase}"})
@@ -830,7 +970,7 @@ def classify_findings(findings: list[dict], spec: LeagueSpec,
             logger.warning("schedule sentinel classify failed: %s", exc)
             real.append(f)
     return {"league": spec.slug, "phase": phase, "real": real,
-            "explained": explained, "watch": watch}
+            "explained": explained, "watch": watch, "unverified": unverified}
 
 
 GREEN_UNVERIFIED = "green_unverified"
@@ -846,12 +986,17 @@ def schedule_verdict(classified: dict, *, covered: bool,
     about the existing rails, and repeating it here would be the same bug wearing
     a new hat. Likewise a day whose authority could not be read has not been
     checked, and an unchecked day may not borrow GREEN's authority (the
-    LAT-P017 lesson the Grid Sentinel already paid for)."""
+    LAT-P017 lesson the Grid Sentinel already paid for).
+
+    A pairing we could not dereference is the same shape of claim and gets the same
+    answer (Codex C-SEN-1). If an event was matched to official truth on names and
+    a clock alone, this league has not been *checked* — it has been compared. RED
+    still outranks it: an unverified pairing must never launder a MISSING game."""
     if not covered:
         return NOT_COVERED
     if classified["real"]:
         return "red"
-    if days_unverified:
+    if days_unverified or classified.get("unverified"):
         return GREEN_UNVERIFIED
     return "green"
 
@@ -896,6 +1041,7 @@ def build_schedule_issue_body(result: dict) -> str:
     fp = schedule_fingerprint(league)
     real, explained, watch = (classified["real"], classified["explained"],
                               classified.get("watch") or [])
+    unverified = classified.get("unverified") or []
     cov = result.get("coverage") or {}
     parts = [
         "## Schedule Sentinel finding — a game that should exist does not",
@@ -911,6 +1057,9 @@ def build_schedule_issue_body(result: dict) -> str:
         f"**Explained (postponement / re-schedule / quiet window — not filed):** "
         f"{len(explained)}  ",
         f"**Watch (not filed):** {len(watch)}  ",
+        # Ruling 042 obligation 1: a count states how much of it rests on a label.
+        f"**Pairings that could NOT be dereferenced (names-only):** "
+        f"{len(unverified)}  ",
         "",
         "> Every other check we have verifies that what exists renders. This one "
         "verifies that what should exist, exists — the denominator is the "
@@ -930,6 +1079,17 @@ def build_schedule_issue_body(result: dict) -> str:
         parts += ["", "### Watch (surfaced, never filed)"]
         for f in watch[:15]:
             parts.append(f"- {f['detail']} — _{f.get('note')}_")
+    if unverified:
+        parts += [
+            "",
+            "### Unverified pairings (this league is measured, not checked)",
+            "",
+            "These rows were matched to the authority on NAMES and a clock because "
+            "no identifier could be dereferenced. They are neither defects nor "
+            "clean results — read the counts above with that in mind.",
+        ]
+        for f in unverified[:15]:
+            parts.append(f"- {f['detail']}")
     parts += [
         "",
         "---",
@@ -1035,6 +1195,10 @@ async def load_our_events(spec: LeagueSpec, days: list[_date]) -> list[OurEvent]
             Event.home_team_id, Event.away_team_id, Event.home_score,
             Event.away_score, Event.commence_time,
             home_t.name.label("home_fk_name"), away_t.name.label("away_fk_name"),
+            # The provider game ids, so the pairing below can dereference rather
+            # than compare strings (ruling 042). Omitting them is what let an
+            # id-less row consume authoritative truth and report GREEN.
+            Event.espn_id, Event.statpal_fixture_id, Event.external_id,
         )
         .join(Sport, Sport.id == Event.sport_id)
         .outerjoin(home_t, home_t.id == Event.home_team_id)
@@ -1062,6 +1226,8 @@ async def load_our_events(spec: LeagueSpec, days: list[_date]) -> list[OurEvent]
                 home_fk_name=r.home_fk_name, away_fk_name=r.away_fk_name,
                 status=r.status or "", home_score=r.home_score,
                 away_score=r.away_score, commence_time=ct,
+                espn_id=r.espn_id, statpal_fixture_id=r.statpal_fixture_id,
+                external_id=r.external_id,
             ))
         except Exception as exc:  # gotcha #42
             logger.warning("schedule sentinel row load failed: %s", exc)
@@ -1093,7 +1259,8 @@ async def run_league(client: httpx.AsyncClient, spec: LeagueSpec,
             "classified": {"league": spec.slug,
                            "phase": season_windows.league_phase(
                                spec.season_key or spec.slug, now),
-                           "real": [], "explained": [], "watch": []},
+                           "real": [], "explained": [], "watch": [],
+                           "unverified": []},
             "days_unverified": [], "truth_games": None, "our_events": None,
             "stats": {},
         }
