@@ -20,6 +20,7 @@ from sqlalchemy import select, update, text, func
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
+from app.utils import kalshi_market_status as kms
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -201,11 +202,34 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
                         if not ticker:
                             continue
-                        if result is None:
-                            stats["no_result"] += 1
+                        # CAL-P053: three states, not two. `result == "yes"`
+                        # mapped "" and "scalar" onto "this outcome lost" and
+                        # wrote it as api_settlement — the top authority rung,
+                        # which nothing may later overwrite. Measured in
+                        # production: whole markets recorded all-losers while
+                        # the venue had them finalized on a scalar.
+                        is_winner = kms.gradeable_winner(
+                            market_data.get("status"), result
+                        )
+                        if is_winner is None:
+                            if result is None or str(result).strip() == "":
+                                stats["no_result"] += 1
+                            else:
+                                stats["ungradeable_result"] = (
+                                    stats.get("ungradeable_result", 0) + 1
+                                )
+                                samples = stats.setdefault(
+                                    "ungradeable_result_samples", []
+                                )
+                                if len(samples) < 5:
+                                    samples.append(
+                                        {
+                                            "market_ticker": ticker,
+                                            "status": market_data.get("status"),
+                                            "result": str(result)[:20],
+                                        }
+                                    )
                             continue
-
-                        is_winner = result == "yes"
 
                         if not dry_run:
                             updated = await session.execute(
@@ -470,10 +494,20 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                 result = mkt.get("result")
                 if not ticker:
                     continue
-                if result is None:
-                    stats["no_result"] += 1
+                # CAL-P053: same three-state mapper as the sibling grader above.
+                # This site is the one that batches tickers, so an unmappable
+                # result silently joined `no_tickers` — a bulk write of losses
+                # the venue never declared.
+                won = kms.gradeable_winner(mkt.get("status"), result)
+                if won is None:
+                    if result is None or str(result).strip() == "":
+                        stats["no_result"] += 1
+                    else:
+                        stats["ungradeable_result"] = (
+                            stats.get("ungradeable_result", 0) + 1
+                        )
                     continue
-                if result == "yes":
+                if won:
                     yes_tickers.append(ticker)
                 else:
                     no_tickers.append(ticker)
