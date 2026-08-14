@@ -1,6 +1,11 @@
 """Market quality classification for Discover feed futures.
 
-This module is intentionally pure: no database access and no app imports.
+This module is intentionally pure: no database access, no side effects. Its
+only app import is ``app.utils.card_integrity``, which is pure on the same
+terms — a shared predicate is imported rather than restated, because Discover
+and the labeling sampler suppressing *slightly different* sets of unreadable
+cards is worse than either importing the other (#1872).
+
 It identifies markets that are liquid or timely but poor feed material,
 especially repetitive range/bucket ladders.
 """
@@ -11,6 +16,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
+
+from app.utils.card_integrity import is_anonymized_market
 
 # #921: a market needs a real, showable price to earn a Discover card. Below
 # this floor the top outcome rounds to 0% in the UI — the "0% probability on
@@ -1110,6 +1117,14 @@ def classify_market_quality(
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
 
+    # #1872: anonymized-at-source option sets ("Person B / Person K"). The
+    # predicate is shared with the labeling sampler via `card_integrity` rather
+    # than re-expressed here — the two surfaces must agree about what is
+    # unreadable, or Discover suppresses a card the label queue still serves.
+    anonymized_outcomes = is_anonymized_market(outcome_names)
+    if anonymized_outcomes:
+        reasons.append("anonymized_outcomes")
+
     # Margin-of-victory + voter-turnout: hard-exclude both families (Alex
     # 2026-06-24), carving out only US presidential turnout.
     margin_turnout = (
@@ -1199,9 +1214,22 @@ def classify_market_quality(
         ladder_or_bucket = True
         reasons.append("numeric_outcome_ladder")
 
-    if social_filler or (obscure and not compelling) or resolved_sports:
-        # R6: resolved sports never surface as live cards.
+    if anonymized_outcomes:
+        # #1872 (queue 355): the options are named "Person B / Person K".
+        # Measured against the upstream record, POLYMARKET serves the
+        # anonymization itself — the CLOB API returns
+        # "Will Person K be the next Secretary General of the United Nations?"
+        # — so our pipeline is copying it faithfully and there is nothing to
+        # un-collapse on our side. A card whose options carry no information
+        # cannot be read, ranked against, or labelled, so it belongs with the
+        # boring-rate suppressions until an enrichment source exists. First,
+        # deliberately: this is a statement about whether the card is legible
+        # at all, which outranks every judgement below about whether it is
+        # interesting.
         quality: QualityClass = "suppress"
+    elif social_filler or (obscure and not compelling) or resolved_sports:
+        # R6: resolved sports never surface as live cards.
+        quality = "suppress"
     elif margin_turnout_excluded:
         # Alex 2026-06-24: margin-of-victory + voter-turnout flood, hard-excluded.
         quality = "suppress"

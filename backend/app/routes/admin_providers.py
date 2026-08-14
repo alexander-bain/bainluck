@@ -66,9 +66,72 @@ async def kalshi_scan_report(
         "note": (
             "No report yet means poll_kalshi_markets has not completed a beat "
             "since this instrumentation deployed (2h schedule). An empty read "
-            "is not a healthy read — gotcha #53."
+            "is not a healthy read — gotcha #53. "
+            "Check summary.arithmetic_ok BEFORE reading any verdict: beats "
+            "written before queue 355 counted events_fetched over the main scan "
+            "only while events_new/events_existing covered main scan PLUS the "
+            "supplementary rescue, so they could not be a partition and are "
+            "reported as runs_unknown_reconciliation. summary.readable_beats is "
+            "the count that satisfies the >=3-beat gate."
         ),
     }
+
+
+@router.get("/kalshi/cliff-drain")
+async def kalshi_cliff_drain_progress(request: Request):
+    """Progress of the fetch-now-or-never Kalshi price-history drain (#1586).
+
+    Read ``remaining`` against ``cohort.at_risk``: the drain runs oldest-first
+    inside the 86-day retention floor, so the at-risk band is what it is
+    currently working through, and ``cohort.past_cliff`` is what no rail can
+    ever recover. ``watermark.checkpoint_written`` is the one field that says
+    whether the run before this one is actually resumable.
+    """
+    _check_admin_secret(request=request)
+
+    from app.tasks.kalshi_cliff import cliff_drain_progress
+
+    return await cliff_drain_progress()
+
+
+@router.post("/kalshi/cliff-drain/run")
+async def trigger_kalshi_cliff_drain(
+    request: Request,
+    limit: int = Query(400, ge=1, le=5000),
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue one cliff-drain pass now (it also runs hourly on the beat)."""
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import kalshi_cliff_drain as _task
+
+    result = _task.delay(limit=limit)
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "limit": limit,
+        "note": (
+            "Resumes from the persisted watermark — this does not restart the "
+            "sweep. Poll GET /api/admin/kalshi/cliff-drain for fetched/remaining."
+        ),
+    }
+
+
+@router.post("/kalshi/cliff-drain/reset")
+async def reset_kalshi_cliff_drain(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Rewind the drain watermark to the start of the retention window.
+
+    Only useful after a backfill changes what the cohort contains; a normal
+    re-run should NOT reset, or the sweep re-grinds ground it already covered.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.kalshi_cliff import reset_state
+
+    return {"status": "reset", "state": reset_state()}
 
 
 @router.post("/kalshi/poll")

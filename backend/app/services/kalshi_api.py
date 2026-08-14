@@ -895,7 +895,16 @@ class KalshiAPIService(BaseAPIClient):
                 break
 
         _tel["pages_fetched"] = page_count
-        _tel["events_fetched"] = len(all_events)
+        # Queue 355 / #1845: this is the MAIN SCAN's population, and only that.
+        # It used to be written to `events_fetched`, which the report then
+        # compared against `events_new + events_existing` — counters derived
+        # from the list this method RETURNS, i.e. main scan PLUS the
+        # supplementary rescue below. The two are different populations, so the
+        # pair could never be a partition of the whole, and beat 1 duly read
+        # `5,335 + 5,075 = 10,410` against `events_fetched 5,000`. A mechanism
+        # named by a counter that cannot add up is not named. `events_fetched`
+        # is now written ONCE, at the return, over the population it claims.
+        _tel["main_scan_events"] = len(all_events)
         _tel["end_cursor_fp"] = cursor_fingerprint(cursor)
         _tel["wrapped"] = not cursor
 
@@ -1117,6 +1126,14 @@ class KalshiAPIService(BaseAPIClient):
                         event.event_ticker, e,
                     )
             logger.info("Backfilled markets for %d events", backfilled)
+
+        # Queue 355 / #1845: close the arithmetic. `supplemented` counts only
+        # dedup-guarded ADDITIONS, so main_scan_events + supplementary_events ==
+        # len(all_events) exactly, and len(all_events) is the list the caller
+        # partitions into new/existing. The report's reconciliation invariant
+        # checks that identity every beat rather than trusting this comment.
+        _tel["supplementary_events"] = supplemented
+        _tel["events_fetched"] = len(all_events)
 
         return list(all_events.values())
 

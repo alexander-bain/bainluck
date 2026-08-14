@@ -512,6 +512,7 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_winners",
     "app.tasks.backfill_kalshi_candlestick",
     "app.tasks.backfill_kalshi_history",
+    "app.tasks.kalshi_cliff_drain",
     "app.tasks.backfill_kalshi_settled",
     "app.tasks.backfill_kalshi_trades",
     "app.tasks.backfill_kalshi_volume",
@@ -883,6 +884,26 @@ def correct_both_winner_guess_side(self):
     runs. Cheap idempotent set-based UPDATE."""
     from app.tasks.backfill_winners import _correct_both_winner_guess_side
     return _tracked_run("both_winner_guess_flip", _correct_both_winner_guess_side())
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.kalshi_cliff_drain")
+def kalshi_cliff_drain(self, limit: int = 400):
+    """#1586 (queue 355): fetch-now-or-never Kalshi price history.
+
+    Oldest-first INSIDE the 86-day retention floor (both bounds — gotcha #41),
+    resumable through a Redis watermark so outcomes that yield nothing are
+    passed permanently instead of re-ground every run. ~7,800 markets cross the
+    cliff each week and nothing recovers them afterwards."""
+    import time as _time
+
+    from app.tasks.kalshi_cliff import run_cliff_drain
+
+    # Leave the soft limit a margin: the drain banks its watermark at the
+    # deadline, so a truncated run is resumable rather than lost.
+    return _tracked_run(
+        "kalshi_cliff_drain",
+        run_cliff_drain(limit=limit, deadline=_time.monotonic() + 780),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
@@ -3097,6 +3118,18 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_history",
         "schedule": crontab(minute=30, hour="4,10,16,22"),  # Every 6h, 30min after Polymarket
         "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
+    # #1586 (queue 355): the cliff drain. HOURLY, deliberately — unlike every
+    # other backfill here, the work this one does not do today cannot be done
+    # at all: ~7,800 Kalshi markets cross the 86-day retention horizon every
+    # week and their price history is deleted upstream. 400/run x 24 = ~9,600
+    # outcomes/day, comfortably ahead of the ~1,100/day expiry rate, so the
+    # at-risk band is reached before it dies rather than after.
+    "kalshi-cliff-drain": {
+        "task": "app.tasks.kalshi_cliff_drain",
+        "schedule": crontab(minute=20),  # hourly, off the :00/:15/:30/:45 crowd
+        "kwargs": {"limit": 400},
         "options": {"queue": "background"},
     },
     "backfill-polymarket-open-sparse": {

@@ -513,6 +513,12 @@ async def _poll_kalshi_markets():
             )
             events = []
             stats["fetch_walltime_exceeded"] = True
+            # Queue 355 (#1845): a CANCELLED fetch left the telemetry's default
+            # `max_pages` in place, so the report claimed a scan that stopped at
+            # a page ceiling — a run that never finished, reported as one that
+            # ran. Name it, so it is also excluded from the reconciliation check
+            # rather than being mistaken for a broken counter.
+            _scan_tel["stop_reason"] = "fetch_wall"
         stats["total_api_events"] = len(events)
         stats["fetch_deadline_hit"] = (
             time.monotonic() - _task_started >= _FETCH_DEADLINE_S
@@ -1110,6 +1116,10 @@ async def _poll_kalshi_markets():
                 pages_skipped=int(_scan_tel.get("pages_skipped") or 0),
                 skip_reasons=dict(_scan_tel.get("skip_reasons") or {}),
                 events_fetched=int(_scan_tel.get("events_fetched") or 0),
+                main_scan_events=int(_scan_tel.get("main_scan_events") or 0),
+                supplementary_events=int(
+                    _scan_tel.get("supplementary_events") or 0
+                ),
                 events_new=_n_new,
                 events_existing=_n_existing,
                 events_processed=_processed,
@@ -1120,6 +1130,8 @@ async def _poll_kalshi_markets():
             )
             save_scan_report(_report)
             stats["scan_verdict"] = _report.verdict()
+            _recon = _report.reconciliation()
+            stats["scan_reconciles"] = bool(_recon["ok"])
             logger.info(
                 "poll_kalshi scan report: verdict=%s stop=%s pages=%d "
                 "wrapped=%s cursor %s->%s processed=%d/%d "
@@ -1129,6 +1141,21 @@ async def _poll_kalshi_markets():
                 _report.start_cursor_fp, _report.end_cursor_fp,
                 _processed, _total, _report.unreached_existing,
             )
+            # Queue 355 (#1845): loud when the instrument disagrees with itself.
+            # The whole failure mode was a legible verdict printed above numbers
+            # that could not both be true, with nothing anywhere saying so.
+            if not _recon["ok"]:
+                logger.error(
+                    "poll_kalshi scan report: ARITHMETIC DOES NOT CLOSE — "
+                    "new+existing=%d (delta %+d), main+supp=%d (delta %+d), "
+                    "events_fetched=%d. Verdict forced to instrument_broken; "
+                    "do not read a mechanism off this beat.",
+                    _recon["new_plus_existing"],
+                    _recon["new_plus_existing_delta"],
+                    _recon["main_plus_supplementary"],
+                    _recon["main_plus_supplementary_delta"],
+                    _recon["events_fetched"],
+                )
         except Exception as exc:
             logger.warning("poll_kalshi: scan report failed: %s", exc)
 
