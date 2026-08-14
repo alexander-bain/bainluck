@@ -53,6 +53,20 @@ declared and counted, never absorbed. Expect the published curve to MOVE on the
 first recompute after an apply pass — that is a CORRECTION, and its cause and count
 are reported by the rail that caused it.
 
+A PRECONDITION THE APPLY PASS OWES, found by the fingerprint ratchet rather than
+by reasoning. Adding :data:`RETRACTION_SOURCE` to ``KNOWN_SOURCES`` moves
+``CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL``, and
+``tests/evals/test_calibration_fingerprint_derived_map.py`` caught it: that input
+is ``sql_interpolated: true`` and ``covered_by_value: false``, i.e. it shapes
+emitted calibration SQL while the main input fingerprint does NOT hash it — the
+documented hole from CAL-P031/P032 that ruling 024 sequences into one combined
+invalidation window. **Merging this changes nothing**, because the value appears
+on zero rows and the moved set feeds a reporting classification rather than the
+curve's eligibility predicate. But the first ``apply=true`` pass changes WHICH
+ROWS are calibration-truth-eligible, and the fingerprint does not hash the data.
+So before that pass runs, someone must answer whether banked calibration units
+invalidate on it. That question is stated here rather than assumed away.
+
 Pure module: no DB, no network. Safe to import from tasks and tests alike.
 """
 
