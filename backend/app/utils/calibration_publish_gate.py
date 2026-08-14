@@ -1,7 +1,7 @@
 """Queue 297: the atomic publish gate + fail-honest serving contract for /api/calibration.
 
-Two pure surfaces, no I/O, so both the publisher and the route can share exactly
-one definition of "is this snapshot trustworthy":
+Two surfaces, so both the publisher and the route can share exactly one
+definition of "is this snapshot trustworthy":
 
 * :func:`snapshot_verdict` — READ side. Is a cached payload shape-valid,
   version-compatible and age-bounded? The route uses it so a malformed, wrong-
@@ -22,15 +22,23 @@ preserved last-good, and one deduped issue the same day.
 
 Everything here is read-side/publish-side only. Nothing mutates data, re-grades
 an outcome, or changes a threshold, filter or methodology (gotcha #21).
+
+The decision logic is pure. It performs exactly ONE read, on exactly one path:
+when the caller's volatile baseline is unusable, :func:`evaluate_publish` asks
+durable history whether a prior generation exists before it will call a build
+the first publish (#1768). That read is injectable, bounded, and never reached
+on a healthy beat — the volatile baseline is present and no probe runs.
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+from app.utils import calibration_durable_baseline as baseline_probe
 
 # --------------------------------------------------------------------------
 # Contract constants
@@ -427,6 +435,14 @@ class PublishVerdict:
     published: dict = field(default_factory=dict)
     version_bumped: bool = False
     first_publish: bool = False
+    #: Where the compared-against artifact came from: ``"provided"`` (the
+    #: caller's volatile cache), ``"durable"`` (recovered from durable history
+    #: after the cache came up empty), ``"none"`` (a proved cold start) or
+    #: ``"unknown"`` (durable history could not answer — see #1768).
+    baseline_source: str = "provided"
+    #: The durable probe's verdict, or ``None`` when the volatile baseline was
+    #: usable and no probe was needed.
+    baseline_probe: Optional[str] = None
 
     @property
     def codes(self) -> list[str]:
@@ -457,7 +473,21 @@ class PublishVerdict:
         return "; ".join(r["detail"] for r in self.rejections)
 
 
-def evaluate_publish(candidate: Any, published: Any) -> PublishVerdict:
+def _probe_baseline(
+    durable_probe: Optional[Callable[[], baseline_probe.BaselineProbe]],
+) -> baseline_probe.BaselineProbe:
+    """The durable probe, or the injected stand-in tests supply."""
+    if durable_probe is not None:
+        return durable_probe()
+    return baseline_probe.probe_durable_baseline()
+
+
+def evaluate_publish(
+    candidate: Any,
+    published: Any,
+    *,
+    durable_probe: Optional[Callable[[], baseline_probe.BaselineProbe]] = None,
+) -> PublishVerdict:
     """Decide whether ``candidate`` may replace ``published``.
 
     Rejects when:
@@ -474,9 +504,23 @@ def evaluate_publish(candidate: Any, published: Any) -> PublishVerdict:
     intended" — it suppresses 2-4 but never 1: an incomplete build is never
     publishable, whatever the version says.
 
-    With no prior artifact (cold Redis, first publish after a flush) only rule 1
-    applies. Refusing the first publish would leave the page permanently dark,
-    which is the failure this whole queue exists to end.
+    When ``published`` carries no usable artifact the gate does NOT conclude
+    "first publish" (#1768). It asks durable history first, and the answer
+    decides:
+
+    * a prior generation is recovered → rules 2-4 run against it, and
+      ``baseline_source`` records that the comparison came from durable;
+    * durable proves there is no prior row → ``first_publish``, only rule 1
+      applies. Refusing a genuine first publish would leave the page permanently
+      dark, which is the failure this whole queue exists to end;
+    * durable cannot answer → ``baseline_unreadable``. An absent baseline and a
+      never-existed baseline are different claims, and treating the first as the
+      second is what let a +7.91% population move publish unexamined on
+      2026-08-11.
+
+    ``durable_probe`` is the injection seam for tests; production leaves it
+    ``None`` and gets the bounded read in
+    :mod:`app.utils.calibration_durable_baseline`.
     """
     cand = census(candidate)
     prev = census(published)
@@ -517,18 +561,81 @@ def evaluate_publish(candidate: Any, published: Any) -> PublishVerdict:
             f"candidate total_outcomes is {cand_pop!r} (must be a positive number)",
         )
 
-    prev_pop = prev["population"]
-    have_baseline = (
-        isinstance(published, dict)
-        and isinstance(prev_pop, (int, float))
-        and prev_pop > 0
-        and not prev["sections_missing"]
-    )
-    if not have_baseline:
-        # Nothing trustworthy to diff against. Structural checks above still
-        # decided it; comparative rules simply do not apply.
+    def usable_baseline(c: dict) -> bool:
+        pop = c["population"]
+        return isinstance(pop, (int, float)) and pop > 0 and not c["sections_missing"]
+
+    have_baseline = isinstance(published, dict) and usable_baseline(prev)
+
+    if not have_baseline and not verdict.ok:
+        # Already rejected on structure, so the comparative rules could not
+        # change the outcome. Return before probing: an I/O call whose result
+        # cannot affect the verdict is pure cost.
         verdict.first_publish = True
         return verdict
+
+    if not have_baseline:
+        # #1768: the caller found nothing in Redis. That is NOT the same claim as
+        # "nothing was ever published" — after an outage longer than the 7d
+        # last_good TTL both keys are gone and a recovery looks exactly like a
+        # cold start. Ask durable history, which has no TTL and is written before
+        # either key, before granting first-publish semantics.
+        probe = _probe_baseline(durable_probe)
+        verdict.baseline_probe = probe.status
+
+        if probe.status == baseline_probe.FOUND:
+            prev = census(probe.payload)
+            verdict.published = prev
+            if usable_baseline(prev):
+                verdict.baseline_source = "durable"
+                have_baseline = True
+            else:
+                # A prior generation exists but will not reduce to comparable
+                # numbers. Fail loudly — see below.
+                probe = replace(
+                    probe,
+                    status=baseline_probe.INDETERMINATE,
+                    detail=(
+                        "durable calibration:main is present but its census is "
+                        "not comparable (missing "
+                        + (", ".join(sorted(prev["sections_missing"])) or "population")
+                        + ")"
+                    ),
+                )
+                verdict.baseline_probe = probe.status
+
+        if not have_baseline:
+            if probe.status == baseline_probe.COLD_START:
+                # Provable first publish. Refusing it would leave the page
+                # permanently dark, which is the failure this path exists to
+                # prevent — so the permissive route survives, narrowed to the one
+                # case that can actually justify it.
+                verdict.baseline_source = "none"
+                verdict.first_publish = True
+                return verdict
+
+            # Durable history cannot rule out a prior generation, so we will not
+            # invent one's absence. Rejecting preserves the last published
+            # snapshot and files one deduped issue; it does not take the page
+            # dark. Note the publisher ALREADY refuses to write the Redis
+            # accelerators when the durable store is unwritable, so a broken
+            # durable store was never going to yield a publish anyway.
+            verdict.baseline_source = "unknown"
+            reject(
+                "baseline_unreadable",
+                "no baseline in the volatile cache and durable history could not "
+                f"prove this is a first publish ({probe.detail}) — refusing rather "
+                "than granting first-publish semantics, which would skip every "
+                "comparative guard on exactly the build that most needs them",
+                probe_status=probe.status,
+                envelope_status=probe.envelope_status,
+            )
+            return verdict
+
+    # Read AFTER baseline resolution, never before: on the durable path `prev` is
+    # a different census from the one built at entry, and a stale local would
+    # silently diff the candidate against the wrong population.
+    prev_pop = prev["population"]
 
     verdict.version_bumped = (
         cand["population_version"] != prev["population_version"]

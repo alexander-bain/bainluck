@@ -24,14 +24,36 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app.tasks.precompute_calibration as pc
+from app.utils.calibration_durable_baseline import (
+    COLD_START,
+    FOUND,
+    INDETERMINATE,
+    BaselineProbe,
+)
 from app.utils.calibration_publish_gate import (
     CATEGORY_MIN_N,
     COHORT_MIN_N,
     PublishVerdict,
     census,
     evaluate_publish,
+    payload_age_s,
     rejection_issue_body,
 )
+
+
+def _cold_start():
+    """Durable history proves there is no prior generation."""
+    return lambda: BaselineProbe(COLD_START, detail="no durable row")
+
+
+def _durable(payload_obj):
+    """Durable history hands back a prior generation to compare against."""
+    return lambda: BaselineProbe(FOUND, payload=payload_obj, detail="recovered")
+
+
+def _cannot_tell(detail="durable store unreachable"):
+    """Durable history cannot rule out a prior generation."""
+    return lambda: BaselineProbe(INDETERMINATE, detail=detail)
 
 # ---------------------------------------------------------------------------
 # Payload builders
@@ -376,25 +398,314 @@ def test_version_bump_authorises_a_deliberate_ordering_change():
 
 
 def test_first_publish_with_no_prior_artifact_is_allowed():
-    """Refusing the first publish would leave the page permanently dark."""
-    verdict = evaluate_publish(payload(), None)
+    """Refusing a PROVED first publish would leave the page permanently dark.
+
+    Since #1768 the proof has to come from somewhere: an empty cache is not it.
+    Durable history saying "no row" is.
+    """
+    verdict = evaluate_publish(payload(), None, durable_probe=_cold_start())
 
     assert verdict.ok
     assert verdict.first_publish
+    assert verdict.baseline_source == "none"
 
 
 def test_a_malformed_prior_artifact_does_not_block_a_good_candidate():
-    verdict = evaluate_publish(payload(), {"buckets": [], "total_outcomes": 0})
+    verdict = evaluate_publish(
+        payload(),
+        {"buckets": [], "total_outcomes": 0},
+        durable_probe=_cold_start(),
+    )
 
     assert verdict.ok
     assert verdict.first_publish
 
 
 def test_first_publish_still_enforces_completeness():
-    verdict = evaluate_publish(payload(drop_sections=("truth_evidence",)), None)
+    verdict = evaluate_publish(
+        payload(drop_sections=("truth_evidence",)), None, durable_probe=_cold_start()
+    )
 
     assert not verdict.ok
     assert "incomplete_sections" in verdict.codes
+
+
+def test_a_structurally_broken_candidate_never_probes_durable():
+    """An I/O call that cannot change the verdict must not happen."""
+    calls = []
+
+    def exploding_probe():
+        calls.append(1)
+        raise AssertionError("the probe must not run on an already-rejected build")
+
+    verdict = evaluate_publish(
+        payload(drop_sections=("truth_evidence",)), None, durable_probe=exploding_probe
+    )
+
+    assert not verdict.ok
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Scenario 7b — #1768: an outage that outlives its own baseline
+# ---------------------------------------------------------------------------
+
+
+def test_expired_redis_baseline_still_gates_against_durable_history():
+    """THE #1768 ACCEPTANCE TEST.
+
+    Both Redis keys have expired during a >7d outage. The durable snapshot is
+    present. The recovery candidate carries the 2026-08-11 shape — +7.91%
+    population under an unchanged version — and must be REJECTED, exactly as it
+    would have been had the outage been short enough to leave a baseline behind.
+    """
+    published = payload(outcomes=652_407, version="q267")
+    candidate = payload(outcomes=703_980, version="q267")
+
+    verdict = evaluate_publish(candidate, None, durable_probe=_durable(published))
+
+    assert not verdict.ok, verdict.summary()
+    assert "population_drift" in verdict.codes
+    assert not verdict.first_publish
+    assert verdict.baseline_source == "durable"
+    # The comparison must be reported against the population it actually used,
+    # not the `null` the live 2026-08-11 gate recorded.
+    assert verdict.published["population"] == 652_407
+    assert "+7.9%" in verdict.summary()
+
+
+def test_a_recovered_durable_baseline_still_lets_a_healthy_build_through():
+    """Consulting durable must not turn every recovery into a refusal."""
+    published = payload(outcomes=1_000_000)
+    candidate = payload(outcomes=1_020_000)
+
+    verdict = evaluate_publish(candidate, None, durable_probe=_durable(published))
+
+    assert verdict.ok, verdict.summary()
+    assert not verdict.first_publish
+    assert verdict.baseline_source == "durable"
+
+
+def test_a_version_bump_still_authorises_a_move_against_durable():
+    published = payload(outcomes=652_407, version="q267")
+    candidate = payload(outcomes=703_980, version="q299")
+
+    verdict = evaluate_publish(candidate, None, durable_probe=_durable(published))
+
+    assert verdict.ok, verdict.summary()
+    assert verdict.version_bumped
+
+
+def test_an_unanswerable_durable_probe_refuses_rather_than_assuming_cold_start():
+    """"I cannot tell" must never be recorded as "nothing was ever published"."""
+    verdict = evaluate_publish(payload(), None, durable_probe=_cannot_tell())
+
+    assert not verdict.ok
+    assert verdict.codes == ["baseline_unreadable"]
+    assert not verdict.first_publish
+    assert verdict.baseline_source == "unknown"
+
+
+def test_a_durable_row_that_will_not_reduce_is_not_a_cold_start():
+    """A present-but-uncomparable prior generation fails loudly, both ways."""
+    verdict = evaluate_publish(
+        payload(), None, durable_probe=_durable({"buckets": [], "total_outcomes": 0})
+    )
+
+    assert not verdict.ok
+    assert verdict.codes == ["baseline_unreadable"]
+    assert not verdict.first_publish
+
+
+def test_a_usable_volatile_baseline_never_probes_durable():
+    """The healthy hourly beat must not pay for this read at all."""
+
+    def exploding_probe():
+        raise AssertionError("durable must not be consulted when Redis has a baseline")
+
+    verdict = evaluate_publish(
+        payload(outcomes=1_010_000), payload(), durable_probe=exploding_probe
+    )
+
+    assert verdict.ok
+    assert verdict.baseline_source == "provided"
+    assert verdict.baseline_probe is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario 7c — CAL-P046: this branch's change composed with master's
+#
+# WHY THIS SECTION EXISTS, AND WHY GREEN TESTS WERE NOT ENOUGH WITHOUT IT.
+# CAL-P042 was authored against a base that predates Q324 (#1680, the five-answer
+# availability envelope, `8a14d8f5`) and Q330 (#1680, *a fallback may weaken a
+# declaration, never heal one*, `b2267b72`). Q324 landed +21 lines in THIS file —
+# `payload_age_s`, one function above the gate — while this branch was rewriting
+# the gate's decision boundary underneath it. Git merged the two textually and
+# reported no conflict, which is precisely the case where a green suite proves
+# least: neither side's tests were written with the other side in the tree, so
+# both can pass while the composed semantics are wrong.
+#
+# The tests below are the ones that would go red if the two changes interacted
+# wrongly, so the interaction is asserted rather than assumed.
+# ---------------------------------------------------------------------------
+
+
+def test_an_ancient_durable_baseline_is_still_evidence_of_a_prior_publish():
+    """THE composition test. Age must not disqualify EXISTENCE evidence.
+
+    Q324 put `payload_age_s` into this module, immediately above the gate. The
+    plausible-and-wrong harmonisation is to reach for it here: an artifact from
+    seven months ago *feels* like something a publish gate should not compare
+    against, and now there is a helper sitting right there to reject it with.
+
+    It would rebuild #1768 one layer down. The durable probe deliberately reads
+    with ``max_age_s=float("inf")`` because a snapshot too old to SERVE is still
+    perfect evidence that this build is not the first one — and the whole defect
+    is that the baseline aged out *during the very outage the publish is
+    recovering from*. Age-bound the baseline and the longest outages, the ones
+    whose recoveries most need scrutiny, are exactly the ones that skip it again.
+
+    Freshness is a SERVE-side question (Q324's envelope). Existence is a
+    WRITE-side one. This test fails the moment the two are conflated.
+    """
+    ancient = payload(
+        outcomes=652_407, version="q267", generated_at="2026-01-01T00:00:00+00:00"
+    )
+    candidate = payload(outcomes=703_980, version="q267")
+
+    # The premise, asserted rather than assumed: this baseline really is far
+    # older than anything the serve path would show a reader.
+    age_s = payload_age_s(ancient)
+    assert age_s is not None and age_s > 90 * 86_400, age_s
+
+    verdict = evaluate_publish(candidate, None, durable_probe=_durable(ancient))
+
+    assert not verdict.ok, verdict.summary()
+    assert "population_drift" in verdict.codes, (
+        "rules 2-4 must have RUN against the ancient baseline — if this is empty "
+        "or reads 'baseline_unreadable', the durable baseline has been age-gated"
+    )
+    assert verdict.baseline_source == "durable"
+    assert not verdict.first_publish
+    assert verdict.published["population"] == 652_407
+
+
+def test_payload_age_never_changes_the_publish_decision():
+    """The same pair, seven years apart, must decide identically.
+
+    `payload_age_s` is a read-side helper that now shares a module with the
+    write-side gate. Nothing about how old an artifact is may leak into whether
+    its successor is publishable — a stale baseline is still a baseline, and a
+    recently-stamped one earns no extra trust.
+    """
+    candidate = payload(outcomes=1_020_000)
+
+    verdicts = []
+    for stamp in ("2026-08-12T00:00:00+00:00", "2019-03-04T05:06:07+00:00"):
+        baseline = payload(outcomes=1_000_000, generated_at=stamp)
+        verdicts.append(
+            evaluate_publish(candidate, None, durable_probe=_durable(baseline))
+        )
+
+    recent, old = verdicts
+    assert recent.ok and old.ok, (recent.summary(), old.summary())
+    assert recent.codes == old.codes == []
+    assert recent.baseline_source == old.baseline_source == "durable"
+    assert recent.first_publish == old.first_publish is False
+
+
+def test_the_durable_fallback_can_weaken_the_gate_never_heal_it():
+    """Q330's rule, in the publish vocabulary rather than the serving one.
+
+    Ruling 025's clause is about a fallback tier re-declaring content some
+    earlier tier already classified, and improving the claim. This branch adds a
+    fallback in the WRITE direction — durable history standing in for an absent
+    volatile baseline — and it is governed by the same asymmetry: consulting the
+    fallback may make the gate STRICTER (a baseline is recovered, rules 2-4 run)
+    or make it REFUSE (durable cannot answer), but it must never leave the gate
+    more permissive than the state it was called in.
+
+    `first_publish` IS the permissive state: it short-circuits rules 2-4. So the
+    invariant is that a passing verdict may only claim it on a PROVED cold start.
+    """
+    candidate = payload(outcomes=703_980, version="q267")
+    prior = payload(outcomes=652_407, version="q267")
+
+    granted = {}
+    for name, probe in (
+        ("cold_start", _cold_start()),
+        ("found", _durable(prior)),
+        ("indeterminate", _cannot_tell()),
+    ):
+        verdict = evaluate_publish(candidate, None, durable_probe=probe)
+        granted[name] = verdict
+        if verdict.ok and verdict.first_publish:
+            assert verdict.baseline_source == "none", (
+                f"{name}: rules 2-4 were skipped on a publish that went through, "
+                "without durable having PROVED there is no prior generation"
+            )
+
+    # And concretely, on the one shape that motivated the branch: the +7.91%
+    # candidate publishes only where there is provably nothing to compare it to.
+    assert granted["cold_start"].ok and granted["cold_start"].first_publish
+    assert not granted["found"].ok and "population_drift" in granted["found"].codes
+    assert not granted["indeterminate"].ok
+    assert granted["indeterminate"].codes == ["baseline_unreadable"]
+
+
+def test_an_unprovable_baseline_never_presents_itself_as_a_comparable_one():
+    """`baseline_source` and `published` must not tell a reader different stories.
+
+    Ruling 025 clause 2's shape: two vocabularies describing one object, where
+    the more reassuring reading wins by accident. On the durable path
+    `verdict.published` is overwritten with the recovered census BEFORE that
+    census is tested for usability, so a verdict that ends up declaring
+    `baseline_source == "unknown"` still carries a populated `published` block —
+    and the publisher copies `published_population` straight into the telemetry
+    of the issue it files.
+
+    It must therefore be visibly not-a-baseline: no positive population, and the
+    missing sections named. A reader must not be able to mistake it for a
+    comparison that happened.
+    """
+    verdict = evaluate_publish(
+        payload(),
+        None,
+        durable_probe=_durable({"buckets": [], "total_outcomes": 0}),
+    )
+
+    assert verdict.codes == ["baseline_unreadable"]
+    assert verdict.baseline_source == "unknown"
+
+    population = verdict.published.get("population")
+    assert not (isinstance(population, (int, float)) and population > 0), (
+        "a baseline the gate refused to trust must not report a usable population"
+    )
+    assert verdict.published.get("sections_missing"), (
+        "the reason it was untrustworthy must travel with it"
+    )
+
+
+def test_the_merged_module_still_carries_both_sides_of_the_merge():
+    """A textual auto-merge is exactly how one side's function quietly vanishes.
+
+    Cheap, and it is the assertion nobody writes: both changes are present and
+    functional in the same module, and `payload_age_s` still means what Q324
+    made it mean (``None`` for an unknown age is never zero).
+    """
+    from app.utils import calibration_publish_gate as gate
+
+    assert callable(gate.payload_age_s)
+    assert callable(gate.evaluate_publish)
+
+    assert gate.payload_age_s({}) is None, "an absent stamp is unknown, not fresh"
+    assert gate.payload_age_s(None) is None
+    assert gate.payload_age_s(payload(generated_at="2026-08-01T12:00:00+00:00")) > 0
+
+    # The write side's seam survived alongside it.
+    import inspect
+
+    assert "durable_probe" in inspect.signature(gate.evaluate_publish).parameters
 
 
 # ---------------------------------------------------------------------------
@@ -546,14 +857,24 @@ class _FakeCM:
         return False
 
 
-def _patch_beat(response, redis):
-    """Patch the beat's compute + Redis so only publication semantics are under test."""
+def _patch_beat(response, redis, durable=None):
+    """Patch the beat's compute + Redis so only publication semantics are under test.
+
+    ``durable`` declares which durable world the beat runs in, because since
+    #1768 an empty cache alone no longer decides the gate's verdict. It defaults
+    to a proved cold start so the pre-existing scenarios keep testing what they
+    were written to test.
+    """
     from unittest.mock import AsyncMock
 
     return (
         patch("app.tasks.base.get_task_session", return_value=_FakeCM()),
         patch.object(pc, "compute_calibration_payload", AsyncMock(return_value=response)),
         patch("app.tasks.redis_state.get_redis_client", return_value=redis),
+        patch(
+            "app.utils.calibration_durable_baseline.probe_durable_baseline",
+            side_effect=durable or _cold_start(),
+        ),
     )
 
 
@@ -665,7 +986,7 @@ async def test_main_key_loss_with_a_valid_last_good_still_gates_against_last_goo
 
 @pytest.mark.asyncio
 async def test_both_keys_cold_publishes_the_first_good_build():
-    """A total cache loss must recover, not deadlock behind its own gate."""
+    """A total cache loss on a TRUE cold start must recover, not deadlock."""
     redis = _FakeRedis({})
 
     for p in _patch_beat(payload(outcomes=1_000_000), redis):
@@ -693,3 +1014,45 @@ async def test_an_unreadable_baseline_does_not_block_publication():
 
     assert set(redis.sets) == {pc._MAIN_KEY, pc._MAIN_LAST_GOOD_KEY}
     assert summary["gate"]["first_publish"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_beat_gates_a_recovery_against_durable_when_both_keys_expired():
+    """#1768 END TO END, at the boundary production actually takes.
+
+    This is the 2026-08-11 recovery: a >7d outage expired both Redis keys, so
+    `_read_published_baseline` returns None and the gate is handed nothing. The
+    durable row is still there. The candidate must be refused and NEITHER key
+    written — the whole point being that the last published snapshot keeps
+    serving while a suspicious recovery is examined instead of enthroned.
+    """
+    redis = _FakeRedis({})
+    published = payload(outcomes=652_407, version="q267")
+    candidate = payload(outcomes=703_980, version="q267")
+
+    with patch.object(pc, "_file_publish_gate_rejection", MagicMock()):
+        for p in _patch_beat(candidate, redis, durable=_durable(published)):
+            p.start()
+        try:
+            with pytest.raises(RuntimeError, match="population_drift"):
+                await pc._precompute_calibration_main()
+        finally:
+            patch.stopall()
+
+    assert redis.sets == [], "a recovery refused by the gate must not write any key"
+
+
+@pytest.mark.asyncio
+async def test_the_beat_refuses_when_durable_cannot_prove_a_cold_start():
+    redis = _FakeRedis({})
+
+    with patch.object(pc, "_file_publish_gate_rejection", MagicMock()):
+        for p in _patch_beat(payload(), redis, durable=_cannot_tell()):
+            p.start()
+        try:
+            with pytest.raises(RuntimeError, match="baseline_unreadable"):
+                await pc._precompute_calibration_main()
+        finally:
+            patch.stopall()
+
+    assert redis.sets == []

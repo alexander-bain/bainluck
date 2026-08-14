@@ -36,6 +36,23 @@ from app.tasks.precompute_calibration import (
     _precompute_calibration_main,
     _publish_calibration_main,
 )
+from app.utils.calibration_durable_baseline import COLD_START, BaselineProbe
+
+
+@pytest.fixture(autouse=True)
+def _durable_baseline_is_a_cold_start(monkeypatch):
+    """#1768: an empty volatile cache no longer means "first publish" by itself.
+
+    These scenarios are about publication stages and idempotence, and every one
+    of them predates the gate's durable READ. They all assume a true cold start,
+    so declare it once here rather than threading a probe through each `with
+    patch(...)` chain — and so a future failure in this file means publication
+    broke, not that the baseline probe fired.
+    """
+    monkeypatch.setattr(
+        "app.utils.calibration_durable_baseline.probe_durable_baseline",
+        lambda *a, **k: BaselineProbe(COLD_START, detail="test default: no durable row"),
+    )
 
 
 def _payload(*, buckets=1, outcomes=635464):
