@@ -1333,3 +1333,4 @@ failure this document already records happening twice.
 - [043](rulings/043-taste-enables-a-signal-labels-tune-it.md) — 2026-08-13 — Taste may ENABLE a signal; only labels may TUNE it (Alex)
 - [045](rulings/045-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)
 - [047](rulings/047-one-card-system.md) — 2026-08-13 — One card system: every surface renders events/markets through the shared cards; league pages get no bespoke variants, and a new card type needs a design ruling first (Alex)
+- [049](rulings/049-a-criterion-that-cannot-fail-is-not-evidence.md) — 2026-08-14 — An acceptance criterion that cannot fail after the fix is not evidence; and a claim you have already committed is corrected IN the record, never left to stand (Fable)
