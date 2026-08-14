@@ -70,6 +70,7 @@ on:
           - sports-latency
           - tournament-inventory
           - event-page
+          - league-cards
 
 # Least privilege: read the repo, nothing else. The filer that consumes a
 # validated manifest is a separate, later job with its own `issues: write`.
@@ -238,7 +239,7 @@ jobs:
           # contract now DERIVES the expected set from `options:` and fails when
           # the allowlist, the dispatch and the npm scripts drift apart, so this
           # class cannot recur silently.
-          if ! printf '%s' "${AUDIT_PACK}" | grep -Eq '^(deploy-smoke|consent|deploy-smoke\+consent|grid|calibration|daily-challenge|latency|sports-latency|tournament-inventory|event-page)$'; then
+          if ! printf '%s' "${AUDIT_PACK}" | grep -Eq '^(deploy-smoke|consent|deploy-smoke\+consent|grid|calibration|daily-challenge|latency|sports-latency|tournament-inventory|event-page|league-cards)$'; then
             echo "::error::unknown pack"
             exit 1
           fi
@@ -359,6 +360,7 @@ jobs:
             sports-latency)        npm run sports-latency ;;
             tournament-inventory)  npm run tournament-inventory ;;
             event-page)            npm run event-page ;;
+            league-cards)          npm run league-cards ;;
             *)
               echo "::error::unknown pack '${AUDIT_PACK}'"
               exit 1

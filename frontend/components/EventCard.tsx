@@ -173,7 +173,19 @@ export default function EventCard({
   const awayShort = event.away_team.split(" ").pop() || event.away_team;
 
   return (
-    <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick} aria-label={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}>
+    <Link
+      href={`/events/${event.id}`}
+      className="h-full"
+      onClick={handleCardClick}
+      // UX-P083 (#1860): the stable hook the browser rail counts. Ruling 047's
+      // acceptance is "the league page renders the SHARED event card", and that
+      // is a claim about WHICH COMPONENT rendered — unanswerable from the DOM
+      // unless the shared card marks itself. Lives on the shared card rather
+      // than on each caller, so a future league-local variant cannot inherit it
+      // by copying a wrapper.
+      data-testid="event-card"
+      aria-label={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+    >
       <motion.div
         variants={fadeIn}
         initial="hidden"
