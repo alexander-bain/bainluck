@@ -216,6 +216,22 @@ async def census(session, apply: bool = False) -> dict[str, Any]:
 #: exactly the population the venue can still answer for, and it reaches the
 #: at-risk band before the cliff does.
 #:
+#: ⚠️ CAL-P057 MEASURED A THIRD ORDERING TRAP IN THIS SAME ``ORDER BY``, and it is
+#: gotcha #41's own closing line — "ordering is never the whole answer; ask what
+#: the ordering starts on." Oldest-first-within-a-floor is correct for the PAST.
+#: But ``resolution_date >= NOW() - purge_bound`` also admits every FUTURE-dated
+#: market, and ``ORDER BY fm.resolution_date ASC`` sorts those DEAD LAST — after
+#: every past-dated row in the band. Measured 2026-08-14: **3,913 Kalshi markets in
+#: this population carry a resolution_date that has not yet arrived**, which is
+#: ~48% of the Kalshi backlog, and they sit behind ~2,887 past-dated markets that
+#: the walk reaches first. They are also the cohort MOST likely to still be
+#: answerable at the venue. An operator draining this rail page by page will not
+#: reach them until the very end. Shard with ``?sport=`` — or, when the future_date
+#: cohort is the target, note that it is reachable only by exhausting the offset.
+#: This is NOT fixed here: changing the sort is a design decision for the attended
+#: pass, and CAL-P009's lesson is that swapping one ordering for another without
+#: asking what it starts on is how the last two of these were created.
+#:
 #: NO ``status = 'resolved'`` FILTER, deliberately. The obvious version had one,
 #: and measuring it showed it selected 2,973 markets out of a 6,817-market
 #: reachable population — because #1818's finding is that Kalshi markets sit at

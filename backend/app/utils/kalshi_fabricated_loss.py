@@ -44,28 +44,61 @@ first place: the badge is what is being corrected. The retraction is reversible 
 real evidence — ``ungradeable_result`` is not in ``AUTHORITATIVE_SOURCES``, so the
 ordinary Kalshi graders will overwrite it the moment the venue declares a side.
 
-WHAT A RETRACTION CHANGES DOWNSTREAM. ``resolution_source`` is the published
-curve's eligibility predicate (``fo.resolution_source IN
+WHAT A RETRACTION CHANGES DOWNSTREAM — MEASURED IN CAL-P057, AND IT IS NOT WHAT
+THIS MODULE ORIGINALLY CLAIMED. ``resolution_source`` is the published curve's
+eligibility predicate (``fo.resolution_source IN
 CALIBRATION_TRUTH_ELIGIBLE_SOURCES``), so moving a row from ``api_settlement`` to
-``ungradeable_result`` REMOVES it from the curve rather than re-grading it. That is
-the honest outcome: we do not know what happened, and ruling 054 says an unknown is
-declared and counted, never absorbed. Expect the published curve to MOVE on the
-first recompute after an apply pass — that is a CORRECTION, and its cause and count
-are reported by the rail that caused it.
+``ungradeable_result`` does remove it from that predicate. The original text
+concluded "expect the published curve to MOVE on the first recompute". Measured
+against production on 2026-08-14, **that is wrong for retractions**, and the
+reason is that this rail's population is the SAME PREDICATE as one of the curve's
+own exclusions:
 
-A PRECONDITION THE APPLY PASS OWES, found by the fingerprint ratchet rather than
-by reasoning. Adding :data:`RETRACTION_SOURCE` to ``KNOWN_SOURCES`` moves
-``CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL``, and
-``tests/evals/test_calibration_fingerprint_derived_map.py`` caught it: that input
-is ``sql_interpolated: true`` and ``covered_by_value: false``, i.e. it shapes
-emitted calibration SQL while the main input fingerprint does NOT hash it — the
-documented hole from CAL-P031/P032 that ruling 024 sequences into one combined
-invalidation window. **Merging this changes nothing**, because the value appears
-on zero rows and the moved set feeds a reporting classification rather than the
-curve's eligibility predicate. But the first ``apply=true`` pass changes WHICH
-ROWS are calibration-truth-eligible, and the fingerprint does not hash the data.
-So before that pass runs, someone must answer whether banked calibration units
-invalidate on it. That question is stated here rather than assumed away.
+    ``no_winner_markets`` (Queue 299 rung 1) excludes every resolved market with
+    ``n_outcomes >= 2`` and ``win_count = 0`` — which is exactly
+    :data:`POPULATION_HAVING_SQL`'s first two conjuncts.
+
+Measured over the whole 0–86 day work band, in 15 date shards with none skipped:
+**2,887 of 2,887 target markets (100%) are already caught by
+``no_winner_markets``**, covering 18,688 legs. Their rows are not on the curve
+now, so retracting them cannot move it. The published census already reports the
+class: ``no_winner_filter.excluded = 26,627`` outcomes / 1,894 markets.
+
+So the curve moves in the OPPOSITE direction, and only via the other verdict:
+a ``restore_winner`` flips ``win_count`` from 0 to 1, the market LEAVES
+``no_winner_markets``, and its whole surviving leg set is ADMITTED to the curve.
+The movement to declare in advance (ruling 054) is therefore an ADDITION driven
+by the restore count — never a subtraction driven by the retraction count.
+
+THE PRECONDITION IS ANSWERED, BY MEASUREMENT (Fable ruling 2, 2026-08-14). It was
+found by the fingerprint ratchet: adding :data:`RETRACTION_SOURCE` to
+``KNOWN_SOURCES`` moves ``CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL``, an input
+that is ``sql_interpolated: true`` / ``covered_by_value: false`` — the CAL-P031/
+P032 hole ruling 024 sequences. The question was whether banked calibration units
+invalidate on an apply. Three measurements, not a judgment call:
+
+1. **Does the new source class change any banked unit today?** No, and the proof
+   is a count: ``SELECT COUNT(*) ... WHERE resolution_source = 'ungradeable_result'``
+   returns **0 rows** in production. A unit recomputed with and without the class
+   in the eligible/ineligible sets is identical because the value matches nothing.
+2. **Does an apply move the GENERATION fingerprint** —
+   ``calibration_staged_futures.generation_fingerprint``, the one mechanism that
+   does invalidate banked units? **No.** That digest is computed over
+   ``(market_id, source, vm_id, is_grouped)``. Every one of those comes from
+   ``market_info`` → ``virtual_market``, whose only filters are
+   ``futures_markets.status = 'resolved'`` and the DataGolf residual flag, with
+   ``vm_id`` / ``is_grouped`` decided by ``group_sizes`` / ``event_sizes`` —
+   which COUNT MARKETS, never outcomes. **Nothing in the roster reads
+   ``futures_outcomes`` at all**, so a repair that writes only to
+   ``futures_outcomes`` is structurally invisible to it.
+3. **Does the MAIN input fingerprint move?** No. It hashes
+   ``inspect.getsource`` of four functions plus three named constants. Source
+   text is the UNEXPANDED f-string, and a data change moves no source at all.
+
+**Conclusion: nothing invalidates banked units on an apply pass.** That is the
+first arm of ruling 2, so the affected cohorts are DECLARED invalidated by the
+operator and counted by the sentinel; they will not invalidate themselves. The
+apply pass must either run against a drained cursor or declare its window.
 
 Pure module: no DB, no network. Safe to import from tasks and tests alike.
 """
