@@ -1339,3 +1339,4 @@ failure this document already records happening twice.
 - [049](rulings/049-a-criterion-that-cannot-fail-is-not-evidence.md) — 2026-08-14 — An acceptance criterion that cannot fail after the fix is not evidence; and a claim you have already committed is corrected IN the record, never left to stand (Fable)
 - [050](rulings/050-a-control-that-cannot-fail-is-not-a-control.md) — 2026-08-13 — A control that cannot fail is not a control: read the null prediction, and arm it with a HALT (Alex)
 - [051](rulings/051-below-the-floor-a-source-is-absent-not-stale.md) — 2026-08-14 — Below its evidence floor a source is ABSENT, not stale: sportsbook consensus floors at 3 books, then drops and re-weights — never freezes (Alex)
+- [052](rulings/052-measure-the-instruction-before-you-obey-it.md) — 2026-08-14 — Measure the instruction before you obey it; ship the payoff sentence and name the words you skipped (Alex)

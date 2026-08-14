@@ -12,8 +12,9 @@ What these tests own:
 
 * the shared upsert core, on BOTH row shapes, including that the typeahead
   wrapper's behaviour is byte-for-byte what it was before the refactor;
-* the `/search` provenance rule, which deliberately DIFFERS from typeahead's
-  blanket flag — see `TestProvenanceIsEvidenceNotDiscoveryPath`;
+* the provenance rule, which `/search` had first and `/typeahead` blanket-flagged
+  past until #1846 — see `TestProvenanceIsEvidenceNotDiscoveryPath` for the rule
+  and `TestTypeaheadConceptProvenance` (LAT-P051) for the surface that was wrong;
 * the two evidence builders, which exist at module level precisely so this file
   can reach them (`_ta_evidence` was a closure, and that is why two defects lived
   in the seam it hid).
@@ -25,8 +26,10 @@ from app.routes.events import (
     _detect_query_awards_concept,
     _detect_query_world_cup_concept,
     _query_names_concept,
+    _query_names_typeahead_concept,
     _search_concept_evidence,
     _search_team_evidence,
+    _typeahead_evidence,
     _upsert_query_derived_concept,
     _upsert_search_query_derived_concept,
 )
@@ -37,7 +40,9 @@ from app.utils.search_match_class import (
     UNRANKABLE,
     match_class,
     rank,
+    rank_key,
 )
+from app.utils.search_match_class import rank as _s_rank
 
 
 def _loop_derived(key: str, name: str, domain: str = "awards", market_id: int = 7) -> dict:
@@ -194,16 +199,19 @@ class TestTypeaheadWrapperUnchangedByTheRefactor:
 
 
 class TestProvenanceIsEvidenceNotDiscoveryPath:
-    """`/search` flags `_derived` per row via `_query_names_concept`, where
-    typeahead flags every loop row blanket-true.
+    """Both surfaces flag `_derived` per row; `/search` got there first.
 
-    That difference is deliberate and is the point of the test class. Ruling 041
-    is about the evidence a candidate OWNS, not the path we reached it by, and a
-    blanket flag drops a concept whose own name IS the query. Typeahead has that
-    hole today (**#1846**); fixing it there is a ranking change on the measured
-    surface with two such changes already in flight unread, so it is filed, not
-    fixed. `test_blanket_flagging_would_have_dropped_it` pins the counterfactual
-    so #1846's eventual fix has a specimen waiting for it.
+    Ruling 041 is about the evidence a candidate OWNS, not the path we reached it
+    by, and a blanket flag drops a concept whose own name IS the query. Typeahead
+    had exactly that hole (**#1846**) and kept it for one cycle because fixing it
+    was a ranking change on the measured surface with two such changes already in
+    flight unread (ruling 046). Both those reads are now taken and the fix has
+    landed — see `TestTypeaheadConceptProvenance`.
+
+    `test_blanket_flagging_would_have_dropped_it` stays. It was written as a
+    specimen waiting for the fix; it now pins the counterfactual permanently, so
+    a later "simplification" back to a blanket flag cannot land silently on
+    either surface.
     """
 
     _EMMYS = {"key": "event:awards:emmys", "name": "The Emmys", "domain": "awards"}
@@ -233,11 +241,165 @@ class TestProvenanceIsEvidenceNotDiscoveryPath:
         assert mc is not UNRANKABLE and mc <= MC1_ALL_TOKENS
 
     def test_blanket_flagging_would_have_dropped_it(self):
-        """Pins the counterfactual, so a future 'simplification' to match
-        typeahead cannot land silently."""
+        """Pins the counterfactual, so a future 'simplification' back to a
+        blanket flag cannot land silently on either surface."""
         row = dict(self._TDF)
         row["_derived"] = True
         assert match_class("tour de france", _search_concept_evidence(row)) is UNRANKABLE
+
+
+# ---------------------------------------------------------------------------
+# #1846 (LAT-P051) — the same rule, on the surface that is actually measured
+# ---------------------------------------------------------------------------
+
+
+class TestTypeaheadConceptProvenance:
+    """The dropdown's concept rows, flagged per row instead of blanket-true.
+
+    The shape differs (`event_key`/`text`, not `key`/`name`) and the rule does
+    not, which is why `_query_names_concept_row` takes the shape as arguments.
+    Both directions are asserted here: the Emmys family — the four measured
+    over-match failures ruling 041 was written against — must stay UNRANKABLE,
+    and a concept whose own name names the query must survive.
+    """
+
+    # Exactly as production mints them (verified against
+    # GET /api/events/search on v3807, 2026-08-14).
+    _US_OPEN = {
+        "type": "event_concept",
+        "text": "2026 Women’s US Open Winner (Tennis)",
+        "event_key": "event:tennis:2026-women-s-us-open-winner-tennis",
+        "sport_key": "tennis",
+    }
+    _EMMYS = {
+        "type": "event_concept",
+        "text": "The Emmys",
+        "event_key": "event:awards:emmys",
+        "sport_key": "awards",
+    }
+
+    @pytest.mark.parametrize("query", ["super bowl", "world series", "wwe", "stranger things"])
+    def test_the_emmys_family_stays_dead(self, query):
+        """The over-match defence is not relaxed to buy #1846. These four are the
+        measured failures (2026-08-12 21:48Z) that owned-evidence-only exists for."""
+        row = dict(self._EMMYS)
+        row["_derived"] = not _query_names_typeahead_concept(query, row)
+        assert row["_derived"] is True
+        assert match_class(query, _typeahead_evidence(row)) is UNRANKABLE
+
+    def test_the_tennis_specimen_survives(self):
+        """Alex ruling 2, 2026-08-13: `us open` has no tennis resolver and never
+        had a query-derived twin, so #1839's guard could not reach it. It is a
+        #1846 sub-case, and this is the specimen that gives it an owner.
+
+        The gold probe expects this exact concept id; on the v3807 read
+        production minted it, flagged it derived, dropped it, and answered with
+        `market:114160` — the market whose name is byte-identical to the concept
+        it had just deleted.
+        """
+        row = dict(self._US_OPEN)
+        row["_derived"] = not _query_names_typeahead_concept("us open", row)
+        assert row["_derived"] is False, "the concept OWNS a match on its own name"
+        mc = match_class("us open", _typeahead_evidence(row))
+        assert mc is not UNRANKABLE and mc <= MC1_ALL_TOKENS
+
+    def test_blanket_flagging_is_what_dropped_it(self):
+        """The defect itself, pinned. This is what production did on v3807."""
+        row = dict(self._US_OPEN)
+        row["_derived"] = True
+        assert match_class("us open", _typeahead_evidence(row)) is UNRANKABLE
+
+    def test_the_shape_is_the_only_difference(self):
+        """One rule, two shapes — not two rules. If these ever disagree, the
+        arrangement gotcha #129 names has come back."""
+        for text, key, query in [
+            ("2026 Women’s US Open Winner (Tennis)",
+             "event:tennis:2026-women-s-us-open-winner-tennis", "us open"),
+            ("The Emmys", "event:awards:emmys", "world series"),
+            ("Tour de France", "event:cycling:tour-de-france", "tour de france"),
+        ]:
+            ta = _query_names_typeahead_concept(query, {"text": text, "event_key": key})
+            se = _query_names_concept(query, {"name": text, "key": key})
+            assert ta is se, f"surfaces disagree on {query!r} -> {key}"
+
+    def test_a_row_missing_both_fields_is_derived_not_crashing(self):
+        assert _query_names_typeahead_concept("us open", {}) is False
+
+
+class TestGolfPrependProtectsTheTie:
+    """`the open championship winner` passes on the PREPEND, not on the scoring.
+
+    Before #1846 the cross-sport tennis "US Open" concepts lost that probe by
+    being dropped as derived. They are rankable now, and they tie the golf major
+    exactly — same match class, same kind, same (absent) prominence — so the only
+    thing left deciding rank 1 is position in the candidate list, which
+    `_upsert_query_derived_concept` controls by inserting at the front.
+
+    This is a real fragility introduced by the fix, so it is asserted rather than
+    left as a comment: a stable sort plus a deliberate prepend is a mechanism, but
+    only while both halves hold.
+
+    The pool is assembled through `_upsert_query_derived_concept` — the real
+    insertion the route performs — and NOT by hand. Planning the mutations for
+    this change is what caught the difference (gotcha #131): a hand-ordered list
+    asserts that a stable sort is stable, which is true and worthless, and the
+    mutation that turns the prepend into an append survived it untouched.
+    """
+
+    _Q = "the open championship winner"
+    _GOLF_NAME = "The Open Championship"
+    _GOLF_KEY = "event:golf:the-open-championship"
+    _TENNIS = [
+        ("2026 Women’s US Open Winner (Tennis)",
+         "event:tennis:2026-women-s-us-open-winner-tennis"),
+        ("2026 Men’s US Open Winner (Tennis)",
+         "event:tennis:2026-men-s-us-open-winner-tennis"),
+    ]
+
+    def _loop_pool(self):
+        """The tennis concepts exactly as the market loop leaves them, with the
+        per-row provenance the fix computes."""
+        pool = []
+        for text, key in self._TENNIS:
+            row = {
+                "type": "event_concept", "text": text,
+                "event_key": key, "sport_key": "tennis",
+            }
+            row["_derived"] = not _query_names_typeahead_concept(self._Q, row)
+            pool.append(row)
+        return pool
+
+    def _ranked(self, pool):
+        return _s_rank(self._Q, [(_typeahead_evidence(r), r) for r in pool])
+
+    def test_the_tennis_rows_are_rankable_now(self):
+        """The premise. Before #1846 they were dropped, so nothing below applied."""
+        assert [r["_derived"] for r in self._loop_pool()] == [False, False]
+
+    def test_the_tie_is_real(self):
+        """If this ever stops being a tie, the tests below measure nothing."""
+        pool = self._loop_pool()
+        pool.insert(0, {"type": "event_concept", "text": self._GOLF_NAME,
+                        "event_key": self._GOLF_KEY, "sport_key": "golf"})
+        keys = {rank_key(self._Q, _typeahead_evidence(r)) for r in pool}
+        assert len(keys) == 1, f"expected one shared rank_key, got {keys}"
+
+    def test_the_upsert_puts_the_golf_major_first_and_it_wins(self):
+        pool = _upsert_query_derived_concept(
+            self._loop_pool(), set(),
+            name=self._GOLF_NAME, key=self._GOLF_KEY, sport_key="golf",
+        )
+        assert pool[0]["event_key"] == self._GOLF_KEY, "the upsert must PREPEND"
+        assert self._ranked(pool)[0]["text"] == self._GOLF_NAME
+
+    def test_and_it_loses_when_it_is_not_prepended(self):
+        """The counterfactual that makes the assertion above non-vacuous: the
+        golf major wins BECAUSE it is inserted first, not because it scores
+        higher. Append it instead and the probe flips."""
+        pool = self._loop_pool()
+        pool.append({"type": "event_concept", "text": self._GOLF_NAME,
+                     "event_key": self._GOLF_KEY, "sport_key": "golf"})
+        assert self._ranked(pool)[0]["text"] != self._GOLF_NAME
 
 
 # ---------------------------------------------------------------------------
