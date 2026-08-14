@@ -1323,3 +1323,4 @@ failure this document already records happening twice.
 - [034](rulings/034-sweep-by-branch-confirm-by-content.md) — 2026-08-12 — The poll sweeps by branch and confirms by content; the ready token is advisory (Alex)
 - [041](rulings/041-search-ranks-by-match-class-on-owned-evidence.md) — 2026-08-12 — Search ranks by MATCH CLASS, and an entity ranks only on evidence it OWNS (Alex)
 - [043](rulings/043-taste-enables-a-signal-labels-tune-it.md) — 2026-08-13 — Taste may ENABLE a signal; only labels may TUNE it (Alex)
+- [046](rulings/046-a-stacked-change-is-measured-on-its-own-deploy.md) — 2026-08-13 — A stacked change is measured on its OWN deploy; an ungradable measurement is a lost one (Alex)
