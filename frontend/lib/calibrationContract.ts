@@ -73,7 +73,12 @@
  * published drop it explains becomes incomplete, and the honest move is to
  * teach the page first and extend this list second.
  */
-export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = ["q267"];
+// INT-065 2026-08-13: CAL-P045 (#1530) bumped the backend to "q1530" and shipped NEITHER
+// client half, so the parity contract went red the moment -43 met master. BOTH versions are
+// listed deliberately — that is the safe state this file documents above: while both are
+// acceptable it does not matter whether Vercel or Heroku lands first. Drop "q267" only once
+// no deployed backend can still serve it.
+export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = ["q267", "q1530"];
 
 /**
  * A version token we are willing to read at all: a short, printable

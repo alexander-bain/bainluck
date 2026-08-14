@@ -470,7 +470,10 @@ final class CalibrationViewModel: ObservableObject {
     /// Keep this in step with `COMPATIBLE_POPULATION_VERSIONS` in
     /// `frontend/lib/calibrationContract.ts` — same claim, same rollout order:
     /// widen the clients FIRST, bump the backend SECOND.
-    static let compatiblePopulationVersions: Set<String> = ["q267"]
+    // INT-065 2026-08-13: CAL-P045 (#1530) bumped the backend q267 -> q1530. Both are listed
+    // so this build accepts either for the whole rollout window — and a shipped iOS build
+    // cannot be rolled back, which is why native must never be the narrower of the two.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 
