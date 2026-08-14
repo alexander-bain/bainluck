@@ -103,6 +103,15 @@ const SINGLETON_HOOKS = [
   "calibration-price-basis-note",
 ] as const;
 
+// UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source collapsed to one panel
+// per provider, and the shape annex moved inside the Sportsbooks panel.
+const UX_P078_HOOKS = [
+  // Rendered in a `.map()` over providers — declared once, three in the DOM.
+  "calibration-provider-panel",
+  // Rendered once, inside the one provider that has more than one shape.
+  "calibration-shape-breakdown",
+] as const;
+
 const COLLECTION_HOOKS = [
   "calibration-category-row",
   "calibration-parked-category",
@@ -126,8 +135,12 @@ describe("the calibration page renders the hooks the audit selects", () => {
     expect(declarations(hook)).toBe(1);
   });
 
+  test.each(UX_P078_HOOKS)("%s is declared exactly once", (hook) => {
+    expect(declarations(hook)).toBe(1);
+  });
+
   test("no two hooks share a name", () => {
-    const all = [...SINGLETON_HOOKS, ...COLLECTION_HOOKS];
+    const all = [...SINGLETON_HOOKS, ...COLLECTION_HOOKS, ...UX_P078_HOOKS];
     expect(new Set(all).size).toBe(all.length);
   });
 });
@@ -246,14 +259,64 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     expect(block).toContain("data-gap-pp=");
   });
 
-  test("each source panel publishes its own n and ECE", () => {
+  test("each SHAPE panel publishes its own n and ECE", () => {
     // Exit-exam item 4's whole point: equal-area panels erase the 28x size
     // difference unless every frame carries its own weight.
+    //
+    // UX-P078: these are the per-source-key panels, which now live inside the
+    // Sportsbooks disclosure rather than being the top level of By Source. The
+    // hook name is unchanged on purpose — it still means "one per source key",
+    // which is what the rail's pack reads it as.
     const i = SOURCE.indexOf('data-testid="calibration-source-panel"');
     const block = SOURCE.slice(i, i + 240);
-    expect(block).toContain("data-source={p.source}");
+    expect(block).toContain("data-source={sp.source}");
+    expect(block).toContain("data-panel-n={sp.n}");
+    expect(block).toContain("data-panel-ece={sp.ece}");
+  });
+
+  test("each PROVIDER panel publishes its n, its ECE, and which keys it pooled", () => {
+    // UX-P078 (Alex ruling 2026-08-14(b) item 3). The provider panel is the new
+    // top level of By Source. `data-provider-sources` is what lets the rail
+    // verify the collapse actually pooled three keys rather than relabelling
+    // one of them — the same thing `calibration-provider-row` carries in the
+    // table above, so the two sections can be compared without a translation.
+    const i = SOURCE.indexOf('data-testid="calibration-provider-panel"');
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 320);
+    expect(block).toContain("data-provider={p.provider}");
+    expect(block).toContain("data-provider-sources={p.sources.join(\",\")}");
     expect(block).toContain("data-panel-n={p.n}");
     expect(block).toContain("data-panel-ece={p.ece}");
+  });
+
+  test("a provider panel declares WHICH KIND of ECE it is showing", () => {
+    // Ruling 003 says a panel renders the SERVER's number. The payload
+    // publishes ECE per source key and none per provider, so the Sportsbooks
+    // panel necessarily shows a POOLED figure. That is allowed only because the
+    // page derives it once (`providerMetrics`, rendered twice) — and the reader
+    // of the DOM must be able to tell the two kinds apart without trusting our
+    // prose. Delete this attribute and a pooled number becomes indistinguishable
+    // from a published one to every downstream grader.
+    const i = SOURCE.indexOf('data-testid="calibration-provider-panel"');
+    const block = SOURCE.slice(i, i + 640);
+    expect(block).toContain("data-ece-basis={p.eceBasis}");
+  });
+
+  test("the shape breakdown is a DISCLOSURE, and its announcement sits outside it", () => {
+    // UX-P075's near-miss, guarded: `innerText` does not return a closed
+    // `<details>`, so a sentence folded into the thing it announces is
+    // invisible to the browser rail AND to a reader who never opens it.
+    // `calibration-shape-annex-note` must therefore be declared BEFORE the
+    // `<details>` that contains the shape panels.
+    const note = SOURCE.indexOf('data-testid="calibration-shape-annex-note"');
+    const details = SOURCE.indexOf('data-testid="calibration-shape-breakdown"');
+    expect(note).toBeGreaterThan(-1);
+    expect(details).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(details);
+    // And the shape panels must be INSIDE it — that is what "the annex moved"
+    // means. If they drift back out, By Source is five panels again.
+    const shapePanel = SOURCE.indexOf('data-testid="calibration-source-panel"');
+    expect(shapePanel).toBeGreaterThan(details);
   });
 
   test("the matched table's thin floor is the SAME number its caption cites", () => {

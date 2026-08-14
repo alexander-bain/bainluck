@@ -24,6 +24,14 @@ import {
   shapeBreakdownIsSymmetric,
   SHAPE_BREAKDOWN_MIN_N,
 } from "@/lib/calibrationProviders";
+// UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source is a panel per PROVIDER
+// too, with the shape breakdown moved inside the provider it describes. The
+// module header records the overturned CAL-P050 decision and the ruling-003
+// reasoning behind the panel's ECE.
+import {
+  buildProviderPanels,
+  shapeBreakdownNote,
+} from "@/lib/calibrationProviderPanels";
 // CAL-P043 (#1643): the page's bucket math and its parity record live in one
 // module so a gate can call the code the page actually renders from. They used
 // to be private functions in this file, which is why the cross-surface gate had
@@ -108,7 +116,10 @@ export default function CalibrationPage() {
     refreshInterval: 300000,
   });
 
-  const [activeSource, setActiveSource] = useState<string | null>(null);
+  // UX-P078: this selects a PROVIDER now, not a source key. The shapes inside a
+  // multi-shape provider are reached through that provider's disclosure, so the
+  // tab strip and the panel grid stay the same three things.
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const priceCohort: "all" | "closing" | "opening" = "all";
   // L2-74 §C (#940) as re-named by L2-236: the page defaults to EXCLUDING the
@@ -393,11 +404,27 @@ export default function CalibrationPage() {
   // small-sample bucket renders as a faded hollow dot with a wide 95% CI bar (the
   // thin convention, threshold = MIN_CHART_BUCKET_N), never silently hidden. The
   // label count is the full source/category total, as before.
-  const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
-    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
-    color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(src)]?.hex || COLORS[i % COLORS.length],
-    label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
-  }));
+  // UX-P078: the full-width view is a PROVIDER's pooled curve. Pooling here is
+  // the same `aggregateBuckets` call the per-source view used, given the whole
+  // provider's keys instead of one — not an average of three curves.
+  const activeProviderGroup = activeProvider
+    ? groupSourcesByProvider(sources).find(g => g.provider === activeProvider) ?? null
+    : null;
+  const providerChartData = activeProviderGroup
+    ? [{
+        data: aggregateBuckets(
+          normalized,
+          b => activeProviderGroup.sources.includes(b.source) && (!cohortFilter || cohortFilter(b)),
+        ),
+        color:
+          SOURCE_COLOR_REGISTRY[canonicalSourceKey(activeProviderGroup.sources[0])]?.hex ||
+          COLORS[0],
+        label: `${activeProviderGroup.label} (${normalized
+          .filter(b => activeProviderGroup.sources.includes(b.source) && (!cohortFilter || cohortFilter(b)))
+          .reduce((s, b) => s + b.n, 0)
+          .toLocaleString()})`,
+      }]
+    : [];
 
   // CAL-P025 / exit-exam item 4: the same per-source data, as small multiples.
   //
@@ -426,6 +453,51 @@ export default function CalibrationPage() {
     data: sourcePanelBuckets.find(s => s.source === p.source)?.buckets ?? [],
     color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(p.source)]?.hex || COLORS[0],
   }));
+
+  // ── UX-P078 (Alex ruling 2026-08-14(b) item 3) ────────────────────────────
+  // By Source is a panel per PROVIDER. The per-source panels above are not
+  // discarded — they become the contents of the Sportsbooks disclosure, which
+  // is how the annex's stated purpose survives inside the provider frame.
+  //
+  // The provider's ECE is read from `providerMetrics`, the SAME memo Source
+  // Comparison renders, so the page derives it exactly once. See the module
+  // header in `lib/calibrationProviderPanels.ts` for why that satisfies ruling
+  // 003 rather than dodging it — and `calibrationProviderPanels.test.ts` for
+  // the pairing assertion that makes the two renders unable to disagree.
+  const providerGroups = groupSourcesByProvider(sources);
+  const providerBucketsFor = (group: { sources: string[] }) =>
+    aggregateBuckets(
+      normalized,
+      b => group.sources.includes(b.source) && (!cohortFilter || cohortFilter(b)),
+    );
+  const providerPanels = buildProviderPanels(
+    providerGroups.map(group => ({
+      provider: group.provider,
+      label: group.label,
+      sources: group.sources,
+      buckets: providerBucketsFor(group),
+      // Single-shape provider: provider IS the source key, so the server's own
+      // published number is the panel's number, exactly as ruling 003 requires.
+      publishedEce:
+        group.sources.length === 1 ? publishedSourceEce.get(group.sources[0]) ?? null : null,
+      // Multi-shape provider: the number already on the page, not a new one.
+      pooledEce:
+        group.sources.length > 1
+          ? providerMetrics.find(pm => pm.provider === group.provider)?.ece ?? null
+          : null,
+    })),
+  );
+  const providerPanelData = providerPanels.map(p => ({
+    ...p,
+    data: providerBucketsFor({ sources: p.sources }),
+    color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(p.sources[0])]?.hex || COLORS[0],
+    // The shape panels for this provider, in the order `buildSourcePanels`
+    // already put them (largest first). Empty for a single-shape provider.
+    shapes: p.hasShapeBreakdown
+      ? sourcePanelData.filter(sp => p.sources.includes(sp.source))
+      : [],
+  }));
+  const providerShapeNote = shapeBreakdownNote(providerPanels);
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
     data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
@@ -652,7 +724,8 @@ export default function CalibrationPage() {
               prediction markets publish a single shape each, so a per-shape column here would
               exist for one provider and be blank for the others. The shape-by-shape breakdown is
               in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
-              below, where all {sources.length} keys are shown separately.
+              below &mdash; open &ldquo;Break out the shapes&rdquo; inside the Sportsbooks panel to
+              see all {sources.length} keys separately.
             </>
           )}
         </p>
@@ -1004,36 +1077,50 @@ export default function CalibrationPage() {
         </div>
       </section>
 
-      {/* By Source — also the shape-breakdown annex for the provider table
-          above (queue 316 item 2). It was already one panel per source key, so
-          the annex the symmetry rule asks for is an existing element plus the
-          sentence that names it as such, not a second thing to build. */}
+      {/* By Source — one panel per PROVIDER, matching Source Comparison above.
+          UX-P078, Alex ruling 2026-08-14(b) item 3. CAL-P050 deliberately kept
+          this section per-source-key and named it the annex; Alex overturned
+          that for the presentation, and the annex MOVED rather than being cut —
+          it is now the disclosure inside the Sportsbooks panel. The overturned
+          reasoning is quoted in `lib/calibrationProviderPanels.ts` (ruling 055:
+          a resolution that changes a decision is a decision, and it is recorded
+          where the next reader will look, not deleted). */}
       <section id="by-source" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
         <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
         <p className="text-xs text-text-muted mb-4">
-          One panel per source, all on the same 0&ndash;100% axis so the shapes are directly
-          comparable &mdash; and each panel states its own sample size, because the sources
-          differ by more than 28x in how much of the curve they carry. Error bars are the 95%
-          CI (wider = less certain). Every bucket is shown &mdash; well-sampled buckets are
-          solid dots, small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are
-          faded hollow dots with wide error bars, so you can see exactly how much data stands
-          behind each point rather than having any hidden. Click any point for example outcomes,
-          or select a source tab for the full-width view.
+          One panel per data provider &mdash; the same three rows as Source Comparison above &mdash;
+          all on the same 0&ndash;100% axis so the curves are directly comparable, and each panel
+          states its own sample size, because the providers differ by more than 28x in how much of
+          the curve they carry. Error bars are the 95% CI (wider = less certain). Every bucket is
+          shown &mdash; well-sampled buckets are solid dots, small-sample ones
+          (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are faded hollow dots with wide error
+          bars, so you can see exactly how much data stands behind each point rather than having any
+          hidden. Click any point for example outcomes, or select a provider tab for the full-width
+          view.
         </p>
-        {!shapeInline && (
+        {/* Derived from the built panels, never from a condition that implies
+            them — UX-P075's PROXY_FOOTNOTE lesson. If no provider has more than
+            one shape, there is no disclosure and this says nothing.
+
+            ⚠️ Deliberately OUTSIDE the disclosure it describes: `innerText` does
+            not return a closed `<details>`, so a sentence folded into the thing
+            it announces is invisible to the browser rail and to a reader who
+            never opens it. UX-P075 nearly hid this page's population arithmetic
+            the same way. */}
+        {providerShapeNote && (
           <p className="text-xs text-text-muted mb-4" data-testid="calibration-shape-annex-note">
-            This is also where the <strong className="text-text-secondary">Sportsbooks (Odds
-            API)</strong> row from Source Comparison breaks apart: moneylines, spreads and totals
-            are separate panels here. They are kept out of that table because the prediction
-            markets have no equivalent split, and a column present for one provider and empty for
-            the others reads as missing data rather than as a difference in what the providers
-            publish.
+            {providerShapeNote}
           </p>
         )}
         <div className="flex flex-wrap gap-2 mb-4">
-          <TabButton label="All" active={!activeSource} onClick={() => { setActiveSource(null); setDrillIn(null); }} />
-          {sources.map(s => (
-            <TabButton key={s} label={sourceLabel(s)} active={activeSource === s} onClick={() => { setActiveSource(s); setDrillIn(null); }} />
+          <TabButton label="All" active={!activeProvider} onClick={() => { setActiveProvider(null); setDrillIn(null); }} />
+          {providerPanelData.map(p => (
+            <TabButton
+              key={p.provider}
+              label={p.label}
+              active={activeProvider === p.provider}
+              onClick={() => { setActiveProvider(p.provider); setDrillIn(null); }}
+            />
           ))}
         </div>
         {/* CAL-P025 / exit-exam item 4: on the "All" tab this used to be five
@@ -1042,33 +1129,50 @@ export default function CalibrationPage() {
             the three sportsbook curves were unreadable — including the one
             comparison that matters most, kalshi vs polymarket. Small multiples
             on the shared 0-100% axis `CalibrationChart` fixes structurally.
-            Selecting a source tab still gives the full-width chart, because
-            that is the view the per-bucket drill-in belongs to. */}
-        {activeSource ? (
+            Selecting a tab still gives the full-width chart, because that is the
+            view the per-bucket drill-in belongs to.
+
+            UX-P078: the tab is a provider, and the full-width curve is that
+            provider's outcomes POOLED. The per-bucket drill-in is not offered on
+            a pooled curve — `/calibration/examples` answers per source key, so a
+            pooled point has no single key to ask about, and inventing one would
+            hand the reader examples from a shape they did not click. The
+            drill-in lives on the shape panels inside the disclosure, which is
+            the other half of why the annex had to move rather than be cut. */}
+        {activeProvider ? (
           <CalibrationChart
-            series={sourceChartData}
+            series={providerChartData}
             width={700}
             height={340}
             thinFloor={MIN_CHART_BUCKET_N}
             showAllN
-            onPointClick={(_, pt) => openDrillIn(activeSource, pt.bucket, Math.floor(pt.midpoint / 10))}
+            onPointClick={
+              activeProviderGroup && activeProviderGroup.sources.length === 1
+                ? (_, pt) =>
+                    openDrillIn(activeProviderGroup.sources[0], pt.bucket, Math.floor(pt.midpoint / 10))
+                : undefined
+            }
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="calibration-source-panels">
-            {sourcePanelData.map(p => (
+            {providerPanelData.map(p => (
               <div
-                key={p.source}
+                key={p.provider}
                 className="border border-surface-border rounded-lg p-3"
-                data-testid="calibration-source-panel"
-                data-source={p.source}
+                data-testid="calibration-provider-panel"
+                data-provider={p.provider}
+                data-provider-sources={p.sources.join(",")}
                 data-panel-n={p.n}
                 data-panel-ece={p.ece}
+                /* Published beside the number so the rail can tell a server
+                   figure from a pooled one without reading our prose. */
+                data-ece-basis={p.eceBasis}
               >
                 {/* Equal-area frames erase the size difference the overlay
                     carried by accident, so every panel states its own weight. */}
                 <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-sm font-semibold text-text-primary">{sourceLabel(p.source)}</span>
-                  {/* Absent when the payload published no ECE for this source.
+                  <span className="text-sm font-semibold text-text-primary">{p.label}</span>
+                  {/* Absent when there is honestly no number for this panel.
                       Nothing is better than a number we made up to fill it. */}
                   {p.ece !== null && (
                     <span className="text-xs text-text-muted tabular-nums">
@@ -1080,13 +1184,70 @@ export default function CalibrationPage() {
                   {p.n.toLocaleString()} outcomes &middot; {(p.share * 100).toFixed(1)}% of the curve
                 </div>
                 <CalibrationChart
-                  series={[{ data: p.data, color: p.color, label: sourceLabel(p.source) }]}
+                  series={[{ data: p.data, color: p.color, label: p.label }]}
                   width={330}
                   height={260}
                   thinFloor={MIN_CHART_BUCKET_N}
                   showLegend={false}
-                  onPointClick={(_, pt) => openDrillIn(p.source, pt.bucket, Math.floor(pt.midpoint / 10))}
+                  onPointClick={
+                    p.hasShapeBreakdown
+                      ? undefined
+                      : (_, pt) => openDrillIn(p.sources[0], pt.bucket, Math.floor(pt.midpoint / 10))
+                  }
                 />
+                {/* THE ANNEX, MOVED (Alex ruling 2026-08-14(b) item 3). Not a
+                    second thing built beside the provider table — the same
+                    per-shape panels CAL-P050 pointed at, relocated inside the
+                    provider they describe, keeping their own published ECE,
+                    their own n and their own drill-in. */}
+                {p.hasShapeBreakdown && (
+                  <details className="mt-3" data-testid="calibration-shape-breakdown">
+                    <summary className="text-xs text-accent-brand cursor-pointer select-none">
+                      Break out the shapes ({p.sources.length})
+                    </summary>
+                    <p className="text-xs text-text-muted mt-2">
+                      Each shape is a different question, so these curves are not comparable to each
+                      other &mdash; only to the same shape elsewhere. The panel above is all of them
+                      pooled and measured together, which is the number the table reports.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 mt-3">
+                      {p.shapes.map(sp => (
+                        <div
+                          key={sp.source}
+                          className="border border-surface-border rounded-lg p-3"
+                          data-testid="calibration-source-panel"
+                          data-source={sp.source}
+                          data-panel-n={sp.n}
+                          data-panel-ece={sp.ece}
+                        >
+                          <div className="flex items-baseline justify-between mb-1">
+                            <span className="text-sm font-semibold text-text-primary">
+                              {sourceLabel(sp.source)}
+                            </span>
+                            {sp.ece !== null && (
+                              <span className="text-xs text-text-muted tabular-nums">
+                                {sp.ece.toFixed(1)}pp ECE
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-text-muted mb-2 tabular-nums">
+                            {sp.n.toLocaleString()} outcomes
+                          </div>
+                          <CalibrationChart
+                            series={[{ data: sp.data, color: sp.color, label: sourceLabel(sp.source) }]}
+                            width={300}
+                            height={230}
+                            thinFloor={MIN_CHART_BUCKET_N}
+                            showLegend={false}
+                            onPointClick={(_, pt) =>
+                              openDrillIn(sp.source, pt.bucket, Math.floor(pt.midpoint / 10))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
             ))}
           </div>
