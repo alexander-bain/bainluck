@@ -49,7 +49,7 @@ describe("describeActivityComparison", () => {
 
     test("names the moved cohort as the WORSE one, not the better one", () => {
       expect(live.direction).toBe("moved_higher");
-      expect(live.sentence).toContain("price-moved cohort carries the higher calibration error");
+      expect(live.sentence).toContain("traded cohort carries the higher calibration error");
     });
     test("leads with both displayed values", () => {
       expect(live.sentence).toContain("1.7pp");
@@ -153,8 +153,8 @@ describe("describeActivityComparison", () => {
       expect(b.direction).toBe("unchanged_higher");
       expect(a.ratioText).toBe(b.ratioText);
       // Both must name 2.4pp as the higher one, whichever slot it sat in.
-      expect(a.sentence).toContain("price-moved cohort carries the higher");
-      expect(b.sentence).toContain("price-unchanged cohort carries the higher");
+      expect(a.sentence).toContain("traded cohort carries the higher");
+      expect(b.sentence).toContain("untraded cohort carries the higher");
     });
   });
 });

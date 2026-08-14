@@ -34,8 +34,16 @@ import {
   decideCalibrationContract,
   CONTRACT_REFUSAL_MESSAGE,
 } from "@/lib/calibrationContract";
-import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
+// UX-P075 item (e): the category vocabulary moved to its own module so the
+// raw-key guard can be TESTED — this page is a "use client" component behind
+// SWR, and a guard that cannot call the function asserts against a copy of it.
+import {
+  DISPLAY_NAMES,
+  categoryLabel,
+  nicheCatLabel,
+  normalizeCat,
+} from "@/lib/calibrationCategories";
 
 // L2-127 (Alex's Option 4): the 1,000-outcome floor USED to HIDE buckets from the
 // By Source / By Category charts, which made a longshot category (golf, tennis)
@@ -46,49 +54,6 @@ import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/li
 // visible in its honest treatment — big solid dots = proven, ghost dots = small
 // sample. Nothing is silently dropped.
 const MIN_CHART_BUCKET_N = 1000;
-
-// L2-103 Item 3b (Alex D5): a thin sub-league (e.g. icehockey_sweden_hockey_league,
-// ~730 outcomes) must NOT collapse to its parent sport's display name ("Hockey"),
-// because the parent sport is already graded in the Category Breakdown above — that
-// made a niche chip read as "Hockey is still coming soon". Prefer the specific
-// league label; only fall back to a prettified raw key for bare single-word
-// categories (chess, commodities, health).
-function nicheCatLabel(raw: string): string {
-  if (raw.includes("_") || LEAGUE_DISPLAY[raw]) {
-    // getLeagueDisplay returns proper-cased mapped names (SHL, NCAA Lacrosse) and
-    // an ALL-CAPS generated fallback for unmapped keys — title-case the latter
-    // while preserving short acronyms (NBA, UFL, NRL, AFL).
-    return getLeagueDisplay(raw).replace(/\w\S*/g, (w) =>
-      w.length <= 4 && w === w.toUpperCase()
-        ? w
-        : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-    );
-  }
-  return raw.replace(/_/g, " ");
-}
-
-const SPORT_KEY_MAP: Record<string, string> = {
-  basketball_nba: "basketball", basketball_ncaab: "basketball",
-  basketball_wnba: "basketball", basketball_nbl: "basketball",
-  basketball_wncaab: "basketball", basketball_euroleague: "basketball",
-  americanfootball_nfl: "football", americanfootball_ncaaf: "football",
-  baseball_mlb: "baseball", icehockey_nhl: "hockey",
-  soccer_epl: "soccer", soccer_usa_mls: "soccer",
-  soccer_uefa_champs_league: "soccer", soccer_spain_la_liga: "soccer",
-  soccer_germany_bundesliga: "soccer", soccer_italy_serie_a: "soccer",
-  soccer_france_ligue_one: "soccer", soccer_uefa_europa_league: "soccer",
-  mma_mixed_martial_arts: "mma", golf_pga: "golf", golf_lpga: "golf",
-  cricket_ipl: "cricket", cricket_test_match: "cricket",
-};
-
-const DISPLAY_NAMES: Record<string, string> = {
-  basketball: "Basketball", baseball: "Baseball", hockey: "Hockey",
-  football: "Football", soccer: "Soccer", golf: "Golf", tennis: "Tennis",
-  mma: "MMA", cricket: "Cricket", esports: "Esports", politics: "Politics",
-  geopolitics: "Geopolitics", entertainment: "Entertainment",
-  weather: "Weather", economics: "Economics", tech: "Tech",
-  motorsports: "Motorsports",
-};
 
 const COLORS = [
   "#2563eb", "#16a34a", "#dc2626", "#ea580c", "#7c3aed",
@@ -107,14 +72,6 @@ const SOURCE_DISPLAY_NAMES: Record<string, string> = {
 
 function sourceLabel(src: string): string {
   return SOURCE_DISPLAY_NAMES[src] || src;
-}
-
-function normalizeCat(cat: string): string {
-  if (SPORT_KEY_MAP[cat]) return SPORT_KEY_MAP[cat];
-  const base = cat.split("_")[0];
-  if (base === "americanfootball") return "football";
-  if (base === "icehockey") return "hockey";
-  return DISPLAY_NAMES[base] ? base : cat;
 }
 
 interface DrillInState {
@@ -379,7 +336,7 @@ export default function CalibrationPage() {
   }
 
   const topCats = categories.slice(0, 3).map(c =>
-    `${DISPLAY_NAMES[c] || c} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
+    `${categoryLabel(c)} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
   ).join(", ");
 
   // L2-127 (Alex's Option 4): show EVERY populated bucket — no floor filter. A
@@ -423,7 +380,7 @@ export default function CalibrationPage() {
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
     data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
     color: COLORS[i % COLORS.length],
-    label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
+    label: `${categoryLabel(cat)} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   return (
@@ -559,6 +516,22 @@ export default function CalibrationPage() {
         >
           {cohort.toggleLabel}
         </button>
+        {/* UX-P075 item (a), and it is the half of that item that does the
+            work. Alex ruled the cohort renamed to "traded"/"untraded" AND the
+            proxy footnote kept — the short word is for the reader, this is what
+            stops it becoming a claim we cannot support. It sits inside the same
+            banner as the word, full-width beneath it, because a caveat a scroll
+            away from its term is a caveat that is not read.
+            `lib/calibrationCohort.ts` carries the reversal of L2-236's
+            contrary decision, in the open, per ruling 055. */}
+        {cohort.proxyFootnote && (
+          <p
+            className="basis-full text-xs text-text-muted"
+            data-testid="calibration-proxy-footnote"
+          >
+            {cohort.proxyFootnote}
+          </p>
+        )}
       </div>
 
       {/* Source Comparison */}
@@ -702,8 +675,12 @@ export default function CalibrationPage() {
                   <thead>
                     <tr className="text-left text-xs text-text-muted border-b border-surface-border">
                       <th className="py-2 pr-4 font-medium">Predicted</th>
-                      <th className="py-2 pr-4 font-medium text-right">Price moved</th>
-                      <th className="py-2 pr-4 font-medium text-right">Price unchanged</th>
+                      {/* UX-P075 item (c): one vocabulary. These columns said
+                          "Price moved"/"Price unchanged" while the toggle above
+                          them said something else again — same two cohorts,
+                          three namings on one page. */}
+                      <th className="py-2 pr-4 font-medium text-right">Traded</th>
+                      <th className="py-2 pr-4 font-medium text-right">Untraded</th>
                       <th className="py-2 font-medium text-right">Difference</th>
                     </tr>
                   </thead>
@@ -743,30 +720,51 @@ export default function CalibrationPage() {
             </p>
           )}
 
-          <h3 className="text-sm font-semibold text-text-primary mb-1">The overall split</h3>
-          <p className="text-xs text-text-muted mb-4">
-            The same data as two whole cohorts, which is how this section used to lead. Points on
-            the diagonal = perfect calibration; above = outcomes happened <em>more</em> than
-            predicted, below = <em>less</em>. Shaded band = &plusmn;5pp and point size reflects
-            sample count. Because the two cohorts differ in source, category and market-shape mix,
-            whichever side lands lower here is an observed ordering &mdash; not evidence that
-            trading caused it. The table above is the version that controls for that.
-          </p>
-          <CalibrationChart
-            series={[
-              { data: movedBuckets, color: "#16a34a", label: `Price moved (${movedN.toLocaleString()})` },
-              { data: unchangedBuckets, color: "#dc2626", label: `Price unchanged (${unchangedN.toLocaleString()})` },
-            ]}
-            width={700}
-            height={400}
-            thinFloor={MIN_CHART_BUCKET_N}
-          />
+          {/* UX-P075 item (b) — Alex, 2026-08-13: the section keeps ONLY the
+              bucket-matched table; the redundant cohort chart is "cut, or
+              collapsed to a toggle".
+
+              COLLAPSED, and the choice is deliberate rather than lazy. Cutting
+              the chart alone would leave the two aggregate cards orphaned above
+              nothing; cutting the whole block would delete L2-236's population
+              reconciliation, the fix for a real 40,075-row shortfall. So the
+              redundant block goes behind one disclosure, closed by default —
+              default view is the matched table and nothing else, which is what
+              the instruction asked for, and the honest aggregate is one click
+              away rather than gone. The partition note is deliberately left
+              OUTSIDE the fold; see below. */}
+          <details className="mt-2 group" data-testid="calibration-overall-split">
+            <summary className="cursor-pointer text-sm font-semibold text-text-primary hover:text-accent-brand list-none flex items-center gap-2">
+              <span className="text-text-muted text-xs group-open:rotate-90 transition-transform">&#9654;</span>
+              The overall split, as two whole cohorts
+            </summary>
+            <p className="text-xs text-text-muted mt-2 mb-4">
+              The same data without the bucket matching, which is how this section used to lead.
+              Points on the diagonal = perfect calibration; above = outcomes happened <em>more</em>{" "}
+              than predicted, below = <em>less</em>. Shaded band = &plusmn;5pp and point size
+              reflects sample count. Because the two cohorts differ in source, category and
+              market-shape mix, whichever side lands lower here is an observed ordering &mdash; not
+              evidence that trading caused it. <strong className="text-text-secondary">The table
+              above is the version that controls for that</strong>, which is why this one is folded
+              away rather than shown beside it.
+            </p>
+            <CalibrationChart
+              series={[
+                { data: movedBuckets, color: "#16a34a", label: `Traded (${movedN.toLocaleString()})` },
+                { data: unchangedBuckets, color: "#dc2626", label: `Untraded (${unchangedN.toLocaleString()})` },
+              ]}
+              width={700}
+              height={400}
+              thinFloor={MIN_CHART_BUCKET_N}
+            />
           {/* L2-230: the value colour is part of the claim. Hard-coding moved
               green and unchanged orange asserted "moved is better" in pixels
               even on the day moved measured 1.7pp against unchanged's 1.0pp,
               so it follows the same direction the sentence below does. */}
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <StatCard label="Active Trading"
+            {/* UX-P075 item (c): "Active Trading" / "Opening Price Only" were a
+                fourth and fifth name for the same two cohorts. */}
+            <StatCard label="Traded"
               testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
@@ -775,7 +773,7 @@ export default function CalibrationPage() {
                   : activity.direction === "unchanged_higher" ? "text-green-600"
                     : "text-text-primary"
               } />
-            <StatCard label="Opening Price Only"
+            <StatCard label="Untraded"
               testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}
@@ -797,9 +795,20 @@ export default function CalibrationPage() {
               `=== false`. The `null` rows — sportsbook lines, where the test
               does not apply — were named nowhere, so the two counts silently
               fell 40,075 short of the population this page claims. */}
+          </details>
+
+          {/* DELIBERATELY OUTSIDE the disclosure above, and this is the one
+              judgment call in item (b). Alex asked for the redundant COHORT
+              CHART to be folded away; this note is not that chart, it is the
+              page's population arithmetic — the only place a reader can check
+              that the parts add up (L2-236's fix for a real 40,075-row
+              shortfall). Folding it would also have hidden it from the browser
+              rail, whose strongest claim on this page reads it: `innerText`
+              does not return a closed `<details>`, so the fold would have
+              turned a rendered proof into a silent one. */}
           {cohort.partitionNote && (
             <p
-              className="text-xs text-text-muted mt-2 text-center"
+              className="text-xs text-text-muted mt-3 text-center"
               data-testid="calibration-activity-partition"
             >
               {cohort.partitionNote}
@@ -957,7 +966,7 @@ export default function CalibrationPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="Top 5" active={!activeCat} onClick={() => setActiveCat(null)} />
           {categories.map(c => (
-            <TabButton key={c} label={DISPLAY_NAMES[c] || c} active={activeCat === c} onClick={() => setActiveCat(c)} />
+            <TabButton key={c} label={categoryLabel(c)} active={activeCat === c} onClick={() => setActiveCat(c)} />
           ))}
         </div>
         <CalibrationChart series={catChartData} width={700} height={340} thinFloor={MIN_CHART_BUCKET_N} showAllN />
@@ -993,7 +1002,7 @@ export default function CalibrationPage() {
                 <tr key={cm.category} className="border-t border-surface-border"
                   data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}>
                   <td className="py-2 pr-4 font-medium text-text-primary">
-                    {DISPLAY_NAMES[cm.category] || cm.category}
+                    {categoryLabel(cm.category)}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
                   <td className={`py-2 pr-4 text-right tabular-nums font-semibold ${

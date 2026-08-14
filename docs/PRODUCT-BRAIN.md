@@ -1326,3 +1326,6 @@ failure this document already records happening twice.
 - [037](rulings/037-a-certified-gate-run-is-not-voided-by-adjacency.md) — 2026-08-12 — A certified gate run is not voided to resolve a textual adjacency; the resolution travels to the Integrator (Alex)
 - [042](rulings/042-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)
 - [047](rulings/047-one-card-system.md) — 2026-08-13 — One card system: every surface renders events/markets through the shared cards; league pages get no bespoke variants, and a new card type needs a design ruling first (Alex)
+- [053](rulings/053-a-binary-card-leads-with-the-side-its-question-names.md) — 2026-08-14 — A binary card leads with the side its own question names; series keep both (Alex)
+- [054](rulings/054-honoring-a-remove-ruling-means-measuring-its-sites.md) — 2026-08-14 — Honoring a remove-ruling means measuring its sites, not counting its lines (Alex)
+- [055](rulings/055-a-conflict-resolution-that-changes-a-decision-is-a-decision.md) — 2026-08-14 — A conflict resolution that changes a decision is a decision, and is recorded like one; a duplicate number renumbers, never keep-both (Alex)

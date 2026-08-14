@@ -226,6 +226,19 @@ async function grade(
     page.locator('[data-testid="calibration-error"]').first().waitFor({ state: "visible", timeout: 30_000 }).catch(() => null),
   ]);
 
+  // UX-P075 item (b): the "overall split" block — the two-cohort chart, the two
+  // aggregate ECE cards and the direction sentence — is now inside a `<details>`
+  // that is CLOSED by default, so `innerText` returns none of it. Open it before
+  // reading, or every claim below that quotes that block silently degrades to
+  // "string not found" and the rail reports a copy regression that is really a
+  // fold. (The population-reconciliation note was deliberately left OUTSIDE the
+  // fold for exactly this reason — see the page.)
+  await page
+    .locator('[data-testid="calibration-overall-split"] > summary')
+    .first()
+    .click({ timeout: 5_000 })
+    .catch(() => null);
+
   const text = await page.locator("body").innerText({ timeout: 10_000 }).catch(() => "");
   const claims = await claimsFor(text, page);
 
@@ -369,11 +382,15 @@ async function commonRenderedClaims(text: string, page: Page): Promise<Claim[]> 
 async function productionNumberClaims(text: string, page: Page): Promise<Claim[]> {
   const claims = await commonRenderedClaims(text, page);
   claims.push(
-    has("copy.headline_names_both_halves", text, "Showing markets whose price moved, plus sportsbook lines (389,385)"),
-    has("copy.moved_half_counted", text, "349,310 outcomes whose price real trading moved"),
+    has("copy.headline_names_both_halves", text, "Showing traded markets, plus sportsbook lines (389,385)"),
+    has("copy.moved_half_counted", text, "349,310 traded outcomes"),
     has("copy.not_applicable_half_named", text, "40,075 sportsbook lines where that test doesn't apply"),
-    has("copy.excluded_side_counted", text, "Excluded: 263,022 outcomes whose price never moved off its opening line."),
-    has("copy.toggle_names_what_it_adds", text, "Include never-moved (+263,022)"),
+    has("copy.excluded_side_counted", text, "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."),
+    has("copy.toggle_names_what_it_adds", text, "Include untraded (+263,022)"),
+    // UX-P075 item (a): the short word must never be on screen without the
+    // sentence saying what it is a proxy for. This is the RENDERED half of the
+    // pairing `calibrationCohort.test.ts` asserts on the copy module.
+    has("copy.proxy_footnote_rendered", text, "shorthand for a price test, not a trade count"),
     has(
       "copy.activity_partition_reconciles_on_screen",
       text,
@@ -408,7 +425,7 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     detail: `data-published-categories=${publishedCats}`,
   });
   claims.push(
-    has("direction.sentence_names_the_higher_cohort", text, "price-moved cohort carries the higher calibration error")
+    has("direction.sentence_names_the_higher_cohort", text, "traded cohort carries the higher calibration error")
   );
   return claims;
 }
@@ -443,15 +460,15 @@ test.describe("calibration cohort copy", () => {
       const claims = await commonRenderedClaims(text, p);
       // Swapped: the moved side is now the 263,022-row cohort.
       claims.push(
-        has("copy.headline_follows_the_swap", text, "Showing markets whose price moved, plus sportsbook lines (303,097)"),
-        has("copy.moved_half_counted", text, "263,022 outcomes whose price real trading moved"),
-        has("copy.excluded_side_counted", text, "Excluded: 349,310 outcomes whose price never moved off its opening line."),
+        has("copy.headline_follows_the_swap", text, "Showing traded markets, plus sportsbook lines (303,097)"),
+        has("copy.moved_half_counted", text, "263,022 traded outcomes"),
+        has("copy.excluded_side_counted", text, "Excluded: 349,310 untraded outcomes, whose price never moved off its opening line."),
         has(
           "copy.activity_partition_reconciles_on_screen",
           text,
           "263,022 + 349,310 + 40,075 = 652,407 resolved outcomes"
         ),
-        has("direction.sentence_names_the_other_cohort", text, "price-unchanged cohort carries the higher calibration error")
+        has("direction.sentence_names_the_other_cohort", text, "untraded cohort carries the higher calibration error")
       );
       const direction = await attr(p, '[data-testid="calibration-activity-section"]', "data-activity-direction");
       claims.push({

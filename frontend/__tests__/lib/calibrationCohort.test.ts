@@ -27,7 +27,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import { PROXY_FOOTNOTE, describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import { describeActivityComparison, ece, mce } from "@/lib/calibrationMath";
 import {
   PROD_BUCKETS,
@@ -108,6 +108,17 @@ const copyOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.heroClause,
   c.shortLabel,
   c.partitionNote ?? "",
+  c.proxyFootnote ?? "",
+];
+
+/** The strings that carry the cohort's NAME, excluding the footnote that explains it. */
+const labelsOf = (c: ReturnType<typeof describeCohort>): string[] => [
+  c.headline,
+  c.detail,
+  c.toggleLabel,
+  c.statDetail,
+  c.heroClause,
+  c.shortLabel,
 ];
 
 // ===========================================================================
@@ -200,13 +211,45 @@ describe("every cohort label names the predicate it actually selects", () => {
   });
 
   test("no label sells a liquidity claim the predicate does not measure", () => {
-    // "well-traded" is about volume; the predicate is about MOVEMENT. "thin /
-    // untraded" is false twice over — those rows traded, they just never moved,
-    // and zero-bid outcomes are already excluded upstream.
-    const banned = /well[- ]traded|thinly[- ]traded|thin\b|untraded/i;
+    // "well-traded" is about VOLUME; the predicate is about MOVEMENT, and a
+    // market can trade heavily and close where it opened. That ban stands.
+    //
+    // ⚠️ `untraded` USED TO BE ON THIS LIST and was removed deliberately.
+    // Alex, 2026-08-13 (UX-P075 item (a)), overrules L2-236's ban on the word
+    // — later, and specific to this page and this word, so it governs (ruling
+    // 055). The ban is replaced, not dropped: see the pairing test below, which
+    // is strictly stronger. L2-236 was right that the word alone overclaims;
+    // the repair is to make it impossible for the word to appear alone.
+    const banned = /well[- ]traded|thinly[- ]traded|thin\b/i;
     for (const copy of [...copyOf(dflt), ...copyOf(all)]) {
       expect(copy).not.toMatch(banned);
     }
+  });
+
+  test("the short word NEVER travels without its proxy footnote", () => {
+    // The invariant that replaces the word-ban. If a label says "untraded",
+    // `proxyFootnote` must exist and must state the price test the word stands
+    // for — otherwise the rename has upgraded a proxy into a fact, which is the
+    // one thing Alex's ruling forbids in the same sentence that ordered it.
+    for (const c of [dflt, all]) {
+      const usesWord = labelsOf(c).some((l) => /untraded/i.test(l));
+      expect(usesWord).toBe(true);
+      expect(c.proxyFootnote).not.toBeNull();
+      expect(c.proxyFootnote).toBe(PROXY_FOOTNOTE);
+      // The footnote must actually do its job, not merely be present.
+      expect(c.proxyFootnote).toContain("not a trade count");
+      expect(c.proxyFootnote).toContain("never moved off its opening line");
+      expect(c.proxyFootnote).toMatch(/already excluded upstream/i);
+    }
+  });
+
+  test("no untraded cohort means no footnote — a caveat about nothing is boilerplate", () => {
+    // The failure mode of an always-on caveat is that it stops being read. When
+    // the excluded side is empty the word is never rendered, so neither is the
+    // sentence explaining it.
+    const c = describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false);
+    expect(labelsOf(c).some((l) => /untraded/i.test(l))).toBe(false);
+    expect(c.proxyFootnote).toBeNull();
   });
 
   test("no label claims trading CAUSED a calibration difference", () => {
@@ -218,25 +261,27 @@ describe("every cohort label names the predicate it actually selects", () => {
 
   test("the default cohort names BOTH halves, with their counts", () => {
     expect(dflt.headline).toBe(
-      "Showing markets whose price moved, plus sportsbook lines (389,385)"
+      "Showing traded markets, plus sportsbook lines (389,385)"
     );
-    expect(dflt.detail).toContain("349,310 outcomes whose price real trading moved");
+    expect(dflt.detail).toContain("349,310 traded outcomes");
     expect(dflt.detail).toContain("40,075 sportsbook lines where that test doesn't apply");
   });
 
   test("the excluded side is described by what it is, with its count", () => {
+    // The count and the predicate both survive the rename — the short word is
+    // ADDED in front of the description, it does not replace it.
     expect(dflt.detail).toContain(
-      "Excluded: 263,022 outcomes whose price never moved off its opening line."
+      "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."
     );
-    expect(dflt.toggleLabel).toBe("Include never-moved (+263,022)");
+    expect(dflt.toggleLabel).toBe("Include untraded (+263,022)");
   });
 
   test("the all-markets view publishes the whole partition", () => {
     expect(all.headline).toBe("Showing all markets (652,407)");
     expect(all.detail).toBe(
-      "349,310 price moved · 263,022 price unchanged · 40,075 not applicable (sportsbook lines)."
+      "349,310 traded · 263,022 untraded · 40,075 not applicable (sportsbook lines)."
     );
-    expect(all.toggleLabel).toBe("Exclude never-moved");
+    expect(all.toggleLabel).toBe("Exclude untraded");
   });
 
   test("the activity note reconciles the two cards to the page total", () => {
@@ -252,18 +297,18 @@ describe("every cohort label names the predicate it actually selects", () => {
     // A caveat that appears on payloads it does not describe is noise. Here the
     // cohort IS exactly `price_moved === true`, so saying so is accurate.
     const c = describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, false);
-    expect(c.headline).toBe("Showing markets whose price moved (200)");
+    expect(c.headline).toBe("Showing traded markets (200)");
     expect(c.detail).toBe(
-      "Every outcome whose price real trading moved. " +
-        "Excluded: 100 outcomes whose price never moved off its opening line."
+      "Every traded outcome. " +
+        "Excluded: 100 untraded outcomes, whose price never moved off its opening line."
     );
     expect(c.partitionNote).toBeNull();
-    expect(c.shortLabel).toBe("Price moved");
+    expect(c.shortLabel).toBe("Traded");
   });
 
   test("with no sportsbook rows the all-markets partition drops the third term", () => {
     const c = describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, true);
-    expect(c.detail).toBe("200 price moved · 100 price unchanged.");
+    expect(c.detail).toBe("200 traded · 100 untraded.");
     expect(c.partitionNote).toBeNull();
   });
 
@@ -293,7 +338,7 @@ describe("the activity comparison states the observed ordering and nothing more"
     expect(a.movedText).toBe("1.7");
     expect(a.unchangedText).toBe("1.0");
     expect(a.ratioText).toBe("1.7");
-    expect(a.sentence).toContain("price-moved cohort carries the higher calibration error");
+    expect(a.sentence).toContain("traded cohort carries the higher calibration error");
     // The shipped bug, in one line: 1.0/1.7 = 0.6 printed as "more accurately".
     expect(a.sentence).not.toMatch(/more accurately calibrated/i);
     expect(a.sentence).not.toContain("0.6x");
@@ -302,7 +347,7 @@ describe("the activity comparison states the observed ordering and nothing more"
   test("the reversed ordering names the other cohort", () => {
     const a = describeActivityComparison({ ece: 1.0, n: 10 }, { ece: 1.7, n: 10 });
     expect(a.direction).toBe("unchanged_higher");
-    expect(a.sentence).toContain("price-unchanged cohort carries the higher calibration error");
+    expect(a.sentence).toContain("untraded cohort carries the higher calibration error");
   });
 
   test("a tie at display precision is stated as a tie", () => {

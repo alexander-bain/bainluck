@@ -24,9 +24,14 @@ describe("no American-moneyline leak (L2-48)", () => {
     "components/RelatedFutures.tsx",
   ];
 
-  test("ThresholdGrid (ladder rail) renders no source-provider name (D1)", () => {
+  test("QuantityGroup (ladder rail) renders no source-provider name (D1)", () => {
     // L2-51: the ladder cells used to print "Polymarket"/"Kalshi" per outcome.
-    const src = read("components/ThresholdGrid.tsx");
+    // The rail this guards is `QuantityGroup` — L2-118 replaced `ThresholdGrid`
+    // with it, and UX-P075 deleted the corpse (gotcha #133). Retargeting rather
+    // than deleting the test: the D1 guard is about the LADDER RAIL, and the
+    // ladder rail still exists. Pointing it at a file with no importer was the
+    // real defect — it certified a component no reader could reach.
+    const src = read("components/QuantityGroup.tsx");
     expect(src).not.toContain('"Polymarket"');
     expect(src).not.toContain('"Kalshi"');
   });
@@ -42,7 +47,10 @@ describe("no American-moneyline leak (L2-48)", () => {
     "components/PlayerPropsGrid.tsx",
     "components/PlayerPropsDashboard.tsx",
     "components/ProgressionTable.tsx",
-    "components/ThresholdGrid.tsx",
+    // `components/ThresholdGrid.tsx` was swept here until UX-P075 deleted it
+    // (gotcha #133 — retired since L2-118, zero importers). Its live successor
+    // `QuantityGroup` is swept by the D1 test above.
+    "components/QuantityGroup.tsx",
   ];
   for (const rel of SWEPT) {
     test(`${rel} renders no source-provider name`, () => {
