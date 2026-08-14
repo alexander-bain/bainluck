@@ -42,7 +42,14 @@ async def kalshi_scan_report(
     was slow" from "the walk never advances"; ``cursor_appears_stuck`` and
     ``never_wrapped`` are the two readings that can only be taken across runs.
     """
-    _check_admin_secret(request)
+    # `request` MUST go through the keyword. The signature is
+    # `_check_admin_secret(secret=None, *, request=None)`, so a positional call
+    # binds the Request object to `secret` and leaves `request=None` — the
+    # header is then read off None, nothing matches, and the endpoint answers
+    # 403 to a perfectly valid token, forever. Shipped that way in q350 and
+    # caught by INT-067 on the first real read: this is the ONE call site out of
+    # 47 in this file that did not pass `request=request`.
+    _check_admin_secret(request=request)
 
     from app.utils.kalshi_scan_report import (
         load_scan_history,
