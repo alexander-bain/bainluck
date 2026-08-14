@@ -265,6 +265,7 @@ class TestBeatScheduleCompleteness:
         "precompute-source-intelligence",
         "precompute-category-pages",
         "warm-event-concepts",
+        "warm-typeahead",
         "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",

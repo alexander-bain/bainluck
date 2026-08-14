@@ -2376,6 +2376,32 @@ def warm_event_concepts(self):
     return _tracked_run("warm_event_concepts", _warm_event_concepts())
 
 
+@celery_app.task(bind=True, soft_time_limit=100, time_limit=115, name="app.tasks.warm_typeahead")
+def warm_typeahead(self, head_size: int = None):
+    """Keep `/typeahead`'s hot pages resident so a user never pays the cold read.
+
+    #1866 / LAT-P056. The miss cost was decomposed at the transport boundary
+    (n=24 pairs): 99.74% of it is the server segment, and EXPLAIN ANALYZE on
+    production showed 95-98% of THAT is `Shared I/O Read Time` on non-resident
+    pg_trgm GIN pages — same plan, same rows, 1094.5ms cold vs 27.1ms hot.
+
+    Budget: the first (cold) run pays the real reads and is the worst case at
+    ~40 queries; every query after that is served from resident pages. ONE query
+    is bounded at `PER_QUERY_TIMEOUT_SECONDS=10` inside the task, so the longest
+    single uninterrupted op is bounded rather than only the loop boundary, and
+    both limits sit under the 300s hard SIGKILL that would be recorded as
+    `no_data`.
+    """
+    # NOTE the module is `typeahead_warmer`, not `warm_typeahead`: a submodule
+    # sharing a name with a registered task is shadowed by the task on
+    # `from app.tasks import <name>` — the same trap `warm_event_concepts`
+    # records two definitions below.
+    from app.tasks.typeahead_warmer import DEFAULT_HEAD_SIZE, _warm_typeahead
+
+    size = DEFAULT_HEAD_SIZE if head_size is None else int(head_size)
+    return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
+
+
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_event_concept")
 def refresh_event_concept(self, key: str, token: str | None = None):
     """Revalidate one concept key after the route served its 24h mirror.
@@ -2847,6 +2873,27 @@ celery_app.conf.beat_schedule = {
         # in ~0.44s and schedules one revalidation, so this cadence governs
         # content freshness, not user-visible latency.
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "background"},
+    },
+    "warm-typeahead": {
+        "task": "app.tasks.warm_typeahead",
+        # Every 2 min — keep the head of the `/typeahead` query distribution's
+        # index pages RESIDENT (#1866, LAT-P056).
+        #
+        # THE CADENCE IS NOT CHASING THE 45s RESPONSE TTL, and that is the whole
+        # design. The measured cost is not "the cache expired", it is "the
+        # pg_trgm GIN pages were evicted": same query, same plan, same rows,
+        # 1094.5ms with 710 `Shared Read Blocks` vs 27.1ms with 0. Page
+        # residency is SHARED, so re-touching the head every 2 min also keeps
+        # tail queries fast — a sub-45s cadence would buy a little cache-hit
+        # rate for a lot more query load, against the segment that is not the
+        # problem.
+        #
+        # Eviction pressure is why it is minutes and not hours:
+        # `ix_futures_outcomes_name_trgm` (406 MB) + `ix_futures_name_trgm`
+        # (172 MB) want 56% of a 1 GB `shared_buffers`, and the prediction-market
+        # matcher sweeps it every 15 min with 13-21s scans over a 977 MB table.
+        "schedule": crontab(minute="*/2"),
         "options": {"queue": "background"},
     },
     "precompute-discover-candidate-base": {

@@ -856,3 +856,141 @@ numbers and name the stage that moves.
 endpoint `entity_top_1` grades. `-47` (#1846) still owes its own read on its own
 deploy. **`-47` must land, deploy and be read BEFORE `-50` lands**, or `-47`'s
 `+1 → 39/44` projection is measured on a server that also changed underneath it.
+
+---
+
+## 9. The miss path, decomposed — and it was never compute (#1866, LAT-P056, 2026-08-14)
+
+§8's tail asked for stage attribution and said four black-box series had produced
+three shapes. This section closes that. The answer needed neither `?debug_timing=1`
+nor a deploy, because the segment that owns the cost is visible from outside —
+and once located, `EXPLAIN ANALYZE` named the mechanism exactly.
+
+Measured against **`da5e7992` / Heroku v3816**, confirmed via `/api/health`.
+
+### 9.1 The segments, on one instrument
+
+`backend/scripts/probe_typeahead_segments.py`. Per query a MISS leg then an
+immediate HIT leg, both on fresh connections, so the difference per segment IS
+the miss cost with the network floor subtracted rather than estimated. The 45s
+cache TTL makes the first touch of a round a miss by construction; a "miss" whose
+server segment lands under 150ms is disclosed as pre-warmed and excluded.
+
+**Capture A, 8-query arm × 3 rounds, n=24 usable pairs, 0 pre-warmed, 0 errors:**
+
+| segment | miss p50 | hit p50 | **miss cost p50** | share of miss cost |
+|---|---|---|---|---|
+| dns | 0.011ms | 0.011ms | 0.000ms | 0.00% |
+| connect | 0.165ms | 0.157ms | 0.010ms | 0.00% |
+| tls | 157.644ms | 157.934ms | 3.449ms | 0.25% |
+| **server** | **1455.496ms** | 86.041ms | **1369.777ms** | **99.74%** |
+| transfer | 0.516ms | 0.299ms | 0.078ms | 0.01% |
+
+Total miss cost p50 **1384.6ms** (min 949.8, max 5195.4); miss wall p50 1627.3ms.
+Response body 1875 bytes.
+
+**Two things this settles immediately.**
+
+*Serialization is not a suspect.* FastAPI's `JSONResponse` serializes fully
+before the first byte, so serialization sits inside `server` — but `transfer`
+measures the wire for that same 1875-byte body at **0.5ms**. A 2 KB payload whose
+transfer is sub-millisecond is not hiding a large serialization cost.
+
+*The TLS tax is real but is a FLOOR, not the miss cost.* 157.6ms on every fresh
+connection — which alone exceeds the `<150ms` budget this endpoint states twice —
+yet only **0.25%** of the miss cost. The connection-reuse control priced it
+directly: leg 2 down the same connection pays **0ms** TLS, and a warm hit drops
+from 251ms to 108ms wall. So connection reuse is worth ~154ms of *floor* and
+~3ms of *miss*. It is a real improvement to the wrong number.
+
+### 9.2 Inside `server`: it is I/O, not compute
+
+`EXPLAIN (ANALYZE, BUFFERS)` on production, on the outcome-name arm
+(`futures_outcomes.name ILIKE '%q%'` — the 3.2M-row / 3 GB table the route's own
+comment flags), same query run twice:
+
+| query | cold | hot | ratio | cold `Shared I/O Read Time` | cold `Shared Read Blocks` | hot read blocks |
+|---|---|---|---|---|---|---|
+| `red sox` | 1094.5ms | **27.1ms** | 40× | 1067.2ms (97.5%) | 710 | **0** |
+| `yankees` | 426.5ms | **5.5ms** | 78× | 380.3ms (89.2%) | 350 | **0** |
+| `bruins` | 219.9ms | **5.0ms** | 44× | 173.8ms (79.0%) | 289 | **0** |
+
+Same plan, same index, same rows, every time. The planner was never wrong and the
+query was never expensive: **the pg_trgm GIN pages simply were not resident**, and
+on every cold run 79–98% of the node's time is `Shared I/O Read Time`.
+
+### 9.3 Why it swings by the hour — and why "accumulating resource" was right to be withdrawn
+
+| object | size |
+|---|---|
+| `ix_futures_outcomes_name_trgm` | **406 MB** |
+| `ix_futures_name_trgm` | **172 MB** |
+| `futures_outcomes` / `futures_markets` | 1141 MB / 977 MB |
+| **`shared_buffers`** | **1024 MB** |
+
+Those two indexes alone want **56% of the entire buffer pool**, and they compete
+with scheduled work that sweeps it: `pg_stat_statements` shows the prediction-market
+matcher's `futures_markets` scans at **13–21s mean** over a 977 MB table, running
+every 15 minutes.
+
+Residency is therefore a **shared resource under periodic eviction pressure**.
+That is not monotone, does not accumulate, and does not survive a restart in any
+particular direction — which is exactly why LAT-P054's one climbing series failed
+to replicate and why withdrawing the accumulating-resource reading was correct.
+The variance was never a leak; it is who last touched the buffer pool.
+
+### 9.4 The three candidate fixes, premise-checked against master before believing
+
+| candidate | verdict | evidence |
+|---|---|---|
+| single-flight on concurrent identical misses (#1767) | **does not address the named segment** | it dedupes N concurrent identical misses into one query; the surviving one still pays the cold read in full, so p50 miss cost is unchanged. Master already has single-flight in `main.py`, `feed.py`, `hub.py`, `league_futures.py` — the utility is not the blocker, the mechanism is |
+| connection reuse | **refuted as the miss-cost fix** | 3.4ms of a 1384.6ms miss cost (0.25%). Worth ~154ms of the warm-hit floor; not this |
+| **warm the head of the query distribution** | **taken** | it moves who pays the cold read. And the mechanism upgrades it: page residency is SHARED, so warming the head also speeds tail queries that touch the same index pages — a bigger effect than the 45s response cache it superficially resembles |
+
+The head is **measured, not guessed** — `search_query_logs`, 30 days, 2026-08-14:
+3,423 rows / 210 distinct, **top-20 = 36.0% of volume, top-50 = 68.7%**. The live
+`/typeahead` distribution is better still and already exists: the route writes
+`search:trending:24h` on every call, so the warmer reads that first and falls back
+to the log, then to a five-entry static floor. Which source produced the head
+travels in the run summary, because it changes what the run means.
+
+### 9.5 The fix, and what is deliberately NOT claimed
+
+`app/tasks/typeahead_warmer.py`, beat `warm-typeahead` every 2 min, background
+queue. It calls **the route function itself** — one implementation, no second
+copy to drift — so the route's own `setex` does the writing and **no ranking code
+is touched**.
+
+The cadence deliberately does not chase the 45s response TTL: with pages resident
+a genuine miss measured 5–27ms in the arm above, so residency is the thing worth
+holding, and a sub-45s cadence would buy a little hit-rate for a lot more load
+against the segment that is not the problem.
+
+**Not load-bearing.** A cold miss still builds inline in the route, so turning the
+task off makes `/typeahead` slow again — never broken.
+
+**The trap it is written against.** `debug_evidence` and `debug_timing` default to
+`Query(False)`, a marker object that is **truthy**. A caller that omits them makes
+the route skip its cache write, so the warmer would run every query, warm nothing,
+and report success — indistinguishable from a healthy run (gotcha #53). The flags
+are passed as literal `False`, two separate mutants cover the conjunction, and
+`scripts/evals/typeahead_warmer_mutations.py` scores **6/6 killed**.
+
+### 9.6 Pre-registered read (ruling 050) — declared BEFORE the deploy
+
+`-51` ships no ranking code, so the no-regression control and the target are
+independent claims and are graded separately.
+
+* **Target — the floor:** `server` miss-cost p50 **< 600ms**, down from
+  **1369.777ms**. Stretch: budget-adjacent (<150ms).
+* **Prediction pinned to the named segment:** the movement appears in `server`
+  and **only** in `server`. `tls` stays ~157ms, `connect`/`dns`/`transfer` stay
+  sub-millisecond. A fix that moved `tls` would mean something other than this
+  change moved.
+* **No-regression control:** gold set **39/44, MRR 0.8913043478260869, 0
+  regressions, 46/46 measured, fidelity `exact`** — measured on `da5e7992` in the
+  same window. **0 of 46 dispositions may differ.**
+* **HALT:** if `server` miss-cost p50 does not fall, or any of the 46 dispositions
+  change, HALT further ranking merges until explained.
+* **Method:** same instrument, `probe_typeahead_segments.py`, same 8-query arm,
+  same hour-class, read twice.
