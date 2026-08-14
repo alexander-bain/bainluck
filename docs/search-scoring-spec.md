@@ -1012,23 +1012,71 @@ task off makes `/typeahead` slow again — never broken.
 the route skip its cache write, so the warmer would run every query, warm nothing,
 and report success — indistinguishable from a healthy run (gotcha #53). The flags
 are passed as literal `False`, two separate mutants cover the conjunction, and
-`scripts/evals/typeahead_warmer_mutations.py` scores **6/6 killed**.
+`scripts/evals/typeahead_warmer_mutations.py` scores **10/10 killed**.
+
+#### The residency bonus, at the endpoint level: NOT SUPPORTED
+
+The warmer's mechanism is testable without a deploy, because it does nothing
+`curl` cannot: touch the endpoint, wait past the 45s response TTL so the cache
+expires but the pages do not, and measure a second genuine MISS.
+`scripts/probe_typeahead_warm_effect.py` does that, with a control arm touched
+for the first time at the same instant — because a quieter database between the
+two legs would otherwise produce the same drop with no mechanism at all.
+
+| run | gap | warmed arm at T1 | control at T1 | warmed vs control |
+|---|---|---|---|---|
+| 1 | 60s | 963.3ms | 1202.6ms | 1.25× |
+| 2 | 46s | 1591.5ms | 1249.6ms | **0.79× (inverted)** |
+
+**Both NOT CONFIRMED**, n=4 and n=3, one flat and one inverted, against an
+endpoint whose own `server` segment ranges 1028–5273ms. So the isolated arm's
+40–78× hot/cold does **not** carry to the endpoint: a request touches teams,
+events, the futures pool's UNION arms and the outcome selectinload, and that
+whole working set does not stay resident the way one arm's pages do.
+
+This is recorded as unsupported rather than quietly dropped, because it is the
+argument the first draft of this fix rested on. **The fix's justification is now
+the response cache alone** — which is deterministic, does not depend on the
+buffer pool, and is what the 30s cadence buys.
 
 ### 9.6 Pre-registered read (ruling 050) — declared BEFORE the deploy
 
 `-51` ships no ranking code, so the no-regression control and the target are
 independent claims and are graded separately.
 
-* **Target — the floor:** `server` miss-cost p50 **< 600ms**, down from
-  **1369.777ms**. Stretch: budget-adjacent (<150ms).
-* **Prediction pinned to the named segment:** the movement appears in `server`
-  and **only** in `server`. `tls` stays ~157ms, `connect`/`dns`/`transfer` stay
-  sub-millisecond. A fix that moved `tls` would mean something other than this
-  change moved.
+**The declared floor was `p50 miss cost < 600ms`. This fix does NOT deliver that
+as worded, and the number is not being redefined to fit.** What it delivers:
+
+* **The head stops missing.** Refreshed every 30s inside a 45s TTL, head queries
+  are cache hits: `server` **1455.5ms → 86.0ms**, measured on capture A's own hit
+  leg rather than projected. That is 36.0% of logged volume at top-20 and 68.7%
+  at top-50.
+* **The tail's miss cost is unchanged** at ~1.2–1.4s. No claim is made there; it
+  is the open half of #1866.
+
+**THE INSTRUMENT CHANGES MEANING AFTER THIS FIX, and that is declared here rather
+than discovered afterwards.** The probe's "miss" leg is the first touch of a
+round — but once the warmer holds the head warm, that leg is a **hit**. So the
+success signal is the probe's own pre-warmed disclosure flipping, not a smaller
+miss number:
+
+* **Primary:** on the 8-query head arm, `excluded_pre_warmed` goes from **0 of
+  24** to **≥ 20 of 24**.
+* **Head wall clock:** p50 from **1627.3ms** toward the measured hit total
+  (~**244ms**, of which ~158ms is TLS).
+* **Segment pin:** movement appears in `server` and **only** in `server`. `tls`
+  stays ~157ms; `connect`/`dns`/`transfer` stay sub-millisecond. A fix that moved
+  `tls` would mean something other than this change moved.
+* **Tail control:** a disjoint never-warmed arm stays ~1.2s. **If the tail also
+  improves, the endpoint-level residency claim withdrawn just above deserves
+  re-opening** — that would be new information, not a confirmation.
 * **No-regression control:** gold set **39/44, MRR 0.8913043478260869, 0
   regressions, 46/46 measured, fidelity `exact`** — measured on `da5e7992` in the
   same window. **0 of 46 dispositions may differ.**
-* **HALT:** if `server` miss-cost p50 does not fall, or any of the 46 dispositions
-  change, HALT further ranking merges until explained.
+* **HALT:** if any of the 46 dispositions change, or the head arm does not go
+  pre-warmed, HALT further ranking merges until explained.
 * **Method:** same instrument, `probe_typeahead_segments.py`, same 8-query arm,
-  same hour-class, read twice.
+  same hour-class, read twice. Also read the warmer's own summary: a
+  `terminal: "skipped"` on every beat is a wedged lock, and a production
+  `head_source: "static_floor"` means both measured sources came back empty.
+  Either is a finding.
