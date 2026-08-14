@@ -2,7 +2,7 @@
   "schema_version":"nonexclusive-bundle/v1",
   "defaults":{"source":"polymarket","category":"cricket","league":"unknown","threshold":1.15,"tolerance":0.000001,"publish_bar":1000,"cohort_after_n":null,"approved_narrow_exclusion":false,"evidence":{"outcome_count":3,"probability_sum":1.52,"winner_count":2,"independent_binary_questions":true,"exclusive_proved":false,"parent_condition_missing":false,"duplicate_ids":false,"contradictory":false},"expected":{"shape":"independent_bundle","normalize":false,"publish":true,"reason":"nonexclusive_bundle_measured","disposition":"measured_only"}},
   "cases":[
-    {"id":"cricket-multiwinner"},
+    {"id":"cricket-multiwinner","expected":{"shape":"independent_bundle","normalize":false,"publish":false,"reason":"nonexclusive_bundle","disposition":"excluded_structural"}},
     {"id":"esports-same-shape","category":"esports","expected":{"shape":"independent_bundle","normalize":false,"publish":false,"reason":"nonexclusive_bundle","disposition":"excluded_structural"}},
     {"id":"entertainment-same-shape","category":"entertainment"},
     {"id":"mex-above-threshold","evidence":{"winner_count":1,"independent_binary_questions":false,"exclusive_proved":true},"expected":{"shape":"mex_field","normalize":true,"publish":true,"reason":null,"disposition":"published"}},

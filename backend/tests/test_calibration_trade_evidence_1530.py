@@ -343,3 +343,93 @@ class TestTheCensusStatement:
         source = inspect.getsource(census_trade_evidence)
         for verb in ("UPDATE ", "INSERT ", "DELETE ", "ALTER "):
             assert verb not in source.upper().replace("STATEMENT_TIMEOUT", "")
+
+
+class TestTheProducerImportsTheRuleAndNeverRestatesIt:
+    """CAL-P045 amendment 1 — the tier has exactly ONE definition.
+
+    The prepared ruling-011 patch predated
+    ``app/utils/calibration_trade_evidence.py`` and declared its own copy of the
+    rule inside ``precompute_calibration.py``: the same five classes, the same
+    excluded sources, its own ``trade_evidence_sql``. Applying it verbatim would
+    have left the CENSUS THAT JUSTIFIES the tier change and the PRODUCER THAT
+    APPLIES it free to disagree about what the tier is — the C13/C14 drift
+    failure, in the one place where it would corrupt the before/after census
+    ruling 011 ships on.
+
+    Identity (``is``), not equality, because two tuples that happen to match
+    today are exactly what drift looks like on day one.
+    """
+
+    def test_the_producer_binds_the_shared_objects_themselves(self):
+        from app.tasks import precompute_calibration as pc
+        from app.utils import calibration_trade_evidence as rule
+
+        assert pc.TRADE_EVIDENCE_CLASSES is rule.CLASSES
+        assert pc.TRADE_EVIDENCE_TRADED_CLASSES is rule.TRADED_CLASSES
+        assert pc.TRADE_EVIDENCE_EVIDENCED_CLASSES is rule.EVIDENCED_CLASSES
+        assert pc.TRADE_EVIDENCE_EXCLUDED_SOURCES is rule.EXCLUDED_SOURCES
+        assert pc.TRADE_EVIDENCE_RULE_TEXT is rule.RULE_TEXT
+        assert pc.trade_evidence_sql is rule.trade_evidence_sql
+
+    def test_the_producer_defines_no_second_case_expression(self):
+        """A restated CASE is the drift, and it is greppable."""
+        import inspect
+
+        from app.tasks import precompute_calibration as pc
+
+        own_source = inspect.getsource(pc)
+        # The rule's own module is where 'not_applicable' may be MINTED. In the
+        # producer it may only ever arrive via the imported helper.
+        assert "'not_applicable'" not in own_source, (
+            "precompute_calibration mints a trade-evidence class of its own. "
+            "The rule lives in app/utils/calibration_trade_evidence.py; import it."
+        )
+
+    def test_the_emitted_sql_names_the_producers_own_aliases(self):
+        """The shared helper's DEFAULTS belong to the census, not to this scope.
+
+        ``trade_evidence_sql()`` defaults to ``fm.``/``fm.``; the population
+        chain carries the market columns on ``vm``. Calling it bare here would
+        emit SQL naming a table the statement does not join — a failure that
+        needs a real database to surface, so it is pinned on the text instead.
+        """
+        from app.tasks.precompute_calibration import _main_futures_sql
+
+        sql = _main_futures_sql()
+        case = sql[sql.index("AS trade_evidence") - 400 : sql.index("AS trade_evidence")]
+
+        assert "vm.source" in case
+        assert "vm.open_interest" in case
+        assert "fo.volume" in case
+        assert "fm.source" not in case and "fm.open_interest" not in case
+
+    def test_trade_evidence_is_a_group_KEY_not_a_passthrough(self):
+        """A passthrough is WORSE than omitting it (the queue's own warning).
+
+        As a key, traded and untraded mass stay in separate rows that the Python
+        merge folds back on the original four. As a passthrough, the staged fold
+        freezes one chunk's value and BROADCASTS it over the group — silently
+        relabelling mass rather than losing it.
+        """
+        from app.utils.calibration_staged_futures import GROUP_KEY_COLUMNS
+
+        assert "trade_evidence" in GROUP_KEY_COLUMNS
+
+    def test_the_rule_is_hashed_into_the_build_fingerprint(self):
+        """Changing the tier must invalidate every banked unit.
+
+        Otherwise a resumed build merges units classified under two different
+        rules into one published payload — the precise failure the digest exists
+        to prevent, and the reason parts (a) and (b) are one window.
+        """
+        from app.tasks import precompute_calibration as pc
+
+        before = pc._main_input_fingerprint()
+        original = pc.TRADE_EVIDENCE_CLASSES
+        try:
+            pc.TRADE_EVIDENCE_CLASSES = ("traded", "untraded")
+            assert pc._main_input_fingerprint() != before
+        finally:
+            pc.TRADE_EVIDENCE_CLASSES = original
+        assert pc._main_input_fingerprint() == before

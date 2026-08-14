@@ -323,7 +323,14 @@ class TestCalibrationPublicEndpoint:
             # never be read as a population change. Additive, so web/native
             # payload compatibility holds.
             "representative_tie_authority",
-            "esports_multi_bundle_filter",  # Queue #159 (#1010)
+            # Queue #159 (#1010) + CAL-P045(c). The wire key keeps its name so no
+            # consumer breaks; `applies_to` is now the real list and includes
+            # cricket, which was diagnosed to `exclusion` (exam item 3).
+            "esports_multi_bundle_filter",
+            # #1530 / ruling 011 (CAL-P045(b)): what the SOURCE says about
+            # trading, beside what our polling says. A transparency block, not a
+            # filter — no row enters or leaves the population because of it.
+            "trade_evidence",
             # Queue 299 (#1012): result authority before shape, then evidence-
             # based exclusivity. Each rung ships its own rule + live count.
             "no_winner_filter",  # rung 1: the market graded nobody

@@ -21,6 +21,34 @@ from app.utils.calibration_coverage_bridge import RUNG_KEYS as _COVERAGE_RUNG_KE
 from app.utils.calibration_coverage_bridge import (
     build_coverage_census as _build_coverage_census,
 )
+
+# #1530 / ruling 011. The tier is IMPORTED, never restated. CAL-P044 shipped
+# `app/utils/calibration_trade_evidence.py` as the ONE definition, and the
+# prepared patch for this queue predated it and declared its own copy here.
+# A second definition of a tier is the C13/C14 drift failure, and here it would
+# be the CENSUS THAT JUSTIFIES the change disagreeing with the PRODUCER THAT
+# APPLIES it — the two-derivations-of-one-fact cost this lane keeps paying.
+# Aliased to the names the producer already uses so the call sites stay
+# greppable, and imported at module level so the derived fingerprint map sees
+# them as cross-module inputs that must be covered (they are).
+from app.utils.calibration_trade_evidence import (
+    CLASSES as TRADE_EVIDENCE_CLASSES,
+)
+from app.utils.calibration_trade_evidence import (
+    EVIDENCED_CLASSES as TRADE_EVIDENCE_EVIDENCED_CLASSES,
+)
+from app.utils.calibration_trade_evidence import (
+    EXCLUDED_SOURCES as TRADE_EVIDENCE_EXCLUDED_SOURCES,
+)
+from app.utils.calibration_trade_evidence import (
+    RULE_TEXT as TRADE_EVIDENCE_RULE_TEXT,
+)
+from app.utils.calibration_trade_evidence import (
+    TRADED_CLASSES as TRADE_EVIDENCE_TRADED_CLASSES,
+)
+from app.utils.calibration_trade_evidence import (
+    trade_evidence_sql,
+)
 from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
@@ -121,27 +149,40 @@ def _main_payload_is_publishable(response: Any) -> bool:
 #   4. exclusivity EVIDENCE gating normalization — the default-true
 #      ``mutually_exclusive`` flag is no longer accepted as proof of a partition.
 #
-# THE VERSION IS DELIBERATELY *NOT* BUMPED YET, and that ordering is the point.
+# CAL-P045 / ruling 024 — THE VERSION IS BUMPED, q267 -> q1530, and the caution
+# below is DISCHARGED BY MEASUREMENT rather than dropped.
 #
-# Bumping it first (tried 2026-08-02, reverted the same hour) took /calibration
-# DARK: ``snapshot_verdict`` refuses a cached artifact whose population_version
-# is not the one the deployed build expects, so the moment the web dyno booted
-# expecting "q299" BOTH the live key and the 7-day last-good became
-# ``wrong_version`` — and the replacement could not exist until the next hourly
-# precompute completed. Q297's gate protects against a BAD build replacing a
-# good one; it has no protection against a version bump that invalidates the
-# only good copy before its successor is built. On a task already known to
-# overrun its window (#1479, #1513) that is an unbounded outage of the exact
-# page #1517 exists to keep lit.
+# Ruling 011 ships only with a version bump plus published before/after counts
+# per cohort, and ruling 024 binds the bump into ONE invalidation window with
+# the fingerprint-coverage fix, the two-tier well-traded classifier and the
+# cricket exclusion. Shipped separately each invalidates the last, so three
+# rebuilds produce three incomparable curves and no before/after means anything.
 #
-# So the sequence is: land the population change under the CURRENT version, let
-# the publish gate compare the new candidate against the published q267 baseline
-# and MEASURE the drift it produces (rejecting and preserving last-good if that
-# drift exceeds its bars — the page stays up on good data either way), then bump
-# the version as a deliberate one-line follow-up once the numbers have been
-# reviewed. The gate's rejection report IS the exact-SHA census, obtained
-# without risking the page.
-CALIBRATION_POPULATION_VERSION = "q267"
+# WHAT THE OLD CAUTION SAID, and it was right at the time. Bumping first (tried
+# 2026-08-02, reverted the same hour) took /calibration DARK: ``snapshot_verdict``
+# refuses a cached artifact whose population_version is not the one the deployed
+# build expects, so the moment the web dyno booted expecting "q299" BOTH the live
+# key and the 7-day last-good became ``wrong_version`` — and the replacement
+# could not exist until the next hourly precompute completed. Q297's gate
+# protects against a BAD build replacing a good one; it has no protection
+# against a version bump that invalidates the only good copy before its
+# successor is built. On a task then known to overrun its window (#1479, #1513)
+# that was an UNBOUNDED outage of the exact page #1517 exists to keep lit.
+#
+# WHAT CHANGED, measured 2026-08-12: the beat no longer overruns. The last 16
+# durations are 48-126 s (median ~81 s) against the 1.38 M ms era that produced
+# the original caution, with a fresh publish at 21:16:12Z and
+# ``last_verdict complete``. The outage is now ONE BEAT, not an unbounded wait.
+#
+# ⚠️ BUT IT IS NOT ~80 SECONDS BY ITSELF, and the deploy must know the difference.
+# The beat is hourly at :15. The page goes dark the instant the dyno boots and
+# stays dark until the next beat COMPLETES, so a deploy landing at :16 is dark
+# for ~59 minutes, not ~80 seconds. The bump therefore ships with a required
+# post-deploy step: POST /api/admin/calibration/recompute immediately after the
+# release, which starts the rebuild at once and bounds the darkness to one beat.
+# Quoting "~80 s" without that call would be an SLO claim the deploy does not
+# actually satisfy.
+CALIBRATION_POPULATION_VERSION = "q1530"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
@@ -413,6 +454,28 @@ KALSHI_LIQUIDITY_RULE_TEXT = (
     "(last_price > 0) in any snapshot — pure one-sided, never-traded placeholder "
     "prices. Applied to Kalshi only; never mutates resolutions."
 )
+
+# #1530 (CAL-P044 / ruling 011) — TRADE EVIDENCE, defined in
+# ``app/utils/calibration_trade_evidence.py`` and IMPORTED above. The rule, the
+# five classes, the excluded sources and the SQL ``CASE`` all live there; this
+# module renders them against its own aliases (the population chain carries the
+# market columns on ``vm``, the census joins ``fm`` directly) via
+# ``trade_evidence_sql(source=..., volume=..., open_interest=...)``, which is
+# parameterised for exactly that reason.
+#
+# WHY ``price_moved`` needed replacing, kept here because it is the producer's
+# motivation rather than the rule's: ``price_moved`` measures whether OUR
+# POLLING captured two distinct prices, and the page has read it as whether the
+# market TRADED. Kalshi is polled every 2h against Polymarket's 1h and the
+# closing line falls back to opening when no distinct later snapshot exists, so
+# Kalshi is structurally over-counted as "unchanged". Measured 2026-08-12 over
+# resolved outcomes in a 30-day window: of 274,590 Kalshi outcomes with
+# ``price_moved = false``, 169,509 (61.7%) carry ``volume > 0``; among the
+# 185,227 carrying ANY volume evidence, 91.5% traded.
+#
+# Read-side only (gotcha #21): this adds a GROUPING dimension and a payload
+# block. It mutates no resolution and changes no published probability, curve,
+# population or bucket list.
 
 # L2-76 (#151/#997): curve-side exclusion of the Polymarket no-bid PLACEHOLDER
 # class. Gamma stamps synthetic `outcomePrices` at ~0.50 with no orderbook, so an
@@ -798,7 +861,32 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
 # malformed-binary filter. Read-side only (gotcha #21). esports-scoped: the same
 # poly bundle shape is well-calibrated in basketball/tennis/hockey (~+1.5pp), so
 # a blanket exclusion would drop good data; the general sweep is #160's sentinel.
-ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
+#: CAL-P045(c) / ruling 024 part (c) — the categories where the multi-winner
+#: non-exclusive bundle is EXCLUDED from the curve rather than merely counted.
+#: A NAMED LIST, never a blanket: the same >=3-outcome/>=2-winner shape is
+#: well-calibrated in hockey and tennis (~+1.5pp), and a category-blind exclusion
+#: would delete 81% of hockey and 47% of tennis. Each member is here because a
+#: diagnosis put it here, and `NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT` says why the
+#: rest stay census-only.
+#:
+#: esports — Queue #159 (#1010), OPS-557: 93,629 outcomes, winrate 0.395 vs cp
+#:   0.487 (+9.2pp), avg per-market cp-sum 17.9.
+#: cricket — CAL-P027 / exam item 3, diagnosed 2026-08-09 and ruled `exclusion`.
+#:   Every multi-winner 3-outcome cricket market has `draw_member_count = 0`
+#:   (1,668 outcomes / 556 markets), while coherently-graded cricket markets carry
+#:   a draw member 7,025 of 7,700. The cohort reaching the curve is exactly the
+#:   set whose THIRD LEG we never captured, so a 3-outcome field is scored as if
+#:   it were 2-outcome — which is the bidirectional mid-band shape the payload
+#:   split predicted independently from the other end (b5 +29.0pp, b2 -16.1pp,
+#:   b3 +0.1pp). Both halves agree and were derived separately. The error appears
+#:   equally on price-moved and price-unchanged rows, so it is a property of the
+#:   POPULATION, not of our capture.
+MULTI_BUNDLE_EXCLUDED_CATEGORIES: tuple[str, ...] = ("cricket", "esports")
+
+#: The same list rendered for SQL, derived rather than typed a second time.
+_MULTI_BUNDLE_EXCLUDED_SQL = ", ".join(
+    f"'{_c}'" for _c in MULTI_BUNDLE_EXCLUDED_CATEGORIES
+)
 
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
@@ -811,14 +899,29 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary "
     "filter and the exclusion complement of #157's counter-class guard. The "
     "many-YES ladder grading is correct, so these are excluded from the curve, "
-    "never re-graded. Read-side only; never mutates resolutions."
+    "never re-graded. Read-side only; never mutates resolutions. "
+    "CAL-P045: CRICKET joins the excluded set on its own diagnosis — every "
+    "multi-winner 3-outcome cricket market reaching the curve has no draw member "
+    "captured (0 of 556 markets), while coherently-graded cricket carries one "
+    "7,025 of 7,700 times, so a 3-outcome field is scored as if it were "
+    "2-outcome (b5 +29.0pp against b2 -16.1pp, equally on moved and unchanged "
+    "rows — a population defect, not a capture artifact). The exclusion stays a "
+    "NAMED list: the same shape is well calibrated in hockey and tennis, where "
+    "a blanket rule would delete 81% and 47% of the cohort respectively."
 )
 
 
-def market_is_esports_multi_bundle(
+def market_is_multi_bundle_excluded(
     category: str | None, n_outcomes: int, n_winners: int
 ) -> bool:
-    """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
+    """True if a resolved multi-winner bundle is EXCLUDED from the curve, not merely counted.
+
+    Renamed from ``market_is_esports_multi_bundle`` at CAL-P045(c) rather than
+    extended under the old name: cricket joined the excluded set, and a predicate
+    called ``..._esports_...`` that returns True for cricket is a name that lies
+    to every future reader. No compatibility alias — a second name for one rule is
+    how the two drift.
+
 
     Canonical, unit-tested definition mirroring the ``esports_multi_bundles`` CTE:
     an esports market with >=3 outcomes that resolved with >=2 winners is a
@@ -832,7 +935,7 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    return category == ESPORTS_MULTI_BUNDLE_CATEGORY and market_is_nonexclusive_bundle(
+    return category in MULTI_BUNDLE_EXCLUDED_CATEGORIES and market_is_nonexclusive_bundle(
         n_outcomes, n_winners
     )
 
@@ -1575,7 +1678,8 @@ def _virtual_market_ctes(frozen_vm_roster: bool) -> str:
                       OR COALESCE(es.event_size >= 3, false) AS is_grouped,
                     mi.mutually_exclusive,
                     mi.market_type,
-                    mi.llm_league
+                    mi.llm_league,
+                    mi.open_interest
                 FROM market_info mi
                 LEFT JOIN group_sizes gs
                   ON gs.group_id = mi.group_id AND gs.source = mi.source
@@ -1597,7 +1701,8 @@ def _virtual_market_ctes(frozen_vm_roster: bool) -> str:
                     vr.is_grouped,
                     mi.mutually_exclusive,
                     mi.market_type,
-                    mi.llm_league
+                    mi.llm_league,
+                    mi.open_interest
                 FROM market_info mi
                 -- INNER, not LEFT: a market inside the chunk's scan that the
                 -- frozen generation does not name is a market that arrived
@@ -1765,6 +1870,10 @@ def _calibration_population_ctes(
                     fm.mutually_exclusive,
                     fm.market_type,
                     fm.llm_league,
+                    -- #1530: the declared BACKUP trade-evidence signal. Carried
+                    -- from market_info (not joined again downstream) so it rides
+                    -- the population scan that is already happening.
+                    fm.open_interest,
                     -- Queue 299 rung 4: the shape classifier's PERSISTED
                     -- exclusivity evidence (app.utils.market_shape semantics v2,
                     -- Queue #260). These three carry the only proof a market is
@@ -1877,7 +1986,7 @@ def _calibration_population_ctes(
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
-                WHERE mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                WHERE mrs.category IN ({_MULTI_BUNDLE_EXCLUDED_SQL})
                   AND mrs.n_outcomes >= 3
                   AND mrs.win_count >= 2
             ),
@@ -2051,6 +2160,27 @@ def _calibration_population_ctes(
                     fo.is_winner AS is_winner,
                     (fo.calibration_probability IS NOT NULL
                      AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
+                    -- #1530: what the SOURCE says about trading, beside what OUR
+                    -- POLLING says. ``price_moved`` above is a snapshot delta and
+                    -- has been read as a trade; this column is the evidence.
+                    -- Carried as a GROUPING dimension, never as a filter — no row
+                    -- enters or leaves the population because of it (the same
+                    -- mechanism Queue 299 rung 4b used for is_nonexclusive_bundle,
+                    -- and the Python side merges these splits back on the original
+                    -- four keys so ``buckets`` keeps its exact prior shape).
+                    -- Aliases passed EXPLICITLY. The shared helper's defaults are
+                    -- the census's (``fm.``), which joins futures_markets
+                    -- directly; this population chain carries the market columns
+                    -- on ``vm`` (both forms of virtual_market select
+                    -- ``mi.source`` and ``mi.open_interest``). Relying on the
+                    -- defaults here would emit SQL naming a table this statement
+                    -- does not join — which is the failure mode that makes a
+                    -- shared predicate worth parameterising in the first place.
+                    {trade_evidence_sql(
+                        source="vm.source",
+                        volume="fo.volume",
+                        open_interest="vm.open_interest",
+                    )} AS trade_evidence,
                     cv.vm_id, cv.source, cv.category,
                     cv.eligible, cv.is_grouped,
                     (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
@@ -2759,6 +2889,14 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 -- side merges these rows back on the original four keys, so the
                 -- served ``buckets`` list keeps its exact prior shape and size.
                 is_nonexclusive_bundle,
+                -- #1530 (CAL-P044): same mechanism, same guarantee. Grouping by
+                -- trade_evidence splits rows in SQL and the Python merge folds
+                -- them back on the original four keys, so the served ``buckets``
+                -- list is byte-for-byte what it was. It costs no extra scan —
+                -- which matters, because #1479 has this task already exceeding
+                -- its hourly window and a second pass over the population to
+                -- measure a transparency block would be a poor trade.
+                trade_evidence,
                 """
             # Queue 300D Item 0: COUNT(*) counts the null-extended row that the
             # staged path's LEFT JOIN produces for an EMPTY chunk, which would
@@ -2824,8 +2962,10 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
             CROSS JOIN published_summary ps""")
             + _coverage_bridge_join()
             + """
-            GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
-            ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
+            GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle,
+                trade_evidence
+            ORDER BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle,
+                trade_evidence
         """)
 
 
@@ -3244,6 +3384,141 @@ def _ece_from_buckets(buckets: dict[int, dict]) -> float | None:
     return round(total / len(live) * 100, 2)
 
 
+def _build_trade_evidence_census(futures_rows) -> dict:
+    """The source-volume view of trading activity (#1530, Alex ruling 2026-08-03).
+
+    ``futures_rows`` are the main futures buckets, now grouped by
+    ``(bucket_idx, source, category, price_moved, is_nonexclusive_bundle,
+    trade_evidence)``. This reads the SAME published rows the curve is built
+    from — deliberately, because the whole point is to put the two readings of
+    "did it trade" side by side, and two readings taken over two populations
+    would not be comparable.
+
+    Three things come out:
+
+    * ``by_source`` — the coverage answer. How much trade evidence exists at all,
+      per source, and how it splits. This is the "before/after counts per source"
+      the ruling requires to ship.
+    * ``by_source[].price_unchanged`` — the ARTIFACT, stated as a ratio over the
+      rows that carry evidence. ``traded_share_of_evidenced_pct`` is the headline
+      number: for Kalshi it is the ~91% that says our polling cadence, not the
+      market's silence, is what "price unchanged" has been measuring.
+    * ``cohorts`` + ``buckets`` — the volume bar itself, so the page can score
+      traded vs untraded vs unknown on the same 10 buckets it scores price-moved
+      vs price-unchanged on.
+
+    Measurement only. No row moves, no probability changes, nothing is re-graded.
+    """
+    def _empty_counts() -> dict[str, int]:
+        return {k: 0 for k in TRADE_EVIDENCE_CLASSES}
+
+    per_source: dict[str, dict] = {}
+    cohort_buckets: dict[str, dict[int, dict]] = {}
+    totals = _empty_counts()
+
+    for r in futures_rows:
+        klass = getattr(r, "trade_evidence", None) or "unknown"
+        n = int(r.n or 0)
+        if n == 0:
+            # The staged path's LEFT JOIN emits a null-keyed census row; it
+            # carries no outcomes and must not create a phantom class.
+            continue
+        if klass not in totals:
+            # An unrecognised class means the SQL CASE and this contract have
+            # drifted. Bank it under its own name rather than silently folding
+            # it into ``unknown`` — ``contract_ok`` below turns RED on it.
+            totals[klass] = 0
+        totals[klass] += n
+
+        src = per_source.setdefault(r.source, {
+            "counts": _empty_counts(),
+            "price_unchanged": _empty_counts(),
+            "price_moved": _empty_counts(),
+        })
+        for slot in (src["counts"],):
+            slot[klass] = slot.get(klass, 0) + n
+        # price_moved is a TRI-state (True / False / None). Only the two decided
+        # sides get a cross-tab row; a NULL price_moved carries no claim about
+        # movement, so putting it in either column would invent one.
+        if r.price_moved is True:
+            src["price_moved"][klass] = src["price_moved"].get(klass, 0) + n
+        elif r.price_moved is False:
+            src["price_unchanged"][klass] = src["price_unchanged"].get(klass, 0) + n
+
+        acc = cohort_buckets.setdefault(klass, {}).setdefault(
+            r.bucket_idx, {"n": 0, "winners": 0, "sum_prob": 0.0}
+        )
+        acc["n"] += n
+        acc["winners"] += int(r.winners or 0)
+        acc["sum_prob"] += float(r.sum_prob or 0.0)
+
+    def _summarise(counts: dict[str, int]) -> dict:
+        n = sum(counts.values())
+        traded = sum(counts.get(k, 0) for k in TRADE_EVIDENCE_TRADED_CLASSES)
+        evidenced = sum(counts.get(k, 0) for k in TRADE_EVIDENCE_EVIDENCED_CLASSES)
+        return {
+            "n": n,
+            **{k: counts.get(k, 0) for k in TRADE_EVIDENCE_CLASSES},
+            "evidenced_n": evidenced,
+            # None, not 0.0, when there is nothing to divide by: a source with no
+            # evidence at all must read as "we cannot say", never as "0% traded".
+            "traded_share_of_evidenced_pct": (
+                round(traded / evidenced * 100, 1) if evidenced else None
+            ),
+            "evidence_coverage_pct": round(evidenced / n * 100, 1) if n else None,
+        }
+
+    by_source = [
+        {
+            "source": src,
+            **_summarise(rec["counts"]),
+            "price_unchanged": _summarise(rec["price_unchanged"]),
+            "price_moved": _summarise(rec["price_moved"]),
+        }
+        for src, rec in sorted(per_source.items(), key=lambda kv: -sum(kv[1]["counts"].values()))
+    ]
+
+    cohorts = {
+        klass: {
+            "n": sum(v["n"] for v in cohort_buckets.get(klass, {}).values()),
+            "winners": sum(v["winners"] for v in cohort_buckets.get(klass, {}).values()),
+            "ece": _ece_from_buckets(cohort_buckets.get(klass, {})),
+        }
+        for klass in TRADE_EVIDENCE_CLASSES
+    }
+
+    buckets = [
+        {
+            "bucket_idx": idx,
+            "trade_evidence": klass,
+            "n": v["n"],
+            "winners": v["winners"],
+            "sum_prob": round(v["sum_prob"], 4),
+            "avg_prob": round(v["sum_prob"] / v["n"], 4) if v["n"] else 0.0,
+        }
+        for klass in TRADE_EVIDENCE_CLASSES
+        for idx, v in sorted(cohort_buckets.get(klass, {}).items())
+        if v["n"] > 0
+    ]
+
+    unknown_classes = sorted(set(totals) - set(TRADE_EVIDENCE_CLASSES))
+    return {
+        "rule": TRADE_EVIDENCE_RULE_TEXT,
+        "excluded_sources": list(TRADE_EVIDENCE_EXCLUDED_SOURCES),
+        "classes": list(TRADE_EVIDENCE_CLASSES),
+        "totals": {k: totals.get(k, 0) for k in TRADE_EVIDENCE_CLASSES},
+        "measured_outcomes": sum(totals.values()),
+        "by_source": by_source,
+        "cohorts": cohorts,
+        "buckets": buckets,
+        # The one RED invariant: the CASE is a partition, so an unrecognised
+        # class means the SQL and this contract disagree about what the classes
+        # ARE. Everything else here is a count, and a count is never a violation.
+        "contract_ok": not unknown_classes,
+        "unknown_classes": unknown_classes,
+    }
+
+
 def _build_nonexclusive_bundle_census(futures_rows) -> dict:
     """Per-category n/ECE for the non-exclusive bundle cohort (Queue 299 rung 4b).
 
@@ -3289,7 +3564,7 @@ def _build_nonexclusive_bundle_census(futures_rows) -> dict:
     by_category.sort(key=lambda x: -x["would_exclude_n"])
     return {
         "rule": NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT,
-        "excluded_from_curve_for": [ESPORTS_MULTI_BUNDLE_CATEGORY],
+        "excluded_from_curve_for": list(MULTI_BUNDLE_EXCLUDED_CATEGORIES),
         "measured_only_for": "all other categories",
         "by_category": by_category,
     }
@@ -4016,6 +4291,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
     # census must not cost payload size or change any published bucket.
     nonexclusive_bundle_census = _build_nonexclusive_bundle_census(rows)
 
+    # #1530 (CAL-P044): built from the same split rows, before the merge below
+    # collapses them — for the same reason the bundle census is. Futures rows
+    # only: the events-derived sources (odds_api / spreads / totals) have no
+    # volume concept at all, which is why they are the ``price_moved IS NULL``
+    # cohort the page already names separately.
+    trade_evidence_census = _build_trade_evidence_census(rows)
+
     # Build bucket dicts with Wilson CIs
     merged: dict[tuple, dict] = {}
     merged_order: list[tuple] = []
@@ -4371,8 +4653,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 "field_incomplete_excluded_outcomes": field_incomplete_outcomes,
             },
         },
-        "esports_multi_bundle_filter": {  # Queue #159 (#1010)
-            "applies_to": "esports",
+        # Queue #159 (#1010) + CAL-P045(c). The WIRE KEY keeps its name so no
+        # consumer breaks on a rename, but ``applies_to`` is now the real list —
+        # a block that said "esports" while excluding cricket would be a published
+        # claim that is false, which is worse than an awkward key.
+        "esports_multi_bundle_filter": {
+            "applies_to": list(MULTI_BUNDLE_EXCLUDED_CATEGORIES),
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
@@ -4413,6 +4699,10 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "candidate_outcomes": nonexclusive_bundle_candidates,
             "candidate_markets": nonexclusive_bundle_markets_count,
         },
+        # #1530 (CAL-P044): the SOURCE's answer to "did it trade", published
+        # beside our polling's answer. Filed with the censuses, NOT the filters:
+        # it excludes nothing and moves no row.
+        "trade_evidence": trade_evidence_census,
         "kalshi_prop_threshold_filter": {  # Queue #186 (#941, corrects #167)
             "applies_to": "kalshi",
             "rule": KALSHI_PROP_THRESHOLD_RULE_TEXT,
@@ -4629,6 +4919,53 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
     return stages
 
 
+def _canonical_input(value: object) -> str:
+    """Render a fingerprint input to text whose ORDER cannot vary between runs.
+
+    CAL-P047 / ruling 024 part (a). This exists because covering the remaining
+    inputs "in the idiom the function already uses" — bare f-string
+    interpolation, as :data:`COVERAGE_CENSUS_ENABLED` does — would have shipped a
+    build that can never converge, while every test passed.
+
+    Three of the newly covered inputs are ``frozenset`` and one is a ``dict`` of
+    them. ``repr`` of a set iterates in HASH order, and Python randomises string
+    hashing per process (``PYTHONHASHSEED``). Measured on the real constant, four
+    seeds gave four different orderings of
+    :data:`DRAW_AUTHORITY_OUTCOME_NAMES`. Celery workers are separate processes,
+    so a bare interpolation would compute a DIFFERENT digest on every beat, the
+    cursor would be discarded as foreign every single time, and the walk would
+    restart forever — the exact failure this digest exists to prevent, caused by
+    the fix meant to strengthen it.
+
+    It would also have been invisible: a test suite runs in ONE process, so every
+    assertion about digest stability holds inside it and says nothing about the
+    property that matters. That is why the guard is a sorted render rather than a
+    test.
+
+    Sets and dict keys sort; everything else takes ``repr``. Sorting is on the
+    rendered text, so a heterogeneous set cannot raise on incomparable types.
+    """
+    if isinstance(value, (set, frozenset)):
+        return "{" + ", ".join(sorted(_canonical_input(v) for v in value)) + "}"
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ", ".join(
+                sorted(
+                    f"{_canonical_input(k)}: {_canonical_input(v)}"
+                    for k, v in value.items()
+                )
+            )
+            + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        # Order IS meaning for a sequence (rung order is the contract), so it is
+        # preserved rather than sorted. Only the members are canonicalised.
+        rendered = ", ".join(_canonical_input(v) for v in value)
+        return f"[{rendered}]" if isinstance(value, list) else f"({rendered})"
+    return repr(value)
+
+
 def _main_input_fingerprint() -> str:
     """Everything a carried phase output depends on, in one 32-char digest.
 
@@ -4672,6 +5009,33 @@ def _main_input_fingerprint() -> str:
     function's source covers that function, never what it calls — is why new
     SQL-shaping inputs belong on this list explicitly rather than being assumed
     covered.
+
+    CAL-P047 CLOSES THE CENSUS (ruling 024 part (a)). Every input the derived
+    map found is now covered: 42 same-module constants and 5 cross-module ones,
+    the four cross-module CONSTANTS by value and ``_build_coverage_census`` by
+    source, because it is a callable and a callable's value is its text. The
+    census went 3 covered / 44 uncovered -> 47 covered / 0 uncovered.
+
+    **The five cross-module holes were the ones that mattered**, and the reason
+    is structural rather than a matter of degree: ruling 009's freeze covered
+    this module and nothing else, so the 39 in-module inputs were protected
+    incidentally by a freeze designed to lift, while an edit to
+    ``app/utils/resolution_authority.py`` could change the published population
+    with the digest sitting perfectly still. ``tests/test_calibration_fingerprint_coverage.py``
+    proved that hole by value rather than arguing it from source; it now asserts
+    the inverse.
+
+    Two things about HOW, both of which were nearly wrong:
+
+    * Values render through :func:`_canonical_input`, not bare interpolation.
+      Three inputs are ``frozenset``; their ``repr`` order is per-process hash
+      order, so the documented idiom would have produced a digest that differs
+      between Celery workers and invalidates the cursor on every beat. See that
+      function.
+    * ``_build_coverage_census`` joins the hashed ROOTS rather than the by-value
+      list. Hashing ``repr`` of a function object would hash its memory address —
+      stable within a process, different in every worker, and it would have
+      looked exactly as covered in the census.
     """
     from app.utils.calibration_phase_ledger import input_fingerprint
 
@@ -4683,6 +5047,11 @@ def _main_input_fingerprint() -> str:
             + inspect.getsource(_calibration_population_ctes)
             + inspect.getsource(_virtual_market_ctes)
             + inspect.getsource(_main_futures_sql)
+            + inspect.getsource(_build_coverage_census)
+            # #1530: the imported trade-evidence CASE. A callable, so by source —
+            # and it emits SQL into the population statement, which makes it the
+            # one root here whose text can change the shape of a banked unit.
+            + inspect.getsource(trade_evidence_sql)
         )
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"
@@ -4690,6 +5059,57 @@ def _main_input_fingerprint() -> str:
         CALIBRATION_POPULATION_VERSION,
         REPRESENTATIVE_TIE_AUTHORITY,
         f"coverage_census={COVERAGE_CENSUS_ENABLED}",
+        # ── cross-module (the tier ruling 009's freeze never covered) ──
+        f"truth_eligible_sources_sql={_canonical_input(CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL)}",
+        f"truth_ineligible_sources_sql={_canonical_input(CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL)}",
+        f"price_derived_sources_sql={_canonical_input(PRICE_DERIVED_SOURCES_SQL)}",
+        f"coverage_rung_keys={_canonical_input(_COVERAGE_RUNG_KEYS)}",
+        f"trade_evidence_classes={_canonical_input(TRADE_EVIDENCE_CLASSES)}",
+        f"trade_evidence_evidenced_classes={_canonical_input(TRADE_EVIDENCE_EVIDENCED_CLASSES)}",
+        f"trade_evidence_excluded_sources={_canonical_input(TRADE_EVIDENCE_EXCLUDED_SOURCES)}",
+        f"trade_evidence_rule_text={_canonical_input(TRADE_EVIDENCE_RULE_TEXT)}",
+        f"trade_evidence_traded_classes={_canonical_input(TRADE_EVIDENCE_TRADED_CLASSES)}",
+        # ── same-module, alphabetical so a new one has an obvious home ──
+        f"calibration_corrections={_canonical_input(CALIBRATION_CORRECTIONS)}",
+        f"coverage_census_disabled_reason={_canonical_input(COVERAGE_CENSUS_DISABLED_REASON)}",
+        f"coverage_rung_predicates={_canonical_input(_COVERAGE_RUNG_PREDICATES)}",
+        f"default_min_category_outcomes={_canonical_input(_DEFAULT_MIN_CATEGORY_OUTCOMES)}",
+        f"draw_authority_outcome_names={_canonical_input(DRAW_AUTHORITY_OUTCOME_NAMES)}",
+        f"draw_authority_rule_text={_canonical_input(DRAW_AUTHORITY_RULE_TEXT)}",
+        f"draw_capable_categories={_canonical_input(DRAW_CAPABLE_CATEGORIES)}",
+        f"multi_bundle_excluded_categories={_canonical_input(MULTI_BUNDLE_EXCLUDED_CATEGORIES)}",
+        f"multi_bundle_excluded_sql={_canonical_input(_MULTI_BUNDLE_EXCLUDED_SQL)}",
+        f"esports_multi_bundle_rule_text={_canonical_input(ESPORTS_MULTI_BUNDLE_RULE_TEXT)}",
+        f"exclusivity_evidence_rule_text={_canonical_input(EXCLUSIVITY_EVIDENCE_RULE_TEXT)}",
+        f"exclusivity_proved_relations={_canonical_input(EXCLUSIVITY_PROVED_RELATIONS)}",
+        f"field_completeness_rule_text={_canonical_input(FIELD_COMPLETENESS_RULE_TEXT)}",
+        f"golf_placeholder_high_band={_canonical_input(GOLF_PLACEHOLDER_HIGH_BAND)}",
+        f"golf_placeholder_rule_text={_canonical_input(GOLF_PLACEHOLDER_RULE_TEXT)}",
+        f"kalshi_hockey_honest_band_max={_canonical_input(KALSHI_HOCKEY_HONEST_BAND_MAX)}",
+        f"kalshi_liquidity_exists={_canonical_input(KALSHI_LIQUIDITY_EXISTS)}",
+        f"kalshi_liquidity_rule_text={_canonical_input(KALSHI_LIQUIDITY_RULE_TEXT)}",
+        f"kalshi_prop_threshold_degenerate_band={_canonical_input(KALSHI_PROP_THRESHOLD_DEGENERATE_BAND)}",
+        f"kalshi_prop_threshold_name_re={_canonical_input(KALSHI_PROP_THRESHOLD_NAME_RE)}",
+        f"kalshi_prop_threshold_rule_text={_canonical_input(KALSHI_PROP_THRESHOLD_RULE_TEXT)}",
+        f"malformed_binary_rule_text={_canonical_input(MALFORMED_BINARY_RULE_TEXT)}",
+        f"mex_normalize_rule_text={_canonical_input(MEX_NORMALIZE_RULE_TEXT)}",
+        f"mex_normalize_threshold={_canonical_input(MEX_NORMALIZE_THRESHOLD)}",
+        f"nonexclusive_bundle_census_rule_text={_canonical_input(NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT)}",
+        f"no_winner_rule_text={_canonical_input(NO_WINNER_RULE_TEXT)}",
+        f"orphan_partition_rule_text={_canonical_input(ORPHAN_PARTITION_RULE_TEXT)}",
+        f"poly_never_traded={_canonical_input(POLY_NEVER_TRADED)}",
+        f"poly_placeholder_exclude={_canonical_input(POLY_PLACEHOLDER_EXCLUDE)}",
+        f"poly_placeholder_rule_text={_canonical_input(POLY_PLACEHOLDER_RULE_TEXT)}",
+        f"soccer_2way_rule_text={_canonical_input(SOCCER_2WAY_RULE_TEXT)}",
+        f"source_liquidity_exclusions={_canonical_input(SOURCE_LIQUIDITY_EXCLUSIONS)}",
+        f"staged_unit_window_safety={_canonical_input(STAGED_UNIT_WINDOW_SAFETY)}",
+        f"vm_roster_is_grouped_param={_canonical_input(VM_ROSTER_IS_GROUPED_PARAM)}",
+        f"vm_roster_market_ids_param={_canonical_input(VM_ROSTER_MARKET_IDS_PARAM)}",
+        f"vm_roster_market_info_extra={_canonical_input(VM_ROSTER_MARKET_INFO_EXTRA)}",
+        f"vm_roster_vm_ids_param={_canonical_input(VM_ROSTER_VM_IDS_PARAM)}",
+        f"void_filter_rule_text={_canonical_input(VOID_FILTER_RULE_TEXT)}",
+        f"weather_wide_spread_exclude={_canonical_input(WEATHER_WIDE_SPREAD_EXCLUDE)}",
+        f"weather_wide_spread_rule_text={_canonical_input(WEATHER_WIDE_SPREAD_RULE_TEXT)}",
         source,
     )
 

@@ -15,13 +15,24 @@ def load_corpus(path=FIXTURE):
     ids=[x.get("id") for x in p["cases"]]
     if len(ids)!=len(set(ids)): raise ValueError("CASE_ID_DUPLICATE")
     p["cases"]=[_merge(p["defaults"],x) for x in p["cases"]]; return p
+#: CAL-P045(c) — categories whose multi-winner bundle is EXCLUDED from the curve
+#: rather than merely counted. Mirrors
+#: ``precompute_calibration.MULTI_BUNDLE_EXCLUDED_CATEGORIES``; the production
+#: match test asserts the two are equal, so this stays ONE decision with two
+#: consumers rather than two lists that agree today.
+EXCLUDED_CATEGORIES=("cricket","esports")
 def classify(r:dict[str,Any])->dict[str,Any]:
     e=r["evidence"]; reason=None; shape="unknown"; normalize=False; publish=False
     if e["duplicate_ids"] or e["contradictory"]: reason="conflicting_shape_evidence"
     elif e["outcome_count"]==1: shape="orphan"; reason="orphan_half_market"
     elif e["independent_binary_questions"] or e["winner_count"]>1:
         shape="independent_bundle"; normalize=False
-        if r["category"] == "esports" or r.get("approved_narrow_exclusion"):
+        # The category exclusion is STRUCTURALLY GATED, matching production's
+        # >=3-outcome/>=2-winner predicate. Gating on category alone would have
+        # excluded 1-winner and 0-winner independent bundles that production
+        # still publishes — a contract/production divergence that was latent for
+        # esports and would have shipped for cricket.
+        if (r["category"] in EXCLUDED_CATEGORIES and e["outcome_count"]>=3 and e["winner_count"]>=2) or r.get("approved_narrow_exclusion"):
             reason="nonexclusive_bundle"; publish=False
         else:
             reason="nonexclusive_bundle_measured"; publish=True

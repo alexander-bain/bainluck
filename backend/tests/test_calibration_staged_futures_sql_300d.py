@@ -188,15 +188,16 @@ class TestRepresentativeTieAuthority:
             module.REPRESENTATIVE_TIE_AUTHORITY = original
         assert _main_input_fingerprint() == before
 
-    def test_population_version_is_not_bumped(self):
-        """An identity delta is not a population change.
+    def test_the_identity_delta_still_did_not_cause_the_bump(self):
+        """An identity delta is not a population change — still true.
 
-        Bumping the version here would take /calibration DARK — ``snapshot_verdict``
-        refuses a cached artifact whose version is not the one the deployed build
-        expects, and the replacement cannot exist until the next successful beat
-        (the 2026-08-02 incident, reverted the same hour).
+        The version IS now bumped (q1530), but NOT by this queue and not for this
+        reason: CAL-P045 changed the POPULATION (cricket exclusion) and the tier
+        under ruling 024's combined window. Queue 300D's representative-tie
+        authority remains an identity delta that would not have earned a bump on
+        its own, which is the distinction this test exists to keep.
         """
-        assert CALIBRATION_POPULATION_VERSION == "q267"
+        assert CALIBRATION_POPULATION_VERSION == "q1530"
         assert REPRESENTATIVE_TIE_AUTHORITY == "canonical-outcome-id/v1"
 
 
