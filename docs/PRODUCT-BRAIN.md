@@ -1332,4 +1332,5 @@ failure this document already records happening twice.
 - [042](rulings/042-dereference-the-id-never-the-label.md) — 2026-08-13 — Dereference the id, never the label; a check built on a label measures the labeller (Fable)
 - [043](rulings/043-taste-enables-a-signal-labels-tune-it.md) — 2026-08-13 — Taste may ENABLE a signal; only labels may TUNE it (Alex)
 - [045](rulings/045-monotone-protects-the-direction-not-the-input.md) — 2026-08-12 — Monotonicity protects the DIRECTION, never the INPUT; a parent settles children only when atomic in time (program-ux, AMENDS 036 — awaiting Alex ratification)
+- [046](rulings/046-a-stacked-change-is-measured-on-its-own-deploy.md) — 2026-08-13 — A stacked change is measured on its OWN deploy; an ungradable measurement is a lost one (Alex)
 - [047](rulings/047-one-card-system.md) — 2026-08-13 — One card system: every surface renders events/markets through the shared cards; league pages get no bespoke variants, and a new card type needs a design ruling first (Alex)

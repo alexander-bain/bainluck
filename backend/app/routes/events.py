@@ -643,6 +643,61 @@ def _detect_query_awards_concept(q: str | None) -> dict | None:
     }
 
 
+def _upsert_query_derived_concept(
+    pool: list[dict],
+    seen: set[str],
+    *,
+    name: str,
+    key: str,
+    sport_key: str,
+    limit: int = 3,
+) -> list[dict]:
+    """Place a QUERY-derived concept in the typeahead pool, upgrading its twin.
+
+    A query-derived concept matched `q` itself, so under ruling 041 it OWNS its
+    evidence and is rankable. A MARKET-derived concept is the same page reached
+    by inference from a member market, is flagged `_derived`, and the scorer
+    drops it as UNRANKABLE.
+
+    Both paths can mint the SAME key, and the market-derived loop runs first:
+    "Grammy Winner: Best New Artist" derives `event:awards:grammys`, which is
+    byte-identical to what `_detect_query_awards_concept("grammys")` returns.
+    The dedup guard was a plain first-writer-wins `key not in seen` skip, so the
+    rankable twin was never inserted and only the UNRANKABLE copy survived to
+    the scorer — the concept then vanished from the answer entirely.
+
+    That cost four gold probes on the v3800 read (`grammys`, `oscars`,
+    `world cup`, plus `oscars`' sibling), measured 2026-08-13: each returned
+    five markets and ZERO concepts, where v3798 had returned the concept at
+    rank 1. Golf majors were unaffected only because no market-derived path
+    mints a golf key, so their query-derived concept hit no collision — the
+    exemption worked exactly where it happened not to be tested.
+
+    A dedup guard must not decide PROVENANCE. Same key + better provenance is an
+    upgrade of the row already present, not a duplicate to discard, so this
+    clears `_derived`, adopts the canonical query-derived display name, and
+    moves the row to the front. Returns the (possibly truncated) pool.
+    """
+    for idx, existing in enumerate(pool):
+        if existing.get("event_key") != key:
+            continue
+        existing["_derived"] = False
+        existing["text"] = name
+        existing["sport_key"] = sport_key
+        pool.insert(0, pool.pop(idx))
+        seen.add(key)
+        return pool[:limit]
+
+    seen.add(key)
+    pool.insert(0, {
+        "type": "event_concept",
+        "text": name,
+        "event_key": key,
+        "sport_key": sport_key,
+    })
+    return pool[:limit]
+
+
 # #1206 (r260/r262): a loop-derived event concept must share a DISTINCTIVE token
 # with the query, not just get pulled in because one of its markets matched on an
 # incidental OUTCOME token. The proven regression: an Emmys market ("… Best Drama
@@ -4220,43 +4275,34 @@ async def typeahead_search(
     # the golf major in the single event_concept slot the dropdown shows (line ~2097
     # takes event_concept_pool[:1]) rather than a cross-sport "open" tennis concept.
     _ta_golf_major = _detect_query_golf_major_concept(q)
-    if _ta_golf_major and _ta_golf_major["key"] not in _ta_seen_concept_keys:
-        _ta_seen_concept_keys.add(_ta_golf_major["key"])
-        event_concept_pool.insert(0, {
-            "type": "event_concept",
-            "text": _ta_golf_major["name"],
-            "event_key": _ta_golf_major["key"],
-            "sport_key": "golf",
-        })
-        event_concept_pool = event_concept_pool[:3]
+    if _ta_golf_major:
+        event_concept_pool = _upsert_query_derived_concept(
+            event_concept_pool, _ta_seen_concept_keys,
+            name=_ta_golf_major["name"], key=_ta_golf_major["key"],
+            sport_key="golf",
+        )
 
     # #205: World Cup is query-derived in typeahead too — "world cup"/"fifa" surfaces
     # the concept in the single event_concept slot the dropdown shows.
     _ta_wc = _detect_query_world_cup_concept(q)
-    if _ta_wc and _ta_wc["key"] not in _ta_seen_concept_keys:
-        _ta_seen_concept_keys.add(_ta_wc["key"])
-        event_concept_pool.insert(0, {
-            "type": "event_concept",
-            "text": _ta_wc["name"],
-            "event_key": _ta_wc["key"],
-            "sport_key": "soccer",
-        })
-        event_concept_pool = event_concept_pool[:3]
+    if _ta_wc:
+        event_concept_pool = _upsert_query_derived_concept(
+            event_concept_pool, _ta_seen_concept_keys,
+            name=_ta_wc["name"], key=_ta_wc["key"],
+            sport_key="soccer",
+        )
 
     # Queue #246 Item 1b: awards ceremonies are query-derived in typeahead too —
     # "grammys"/"the oscars"/"academy awards" surfaces the ceremony concept in the
     # single event_concept slot the dropdown shows (sport_key "awards" matches the
     # market-name-derived awards path above).
     _ta_awards = _detect_query_awards_concept(q)
-    if _ta_awards and _ta_awards["key"] not in _ta_seen_concept_keys:
-        _ta_seen_concept_keys.add(_ta_awards["key"])
-        event_concept_pool.insert(0, {
-            "type": "event_concept",
-            "text": _ta_awards["name"],
-            "event_key": _ta_awards["key"],
-            "sport_key": "awards",
-        })
-        event_concept_pool = event_concept_pool[:3]
+    if _ta_awards:
+        event_concept_pool = _upsert_query_derived_concept(
+            event_concept_pool, _ta_seen_concept_keys,
+            name=_ta_awards["name"], key=_ta_awards["key"],
+            sport_key="awards",
+        )
 
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
     did_you_mean: str | None = None
