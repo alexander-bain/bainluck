@@ -259,11 +259,57 @@ the change that caused it** (ruling 046).
 | v3804 / v3805 | no latency change (re-measured twice) | 35/44 | 0.8043 | — | corroborates the stack was unlanded |
 | **v3806** | **`-43` concept dedup ALONE** (#1839) | **38/44** | **0.8696** | +4 → 39 | **MISSED by 1** |
 | **v3807** | **`-44` outcome evidence** (#1843) | **38/44** | **0.8696** | none registered | **no movement** — see below |
-| pending | **`-46` evidence echo** | — | — | none; a test asserts byte-identical ordering | owed |
-| pending | **#1846 typeahead provenance** (LAT-P051) | — | — | **+1 → 39** (`us open` only) | owed |
+| **v3812** | **`-45` `/search` scorer wiring ALONE** — the **ARMED CONTROL** | **38/44** | **0.8696** | **NO movement, with a HALT attached** (ruling 050) | ✅ **HELD — the control fired clean; no HALT** |
+| **v3813** | **`-46` evidence echo ALONE** | **38/44** | **0.8696** | none; a test asserts byte-identical ordering | ✅ **HELD — no movement** (LAT-P054) |
+| **v3814** | **`-47` #1846 typeahead provenance ALONE** (LAT-P051) | **39/44** | **0.8913** | **+1 → 39** (`us open` only) | ✅ **HELD — exactly, and on the named probe** |
 
 Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
 with byte-identical dispositions across all 46 probes.
+
+**Cache state, and it is now a structural claim rather than an observation.**
+Every read in this table was taken with `debug_evidence=1`, and
+`typeahead_search` skips the cache **in both directions** when that flag is set
+(`events.py:4021-4034`). So every gold read is **100% cache-MISS by
+construction** — not "predominantly misses", which is how LAT-P053 could only
+put it. This is also why #1866's miss cost is the cost of every number above.
+
+### The `-45` ARMED CONTROL fired, and it came out clean (LAT-P053, 2026-08-14)
+
+Ruling 050 armed this one in advance: `-45` wires the scorer into `/search`, a
+surface `entity_top_1` does **not** grade (the producer reads `/typeahead`), so
+it was predicted to move **nothing** — with an explicit HALT on further ranking
+merges if it moved anyway.
+
+`-45` merged **alone** into `6d3fba9e` and deployed as **v3812**, exactly as
+ruling 046 requires. Read taken twice, ~2.5 min apart, beginning ~15 min after
+the release (outside the ~5 min post-deploy artifact window):
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 (18:22 UTC) | **38/44** | 0.8695652 | 46/46 | — |
+| r2 (18:25 UTC) | **38/44** | 0.8695652 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0` on both. Identical to v3806 and v3807 to seven decimal places.
+
+**The prediction HELD. The HALT does not fire, and ranking merges continue.**
+Three windows kept this armed rather than skipping it as a foregone conclusion;
+what it bought is that the attribution model behind every row above is now
+corroborated by a change deliberately chosen to be invisible to it. Under ruling
+056's corollary, a clean unarmed control (`-44`) *raised* the value of firing
+this one — that reasoning is now paid off rather than merely asserted.
+
+`search-gold-us-open-001` is still `ENTITY_NOT_TOP`, which is the expected state:
+its fix is `-47`, which has not deployed.
+
+**CACHE STATE, recorded for the first time** (the new standing requirement from
+§8 / #1866): **both reads are cache MISSES.** LAT-P053 could only say
+"predominantly", reasoning from the 45s TTL and a 150s gap between reads;
+LAT-P054 upgraded that to a **structural** claim by reading the route —
+`debug_evidence=1` skips the cache in **both** directions
+(`events.py:4021-4034`), so an evidence-bearing read can never be served warm
+and never warms anything. Read 2's wall clock was **113s for 46 probes —
+2.46s/probe**, which independently corroborates #1866's 1.16–2.29s miss p50 plus
+the ~0.24s sandbox connection tax, on a measurement taken for a different reason.
 
 **`-43`'s missing +1 was a diagnosis error, not noise.** `grammys`, `oscars` and
 `world cup` recovered exactly as projected; `us open` did not, and it had been
@@ -288,6 +334,131 @@ is a coverage gap in the gold set, filed as such rather than settled here. It
 also functioned as an **unarmed control** that came out clean, which is
 corroboration for the attribution model the `-45` armed control (ruling 050) will
 test deliberately.
+
+**RESOLVED, LAT-P052 (2026-08-14): it was reading 1, and the mechanism is now
+measured.** Alex adopted the distinction as this ledger's standing reading law
+(**ruling 056**) and required a fix rather than a filing. Both landed; the answer
+is more specific than either reading above.
+
+#1843's lift is **conditionally uniform**, and the rival set decides, not the
+change. Measured with the real scorer over a frozen production capture — 7 Oscar
+markets, 155 outcomes, v3808 —
+`backend/tests/test_search_outcome_evidence_discrimination.py`:
+
+* **When every candidate owns the queried outcome below its own display cut**,
+  they all move MC5 → MC4 *together*. `entity_top_1` reads relative order only,
+  so the lift is **invisible**. Four of five new specimens behave this way, and
+  this is why 46 probes produced byte-identical dispositions on v3807.
+* **When the lift is unequal, top-1 moves.** `club kid` is the specimen:
+  "Oscars 2027: Best Original Screenplay Winner" displays it at outcome rank
+  **3 of 17**, inside its cut, so it already scored MC4 and did not move while
+  the others did.
+* **The substring accident is the shape #1843 named.** Query `fjord`: the Best
+  Picture market owns the film at outcome rank 7, while "FH Hafnarfjordur vs.
+  Vikingur Reykjavik" merely contains the letters and sits on the MC5 floor.
+  Pre-#1843 the accident won on input order; post-#1843 it cannot. Both rows are
+  real production data.
+
+So `-44`'s row stays **"no movement"**, and it now carries a mechanism instead of
+a shrug: *the change was real, and the 46-probe set could not see it because the
+class it lifts, it lifts uniformly.*
+
+### `-46`'s read, and the EXACT-FIDELITY RE-DERIVATION (LAT-P054, 2026-08-14)
+
+`-46` merged alone into `7ffc2911` and deployed as **v3813** at 11:40 PDT. Its
+prediction was a **declared null** — the echo is additive and a test asserts
+byte-identical default ordering — so ruling 050's HALT was attached to it, and
+the read was taken rather than assumed.
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 | **38/44** | 0.8695652173913043 | 46/46 | — |
+| r2 | **38/44** | 0.8695652173913043 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0` on both. **The prediction HELD; the HALT does not fire.**
+
+#### The re-derivation: the harness and the server now agree exactly
+
+This debt was owed for **four windows** and was payable the hour `-46` went
+live. The producer's `evidence_fidelity` flipped `legacy` → **`exact`** on the
+first capture, 46/46 evidence probes.
+
+**The acceptance was the idempotence property, not a number:** at `exact`
+fidelity against a **same-deploy** capture, a rerank must reproduce the
+deployed grade. It does, on both captures independently:
+
+| graded object (all v3813, same hour, same 46 probes) | `entity_top_1` | MRR |
+|---|---|---|
+| production, deployed (capture r1) | **38/44** | 0.8696 |
+| production, deployed (capture r2) | **38/44** | 0.8696 |
+| harness rerank @ **exact** (r1) | **38/44** | 0.8696 |
+| harness rerank @ **exact** (r2) | **38/44** | 0.8696 |
+| harness rerank @ **legacy** (same deploy) | **33/44** | 0.7859 |
+
+**0 probes differ** in code, disposition *or* top entity across every pairwise
+comparison of the first four rows. The instrument no longer models a different
+server.
+
+#### The size of the old instrument's error, measured on ONE deploy
+
+The `−5` was previously known only as a cross-deploy comparison (v3804: 35
+deployed vs 30 reranked). LAT-P054 measured both fidelities against the **same**
+deploy, an hour apart, and the error reproduces **exactly**:
+
+> **38/44 deployed → 33/44 at legacy fidelity: −5, and the five casualties are
+> the same five team probes as the original diagnosis** — `bruins`, `celtics`,
+> `patriots`, `red-sox`, `yankees`. Every one `team → market`: `MC0 → MC1` on
+> aliases the wire never carried, losing the tie on `KIND_ORDER`.
+
+Nine deploys and a different baseline later (35/44 → 38/44), the defect is the
+same size and hits the same five probes. It was never a noisy offset; it was a
+structural blindness to exactly one class, and the echo closes it to **zero**.
+
+**A control fell out of this for free.** The `legacy` capture is a *plain*
+capture — no `debug_evidence` — and it graded **38/44**, identical to the two
+evidence-bearing captures. So the echo does not perturb ranking: the spec's
+"the default response is byte-unchanged" claim is now verified end-to-end on the
+graded cohort, not just asserted by a unit test.
+
+The fidelity gate also demonstrated it refuses: `--require-fidelity exact`
+against the legacy capture **exits 2** rather than producing a number.
+
+### `-47`'s read: the first projection this program has hit EXACTLY (LAT-P054)
+
+`-47` merged **alone** into `92f66962` and deployed as **v3814** at 12:01 PDT —
+ruling 046 honoured by the Integrator without being asked. The projection on
+record was **+1 → 39/44, `us open` only**.
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 | **39/44** | 0.8913043478260869 | 46/46 | — |
+| r2 | **39/44** | 0.8913043478260869 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0`. Against v3813, **exactly one probe moved**, and it is the named
+one:
+
+```
+search-gold-us-open-001   ENTITY_NOT_TOP/fail  market:114160
+                       →  PASS/pass            concept:event:tennis:2026-women-s-us-open-winner-tennis
+```
+
+**+1 predicted, +1 delivered, on the predicted probe.** The prior record was
+`-41` missed by 7, `-42` held and exceeded, `-43` missed by 1, `-44` no movement,
+`-45` and `-46` declared nulls that held. This is the first row where the
+mechanism, the magnitude *and* the specific probe were all called in advance.
+
+Idempotence was re-asserted on this deploy too, so the instrument's agreement is
+not a one-deploy accident: rerank @ `exact` = **39/44**, MRR identical to 16
+decimals, **0 probes differing** from the deployed grade.
+
+**The standing honesty note, which still applies and is Alex's text:** 39/44 sits
+inside the originally ratified **39–41** band — but that band was a claim about
+`-41` **alone**, and `-41` missed it by 7. Several changes summing to a number
+predicted for one is **not** the prediction holding. What holds here is `-47`'s
+own `+1`, nothing wider.
+
+**The stack's read debt is now fully discharged.** Every ranking change from
+`-41` to `-47` has a number attributed to its own deploy.
 
 ### How this table must be read — and how it must not
 
@@ -407,3 +578,281 @@ would have caught this before a band was published.
 recorded, with the two-sided caveat above attached to it — the old numbers are
 not retracted, because they were honestly taken; only the claim that they were
 floors is withdrawn.
+
+---
+
+## 7. What the probe set can and cannot DISCRIMINATE (LAT-P052, ruling 056, #1861)
+
+The 46-probe gold set was assembled for **coverage** of Alex's approved query
+set. Nothing has ever asked the separate question — *which classes of ranking
+change can it tell apart?* — and the two are not the same property. A set can
+cover the query space perfectly and still be blind to a whole tier.
+
+`-44` is what forced the question: a real ranking change, deployed alone under
+ruling 046, that moved zero probes. This section is the answer, and it is
+maintained rather than one-off — a change class that lands here as "cannot"
+is a queue item, not a footnote.
+
+| match class | what a change to it looks like | can `entity_top_1` grade it? | evidence |
+|---|---|---|---|
+| **MC0** exact alias | a team's alias is withheld or restored | **YES** | `-42` (#1836) moved **+3**; five team probes turn on aliases the response strips |
+| **MC1** all tokens in own name | the name pool widens or narrows | **YES** | the majority of the 46 probes resolve here |
+| **MC2** last-token prefix | typeahead prefix behaviour | **partially** | no probe is *specifically* a prefix probe; the class is exercised only incidentally |
+| **MC3** partial tokens | coverage-threshold tuning | **NO probe isolates it** | untested class — the nearest is `full_question`, which conflates it with scaffolding-strip |
+| **MC4** outcome-only | #1843's widening | **ONLY when the lift is unequal** | see below — this is the #1861 finding |
+| **MC5** fragment / fuzzy | the trigram floor | **indirectly** | graded only as the thing better classes must beat |
+| **UNRANKABLE** derived-only | #1846's provenance fix | **YES** | `us open`; projection **+1 → 39** registered pre-deploy |
+
+### The MC4 rule, stated once so it is not re-derived
+
+> An outcome-evidence change moves `entity_top_1` **only when the candidates do
+> not all gain the class together.**
+
+Because `entity_top_1` is a function of *relative* order, and #1843 lifts every
+market that owns the queried outcome at the same instant. Three regimes, all
+measured against a frozen production capture in
+`backend/tests/test_search_outcome_evidence_discrimination.py`:
+
+| regime | pre-#1843 winner | post | graded? |
+|---|---|---|---|
+| all candidates own the outcome below their cut | the same market | unchanged | **no** — uniform lift |
+| a rival displays the outcome inside its top 3 | that rival (already MC4) | **moves** | **yes** — `club kid` |
+| the winner never owns the outcome (substring accident) | the accident, on input order | **moves** | **yes** — `fjord` |
+
+### Consequences worth acting on
+
+1. **MC3 is genuinely ungraded.** Nothing in the set isolates partial-token
+   coverage, so `PARTIAL_MIN_COVERAGE` could be retuned in either direction and
+   every published number would be unchanged. That is the largest remaining
+   blind spot. **Filed as #1867** (LAT-P053) — a table cell reading "NO" is a
+   spec note, not a queue, which is why the filing was owed.
+2. **MC2 is graded only by accident.** Typeahead's defining behaviour — the user
+   is still typing — has no dedicated probe. **Also #1867.**
+3. **A null read is now interpretable.** Under ruling 056, "no movement" on a
+   class marked **NO** or **partially** above is a statement about the
+   instrument. On a class marked **YES** it is a statement about the change.
+   That distinction is the whole point of keeping this table.
+
+### The class lives in `canary`, deliberately
+
+The outcome-evidence probes are `--split canary`, not `test`. The §5 ledger is
+written against a 46-probe cohort graded 44-wide; growing `test` would move the
+denominator and silently make every prior read incomparable — a measurement
+defect committed while fixing one.
+`test_the_canary_split_never_grows_the_ledger_cohort` asserts the separation, so
+the ledger cannot be invalidated by a well-meant registry edit.
+
+---
+
+## 8. The recall/latency trade, priced (#1855, LAT-P052, 2026-08-14)
+
+#1855 asked whether **+3 `entity_top_1` was worth ~170ms of warm `/search` p50**
+(0.48s → 0.65s), and routed it here for a measured verdict rather than a
+recovery. Measured on **v3808 (`d4b7309c`)**, ~1h after release so no post-deploy
+artifact (gotcha: a read inside ~5 min of a release scans as a regression).
+
+### First: ~0.24s of every number ever quoted here is the measuring instrument
+
+`GET /api/health` — an endpoint that does no work — costs **p50 0.239s** (n=8)
+from an agent sandbox, of which **~0.148s is the TLS handshake**. Every `curl`
+opens a fresh connection, so that tax is paid per reading.
+
+On a **reused** connection the same endpoint costs **p50 0.086s** (n=9). The
+difference is not the server.
+
+| surface | fresh conn | keep-alive | server work |
+|---|---|---|---|
+| `/api/health` (floor) | 0.239s | 0.086s | ~0 |
+| `/api/events/search?q=chiefs` warm | **0.476s** (n=12) | **0.213s** (n=9) | **~0.127s** |
+| `/api/feed` (control, untouched by this program) | 0.368s (n=8) | — | — |
+
+Server-side, from `?debug_timing=1` (n=11): **total p50 163ms**, of which
+`teams` **p50 60ms** and `futures` **p50 35ms**.
+
+### The 170ms is the cold/warm boundary, not a code cost
+
+Same deploy, no code change between the two readings:
+
+| `/api/events/search`, novel queries | p50 |
+|---|---|
+| **cold** (first touch, n=6) | **0.692s** |
+| **warm** (second touch, n=5) | **0.468s** |
+
+The gap is **0.224s** — and #1855's claimed regression is **0.17s**. Its two
+numbers are a warm read (v3800, 0.48s) compared against reads that were
+effectively cold, at n=1–4, over a distribution whose server-side total spans
+**105ms to 399ms across eleven consecutive reads of the same query**. A
+four-sample median cannot resolve 170ms on that distribution.
+
+Today's warm `/search?q=chiefs` p50 is **0.476s** — the v3800 baseline number.
+
+### The verdict, as two numbers and a recommendation
+
+* **Cost of the recall: ≤ 60ms of server time.** That is the *entire* `teams`
+  stage, which is an **upper bound** — there is no pre-`-42` stage measurement to
+  subtract, so this deliberately charges the widening for work the stage was
+  always doing.
+* **Benefit: +3 `entity_top_1`** (`-42`, #1836, v3802: 32 → 35/44).
+
+**Recommendation: keep the recall, and close #1855 as premise-not-supported.**
+There is no trade to make. 60ms is 3% of the 2s bar and ~37% of a stage that is
+itself 13% of a warm request's wall clock; the 170ms it was weighed against is a
+cache-state artifact reproducible today with no code change at all.
+
+### `_search_owned_outcome_names` is not the suspect — stop suspecting it
+
+The queue asked whether #1843's deliberately-unbounded outcome walk is free.
+**It is not on `/search` at all.** Its only call site is `typeahead_search`
+(`events.py:4400`); `/search` never invokes it. It cannot be any part of #1855.
+On typeahead it walks a list already `selectinload`ed into memory — 38 strings
+for the largest specimen in §7.
+
+### The finding that is bigger than #1855: typeahead's cache miss
+
+`/api/events/typeahead` is Redis-fronted at `bainluck:typeahead:{q}` with a
+**45s TTL**. That changes what every measurement of this surface means — and
+typeahead is **the surface `entity_top_1` grades**.
+
+| typeahead | p50 |
+|---|---|
+| cache **hit** (n=10) | **0.235s** — *at the 0.239s network floor; server ≈ 0* |
+| cache **miss**, novel queries (n=6) | **1.158s** |
+| cache **miss**, same batch ~25 min later (n=8) | **2.289s**, max **7.67s** |
+
+The code states a **`<150ms p50` budget** for this endpoint. A cache miss is
+7–15× that. The second row is not query-specific: re-reading the *first* batch's
+queries after their TTL expired moved `packers` 1.072s → 1.797s and `nvidia`
+1.126s → 2.164s, and three never-used controls all landed at ~2.1s — so the
+surface drifts with load, and it drifts across the **2s investigate bar** in
+`CLAUDE.md`.
+
+Two consequences this lane owns:
+
+1. **Every gold-set read this program has taken is a read of a cache-fronted
+   surface.** That does not invalidate any ranking number — ordering is cached
+   along with the payload — but it means the lane has never once measured
+   typeahead's true cost, and `<150ms p50` has never been verified against a
+   miss.
+2. The `-45`/`-46`/`-47` reads should record cache state, because a 45s TTL and a
+   46-probe sequential producer run interact.
+
+**Dispositions, LAT-P053 (2026-08-14).** Alex closed #1855 on the decomposition
+above — *accepted trade, ≤60ms server time for +3 recall* — and the closing
+comment carries the TLS and cold/warm arithmetic **so nobody re-discovers the
+sandbox tax as a regression**. The miss-cost finding is now **#1866, p1**, framed
+as Alex required: *no ranking number invalidated, the COST was simply never
+measured.* Consequence 2 is promoted from "should" to an acceptance criterion —
+every read from LAT-P053 onward **records cache state**.
+
+### #1866 measured: the assembly hypothesis dies, and the drift is MONOTONE (LAT-P054, 2026-08-14)
+
+All numbers below are production **v3813**, taken between ~12:15 and ~13:05 PDT
+with no release in the window.
+
+#### Cache state is now a STRUCTURAL claim, not an inference
+
+`debug_evidence=1` skips the cache in **both** directions
+(`events.py:4021-4034`), so an evidence-bearing read can never be served warm
+and never warms anything. **Every gold read in §5 is 100% cache-MISS by
+construction.** LAT-P053 reasoned to "predominantly" from the 45s TTL and a 150s
+gap; it did not have to. This also gives #1866 a free instrument: `debug_evidence=1`
+is a *repeatable* miss that needs no TTL wrangling to reproduce.
+
+#### Step 2 — per-result assembly is REFUTED as the dominant term
+
+`_search_owned_outcome_names` was cleared for #1855 on the grounds that it is not
+on `/search` at all. That is not a conviction *or* an acquittal for `/typeahead`,
+where it genuinely does run. So it was measured, with a **discriminating**
+experiment rather than a plausible one:
+
+> If per-result assembly drives the miss cost, a query returning **zero**
+> suggestions must be cheap — it does zero assembly.
+
+| arm (both guaranteed misses) | p50 | mean | min | max | n |
+|---|---|---|---|---|---|
+| **zero-result** novel tokens (0 assembly) | **1.778s** | 1.783s | 1.366s | 2.455s | 8 |
+| **result-bearing** gold queries | **1.297s** | 1.324s | 1.124s | 1.708s | 8 |
+
+**Zero-result queries are 1.37× SLOWER**, and the zero arm's *minimum* (1.366s)
+sits above the result arm's *median* (1.297s) — the distributions barely overlap
+in the wrong direction. Assembly is not the cost. **The cost is in the match/scan
+phase**, which is where `?debug_timing=1`'s marks are now placed.
+
+#### The miss cost, paired against its own network floor
+
+Pairing miss and hit **on the same query** removes the ~0.26s sandbox connection
+tax that §8 opens with, so this is server work rather than a difference of two
+population medians:
+
+| | p50 | min | max | n |
+|---|---|---|---|---|
+| warm **hit** | **0.262s** | 0.258s | 0.269s | 16 |
+| cold **miss** (novel) | 1.309s | 1.166s | 13.701s | 16 |
+| **paired miss cost** (miss − hit, same query) | **1.049s** | 0.903s | 13.433s | 16 |
+
+**1.049s against a stated `<150ms p50` budget is 7.0×.** The warm-hit arm's
+spread is 11ms across 16 calls, which is what a network floor looks like and is
+why the paired subtraction is trustworthy.
+
+#### Step 3 — the drift is REAL and LARGE, but its direction is NOT stable
+
+The issue reported 1.16 → 2.29s inside one window and could not say whether that
+was noise, query mix, or a trend. LAT-P054 ran an **identical 8-query arm** (same
+queries, same flag, round-opening warmup discarded) five times. All five landed
+after the **v3814** release at **12:01:33 PDT**, so the series starts on freshly
+restarted dynos:
+
+| minutes after the v3814 restart | +1.7 | +3.8 | +8.1 | +12.5 | +17.0 |
+|---|---|---|---|---|---|
+| **p50** | **1.297s** | **1.808s** | **2.006s** | **2.781s** | **3.098s** |
+
+Within that series: **monotonically increasing, 2.39× end to end**, same deploy,
+same queries. Round 4's *minimum* is 2.654s — by then **every** query is over
+`CLAUDE.md`'s 2s investigate bar, and the p50 is **20.7×** the stated budget.
+Two round-opening warmup calls exceeded **10s**.
+
+**Two confounds were chased. One is cleared; the other kills the tidy story.**
+
+**Cleared — it is not this machine.** The mutation harness and then the full
+13,916-test suite were running locally during rounds 2–4, at load average ~12,
+so client CPU contention was the obvious alternative explanation. The warm-**hit**
+arm is the control that settles it: a hit does ~0 server work, so its wall clock
+is network plus local cost. Measured under load average 11.9 it was **p50 0.264s
+(min 0.259, max 0.274, n=8)** against a low-load baseline of **p50 0.262s (min
+0.258, max 0.269, n=16)** — an inflation factor of **1.01×**. The client is not
+the cause.
+
+**Not cleared — the climb did NOT replicate.** `v3815` restarted the dynos again
+at 12:20:51, which is a free second trial, and two independent 46-probe captures
+across that window trend the *other* way. Per-probe fetch cost, derived from
+capture wall clocks (46 probes, 45 × 1.1s of deliberate spacing removed):
+
+| capture | window | per-probe |
+|---|---|---|
+| v3813 r1 | 11:48–11:51 | 2.10s |
+| v3813 r2 | 11:53–11:56 | 1.78s |
+| v3813 legacy | 11:56–11:58 | 1.56s |
+| v3814 r1 | ~12:27–12:29 (+6 min from restart) | 1.91s |
+| v3814 r2 | ~12:31–12:33 (+10.5 min) | 1.71s |
+
+Both series **decline**. So the honest verdict is narrower than the one this
+section first drafted:
+
+> **The miss cost is real, is 7–20× its stated budget, and swings between roughly
+> 1.3s and 3.1s within a single hour on identical queries. It is NOT established
+> that it climbs monotonically, and the accumulating-resource reading is NOT
+> supported** — one identical-arm series climbed, two capture series over
+> comparable windows fell. The variance itself is the SLO defect; the direction
+> is not yet a finding.
+
+**What would settle it:** stage attribution, not more black-box timing. Four
+independent black-box series have now produced three different shapes. That is
+the signature of a measurement that cannot resolve its own subject, which is
+precisely why step 1 was step 1. `?debug_timing=1` is built and **not deployed**;
+the next window's first #1866 act is to re-run these arms against per-stage
+numbers and name the stage that moves.
+
+**Sequencing owed to ruling 046:** `debug_timing` is production code on the very
+endpoint `entity_top_1` grades. `-47` (#1846) still owes its own read on its own
+deploy. **`-47` must land, deploy and be read BEFORE `-50` lands**, or `-47`'s
+`+1 → 39/44` projection is measured on a server that also changed underneath it.

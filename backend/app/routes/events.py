@@ -3993,6 +3993,7 @@ async def typeahead_search(
             "the default response and changes no ordering."
         ),
     ),
+    debug_timing: bool = Query(False, description="Return per-stage timings in ms"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -4028,7 +4029,14 @@ async def typeahead_search(
     # one (a user typing that prefix would be served the eval payload for the
     # full 45s TTL). Same reasoning as LAT-P007's degraded-answer rule: an
     # answer produced under different rules is never interchangeable in a cache.
-    if not debug_evidence:
+    #
+    # LAT-P054: `debug_timing` joins it on the READ side for a reason specific to
+    # what it measures. A cached entry carries no `debug_timing` key, so serving
+    # one would answer a timing request with SILENCE — indistinguishable from a
+    # stage that cost nothing (gotcha #53: an absent field and a zero field must
+    # never read the same). The instrument would then under-report exactly the
+    # path #1866 is about, which is the miss.
+    if not debug_evidence and not debug_timing:
         try:
             _rc = get_redis_client()
             _cached = _rc.get(_cache_key)
@@ -4040,6 +4048,31 @@ async def typeahead_search(
     # LAT-P007: start the request budget AFTER the cache read — a cache hit has
     # already returned above and never touches the database.
     _ta_deadline = time.monotonic() + (_TYPEAHEAD_DEADLINE_MS / 1000.0)
+
+    # LAT-P054/#1866: per-stage attribution, opt-in only (`?debug_timing=1`), so
+    # the normal response shape is untouched. Same shape as `/search`'s at the
+    # top of `search_events`.
+    #
+    # WHY THIS EXISTS. #1866 measured a 1.16-2.29s p50 on the cache-MISS path
+    # against a `<150ms p50` budget this file states twice — but there was no
+    # way to say WHICH stage spent it, so every causal claim about the miss was
+    # an inference. The one hypothesis that could be tested from outside has
+    # been REFUTED (LAT-P054, n=16): zero-result queries, which do no per-result
+    # assembly at all, are 1.37x SLOWER than result-bearing ones (p50 1.778s vs
+    # 1.297s), so the cost is in the match/scan phase, not in assembly. That
+    # narrows it to these query stages and is exactly why they are marked
+    # separately.
+    #
+    # NOTE the interaction with `debug_evidence`: that flag bypasses the cache
+    # in BOTH directions, so `?debug_evidence=1&debug_timing=1` is a guaranteed
+    # miss-path timing and needs no TTL wrangling to reproduce one.
+    _ta_stage_ms: dict[str, int] = {}
+    _ta_t0 = time.perf_counter()
+
+    def _ta_mark(label: str) -> None:
+        nonlocal _ta_t0
+        _ta_stage_ms[label] = round((time.perf_counter() - _ta_t0) * 1000)
+        _ta_t0 = time.perf_counter()
 
     now = datetime.now(timezone.utc)
     pattern = f"%{q}%"
@@ -4176,7 +4209,9 @@ async def typeahead_search(
         .order_by(team_prominence_order, team_name_order, Team.name)
         .limit(_TEAM_POOL_FETCH_LIMIT)
     )
+    _ta_mark("setup")
     team_result = await db.execute(team_query)
+    _ta_mark("teams_query")
     team_pool = []
     teams_seen = set()
     for row in team_result.all():
@@ -4223,7 +4258,9 @@ async def typeahead_search(
         )
         .limit(4)
     )
+    _ta_mark("teams_assemble")
     event_result = await db.execute(event_query)
+    _ta_mark("events_query")
     event_pool = []
     for event in event_result.scalars().all():
         home = event.home_team
@@ -4353,12 +4390,19 @@ async def typeahead_search(
     # The three suggestion pools are already plain dicts by now, so the rollback
     # cannot expire anything (gotcha #6).
     _ta_degraded = False
+    _ta_mark("events_assemble")
     await _apply_search_statement_timeout(db, _ta_deadline)
     try:
         futures_result = await db.execute(futures_query)
+        _ta_mark("futures_query")
     except Exception as exc:  # noqa: BLE001
         if not _is_query_timeout(exc):
             raise
+        # Attribute the time the timeout ITSELF burned, under a distinct label.
+        # Without this the elapsed time silently lands in the next stage's mark
+        # and `futures_assemble` would appear to cost seconds on precisely the
+        # requests where the futures stage is the known problem.
+        _ta_mark("futures_query_TIMED_OUT")
         logger.error(
             "typeahead futures TIMED OUT for %r — the dropdown is answering "
             "without its futures suggestions", q
@@ -4564,6 +4608,7 @@ async def typeahead_search(
         )
 
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
+    _ta_mark("futures_assemble")
     did_you_mean: str | None = None
     if not team_pool and not event_pool and len(futures_pool) < 2:
         try:
@@ -4661,12 +4706,14 @@ async def typeahead_search(
     # reorders and drops derived-only concepts (see `search_match_class`).
     from app.utils.search_match_class import rank as _s_rank
 
+    _ta_mark("fuzzy_and_concepts")
     _ta_candidates = [
         (_typeahead_evidence(item), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
     suggestions = _s_rank(q, _ta_candidates)[:7]
+    _ta_mark("rank")
 
     for _s in suggestions:
         _s.pop("_derived", None)
@@ -4700,6 +4747,13 @@ async def typeahead_search(
         result["_evidence"] = _evidence_echo
     if did_you_mean:
         result["did_you_mean"] = did_you_mean
+    if debug_timing:
+        # Emitted BEFORE the cache write below, and the write is skipped for any
+        # debug answer anyway — a timing echo must never be served to a normal
+        # user from a warm entry, same rule as `_evidence` (LAT-P050).
+        _ta_mark("echo")
+        result["debug_timing"] = {**_ta_stage_ms,
+                                  "total_ms": sum(_ta_stage_ms.values())}
 
     # Cache the assembled suggestions (incl. top_outcomes) per query. The read at
     # the top of this endpoint had no matching write — the cache never populated,
@@ -4716,7 +4770,11 @@ async def typeahead_search(
     # LAT-P050: nor is a debug-evidence answer, for the mirror-image reason. It
     # is not incomplete, it is EXTRA — and writing it here would serve
     # `_evidence` to every normal user typing that prefix for the full TTL.
-    if not _ta_degraded and not debug_evidence:
+    #
+    # LAT-P054: nor is a debug-timing answer, for exactly that reason — the
+    # payload carries a `debug_timing` block, and caching it would ship per-stage
+    # server timings to every normal user typing that prefix for the full TTL.
+    if not _ta_degraded and not debug_evidence and not debug_timing:
         try:
             from app.tasks.redis_state import get_redis_client as _get_rc
             _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))

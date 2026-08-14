@@ -5,6 +5,12 @@
     "gold_set_source": ".claude/handoff/gold_queries_draft.md (gold query set v1, Alex approved-with-edits 2026-07-22)",
     "gold_set_unique_queries": 71,
     "migrated": 46,
+    "outcome_evidence_probes": 5,
+    "split_counts": {
+      "test": 46,
+      "canary": 5
+    },
+    "split_note": "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is written against — 46 probes graded 44-wide — and it MUST NOT grow without restating every prior read. The outcome-evidence discrimination class (ruling 056, #1861) is therefore in `canary`.",
     "mc_candidates": 27,
     "results_producer": "scripts/evals/search_results_producer.py",
     "fixture_hash_convention": "sha256 over the canonical JSON of presentation{} (hash_scope presentation/v1); validate_registry re-derives and enforces it"
@@ -3249,6 +3255,378 @@
       },
       "presentation": {
         "query": "Taylor Swift pregnant by...?"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-outcome-evidence-werwulf-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556"
+        ],
+        "gold_half": "outcome_evidence",
+        "gold_family": "outcome_evidence"
+      },
+      "evidence": {
+        "fixture_hash": "9a5dcf56942d4dd6fc405b7b2d02ccc96bc30f4c64cc3ae80127fb1acc8ca49f",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, specimened from the production futures_outcomes table",
+        "provenance": "outcome-evidence half; the expected market owns this query at outcome rank 17, outside the top-3 display cut, and matches on NO name token. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public film titles only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the product's ONLY representation of this film is as an outcome of the Best Picture markets, so a market that owns it is the correct referent — there is no rival surface to prefer",
+        "evidence": "'Werwulf' is a Best Picture nominee sitting at outcome rank 17 of 38 — far outside the three rows the dropdown displays. The market's NAME ('Oscar winner: Best Picture') contains no query token, so the only evidence that can rank it is the owned outcome. Verified on production v3808 (2026-08-14): market 6173044 returns at rank 1.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "outcome_evidence"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1861",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:outcome-evidence-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "werwulf"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-outcome-evidence-elsinore-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556"
+        ],
+        "gold_half": "outcome_evidence",
+        "gold_family": "outcome_evidence"
+      },
+      "evidence": {
+        "fixture_hash": "1c0de42ad8186fd73039370353b3a58f4425e65c3377591028f7ab18a22a46be",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, specimened from the production futures_outcomes table",
+        "provenance": "outcome-evidence half; the expected market owns this query at outcome rank 35, outside the top-3 display cut, and matches on NO name token. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public film titles only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the product's ONLY representation of this film is as an outcome of the Best Picture markets, so a market that owns it is the correct referent — there is no rival surface to prefer",
+        "evidence": "Outcome rank 35 of 38 — the deepest specimen in the class, and the strongest demonstration that the evidence is genuinely unbounded rather than merely wider. Verified rank 1 on production v3808 (2026-08-14).",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "outcome_evidence"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1861",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:outcome-evidence-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "elsinore"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-outcome-evidence-behemoth-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556"
+        ],
+        "gold_half": "outcome_evidence",
+        "gold_family": "outcome_evidence"
+      },
+      "evidence": {
+        "fixture_hash": "e9d62038fcafdb1a1ab3a14bce78e8b62ebd9b217d4e9b1bfa1c338075585624",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, specimened from the production futures_outcomes table",
+        "provenance": "outcome-evidence half; the expected market owns this query at outcome rank 9, outside the top-3 display cut, and matches on NO name token. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public film titles only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the product's ONLY representation of this film is as an outcome of the Best Picture markets, so a market that owns it is the correct referent — there is no rival surface to prefer",
+        "evidence": "Outcome rank 9 of 38. Verified rank 1 on production v3808 (2026-08-14).",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "outcome_evidence"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1861",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:outcome-evidence-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "behemoth"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-outcome-evidence-minotaur-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556"
+        ],
+        "gold_half": "outcome_evidence",
+        "gold_family": "outcome_evidence"
+      },
+      "evidence": {
+        "fixture_hash": "36ca6b8bc3985f9b01c37ba5853c6cd35e05199ce48e141951bedc8599032706",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, specimened from the production futures_outcomes table",
+        "provenance": "outcome-evidence half; the expected market owns this query at outcome rank 31, outside the top-3 display cut, and matches on NO name token. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public film titles only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the product's ONLY representation of this film is as an outcome of the Best Picture markets, so a market that owns it is the correct referent — there is no rival surface to prefer",
+        "evidence": "Outcome rank 31 of 38. Verified rank 1 on production v3808 (2026-08-14).",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "outcome_evidence"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1861",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:outcome-evidence-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "minotaur"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-outcome-evidence-club-kid-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556",
+          "market:58492236"
+        ],
+        "gold_half": "outcome_evidence",
+        "gold_family": "outcome_evidence"
+      },
+      "evidence": {
+        "fixture_hash": "0b9fa03962a6efb144c08ee4eb0505da36a2360065ba3c9904a86dd03c85ab23",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P052 (#1861, ruling 056): outcome-evidence discrimination class, specimened from the production futures_outcomes table",
+        "provenance": "outcome-evidence half; the expected market owns this query at outcome rank 37, outside the top-3 display cut, and matches on NO name token. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public film titles only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the product's ONLY representation of this film is as an outcome of the Best Picture markets, so a market that owns it is the correct referent — there is no rival surface to prefer",
+        "evidence": "THE DISCRIMINATING SPECIMEN, and the most valuable probe in this class. Outcome rank 37 of 38 here, but rank 3 of 17 — INSIDE the display cut — in 'Oscars 2027: Best Original Screenplay Winner' (58492236). That rival therefore already scored MC4 before #1843 and did not move while every other candidate went MC5 -> MC4, so the lift is UNEQUAL and top-1 genuinely changes. It is the existence proof that an outcome-evidence change can be graded top-1 at all; the other four specimens cannot show that, because their lift is uniform. 58492236 is recorded as an ALLOWED answer rather than a rival precisely because it owns the film too. Also the only MULTI-TOKEN query in the class, which exercises MC4's multi-token PATH — but NOT its conjunction: every candidate owning 'kid' here also owns 'club', so flipping MC4's `all()` to `any()` survives this specimen untouched. That was found by the mutation gate (M5) and the conjunction is now asserted separately, on a synthetic partial owner, in test_mc4_requires_every_query_token_not_merely_one. Recorded because the earlier version of this note claimed the specimen covered it. Verified rank 1 on production v3808 (2026-08-14).",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556",
+            "market:58492236"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "outcome_evidence"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1861",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:outcome-evidence-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "club kid"
       }
     }
   ]
