@@ -129,6 +129,29 @@ whenever nothing relevant matched.
 `/search` follows the same order. **[P7, ratified]** query-class vocabularies are
 scoped per registry.
 
+> **`/search` does NOT yet adopt the scorer — still true as of 2026-08-13, and
+> now with a diagnosis attached.** It is scheduled as its own measured change
+> (Alex, 2026-08-13: *same scorer, second surface, one change in flight, its own
+> before/after*), so it is not a gap to close opportunistically inside another
+> queue.
+>
+> Two things are known about it in advance, both worth having before the design
+> step:
+>
+> 1. **It is a design step, not a copy.** `/search` answers in parallel buckets
+>    and asserts no cross-bucket order. Whoever wires it must decide and write
+>    down which is being built: the scorer WITHIN each bucket, or a cross-bucket
+>    order that changes the bucket contract.
+> 2. **It carries the same first-writer-wins concept guard** that produced #1839
+>    on typeahead — three call sites, `_detect_query_{golf_major,world_cup,awards}`
+>    at `events.py`, each skipping when a member-derived row already claimed the
+>    key. The consequence is milder here *only because there is no scorer yet*:
+>    the concept still displays, it just fails to lead, which contradicts the
+>    call sites' own "prepended so it leads top-1" comments. **Wiring the scorer
+>    into `/search` without also routing these through
+>    `_upsert_query_derived_concept` would convert a mild ordering miss into
+>    #1839's disappearing-concept bug on a second surface.**
+
 Two evidence changes were required to make the ruling operable:
 
 - **Teams now SELECT `alternate_names`.** The recall arms had always *filtered*
@@ -161,18 +184,47 @@ space is small and enumerated, so it cannot flake and cannot depend on a seed.
 
 ## 5. The measurement
 
-Same 46 probes, same instrument, both numbers written down.
+Same 46 probes, same instrument, every number written down and **attributed to
+the change that caused it** (ruling 046).
 
-| | value |
-|---|---|
-| **BEFORE (measured)** | `entity_top_1` **30/44**, MRR **0.757**, rate 0.652 over 46 · prod v3792, 2026-08-12 21:48Z · coverage 46/46, `fetch_ok` 46/46 |
-| **Prediction (ratified, falsifiable)** | **+11±1 on the same 44** → ~40±1 |
-| **AFTER (projection, floor)** | **35/44**, MRR 0.800 — `search_offline_rerank.py`, +2 verified alias fixes not visible to it |
-| **AFTER (deployed, measured)** | **OWED** — the producer fetches production, and a program lane never pushes |
+| deploy | change | `entity_top_1` | MRR | prediction | verdict |
+|---|---|---|---|---|---|
+| v3792 / v3795 / v3798 | **BEFORE** — measured three times, identical | **30/44** | 0.7572 | — | — |
+| — | offline projection, biased low | 35/44 | 0.800 | — | a floor, not a read |
+| **v3800** | **`-41` scorer ALONE** (ruling 041) | **32/44** | 0.7391 | **+11±1 → 39–41** | **MISSED by 7** |
+| **v3802** | **`-42` pool fix ALONE** (#1836) | **35/44** | **0.8043** | +2 → 34 | **HELD, exceeded** |
+| pending | **`-43` concept dedup ALONE** (#1839) | **OWED** | — | +4 → 39 | — |
+
+Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
+with byte-identical dispositions across all 46 probes.
+
+### How this table must be read — and how it must not
+
+**Recorded by Alex, 2026-08-13, as this ledger's standing text.**
+
+If `-43` lands its projected +4, the program reaches **39/44** — a number that
+sits inside the originally ratified 39–41 band. **That is not the prediction
+holding, and this ledger must never be read as though it were.**
+
+> The band was a claim about **`-41` alone**, and `-41` missed it by 7. Three
+> changes reaching a number that was predicted for one is **not** the prediction
+> holding.
+
+The arithmetic that makes this unambiguous: the ratified claim was `+11±1` from
+the scorer. The scorer delivered **`+2`**. The remaining movement was bought by a
+recall fix and a dedup repair that were not part of the claim — and the dedup
+repair exists only because the scorer's own miss exposed the defect.
+
+So the record shows **a missed prediction and a working measurement system**,
+and that is worth more than a prediction that appeared to hold. A number
+assembled from three changes and compared against a band drawn for one is the
+exact confusion ruling 046 was written to prevent; reproducing it here, in the
+ledger, would undo the discipline that produced the numbers.
 
 Expected misses that **do not** count against the prediction: `celtics`,
 `march-madness`, `422` — data/identity riders on queue 322, which was trimmed to
-exactly that scope.
+exactly that scope. (`celtics` remains an undiagnosed pool miss, recorded when
+#1836 closed.)
 
 `search_offline_rerank.py` re-ranks captured producer output with the same
 scorer and grades it with the unmodified grader. It is a **projection biased

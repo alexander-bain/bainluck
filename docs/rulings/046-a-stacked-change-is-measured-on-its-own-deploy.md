@@ -44,6 +44,44 @@ number with two changes behind it. The +7 and the −5 would have cancelled into
 noise, the dedup bug would have stayed invisible, and the honest report would have
 been "we cannot say".
 
+## First confirmed instance — the miss was worth more than the hit
+
+**Recorded by Alex, 2026-08-13, on the LAT-P047 acceptance.** The ruling's payoff
+arrived inside the same session that banked it, and it is the week's best proof
+of method.
+
+Had `-41` and `-42` shipped together, the observable would have been a single,
+tidy **30 → 35**. That reads as a clean win. It would have been reported as one,
+nobody would have looked further, and **#1839 would have stayed hidden** —
+indefinitely, because there is no second chance to observe the intermediate
+state and no reason to go looking inside a number that already met expectations.
+
+What the sequenced deploys produced instead was a *decomposed* miss:
+
+| component | value | what it actually was |
+|---|---|---|
+| gained | **+7** | the predicted victory — the Emmys false positives and the fragment wins, both dead |
+| lost | **−5** | an undiagnosed regression nobody predicted |
+| cause | — | first-writer-wins dedup killing the rankable twin (#1839) |
+
+The `+7` and the `−5` would have cancelled into a plausible net. Separated, the
+`−5` was diagnosable within the hour, and the fix carried 15 tests and 6 killed
+mutations.
+
+So the ruling's value is not that it protects good news. **It is that a miss
+carries strictly more information than a hit, and only a clean deploy lets you
+collect it.** A hit tells you the number moved as expected; a miss with
+attribution tells you *which* mechanism moved it, by how much, and in which
+direction — including the mechanisms nobody predicted.
+
+> **The miss was worth more than the hit.**
+
+Note also what this instance says about the *pre-registration*, not just the
+sequencing: the `+11±1` band was wrong by 7, and the discipline still paid.
+Being wrong loudly, on the record, against a fixed instrument, is what made the
+decomposition worth reading. A prediction is an instrument for noticing
+surprise, and it does that job whether or not it holds.
+
 ## What it does NOT mean
 
 It does not mean a lane waits. Lanes stack freely and continue working — that is
