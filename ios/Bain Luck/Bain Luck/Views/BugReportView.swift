@@ -21,6 +21,20 @@ struct BugReportView: View {
     @State private var showErrorAlert = false
     @State private var savedLocally = false
 
+    // MARK: Receipt state (#1847)
+
+    /// The server acknowledgment for the report just submitted.
+    @State private var lastReceipt: BugReportReceipt? = nil
+    /// The newest receipt from BEFORE this sheet opened, so the user can see
+    /// that their previous report landed without having to remember a toast.
+    @State private var priorReceipt: BugReportReceipt? = nil
+    /// Reports queued on this device and not yet delivered.
+    @State private var pendingCount = 0
+    /// Reports delivered by the outbox while this sheet was opening.
+    @State private var recoveredCount = 0
+    /// Whether the outbox is currently sending.
+    @State private var flushing = false
+
     #if os(iOS)
     @State private var canvasView = PKCanvasView()
     #endif
@@ -103,19 +117,38 @@ struct BugReportView: View {
                                 pastedScreenshot = img
                             }
                         }
+                        #else
+                        // #1847: a shake whose screenshot capture failed now
+                        // opens the form anyway. Say so, rather than rendering
+                        // a form with an unexplained gap where an image goes.
+                        HStack(spacing: 8) {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                            Text("Couldn't capture a screenshot — describe the problem below and we'll still get it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
+                        .accessibilityIdentifier("bug-report-no-screenshot")
                         #endif
                     }
 
-                    Button(role: .destructive) {
-                        screenshot = nil
-                        #if os(macOS)
-                        pastedScreenshot = nil
-                        #endif
-                    } label: {
-                        Label("Remove Screenshot", systemImage: "xmark.circle")
-                            .font(.caption)
+                    // Only offer removal when there is something to remove.
+                    // A shake whose capture failed now opens this form with no
+                    // image (#1847), and "Remove Screenshot" under an empty
+                    // space reads as a bug.
+                    if hasScreenshot {
+                        Button(role: .destructive) {
+                            screenshot = nil
+                            #if os(macOS)
+                            pastedScreenshot = nil
+                            #endif
+                        } label: {
+                            Label("Remove Screenshot", systemImage: "xmark.circle")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
 
                     #if os(macOS)
                     if let pasted = pastedScreenshot {
@@ -158,22 +191,77 @@ struct BugReportView: View {
                         .padding(.horizontal)
                     }
 
-                    if submitted {
-                        HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text("Bug report submitted! Thanks for helping improve Bain Luck.")
-                                .font(.subheadline)
+                    // THE RECEIPT (#1847). Quotes the server-assigned id, which
+                    // is the thing you can actually check later. The old
+                    // version said only "Bug report submitted!" and vanished.
+                    if submitted, let receipt = lastReceipt {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Report #\(receipt.id) received")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            Text("Saved on this device so you can check it later. Thanks for helping improve Bain Luck.")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
+                        .accessibilityIdentifier("bug-report-receipt")
+                    }
+
+                    // THE OUTBOX (#1847). `pendingCount` existed on the store
+                    // from the beginning and had ZERO call sites, so a report
+                    // sitting unsent on the device was invisible to its author.
+                    if pendingCount > 0 && !submitted {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "tray.full.fill")
+                                    .foregroundStyle(.orange)
+                                Text(pendingCount == 1
+                                     ? "1 report is waiting to send"
+                                     : "\(pendingCount) reports are waiting to send")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            Text("They'll go automatically when the connection is back.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if flushing {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Button("Try Sending Now") {
+                                    Task { await flushOutbox() }
+                                }
+                                .font(.caption.weight(.semibold))
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .accessibilityIdentifier("bug-report-outbox")
+                    }
+
+                    // A report recovered by the outbox is announced, rather
+                    // than silently disappearing from the queue.
+                    if recoveredCount > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill")
+                                .foregroundStyle(.green)
+                            Text(recoveredCount == 1
+                                 ? "A report saved earlier has now been sent."
+                                 : "\(recoveredCount) reports saved earlier have now been sent.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
                     }
 
                     if savedLocally {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.down.doc.fill")
                                 .foregroundStyle(.blue)
-                            Text("Saved locally. We'll send it automatically next time you open a bug report.")
+                            Text("Saved on this device. We'll keep trying to send it in the background.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -189,6 +277,17 @@ struct BugReportView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding()
+                    }
+
+                    // The last report that landed, shown BEFORE submitting so
+                    // the question "did my last one go through?" is answerable
+                    // on arrival rather than from memory.
+                    if !submitted, let prior = priorReceipt {
+                        Text("Last report sent: #\(prior.id) · \(prior.submittedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal)
+                            .accessibilityIdentifier("bug-report-prior-receipt")
                     }
                 }
                 .padding(.vertical)
@@ -206,41 +305,120 @@ struct BugReportView: View {
                     if submitting {
                         ProgressView()
                     } else {
+                        // Only a LANDED report disables Submit. It used to be
+                        // disabled by `savedLocally` too, which was a dead end:
+                        // after a failed send the user could edit their
+                        // description and have no way to send the edit.
+                        // Re-submitting an unchanged report is harmless — the
+                        // draft store de-duplicates on `draftKey`.
                         Button("Submit") { submitReport() }
-                            .disabled(submitted || savedLocally)
+                            .disabled(submitted)
                             .fontWeight(.semibold)
                     }
                 }
             }
-            .alert("Couldn't Submit", isPresented: $showErrorAlert) {
+            // #1847 defect C: this alert used to offer a `Cancel` that ran
+            // `{ }` — the report was destroyed with no save and no warning, on
+            // the one path a frustrated user is most likely to take. The report
+            // is now already on disk before this alert can appear, so there is
+            // no longer a losing button to press.
+            .alert("Couldn't Send Yet", isPresented: $showErrorAlert) {
                 Button("Try Again") { submitReport() }
-                Button("Save for Later") { saveReportLocally() }
-                Button("Cancel", role: .cancel) { }
+                Button("OK", role: .cancel) { savedLocally = true }
             } message: {
-                Text(submitError ?? "Check your connection and try again.")
+                Text((submitError ?? "Check your connection and try again.")
+                     + "\n\nYour report is saved on this device and will send automatically.")
             }
-            .task { await retryPendingDrafts() }
+            .task { await onOpen() }
         }
     }
 
     /// Maximum base64 screenshot size accepted by the backend (~1.5MB decoded).
     private static let maxScreenshotBase64Length = 2_000_000
 
+    /// Whether there is an image attached, on either platform.
+    private var hasScreenshot: Bool {
+        #if os(macOS)
+        return screenshot != nil || pastedScreenshot != nil
+        #else
+        return screenshot != nil
+        #endif
+    }
+
     private func submitReport() {
         submitting = true
         Task {
+            // Built ONCE and reused on both paths. The old code rebuilt the
+            // submission inside `saveReportLocally()`, so the draft that got
+            // saved was a different object from the one that failed (fresh
+            // `timestamp`, and any edit made in between).
+            let submission = await buildSubmission()
             do {
-                let submission = await buildSubmission()
-                try await submitWithRetry(submission, maxRetries: 2)
+                let response = try await submitWithRetry(submission, maxRetries: 2)
+
+                // Record the receipt BEFORE anything can dismiss the view. The
+                // response's `id` used to be discarded at the call site
+                // (`_ = try await ...`), which is why a landed report left no
+                // trace the user could check.
+                lastReceipt = BugReportReceiptStore.record(
+                    id: response.id,
+                    description: submission.description,
+                    page: submission.appState?["current_page"]
+                )
+                // If an earlier attempt queued this same report, it has now
+                // been delivered — drop the duplicate.
+                removeQueuedDraft(matching: submission)
+                pendingCount = BugReportDraftStore.pendingCount
+
                 submitError = nil
+                savedLocally = false
                 submitted = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
+                // Long enough to read an id, not so long it feels stuck.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { dismiss() }
             } catch {
-                let message = userFacingErrorMessage(for: error)
-                submitError = message
+                // Persist FIRST, then tell the user. No ordering in which the
+                // report can be lost.
+                BugReportDraftStore.saveDraft(submission)
+                pendingCount = BugReportDraftStore.pendingCount
+                submitError = userFacingErrorMessage(for: error)
                 showErrorAlert = true
             }
             submitting = false
+        }
+    }
+
+    /// Refresh receipt/outbox state and deliver anything queued.
+    private func onOpen() async {
+        priorReceipt = BugReportReceiptStore.mostRecent
+        pendingCount = BugReportDraftStore.pendingCount
+        await flushOutbox()
+    }
+
+    /// Drain the outbox and reflect the result in the sheet.
+    private func flushOutbox() async {
+        guard BugReportDraftStore.hasPendingDrafts else {
+            pendingCount = 0
+            return
+        }
+        flushing = true
+        let result = await BugReportOutbox.flush()
+        flushing = false
+        recoveredCount += result.sent
+        pendingCount = result.remaining
+        if result.sent > 0 {
+            // A recovered report supplies a newer receipt than the one shown
+            // on open.
+            priorReceipt = BugReportReceiptStore.mostRecent
+            savedLocally = false
+        }
+    }
+
+    /// Remove a queued copy of `submission`, if one exists.
+    private func removeQueuedDraft(matching submission: BugReportSubmission) {
+        let key = submission.draftKey
+        let drafts = BugReportDraftStore.loadDrafts()
+        if let index = drafts.firstIndex(where: { $0.draftKey == key }) {
+            BugReportDraftStore.removeDraft(at: index)
         }
     }
 
@@ -367,13 +545,16 @@ struct BugReportView: View {
 
     /// Submit a bug report with retry and exponential backoff.
     /// Retries only on network errors, not on HTTP 4xx/5xx.
-    private func submitWithRetry(_ submission: BugReportSubmission, maxRetries: Int) async throws {
+    @discardableResult
+    private func submitWithRetry(
+        _ submission: BugReportSubmission, maxRetries: Int
+    ) async throws -> BugReportResponse {
         var lastError: Error?
 
         for attempt in 0...maxRetries {
             do {
-                _ = try await APIClient.shared.submitBugReport(submission)
-                return
+                // The response is the RECEIPT. Returned, not discarded (#1847).
+                return try await BugReportOutbox.send(submission)
             } catch let error as APIError {
                 switch error {
                 case .networkError:
@@ -396,55 +577,39 @@ struct BugReportView: View {
             }
         }
 
-        if let lastError { throw lastError }
-    }
-
-    /// Save the current report locally when all retries are exhausted.
-    private func saveReportLocally() {
-        Task {
-            let submission = await buildSubmission()
-            BugReportDraftStore.saveDraft(submission)
-            savedLocally = true
-            submitError = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { dismiss() }
-        }
-    }
-
-    /// Retry any previously saved drafts in the background when the view appears.
-    private func retryPendingDrafts() async {
-        let drafts = BugReportDraftStore.loadDrafts()
-        guard !drafts.isEmpty else { return }
-
-        for (index, draft) in drafts.enumerated().reversed() {
-            do {
-                _ = try await APIClient.shared.submitBugReport(draft)
-                BugReportDraftStore.removeDraft(at: index)
-            } catch {
-                // Failed again — leave it for next time
-                break
-            }
-        }
+        // The loop either returned a response or recorded an error. Exhausting
+        // it with neither is unreachable, but this function now yields a value
+        // callers depend on, so it fails loudly rather than silently.
+        throw lastError ?? APIError.networkError(
+            underlying: NSError(
+                domain: "BugReport", code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Submission exhausted all retries"]
+            )
+        )
     }
 
     /// Map API errors to user-friendly messages.
     private func userFacingErrorMessage(for error: Error) -> String {
         if let apiError = error as? APIError {
             switch apiError {
+            // These no longer say "you can save this report" — the report is
+            // already saved by the time this text is read (#1847 defect C).
+            // Copy that asks for an action already taken is its own small lie.
             case .networkError:
-                return "No internet connection. You can save this report and we'll send it later."
+                return "No internet connection."
             case .httpError(let code, _) where code == 413:
                 return "Screenshot is too large. Try removing the screenshot and submitting again."
             case .httpError(let code, _) where code == 422:
                 return "Report content was too large. Try shortening your description."
             case .httpError(let code, _) where code >= 500:
-                return "Our server is having trouble. You can save this report and we'll send it later."
+                return "Our server is having trouble."
             case .httpError(let code, _):
-                return "Submission failed (error \(code)). Please try again."
+                return "Submission failed (error \(code))."
             default:
-                return "Something went wrong. You can save this report and we'll send it later."
+                return "Something went wrong."
             }
         }
-        return "Something went wrong. You can save this report and we'll send it later."
+        return "Something went wrong."
     }
 
     private func flattenedScreenshot() -> Data? {
