@@ -628,6 +628,7 @@ class KalshiAPIService(BaseAPIClient):
         progress_cb: Optional[Callable[[str], None]] = None,
         start_cursor: Optional[str] = None,
         save_cursor: Optional[Callable[[Optional[str]], None]] = None,
+        telemetry: Optional[dict] = None,
     ) -> list[KalshiEvent]:
         """
         Fetch all open events across specified categories.
@@ -654,6 +655,7 @@ class KalshiAPIService(BaseAPIClient):
             return await self._fetch_all_events_unfiltered(
                 deadline=deadline, progress_cb=progress_cb,
                 start_cursor=start_cursor, save_cursor=save_cursor,
+                telemetry=telemetry,
             )
 
         # Step 1: Discover series tickers for these categories + tags
@@ -718,6 +720,7 @@ class KalshiAPIService(BaseAPIClient):
         progress_cb: Optional[Callable[[str], None]] = None,
         start_cursor: Optional[str] = None,
         save_cursor: Optional[Callable[[Optional[str]], None]] = None,
+        telemetry: Optional[dict] = None,
     ) -> list[KalshiEvent]:
         """Fetch all events from Kalshi without category filtering (paginated).
 
@@ -788,6 +791,25 @@ class KalshiAPIService(BaseAPIClient):
         max_pages = 100
         categories_seen: dict[str, int] = {}
 
+        # #1586/#1845 instrumentation. Read-only: records where the walk starts,
+        # where it ends, what it drops, and why it stops, so the freeze's
+        # mechanism is a measurement rather than a hypothesis. `stop_reason`
+        # starts as the ceiling case and is overwritten by whichever branch
+        # actually breaks the loop.
+        from app.utils.kalshi_scan_report import cursor_fingerprint
+
+        _tel = telemetry if telemetry is not None else {}
+        _tel["resumed"] = bool(start_cursor)
+        _tel["start_cursor_fp"] = cursor_fingerprint(start_cursor)
+        _tel["stop_reason"] = "max_pages"
+        _tel["pages_skipped"] = 0
+        _tel.setdefault("skip_reasons", {})
+
+        def _skip(reason: str) -> None:
+            _tel["pages_skipped"] = int(_tel.get("pages_skipped") or 0) + 1
+            reasons = _tel.setdefault("skip_reasons", {})
+            reasons[reason] = reasons.get(reason, 0) + 1
+
         while page_count < max_pages:
             _progress(f"fetch:unfiltered:p{page_count}")
             if _past_main_scan_deadline():
@@ -797,6 +819,7 @@ class KalshiAPIService(BaseAPIClient):
                     "guaranteed supplementary rescue; cursor resumes next beat.",
                     page_count, len(all_events), _RESCUE_RESERVE_S,
                 )
+                _tel["stop_reason"] = "main_scan_deadline"
                 break
             if page_count > 0:
                 await asyncio.sleep(0.5)
@@ -828,6 +851,8 @@ class KalshiAPIService(BaseAPIClient):
                     "scan with %d events collected so the poll reaches create.",
                     page_count, type(e).__name__, len(all_events),
                 )
+                _tel["stop_reason"] = "page_error"
+                _skip(f"page_error:{type(e).__name__}")
                 break
             _progress(f"fetch:unfiltered:p{page_count}:recv{len(events)}")
 
@@ -853,6 +878,8 @@ class KalshiAPIService(BaseAPIClient):
                     "continuing so the poll still reaches create.",
                     page_count, type(e).__name__,
                 )
+                # A dropped page is invisible in a coverage curve; count it.
+                _skip(f"parse_timeout:{type(e).__name__}")
                 parsed_events = []
             for parsed_event in parsed_events:
                 if parsed_event:
@@ -862,7 +889,15 @@ class KalshiAPIService(BaseAPIClient):
 
             page_count += 1
             if not cursor:
+                # Listing walked to the end. This is the ONLY stop reason under
+                # which the tail is actually revisited next beat.
+                _tel["stop_reason"] = "exhausted"
                 break
+
+        _tel["pages_fetched"] = page_count
+        _tel["events_fetched"] = len(all_events)
+        _tel["end_cursor_fp"] = cursor_fingerprint(cursor)
+        _tel["wrapped"] = not cursor
 
         # #995 attempt-10: persist the resume point. If the loop ended because the
         # listing was exhausted (`not cursor`), save None so the next run wraps to

@@ -499,10 +499,31 @@ async def _ingest_event_odds(
     # Update opening odds with consensus across all bookmakers
     # (keeps updating on every poll while the game is scheduled).
     if all_home_probs:
-        avg_home = sum(all_home_probs) / len(all_home_probs)
-        avg_away = sum(all_away_probs) / len(all_away_probs) if all_away_probs else (1 - avg_home)
-        avg_spread = sum(all_spreads) / len(all_spreads) if all_spreads else None
-        avg_ou = sum(all_ous) / len(all_ous) if all_ous else None
+        # #1841: MEDIAN, not mean. Books PULL the moneyline when a game goes out
+        # of reach, and they drop out one at a time. Under a mean, the
+        # "consensus" silently narrows as `len()` shrinks until it is a single
+        # book — measured on event 15192596 (Red Sox @ Blue Jays, 2026-08-13):
+        # 12 books at 20:55 UTC, then 3 at 21:05 (fanduel 0.0140, betmgm 0.0288,
+        # rebet 0.1347), then ONE. `win_probability_sources['betting']` was left
+        # at 0.1347 — one minor book's last quote, stored as the sportsbook
+        # consensus, while the two sharper books still pricing it at 1-3% had
+        # already dropped out. That number rendered 87-13 for a team trailing
+        # 5-0 in the 9th.
+        #
+        # A median cannot be carried by one book among three. It is NOT a
+        # complete fix: with a single book left, median == that book. The
+        # minimum-book-count refusal that would close the rest is a policy call
+        # and is NOT taken here — #1841 marks its shape "not ruled".
+        #
+        # Same integrity question as #1844, one step upstream: that one is about
+        # how a consensus is COMPARED, this one about what the consensus IS when
+        # sources drop out.
+        from statistics import median as _median
+
+        avg_home = _median(all_home_probs)
+        avg_away = _median(all_away_probs) if all_away_probs else (1 - avg_home)
+        avg_spread = _median(all_spreads) if all_spreads else None
+        avg_ou = _median(all_ous) if all_ous else None
         await _maybe_set_opening_odds(
             session, event_id,
             avg_home, avg_away,
@@ -525,10 +546,45 @@ async def _ingest_event_odds(
         _current = stamp_source_reading(
             event.win_probability_sources, "betting", betting_val
         )
+        # #1841: record HOW MANY books stand behind that number. A consensus of
+        # one is not a consensus, and today nothing downstream can tell the
+        # difference. `compute_aggregate_probability` skips keys absent from
+        # SOURCE_WEIGHTS, so this is inert for the blend and readable by humans
+        # and by any future weighting rule.
+        #
+        # INT-067 conflict resolution: #1829's `stamp_source_reading` (which
+        # nests `betting` as {value, updated_at} and is the ONLY thing making
+        # the hero's recency decay work) landed on master via ux-59 while this
+        # branch waited. Both halves are kept — the stamp writes the reading,
+        # this line adds the book count as a TOP-LEVEL sibling. Deliberately
+        # not nested inside the `betting` entry: the count describes the
+        # measurement, not the reading, and every reader added since #1829
+        # expects that entry to hold value/updated_at.
+        _current["betting_book_count"] = len(all_home_probs)
         await session.execute(
             _update(Event)
             .where(Event.id == event_id)
             .values(win_probability_sources=_current)
+        )
+
+        if len(all_home_probs) <= 2:
+            logger.warning(
+                "event %s: betting consensus stands on only %d book(s) "
+                "(value %.4f) — books pull the moneyline when a game goes out "
+                "of reach (#1841)",
+                event_id, len(all_home_probs), betting_val,
+            )
+    elif snapshots_processed:
+        # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT
+        # — the market has closed) and "we did not poll" (an absence) are the
+        # same silence today, because both simply skip the write and leave a
+        # stale `betting` in place. Naming the first one is the prerequisite for
+        # ever treating them differently.
+        logger.info(
+            "event %s: %d bookmaker snapshot(s) processed but NO moneyline "
+            "quoted by any book — market closed, not a polling gap (#1841). "
+            "The prior betting consensus is left in place and is now stale.",
+            event_id, snapshots_processed,
         )
 
     return snapshots_processed

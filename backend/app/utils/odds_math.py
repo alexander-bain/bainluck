@@ -5,7 +5,8 @@ This module handles all the math for converting betting odds
 to probabilities, projected scores, and excitement indices.
 """
 
-from typing import List, Optional, Tuple
+import math
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from statistics import mean, median
 
@@ -43,21 +44,150 @@ def decimal_to_probability(odds: float) -> float:
     return 1 / odds
 
 
+def remove_vig_nway(probabilities: Sequence[Optional[float]]) -> Optional[List[float]]:
+    """
+    Remove the bookmaker's vig from an N-outcome mutually-exclusive market.
+
+    Bookmakers price every outcome of a market so the implied probabilities sum
+    to MORE than 100%. The excess is the overround (vig). On a two-way market
+    that excess is typically 4-6%; on a 30-outcome futures market it is routinely
+    16-33% (measured on ``MLB World Series Winner``, 2026-08-13: fanduel 16.6%,
+    betrivers 32.5%). Proportional normalization divides it back out.
+
+    This is the N-way generalization of :func:`remove_vig`, which handles only
+    the home/away pair. It exists because there was NO n-way helper: every caller
+    that needed one either open-coded the division or — worse — compared a RAW,
+    vig-inclusive book price against a de-vigged consensus, which is #1844: the
+    grid's "Biggest Movers" row rendered 29 of 30 teams falling every single day,
+    because ``merged - old_p`` subtracted a 1.3178-sum column from a 0.9873-sum
+    one. The bias is negative by construction and proportional to each outcome's
+    probability, so it looks exactly like real market movement.
+
+    **Standing rule this encodes (Alex, 2026-08-13): raw vig-inclusive book
+    prices NEVER enter probability arithmetic, anywhere.** De-vig first, then
+    compare, average, or subtract.
+
+    Args:
+        probabilities: One bookmaker's raw implied probabilities for EVERY
+            outcome it quotes on a single mutually-exclusive market.
+
+    Returns:
+        A list in the same order, summing to 1.0 — or ``None`` when the input
+        cannot be normalized (empty, contains ``None``, negative, non-finite, or
+        sums to zero). ``None`` is deliberate: a caller must not silently treat
+        an un-normalizable column as if it were a distribution. That is the
+        gotcha-#53 shape — an absence and a fact must not share a return value.
+
+    Examples:
+        >>> remove_vig_nway([0.55, 0.50])  # two-way, 5% overround
+        [0.5238095238095238, 0.47619047619047616]
+        >>> sum(remove_vig_nway([0.39, 0.16, 0.12, 0.65]))  # 32% overround
+        1.0
+    """
+    values: List[float] = []
+    for p in probabilities:
+        if p is None:
+            return None
+        try:
+            value = float(p)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        values.append(value)
+
+    if not values:
+        return None
+
+    total = sum(values)
+    if total <= 0:
+        return None
+
+    return [value / total for value in values]
+
+
 def remove_vig(home_prob: float, away_prob: float) -> Tuple[float, float]:
     """
     Remove the bookmaker's vig (juice) to get true probabilities.
-    
+
     Bookmakers set odds so implied probabilities sum to >100%.
     The excess is their profit margin (vig).
-    
+
     This normalizes the probabilities to sum to exactly 100%.
-    
+
+    Thin two-way wrapper over :func:`remove_vig_nway` — ONE normalization
+    implementation, so the two-way and N-way paths can never drift apart.
+
     Examples:
         >>> remove_vig(0.55, 0.50)  # Sum is 1.05 (5% vig)
         (0.5238, 0.4762)  # Now sums to 1.0
     """
-    total = home_prob + away_prob
-    return home_prob / total, away_prob / total
+    normalized = remove_vig_nway([home_prob, away_prob])
+    if normalized is None:
+        # Un-normalizable (both zero / non-finite). Pass through rather than
+        # raising: callers historically got a ZeroDivisionError here, which is
+        # strictly worse than returning the input unchanged.
+        return home_prob, away_prob
+    return normalized[0], normalized[1]
+
+
+def devig_consensus(
+    book_columns: Mapping[str, Mapping[str, Optional[float]]],
+    method: str = "mean",
+) -> Dict[str, float]:
+    """
+    Build a de-vigged consensus across bookmakers for one N-way market.
+
+    Each bookmaker's column is de-vigged on its OWN outcome set first (so a book
+    with a 32% overround stops out-weighting a book with a 16% one), then the
+    normalized values are aggregated across books per outcome.
+
+    This is the single implementation of "what the market thinks", and it is
+    deliberately shared by both the live path (``_aggregate_futures_outcomes``
+    in ``app/tasks/futures.py``) and the historical path (``_compute_movers`` in
+    ``app/routes/playoffs.py``). #1844's design constraint, in one sentence: a
+    second copy written to serve the historical side re-creates exactly the
+    divergence this closes.
+
+    Args:
+        book_columns: ``{bookmaker: {outcome_key: raw_implied_probability}}``.
+            Raw means straight from American odds — vig-inclusive, NOT
+            pre-normalized.
+        method: Cross-book aggregation, passed to :func:`aggregate_probabilities`
+            ("mean", "median", or "trimmed_mean").
+
+    Returns:
+        ``{outcome_key: consensus_probability}``. Sums to ~1.0 whenever every
+        book quotes the same outcome set. Empty dict when no book column could
+        be normalized.
+
+        The sum is "~1.0" rather than exactly 1.0 because books quote different
+        SUBSETS (fanduel priced 25 of 30 World Series teams on 2026-08-13 where
+        the other four priced all 30). Each book is normalized over what it
+        actually quotes, so averaging partially-overlapping columns lands near,
+        not on, 1.0. That is pre-existing behaviour, preserved here on purpose:
+        both sides of a delta must be the SAME quantity, and changing the live
+        side's semantics while fixing the historical side would defeat the fix.
+    """
+    per_outcome: Dict[str, List[float]] = {}
+
+    for _bookmaker, column in book_columns.items():
+        if not column:
+            continue
+        keys = list(column.keys())
+        normalized = remove_vig_nway([column[k] for k in keys])
+        if normalized is None:
+            # This book's column is unusable; skip the BOOK, not the market.
+            continue
+        for key, value in zip(keys, normalized):
+            per_outcome.setdefault(key, []).append(value)
+
+    consensus: Dict[str, float] = {}
+    for key, values in per_outcome.items():
+        aggregated = aggregate_probabilities(values, method=method)
+        if aggregated is not None:
+            consensus[key] = aggregated
+    return consensus
 
 
 def moneyline_to_probability(
