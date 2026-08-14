@@ -30,6 +30,7 @@ import {
 // reasoning behind the panel's ECE.
 import {
   buildProviderPanels,
+  providerKpiDetail,
   shapeBreakdownNote,
 } from "@/lib/calibrationProviderPanels";
 // CAL-P043 (#1643): the page's bucket math and its parity record live in one
@@ -67,6 +68,52 @@ import {
 // visible in its honest treatment — big solid dots = proven, ghost dots = small
 // sample. Nothing is silently dropped.
 const MIN_CHART_BUCKET_N = 1000;
+
+// UX-P080 item 1 (Alex round 2). ONE sentence, in the card's own small grey
+// detail slot. Alex's bar, quoted because it generalises past this card: "if it
+// can't earn its sentence, it doesn't earn its card."
+//
+// A constant rather than a literal in the JSX so the FAQ entry further down the
+// page and this card cannot drift into two different explanations of one
+// number — the page already carries a longer FAQ answer, and two prose
+// definitions of the same metric is how a reader learns to trust neither.
+//
+// NOT exported: a Next.js page module may only export `default`, `metadata` and
+// the other framework names, and adding one more turns the generated route type
+// in `.next/types/app/calibration/page.ts` red. Caught by `npm run typecheck`,
+// which is why that gate runs AFTER the build (gotcha #10) — `next build` would
+// have shipped this.
+const BRIER_ONE_LINER =
+  "how far our probabilities were from what happened, squared — " +
+  "0 is perfect, coin-flipping scores 0.25";
+
+// UX-P080 item 4 (Alex round 2): "Label every section with the cohort it draws
+// from (traded / all) explicitly — Alex had to ask whether the category section
+// is traded-only, and a reader shouldn't have to."
+//
+// The label is DERIVED from the live cohort object, never written beside it, so
+// flipping the toggle relabels every section at once and no section can claim a
+// cohort it is not drawing from. `calibrationAuditHooks.test.tsx` asserts the
+// other half structurally: every cohort-drawing <h2> carries one of these, and
+// a new section is untagged-by-default RED unless it is declared cohort-free.
+function CohortTag({ cohort, scope }: {
+  cohort: { key: string; shortLabel: string };
+  scope?: "comparison";
+}) {
+  // The traded-vs-untraded section draws from BOTH sides — that comparison is
+  // its entire subject — so labelling it with the active cohort would be a lie
+  // in the one place the distinction is being explained.
+  const text = scope === "comparison" ? "Traded vs untraded" : cohort.shortLabel;
+  return (
+    <span
+      className="ml-2 align-middle text-[10px] uppercase tracking-wide text-text-muted border border-surface-border rounded px-1.5 py-0.5"
+      data-testid="calibration-cohort-tag"
+      data-cohort-key={scope === "comparison" ? "comparison" : cohort.key}
+    >
+      {text}
+    </span>
+  );
+}
 
 const COLORS = [
   "#2563eb", "#16a34a", "#dc2626", "#ea580c", "#7c3aed",
@@ -649,12 +696,24 @@ export default function CalibrationPage() {
             detail={`percentage points · ${cohortECE < 3 ? "close" : "wide"} · see “show the math”`}
             valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
         </div>
+        {/* UX-P080 item 1 (Alex round 2): "explain it in ONE sentence of small
+            grey text, or exclude it from the headline row. If it can't earn its
+            sentence, it doesn't earn its card." It earns it — the sentence is
+            below, in the card's own 11px muted detail slot. What it replaces,
+            "0 = oracle, lower = better", is not an explanation: it tells a
+            reader which direction is good without ever saying what the number
+            measures, which is the shape of every metric label this page has
+            been walking back (ruling 044 — rendered-green is not
+            communicates-green; banked against this page by name). */}
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
           testId="calibration-stat-brier"
-          detail="0 = oracle, lower = better" />
-        <StatCard label="Sources" value={String(sources.length)}
+          detail={BRIER_ONE_LINER} />
+        {/* UX-P080 item 2: counts PROVIDERS, from the same `providerGroups` the
+            two tables below are built from — so the card cannot say 5 while
+            they say 3. The shapes are named in the subtext rather than dropped. */}
+        <StatCard label="Sources" value={String(providerGroups.length)}
           testId="calibration-stat-sources"
-          detail={sources.map(sourceLabel).join(", ")} />
+          detail={providerKpiDetail(providerGroups, sourceLabel)} />
         <StatCard label="Categories" value={String(categories.length)}
           testId="calibration-stat-categories"
           detail={topCats} />
@@ -704,7 +763,7 @@ export default function CalibrationPage() {
 
       {/* Source Comparison */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-1">Source Comparison</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">Source Comparison<CohortTag cohort={cohort} /></h2>
         <p className="text-xs text-text-muted mb-4">
           How each data source performs independently, sorted by ECE.{" "}
           <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
@@ -854,6 +913,7 @@ export default function CalibrationPage() {
               all, which a "traded / didn't trade" framing cannot express. */}
           <h2 className="text-title-3 text-text-primary mb-1">
             Does a price that moves predict better?
+            <CohortTag cohort={cohort} scope="comparison" />
           </h2>
           <p className="text-xs text-text-muted mb-4">
             We don&rsquo;t receive trading volume for most of these markets, so we use{" "}
@@ -1021,7 +1081,7 @@ export default function CalibrationPage() {
         </section>
       ) : (
         <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <h2 className="text-title-3 text-text-primary mb-1">Calibration Curve</h2>
+          <h2 className="text-title-3 text-text-primary mb-1">Calibration Curve<CohortTag cohort={cohort} /></h2>
           <p className="text-xs text-text-muted mb-4">
             {cohort.shortLabel} ({cohortN.toLocaleString()} outcomes). Points on the diagonal =
             perfect calibration. Above = outcomes happened <em>more</em> than
@@ -1042,7 +1102,7 @@ export default function CalibrationPage() {
 
       {/* Table */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-3">Calibration Table</h2>
+        <h2 className="text-title-3 text-text-primary mb-3">Calibration Table<CohortTag cohort={cohort} /></h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -1086,7 +1146,7 @@ export default function CalibrationPage() {
           a resolution that changes a decision is a decision, and it is recorded
           where the next reader will look, not deleted). */}
       <section id="by-source" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
-        <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">By Source<CohortTag cohort={cohort} /></h2>
         <p className="text-xs text-text-muted mb-4">
           One panel per data provider &mdash; the same three rows as Source Comparison above &mdash;
           all on the same 0&ndash;100% axis so the curves are directly comparable, and each panel
@@ -1261,7 +1321,7 @@ export default function CalibrationPage() {
 
       {/* By Category */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-1">By Category</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">By Category<CohortTag cohort={cohort} /></h2>
         <p className="text-xs text-text-muted mb-4">
           Same treatment as By Source: 95% CI error bars, and every bucket shown &mdash;
           small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) as faded
@@ -1287,7 +1347,7 @@ export default function CalibrationPage() {
         data-testid="calibration-category-breakdown"
         data-published-categories={categoryMetrics.length}
       >
-        <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown<CohortTag cohort={cohort} /></h2>
         <p className="text-xs text-text-muted mb-4">
           Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
         </p>
@@ -1343,7 +1403,7 @@ export default function CalibrationPage() {
         return (
           <section className="bg-surface-card rounded-xl p-5 border border-surface-border"
             data-testid="calibration-niche-section" data-parked-count={thin.length}>
-            <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?</h2>
+            <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?<CohortTag cohort={cohort} /></h2>
             <p className="text-sm text-text-secondary mb-3">
               Fair question &mdash; what about the offbeat ones (one-off culture bets, novelty props,
               minor leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so

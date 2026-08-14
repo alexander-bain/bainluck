@@ -411,3 +411,114 @@ describe("hooks expose no user data", () => {
     expect(leaky).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// UX-P080 — Alex's calibration round 2, items 1, 2 and 4.
+// ---------------------------------------------------------------------------
+
+describe("item 1 — the Brier card earns its sentence", () => {
+  // Alex: "explain it in ONE sentence of small grey text, or exclude it from the
+  // headline row. If it can't earn its sentence, it doesn't earn its card."
+  test("the Brier card's detail is an explanation, not a direction hint", () => {
+    expect(SOURCE).toContain("const BRIER_ONE_LINER");
+    expect(SOURCE).toContain("detail={BRIER_ONE_LINER}");
+    expect(SOURCE).toContain("coin-flipping scores 0.25");
+    expect(SOURCE).not.toContain('detail="0 = oracle, lower = better"');
+  });
+
+  test("the sentence says what the number MEASURES, not just which way is good", () => {
+    const sentence = SOURCE.match(/const BRIER_ONE_LINER =\s*([\s\S]*?);/)?.[1] ?? "";
+    // A direction hint ("lower = better") is satisfiable without ever naming the
+    // quantity. Naming what is being measured is the part that earns the card.
+    expect(sentence).toMatch(/how far/i);
+    expect(sentence).toMatch(/squared/i);
+    expect(sentence).toMatch(/0 is perfect/i);
+  });
+
+  test("BRIER_ONE_LINER is NOT exported from the page module", () => {
+    // A Next.js page may only export `default`/`metadata`/… — an extra export
+    // reds the generated route type, and `next build` does NOT catch it
+    // (gotcha #10: build is the ESLint gate, typecheck is the TS gate).
+    expect(SOURCE).not.toMatch(/^export const BRIER_ONE_LINER/m);
+  });
+});
+
+describe("item 2 — the Sources KPI counts providers, not shapes", () => {
+  test("the card's value comes from providerGroups, not from sources", () => {
+    expect(SOURCE).toContain("value={String(providerGroups.length)}");
+    expect(SOURCE).not.toContain("value={String(sources.length)}");
+  });
+
+  test("the shapes are named in the subtext rather than dropped", () => {
+    expect(SOURCE).toContain("detail={providerKpiDetail(providerGroups, sourceLabel)}");
+  });
+
+  test("the KPI is derived from the SAME groups the tables below render", () => {
+    // The whole point of the merge reaching this card: it cannot say 5 while
+    // Source Comparison and By Source say 3. Shared derivation is what
+    // guarantees that — a second count kept "in step" is the failure mode this
+    // page keeps re-learning (#1620's disease).
+    const groupsDecl = SOURCE.match(/const providerGroups = ([^;]+);/)?.[1] ?? "";
+    expect(groupsDecl).toContain("groupSourcesByProvider(sources)");
+    expect(SOURCE).toContain("buildProviderPanels(");
+    expect(SOURCE).toContain("providerGroups.map(group =>");
+  });
+});
+
+describe("item 4 — every section names the cohort it draws from", () => {
+  /**
+   * Sections that legitimately draw from NO cohort. Everything else must carry
+   * a <CohortTag>, so a NEW section is RED BY DEFAULT until its author either
+   * tags it or consciously declares it cohort-free here.
+   *
+   * That default is the whole design. Alex had to ASK whether the category
+   * section was traded-only; a rule that says "remember to label sections"
+   * would have produced the same question again on the next section added.
+   */
+  const COHORT_FREE_SECTIONS = [
+    "Something went wrong", // the ErrorBoundary fallback
+    "How We Compare", // external published benchmarks, not our cohort
+    "Further Reading",
+    "How We Measure This",
+  ];
+
+  // The inner may not itself contain an h2 tag. Without that, a PROSE mention
+  // of `<h2>` in a comment (this file's own design note is one) opens a match
+  // that runs to the next real `</h2>`, swallowing several hundred lines of
+  // code and reporting it as one untagged section. Found on this guard's first
+  // run, and fixed here rather than by rewording the comment — a guard a future
+  // comment can break is not a guard.
+  const headings = [
+    ...SOURCE.matchAll(/<h2(?:\s[^>]*)?>((?:(?!<\/?h2)[\s\S])*?)<\/h2>/g),
+  ].map((m) => ({
+    inner: m[1],
+    text: m[1].replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim(),
+  }));
+
+  test("the page still has the sections this guard is about", () => {
+    // Anti-vacuity: a regex that matches nothing passes every assertion below.
+    expect(headings.length).toBeGreaterThanOrEqual(10);
+  });
+
+  test.each(
+    headings
+      .filter((h) => !COHORT_FREE_SECTIONS.some((f) => h.text.startsWith(f)))
+      .map((h) => [h.text, h.inner] as const)
+  )("section %s carries a cohort tag", (_text, inner) => {
+    expect(inner).toContain("<CohortTag");
+  });
+
+  test("the tag is DERIVED from the live cohort, never written beside it", () => {
+    // If a section hard-coded "Traded", flipping the toggle would leave it
+    // lying. Every tag takes the cohort object.
+    const tags = SOURCE.match(/<CohortTag[^/]*\/>/g) ?? [];
+    expect(tags.length).toBeGreaterThanOrEqual(8);
+    for (const tag of tags) expect(tag).toContain("cohort={cohort}");
+  });
+
+  test("the traded-vs-untraded section is labelled as the comparison it is", () => {
+    // Labelling THAT section with the active cohort would be a lie in the one
+    // place the distinction is being explained to the reader.
+    expect(SOURCE).toContain('<CohortTag cohort={cohort} scope="comparison" />');
+  });
+});

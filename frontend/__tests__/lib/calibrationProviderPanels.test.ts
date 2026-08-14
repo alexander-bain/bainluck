@@ -2,6 +2,7 @@ import {
   buildProviderPanels,
   shapeBreakdownNote,
   type ProviderPanelInput,
+  providerKpiDetail,
 } from "@/lib/calibrationProviderPanels";
 import { groupSourcesByProvider } from "@/lib/calibrationProviders";
 import { ece } from "@/lib/calibrationMath";
@@ -259,5 +260,55 @@ describe("shapeBreakdownNote — derived from the panels, not from a condition",
 
   it("says nothing for an empty panel set", () => {
     expect(shapeBreakdownNote([])).toBeNull();
+  });
+});
+
+describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
+  const label = (s: string) =>
+    ({ kalshi: "Kalshi", polymarket: "Polymarket", odds_api: "moneyline",
+       odds_api_bookmaker: "moneyline (book)", odds_api_spread: "spread" }[s] ?? s);
+
+  const GROUPS = [
+    { label: "Kalshi", sources: ["kalshi"] },
+    { label: "Polymarket", sources: ["polymarket"] },
+    { label: "Sportsbooks (Odds API)",
+      sources: ["odds_api", "odds_api_bookmaker", "odds_api_spread"] },
+  ];
+
+  test("single-shape providers are named plainly, with no empty parens", () => {
+    const out = providerKpiDetail(GROUPS, label);
+    expect(out).toContain("Kalshi");
+    expect(out).not.toContain("Kalshi (");
+    expect(out).not.toContain("()");
+  });
+
+  test("a multi-shape provider names its shapes in the subtext", () => {
+    expect(providerKpiDetail(GROUPS, label)).toContain(
+      "Sportsbooks (Odds API) (moneyline, moneyline (book), spread)",
+    );
+  });
+
+  test("the shapes are NOT dropped — every source key is still reachable", () => {
+    // Alex's ruling collapses the COUNT, not the information. A KPI that says
+    // "3" with no way to see what the third is made of trades one confusion for
+    // another.
+    const out = providerKpiDetail(GROUPS, label);
+    for (const src of GROUPS.flatMap(g => g.sources)) {
+      expect(out).toContain(label(src));
+    }
+  });
+
+  test("the detail describes exactly the groups it was given", () => {
+    // The pairing that makes the card unable to disagree with the tables: it is
+    // a pure function of the same ProviderGroup[] they are built from, so it
+    // cannot count a provider they do not show.
+    const two = GROUPS.slice(0, 2);
+    const out = providerKpiDetail(two, label);
+    expect(out).not.toContain("Sportsbooks");
+    expect(out.split(" · ")).toHaveLength(2);
+  });
+
+  test("an empty provider list yields an empty string, not 'undefined'", () => {
+    expect(providerKpiDetail([], label)).toBe("");
   });
 });
