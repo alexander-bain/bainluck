@@ -4829,9 +4829,26 @@ async def _run_calibration_main_build(runner=None):
         "published_population": verdict.published.get("population"),
         "candidate_version": verdict.candidate.get("population_version"),
         "published_version": verdict.published.get("population_version"),
+        # C-RV-3 [P2], CAL-P042/#1768 follow-up. WHICH baseline answered is the
+        # whole point of the durable probe, and it was observable only on the
+        # rejection path — a REJECTED build carries its codes and detail into a
+        # deduped issue, so `durable` vs `provided` could be read off that. A
+        # build that PASSED after recovering its baseline from durable history
+        # was byte-identical in telemetry to one that read Redis normally. The
+        # branch exists to make `found` / `cold_start` / `indeterminate`
+        # distinguishable, and the success case is exactly where the new safety
+        # path is exercised silently.
+        "baseline_source": verdict.baseline_source,
+        "baseline_probe": verdict.baseline_probe,
     }
 
     runner.outcome["gate"] = "pass" if verdict.ok else "refuse"
+    # Also on the run OUTCOME, not just the summary: `outcome` is what
+    # `save_phase_ledger` persists, so this survives into the durable run
+    # evidence a later reader actually queries. Written before the rejection
+    # branch below, so a refused run records which baseline refused it.
+    runner.outcome["baseline_source"] = verdict.baseline_source
+    runner.outcome["baseline_probe"] = verdict.baseline_probe
 
     if not verdict.ok:
         with runner.stage("gate_rejection_filing"):
