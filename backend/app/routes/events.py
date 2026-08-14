@@ -5125,6 +5125,9 @@ async def get_live_odds(sport_key: str):
                 "over_under": aggregated["over_under"],
                 "spread": aggregated["home_spread"],
                 "bookmaker_count": aggregated["bookmaker_count"],
+                # #1854: KEPT. This object's `home_probability` IS
+                # `aggregated["home_probability"]` - sportsbook number, sportsbook
+                # range. Coherent, so the ruling does not reach it.
                 "probability_range": {
                     "min": aggregated["min_home_probability"],
                     "max": aggregated["max_home_probability"],
@@ -5272,10 +5275,20 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
-            "probability_range": {
-                "min": aggregated["min_home_probability"],
-                "max": aggregated["max_home_probability"],
-            },
+            # #1854 (UX-P077, Alex ruling 2026-08-14): `probability_range` USED to
+            # sit here — the sportsbook min/max, served beside a hero that is the
+            # multi-source BLEND since #1829. Measured on production 2026-08-13:
+            # event 15191315 served home_probability 0.2813 with a range of
+            # 0.6117-0.626, and 15196976 served 0.999 with 0.426-0.9901. The hero
+            # was outside its own stated envelope in both, always in the same
+            # direction, because the range never moved off the sportsbook when the
+            # hero did. It was typed on web and iOS and rendered by neither, so it
+            # was a trap for the next person to render it, not a live lie.
+            # REMOVED rather than re-derived: an envelope around the hero would be
+            # a source-divergence display, and the standing ruling is that the
+            # blend IS the product - divergence is a data bug to fix, not a
+            # feature to show, outside a short closed list of comparison surfaces
+            # this payload is not on.
         }
 
         # Show ALL bookmakers in the table (not just filtered ones)
@@ -8146,6 +8159,11 @@ async def get_event_odds_history(
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # #1854: KEPT. This bucket's `home_probability` IS
+            # `aggregated["home_probability"]` - a sportsbook number bounded by
+            # sportsbook min/max, so the range contains what it sits beside. The
+            # two HERO sites (get_event, _format_event_with_aggregated_odds) are
+            # the ones that stopped being coherent when #1829 moved the hero.
             "probability_range": {
                 "min": aggregated["min_home_probability"],
                 "max": aggregated["max_home_probability"],
@@ -8757,6 +8775,8 @@ async def get_event_odds_history(
                         "projected_home_score": None,
                         "projected_away_score": None,
                         "bookmaker_count": 0,
+                        # #1854: KEPT. min == max == the number beside it (a
+                        # terminal point), so it cannot exclude its own probability.
                         "probability_range": {
                             "min": resolved_home_prob,
                             "max": resolved_home_prob,
@@ -9826,10 +9846,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
-            "probability_range": {
-                "min": aggregated["min_home_probability"],
-                "max": aggregated["max_home_probability"],
-            },
+            # #1854 (UX-P077): the second hero site. Same removal, same reason as
+            # `get_event` above - this object's `home_probability` is `_blend`.
         }
 
         # Include ALL bookmakers in the table (not just filtered ones)
