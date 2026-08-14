@@ -874,8 +874,33 @@ final class DiscoverViewModel: ObservableObject {
             let advanced = pageEnd > nextOffset
             nextOffset = pageEnd
 
+            // #1773: apply the SAME fail-closed empty-envelope filter the initial
+            // load applies (L2-215 Item 1 / #1486, `renderable` at the cache-seed
+            // and network-publish paths). It was missing here, so page 1 was
+            // filtered and every page after it was not — a live/upcoming `concept`
+            // card is probability-free by construction (its payload carries only
+            // `entry_count`/`fight_count`, no outcomes) and was correctly dropped
+            // from the first page, then admitted from the second onward. Report
+            // #144 is exactly that: scrolled past page 1 into unfiltered territory,
+            // six consecutive concept cards, "none of these cards show
+            // probabilities". `empty_futures` and `empty_tournament` leaked by the
+            // same hole.
+            //
+            // Filter BEFORE the dedup so an envelope cannot occupy a slot, and
+            // note this does not disturb offset advancement: `pageBoundary` above
+            // already advances by the SERVER page width, never by decoded or
+            // retained item count (C29 P1). A page that is ALL envelopes therefore
+            // yields `fresh == []` and falls through to the duplicate-only branch,
+            // which keeps scanning on the server's own `has_more` rather than
+            // declaring a false exhaustion.
+            let renderable = Self.renderable(response.items)
+            // The suppression metric had the same first-page-only blind spot
+            // (`reportSuppressedEnvelopes` fired only on initial network publish),
+            // which is why this leak was invisible in telemetry. Pagination is a
+            // network path too, so count it here as well.
+            reportSuppressedEnvelopes(response.items)
             let loadedIds = Set(items.map(Self.itemKey))
-            let fresh = response.items.filter { !loadedIds.contains(Self.itemKey($0)) }
+            let fresh = renderable.filter { !loadedIds.contains(Self.itemKey($0)) }
 
             if !fresh.isEmpty {
                 // Real new content (may be lifecycle-stale — the view's stale

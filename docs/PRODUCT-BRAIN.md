@@ -1346,3 +1346,4 @@ failure this document already records happening twice.
 - [061](rulings/061-a-derived-figure-is-an-interim-with-an-expiry.md) — 2026-08-14 — A derived figure is an interim, and an interim carries an expiry: the payload publishes what the client renders, and the derivation is deleted the day it does (Alex, extends 003)
 - [062](rulings/062-branch-where-the-dependency-lives.md) — 2026-08-14 — A branch bases where its dependency lives, and disjointness is measured at content level, never read off merge-tree's conflict count (Alex)
 - [063](rulings/063-a-gate-that-reads-shared-state-names-it.md) — 2026-08-14 — A gate that reads shared mutable state names what it read, and fails only on ambiguity that could change its verdict (Alex)
+- [067](rulings/067-extract-the-state-and-pin-it-against-its-old-self.md) — 2026-08-14 — A `@State` defect is extracted into a value and pinned against its old self; the trigger is any behaviour visible only in a SEQUENCE (Fable)
