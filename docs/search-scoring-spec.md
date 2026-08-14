@@ -259,11 +259,48 @@ the change that caused it** (ruling 046).
 | v3804 / v3805 | no latency change (re-measured twice) | 35/44 | 0.8043 | — | corroborates the stack was unlanded |
 | **v3806** | **`-43` concept dedup ALONE** (#1839) | **38/44** | **0.8696** | +4 → 39 | **MISSED by 1** |
 | **v3807** | **`-44` outcome evidence** (#1843) | **38/44** | **0.8696** | none registered | **no movement** — see below |
+| **v3812** | **`-45` `/search` scorer wiring ALONE** — the **ARMED CONTROL** | **38/44** | **0.8696** | **NO movement, with a HALT attached** (ruling 050) | ✅ **HELD — the control fired clean; no HALT** |
 | pending | **`-46` evidence echo** | — | — | none; a test asserts byte-identical ordering | owed |
 | pending | **#1846 typeahead provenance** (LAT-P051) | — | — | **+1 → 39** (`us open` only) | owed |
 
 Coverage 46/46, `fetch_ok` 46/46 throughout. Each deployed read was taken twice
 with byte-identical dispositions across all 46 probes.
+
+### The `-45` ARMED CONTROL fired, and it came out clean (LAT-P053, 2026-08-14)
+
+Ruling 050 armed this one in advance: `-45` wires the scorer into `/search`, a
+surface `entity_top_1` does **not** grade (the producer reads `/typeahead`), so
+it was predicted to move **nothing** — with an explicit HALT on further ranking
+merges if it moved anyway.
+
+`-45` merged **alone** into `6d3fba9e` and deployed as **v3812**, exactly as
+ruling 046 requires. Read taken twice, ~2.5 min apart, beginning ~15 min after
+the release (outside the ~5 min post-deploy artifact window):
+
+| read | `entity_top_1` | MRR | coverage | dispositions differing |
+|---|---|---|---|---|
+| r1 (18:22 UTC) | **38/44** | 0.8695652 | 46/46 | — |
+| r2 (18:25 UTC) | **38/44** | 0.8695652 | 46/46 | **0 of 46 vs r1** |
+
+`regression: 0` on both. Identical to v3806 and v3807 to seven decimal places.
+
+**The prediction HELD. The HALT does not fire, and ranking merges continue.**
+Three windows kept this armed rather than skipping it as a foregone conclusion;
+what it bought is that the attribution model behind every row above is now
+corroborated by a change deliberately chosen to be invisible to it. Under ruling
+056's corollary, a clean unarmed control (`-44`) *raised* the value of firing
+this one — that reasoning is now paid off rather than merely asserted.
+
+`search-gold-us-open-001` is still `ENTITY_NOT_TOP`, which is the expected state:
+its fix is `-47`, which has not deployed.
+
+**CACHE STATE, recorded for the first time** (the new standing requirement from
+§8 / #1866): **both reads are predominantly cache MISSES.** `/typeahead`'s Redis
+TTL is 45s; read 2 began 150s after read 1, so every probe's entry from r1 had
+expired before r2 re-queried it. Read 2's wall clock was **113s for 46 probes —
+2.46s/probe**, which independently corroborates #1866's 1.16–2.29s miss p50 plus
+the ~0.24s sandbox connection tax, on a measurement taken for a different reason.
+A cached read would have completed in a fraction of that.
 
 **`-43`'s missing +1 was a diagnosis error, not noise.** `grammys`, `oscars` and
 `world cup` recovered exactly as projected; `us open` did not, and it had been
