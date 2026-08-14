@@ -12,6 +12,7 @@ from app.models import Event, FuturesMarket
 from app.models.models import LineMovementAnalysis
 from app.services import get_db, get_db_rw
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
+from app.utils.event_merge_invariant import assert_mergeable, shared_provider_id_sql
 
 router = APIRouter()
 
@@ -523,13 +524,31 @@ async def merge_duplicate_events_sql(
     dry_run: bool = Query(True, description="Preview without making changes"),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Merge duplicate events: find orphans, clear FK refs, then delete."""
+    """Merge duplicate events: find orphans, clear FK refs, then delete.
+
+    R6 (#1801, codex ``C-CERT-1801-R5``): this endpoint is the SECOND live rail
+    that could absorb an id-less row, and it was the more direct of the two —
+    exact team names inside six hours, with **no id requirement at all**. Its
+    Case A ("keeper has an external_id, orphan does not") and Case B ("both
+    NULL, keep the lowest id") are not identity tests; they are tie-breaks
+    applied to a pair whose sameness was never established. Codex's
+    doubleheader specimen — game 1 at 13:05 anchored, game 2 at 18:35 id-less —
+    is selected by Case A directly, and game 2 is deleted.
+
+    The invariant now comes from ``app/utils/event_merge_invariant.py`` for the
+    same reason the drain's does: one definition, used by every rail that can
+    destroy a row, re-asserted in Python immediately before the delete.
+    """
     _check_admin_destructive(secret, request=request)
 
     # Step 1: Find keeper-orphan pairs
-    result = await db.execute(text("""
+    result = await db.execute(text(f"""
         SELECT
             keeper.id AS keeper_id, orphan.id AS orphan_id,
+            keeper.external_id AS keeper_external_id,
+            keeper.espn_id AS keeper_espn_id,
+            keeper.statpal_fixture_id AS keeper_statpal_fixture_id,
+            orphan.external_id AS orphan_external_id,
             orphan.statpal_fixture_id, orphan.commence_time_source,
             orphan.statpal_end_time, orphan.home_team_id,
             orphan.away_team_id, orphan.espn_id
@@ -540,19 +559,26 @@ async def merge_duplicate_events_sql(
             AND LOWER(keeper.home_team_name) = LOWER(orphan.home_team_name)
             AND LOWER(keeper.away_team_name) = LOWER(orphan.away_team_name)
             AND ABS(EXTRACT(EPOCH FROM (keeper.commence_time - orphan.commence_time))) < 21600
+            -- Ruling 048, from the one place it is defined. Everything above is
+            -- name + window, which is precisely what does NOT establish identity.
+            AND {shared_provider_id_sql("keeper", "orphan")}
         )
         WHERE keeper.commence_time > NOW() - INTERVAL '30 days'
           AND orphan.commence_time > NOW() - INTERVAL '30 days'
           AND NOT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = orphan.id LIMIT 1)
-          AND (
-              -- Case A: keeper has external_id, orphan doesn't
-              (keeper.external_id IS NOT NULL AND orphan.external_id IS NULL)
-              OR
-              -- Case B: both NULL, keep lowest ID
-              (keeper.external_id IS NULL AND orphan.external_id IS NULL AND keeper.id < orphan.id)
-          )
+          AND keeper.id < orphan.id
     """))
     pairs = result.all()
+
+    # Re-assert on the rows in hand, before anything is destroyed.
+    for row in pairs:
+        assert_mergeable(
+            {"external_id": row.keeper_external_id, "espn_id": row.keeper_espn_id,
+             "statpal_fixture_id": row.keeper_statpal_fixture_id, "id": row.keeper_id},
+            {"external_id": row.orphan_external_id, "espn_id": row.espn_id,
+             "statpal_fixture_id": row.statpal_fixture_id, "id": row.orphan_id},
+            context="merge_duplicate_events_sql",
+        )
 
     if dry_run:
         return {"dry_run": True, "would_merge": len(pairs)}

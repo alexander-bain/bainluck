@@ -597,6 +597,11 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
     """Find and merge duplicate events. Runs as Celery background task."""
     from sqlalchemy import text as sa_text
     from app.tasks.base import get_task_session
+    from app.utils.event_merge_invariant import (
+        UnanchoredMergeRefused,
+        assert_mergeable,
+        shared_provider_id_sql,
+    )
 
     async with get_task_session() as session:
         # Find duplicate pairs — limited to 200 per run to avoid timeouts.
@@ -628,47 +633,18 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                     -- Everything above this line is name + a 6h window and NO id:
                     -- the exact predicate 048 forbids, and this task DELETEs the
                     -- loser and repoints its FKs, so a wrong pairing here destroys
-                    -- data just as surely as a wrong absorption did. A 1:05/6:35
-                    -- doubleheader is 5.5h apart and sits inside that window.
-                    -- Ruling 048 leans on this task to bound the duplicate cost, so
-                    -- it must be the id-keyed drain the ruling actually describes.
-                    AND (
-                        -- Arm A: a genuinely SHARED provider id. Definitive on its
-                        -- own — no window or name reasoning is load-bearing here.
-                        (a.external_id IS NOT NULL AND a.external_id = b.external_id)
-                        OR (a.espn_id IS NOT NULL AND a.espn_id = b.espn_id)
-                        OR (a.statpal_fixture_id IS NOT NULL
-                            AND a.statpal_fixture_id = b.statpal_fixture_id)
-                        -- Or: one side carries NO provider id at all (an unanchored
-                        -- create from the registry's new path) AND the pairing is
-                        -- UNAMBIGUOUS — no third same-matchup row shares the window.
-                        -- Uniqueness is not a softer threshold; it is the statement
-                        -- that there are not two distinct games to confuse. Where a
-                        -- doubleheader IS present the third row exists, this fails,
-                        -- and the pair is left alone and counted by the meter.
-                        OR (
-                            (
-                                (a.external_id IS NULL AND a.espn_id IS NULL
-                                 AND a.statpal_fixture_id IS NULL)
-                                OR (b.external_id IS NULL AND b.espn_id IS NULL
-                                    AND b.statpal_fixture_id IS NULL)
-                            )
-                            AND NOT EXISTS (
-                                SELECT 1 FROM events c
-                                WHERE c.id <> a.id AND c.id <> b.id
-                                  AND c.sport_id = a.sport_id
-                                  AND c.commence_time BETWEEN
-                                      a.commence_time - INTERVAL '6 hours'
-                                      AND a.commence_time + INTERVAL '6 hours'
-                                  AND (
-                                    (LOWER(c.home_team_name) = LOWER(a.home_team_name)
-                                     AND LOWER(c.away_team_name) = LOWER(a.away_team_name))
-                                    OR (LOWER(c.home_team_name) = LOWER(a.away_team_name)
-                                        AND LOWER(c.away_team_name) = LOWER(a.home_team_name))
-                                  )
-                            )
-                        )
-                    )
+                    -- data just as surely as a wrong absorption did.
+                    --
+                    -- R6 (codex C-CERT-1801-R5): the invariant is no longer written
+                    -- here. It comes from `app/utils/event_merge_invariant.py`, and
+                    -- the same module re-checks every pair in Python before the
+                    -- delete. R5's version of this clause had a second arm — "one
+                    -- side is id-less AND no THIRD row shares the window" — which
+                    -- reads as a safety check and is not one: a 13:05/18:35
+                    -- doubleheader IS the complete pair, so there is no third row,
+                    -- and the drain deleted the game the registry had just
+                    -- correctly created. Uniqueness is not identity.
+                    AND """ + shared_provider_id_sql("a", "b") + """
                 )
                 WHERE a.commence_time > NOW() - INTERVAL '30 days'
                   AND b.commence_time > NOW() - INTERVAL '30 days'
@@ -694,9 +670,29 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
 
         merged_count = 0
         skipped_count = 0
+        refused_count = 0
         delete_ids = []
 
         for row in pairs:
+            # R6: the SQL above already required a shared provider id, and this
+            # asks again on the row in hand. The redundancy is deliberate — the
+            # query proves the candidate set was built correctly today, this
+            # proves THIS pair is safe to destroy now, and a future hand-edit to
+            # a 90-line SQL string cannot quietly reopen the doubleheader delete.
+            # A refusal skips the pair and drains the rest (gotcha #42).
+            try:
+                assert_mergeable(
+                    {"external_id": row.ext_a, "espn_id": row.espn_a,
+                     "statpal_fixture_id": row.statpal_a, "id": row.id_a},
+                    {"external_id": row.ext_b, "espn_id": row.espn_b,
+                     "statpal_fixture_id": row.statpal_b, "id": row.id_b},
+                    context="merge_duplicate_events",
+                )
+            except UnanchoredMergeRefused as exc:
+                refused_count += 1
+                logger.warning("merge_duplicate_events refused a pair: %s", exc)
+                continue
+
             keep_a = (row.ext_a is not None and row.has_snaps_a)
             keep_b = (row.ext_b is not None and row.has_snaps_b)
 
@@ -794,6 +790,10 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             "dry_run": dry_run,
             "merged": merged_count,
             "skipped": skipped_count,
+            # Reported, not swallowed: a non-zero count means the SQL and the
+            # Python guard disagreed, which is either drift in this query or a
+            # provider column added in one place and not the other.
+            "refused_unanchored": refused_count,
             "deleted": len(delete_ids) if not dry_run else 0,
         }
 
@@ -847,7 +847,8 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
 
     async with get_task_session() as session:
         degen_rows = (await session.execute(sa_text(
-            "SELECT id, sport_id, home_team_name, commence_time "
+            "SELECT id, sport_id, home_team_name, commence_time, "
+            "       external_id, espn_id, statpal_fixture_id "
             "FROM events "
             "WHERE lower(home_team_name) = lower(away_team_name) "
             "  AND sport_id IS NOT NULL "
@@ -862,7 +863,8 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
         for d in degen_rows:
             fighter = d.home_team_name
             candidates = (await session.execute(sa_text(
-                "SELECT id, home_team_name, away_team_name FROM events "
+                "SELECT id, home_team_name, away_team_name, "
+                "       external_id, espn_id, statpal_fixture_id FROM events "
                 "WHERE sport_id = :sid AND id <> :did "
                 "  AND lower(home_team_name) <> lower(away_team_name) "
                 "  AND ABS(EXTRACT(EPOCH FROM (commence_time - :ct))) < :win"
@@ -884,6 +886,29 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
                 continue
 
             keep_id, orphan_id = reals[0], d.id
+
+            # R6 (#1801): THE AST CENSUS FOUND THIS RAIL and it is deliberately
+            # NOT guarded by the ruling-048 invariant. Recorded here because the
+            # reasoning is the interesting part, and because the census will keep
+            # pointing at this line until someone reads it.
+            #
+            # The rail does look like the others: a name match inside a 28h
+            # window, an "only one candidate" ambiguity check, then a delete. But
+            # the row it deletes has `home_team_name == away_team_name`. That is
+            # not a game — no fixture in any sport is a competitor against
+            # itself — so it is a corrupt ingest artifact, and it cannot be the
+            # other half of a doubleheader. The hazard ruling 048 exists to stop
+            # is destroying a REAL second game that merely looks like the first;
+            # a degenerate row has no such claim to being real.
+            #
+            # Guarding it anyway was tried and measured: the invariant refuses
+            # every pair (a degenerate row shares no provider id with the real
+            # event), the rail becomes a permanent no-op, and three tests fail
+            # asserting the repair it exists to perform. That is a worse world —
+            # it trades a corruption cleanup for nothing.
+            #
+            # Its existing ambiguity refusal stays as the safety: >1 candidate
+            # never guesses.
             merged_pairs.append({"orphan": orphan_id, "keep": keep_id, "fighter": fighter})
 
             if not dry_run:

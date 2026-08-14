@@ -461,6 +461,7 @@ async def merge_duplicate_events(
     _check_admin_destructive(secret, request=request)
 
     from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
+    from app.utils.event_merge_invariant import assert_mergeable, refusal_reason
     from app.utils.name_normalization import names_match
 
     # Major sports only by default to avoid Heroku timeout
@@ -489,6 +490,7 @@ async def merge_duplicate_events(
 
     merges = []
     no_match = []
+    refused = []  # R6: pairs the ruling-048 invariant will not let us delete
 
     for pm_event in pm_events:
         # Search for a real event with the same teams on the same day
@@ -531,6 +533,32 @@ async def merge_duplicate_events(
             })
             continue
 
+        # R6 (#1801, codex C-CERT-1801-R5). This rail picks the FIRST fuzzy
+        # same-team candidate inside +/-24h and then deletes a row, which is
+        # name-and-window absorption with a delete on the end — the thing
+        # ruling 048 forbids, on a wider window than either rail codex rated P1.
+        #
+        # Applied honestly, the invariant refuses nearly everything here: a `pm_`
+        # event's external_id is by construction NOT the real event's, so the two
+        # share no provider id and never will until an identity-graph edge can
+        # CONFIRM them (see CONFIRMING_RAIL_AVAILABLE). That is the ruling's
+        # answer, not a bug in it — the pairing may well be right, and "probably
+        # right" is not a licence to delete.
+        #
+        # So the endpoint keeps its diagnostic half and loses its destructive
+        # half: refusals are returned with reasons, which is strictly more useful
+        # than a silent no-op and leaves the backlog visible for the id-keyed
+        # reconciliation that should drain it.
+        reason = refusal_reason(pm_event, best_match)
+        if reason is not None:
+            refused.append({
+                "pm_event_id": pm_event.id,
+                "pm_teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
+                "candidate_event_id": best_match.id,
+                "reason": reason,
+            })
+            continue
+
         merges.append({
             "pm_event_id": pm_event.id,
             "pm_teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
@@ -541,6 +569,7 @@ async def merge_duplicate_events(
         })
 
         if not dry_run:
+            assert_mergeable(pm_event, best_match, context="cleanup/merge-duplicate-events")
             eid = pm_event.id
             target = best_match.id
             # Migrate all event_id references to real event
@@ -562,10 +591,15 @@ async def merge_duplicate_events(
         "dry_run": dry_run,
         "merged_count": len(merges),
         "no_match_count": len(no_match),
+        "refused_count": len(refused),
         "merges": merges[:100],
         "no_match_sample": no_match[:20],
+        "refused_sample": refused[:20],
         "message": f"{'Would merge' if dry_run else 'Merged'} {len(merges)} duplicate events. "
-                   f"{len(no_match)} pm_ events had no matching real event.",
+                   f"{len(no_match)} pm_ events had no matching real event. "
+                   f"{len(refused)} name-matched pairs were REFUSED for lack of a shared "
+                   f"provider id (ruling 048) — they remain as duplicates on purpose, "
+                   f"awaiting id-keyed reconciliation.",
     }
 
 
