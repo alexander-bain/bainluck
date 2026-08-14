@@ -899,7 +899,17 @@ class FuturesOddsSnapshot(Base):
         String(50)
     )  # 'draftkings', 'fanduel', 'kalshi'
 
-    # Normalized probability (always calculated)
+    # RAW implied probability for THIS ONE BOOKMAKER — vig-inclusive.
+    #
+    # Normalized from American odds, and nothing more: it is NOT de-vigged and
+    # NOT a consensus. A full column of these sums to 1.16-1.33 on a 30-outcome
+    # futures market, not to 1.0. This comment used to read "Normalized
+    # probability (always calculated)", and that wording is why #1844 shipped:
+    # a reader took it for a de-vigged consensus and subtracted one of these
+    # rows from a real one, publishing an all-red movers row for months.
+    #
+    # To get a distribution, de-vig the column first —
+    # app/utils/odds_math.devig_consensus(). Never compare a raw row to a blend.
     probability: Mapped[float] = mapped_column(Numeric(7, 6))
 
     # Source-specific raw data
