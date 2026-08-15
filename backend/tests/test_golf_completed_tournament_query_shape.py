@@ -50,6 +50,13 @@ from app.routes import golf as golf_route
 
 SRC = inspect.getsource(golf_route._build_completed_tournament)
 
+# LAT-P058/#1866 moved the phase-1 predicate and projection out of the function body
+# and into `golf_identity_select`, so that the `OR` can be swapped for an indexable
+# `UNION` once the covering partial indexes exist. The invariants below did not move
+# with it — they follow the code. See `test_golf_identity_prefilter.py` for the
+# set-equality proof between the two shapes.
+PREFILTER_SRC = inspect.getsource(golf_route.golf_identity_select)
+
 
 def _strip_comments(src: str) -> str:
     """Drop whole-line `#` comments.
@@ -64,6 +71,7 @@ def _strip_comments(src: str) -> str:
 
 
 CODE = _strip_comments(SRC)
+PREFILTER_CODE = _strip_comments(PREFILTER_SRC)
 
 
 def test_the_matching_pass_does_not_eager_load_outcomes():
@@ -89,12 +97,22 @@ def test_the_matching_pass_selects_only_the_columns_the_match_reads():
     outcomes. The predicate needs three fields.
     """
     match_pass = CODE.split("if not matched_ids:")[0]
-    assert re.search(r"select\(\s*FuturesMarket\.id\s*,", match_pass), (
-        "the matching pass is not selecting a narrow column projection"
+    assert "golf_identity_select()" in match_pass, (
+        "the matching pass no longer goes through the narrow prefilter — if the "
+        "projection has been inlined again, this test must follow it, not be deleted"
+    )
+    assert "select(FuturesMarket)" not in match_pass, (
+        "the matching pass is selecting whole entities again"
+    )
+    assert re.search(r"FuturesMarket\.id\s*,", PREFILTER_CODE), (
+        "the prefilter is not selecting a narrow column projection"
     )
     for col in ("FuturesMarket.source", "FuturesMarket.external_id",
                 "FuturesMarket.name"):
-        assert col in match_pass, f"{col} is read by the match but not selected"
+        assert col in PREFILTER_CODE, f"{col} is read by the match but not selected"
+    assert "selectinload" not in PREFILTER_CODE, (
+        "the prefilter is eager-loading outcomes — the 3.2M-row load is back"
+    )
 
 
 def test_the_hydrate_pass_is_bounded_by_the_matched_ids():
@@ -134,12 +152,22 @@ def test_the_predicate_that_selects_golf_markets_is_unchanged():
     row set it considers must not narrow — no status or date filter may creep in
     while 'optimising', or completed majors stop resolving entirely."""
     match_pass = CODE.split("if not matched_ids:")[0]
-    assert 'FuturesMarket.external_id.ilike("golf_%")' in match_pass
-    assert 'FuturesMarket.llm_sport_category == "golf"' in match_pass
-    assert "status" not in match_pass, (
-        "a status filter appeared in the completed-tournament lookup — completed "
-        "markets are exactly what this function exists to find"
-    )
+    assert 'FuturesMarket.external_id.ilike("golf_%")' in PREFILTER_CODE
+    assert 'FuturesMarket.llm_sport_category == "golf"' in PREFILTER_CODE
+    for where, label in ((match_pass, "the matching pass"),
+                         (PREFILTER_CODE, "the prefilter")):
+        assert "status" not in where, (
+            f"a status filter appeared in {label} of the completed-tournament "
+            "lookup — completed markets are exactly what this function exists to find"
+        )
+    # LAT-P058: the indexable shape must be a UNION, never a UNION ALL. `A UNION B`
+    # is `A OR B` de-duplicated; `UNION ALL` would double every row that satisfies
+    # both branches, and `matched_ids` feeds an ordered hydrate.
+    if "union" in PREFILTER_CODE:
+        assert "union_all" not in PREFILTER_CODE, (
+            "the indexable shape uses UNION ALL — rows matching both branches would "
+            "be returned twice and doubled in the winner field"
+        )
 
 
 # ---------------------------------------------------------------------------
