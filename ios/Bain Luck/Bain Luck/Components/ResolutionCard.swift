@@ -62,6 +62,26 @@ struct NativeResolutionDigestCard: View {
 /// Cadence ("every couple of hours") is derived from the documented ingestion
 /// poll cadences (Polymarket every 1h, Kalshi every 2h) — see CLAUDE.md.
 struct NativeFeedEndCard: View {
+    /// #1773: when present, the card carries its own Refresh control instead of
+    /// naming a gesture the reader cannot perform where the card is.
+    var onRefresh: (() -> Void)? = nil
+
+    /// Pure copy rule, unit-tested (#1773).
+    ///
+    /// This card renders at the BOTTOM of the Discover feed, where
+    /// `.refreshable`'s pull-down is unreachable — the reader would have to
+    /// scroll all the way back to the top to perform the gesture the card just
+    /// asked for. Alex's report names exactly that: "when I get to the bottom,
+    /// it invites me to pull to refresh, but I can't pull up, and scrolling back
+    /// to the top just to pull down feels counterintuitive."
+    ///
+    /// So: only name the gesture when there is no button to press instead.
+    static func bodyCopy(hasRefreshAction: Bool) -> String {
+        hasRefreshAction
+            ? "New markets surface roughly every couple of hours."
+            : "New markets surface roughly every couple of hours — pull to refresh."
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
@@ -70,10 +90,21 @@ struct NativeFeedEndCard: View {
             Text("You're all caught up")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.primary)
-            Text("New markets surface roughly every couple of hours — pull to refresh.")
+            Text(Self.bodyCopy(hasRefreshAction: onRefresh != nil))
                 .font(.caption)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+            if let onRefresh {
+                Button(action: onRefresh) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.blue)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Refresh feed")
+                .accessibilityHint("Checks for newly surfaced markets")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
