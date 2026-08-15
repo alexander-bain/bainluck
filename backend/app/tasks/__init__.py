@@ -2444,6 +2444,32 @@ def warm_event_concepts(self):
     return _tracked_run("warm_event_concepts", _warm_event_concepts())
 
 
+@celery_app.task(bind=True, soft_time_limit=100, time_limit=115, name="app.tasks.warm_typeahead")
+def warm_typeahead(self, head_size: int = None):
+    """Keep `/typeahead`'s hot pages resident so a user never pays the cold read.
+
+    #1866 / LAT-P056. The miss cost was decomposed at the transport boundary
+    (n=24 pairs): 99.74% of it is the server segment, and EXPLAIN ANALYZE on
+    production showed 95-98% of THAT is `Shared I/O Read Time` on non-resident
+    pg_trgm GIN pages — same plan, same rows, 1094.5ms cold vs 27.1ms hot.
+
+    Budget: the first (cold) run pays the real reads and is the worst case at
+    ~40 queries; every query after that is served from resident pages. ONE query
+    is bounded at `PER_QUERY_TIMEOUT_SECONDS=10` inside the task, so the longest
+    single uninterrupted op is bounded rather than only the loop boundary, and
+    both limits sit under the 300s hard SIGKILL that would be recorded as
+    `no_data`.
+    """
+    # NOTE the module is `typeahead_warmer`, not `warm_typeahead`: a submodule
+    # sharing a name with a registered task is shadowed by the task on
+    # `from app.tasks import <name>` — the same trap `warm_event_concepts`
+    # records two definitions below.
+    from app.tasks.typeahead_warmer import DEFAULT_HEAD_SIZE, _warm_typeahead
+
+    size = DEFAULT_HEAD_SIZE if head_size is None else int(head_size)
+    return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
+
+
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_event_concept")
 def refresh_event_concept(self, key: str, token: str | None = None):
     """Revalidate one concept key after the route served its 24h mirror.
@@ -2915,6 +2941,45 @@ celery_app.conf.beat_schedule = {
         # in ~0.44s and schedules one revalidation, so this cadence governs
         # content freshness, not user-visible latency.
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "background"},
+    },
+    "warm-typeahead": {
+        "task": "app.tasks.warm_typeahead",
+        # Every 30s — keep the head of the `/typeahead` distribution warm
+        # (#1866, LAT-P056). THE NUMBER IS MEASURED, and the first draft of this
+        # entry had it wrong at */2 min, which is why the measurement exists.
+        #
+        # The cost being avoided is not compute, it is a cold read: same query,
+        # same plan, same rows, 1094.5ms with 710 `Shared Read Blocks` vs 27.1ms
+        # with 0. So the cadence question is "how long do the pages stay
+        # resident", and that was measured directly with EXPLAIN (ANALYZE,
+        # BUFFERS) on production rather than reasoned about:
+        #
+        #     t=0 cold  245 read blocks / 221.7ms
+        #     t=2s        0 / 35.5ms      t=30s   0 / 16.8ms
+        #     t=15s       0 /  7.2ms      t=45s   0 /  9.9ms
+        #     ...and a second query at t=60s: 701 blocks, fully EVICTED.
+        #
+        # Residency survives 45s and is gone by 60s, so a 2-minute cadence would
+        # have left the pages cold for most of every interval — the warmer would
+        # have run, reported success, and delivered nothing. 30s sits inside the
+        # measured window with margin.
+        #
+        # 30s ALSO sits inside the route's 45s response TTL, which is the
+        # stronger of the two effects and the one the head actually rides on: a
+        # head entry refreshed every 30s never expires, so those users never
+        # reach the database at all. Page residency is the weaker, shared
+        # benefit that reaches tail queries too — real, but decaying inside a
+        # minute, so it is not what the head's guarantee rests on.
+        #
+        # Why eviction is that fast: `ix_futures_outcomes_name_trgm` (406 MB) +
+        # `ix_futures_name_trgm` (172 MB) want 56% of a 1 GB `shared_buffers`,
+        # and the prediction-market matcher sweeps it every 15 min with 13-21s
+        # scans over a 977 MB table.
+        #
+        # A cold run cannot pile up behind the next beat: the task takes a Redis
+        # single-run lock and SKIPS if one is already in flight.
+        "schedule": 30.0,
         "options": {"queue": "background"},
     },
     "precompute-discover-candidate-base": {
