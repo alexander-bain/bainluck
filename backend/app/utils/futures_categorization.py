@@ -13,7 +13,7 @@ Also provides:
 
 import re
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Sequence
 
 from app.services import llm
@@ -330,25 +330,59 @@ _STAT_TO_SPORT: dict[str, str] = {
 
 
 def _seasonal_sport_for_college_matchup() -> Optional[str]:
-    """
-    Infer the most likely sport for a college matchup based on current month.
+    """Return None. A bare matchup with no sport signal has no sport (#1888).
 
-    College teams play multiple sports (football, basketball, baseball, etc.).
-    When the market name is just "Team at Team" with an ambiguous stat like
-    "Spread" or "Total Points", the current date disambiguates:
-    - Feb–Apr: basketball (football ended in Jan, March Madness in Mar/Apr)
-    - May–Jul: baseball/softball (both football and basketball off-season)
-    - Aug–Oct: football (basketball hasn't started yet)
-    - Nov–Jan: ambiguous (both football and basketball in-season) → None
+    HONEST-EMPTY — Alex ruling, 2026-08-15. This function used to answer the
+    question "what sport is `Team A vs Team B`?" with the current month:
+    basketball Feb–Apr, baseball May–Jul, football Aug–Oct, None Nov–Jan. It
+    was written for genuinely ambiguous *college* matchups, where a month
+    beats a shrug. But nothing downstream restricted it to college, so it
+    became the terminal fallback for **every** unmapped bare-matchup ticker on
+    Kalshi, and its answer was written to ``llm_sport_category`` as persistent
+    state.
+
+    What that produced, measured in production 2026-08-15 across the
+    non-ITF unmapped families (23,311 rows), is a table that is not a sport
+    distribution at all — it is a calendar:
+
+        created   basketball  baseball  football     guesser returns
+        2026-02          650         3         1     basketball
+        2026-03        1,935       136         2     basketball
+        2026-04        2,391       157         8     basketball
+        2026-05          328     1,278       146     baseball
+        2026-06          142       789       285     baseball
+        2026-07        3,369     6,062       878     baseball
+        2026-08        1,481       916     2,354     football
+
+    The dominant tag in every single month is exactly what this function
+    returned that month. The populations underneath are soccer (Brasileirão,
+    Liga MX, J-League, UECL, Allsvenskan…), cricket (ODI, Test, The Hundred),
+    ice hockey (IIHF, SHL), squash, darts, table tennis, lacrosse and esports —
+    not one of which is basketball, baseball or football. The specimen that
+    settles it: **KXWBCGAME, the World Baseball Classic, is tagged
+    ``basketball``**, because it was created in March.
+
+    Two properties made this worse than a wrong default. The tag **migrated** —
+    ``tasks/kalshi.py`` re-stamped it on every upsert, so a July row flipped
+    baseball→football on its next August poll with no code change (killed
+    separately, and independently, in that file). And it was **right by
+    accident** often enough to look fine: KXNFL* markets created in August are
+    tagged football, correctly, for entirely the wrong reason.
+
+    So the answer is no answer. An unmapped bare matchup falls through this
+    function to the rest of the cascade and lands in ``"other"``, where it
+    stays until a *real* signal arrives — the ticker map growing a prefix (the
+    fix that retired ITF from this population), or a name that actually names
+    its sport. There is deliberately no confidence field and no college
+    carve-out: a caller cannot re-derive the guess, because a guess written
+    into persistent state is indistinguishable from evidence the moment it is
+    read by anything that did not write it.
+
+    The signature is kept — callers are unchanged, and the twelve-month sweep
+    in ``tests/test_kalshi_itf_tennis_tagging.py`` pins the return across the
+    whole clock, per gotcha #44: the defect IS the clock dependence, so the
+    guard has to sweep the clock rather than stand on a convenient month.
     """
-    month = datetime.now(timezone.utc).month
-    if month in (2, 3, 4):
-        return "basketball"
-    elif month in (5, 6, 7):
-        return "baseball"
-    elif month in (8, 9, 10):
-        return "football"
-    # Nov–Jan: both football and basketball are in-season
     return None
 
 

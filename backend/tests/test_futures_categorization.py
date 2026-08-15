@@ -1532,14 +1532,24 @@ class TestStatToSportTaxonomy:
             == "tennis"
         )
 
-    def test_genuinely_ambiguous_stat_still_uses_seasonal_heuristic(self):
-        # "Spread" contains no sport-specific stat, so it must still reach the
-        # seasonal fallback — Aug → football, Jul → baseball. The 300D change
-        # narrows what reaches this branch; it does not remove the branch.
-        with _frozen_fc_datetime(8):
-            assert detect_game_prop_sport("Orlando at Sacramento: Spread") == "football"
-        with _frozen_fc_datetime(7):
-            assert detect_game_prop_sport("Orlando at Sacramento: Spread") == "baseball"
+    def test_genuinely_ambiguous_stat_now_declines_instead_of_guessing(self):
+        # SUPERSEDED 2026-08-15 — Alex's honest-empty ruling (#1888). This
+        # asserted the seasonal fallback's answers directly: Aug → football,
+        # Jul → baseball, for the SAME market name.
+        #
+        # That pair of assertions is the defect stated as a requirement. The
+        # specimen makes it plain: Orlando and Sacramento are NBA cities, so
+        # "Orlando at Sacramento: Spread" is basketball in both months — the old
+        # code called it football in August and baseball in July, and was wrong
+        # both times, in different directions, from the same input.
+        #
+        # Measured across production: 23,311 unmapped bare-matchup rows tagged
+        # by the calendar rather than by their sport. The branch is now empty —
+        # "Spread" carries no sport-specific stat, so there is nothing to
+        # classify on and the honest answer is None.
+        for month in (7, 8):
+            with _frozen_fc_datetime(month):
+                assert detect_game_prop_sport("Orlando at Sacramento: Spread") is None
 
     def test_soccer_teams_still_short_circuit_ambiguous_stats(self):
         with _frozen_fc_datetime(8):

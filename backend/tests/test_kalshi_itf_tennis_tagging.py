@@ -186,16 +186,32 @@ class TestTheGuesserIsStillThereForWhatItWasWrittenFor:
     bare-matchup ticker — is real and outlives this issue.
     """
 
-    def test_a_college_matchup_still_uses_the_seasonal_inference(
+    def test_the_seasonal_inference_no_longer_answers_at_all(
         self, freeze_month
     ):
+        """SUPERSEDED 2026-08-15 by Alex's honest-empty ruling (#1888).
+
+        This test used to assert the opposite — that a college matchup still
+        got a month-based answer — on the scope note above: #1109 routed ITF
+        *around* the guesser rather than deleting it, and the guesser's
+        original behaviour was deliberately left in place as out of scope.
+
+        The wider defect that note names ("a clock-dependent classifier writing
+        PERSISTENT state, for ANY unmapped bare-matchup ticker") was then
+        measured: 23,311 non-ITF rows across soccer, cricket, ice hockey,
+        squash, darts, table tennis, lacrosse and esports, each carrying
+        whichever sport the calendar was on when they were created. Alex ruled
+        honest-empty — the function returns None always, and unmapped bare
+        matchups land in "other" until real evidence arrives.
+
+        Kept as a pointer rather than deleted: this is the exact assertion a
+        future reader would otherwise re-add, believing they were restoring a
+        feature. The full guard is ``test_seasonal_sport_guess_honest_empty``.
+        """
         from app.utils.futures_categorization import (
             _seasonal_sport_for_college_matchup,
         )
 
-        freeze_month(9)
-        assert _seasonal_sport_for_college_matchup() == "football"
-        freeze_month(3)
-        assert _seasonal_sport_for_college_matchup() == "basketball"
-        freeze_month(12)
-        assert _seasonal_sport_for_college_matchup() is None
+        for month in (3, 9, 12):
+            freeze_month(month)
+            assert _seasonal_sport_for_college_matchup() is None

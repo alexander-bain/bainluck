@@ -836,10 +836,38 @@ async def _poll_kalshi_markets():
                         "volume_updated_at": func.now(),
                         "is_editorial_recall": _editorial,
                     }
-                    # Always update llm_sport_category unless new value is "other"
-                    # and existing might be better (from LLM or previous categorization)
+                    # A sport tag is written ONCE, by evidence, or not at all
+                    # (#1888, Alex ruling 2026-08-15 — "honest-empty").
+                    #
+                    # This line used to read `update_set["llm_sport_category"] =
+                    # sport_category` unconditionally, which made the tag MIGRATE:
+                    # `_seasonal_sport_for_college_matchup()` answered from the
+                    # current month, so an unmapped bare-matchup row created in
+                    # July as "baseball" was re-stamped "football" on its next
+                    # August poll, with no code change and no new information. The
+                    # same market therefore held four different sports over a year.
+                    # That is also why a repair backfill run against still-open
+                    # rows is self-undoing: the poll simply re-guesses on top of it.
+                    #
+                    # The guesser now returns None, so this rail can no longer
+                    # carry a guess — but the two fixes are deliberately
+                    # independent. Overwrite-with-a-fresh-answer is wrong on its
+                    # own terms whatever the answer's provenance, and a future
+                    # classifier that reintroduces a clock (or any other
+                    # non-evidence signal) must not be able to reopen the defect
+                    # by editing one file.
+                    #
+                    # `nullif(..., "other")` is what keeps the door open in the
+                    # one direction that should stay open: "other" IS the
+                    # honest-empty landing state, not a tag, so real evidence
+                    # arriving later — the ticker map growing a prefix, as it did
+                    # for ITF — still upgrades the row. An existing REAL tag is
+                    # never overwritten.
                     if sport_category and sport_category != "other":
-                        update_set["llm_sport_category"] = sport_category
+                        update_set["llm_sport_category"] = func.coalesce(
+                            func.nullif(FuturesMarket.llm_sport_category, "other"),
+                            sport_category,
+                        )
                     # Set league and canonical key
                     if league:
                         upsert_values["llm_league"] = league
