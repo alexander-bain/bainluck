@@ -379,7 +379,18 @@ def test_the_canary_split_never_grows_the_ledger_cohort():
         "outcome-evidence class is not from it and must not inflate this number"
     )
     assert metadata["outcome_evidence_probes"] == len(SPECIMENS)
-    assert metadata["split_counts"] == {"test": 46, "canary": len(SPECIMENS)}
+    # LAT-P058/#1881 added a SECOND canary class (diacritic folding). `canary` is
+    # the place new probe classes go — that is what ruling 060 is for — so this
+    # asserts what actually matters and did not weaken to accommodate it:
+    #   * `test` is still exactly 46;
+    #   * the outcome-evidence class is still exactly its own size;
+    #   * `canary` is the SUM of the declared classes, so a class cannot be added
+    #     without also being declared in metadata.
+    diacritic_n = metadata.get("diacritic_probes", 0)
+    assert metadata["split_counts"] == {
+        "test": 46,
+        "canary": len(SPECIMENS) + diacritic_n,
+    }
 
     test_split = [p for p in probes if p["isolation"]["split"] == "test"]
     canary = [p for p in probes if p["isolation"]["split"] == "canary"]
@@ -393,6 +404,15 @@ def test_the_canary_split_never_grows_the_ledger_cohort():
         1 for p in test_split if p["lifecycle"]["known_failure_status"] == "pass"
     ) == 44, "the 44-wide graded cohort changed size"
 
-    assert {p["identity"]["gold_family"] for p in canary} == {"outcome_evidence"}
-    assert len(canary) == len(SPECIMENS)
+    families = {p["identity"]["gold_family"] for p in canary}
+    assert families <= {"outcome_evidence", "diacritic_folding"}, (
+        f"an undeclared probe class appeared in `canary`: {families}"
+    )
+    outcome_canary = [
+        p for p in canary if p["identity"]["gold_family"] == "outcome_evidence"
+    ]
+    assert len(outcome_canary) == len(SPECIMENS)
+    assert len(canary) == len(SPECIMENS) + diacritic_n
     assert all(p["lifecycle"]["difficulty"] == "discrimination" for p in canary)
+    # No canary probe may leak into the `test` cohort's families either.
+    assert not (families & {p["identity"]["gold_family"] for p in test_split})

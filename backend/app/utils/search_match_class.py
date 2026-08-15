@@ -153,6 +153,39 @@ def _exact_key(text: str) -> str:
     return _WS_RE.sub(" ", unicodedata.normalize("NFC", text or "")).strip().casefold()
 
 
+def _fold_text(text: str) -> str:
+    """Whole-string fold: casefold, strip accents, collapse whitespace.
+
+    LAT-P058/#1881. This is `_exact_key` PLUS accent stripping, and it exists
+    because MC0 must stay unfolded while everything below it must not be.
+
+    ``_fold_token`` already folds accents for MC1-MC4, so `köln` and `koln`
+    have been the same token all along. `fragment_credit` was the one surface
+    below MC0 still comparing raw text, so MC5 ordering was accent-sensitive in
+    a way no tier above it was — and asymmetrically, which is the tell:
+
+        query              vs  "FC Viktoria Köln 1904"      credit
+        koln                                                0.0000
+        köln                                                1.0000
+        query              vs  "Vuelta a Espana 2026: ..."  credit
+        vuelta a espana                                     1.0000
+        vuelta a españa                                     0.4062
+
+    Same entity, same query meaning, different within-tier credit purely on
+    whether the user's keyboard supplied the diacritic. Measured 2026-08-14.
+
+    NOT applied to `_exact_key`: ruling 041 makes MC0 exactly-equal-UNFOLDED,
+    so `Sao Paulo` must not become equal to `São Paulo` there. They meet at MC1,
+    which is the design. `test_p3_mc0_is_exact_and_unfolded` guards that, and
+    `test_p11b` guards this.
+
+    No plural strip — that is per-token and belongs to `_fold_token`.
+    """
+    folded = unicodedata.normalize("NFKD", (text or "").casefold())
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return _WS_RE.sub(" ", folded).strip()
+
+
 def _fold_token(token: str) -> str:
     """MC1+ folding: casefold, strip accents, strip one trailing plural `s`."""
     t = unicodedata.normalize("NFKD", token.casefold())
@@ -278,19 +311,27 @@ def match_class(query: str, ev: Evidence) -> int | None:
 
 
 def fragment_credit(query: str, ev: Evidence) -> float:
-    """How good a fragment match is, for ordering WITHIN MC5. 0.0 = none."""
-    q_exact = _exact_key(query)
-    if len(q_exact) < MIN_FRAGMENT_LEN:
+    """How good a fragment match is, for ordering WITHIN MC5. 0.0 = none.
+
+    Folded (`_fold_text`), not exact: MC5 sits below MC0, so the unfolded rule
+    does not reach here. See `_fold_text` for the measured asymmetry this closes
+    (#1881). Folding can only ever RAISE a credit — accents are removed from both
+    sides, so every containment and every shared trigram that held before still
+    holds — which is why it cannot demote a candidate that ranks today (P5's
+    monotonicity, extended to the fragment term).
+    """
+    q_folded = _fold_text(query)
+    if len(q_folded) < MIN_FRAGMENT_LEN:
         return 0.0
     best = 0.0
     for own in ev.owned_names():
         if not own:
             continue
-        own_exact = _exact_key(own)
-        if q_exact in own_exact or own_exact in q_exact:
+        own_folded = _fold_text(own)
+        if q_folded in own_folded or own_folded in q_folded:
             best = max(best, 1.0)
             continue
-        sim = trigram_similarity(q_exact, own_exact)
+        sim = trigram_similarity(q_folded, own_folded)
         if sim >= TRIGRAM_FLOOR:
             best = max(best, sim)
     return best

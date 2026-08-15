@@ -7,6 +7,7 @@ Enriches with PGA tour schedule from DataGolf for accurate current-event detecti
 """
 
 import logging
+import os
 import re
 import sys
 import time
@@ -14,7 +15,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select, func as sqlfunc
+from sqlalchemy import or_, select, union, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -143,6 +144,113 @@ def _is_golf_market(market) -> bool:
         return False
 
     return True
+
+
+# ============================================================================
+# The golf identity prefilter — LAT-P058 / #1866
+# ============================================================================
+#
+# This is the SQL superset that feeds `_is_golf_market` on the completed-tournament
+# path. It was, when measured on production v3817, **the single largest consumer of
+# physical reads in the entire database**:
+#
+#     1,110 calls/day · 492.2 MB physically read per call · mean 2,742 ms
+#     = 533.7 GB/day = 19% of every physical read the database performs
+#
+# It reads 7,169 rows out of 779,617 (0.92%) and pays a full sequential scan of a
+# 977 MB heap to find them, because the `OR` defeats every index on the table.
+#
+# THE MEASUREMENT THAT SHAPES THIS CODE (LAT-P058, production, `EXPLAIN` only):
+#
+#   | shape | plan | total cost |
+#   |---|---|---|
+#   | `OR`    | one Seq Scan                             | 128,191.5 |
+#   | `UNION` | TWO Seq Scans + Sort + Unique            | 255,180.0 |
+#
+# So the `UNION` rewrite — which is the shape the supporting indexes need, and which
+# is set-identical to the `OR` (proven on production: 7,169 = 7,169 rows, symmetric
+# difference 0/0, identical md5 `0e7625c986754f8315b451c1003dd206` over the ordered
+# id list) — is a **1.99x REGRESSION until the indexes exist**. Two seq scans are
+# worse than one.
+#
+# The design premise it corrects: `lat-p057-tail-attack-design.md` §2 A1 assumed
+# "`llm_sport_category` has a btree". It does not. The only index over that column is
+# `ix_fm_feed_open_sports`, which is PARTIAL on `status='open' AND event_id IS NULL` —
+# and this query filters on neither, so it cannot be used.
+#
+# Hence the flag. The two shapes are set-identical, so the flag is a pure
+# plan-selection switch with no behavioural surface:
+#
+#   * OFF (default) — today's `OR`. One seq scan. Byte-for-byte the shipped behaviour.
+#   * ON            — the `UNION`. Two branches, each independently indexable, which
+#                     the covering partial indexes turn into Index Only Scans.
+#
+# The flag is flipped ON only AFTER the indexes exist and an `EXPLAIN` confirms both
+# branches use them — see `docs/audits/latency/lat-p058-golf-index-spec.md`, which is
+# addressed to the Integrator. The DDL is a one-off dyno operation, never an Alembic
+# migration (gotcha #31: `CREATE INDEX CONCURRENTLY` on a 977 MB table hangs Heroku's
+# ~5-minute release phase into an outage).
+#
+# Rollback is therefore config, not code: unset the var and the process is back on the
+# `OR` at the next dyno restart, with no revert commit and no deploy.
+
+_GOLF_SPLIT_SCAN_ENV = "GOLF_IDENTITY_SPLIT_SCAN"
+_GOLF_SPLIT_SCAN_TRUE = {"1", "true", "yes", "on"}
+
+#: The indexes `golf_identity_select(split=True)` is written for. Named here so the
+#: spec, the DDL and the code cannot drift apart silently.
+GOLF_IDENTITY_INDEXES = ("ix_fm_golf_identity_category", "ix_fm_golf_identity_extid")
+
+
+def _golf_split_scan_enabled() -> bool:
+    """True when the covering partial indexes are known to exist (config-gated).
+
+    Read at call time, never at import, so a `heroku config:set` takes effect on the
+    dyno restart it already causes and a test can monkeypatch it without reimporting.
+    """
+    return os.getenv(_GOLF_SPLIT_SCAN_ENV, "0").strip().lower() in _GOLF_SPLIT_SCAN_TRUE
+
+
+def golf_identity_select(split: bool | None = None):
+    """The golf identity prefilter, in whichever of its two set-identical shapes.
+
+    `split=None` (the default) consults `GOLF_IDENTITY_SPLIT_SCAN`. Both shapes select
+    exactly the four columns the caller reads — `_is_golf_market` uses
+    source/external_id/name and the slug test uses name — and no outcomes.
+
+    Set-equality is not asserted here, it is proven: see the module comment above for
+    the production capture, and `test_golf_identity_prefilter.py` for the compiled-SQL
+    and predicate-level proofs.
+    """
+    if split is None:
+        split = _golf_split_scan_enabled()
+
+    cols = (
+        FuturesMarket.id,
+        FuturesMarket.source,
+        FuturesMarket.external_id,
+        FuturesMarket.name,
+    )
+    by_external_id = FuturesMarket.external_id.ilike("golf_%")
+    by_category = FuturesMarket.llm_sport_category == "golf"
+
+    if not split:
+        return select(*cols).where(or_(by_external_id, by_category))
+
+    # `A UNION B` is `A OR B` de-duplicated, and `id` is the primary key, so the
+    # de-duplication is over whole rows keyed by a unique column: the two shapes
+    # cannot differ. The subquery wrapper is what keeps `.id` / `.name` attribute
+    # access on the result rows identical to the single-select shape.
+    combined = union(
+        select(*cols).where(by_external_id),
+        select(*cols).where(by_category),
+    ).subquery()
+    return select(
+        combined.c.id,
+        combined.c.source,
+        combined.c.external_id,
+        combined.c.name,
+    )
 
 
 # ============================================================================
@@ -2283,21 +2391,13 @@ async def _build_completed_tournament(
     # re-selects the matched ids WITH outcomes. Set-identical by construction: the
     # same rows are chosen by the same Python predicate, and phase 2 is a subset
     # keyed by id.
-    ident_rows = (
-        await db.execute(
-            select(
-                FuturesMarket.id,
-                FuturesMarket.source,
-                FuturesMarket.external_id,
-                FuturesMarket.name,
-            ).where(
-                or_(
-                    FuturesMarket.external_id.ilike("golf_%"),
-                    FuturesMarket.llm_sport_category == "golf",
-                ),
-            )
-        )
-    ).all()
+    #
+    # LAT-P058/#1866: phase 1 is still the database's #1 physical-read consumer
+    # (533.7 GB/day, 19% of all reads) because the `OR` cannot use an index. The
+    # shape is now chosen by `golf_identity_select` — see its module comment for
+    # the plan measurement, the set-equality proof, and why the indexable `UNION`
+    # is config-gated rather than shipped bare.
+    ident_rows = (await db.execute(golf_identity_select())).all()
 
     # Group by normalized tournament key using existing logic
     matched_ids: list[int] = []

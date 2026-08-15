@@ -402,6 +402,107 @@ OUTCOME_EVIDENCE_ROWS: list[tuple[str, str, list[str], int, str]] = [
 OUTCOME_EVIDENCE_CAPTURED_AT = "2026-08-14T00:00:00Z"
 
 
+# ---------------------------------------------------------------------------
+# THE DIACRITIC-FOLDING PROBE CLASS (#1881) — LAT-P058
+# ---------------------------------------------------------------------------
+#
+# WHY THIS CLASS EXISTS. #1881 is filed as a Search defect and had no probe, so
+# nothing in the set could grade a fix for it — #1861's lesson, applied before
+# the fix rather than after it. The Fable directive for LAT-P058 asked for gold
+# probes on both of the issue's named specimens *so the gate can grade it*.
+#
+# ---- WHAT WAS MEASURED FIRST, AND WHAT IT CHANGED --------------------------
+#
+# #1881 reads as a RANKING bug. It is not one. `search_match_class.tokens()` has
+# folded accents since ruling 041, so both spellings of both specimens already
+# reach MC1 — the best non-exact class — against the entity the issue says is
+# missing (asserted in `test_p11b_the_scorer_was_never_the_1881_defect`):
+#
+#     tokens('köln') == tokens('koln') == ('koln',)
+#     match_class('vuelta a españa', Evidence('Vuelta a Espana 2026: Winner')) == MC1
+#
+# The defect is upstream, in RETRIEVAL. Production v3820, 2026-08-14 17:5x PDT:
+#
+#     vuelta a espana  -> 1 suggestion   market 58675941 'Vuelta a Espana 2026: Winner'
+#     vuelta a españa  -> 0 suggestions  NOTHING AT ALL
+#     koln             -> 1 suggestion   team fortuna-koln-ii   (the only ASCII-named club)
+#     köln             -> 7 suggestions  all Köln-named, none of them the ASCII row
+#
+# A scorer cannot rank a candidate the SQL never handed it. `unaccent` is not
+# installed; `pg_trgm` is doing the matching and trigrams over `ö` and `o` are
+# simply different trigrams. So these probes grade an INDEX change, not a
+# scorer change — and the one scorer-side fold this window did ship
+# (`fragment_credit`, which was still comparing unfolded text at MC5) cannot
+# move them, which is exactly why they belong here as `xfail` rather than as a
+# claim that anything is fixed.
+#
+# ---- THE TWO DIRECTIONS, ONE PROBE EACH ------------------------------------
+#
+# The defect is not symmetric and neither is its fix, so the class is built to
+# tell a half-fix from a whole one:
+#
+#   * `vuelta a españa` — ACCENTED query, ASCII-named entity. A query-side fold
+#     alone (strip diacritics before matching) fixes this direction. The issue
+#     calls that the "cheapest interim".
+#   * `koln` — ASCII query, ACCENTED-named entity. A query-side fold does
+#     NOTHING here; only an `unaccent` expression index over the COLUMN reaches
+#     it.
+#
+# If a future window reports #1881 fixed and only the vuelta probe has flipped,
+# half the defect is still shipping. That distinction is the point of the class.
+#
+# ---- SPLIT: `canary`, per ruling 060 ---------------------------------------
+#
+# Not negotiable and not a filing convenience: the §5 ledger of
+# `docs/search-scoring-spec.md` is written against a 46-probe `test` cohort
+# graded 44-wide, and growing it in place voids every read ever taken against
+# it. Same reasoning as the outcome-evidence class above.
+#
+# ---- SPECIMEN DURABILITY ---------------------------------------------------
+#
+# This program has lost three specimens to expiry (`tour de france` died between
+# `-45` shipping and its deploy check). So the anchors here were chosen for
+# lifespan, and the choice is recorded rather than left implicit:
+#
+#   * The Köln probe anchors on TEAM rows. Teams do not resolve; `1. FC Köln`
+#     will exist for as long as the club does.
+#   * The Vuelta probe anchors on a market, which DOES expire (the 2026 Vuelta
+#     settles around September 2026). It is used anyway because it is the only
+#     specimen where the ASCII twin passes and the accented twin returns
+#     literally nothing — the cleanest possible isolation of the fold. When it
+#     reads red for expiry rather than for folding, re-specimen it against the
+#     next edition; `valid_at` carries the capture date.
+#
+# (query, expected_entity_id, allowed_entity_ids, direction, status, note)
+DIACRITIC_ROWS: list[tuple[str, str, list[str], str, str, str]] = [
+    ("vuelta a espana", "market:58675941", [], "control", "pass",
+     "THE CONTROL, and the reason this pair is decisive. The ASCII spelling returns this market "
+     "at rank 1 on production v3820 (2026-08-14). Its accented twin below differs by exactly one "
+     "character and returns nothing, so no explanation other than the fold survives — not "
+     "coverage, not ranking, not the entity's existence."),
+    ("vuelta a españa", "market:58675941", [], "accented_query_ascii_entity", "xfail",
+     "THE DEFECT, accented-query direction. ZERO suggestions on production v3820 — not a wrong "
+     "answer, no answer. The market's own name is ASCII ('Vuelta a Espana 2026: Winner') and the "
+     "scorer already scores this query MC1 against it, so retrieval never offered it. This is the "
+     "direction a query-side fold alone would fix."),
+    ("koln", "team:1-fc-kln-bundesliga",
+     ["team:1-fc-kln", "team:fc-viktoria-kln-1904"],
+     "ascii_query_accented_entity", "xfail",
+     "THE DEFECT, ASCII-query direction — the half a query-side fold CANNOT reach. On production "
+     "v3820 `koln` returns exactly one suggestion, `team:fortuna-koln-ii`, which is the only club "
+     "in the corpus whose stored name happens to be spelled without the umlaut; every real Köln "
+     "entity is invisible to the ASCII spelling. Anyone typing on a keyboard without an umlaut "
+     "key — or reading a URL — is looking at a search that cannot find a Bundesliga club. "
+     "`1. FC Köln` is the expected referent; the duplicate row `team:1-fc-kln` and the other "
+     "senior Köln club are allowed, because which of them ranks first is a ranking question and "
+     "this probe grades retrieval. Closing it needs an `unaccent` expression index over the "
+     "column, with the sequencing caveat #1881 records: unaccented duplicates roughly double "
+     "579 MB of trigram index against a 1 GiB shared_buffers."),
+]
+
+DIACRITIC_CAPTURED_AT = "2026-08-14T00:00:00Z"
+
+
 def _slug(query: str) -> str:
     out = "".join(char if char.isalnum() else "-" for char in query.lower())
     while "--" in out:
@@ -485,6 +586,96 @@ def build_probes() -> list[dict[str, Any]]:
             "presentation": presentation,
         })
     probes.extend(build_outcome_evidence_probes())
+    probes.extend(build_diacritic_probes())
+    return probes
+
+
+def build_diacritic_probes() -> list[dict[str, Any]]:
+    """The DIACRITIC-FOLDING class (#1881) — `canary` split.
+
+    See the block comment on ``DIACRITIC_ROWS`` for what was measured, why the
+    class grades an index rather than the scorer, and why the two directions of
+    the defect get one probe each.
+    """
+
+    probes: list[dict[str, Any]] = []
+    for query, expected, allowed, direction, status, note in DIACRITIC_ROWS:
+        kind = expected.split(":", 1)[0]
+        surface, item_type = KIND_SHAPE[kind]
+        presentation = {"query": query}
+        probes.append({
+            "identity": {
+                "probe_key": f"search-diacritic-{_slug(query)}-001",
+                "probe_version": 1,
+                "schema_version": SCHEMA_VERSION,
+                "surface": "search_typeahead",
+                "task_type": "search_entity",
+                "item_type": item_type,
+                "entity_ids": [expected, *allowed],
+                "gold_half": "diacritic_folding",
+                "gold_family": "diacritic_folding",
+            },
+            "evidence": {
+                "fixture_hash": fixture_sha256(presentation),
+                "hash_scope": "presentation/v1",
+                "source": (
+                    "LAT-P058 (#1881, ruling 060): diacritic-folding class, specimened from the "
+                    "two pairs named in the issue and re-measured on production v3820"
+                ),
+                "provenance": (
+                    f"diacritic-folding half, {direction} direction; measured against "
+                    f"{EVIDENCE_SURFACE}"
+                ),
+                "captured_at": DIACRITIC_CAPTURED_AT,
+                "valid_at": DIACRITIC_CAPTURED_AT,
+                "license_usage_note": (
+                    "internal product query set; queries name public sports clubs and a public "
+                    "sporting event only"
+                ),
+                "pii_redacted": True,
+            },
+            "oracle": {
+                "oracle_kind": "known_answer",
+                "label_schema": "search_entity/v1",
+                "label_schema_version": 1,
+                "authority": (
+                    "product judgment: a diacritic is a spelling of the same entity, not a "
+                    "different entity, so both spellings must reach the same referent"
+                ),
+                "evidence": note,
+                "adjudication_history": [],
+                "answer": {
+                    "expected_entity_id": expected,
+                    "allowed_entity_ids": list(allowed),
+                    "expected_surfaces": [surface],
+                    "expected_item_type": item_type,
+                    "query_class": "diacritic_folding",
+                },
+            },
+            "lifecycle": {
+                "state": "active",
+                "owner": "search-evals",
+                "difficulty": "discrimination",
+                "failure_family": "search-entity-top-1",
+                "issue_gotcha": "#1881",
+                "known_failure_status": status,
+            },
+            "audience_safety": {
+                "reviewer_audience": "engineer",
+                "kid_facing": False,
+                "guardian_safety_authority": None,
+                "privacy_sensitivity": "none",
+            },
+            "isolation": {
+                "split": "canary",
+                "real_world_group_key": f"diacritic:{direction}",
+                "contamination_lineage": [f"lineage:diacritic-v1:{direction}"],
+                "prompt_version": None,
+                "model_version": None,
+                "scorer_version": "search-entity/v1",
+            },
+            "presentation": presentation,
+        })
     return probes
 
 
@@ -601,15 +792,17 @@ def build_registry() -> dict[str, Any]:
             # and overclaimed coverage of a set that did not grow.
             "migrated": len(GOLD_ROWS),
             "outcome_evidence_probes": len(OUTCOME_EVIDENCE_ROWS),
+            "diacritic_probes": len(DIACRITIC_ROWS),
             "split_counts": {
                 "test": len(GOLD_ROWS),
-                "canary": len(OUTCOME_EVIDENCE_ROWS),
+                "canary": len(OUTCOME_EVIDENCE_ROWS) + len(DIACRITIC_ROWS),
             },
             "split_note": (
                 "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is "
                 "written against — 46 probes graded 44-wide — and it MUST NOT grow without "
                 "restating every prior read. The outcome-evidence discrimination class "
-                "(ruling 056, #1861) is therefore in `canary`."
+                "(ruling 056, #1861) and the diacritic-folding class (#1881, LAT-P058) are "
+                "therefore both in `canary`."
             ),
             "mc_candidates": sum(len(queries) for queries, _ in MC_CANDIDATES),
             "results_producer": "scripts/evals/search_results_producer.py",

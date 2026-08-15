@@ -98,6 +98,48 @@ accent stripping, no punctuation stripping* — `São Paulo` and `sao paulo` mee
 at MC1, not MC0 — but case is not a semantic distinction and a typeahead query
 is typed lowercase by convention. This is the single judgment inside MC0.
 
+### The fold reaches all the way down (LAT-P058, #1881, 2026-08-14)
+
+"Folding allowed from MC1 down" was true of the *classes* and false of one
+*term*. `fragment_credit` — the only within-tier signal MC5 has — compared
+`_exact_key`, which by construction does not strip accents. So the bottom tier,
+whose entire job is fuzzy matching, was the strictest surface in the scorer
+about diacritics, and asymmetrically so:
+
+| query | against | credit BEFORE | AFTER |
+|---|---|---|---|
+| `koln` | `FC Viktoria Köln 1904` | **0.0000** | 1.0000 |
+| `köln` | `FC Viktoria Köln 1904` | 1.0000 | 1.0000 |
+| `vuelta a espana` | `Vuelta a Espana 2026: Winner` | 1.0000 | 1.0000 |
+| `vuelta a españa` | `Vuelta a Espana 2026: Winner` | **0.4062** | 1.0000 |
+
+Same entity, same query meaning, different ordering credit purely on whether the
+user's keyboard — or iOS autocorrect — supplied the diacritic. `fragment_credit`
+now folds via `_fold_text` (casefold + accent strip + whitespace collapse, no
+plural strip). **MC0 is untouched**, and `test_p11b_mc0_is_still_unfolded_after_
+the_fragment_fold` is what keeps it that way.
+
+The change cannot demote anything: stripping accents from both sides only ever
+preserves or adds containments and shared trigrams, so no candidate that earned
+credit before earns less now. That is P5's monotonicity argument applied to the
+fragment term.
+
+**What it does NOT do — stated because the issue's title invites the opposite
+reading.** This does not fix #1881. `tokens()` has folded accents since ruling
+041, so both spellings of both of #1881's specimens *already* reached MC1
+against the entity the issue says is missing. The defect is upstream, in
+retrieval: `unaccent` is not installed, `pg_trgm` sees `ö` and `o` as different
+trigrams, and on production v3820 `vuelta a españa` returns **zero** suggestions
+while `vuelta a espana` returns the market at rank 1. A scorer cannot rank a
+candidate the SQL never handed it. #1881 needs an `unaccent` expression index,
+with the sequencing caveat the issue itself records — unaccented duplicates
+roughly double 579 MB of trigram index against a 1 GiB `shared_buffers`, so it
+lands with or after the tail work, not before it.
+
+The three `canary` probes added for it (`diacritic_folding`, §7's sibling class)
+grade that index change, one probe per direction of the defect, and are recorded
+`xfail` today. See `tests/test_search_diacritic_probe_class.py`.
+
 ## 2. The knobs
 
 Five, against a ratified ceiling of eight. **Every default is provisional until
