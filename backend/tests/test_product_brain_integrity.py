@@ -451,6 +451,95 @@ def test_ruling_numbers_are_unique() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Queue 357 (2026-08-15) — THE NON-VACUITY FLOOR.
+#
+# Every consistency test above is a comparison between docs/rulings/ and the
+# PRODUCT-BRAIN index. Both are quantified over what exists, so both are
+# VACUOUSLY TRUE when nothing exists: delete the whole directory and the whole
+# index in one commit and the both-directions check — the one deliberately
+# written in both directions so a filed-but-unindexed ruling cannot hide — goes
+# green, because there is no file to be unindexed and no line to be unfiled.
+#
+# That is not a hypothetical. It was reported this cycle as an observed state
+# ("the index stops at 047, and the gate is green because BOTH SIDES ARE
+# EMPTY"). Measurement said otherwise — 64 files, 64 index lines, zero drift in
+# either direction — so the sync gate was doing its job. But the hole the report
+# named is real and independent of whether it had been fallen into yet: a
+# symmetric check cannot distinguish "consistent" from "absent", and the failure
+# it would miss is the exact one the doc header records happening TWICE (a
+# wholesale rewrite silently dropping ratified rulings).
+#
+# So the floor is what makes the symmetry mean something. It is deliberately a
+# TRACKED CONSTANT rather than a read of RULING-CLAIMS.md: the ledger is
+# gitignored, absent on every CI runner and inside every linked worktree, so a
+# floor derived from it would skip precisely where a wholesale rewrite gets
+# merged. A floor that cannot run in CI is the same vacuity one level up.
+#
+# It ratchets, like frontend/typecheck-baseline.json: bank a ruling, raise the
+# number in the same commit. There is no slack in it on purpose — slack is
+# permission to delete exactly that many rulings. A ruling is never retired by
+# deletion (it is superseded by a later ruling), and renumbering preserves the
+# count, so nothing legitimate ever lowers this.
+# ---------------------------------------------------------------------------
+
+#: Measured on `origin/master` @ `cabc791a`: 64 ruling files, 64 index lines,
+#: plus ruling 068 banked in the same commit as this floor. Gaps are expected
+#: and fine (057-059 reserved-not-minted, 067 held by an in-flight lane) — the
+#: floor counts what is BANKED, never the highest number claimed.
+MINIMUM_BANKED_RULINGS = 65
+
+
+def test_the_rulings_directory_is_not_empty() -> None:
+    """The floor, directory side.
+
+    Without this, `test_every_ruling_file_has_exactly_one_index_line` passes
+    over zero files.
+    """
+    count = len(_ruling_files())
+    assert count >= MINIMUM_BANKED_RULINGS, (
+        f"docs/rulings/ holds {count} rulings, below the banked floor of "
+        f"{MINIMUM_BANKED_RULINGS}. Rulings are never retired by deletion — a "
+        "ruling is superseded by a later ruling, and the superseded file stays. "
+        "If you genuinely banked one and this still fails, you deleted another. "
+        "Restore it from git; do not lower this number to go green."
+    )
+
+
+def test_the_rulings_index_is_not_empty() -> None:
+    """The floor, index side.
+
+    Without this, `test_every_index_line_points_at_a_file_that_exists` passes
+    over zero lines — so a rewrite that dropped the index while leaving the
+    directory intact would clear every check but the section-header pin.
+    """
+    count = len(_index_entries())
+    assert count >= MINIMUM_BANKED_RULINGS, (
+        f"the RULINGS INDEX has {count} lines, below the banked floor of "
+        f"{MINIMUM_BANKED_RULINGS}. An unindexed ruling is invisible to every "
+        "reader of PRODUCT-BRAIN, which is the only place anyone looks."
+    )
+
+
+def test_the_floor_tracks_reality_and_is_raised_when_a_ruling_is_banked() -> None:
+    """The ratchet's other direction, and the reason the floor stays honest.
+
+    A floor left below reality accumulates silent headroom — after ten banked
+    rulings it would permit deleting ten. Same failure as the typecheck
+    baseline drifting above the real error count, which is why that gate fails
+    on one FEWER error too.
+
+    So: bank a ruling, raise this number in the same commit.
+    """
+    banked = len(_ruling_files())
+    assert banked == MINIMUM_BANKED_RULINGS, (
+        f"{banked} rulings are banked but MINIMUM_BANKED_RULINGS is "
+        f"{MINIMUM_BANKED_RULINGS}. Raise it to {banked} in this same commit. "
+        "The gap between them is headroom to delete rulings undetected, which "
+        "is the whole thing this floor exists to remove."
+    )
+
+
 def test_index_is_sorted_ascending() -> None:
     """Sorted order is what makes a conflict resolution mechanical.
 
