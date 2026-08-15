@@ -224,12 +224,52 @@ _REMAINING_SQL = """
 #: a truncated count presented as a total is the silent-cap failure.
 _REMAINING_CAP = 250_000
 
-_EPOCH = "1970-01-01T00:00:00+00:00"
+#: The cold-start watermark. A ``datetime``, NOT an ISO string, and that is the
+#: whole point of this comment (#1884).
+#:
+#: ``fm.resolution_date`` is ``DateTime(timezone=True)``, so Postgres infers
+#: ``$1`` in ``(fm.resolution_date, fo.id) > (:cursor_date, :cursor_id)`` as
+#: ``timestamptz``. asyncpg is strictly typed at that boundary: handed a ``str``
+#: it raises ``asyncpg.exceptions.DataError: invalid input for query argument``
+#: rather than casting, which psycopg2 would have done silently. The drain
+#: shipped binding the ISO string below and therefore threw on its FIRST
+#: statement, every run, in 166 ms — before any fetch, so ``fetch_errors`` stayed
+#: 0 and the watermark could never leave its initial value. A cold path that
+#: cannot complete is the only path the rail will ever take: permanently
+#: self-blocking, on a cohort that expires at ~1,100 outcomes/day.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _as_cursor_datetime(value: Any) -> datetime:
+    """State's ISO string -> the ``datetime`` asyncpg requires.
+
+    The watermark round-trips through JSON in Redis, so it is a string by the
+    time it comes back; the row that set it held a ``datetime``. Both shapes
+    arrive here and both must leave as one tz-aware ``datetime``.
+
+    Never raises (ruling 039 — a lookup must never throw). An unparseable or
+    missing watermark degrades to the epoch, which costs a re-sweep of already
+    barren rows; raising would cost the entire rail, which is the failure this
+    function exists to end.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            logger.warning(
+                "cliff drain: unparseable watermark %r — restarting at the epoch",
+                value[:64],
+            )
+            return _EPOCH
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return _EPOCH
 
 
 def _cursor_params(state: dict[str, Any]) -> dict[str, Any]:
     return {
-        "cursor_date": state.get("cursor_date") or _EPOCH,
+        "cursor_date": _as_cursor_datetime(state.get("cursor_date")),
         "cursor_id": int(state.get("cursor_id") or 0),
     }
 

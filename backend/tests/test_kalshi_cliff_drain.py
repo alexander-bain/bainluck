@@ -53,13 +53,61 @@ class _FakeResult:
         return self._rows[0] if self._rows else None
 
 
+#: Bound parameters that land on a ``timestamptz`` column, and therefore must
+#: arrive as a ``datetime``. asyncpg does not cast at this boundary — psycopg2
+#: would have, which is why the habit is easy to keep and the failure is not.
+_TIMESTAMPTZ_PARAMS = ("cursor_date",)
+
+
+class _AsyncpgDataError(TypeError):
+    """Stands in for ``asyncpg.exceptions.DataError`` (#1884).
+
+    The real class is not importable from a pure-unit test without a driver
+    connection, and the point being tested is the TYPE that crosses the bind,
+    not the identity of the exception raised on the other side.
+    """
+
+
 class _FakeSession:
+    """In-memory session that is STRICT ABOUT BIND TYPES, deliberately.
+
+    The original double accepted ``params`` and discarded it. Every watermark
+    test therefore passed while production threw ``asyncpg.DataError`` on its
+    first statement of every run (#1884): the drain bound its cold-start
+    watermark as an ISO *string* into a ``timestamptz`` comparison. No test
+    could have caught it, because no test could see a bind at all.
+
+    So this double now enforces what the driver enforces. That is what makes
+    the pre-existing behavioural tests above and below real evidence rather
+    than a description of the fake.
+    """
+
     def __init__(self, rows):
         self._rows = rows
         self.committed = 0
+        self.bound_params = []
+
+    def _typecheck(self, params):
+        if not params:
+            return
+        for name in _TIMESTAMPTZ_PARAMS:
+            if name not in params:
+                continue
+            value = params[name]
+            if not isinstance(value, datetime):
+                raise _AsyncpgDataError(
+                    "invalid input for query argument "
+                    f"${name}: {value!r} (expected a datetime.datetime "
+                    f"instance, got {type(value).__name__!r}). "
+                    f"{name} is compared against fm.resolution_date, which is "
+                    "DateTime(timezone=True) -> timestamptz."
+                )
 
     async def execute(self, statement, params=None):
         sql = str(statement)
+        self._typecheck(params)
+        if params:
+            self.bound_params.append(dict(params))
         if "ORDER BY fm.resolution_date ASC" in sql:
             return _FakeResult(rows=self._rows)
         if "count(*)" in sql:
@@ -154,6 +202,118 @@ class TestWatermark:
         params = drain._cursor_params(drain._default_state())
         assert params["cursor_date"] == drain._EPOCH
         assert params["cursor_id"] == 0
+
+    # ----------------------------------------------------------------
+    # #1884 — the cold watermark's TYPE, not just its value.
+    #
+    # The test directly above shipped green while the rail threw on every
+    # run. It compared `_cursor_params()["cursor_date"]` against `_EPOCH`,
+    # the same constant the production line binds — so it restated the
+    # assignment and could not fail whatever the type was. The type is the
+    # entire defect: `fm.resolution_date` is timestamptz, and asyncpg
+    # refuses a `str` there instead of casting it.
+    # ----------------------------------------------------------------
+
+    def test_the_cold_watermark_binds_as_a_datetime_not_an_iso_string(self):
+        """The #1884 defect, pinned at the bind.
+
+        Asserting the TYPE is what the value comparison above could not do.
+        """
+        params = drain._cursor_params(drain._default_state())
+        assert isinstance(params["cursor_date"], datetime), (
+            "the cold-start watermark must bind as a datetime: "
+            "fm.resolution_date is DateTime(timezone=True), so asyncpg "
+            "raises DataError on a str rather than casting it, and the "
+            "drain fails before its first fetch — permanently, because the "
+            "cold path is the only path a never-advancing watermark takes."
+        )
+        assert params["cursor_date"].tzinfo is not None, (
+            "a naive datetime against timestamptz is a silent timezone guess"
+        )
+
+    def test_a_warm_watermark_binds_as_a_datetime_too(self):
+        """The warm path stores an ISO string in Redis and must parse it back.
+
+        `state["cursor_date"] = row.resolution_date.isoformat()` is JSON-safe
+        by necessity, so EVERY resumed run re-enters through a string. Fixing
+        only the epoch would have moved the failure from run 1 to run 2.
+        """
+        moment = datetime(2026, 6, 1, 12, 30, tzinfo=timezone.utc)
+        state = drain._default_state()
+        state["cursor_date"] = moment.isoformat()
+        state["cursor_id"] = 4242
+
+        params = drain._cursor_params(state)
+
+        assert isinstance(params["cursor_date"], datetime)
+        assert params["cursor_date"] == moment
+        assert params["cursor_id"] == 4242
+
+    def test_an_unparseable_watermark_degrades_to_the_epoch_and_does_not_throw(
+        self,
+    ):
+        """Ruling 039 — a lookup must never throw.
+
+        A corrupt watermark costs a re-sweep of rows already known barren.
+        Raising costs the rail, which is exactly the outage being fixed.
+        """
+        state = drain._default_state()
+        state["cursor_date"] = "not-a-date"
+        params = drain._cursor_params(state)
+        assert params["cursor_date"] == drain._EPOCH
+
+    @pytest.mark.asyncio
+    async def test_a_cold_start_completes_a_first_drain_through_a_strict_bind(
+        self, monkeypatch
+    ):
+        """watermark=None -> a real first drain, with the driver's type rule on.
+
+        This is the end-to-end shape #1884 asked for. It runs the rail from a
+        DEFAULT state (cursor_date None, cursor_id 0) against a session that
+        rejects a non-datetime bind the way asyncpg does. On the shipped code
+        the very first `session.execute` raises, `outcomes_seen` is 0 and the
+        terminal is `failed` — which is what production recorded twice.
+        """
+        rows = _cohort([(31, "KX-A"), (32, "KX-B")])
+        saved = _install_fakes(
+            monkeypatch, rows=rows, candles_by_ticker={}, markets={}
+        )
+        session = saved["session"]
+
+        result = await drain.run_cliff_drain(limit=10)
+
+        # It reached the rows at all — the bind was accepted.
+        assert result["run"]["outcomes_seen"] == 2
+        assert not result.get("errors"), result.get("errors")
+        # And the watermark left its cold value, which is the property whose
+        # absence made the failure permanent rather than merely repeated.
+        assert saved["state"]["cursor_id"] == 32
+        assert saved["state"]["cursor_date"] == rows[-1].resolution_date.isoformat()
+
+        cold_binds = [
+            p for p in session.bound_params if p.get("cursor_id") == 0
+        ]
+        assert cold_binds, "the cohort query never ran with the cold watermark"
+        assert all(
+            isinstance(p["cursor_date"], datetime) for p in cold_binds
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_strict_session_actually_rejects_a_string_watermark(self):
+        """The guard's own control.
+
+        A double that enforces nothing is the thing that let #1884 ship. This
+        proves the strictness above is real, so a future change that reverts
+        `_cursor_params` to an ISO string fails loudly rather than passing
+        against a permissive fake.
+        """
+        session = _FakeSession(rows=[])
+        with pytest.raises(_AsyncpgDataError):
+            await session.execute(
+                "SELECT 1 WHERE (fm.resolution_date, fo.id) > "
+                "(:cursor_date, :cursor_id)",
+                {"cursor_date": "1970-01-01T00:00:00+00:00", "cursor_id": 0},
+            )
 
     @pytest.mark.asyncio
     async def test_watermark_advances_over_outcomes_that_yield_nothing(
