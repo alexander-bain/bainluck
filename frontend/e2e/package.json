@@ -19,7 +19,8 @@
     "validate": "node scripts/validate-manifest.js",
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js",
     "blend-parity": "playwright test --project=desktop --project=mobile blend-surface-parity",
-    "event-page": "playwright test --project=desktop --project=mobile event-page"
+    "event-page": "playwright test --project=desktop --project=mobile event-page",
+    "league-cards": "playwright test --project=desktop --project=mobile league-cards"
   },
   "devDependencies": {
     "@playwright/test": "1.48.2"
