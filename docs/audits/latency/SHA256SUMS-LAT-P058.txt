@@ -1,0 +1,5 @@
+b8ec4f7c683a941fcb35f933ac338cdbf267602e454279f9a69bbd5f6b26c65a  capture-lat-p055-gold-read-v3820.results.json
+a5ad499b3c99c51846e6ed49d59ed7f71d2d73b1c65c5ff3608aaa80c47648e3  capture-lat-p055-gold-read-v3820.graded.json
+58e05aea5f963df49cee4d15a27a5fb999bbdce57b0696fabd474b0104bb3a7c  gold-producer-v3820.txt
+192f26dd0450a663f4303899f9ddc7d73c1d06b2c575daca08a742dc9fb62985  lat-p058-golf-index-spec.md
+ccb5771caa81518b577dad38924d40360e72aadb8588cf97f846a6e0bd68a1da  lat-p055-the-50-read-v3820.md
