@@ -26,9 +26,30 @@ enum FeedInterleave {
     ///
     /// Linear: partition is one pass; the drain advances two cursors and performs
     /// at most one O(1) swap plus a bounded (≤5) look-ahead per emitted item.
+    ///
+    /// - Parameter breakNonSportsRuns: apply the same bounded look-ahead swap to
+    ///   the **non-sports** drain (#1883). Defaults to `false`, which is the exact
+    ///   pre-#1883 algorithm — that default is what keeps
+    ///   `testByteForByteEquivalenceAcrossSizes` a live proof of the L2-202
+    ///   equivalence rather than a test that had to be rewritten to stay green.
+    ///
+    ///   Why it is needed: the guard only ever broke runs in the *sports*
+    ///   partition, and the sports partition runs dry partway down every Discover
+    ///   page, so the tail of the page was an unguarded raw-order drain. Measured
+    ///   on 83 production cards (2026-08-14), page `offset=30` came back with a
+    ///   run of **six** politics cards — and today's guard made that page *worse*
+    ///   than raw server order (5 → 6).
+    ///
+    ///   It is also the mandatory safety half of the #1883 concept fix. Mapping
+    ///   `ufc → mma` moves concepts *out* of the non-sports partition, which
+    ///   starves it of the variety it was using to break up runs: measured, the
+    ///   domain map **alone** takes the worst case from 6 to **8**. Map plus this
+    ///   guard returns it to 5. A fix that admits data ships its safety half in
+    ///   the same commit.
     static func byCategory<T>(
         _ items: [T],
         sportsCategories: Set<String>,
+        breakNonSportsRuns: Bool = false,
         category: (T) -> String
     ) -> [T] {
         var sports: [T] = []
@@ -62,6 +83,18 @@ enum FeedInterleave {
             // are exhausted) — same predicate as the original leading `if`.
             if nonSportsIdx < nonSports.count
                 && (sportsSinceNonSport >= maxSportsRun || sportsIdx >= sports.count) {
+                // #1883: the same bounded look-ahead swap the sports branch has
+                // always had. Opt-in, so the legacy order stays reachable and
+                // pinned. Monotone by construction: when the next non-sports card
+                // does not repeat `lastCategory` the swap never fires and the
+                // output is bit-for-bit the pre-#1883 order.
+                if breakNonSportsRuns, category(nonSports[nonSportsIdx]) == lastCategory {
+                    let windowEnd = min(nonSportsIdx + 5, nonSports.count)
+                    if let swapIdx = (nonSportsIdx..<windowEnd)
+                        .first(where: { category(nonSports[$0]) != lastCategory }) {
+                        nonSports.swapAt(nonSportsIdx, swapIdx)
+                    }
+                }
                 let item = nonSports[nonSportsIdx]
                 nonSportsIdx += 1
                 result.append(item)
