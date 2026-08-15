@@ -6,11 +6,12 @@
     "gold_set_unique_queries": 71,
     "migrated": 46,
     "outcome_evidence_probes": 5,
+    "diacritic_probes": 3,
     "split_counts": {
       "test": 46,
-      "canary": 5
+      "canary": 8
     },
-    "split_note": "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is written against — 46 probes graded 44-wide — and it MUST NOT grow without restating every prior read. The outcome-evidence discrimination class (ruling 056, #1861) is therefore in `canary`.",
+    "split_note": "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is written against — 46 probes graded 44-wide — and it MUST NOT grow without restating every prior read. The outcome-evidence discrimination class (ruling 056, #1861) and the diacritic-folding class (#1881, LAT-P058) are therefore both in `canary`.",
     "mc_candidates": 27,
     "results_producer": "scripts/evals/search_results_producer.py",
     "fixture_hash_convention": "sha256 over the canonical JSON of presentation{} (hash_scope presentation/v1); validate_registry re-derives and enforces it"
@@ -3627,6 +3628,218 @@
       },
       "presentation": {
         "query": "club kid"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-diacritic-vuelta-a-espana-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:58675941"
+        ],
+        "gold_half": "diacritic_folding",
+        "gold_family": "diacritic_folding"
+      },
+      "evidence": {
+        "fixture_hash": "3481e62b4d767ad8eb5e36c2eef36948086ed58ecffbb7b12b7e53c09dd2254b",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P058 (#1881, ruling 060): diacritic-folding class, specimened from the two pairs named in the issue and re-measured on production v3820",
+        "provenance": "diacritic-folding half, control direction; measured against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public sports clubs and a public sporting event only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: a diacritic is a spelling of the same entity, not a different entity, so both spellings must reach the same referent",
+        "evidence": "THE CONTROL, and the reason this pair is decisive. The ASCII spelling returns this market at rank 1 on production v3820 (2026-08-14). Its accented twin below differs by exactly one character and returns nothing, so no explanation other than the fold survives — not coverage, not ranking, not the entity's existence.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:58675941",
+          "allowed_entity_ids": [],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "diacritic_folding"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1881",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "diacritic:control",
+        "contamination_lineage": [
+          "lineage:diacritic-v1:control"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "vuelta a espana"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-diacritic-vuelta-a-españa-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:58675941"
+        ],
+        "gold_half": "diacritic_folding",
+        "gold_family": "diacritic_folding"
+      },
+      "evidence": {
+        "fixture_hash": "7da4454cd39d3ca96fd256107a7cd117ff2c20595113ad4067f059f6ead374c7",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P058 (#1881, ruling 060): diacritic-folding class, specimened from the two pairs named in the issue and re-measured on production v3820",
+        "provenance": "diacritic-folding half, accented_query_ascii_entity direction; measured against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public sports clubs and a public sporting event only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: a diacritic is a spelling of the same entity, not a different entity, so both spellings must reach the same referent",
+        "evidence": "THE DEFECT, accented-query direction. ZERO suggestions on production v3820 — not a wrong answer, no answer. The market's own name is ASCII ('Vuelta a Espana 2026: Winner') and the scorer already scores this query MC1 against it, so retrieval never offered it. This is the direction a query-side fold alone would fix.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:58675941",
+          "allowed_entity_ids": [],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "diacritic_folding"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1881",
+        "known_failure_status": "xfail"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "diacritic:accented_query_ascii_entity",
+        "contamination_lineage": [
+          "lineage:diacritic-v1:accented_query_ascii_entity"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "vuelta a españa"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-diacritic-koln-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "team",
+        "entity_ids": [
+          "team:1-fc-kln-bundesliga",
+          "team:1-fc-kln",
+          "team:fc-viktoria-kln-1904"
+        ],
+        "gold_half": "diacritic_folding",
+        "gold_family": "diacritic_folding"
+      },
+      "evidence": {
+        "fixture_hash": "4cdd776f5113ed9d84821c9543a78d69a4557b3cd1b49e281c63eba8622a47d0",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P058 (#1881, ruling 060): diacritic-folding class, specimened from the two pairs named in the issue and re-measured on production v3820",
+        "provenance": "diacritic-folding half, ascii_query_accented_entity direction; measured against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-08-14T00:00:00Z",
+        "valid_at": "2026-08-14T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public sports clubs and a public sporting event only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: a diacritic is a spelling of the same entity, not a different entity, so both spellings must reach the same referent",
+        "evidence": "THE DEFECT, ASCII-query direction — the half a query-side fold CANNOT reach. On production v3820 `koln` returns exactly one suggestion, `team:fortuna-koln-ii`, which is the only club in the corpus whose stored name happens to be spelled without the umlaut; every real Köln entity is invisible to the ASCII spelling. Anyone typing on a keyboard without an umlaut key — or reading a URL — is looking at a search that cannot find a Bundesliga club. `1. FC Köln` is the expected referent; the duplicate row `team:1-fc-kln` and the other senior Köln club are allowed, because which of them ranks first is a ranking question and this probe grades retrieval. Closing it needs an `unaccent` expression index over the column, with the sequencing caveat #1881 records: unaccented duplicates roughly double 579 MB of trigram index against a 1 GiB shared_buffers.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "team:1-fc-kln-bundesliga",
+          "allowed_entity_ids": [
+            "team:1-fc-kln",
+            "team:fc-viktoria-kln-1904"
+          ],
+          "expected_surfaces": [
+            "team"
+          ],
+          "expected_item_type": "team",
+          "query_class": "diacritic_folding"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1881",
+        "known_failure_status": "xfail"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "diacritic:ascii_query_accented_entity",
+        "contamination_lineage": [
+          "lineage:diacritic-v1:ascii_query_accented_entity"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "koln"
       }
     }
   ]

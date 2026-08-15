@@ -334,6 +334,88 @@ def test_p11_folding_is_confined_to_mc1_and_below():
     assert match_class("patriot", Evidence(name="Patriot")) == MC0_EXACT
 
 
+# --- P11b (LAT-P058 / #1881): the fold reaches ALL the way down -------------
+#
+# P11 says folding is confined to MC1 and below. It was silently ALSO confined
+# to MC1..MC4: `fragment_credit` compared `_exact_key`, so MC5 — the one tier
+# whose whole job is fuzzy matching — was the strictest surface in the scorer
+# about accents. Measured on the #1881 specimens, 2026-08-14.
+
+
+@pytest.mark.parametrize(
+    "ascii_q, accented_q, name",
+    [
+        ("koln", "köln", "FC Viktoria Köln 1904"),
+        ("cadiz", "cádiz", "Cádiz CF"),
+        ("espana", "españa", "Vuelta a Espana 2026: Winner"),
+        ("nurnberg", "nürnberg", "1. FC Nürnberg"),
+    ],
+)
+def test_p11b_fragment_credit_is_accent_blind(ascii_q, accented_q, name):
+    """#1881's two specimens plus two siblings, both spellings, either direction.
+
+    The user's keyboard layout is not a relevance signal. Before this, `koln`
+    against `FC Viktoria Köln 1904` earned 0.0000 while `köln` earned 1.0000 —
+    the same query, the same entity, ranked differently inside MC5 purely on
+    whether iOS autocorrect had supplied the umlaut.
+    """
+    ev = Evidence(name=name, kind="team")
+    assert smc.fragment_credit(ascii_q, ev) == smc.fragment_credit(accented_q, ev)
+    assert smc.fragment_credit(ascii_q, ev) > 0.0
+
+
+def test_p11b_folding_the_fragment_never_demotes():
+    """Monotonicity, the P5 argument applied to the fragment term.
+
+    Stripping accents from BOTH sides can only preserve or add containments and
+    shared trigrams, so no candidate that earned credit before earns less now.
+    Enumerated over the specimen table plus the accented cases.
+    """
+    for ev in SPECIMENS.values():
+        assert smc.fragment_credit(QUERY, ev) >= 0.0
+    # An unaccented pair is unaffected — the fold is a no-op on ASCII.
+    plain = Evidence(name="Souper Bowle", kind="team")
+    assert smc.fragment_credit(QUERY, plain) == pytest.approx(
+        smc.trigram_similarity("super bowl", "souper bowle")
+    )
+
+
+def test_p11b_mc0_is_still_unfolded_after_the_fragment_fold():
+    """The line the fold must not cross (ruling 041, and P3 above).
+
+    `São Paulo` and `Sao Paulo` meet at MC1. They must NOT meet at MC0, or the
+    exactly-equal-unfolded tier stops meaning anything.
+    """
+    ev = Evidence(name="São Paulo", kind="team")
+    assert match_class("sao paulo", ev) == MC1_ALL_TOKENS
+    assert match_class("são paulo", ev) == MC0_EXACT
+
+
+def test_p11b_the_scorer_was_never_the_1881_defect():
+    """The premise check, kept as a test so it cannot quietly stop being true.
+
+    #1881 reads as a ranking bug and is not one. `tokens()` has folded accents
+    since ruling 041, so both spellings of both specimens already reach MC1 —
+    the BEST non-exact class — against the entity the issue says is missing.
+
+    The defect is upstream, in retrieval: on production v3820, `vuelta a españa`
+    returns ZERO suggestions and `vuelta a espana` returns one. A scorer cannot
+    rank a candidate the SQL never handed it. Closing #1881 therefore requires
+    an `unaccent` expression index (see the issue's own sequencing warning), not
+    a change to this module.
+    """
+    assert smc.tokens("köln") == smc.tokens("koln") == ("koln",)
+    assert smc.tokens("vuelta a españa") == smc.tokens("vuelta a espana")
+
+    vuelta = Evidence(name="Vuelta a Espana 2026: Winner", kind="market")
+    for q in ("vuelta a espana", "vuelta a españa"):
+        assert match_class(q, vuelta) == MC1_ALL_TOKENS
+
+    koln = Evidence(name="FC Viktoria Köln 1904", kind="team")
+    for q in ("koln", "köln"):
+        assert match_class(q, koln) == MC1_ALL_TOKENS
+
+
 def test_p12_rank_drops_derived_evidence_and_nothing_else():
     """The scorer REORDERS; it does not filter.
 
