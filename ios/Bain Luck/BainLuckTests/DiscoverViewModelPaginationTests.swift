@@ -380,4 +380,246 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         XCTAssertEqual(offsets.count, 1, "concurrent loadMore must not double-fetch")
         XCTAssertEqual(vm.items.count, 13)
     }
+
+    // MARK: - #1773: the empty-envelope filter must cover EVERY page, not just page 1
+
+    // Bug report #144 (2026-08-11, Alex): "None of these cards show probabilities."
+    // The attached screenshot is six consecutive `concept` cards — two F1 Grand
+    // Prix, four UFC fight cards — each rendering a title and a market count and
+    // nothing else. A concept card is probability-free by construction
+    // (`DiscoverConceptCard.swift`: "Concept cards are hubs, not single markets");
+    // its backend payload carries `entry_count`/`fight_count` and no outcomes at
+    // all (`routes/feed.py` `_score_event_concepts`).
+    //
+    // L2-215 Item 1 / #1486 added `renderable` precisely to fail these closed, and
+    // wired it into BOTH initial-load paths — the cache seed and the network
+    // publish. It was never wired into `loadMoreIfNeeded`, whose only filter was
+    // the dedup `loadedIds` check. So the first page was filtered and every page
+    // after it was not, and a reader who scrolled — as #144 did, all the way to
+    // the bottom — fell out of the filtered region into the unfiltered one.
+    //
+    // The suppression METRIC had the same blind spot (`reportSuppressedEnvelopes`
+    // fired only on the initial network publish), which is why nine months of
+    // telemetry never showed it.
+
+    /// A live/upcoming concept: the exact #144 card shape. Probability-free, not
+    /// settled, so `suppressionReason` == `empty_concept`.
+    private static func liveConceptJSON(key: String, domain: String = "ufc") -> String {
+        """
+        {
+          "type": "concept", "score": 95, "reason": "4 fights on the card",
+          "data": {
+            "key": "\(key)", "name": "\(key)",
+            "domain": "\(domain)", "status": "scheduled",
+            "fight_count": 4, "entry_count": 0, "marquee_whathit": false
+          }
+        }
+        """
+    }
+
+    /// A settled concept — renderable, because it can lead with a real result.
+    private static func settledConceptJSON(key: String) -> String {
+        """
+        {
+          "type": "concept", "score": 95,
+          "data": {
+            "key": "\(key)", "name": "\(key)",
+            "domain": "ufc", "status": "settled", "marquee_whathit": true,
+            "winner": "A Fighter"
+          }
+        }
+        """
+    }
+
+    /// A futures envelope with zero outcomes and no settled state → `empty_futures`.
+    private static func emptyFuturesJSON(id: Int) -> String {
+        """
+        {
+          "type": "futures", "score": 80,
+          "data": { "id": \(id), "name": "Envelope \(id)?", "status": "open",
+                    "top_outcomes": [], "outcome_count": 0 }
+        }
+        """
+    }
+
+    /// A tournament with no golfers and no settled result → `empty_tournament`.
+    private static func emptyTournamentJSON(key: String) -> String {
+        """
+        {
+          "type": "tournament", "score": 80,
+          "data": { "key": "\(key)", "name": "\(key)", "golfers": [],
+                    "marquee_whathit": false }
+        }
+        """
+    }
+
+    private static func pageOfRawItems(
+        _ raw: [String], offset: Int, hasMore: Bool, limit: Int? = nil
+    ) throws -> FeedResponse {
+        let json = """
+        {"items":[\(raw.joined(separator: ","))],"total":9999,\
+        "limit":\(limit ?? raw.count),"offset":\(offset),"has_more":\(hasMore)}
+        """
+        return try decoder().decode(FeedResponse.self, from: Data(json.utf8))
+    }
+
+    @MainActor
+    func testPaginationDropsLiveConceptEnvelopes() async throws {
+        // The #144 page: one real market buried in six probability-free concepts.
+        let (vm, _) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [
+                    Self.liveConceptJSON(key: "ufc:wells-vs-uulu"),
+                    Self.liveConceptJSON(key: "ufc:van-vs-pantoja"),
+                    Self.liveConceptJSON(key: "f1:italian-gp", domain: "f1"),
+                    Self.liveConceptJSON(key: "ufc:silva-vs-rodriguez"),
+                    Self.liveConceptJSON(key: "ufc:ruffy-vs-tsarukyan"),
+                    Self.liveConceptJSON(key: "f1:washington-gp", domain: "f1"),
+                    Self.futuresJSON(id: 500),
+                ],
+                offset: 12, hasMore: true)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(vm.items.count, 13, "only the one real market may be appended")
+        let conceptCount = vm.items.filter { $0.concept != nil }.count
+        XCTAssertEqual(conceptCount, 0, "no live concept envelope may survive pagination")
+        XCTAssertNil(vm.error)
+    }
+
+    @MainActor
+    func testPaginationKeepsSettledConceptCards() async throws {
+        // The filter is fail-CLOSED, not concept-hostile: a settled concept leads
+        // with a real result and must still arrive. Guards the other direction so
+        // this fix cannot be "passed" by dropping concepts wholesale (gotcha #43).
+        let (vm, _) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [
+                    Self.liveConceptJSON(key: "ufc:live-card"),
+                    Self.settledConceptJSON(key: "ufc:settled-card"),
+                ],
+                offset: 12, hasMore: true)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(vm.items.count, 13)
+        let concepts = vm.items.compactMap { $0.concept }
+        XCTAssertEqual(concepts.count, 1, "exactly the settled concept survives")
+        XCTAssertEqual(concepts.first?.marqueeWhathit, true)
+    }
+
+    @MainActor
+    func testPaginationDropsEmptyFuturesAndTournamentEnvelopes() async throws {
+        // The hole leaked the whole envelope matrix, not just concepts.
+        let (vm, _) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [
+                    Self.emptyFuturesJSON(id: 901),
+                    Self.emptyTournamentJSON(key: "golf:empty-open"),
+                    Self.futuresJSON(id: 500),
+                ],
+                offset: 12, hasMore: true)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(vm.items.count, 13, "both envelopes dropped, the real market kept")
+        XCTAssertTrue(
+            vm.items.allSatisfy { DiscoverViewModel.isRenderable($0) },
+            "every card in the feed must pass the same predicate the first page uses")
+    }
+
+    @MainActor
+    func testAllEnvelopePageDoesNotEndTheFeed() async throws {
+        // A page that is ENTIRELY envelopes must not read as exhaustion. Only the
+        // server's own `has_more` may close the feed (the L2-238 rule), so the scan
+        // continues to the next page and finds the real content behind it.
+        let (vm, fake) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [
+                    Self.liveConceptJSON(key: "ufc:a"),
+                    Self.liveConceptJSON(key: "ufc:b"),
+                ],
+                offset: 12, hasMore: true, limit: 200)),
+            .ok(try Self.response(ids: [500], offset: 212, hasMore: false)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(vm.items.count, 13, "the real market behind the envelope page arrives")
+        XCTAssertFalse(vm.hasMore, "the server's own has_more=false ends the feed")
+        XCTAssertNil(vm.error, "an all-envelope page is not an error")
+        XCTAssertEqual(
+            fake.requestedOffsets, [12, 212],
+            "offset advances by the SERVER page width (200), never by retained count")
+    }
+
+    @MainActor
+    func testEnvelopeFilterDoesNotDisturbOffsetAdvancement() async throws {
+        // The filter runs AFTER `pageBoundary`, so dropping items must not shorten
+        // the stride. A 200-slot page whose decoded content is all envelopes still
+        // advances a full 200 (C29 P1 — never advance by decoded/retained count).
+        let (vm, fake) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [Self.liveConceptJSON(key: "ufc:only")],
+                offset: 12, hasMore: true, limit: 200)),
+            .ok(try Self.response(ids: [777], offset: 212, hasMore: false)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(fake.requestedOffsets, [12, 212])
+        XCTAssertEqual(vm.items.count, 13)
+    }
+
+    @MainActor
+    func testDuplicateEnvelopeDoesNotBurnTheScanBudget() async throws {
+        // An envelope must not be counted as "fresh" and then filtered by the view,
+        // which would let a repeating envelope page masquerade as forward progress.
+        let (vm, _) = try await loadedVM([
+            .ok(try Self.pageOfRawItems(
+                [Self.liveConceptJSON(key: "ufc:repeat")],
+                offset: 12, hasMore: true, limit: 200)),
+            .ok(try Self.pageOfRawItems(
+                [Self.liveConceptJSON(key: "ufc:repeat")],
+                offset: 212, hasMore: false, limit: 200)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(vm.items.count, 12, "no envelope was ever appended")
+        XCTAssertFalse(vm.hasMore, "honest exhaustion, not a spin")
+        XCTAssertNil(vm.error)
+    }
+
+    /// Pins the OLD behaviour against a literal reference copy of the shipped
+    /// pre-fix line, so the defect can never be reintroduced as "just a dedup".
+    /// House standard for this class of bug (the `DiscoverSwipeState` technique
+    /// from UX-P081, and `DiscoverInterleaveTests` before it): assert what the
+    /// broken code DID, next to what the fixed code does.
+    @MainActor
+    func testLegacyPaginationAdmittedEveryEnvelope() async throws {
+        let page = try Self.pageOfRawItems(
+            [
+                Self.liveConceptJSON(key: "ufc:a"),
+                Self.liveConceptJSON(key: "f1:b", domain: "f1"),
+                Self.emptyFuturesJSON(id: 902),
+                Self.futuresJSON(id: 500),
+            ],
+            offset: 12, hasMore: true)
+
+        // VERBATIM the shipped pre-fix line: dedup against loaded ids, and nothing
+        // else. `renderable` was never consulted on this path.
+        let alreadyLoaded = Set<String>()
+        let legacyFresh = page.items.filter { item in
+            !alreadyLoaded.contains(item.id)
+        }
+        XCTAssertEqual(
+            legacyFresh.count, 4,
+            "OLD behaviour: all four items admitted, three of them empty envelopes")
+        XCTAssertEqual(
+            legacyFresh.filter { DiscoverViewModel.isRenderable($0) }.count, 1,
+            "…and only ONE of those four could actually render a probability")
+
+        // NEW behaviour, through the real view model on the same page.
+        let (vm, _) = try await loadedVM([.ok(page)])
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(vm.items.count, 13, "NEW behaviour: exactly the one renderable card")
+    }
 }

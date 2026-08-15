@@ -485,9 +485,15 @@ def test_ruling_numbers_are_unique() -> None:
 
 #: Measured on `origin/master` @ `cabc791a`: 64 ruling files, 64 index lines,
 #: plus ruling 068 banked in the same commit as this floor. Gaps are expected
-#: and fine (057-059 reserved-not-minted, 067 held by an in-flight lane) — the
-#: floor counts what is BANKED, never the highest number claimed.
-MINIMUM_BANKED_RULINGS = 65
+#: and fine (057-059 reserved-not-minted) — the floor counts what is BANKED,
+#: never the highest number claimed.
+#:
+#: Raised 65 -> 66 by INT-071 when `program/ux-69` landed ruling **067** in the
+#: same cycle as q357's 068. 067 was the "held by an in-flight lane" gap this
+#: comment used to name; the lane landed, so the gap closed. The ratchet asserts
+#: EQUALITY (`test_the_floor_tracks_reality_and_is_raised_when_a_ruling_is_banked`),
+#: so this is not optional bookkeeping — merging 067 without this line is red.
+MINIMUM_BANKED_RULINGS = 66
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
