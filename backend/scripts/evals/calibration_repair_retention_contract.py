@@ -80,11 +80,46 @@ def _retention(row: dict[str, Any]) -> dict[str, Any]:
     return {"verdict": verdict, "recovered_ids": recovered if not reasons else [], "reason_codes": sorted(set(reasons))}
 
 
+def _invalidation(row: dict[str, Any]) -> dict[str, Any]:
+    """When a calibration invalidation counts as DISCHARGED (CAL-P062).
+
+    Re-derived here rather than imported, like every other rule in this file:
+    the corpus is only an oracle if it is a second opinion. The shipping rule
+    lives in ``app/utils/calibration_invalidation.invalidation_discharged`` and
+    the test suite asserts the two agree case by case — a disagreement is the
+    finding, and neither side is allowed to be the other's definition.
+
+    The rule the certification asked for: ``nothing_written`` is a discharge
+    ONLY for a plan proven never to have written. An open obligation carried in
+    from an earlier call, rows written by this call, or unresolved concurrent
+    drift each defeat that proof.
+    """
+    r = row["invalidation"]
+    status = r.get("status")
+    reasons: list[str] = []
+
+    if status == "invalidated":
+        return {"discharged": True, "reason_codes": []}
+    if status != "nothing_written":
+        return {"discharged": False, "reason_codes": ["INVALIDATION_NOT_EXECUTED"]}
+
+    if r.get("prior_obligation_open"):
+        reasons.append("PRIOR_OBLIGATION_UNDISCHARGED")
+    if r.get("wrote_rows"):
+        reasons.append("NOTHING_WRITTEN_CONTRADICTS_WRITES")
+    if int(r.get("drift_count") or 0) > 0:
+        reasons.append("DRIFT_LEAVES_NEVER_WROTE_UNPROVEN")
+
+    return {"discharged": not reasons, "reason_codes": sorted(set(reasons))}
+
+
 def evaluate_case(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("kind") == "repair":
         return _repair(row)
     if row.get("kind") == "retention":
         return _retention(row)
+    if row.get("kind") == "invalidation":
+        return _invalidation(row)
     raise ValueError("CASE_KIND_INVALID")
 
 

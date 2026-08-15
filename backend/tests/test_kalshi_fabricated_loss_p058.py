@@ -55,6 +55,24 @@ from app.utils.repair_apply_plan import (
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _obligation_ledger(monkeypatch):
+    """CAL-P062 plumbing, not a weakening of anything asserted below.
+
+    C-CERT-1852-R2's second specimen made the apply path read a durable
+    invalidation-obligation ledger BEFORE it writes, and an unreadable ledger
+    refuses (that refusal is the fix). These cases predate the ledger and run
+    without a database, where the real read classifies as ``unavailable``, so
+    each gets an empty in-memory store. The ledger's own behaviour — open,
+    carried, discharged, unreadable — is proved in
+    ``test_kalshi_fabricated_loss_p062.py``, against a store that survives
+    across calls.
+    """
+    from tests.test_kalshi_fabricated_loss_p062 import _DurableStore
+
+    _DurableStore().install(monkeypatch)
+
+
 def _venue_specimens() -> dict:
     return json.loads(
         (FIXTURES / "kalshi_fabricated_loss_specimens_p056.json").read_text()

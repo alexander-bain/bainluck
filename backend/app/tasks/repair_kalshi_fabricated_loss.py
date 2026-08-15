@@ -42,6 +42,26 @@ the attended pass is driven. Four of them are answered in this file:
    :func:`invalidate_calibration_generation`. A run that wrote rows and could not
    invalidate returns ``success: false``.
 
+CAL-P062 — WHAT C-CERT-1852-**R2** CHANGED, and it is finding 4 again, twice. The
+re-certification passed 1, 2, 3 and 5 and blocked on two paths by which the
+invalidation could still report green having done nothing:
+
+4a. **The main checkpoint is AFTER-READ, not acknowledged.** Only the staged
+    cursor was re-read; the checkpoint's own publish status was taken as proof.
+    A no-op publisher scored ``invalidated``, and ``superseded`` — the case where
+    a newer checkpoint's banked phases are provably still sitting there — counted
+    as success. The record in the store is now read back and judged by
+    ``app/utils/calibration_invalidation.main_checkpoint_is_invalidation``.
+4b. **The invalidation obligation OUTLIVES the response.** The apply commits its
+    rows before invalidating, so a failed invalidation is a debt; that debt used
+    to vanish with the HTTP response. A retry of the same plan then drifted on
+    its own committed row, called the invalidation with an empty id set, got
+    ``nothing_written`` and returned ``success: true``. The debt is now persisted
+    at :data:`OBLIGATION_IDENTITY` BEFORE the invalidation is attempted, a retry
+    retries that exact obligation's market ids, and ``nothing_written`` is a
+    discharge only for a plan proven never to have written — never for one whose
+    legs drifted, and never for one carrying an open debt.
+
 The fifth finding is answered in ``app/utils/kalshi_fabricated_loss.py``: the
 venue-to-stored-leg join now lives in :func:`~app.utils.kalshi_fabricated_loss.plan_market_legs`,
 which is the path production takes AND the path the specimen replay enters
@@ -83,6 +103,17 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.utils.calibration_invalidation import (
+    INVALIDATION_OBLIGATION_SCHEMA,
+    discharge_obligation,
+    invalidation_discharged,
+    main_checkpoint_is_invalidation,
+    new_obligation,
+    obligation_is_open,
+    obligation_leg_ids,
+    obligation_market_ids,
+    obligation_plan_hash,
+)
 from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
     RETENTION_BAND_SQL,
@@ -494,6 +525,100 @@ async def _load_plan():
 
 
 # ---------------------------------------------------------------------------
+# The invalidation OBLIGATION ledger (C-CERT-1852-R2 specimen two)
+#
+# One durable slot, deliberately separate from the plan artifact. The plan says
+# what SHOULD be written; this says what HAS been written and not yet paid for.
+# They have different lifetimes: a plan is superseded by the next dry-run, while
+# a debt survives every later call until it is discharged.
+# ---------------------------------------------------------------------------
+
+OBLIGATION_IDENTITY = "calibration:repair:kalshi_fabricated_loss:invalidation_obligation"
+
+#: An obligation must never age out of visibility. A debt that becomes
+#: unreadable because it got old is the same false-green one door down, so the
+#: bound is a year and an expiry reads as UNREADABLE (which refuses) rather than
+#: as absence (which would let the next apply proceed).
+_OBLIGATION_MAX_AGE_S = 365 * 86400
+
+
+async def _load_obligation() -> tuple[dict[str, Any] | None, str]:
+    """``(record, note)``. ``note`` is ``missing`` (no debt) or ``ok``, and any
+    other value means UNKNOWN — which the caller must treat as a refusal, never
+    as "no obligation"."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            OBLIGATION_IDENTITY,
+            expected_version=INVALIDATION_OBLIGATION_SCHEMA,
+            max_age_s=_OBLIGATION_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"obligation read raised: {type(exc).__name__}"
+    if read.status == "missing":
+        return None, "missing"
+    if not read.ok or read.envelope is None:
+        return None, f"obligation unreadable: {read.status}"
+    payload = read.envelope.payload
+    if not isinstance(payload, dict):
+        return None, "obligation malformed"
+    return payload, "ok"
+
+
+async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
+    """Persist the debt (or its discharge). A failure is REPORTED, never assumed."""
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=OBLIGATION_IDENTITY,
+                schema_version=INVALIDATION_OBLIGATION_SCHEMA,
+                payload=record,
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"obligation persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"obligation persist rejected: {result.get('status')}"
+
+
+async def _main_checkpoint_after_read() -> tuple[bool, str, str]:
+    """Read ``CHECKPOINT_IDENTITY`` back and judge the record that is THERE.
+
+    ``(is_invalidation, why, read_status)``. An absent checkpoint counts: there
+    is nothing banked for a resume to read, which is the fact the invalidation
+    exists to establish. Every other non-``ok`` read is UNKNOWN and fails.
+    """
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.tasks.calibration_main_build import CHECKPOINT_IDENTITY
+    from app.utils.calibration_phase_ledger import MAIN_CHECKPOINT_SCHEMA
+
+    try:
+        read = await read_snapshot_standalone(
+            CHECKPOINT_IDENTITY,
+            expected_version=MAIN_CHECKPOINT_SCHEMA,
+            max_age_s=14 * 86400,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"MAIN_CHECKPOINT_READ_RAISED:{type(exc).__name__}", "raised"
+    if read.status == "missing":
+        return (
+            True,
+            "MAIN_CHECKPOINT_ABSENT — no record, so nothing banked to resume",
+            read.status,
+        )
+    if not read.ok or read.envelope is None:
+        return False, f"MAIN_CHECKPOINT_UNREADABLE:{read.status}", read.status
+    ok, why = main_checkpoint_is_invalidation(read.envelope.payload)
+    return ok, why, read.status
+
+
+# ---------------------------------------------------------------------------
 # Executable calibration invalidation (C-CERT-1852 finding 4)
 # ---------------------------------------------------------------------------
 
@@ -543,6 +668,16 @@ async def invalidate_calibration_generation(session, market_ids) -> dict[str, An
     Returns a verdict dict. ``status`` is ``invalidated`` ONLY when the re-read
     proves the cursor is empty — the after-read discipline, because a mutation
     that fails to apply reports green.
+
+    CAL-P062 / C-CERT-1852-R2 specimen one: the STAGED cursor was re-read and the
+    MAIN CHECKPOINT was not. Its publish returned ``ok``/``superseded`` and that
+    acknowledgement was accepted as proof, so a no-op publisher scored
+    ``invalidated`` while the read-identity ledger showed the checkpoint was
+    never inspected — and ``superseded``, which is precisely the case where a
+    newer checkpoint's banked phases are demonstrably still there, counted as
+    success. Both halves are now re-read, and the checkpoint half is judged by
+    :func:`~app.utils.calibration_invalidation.main_checkpoint_is_invalidation`
+    against the record that is in the store afterwards.
     """
     from app.tasks.calibration_main_build import (
         CHECKPOINT_IDENTITY,
@@ -642,10 +777,23 @@ async def invalidate_calibration_generation(session, market_ids) -> dict[str, An
                 source="repair:kalshi-fabricated-loss",
             )
         )
-        checkpoint_ok = res.get("status") in ("ok", "superseded")
+        verdict["main_checkpoint_publish_status"] = res.get("status")
     except Exception as exc:  # noqa: BLE001
-        checkpoint_ok = False
+        verdict["main_checkpoint_publish_status"] = "raised"
         verdict["checkpoint_error"] = f"{type(exc).__name__}"
+
+    # The publish's own answer is a RESPONSE SHAPE, not a fact about the store.
+    # This is the proof, and it is unconditional: it runs even when the publish
+    # raised, because the record that matters is the one sitting there now.
+    checkpoint_ok, checkpoint_why, checkpoint_read_status = (
+        await _main_checkpoint_after_read()
+    )
+    verdict["main_checkpoint_after_read"] = {
+        "read_identity": CHECKPOINT_IDENTITY,
+        "read_status": checkpoint_read_status,
+        "is_invalidation": checkpoint_ok,
+        "why": checkpoint_why,
+    }
     verdict["main_checkpoint_write_ok"] = checkpoint_ok
 
     after = await _banked()
@@ -660,9 +808,15 @@ async def invalidate_calibration_generation(session, market_ids) -> dict[str, An
         verdict["status"] = "failed"
         verdict["note"] = (
             "The write did not prove itself on re-read. The rows ARE repaired; "
-            "the published curve may still resume banked pre-repair units. Do "
-            "not run another page until this is cleared."
+            "the published curve may still resume banked pre-repair units. The "
+            "obligation is PERSISTED — re-apply the same plan_hash until this "
+            "reads invalidated. Do not run another page until it does."
         )
+        verdict["failed_half"] = {
+            "staged_cursor": bool(staged_ok),
+            "main_checkpoint": bool(checkpoint_ok),
+            "staged_after_read_empty": after == 0,
+        }
     return verdict
 
 
@@ -918,7 +1072,15 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
 
 
 async def _apply_reviewed_plan(session, plan_hash, started):
-    """Execute the reviewed plan, and NOTHING else. Compare-and-set throughout."""
+    """Execute the reviewed plan, and NOTHING else. Compare-and-set throughout.
+
+    CAL-P062 adds one thing to the sequence, before any row is touched: the
+    OBLIGATION LEDGER is read. The apply commits its rows and then invalidates,
+    so a failure between those two steps leaves a debt — and C-CERT-1852-R2
+    showed that the debt used to die with the HTTP response, after which a retry
+    of the same plan drifted on its own committed row, invalidated nothing, and
+    reported ``success: true``. The ledger is what a retry retries.
+    """
     plan, reason = await _load_plan()
     ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
     if not ok:
@@ -937,6 +1099,49 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "success": False,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
+
+    # --- The outstanding debt, read BEFORE the first write -------------------
+    prior, prior_note = await _load_obligation()
+    if prior_note not in ("ok", "missing"):
+        # UNKNOWN is not "no debt". Writing more rows while unable to read what
+        # the last call owes is how the retry specimen compounds.
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": ["OBLIGATION_LEDGER_UNREADABLE"],
+            "obligation_note": prior_note,
+            "reason": (
+                "The invalidation obligation ledger could not be read, so this "
+                "call cannot tell an unpaid invalidation from none. Nothing was "
+                "written."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    prior_open = prior is not None and obligation_is_open(prior)
+    prior_hash = obligation_plan_hash(prior) if prior_open else None
+    if prior_open and prior_hash != plan.plan_hash:
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": ["OUTSTANDING_INVALIDATION"],
+            "outstanding_obligation": {
+                "plan_hash": prior_hash,
+                "market_ids": obligation_market_ids(prior),
+                "leg_ids": obligation_leg_ids(prior),
+            },
+            "reason": (
+                "A previous apply committed rows whose calibration invalidation "
+                "never discharged. Re-apply THAT plan_hash until it does; a new "
+                "page would compound an unpaid debt against the published curve."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    prior_ids = obligation_market_ids(prior) if prior_open else []
+    prior_legs = obligation_leg_ids(prior) if prior_open else []
 
     index = approved_leg_index(plan)
     written: list[int] = []
@@ -1047,9 +1252,50 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "scope": "the markets in THIS plan only",
         }
 
-    invalidation = await invalidate_calibration_generation(
-        session, {index[i].market_id for i in written}
+    # --- The debt, recorded BEFORE it is paid --------------------------------
+    # The union, not this call's `written` set. On a retry the rows are already
+    # committed, so `written` is empty and the ledger is the ONLY surviving
+    # record of what the curve is owed. Persisting first means a crash between
+    # the write and the invalidation leaves the debt visible rather than gone.
+    owed_market_ids = sorted({index[i].market_id for i in written} | set(prior_ids))
+    owed_leg_ids = sorted(set(written) | set(prior_legs))
+    receipt = new_obligation(
+        plan_hash=plan.plan_hash,
+        market_ids=owed_market_ids,
+        leg_ids=owed_leg_ids,
+        owner="repair:kalshi-fabricated-loss",
     )
+    obligation_persisted, obligation_note = (
+        await _save_obligation(receipt) if owed_market_ids else (True, "nothing owed")
+    )
+
+    invalidation = await invalidate_calibration_generation(session, set(owed_market_ids))
+
+    discharged, discharge_note = invalidation_discharged(
+        status=invalidation["status"],
+        wrote_rows=bool(written),
+        drift_count=len(drift),
+        prior_obligation_open=prior_open,
+    )
+
+    obligation_cleared = True
+    clear_note = "nothing owed"
+    if owed_market_ids:
+        if discharged:
+            obligation_cleared, clear_note = await _save_obligation(
+                discharge_obligation(
+                    receipt,
+                    proof={
+                        "staged_after_read": invalidation.get("banked_units_after"),
+                        "main_checkpoint_after_read": invalidation.get(
+                            "main_checkpoint_after_read"
+                        ),
+                    },
+                )
+            )
+        else:
+            obligation_cleared = False
+            clear_note = "left OPEN — the invalidation has not discharged"
 
     # Every planned leg must have been ATTEMPTED — that is the identity the
     # binding buys, and it is a different claim from "every planned leg was
@@ -1067,7 +1313,7 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         next_cursor=None,
     )
 
-    invalidation_ok = invalidation["status"] in ("invalidated", "nothing_written")
+    invalidation_ok = discharged and obligation_persisted and obligation_cleared
     return {
         "apply": True,
         "measured": True,
@@ -1083,6 +1329,24 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         # C-CERT-1852 finding 4: executed, counted, and it GATES success.
         "calibration_invalidation": invalidation,
         "invalidated_units": invalidation.get("banked_units_discarded"),
+        # C-CERT-1852-R2 specimen two: the debt, and whether THIS call paid it.
+        "invalidation_obligation": {
+            "carried_in": {
+                "open": prior_open,
+                "plan_hash": prior_hash,
+                "market_ids": prior_ids,
+                "ledger_read": prior_note,
+            },
+            "owed_market_ids": owed_market_ids,
+            "owed_leg_ids": owed_leg_ids,
+            "persisted_before_invalidating": obligation_persisted,
+            "persist_note": obligation_note,
+            "discharged": discharged,
+            "discharge_note": discharge_note,
+            "ledger_cleared": obligation_cleared,
+            "clear_note": clear_note,
+            "state": "discharged" if (obligation_cleared and discharged) else "open",
+        },
         # Ruling 050: the prediction travels WITH the write, in the direction
         # CAL-P057 measured — zero on the retraction arm, an ADDITION on restore.
         "declared_curve_movement": declared_curve_movement(
@@ -1101,8 +1365,13 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         ),
         "success_note": (
             "success is FALSE unless the calibration invalidation executed and "
-            "proved itself on re-read. Rows may be repaired while success is "
-            "false; that is the honest state, not a contradiction."
+            "proved itself on re-read of BOTH the staged cursor and the main "
+            "checkpoint, and unless the obligation this call carried is "
+            "recorded discharged. `nothing_written` is a discharge only for a "
+            "plan proven never to have written — never for one whose legs "
+            "drifted, and never for one carrying an open debt. Rows may be "
+            "repaired while success is false; that is the honest state, not a "
+            "contradiction."
         ),
         "elapsed_s": round(time.monotonic() - started, 1),
     }
