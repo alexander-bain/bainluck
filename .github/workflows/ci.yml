@@ -202,6 +202,26 @@ jobs:
             exit 1
           fi
 
+      - name: Kalshi cliff-drain bind contract (real Postgres)
+        # #1884. The drain shipped with 39 green unit tests and threw
+        # asyncpg.DataError on the FIRST statement of every run: it bound its
+        # cold-start watermark as an ISO string into a timestamptz comparison.
+        # asyncpg refuses that; psycopg2 would have cast it silently. No unit
+        # test could see the defect, because the session double discarded
+        # `params` and the one test that read the bind compared it against the
+        # same constant the production line binds.
+        #
+        # Only a real driver enforces a bind type, so this gate lives here.
+        # Same skip-detection as the two gates above, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_cliff_bind_contract.py \
+            -v -s -rs 2>&1 | tee /tmp/cliffbind.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cliffbind.txt; then
+            echo "::error::cliff-drain bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

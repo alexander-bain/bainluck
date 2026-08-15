@@ -463,6 +463,32 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxwtachallengermatch": "tennis_wta",         # WTA Challenger match
     "kxwtadoubles": "tennis_wta",                # WTA doubles match
     "kxwtagame": "tennis_wta",                   # WTA match winner (by event)
+    # ITF (International Tennis Federation) — #1109. ATP and WTA were mapped
+    # here from the start; ITF never was, and the omission was not neutral.
+    #
+    # An ITF market name is a bare matchup ("Velcz vs Kimhi"), so with no ticker
+    # rule to short-circuit step 1, `_categorize_kalshi_market` fell through to
+    # the name rules and landed on `_seasonal_sport_for_college_matchup()` —
+    # which guesses a sport FROM THE CURRENT MONTH: basketball Feb–Apr, baseball
+    # May–Jul, football Aug–Oct. Measured 2026-08-15: of 25,073 ITF markets,
+    # 24,265 (96.8%) carry a wrong sport, and the split is a calendar fingerprint
+    # rather than anything about tennis — baseball 13,335, football 7,128,
+    # basketball 3,431, with only 808 correctly tagged. The poll re-stamps
+    # `llm_sport_category` on every upsert, so rows also MIGRATE between wrong
+    # sports as the months turn.
+    #
+    # ITF is its own tour, so it gets its own keys rather than being folded into
+    # ATP/WTA — claiming an ITF women's qualifier is a WTA match would trade a
+    # visible defect for an invisible one. The keys are deliberately absent from
+    # SPORT_LEAGUE_MAP / STATPAL_SPORT_MAPPING / SPORT_HIERARCHY: we have no ITF
+    # schedule, roster or ESPN integration, and every consumer of those maps is
+    # membership-checked, so absence reads as "no integration" — which is true.
+    # The prefix `tennis` is all step 1 needs: it resolves through
+    # SPORT_PREFIX_TO_LLM_CATEGORY to the category `tennis`.
+    "kxitfmatch": "tennis_itf",                  # ITF men's match
+    "kxitfdoubles": "tennis_itf",                # ITF men's doubles
+    "kxitfwmatch": "tennis_itf_w",               # ITF women's match
+    "kxitfwdoubles": "tennis_itf_w",             # ITF women's doubles
     # Combat sports
     "kxufcfight": "mma_mixed_martial_arts",
     "kxufcdistance": "mma_mixed_martial_arts",   # To go the distance
@@ -1340,7 +1366,7 @@ LLM_CATEGORY_TO_SPORT_KEYS: dict[str, list[str]] = {
         "soccer_france_ligue_one", "soccer_uefa_champs_league",
     ],
     "golf": ["golf_pga"],
-    "tennis": ["tennis_atp", "tennis_wta"],
+    "tennis": ["tennis_atp", "tennis_wta", "tennis_itf", "tennis_itf_w"],
     "mma": ["mma_mixed_martial_arts"],
     "boxing": ["boxing_boxing"],
     "motorsports": ["motorsport_f1", "motorsport_nascar"],

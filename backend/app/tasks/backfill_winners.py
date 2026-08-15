@@ -4785,7 +4785,25 @@ async def _backfill_polymarket_group_ids_from_api():
     return stats
 
 
-async def _backfill_polymarket_winners_from_api(limit: int = 500):
+def _effective_stop_at(
+    t0: float, max_runtime: float, deadline: float | None
+) -> float:
+    """The earlier of a self-relative budget and an absolute caller deadline.
+
+    A module-level function rather than two lines inside the closure so the
+    arithmetic that caused five consecutive SoftTimeLimitExceeded can be tested
+    without standing up Redis, a DB session and the Gamma client. The defect was
+    never in the loops — it was here, in which zero the budget is measured from.
+    """
+    stop_at = t0 + max_runtime
+    if deadline is not None:
+        stop_at = min(stop_at, deadline)
+    return stop_at
+
+
+async def _backfill_polymarket_winners_from_api(
+    limit: int = 500, deadline: float | None = None
+):
     """Phase 3: Fetch settlement prices from Polymarket Gamma API.
 
     For stuck Polymarket markets where current_probability didn't reach
@@ -4893,7 +4911,31 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     import time as _time
 
     _t0 = _time.monotonic()
+    # The STANDALONE budget, for a caller that passes no deadline. Note the
+    # comment it has always carried: it is sized against `resolve_winners`'
+    # 540s soft limit. That is a fact about ONE of its two callers.
     _MAX_RUNTIME = 420  # 7 min (resolve_winners has 9 min soft limit)
+
+    # #1884-adjacent, queue 357 — the actual cause of backfill_winners' five
+    # consecutive SoftTimeLimitExceeded.
+    #
+    # `backfill_winners` (soft_time_limit=840) calls this at roughly t=426s,
+    # after score_resolution + kalshi_api + kalshi_markets_api. A self-budget of
+    # 420s measured from ITS OWN _t0 then permits 426 + 420 = 846s > 840. The
+    # callee obeys its budget perfectly and the task still dies: a budget
+    # measured from the wrong zero is not a budget, it is a duration.
+    #
+    # The caller's pre-phase guard at the call site cannot save it either — that
+    # guard tests ENTRY (413.9s left > _BUDGET_MARGIN_S = 300, so it passes) and
+    # then has no further say for the next seven minutes. This is why #991
+    # raising the margin 240 -> 300 bought time rather than fixing it.
+    #
+    # So take the EARLIER of the two. The absolute deadline wins whenever the
+    # caller knows the wall; the self-budget still governs a standalone run.
+    _stop_at = _effective_stop_at(_t0, _MAX_RUNTIME, deadline)
+
+    def _out_of_time() -> bool:
+        return _time.monotonic() >= _stop_at
 
     # Dead-CID cache: skip condition_ids that returned a definitive 404 before.
     _dead_key = "bainluck:poly_dead_cids"
@@ -4959,7 +5001,8 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         stats["skipped_dead"] = len(_addressable) - len(alive_conditions)
 
         for batch_start in range(0, len(alive_conditions), 200):
-            if _time.monotonic() - _t0 > _MAX_RUNTIME:
+            if _out_of_time():
+                stats["deadline_hit"] = "phase_a"
                 break
             batch = alive_conditions[batch_start : batch_start + 200]
             results = await asyncio.gather(
@@ -5069,7 +5112,8 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         event_ids = list(by_event.keys())
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
-            if _time.monotonic() - _t0 > _MAX_RUNTIME:
+            if _out_of_time():
+                stats["deadline_hit"] = "phase_b"
                 logger.info(
                     "Polymarket API backfill: time limit, stopping after %d/%d events",
                     batch_start,
@@ -5080,6 +5124,15 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
             async with get_task_session() as session:
                 for event_id in batch:
+                    # The longest uninterrupted operation in the whole task:
+                    # 200 SERIAL Gamma round-trips with a retry/backoff on each.
+                    # A boundary-only check lets one batch run for minutes past
+                    # the wall — the budget-guard-inner-op gotcha, which is what
+                    # `_out_of_time()` at the batch edge alone would still have.
+                    # Checked per EVENT, so the overshoot is one HTTP call.
+                    if _out_of_time():
+                        stats["deadline_hit"] = "phase_b_inner"
+                        break
                     try:
                         event_data = await service.get_event_by_id(str(event_id))
                     except Exception as e:
@@ -5548,7 +5601,11 @@ async def _resolve_winners_only(limit: int = 2000):
         return _budget_exit("before_polymarket_api")
 
     # Polymarket API settlement (concurrent condition_id lookups)
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=5000)
+    # Queue 357: the deadline, not just the pre-phase guard above. `_over_budget()`
+    # tests entry and then cannot interrupt a seven-minute call.
+    poly_api_stats = await _backfill_polymarket_winners_from_api(
+        limit=5000, deadline=_start + _DEADLINE_S
+    )
     stats["polymarket_api"] = {
         "winners": poly_api_stats.get("winners_set", 0),
         "losers": poly_api_stats.get("losers_set", 0),
@@ -5914,7 +5971,14 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("polymarket_api")
     _start_phase("polymarket_api")
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
+    # Queue 357: the five consecutive SoftTimeLimitExceeded happened HERE, and
+    # the phase timer is how we know — the Redis blob's last write was
+    # `_start_phase("polymarket_api")` at cum 426.1s and `_end_phase` never ran,
+    # so the task spent its final 414s inside this one call. Same deadline form
+    # the candlestick drainer below has carried since #107.
+    poly_api_stats = await _backfill_polymarket_winners_from_api(
+        limit=10000, deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+    )
     _end_phase("polymarket_api")
 
     # #1152: Authoritative DataGolf leaderboard resolution MUST run BEFORE the
@@ -5932,6 +5996,21 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # pass sees SUM(is_winner) >= 1 and skips the market. (The Phase-0g tail
     # call below is kept — idempotent — to catch markets whose truncated
     # leaderboards get API-backfilled later in the same run.)
+    # Queue 357: this region — from here to `_end_phase("fix_categories")` —
+    # had NO phase timer and NO budget guard. It is not small: measured 314.9s
+    # on the last successful run, 40% of the pipeline, and it does not appear in
+    # `phase_times` at all, which is why the recorded phases summed to 473s
+    # against a 788s elapsed.
+    #
+    # The cost of the hole is not just an unaccounted number. Throughout those
+    # ~315s the Redis phase blob still reads `running_phase: None` (last written
+    # by `_end_phase("polymarket_api")`), so a death anywhere in here is
+    # INVISIBLE to the exact instrument #898 built to locate a death. Naming it
+    # is what makes the deadline fix above falsifiable: sum(phase_times) should
+    # now approximate pipeline_elapsed_s instead of trailing it by 40%.
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("prob_and_datagolf")
+    _start_phase("prob_and_datagolf")
     dg_early_stats = await _backfill_datagolf_winners()
 
     # Set is_winner from current_probability (all sources, fast). Only
@@ -6004,7 +6083,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         logger.warning("DataGolf category fix failed: %s", e)
 
-    _end_phase("fix_categories")
+    # Queue 357: `_end_phase("fix_categories")` used to sit here with NO
+    # matching `_start_phase` anywhere in the file. `_end_phase` is
+    # `if name in _phase_times:` — so it was a silent no-op, and `fix_categories`
+    # has never once appeared in a phase map. An unpaired end is worse than no
+    # timer at all: it reads, to anyone grepping, like this region was measured.
+    _end_phase("prob_and_datagolf")
 
     # Phase 0-link-props: Link sports prop markets to their parent game events.
     _start_phase("link_props")
