@@ -89,14 +89,26 @@ async def _seed_one_recoverable_outcome(session):
     settled = datetime.now(timezone.utc) - timedelta(
         days=PROVABLY_PURGED_AGE_DAYS - 5
     )
+    # Raw `text()` INSERTs deliberately — this gate exists to exercise the
+    # driver's own type coercion, and going through the ORM would let SQLAlchemy
+    # adapt values on the way in, which is exactly the layer whose absence is
+    # the defect.
+    #
+    # The cost of that choice: Python-side column defaults do NOT apply to a raw
+    # INSERT, so every NOT NULL column with only a `default=` must be supplied
+    # explicitly. `category` ('championship'), `mutually_exclusive` (True) and
+    # `status` ('open') on futures_markets, and `is_winner` (False) on
+    # futures_outcomes, are all in that class. CI found this on the first run.
     market_id = (
         await session.execute(
             text(
                 """
                 INSERT INTO futures_markets
-                    (name, source, status, resolution_date, external_id)
+                    (name, source, category, mutually_exclusive,
+                     status, resolution_date, external_id)
                 VALUES
-                    (:name, 'kalshi', 'resolved', :settled, :ext)
+                    (:name, 'kalshi', 'championship', TRUE,
+                     'resolved', :settled, :ext)
                 RETURNING id
                 """
             ),
@@ -112,8 +124,9 @@ async def _seed_one_recoverable_outcome(session):
         await session.execute(
             text(
                 """
-                INSERT INTO futures_outcomes (market_id, name, external_id)
-                VALUES (:mid, 'Yes', :ext)
+                INSERT INTO futures_outcomes
+                    (market_id, name, external_id, is_winner)
+                VALUES (:mid, 'Yes', :ext, FALSE)
                 RETURNING id
                 """
             ),
