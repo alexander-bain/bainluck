@@ -1,5 +1,70 @@
 # LAT-P058 — the golf identity index: a runbook addressed to the INTEGRATOR
 
+**Status:** ⚠️ **EXECUTED 2026-08-15 by INT-072's predecessor cycle (INT-071). 2 of 3 built. This document has been CORRECTED from that run — see the execution record immediately below before running anything here.**
+
+---
+
+## 0. EXECUTION RECORD — 2026-08-15, INT-071 (read this first)
+
+### 🔴 `SET lock_timeout = '5s'` was WRONG and it fails silently-expensively
+
+The first run of §3 exactly as written left **all three indexes INVALID** (`indisvalid=false, indisready=true`) and the dyno exited. The *sizes* are the diagnosis, and they are the reason this is not ambiguous:
+
+| index | size after the failed run | expected final size |
+|---|---|---|
+| `ix_fm_golf_identity_category` | **1088 kB** | ~1 MB ✔ full |
+| `ix_fm_source_created_at` | **6072 kB** | its true full size (see below) ✔ full |
+
+Both had reached their **full final size**. The builds *completed* and then died in `CONCURRENTLY`'s **second wait phase** — the one this document's own §4 warns "waits — twice — for every transaction that can see the table". Re-run byte-identically but with `lock_timeout = '60s'`, the same statement reached `indisvalid=true` in under a minute.
+
+`futures_markets` is swept by the prediction-market matcher every 15 minutes with 13–21 s scans. **5 s is not a plausible wait budget on this table**, and the failure mode is the worst-shaped one: an INVALID index is never *read* but IS *maintained on every write*, so a "failed" run leaves a permanent write tax behind and reports nothing.
+
+**Both invocations in §3 have been changed to `60s`.**
+
+### The size estimate for (3) was ~5× high
+
+Spec predicted ~25–35 MB for `ix_fm_source_created_at`. **Actual: 6,088 kB.** Anyone using the old figure to judge "is it still building?" will conclude a finished index is 20% done — which is exactly the wrong inference INT-071 drew for several minutes.
+
+### §3's invocation prints to stdout, which is UNREACHABLE from an agent session
+
+Gotcha #125(a): `heroku logs` dies on an EPERM rendezvous from the sandbox, so a `run:detached` one-off's stdout cannot be read at all. As written, **a failure here is invisible** — which is precisely how the first run's three INVALID indexes went unnoticed until the catalog was polled by hand.
+
+**Use the catalog as the progress channel.** This worked well and should be the documented method:
+
+```sql
+SELECT c.relname, i.indisvalid, i.indisready, pg_size_pretty(pg_relation_size(c.oid))
+  FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+ WHERE c.relname LIKE 'ix_fm_golf%' OR c.relname = 'ix_fm_source_created_at';
+```
+
+Read it as: `indisready=false` → phase 1 has not finished (**and note such an index is NOT maintained on writes, so it is inert**); `indisready=true, indisvalid=false` → built, in a wait phase, *or dead*; `indisvalid=true` → done. Distinguish "in a wait" from "dead" by whether a one-off dyno is still alive (`heroku ps`), never by the catalog alone — they are identical there.
+
+### Result of the corrected run
+
+| index | state | size |
+|---|---|---|
+| `ix_fm_source_created_at` | ✅ **VALID** | 6,088 kB |
+| `ix_fm_golf_identity_extid` | ✅ **VALID** | 16 kB |
+| `ix_fm_golf_identity_category` | ⚠️ **not built** — `indisready=false`, 0 bytes, inert | — |
+
+The three INVALID indexes from attempt 1 were dropped before any retry, so no write tax was left behind.
+
+**Measured payoff of (3), which needed neither the code half nor the flag** — `EXPLAIN (ANALYZE)` on production after the index:
+
+```
+Index Only Scan using ix_fm_source_created_at
+Actual Total Time  = 0.149 ms     Actual Loops = 1
+Shared Read Blocks = 0            Shared Hit Blocks = 5
+```
+
+against 2,746 ms mean and 186.6 MB physically read per call before. `Actual` times with loops stated, so this is runtime, not a cost estimate.
+
+### ⛔ The flag stays OFF, and branch B is the open question
+
+`GOLF_IDENTITY_SPLIT_SCAN` is unset and untouched. **`ix_fm_golf_identity_category` — branch B's index — does not exist**, so flipping now would run the `UNION` with one unindexed branch, and unindexed the `UNION` costs **255,180** against the `OR`'s **128,191**. Step 5.3's preconditions are not met. **The branch-B call belongs to the latency lane**: rebuild it, or change the shape. Do not flip until it is built and `EXPLAIN` shows both branches indexed.
+
+---
+
 **Status:** SPEC. The lane wrote it; the lane does not run it.
 **Addressee:** the Integrator, as a `heroku run:detached` one-off dyno operation.
 **Explicitly NOT:** an Alembic migration (gotcha #31), and not a task for Alex.
@@ -95,7 +160,7 @@ needs **no code change at all** and can be judged independently.
 -- Session setup. NOT optional. CREATE INDEX CONCURRENTLY cannot run inside a
 -- transaction block, and it will be killed by any inherited statement_timeout.
 SET statement_timeout = 0;
-SET lock_timeout = '5s';
+SET lock_timeout = '60s';   -- was '5s'; 5s FAILS. See the EXECUTION RECORD below.
 SET maintenance_work_mem = '128MB';   -- server default is 205MB; these builds need far less
 
 -- (1) branch B of the UNION: llm_sport_category = 'golf'
@@ -188,7 +253,7 @@ heroku run:detached --size=standard-1x -a bainluck -- \
 import asyncio, os, asyncpg
 DDL = [
   \"SET statement_timeout = 0\",
-  \"SET lock_timeout = '5s'\",
+  \"SET lock_timeout = '60s'\",   # was '5s'; 5s FAILS -- see the EXECUTION RECORD
   \"CREATE INDEX CONCURRENTLY ix_fm_golf_identity_category ON futures_markets (id) INCLUDE (source, external_id, name) WHERE llm_sport_category = 'golf'\",
   \"CREATE INDEX CONCURRENTLY ix_fm_golf_identity_extid ON futures_markets (id) INCLUDE (source, external_id, name) WHERE external_id ILIKE 'golf_%'\",
   \"CREATE INDEX CONCURRENTLY ix_fm_source_created_at ON futures_markets (source, created_at DESC)\",
