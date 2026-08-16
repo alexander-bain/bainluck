@@ -42,7 +42,21 @@ DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 # rev 5 (#1809): adds the quantitative `frame` (C1) and the registry-grounded
 # `subjects`/`subject_ref` (C2). Both are additive slots on the same JSONB key —
 # the bump exists to re-tag rev-4 profiles, which carry neither.
-CU_WRITER_REV = 5
+#: rev 6 (#1809 step 0): the frame slot's prompt is rewritten around REJECTED
+#: worked examples after a rev-5 production batch dropped 9 of 11 attempted
+#: frames on the literal invariant (82%) for 1.6% coverage. The pre-diagnosis
+#: was "prompt regression, not a data property"; verifying it turned up
+#: something sharper — rule 6's own worked example, title "W7M" -> value "7M",
+#: is REJECTED by `sanitize_cu_frame`, because "7M" is not a standalone token
+#: inside "W7M". The prompt was teaching a form the validator discards.
+#: `tests/test_cu_prompt_examples_match_validator.py` now runs every ACCEPTED
+#: example in the prompt through the real validator, so a false teacher cannot
+#: ship again.
+#:
+#: A rev bump is REQUIRED alongside any prompt change: `_cu_v2_needs_retag`
+#: gates on it, so without the bump a re-run reports `skipped_fresh` and
+#: generates nothing (CU-NEXT's named tell).
+CU_WRITER_REV = 6
 CU_V2_SCHEMA_VERSION = 2
 # How long a CU v2 profile keeps ownership of the shared key without being
 # re-tagged. The v2 writer refreshes its own rows every ~24h, so this only
@@ -990,7 +1004,21 @@ CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
 3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
 4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
 5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
-6. frame: fill it ONLY from what the title itself states. `value` and `unit` must be copied EXACTLY as the title writes them — title "W7M" -> value "7M" (never 7000000), title "70%" -> unit "%" (never "percent"), title "2.5 goals" -> value "2.5", unit "goals". If the title names no number, return "frame": null. NEVER infer, convert, or round a number the title does not contain: a value that is not literally in the title is discarded, and the frame with it. A title can have a measure with no number ("Who wins the scoring title?" -> measure "points", value null).
+6. frame: fill it ONLY from what the title itself states, and copy `value` and `unit` CHARACTER-FOR-CHARACTER out of the title. The check applied to your answer is mechanical: the exact string you write must appear in the title as a STANDALONE token. Before emitting a frame, look for your `value` string in the title; if you cannot see it there, emit "frame": null instead. One wrong character discards the entire frame, so copying is always safer than reasoning.
+   ACCEPTED — the string is present in the title, verbatim:
+     "Will X reach 13M subscribers?"   -> value "13M", unit "M"
+     "Will it hit 70%?"                -> value "70",  unit "%"
+     "Over 2.5 goals?"                 -> value "2.5", unit "goals"
+     "Bitcoin above $100K?"            -> value "100K", unit "K"
+   REJECTED — every one of these discards the whole frame, and these are the mistakes actually being made:
+     13000000   for a title saying "13M"    — NEVER expand a magnitude suffix
+     "percent"  for a title saying "70%"    — NEVER spell out a symbol
+     100        for a title saying "$100K"  — NEVER drop the suffix; "100" is only a fragment of the longer token "100K"
+     27         for a title saying "2026-27" — the tail of a compact range is never a value
+     2025       for a title saying "2026"   — never a nearby or remembered number
+     any value you calculated, converted, rounded, summed or inferred
+   A number embedded inside a longer word does NOT count as present: "7M" is not standalone in "W7M", so that title yields "frame": null.
+   If the title names no number at all, return "frame": null — that is a CORRECT answer and is expected for most titles, not a failure. A title can also carry a measure with no number ("Who wins the scoring title?" -> measure "points", value null).
 7. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
 
 CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
