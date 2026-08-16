@@ -208,32 +208,20 @@ struct DiscoverView: View {
     @State private var dismissVersion = 0
     @State private var profileVersion = 0
 
-    private let sportsCats: Set<String> = [
-        "basketball", "football", "baseball", "hockey", "soccer",
-        "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
-        "americanfootball", "icehockey", "olympics",
-    ]
+    /// #1883: was a second, drifted copy of the classifier. Both copies now
+    /// delegate to `DiscoverCategory`, so they cannot disagree (gotcha #129).
+    private var sportsCats: Set<String> { DiscoverCategory.sportsCategories }
 
     private func itemCategory(_ item: FeedItem) -> String {
-        if item.type == "event", let e = item.event {
-            return e.sport?.split(separator: "_").first.map(String.init) ?? "sports"
+        // The bundle resolver keeps this call site's C29 P2 behavior: derive from
+        // the first ELIGIBLE child, never a stale raw first child. That gate is
+        // time-dependent view state, so it is injected rather than pulled into the
+        // pure classifier. `filteredItems` sanitizes bundles up front, so this is
+        // normally already the first child; the explicit admit keeps the
+        // derivation correct for any caller that passes a raw bundle.
+        DiscoverCategory.of(item) { bundle in
+            Self.eligibleBundleItems(bundle).first ?? bundle.items.first
         }
-        if item.type == "futures", let f = item.futures {
-            return f.llmSportCategory ?? "other"
-        }
-        if item.type == "bundle", let bundle = item.bundle {
-            // Derive category from the first ELIGIBLE child, never a stale raw
-            // first child (C29 P2). `filteredItems` sanitizes bundles up front, so
-            // this is normally already the first child; the explicit admit keeps
-            // the derivation correct for any caller that passes a raw bundle.
-            if let first = Self.eligibleBundleItems(bundle).first ?? bundle.items.first {
-                return itemCategory(first)
-            }
-        }
-        if item.type == "concept", let c = item.concept {
-            return c.domain?.lowercased() ?? "other"
-        }
-        return "golf"
     }
 
     /// Pure, testable staleness predicate powering the Discover stale gate
@@ -489,6 +477,28 @@ struct DiscoverView: View {
             rank: rank,
             score: item.score
         )
+        // The rage-shake app-state instrument. `recordVisibleCard` is the sole
+        // writer of BOTH `discover_visible_cards` and `discover_current_card`, and
+        // until now it had ZERO call sites anywhere in the iOS tree — so every bug
+        // report ever filed carried "[]" and "{}" for those two fields, and no
+        // report has ever recorded which card was on screen when the user shook the
+        // phone. (Its sibling `recordInteraction` has 34 call sites and works.)
+        // #1772 — "Discover cards: text too small to read", three words and a
+        // screenshot — is the live cost: its own scope section says to pull the app
+        // state from report #143 first, and the app state was empty.
+        // Wired here rather than at a new site because this is already the deduped
+        // once-per-card viewport hook and it computes every field the debug card
+        // needs, so the instrument cannot drift away from the analytics it mirrors.
+        NativeDiscoverDebugState.recordVisibleCard(
+            NativeDiscoverDebugCard(
+                itemType: itemType(item),
+                itemId: rawItemId(item),
+                itemName: itemName(item),
+                category: itemCategory(item),
+                rank: rank,
+                score: item.score
+            )
+        )
         Task {
             let event = DiscoverInteractionEvent(
                 action: "impression",
@@ -701,7 +711,10 @@ struct DiscoverView: View {
         // Preserve this call site's small-input guard, then delegate to the shared
         // linear-traversal core (L2-202): identical order, no O(n²) removeFirst.
         guard items.count > 2 else { return items }
-        return FeedInterleave.byCategory(items, sportsCategories: sportsCats, category: itemCategory)
+        return FeedInterleave.byCategory(
+            items, sportsCategories: sportsCats,
+            breakNonSportsRuns: true, category: itemCategory
+        )
     }
 
     private func groupedCategory(_ item: DiscoverGroupedItem) -> String {
@@ -712,7 +725,10 @@ struct DiscoverView: View {
         // Same shared linear core as `interleave`, classified by the grouped
         // item's primary category (L2-202): identical order, no O(n²) removeFirst.
         guard items.count > 2 else { return items }
-        return FeedInterleave.byCategory(items, sportsCategories: sportsCats, category: groupedCategory)
+        return FeedInterleave.byCategory(
+            items, sportsCategories: sportsCats,
+            breakNonSportsRuns: true, category: groupedCategory
+        )
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
