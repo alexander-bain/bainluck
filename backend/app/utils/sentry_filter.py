@@ -45,8 +45,10 @@ A ``before_send`` written to kill exactly this noise lived inline in
 * **THROTTLE** — real but chronic classes (Celery task death, event-loop
   teardown). One event per signature per window keeps ``lastSeen`` honest and
   the issue alive in the UI instead of hiding the class outright. Task death is
-  independently metered in Redis task-metrics (``failures_24h``,
-  ``hard_kills_24h``), so a throttle here is not a blind spot.
+  independently metered in Redis task-metrics (``failures_24h``) and, since
+  #1501 item 2, by the signal-driven lifecycle pair
+  (``attempts - terminals``) that observes every task from ABOVE
+  ``_tracked_run`` — so a throttle here is not a blind spot.
 * **PASS** — everything else at full fidelity, subject only to the backstop.
 
 The **backstop** is the part that does not depend on the census being right.
@@ -99,12 +101,12 @@ logger = logging.getLogger(__name__)
 #: Two families, and the line between "drop" and "throttle" is drawn on ONE
 #: question: does the Sentry event carry a diagnostic that the compensating rail
 #: cannot? Verified in ``app/tasks/redis_state.py`` +
-#: ``app/tasks/__init__.py::_tracked_run``, not assumed:
+#: ``app/tasks/__init__.py``, not assumed:
 #:
-#: * ``record_task_started`` fires BEFORE the work, so a death that reaches no
-#:   handler is still counted, and ``hard_kills_24h = starts - (successes +
-#:   failures + incompletes)`` is exactly the SIGKILL / hard-``time_limit``
-#:   population;
+#: * ``record_task_attempt`` / ``record_task_terminal`` fire from celery's OWN
+#:   ``task_prerun`` / ``task_postrun`` signals, so ``attempts - terminals`` is
+#:   the SIGKILL / hard-``time_limit`` population for **every task**, with no
+#:   cooperation from any task body (see ``TASK_LIFECYCLE_PREFIX``);
 #: * ``record_task_failure(..., verdict_reason=type(exc).__name__)`` records any
 #:   thrown exception by class, with ``last_failure_at``.
 #:
@@ -112,7 +114,24 @@ logger = logging.getLogger(__name__)
 #: pool PARENT (culprits ``billiard.pool in mark_as_worker_lost`` /
 #: ``on_hard_timeout``), so their stack is billiard's own teardown and says
 #: nothing about where the child actually was. They are a strict duplicate of
-#: ``hard_kills_24h`` and are dropped.
+#: the lifecycle gap and are dropped.
+#:
+#: **This drop was WRONG for two cycles and the repair is the point** (codex
+#: C-CERT-SENTRY-R2 finding 2). The rail named here used to be
+#: ``hard_kills_24h = starts - terminals``, whose ``starts`` are written by
+#: ``record_task_started`` — which lives INSIDE ``_tracked_run``, a helper the
+#: task body elects to call. A child lost before reaching it contributed no
+#: start and so could not appear in the difference, and **30 scheduled tasks
+#: never call the helper at all**. For those, a hard kill and a healthy no-op
+#: delivery were the same observation in the counter, while the parent-side
+#: event that would have shown it was dropped here on the strength of that very
+#: counter. The diagnostic was absent from Sentry AND from the metric.
+#:
+#: The general form, worth more than the instance: **a compensating instrument
+#: that starts below the failure boundary is not a compensating instrument.**
+#: Same shape as gotcha #53 — an absence and a fact sharing one reading. Before
+#: adding anything to this set, check that its named rail observes the failure
+#: from ABOVE the boundary where the failure occurs.
 #:
 #: ``SoftTimeLimitExceeded`` is deliberately NOT here: it is raised *into the
 #: task*, so its stack names the exact operation that overran, which no counter
@@ -297,7 +316,28 @@ _EVENT_LOOP_MARKERS = ("event loop is closed", "attached to a different loop")
 
 THROTTLE_PER_WINDOW = 1
 THROTTLE_WINDOW_S = 86400
-BACKSTOP_PER_WINDOW = 3
+#: Lowered 3 -> 1 by codex C-CERT-SENTRY-R2 finding 1, and the reason it had to
+#: move is worth keeping: at 3 the measured replay sat at 157.0/day against a
+#: 164.47/day budget, and **both** of the negative controls the certification
+#: demanded pushed it over — one novel high-frequency worker signature costs
+#: ``cap x 4 prefork children`` (+12/day at 3), and the watchdog cooldown's
+#: tested Redis-down path (it fails OPEN by design, so an infra failure never
+#: swallows an alarm) reaches the background children's backstops.
+#:
+#: At 1, three things happen at once, all measured in
+#: ``TestFleetVolumeCeiling``: the replay drops to 123.6/day non-watchdog, one
+#: novel worker signature costs 4/day instead of 12, and the watchdog's
+#: fail-open path stops costing anything at all — because ``1 x 2 background
+#: children`` is BELOW the 4-per-day the working cooldown already allows, so the
+#: backstop binds first and the failure mode is bounded by the same number as
+#: the healthy one.
+#:
+#: What is NOT lost: a novel signature still always sends its **first** event
+#: (that is the ``count < limit`` path, not the cap), and with ~70 process
+#: incarnations a day a genuinely high-frequency class is still plainly visible
+#: fleet-wide. What IS lost is repeat-within-one-process detail, which is the
+#: cheapest information in the system to give up.
+BACKSTOP_PER_WINDOW = 1
 BACKSTOP_WINDOW_S = 86400
 _MAX_TRACKED_SIGNATURES = 512
 
@@ -474,6 +514,37 @@ def _failure_site(event: dict[str, Any], hint: dict[str, Any] | None) -> str:
     return "?"
 
 
+#: Exceptions INJECTED into a task from outside it, rather than raised BY the
+#: code at the frame they land on.
+#:
+#: For these the deepest frame is a **sampling artifact**: celery's soft-timeout
+#: signal handler fires wherever the interpreter happens to be at the instant the
+#: timer expires, so one chronically overrunning task fragments into a different
+#: "failure site" per run. Measured in the 2026-07-21 census, schema 2:
+#: ``SoftTimeLimitExceeded`` in ``refresh_open_commentary`` produced **11
+#: distinct sites** — ``selectors:select`` (396 events),
+#: ``app.routes.golf:_build_completed_tournament`` (68),
+#: ``asyncpg.pgproto:numeric_decode_binary_`` (8), even ``?:<module>``. That is
+#: ONE condition holding ELEVEN throttle allowances, and none of the eleven
+#: names the bug.
+#:
+#: This is not a retreat from codex finding (b), it is its boundary. A site is
+#: identity when the code at that site raised; it is noise when the exception
+#: arrived from a signal handler, a pool parent, or a revoke. Distinguishing the
+#: two is what lets the signature be fine-grained where fineness is information
+#: and coarse where it is sampling noise.
+#:
+#: An explicit ``fingerprint`` still wins — that is deliberate grouping by the
+#: code that raised, and the watchdog relies on it.
+SITE_AGNOSTIC_EXC_NAMES = frozenset({
+    "SoftTimeLimitExceeded",
+    "TimeLimitExceeded",
+    "Terminated",
+    "WorkerLostError",
+    "WorkerLost",
+})
+
+
 def event_signature(event: dict[str, Any], exc_name: str, hint: dict[str, Any] | None = None) -> str:
     """``class | where | failure-site`` — the throttling key.
 
@@ -482,9 +553,19 @@ def event_signature(event: dict[str, Any], exc_name: str, hint: dict[str, Any] |
     de-duplication entirely — which is precisely how one class ends up spending a
     whole month's quota. But it does NOT stop at the transaction: see
     :func:`_failure_site`.
+
+    The one exception is :data:`SITE_AGNOSTIC_EXC_NAMES`, where the site is
+    where a signal LANDED rather than where anything went wrong.
     """
     event = event or {}
     where = event.get("transaction") or event.get("logger") or "?"
+    if exc_name in SITE_AGNOSTIC_EXC_NAMES:
+        fingerprint = (event.get("fingerprint") or []) if isinstance(
+            event.get("fingerprint"), (list, tuple)
+        ) else []
+        parts = [str(p) for p in fingerprint if p and str(p) != "{{ default }}"]
+        site = "fp:" + "|".join(parts) if parts else "signal"
+        return f"{exc_name}|{where}|{site}"
     return f"{exc_name or 'unknown'}|{where}|{_failure_site(event, hint)}"
 
 

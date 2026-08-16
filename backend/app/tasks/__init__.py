@@ -401,12 +401,20 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     @_task_prerun.connect
     def _record_delivery(sender=None, task=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_delivery
+            from app.tasks.redis_state import record_task_attempt, record_task_delivery
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             request = getattr(sender, "request", None)
             if request is None:
                 request = getattr(task, "request", None)
+            # #1501 item 2: the ATTEMPT is recorded first and unconditionally,
+            # BEFORE the two schedule-semantics filters below. The two counters
+            # answer different questions and must not share a predicate:
+            # `deliveries` grades a SCHEDULE, so a retry is not a fire; the
+            # lifecycle pair detects DEATH, and a retry that dies is a death.
+            # Filtering it here would leave a terminal with no attempt and drive
+            # the difference negative — which floors to zero and reads healthy.
+            record_task_attempt(name)
             # An unreadable request must not silently zero the counter: the
             # count is the point, and losing it is worse than an upper bound.
             if request is not None:
@@ -415,6 +423,31 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
                 if getattr(request, "is_eager", False):
                     return
             record_task_delivery(name)
+        except Exception:
+            pass
+except Exception:  # pragma: no cover - defensive
+    pass
+
+# #1501 item 2 (codex C-CERT-SENTRY-R2): the TERMINAL half of the lifecycle
+# pair. `task_postrun` fires after the body returns or raises, for every task,
+# with no cooperation from the body — so `attempts - terminals` is a death count
+# that holds for the 30 tasks which never call `_tracked_run`, and for a child
+# killed before it gets there. Without this half, the parent-side
+# `WorkerLostError` that Sentry DROPS has no compensating observer at all: the
+# drop was justified by `hard_kills_24h`, and that counter is written from
+# inside `_tracked_run`, i.e. below the boundary where these deaths happen.
+#
+# See `redis_state.TASK_LIFECYCLE_PREFIX` for the two named residuals.
+try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
+    from celery.signals import task_postrun as _task_postrun
+
+    @_task_postrun.connect
+    def _record_terminal(sender=None, task=None, **_kwargs):
+        try:
+            from app.tasks.redis_state import record_task_terminal
+
+            name = getattr(sender, "name", None) or getattr(task, "name", None)
+            record_task_terminal(name)
         except Exception:
             pass
 except Exception:  # pragma: no cover - defensive

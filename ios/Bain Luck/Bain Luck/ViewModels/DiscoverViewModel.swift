@@ -223,11 +223,8 @@ final class DiscoverViewModel: ObservableObject {
         self.retryBackoff = retryBackoff
     }
 
-    private static let sportsCategories: Set<String> = [
-        "basketball", "football", "baseball", "hockey", "soccer",
-        "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
-        "americanfootball", "icehockey", "olympics",
-    ]
+    /// #1883: one set, shared with the view (they were byte-identical copies).
+    private static var sportsCategories: Set<String> { DiscoverCategory.sportsCategories }
 
     @MainActor
     func load() async {
@@ -967,14 +964,20 @@ final class DiscoverViewModel: ObservableObject {
     /// its historical lack of a small-input guard — the core handles 0/1/2 items
     /// the same way the old inline loop did.
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
-        FeedInterleave.byCategory(items, sportsCategories: sportsCategories, category: category(for:))
+        FeedInterleave.byCategory(
+            items, sportsCategories: sportsCategories,
+            breakNonSportsRuns: true, category: category(for:)
+        )
     }
 
+    /// #1883: delegates to the one shared classifier. This copy previously had no
+    /// `bundle` branch (so every bundle classified `"other"`) and no `tournament`
+    /// branch, which is two of the four measured divergences against the view's
+    /// copy. Bundles resolve through the default first-child rule — production
+    /// paths sanitize bundles upstream, so that agrees with the view's
+    /// eligibility-gated resolver.
     private static func category(for item: FeedItem) -> String {
-        if let f = item.futures { return f.llmSportCategory?.lowercased() ?? "other" }
-        if let e = item.event { return e.sport?.split(separator: "_").first.map(String.init) ?? "other" }
-        if let c = item.concept { return c.domain?.lowercased() ?? "other" }
-        return "other"
+        DiscoverCategory.of(item)
     }
 
     private static func itemKey(_ item: FeedItem) -> String {
