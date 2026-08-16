@@ -274,9 +274,36 @@ def _read(path: str) -> tuple[str, str, Optional[int], Optional[str], re.Match]:
     except OSError as exc:
         print(f"MALFORMED: cannot read {path}: {exc}", file=sys.stderr)
         sys.exit(MALFORMED)
-    m = re.search(r"(?m)^status:\s*(\S+)", text)
+    # `.*$` is LOAD-BEARING, not tidiness (ruling 071). The old pattern was
+    # `^status:\s*(\S+)` — it matched only the FIRST TOKEN, so `m.end()` stopped
+    # there and both writers below did
+    #     text[:m.start()] + "status: NEW   # stamp." + text[m.end():]
+    # which re-appended everything already on that line. Every release therefore
+    # COMPOUNDED the status line instead of replacing it. Measured 2026-08-16:
+    # LANE-calibration.lock at 12 `status:` lines, LANE-lane1.lock at 6, and
+    # LANE-latency.lock carrying ~35 stamps welded onto a single line. Ruling 071
+    # makes such a file MALFORMED and therefore read as HELD, so this one regex
+    # was quietly fencing lanes out of their own work.
+    m = re.search(r"(?m)^status:\s*(\S+).*$", text)
     if not m:
         print(f"MALFORMED: no `status:` line in {path}", file=sys.stderr)
+        sys.exit(MALFORMED)
+    # Ruling 071: more than one `status:` or `owner_pid:` line is MALFORMED and
+    # reads as HELD, fail-safe. Refuse rather than guess which line is the truth.
+    if len(re.findall(r"(?m)^status:", text)) > 1:
+        print(
+            f"MALFORMED: {path} has {len(re.findall(r'(?m)^status:', text))} `status:` "
+            "lines. Ruling 071: a lock with more than one is MALFORMED and reads as "
+            "HELD. Repair belongs to the OWNER while its pid is alive. Collapse it to "
+            "one `status:` line with the history BELOW it, then retry.",
+            file=sys.stderr,
+        )
+        sys.exit(MALFORMED)
+    if len(re.findall(r"(?m)^owner_pid:", text)) > 1:
+        print(
+            f"MALFORMED: {path} has multiple `owner_pid:` lines (ruling 071).",
+            file=sys.stderr,
+        )
         sys.exit(MALFORMED)
     pm = re.search(r"(?m)^(?:owner_)?pid:\s*(\d+)", text)
     im = re.search(r"(?m)^owner_identity:\s*(\S+)", text)
