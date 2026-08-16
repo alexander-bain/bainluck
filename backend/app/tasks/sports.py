@@ -848,7 +848,8 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
     async with get_task_session() as session:
         degen_rows = (await session.execute(sa_text(
             "SELECT id, sport_id, home_team_name, commence_time, "
-            "       external_id, espn_id, statpal_fixture_id "
+            "       external_id, espn_id, statpal_fixture_id, "
+            "       home_team_id, away_team_id "
             "FROM events "
             "WHERE lower(home_team_name) = lower(away_team_name) "
             "  AND sport_id IS NOT NULL "
@@ -858,9 +859,73 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
         merged = 0
         skipped_no_match = 0
         skipped_ambiguous = 0
+        refused_anchored = 0
+        refused_pairs = []
         merged_pairs = []
 
         for d in degen_rows:
+            # R6 → R7 (#1801): DELETION REQUIRES EVIDENCE OF THE ARTIFACT, not
+            # merely the shape of one. This check is FIRST — before the window
+            # scan — because a row that may not be deleted should not have a
+            # deletion candidate computed for it at all.
+            #
+            # The rail used to reason: `home_team_name == away_team_name` is not
+            # a fixture, because nothing competes against itself, therefore the
+            # row is a corrupt ingest artifact and may be deleted once a unique
+            # real counterpart is found. The premise is sound and the conclusion
+            # does not follow. `Event` carries `home_team_id` and `away_team_id`
+            # as separate nullable FKs, and no constraint anywhere says that
+            # equal DISPLAY LABELS mean the same participant — two distinct
+            # teams can share a short name ("United", "City", "Cardinals"), and
+            # a provider that fills the label from the wrong field produces a
+            # row that looks degenerate while being a real, anchored game.
+            #
+            # C-CERT-1801-R6 executed that specimen: event 9001 carried
+            # `external_id`, `espn_id` AND `statpal_fixture_id`, with
+            # `home_team_id=101` and `away_team_id=202` — three provider anchors
+            # and two distinct participants — and the rail returned `merged=1`,
+            # executed `DELETE FROM events WHERE id = 9001`, and committed. That
+            # is ruling 042's failure class exactly: LABEL EQUALITY READ AS
+            # IDENTITY. The old code selected all three provider IDs and then
+            # ignored them, which is what let the belief survive being written
+            # down next to its own counter-evidence.
+            #
+            # So the test is now the artifact's actual signature, and both halves
+            # must hold: no authoritative identity from any provider, AND no
+            # distinct participant IDs. A row failing either half is refused and
+            # counted — never deleted, never silently skipped. Refusing is not a
+            # regression in the repair: a genuine single-participant artifact has
+            # nothing to be anchored BY, which is what makes it an artifact.
+            #
+            # Note this is deliberately NOT the ruling-048 shared-provider-ID
+            # invariant, which was tried here and measured: it refuses every pair
+            # (a degenerate row shares no provider ID with the real event), makes
+            # the rail a permanent no-op, and trades a corruption cleanup for
+            # nothing. Ruling 048 asks "are these the same event?"; this asks
+            # "is this row real?" — different questions, and only the second one
+            # is answerable about a row with one participant.
+            anchors = (d.external_id, d.espn_id, d.statpal_fixture_id)
+            has_authoritative_identity = any(a is not None for a in anchors)
+            has_distinct_participants = (
+                d.home_team_id is not None
+                and d.away_team_id is not None
+                and d.home_team_id != d.away_team_id
+            )
+            if has_authoritative_identity or has_distinct_participants:
+                refused_anchored += 1
+                refused_pairs.append({
+                    "id": d.id,
+                    "label": d.home_team_name,
+                    "anchors": [
+                        n for n, a in zip(
+                            ("external_id", "espn_id", "statpal_fixture_id"), anchors
+                        ) if a is not None
+                    ],
+                    "home_team_id": d.home_team_id,
+                    "away_team_id": d.away_team_id,
+                })
+                continue
+
             fighter = d.home_team_name
             candidates = (await session.execute(sa_text(
                 "SELECT id, home_team_name, away_team_name, "
@@ -887,28 +952,10 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
 
             keep_id, orphan_id = reals[0], d.id
 
-            # R6 (#1801): THE AST CENSUS FOUND THIS RAIL and it is deliberately
-            # NOT guarded by the ruling-048 invariant. Recorded here because the
-            # reasoning is the interesting part, and because the census will keep
-            # pointing at this line until someone reads it.
-            #
-            # The rail does look like the others: a name match inside a 28h
-            # window, an "only one candidate" ambiguity check, then a delete. But
-            # the row it deletes has `home_team_name == away_team_name`. That is
-            # not a game — no fixture in any sport is a competitor against
-            # itself — so it is a corrupt ingest artifact, and it cannot be the
-            # other half of a doubleheader. The hazard ruling 048 exists to stop
-            # is destroying a REAL second game that merely looks like the first;
-            # a degenerate row has no such claim to being real.
-            #
-            # Guarding it anyway was tried and measured: the invariant refuses
-            # every pair (a degenerate row shares no provider id with the real
-            # event), the rail becomes a permanent no-op, and three tests fail
-            # asserting the repair it exists to perform. That is a worse world —
-            # it trades a corruption cleanup for nothing.
-            #
-            # Its existing ambiguity refusal stays as the safety: >1 candidate
-            # never guesses.
+            # Every row reaching here has already been proven unanchored and
+            # single-participant by the check at the top of the loop (R7). The
+            # ambiguity refusal above remains the second safety: >1 candidate
+            # never guesses which fight the artifact belongs to.
             merged_pairs.append({"orphan": orphan_id, "keep": keep_id, "fighter": fighter})
 
             if not dry_run:
@@ -933,5 +980,13 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             "merged": merged,
             "skipped_no_match": skipped_no_match,
             "skipped_ambiguous": skipped_ambiguous,
+            # Reported, not just counted: a refusal is the rail declining to
+            # delete something that LOOKS degenerate but carries provider
+            # anchors or two distinct participants. A non-zero value is a
+            # standing signal that some upstream writer is producing real rows
+            # with equal display labels — which is a bug worth seeing, and was
+            # invisible while the rail simply deleted them (#1801 R6→R7).
+            "refused_anchored": refused_anchored,
+            "refused_sample": refused_pairs[:15],
             "sample": merged_pairs[:15],
         }
