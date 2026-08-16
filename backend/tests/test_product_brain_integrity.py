@@ -493,7 +493,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: comment used to name; the lane landed, so the gap closed. The ratchet asserts
 #: EQUALITY (`test_the_floor_tracks_reality_and_is_raised_when_a_ruling_is_banked`),
 #: so this is not optional bookkeeping — merging 067 without this line is red.
-MINIMUM_BANKED_RULINGS = 66
+MINIMUM_BANKED_RULINGS = 67
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
