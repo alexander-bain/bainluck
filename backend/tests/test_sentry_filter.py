@@ -43,6 +43,7 @@ from app.utils.sentry_filter import (
     VERDICT_PASS,
     VERDICT_THROTTLE,
     SentryVolumeFilter,
+    _failure_site,
     _SignatureThrottle,
     build_before_send,
     classify,
@@ -50,12 +51,24 @@ from app.utils.sentry_filter import (
     event_signature,
 )
 from tests.fixtures.sentry_formation import (
+    CENSUS_DYNO_INCARNATIONS,
+    CENSUS_MEAN_INCARNATIONS_PER_DAY,
+    CENSUS_SINGLE_DAY_INCARNATIONS,
     DAILY_BUDGET,
     FORMATION,
+    MAX_WORKER_CONCURRENCY,
+    MEASURED_RELEASES_PER_DAY,
+    MIN_SAFE_MARGIN,
+    NOVEL_SIGNATURE_CAPACITY_FLOOR,
     QUOTA_EVENTS_PER_MONTH,
     STEADY_SDK_PROCESSES,
     STEADY_TYPES,
+    WATCHDOG_COOLDOWN_WINDOWS_PER_DAY,
+    WATCHDOG_PAIRS_PER_DAY,
+    WATCHDOG_POOL_CHILDREN,
+    novel_signature_reserve,
     sdk_processes,
+    watchdog_ceiling_per_day,
 )
 
 CENSUS_PATH = Path(__file__).parent / "fixtures" / "sentry_census_2026_07_21.json.gz"
@@ -413,6 +426,24 @@ def _load_census():
 
 
 def _census_event(row):
+    """Rebuild the event the classifier would have seen.
+
+    Schema 2 (codex C-CERT-SENTRY-R2 finding 3): the row's real deepest in-app
+    frame is attached, so ``_failure_site`` takes the branch it takes in
+    production — the frame — instead of falling through to ``culprit``. Under
+    schema 1 every row fell through, which merged distinct production failure
+    sites into one throttle bucket and made the replay UNDERCOUNT sends.
+
+    Two honest limits, kept visible rather than smoothed over:
+
+    * ``module`` stays empty. Discover exposes no field for the *defining
+      module* of the exception class, so the module-provenance drop path is
+      still reached only via the endpoint fallback. This makes the replay
+      PESSIMISTIC (it drops less than production does), which is the safe
+      direction and is asserted as such below.
+    * a row with ``site == ""`` genuinely carried no in-app frame; it falls
+      through to ``culprit`` exactly as production would.
+    """
     event = {}
     if row["transaction"]:
         event["transaction"] = row["transaction"]
@@ -421,21 +452,31 @@ def _census_event(row):
     if row["logger"]:
         event["logger"] = row["logger"]
     if row["kind"] == "error":
-        event["exception"] = {"values": [
-            {"type": row["exc_type"], "module": "", "value": row["message"]}
-        ]}
+        value = {"type": row["exc_type"], "module": "", "value": row["message"]}
+        site = row.get("site") or ""
+        if site:
+            module, _, function = site.rpartition(":")
+            value["stacktrace"] = {"frames": [
+                {"module": module or "?", "function": function or "?", "in_app": True}
+            ]}
+        event["exception"] = {"values": [value]}
     else:
         event["logentry"] = {"formatted": row["message"]}
     return event
 
 
 _WATCHDOG_CULPRIT = "app.tasks.run_freshness_watchdog"
-#: The watchdog's cooldown is FLEET-SHARED (Redis SET NX, 6h), so its ceiling is
-#: windows-per-day x distinct [alert_class, provider] pairs x 1 event each. One
-#: event, not two: the ``logger.critical`` twin no longer reaches Sentry (see
-#: DUPLICATE_EVENT_LOGGERS). It is modelled as a CEILING rather than replayed,
-#: because the census is bucketed by day and carries no timestamps.
-_WATCHDOG_WINDOWS_PER_DAY = 24 * 3600 // (6 * 3600)
+#: Emissions per [alert_class, provider] pair per day. One event, not two: the
+#: ``logger.critical`` twin no longer reaches Sentry (see
+#: DUPLICATE_EVENT_LOGGERS). Modelled as a CEILING rather than replayed, because
+#: the census is bucketed by day and carries no timestamps.
+#:
+#: Codex C-CERT-SENTRY-R2 finding 1: this used to be the cooldown's 4/day alone,
+#: which prices the HAPPY PATH of a gate that is designed to fail open. See
+#: ``watchdog_ceiling_per_day`` — the honest ceiling is the worse of the two
+#: shipped states, and both are bounded by the backstop.
+def _watchdog_per_pair_per_day() -> int:
+    return watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) // WATCHDOG_PAIRS_PER_DAY
 
 
 def _watchdog_pair(message):
@@ -502,7 +543,7 @@ def replay(census, model):
                 sent += 1
                 residual[signature] += 1
 
-    watchdog = sum(len(p) for p in watchdog_pairs.values()) * _WATCHDOG_WINDOWS_PER_DAY
+    watchdog = sum(len(p) for p in watchdog_pairs.values()) * _watchdog_per_pair_per_day()
     return {
         "days": days,
         "offered": sum(r["count"] for r in census["rows"]),
@@ -512,6 +553,64 @@ def replay(census, model):
         "per_day": (sent + watchdog) / days,
         "residual": residual,
     }
+
+
+class TestTheFixtureCarriesNoCredentials:
+    """A committed error-message corpus is a credential surface.
+
+    Found 2026-08-14 (queue 351), already on master: this fixture contained the
+    app's **live ``ADMIN_TOKEN``**, captured by Sentry inside
+    ``Client error '403 Forbidden' for url '...&secret=<64 hex>'`` — the legacy
+    ``?secret=`` path that Queue #252 removed from *auth* but not from the
+    *caller*, so it kept being sent, kept 403ing, and kept being recorded.
+
+    It survived a certification that scanned this very file for secrets, for two
+    reasons worth keeping:
+
+    * the value sits in a URL inside a message, not in anything config-shaped;
+    * **the artifact is gzip**, and the repo's gitleaks backstop scans text. A
+      binary fixture is a blind spot for every text scanner pointed at the repo.
+
+    So the scan has to live where the file is already being decompressed, which
+    is here. The builder scrubs at the source; this asserts the result, because
+    a scrub nobody verifies is a scrub that silently stops matching.
+    """
+
+    CREDENTIAL_RE = re.compile(
+        r"(?i)\b(secret|token|api[_-]?key|apikey|password|passwd|pwd|"
+        r"access[_-]?token|admin[_-]?token|signature)=([^&\s'\"]{12,})"
+    )
+
+    @pytest.fixture(scope="class")
+    def raw(self):
+        with gzip.open(CENSUS_PATH, "rt", encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_no_query_string_credential_survives(self, raw):
+        found = [
+            (name, value) for name, value in self.CREDENTIAL_RE.findall(raw)
+            if value != "REDACTED"
+        ]
+        assert not found, (
+            f"{len(found)} credential-shaped query values in the fixture "
+            f"(parameter names: {sorted({n for n, _ in found})}) — REDACT and "
+            "ROTATE; history keeps the value forever, so deleting the line is "
+            "not the remedy"
+        )
+
+    def test_the_redaction_kept_the_parameter_name(self, raw):
+        """The name is what makes a leak legible to the next reader; only the
+        value goes. This also proves the scrub actually ran on this file."""
+        assert "secret=REDACTED" in raw
+
+    def test_no_bare_high_entropy_hex_secret(self, raw):
+        """A 64-char hex run is what both of this project's real tokens look
+        like. Task ids are UUIDs (dashed, 36 chars) and do not match."""
+        assert not re.findall(r"\b[0-9a-f]{48,}\b", raw)
+
+    def test_no_broker_credentials(self, raw):
+        assert "rediss://:pw@" not in raw
+        assert not re.findall(r"rediss?://[^\s\"]*:[^@\"\s]{4,}@(?!REDACTED)", raw)
 
 
 class TestFormationIsParsedNotAssumed:
@@ -579,17 +678,25 @@ class TestFleetVolumeCeiling:
         563 observed ``server_name`` values appear on exactly one day, i.e. ~70
         process incarnations per day, and each dyno hosts several of them."""
         result = replay(census, "dyno")
-        assert result["sent"] == 838, "policy changed — re-derive and update the report"
-        assert round(result["per_day"], 1) == 104.8
+        assert result["sent"] == 588, "policy changed — re-derive and update the report"
+        assert round(result["per_day"], 1) == 73.5
         assert result["per_day"] < DAILY_BUDGET
 
     def test_measured_volume_worst_case(self, census):
         """Task-side errors spread round-robin across every prefork child, which
         is realistic rather than adversarial: Celery routes a task to whichever
-        child is free. This is the operative ceiling."""
+        child is free. This is the operative ceiling.
+
+        **This number is a REPLAY, not a bound on the policy** (codex
+        C-CERT-SENTRY-R2 finding 1). It prices only signatures present in one
+        frozen eight-day census, so on its own it cannot see a state the census
+        did not contain. The two such states that matter are priced explicitly
+        in :class:`TestBudgetSurvivesItsNegativeControls`, and the certified
+        margin is the one THERE, not the one here.
+        """
         result = replay(census, "process")
-        assert result["sent"] == 1_256
-        assert round(result["per_day"], 1) == 157.0
+        assert result["sent"] == 1_090
+        assert round(result["per_day"], 1) == 136.2
         assert result["per_day"] < DAILY_BUDGET, (
             "the worst-case fleet/day ceiling must fit the quota"
         )
@@ -598,12 +705,104 @@ class TestFleetVolumeCeiling:
         result = replay(census, "process")
         assert result["per_day"] * 30.4 < QUOTA_EVENTS_PER_MONTH
 
-    def test_headroom_is_reported_honestly_not_generously(self, census):
-        """5% is thin. If a change makes it thinner the test fails, and the fix
-        is to cut volume — not to raise the cap."""
-        result = replay(census, "process")
-        headroom = (DAILY_BUDGET - result["per_day"]) / DAILY_BUDGET
-        assert 0.0 < headroom < 0.10
+
+class TestBudgetSurvivesItsNegativeControls:
+    """Codex C-CERT-SENTRY-R2 finding 1 — the replay is not a ceiling.
+
+    At the certified policy (backstop 3) the replay read 157.0/day against a
+    164.47/day budget, and **either** of the two controls below took it over:
+    169/day for a novel worker signature, 167/day for the watchdog's tested
+    Redis-down path. A margin that only survives the sample is not a margin.
+
+    Both controls are now priced INTO the budget, and the cap was lowered until
+    the priced total cleared a floor rather than a threshold.
+    """
+
+    @pytest.fixture(scope="class")
+    def census(self):
+        return _load_census()
+
+    def _priced(self, census, signatures=1):
+        base = replay(census, "process")["per_day"]
+        return base + novel_signature_reserve(BACKSTOP_PER_WINDOW, signatures)
+
+    def test_control_one_a_novel_worker_signature_is_reserved_for(self, census):
+        """The census cannot contain tomorrow's bug.
+
+        One new task erroring on every run is capped per process and reaches
+        every child in the pool, so it costs ``cap x children`` per day until
+        someone fixes it. At backstop 3 that was +12/day and it broke the
+        budget; the reserve is now paid for up front instead of discovered.
+        """
+        reserve = novel_signature_reserve(BACKSTOP_PER_WINDOW, 1)
+        assert reserve == BACKSTOP_PER_WINDOW * MAX_WORKER_CONCURRENCY == 4
+        assert self._priced(census, 1) < DAILY_BUDGET
+
+    def test_control_two_the_watchdog_cooldown_fails_open(self, census):
+        """``_alert_on_cooldown`` returns False when Redis is unreachable.
+
+        That is deliberate and tested — a telemetry-infra failure must never
+        swallow an alarm — which means the cooldown can NEVER be assumed to be
+        holding when pricing the watchdog. The previous model priced only the
+        happy path at 4 windows/day.
+
+        The repair is not a bigger allowance, it is that the backstop now binds
+        first: ``1 x 2 background children`` is below the 4/day a working
+        cooldown allows, so the failure mode is bounded by the same number as
+        the healthy one and costs nothing extra.
+        """
+        assert BACKSTOP_PER_WINDOW * WATCHDOG_POOL_CHILDREN <= WATCHDOG_COOLDOWN_WINDOWS_PER_DAY, (
+            "the backstop no longer binds the watchdog — the fail-open path is "
+            "unpriced again and the cooldown's happy path is back in the budget"
+        )
+        assert watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) == 10
+        # And the control that would have caught the original: at the certified
+        # cap the fail-open path exceeded what the model charged for it.
+        assert watchdog_ceiling_per_day(3) > WATCHDOG_PAIRS_PER_DAY * WATCHDOG_COOLDOWN_WINDOWS_PER_DAY / 2
+
+    def test_the_slack_is_stated_in_bugs_not_percent(self, census):
+        """A percentage is abstract. This is the same fact an operator can act
+        on: how many MORE novel high-frequency worker signatures the remaining
+        slack absorbs before the quota is at risk."""
+        base = replay(census, "process")["per_day"]
+        per_signature = novel_signature_reserve(BACKSTOP_PER_WINDOW, 1)
+        capacity = int((DAILY_BUDGET - base) // per_signature)
+        assert capacity >= NOVEL_SIGNATURE_CAPACITY_FLOOR, (
+            f"only {capacity} novel worker signatures of slack remain"
+        )
+
+    def test_the_margin_is_a_FLOOR_not_a_range(self, census):
+        """The assertion this replaces was ``0.0 < headroom < 0.10``.
+
+        Its docstring promised that a change making the margin thinner would
+        fail. It did the opposite: shrinking the margin from 5% to 0.1% passes
+        that assertion comfortably. A test whose name is the opposite of its
+        assertion is worse than no test, because it is *cited* as cover.
+
+        A floor cannot be satisfied by getting worse.
+        """
+        margin = (DAILY_BUDGET - self._priced(census, 1)) / DAILY_BUDGET
+        assert margin >= MIN_SAFE_MARGIN, (
+            f"margin {margin:.1%} is below the {MIN_SAFE_MARGIN:.0%} floor — "
+            "cut volume or lower a cap; do NOT lower the floor"
+        )
+
+    def test_a_thinner_margin_would_fail_this_suite(self, census):
+        """The negative control ON the floor itself, so it cannot rot the way
+        its predecessor did: a hypothetical policy at 0.1% margin must FAIL."""
+        hypothetical = DAILY_BUDGET * 0.999
+        margin = (DAILY_BUDGET - hypothetical) / DAILY_BUDGET
+        assert not (margin >= MIN_SAFE_MARGIN), "the floor accepts a 0.1% margin"
+
+    def test_even_two_novel_signatures_still_fit_the_quota(self, census):
+        """Weaker than the floor and deliberately kept: two simultaneous novel
+        worker signatures eat into the margin (13.9%, under the floor) but do
+        NOT exhaust the quota. The floor is where we act; this is where we
+        would be in trouble."""
+        assert self._priced(census, 2) < DAILY_BUDGET
+
+    def test_the_month_fits_with_the_reserve_applied(self, census):
+        assert self._priced(census, 1) * 30.4 < QUOTA_EVENTS_PER_MONTH
 
     def test_the_dominant_residual_is_named(self, census):
         """The biggest surviving signature is ONE chronically overrunning task.
@@ -613,6 +812,110 @@ class TestFleetVolumeCeiling:
         assert "SoftTimeLimitExceeded" in top and "refresh_open_commentary" in top
         assert count / result["days"] > 30
 
+    def test_schema_2_round_trips_the_signature_fields(self, census):
+        """Codex C-CERT-SENTRY-R2 finding 3, direct.
+
+        The predecessor fixture asserted only ``>500 anonymised server_name
+        values``, which proves CARDINALITY and nothing about fidelity. What the
+        classifier actually consumes is the failure site, and schema 1 carried
+        no frames at all — so every row fell through to ``culprit`` and the
+        replay could not have noticed a collapsed bucket if it happened.
+        """
+        assert census["schema_version"] == 2
+        rows_with_site = [r for r in census["rows"] if r["site"]]
+        assert len(rows_with_site) > 800, "the frames did not survive the rebuild"
+        # the site is a real module:function, and it reaches _failure_site
+        row = next(r for r in rows_with_site if r["exc_type"] == "IntegrityError")
+        assert ":" in row["site"] and row["frame_depth"] > 0
+        assert _failure_site(_census_event(row), None) == row["site"]
+        # and a row with no in-app frame falls through to culprit, as production does
+        frameless = next((r for r in census["rows"]
+                          if not r["site"] and r["culprit"] and r["kind"] == "error"), None)
+        if frameless is not None:
+            assert _failure_site(_census_event(frameless), None) == frameless["culprit"]
+
+    def test_missing_signature_fields_can_only_UNDERCOUNT(self, census):
+        """The monotonicity that makes finding 3 tractable.
+
+        Stripping the site information can never *raise* the replay's volume:
+        fewer distinguishable signatures means more events sharing one
+        allowance, and a shared allowance suppresses more. So a fixture missing
+        signature fields is biased toward undercounting — the optimistic
+        direction — which is why "the omissions make it pessimistic" could not
+        be assumed and had to be checked.
+
+        Measured on this change: rebuilding schema 1 -> schema 2 moved the
+        replay from **133.6 to 141.1/day** at the then-current policy, a 5.6%
+        correction upward. The site-agnostic rule for signal-injected classes
+        then returned 4.9/day of that, which is why the number below is 136.2
+        rather than either. Both movements are real and neither is a tuning
+        knob.
+        """
+        stripped = {**census, "rows": [{**r, "site": ""} for r in census["rows"]]}
+        assert replay(stripped, "process")["per_day"] <= replay(census, "process")["per_day"]
+
+    def test_bucket_collapse_is_MEASURED_against_sentrys_own_grouping(self, census):
+        """``issue`` is Sentry's grouping id. It is never fed to the filter — it
+        is the independent yardstick that turns "can our signature collapse
+        distinct production buckets?" from an argument into a number.
+
+        Two directions, both reported:
+
+        * a signature covering >1 issue is a COLLAPSE (we would suppress a
+          distinct bug behind another one's allowance);
+        * an issue split across >1 signature is the safe direction — more
+          allowances, more volume, already priced by the replay.
+        """
+        sig_to_issues = collections.defaultdict(set)
+        for row in census["rows"]:
+            if row["culprit"] == _WATCHDOG_CULPRIT:
+                continue  # modelled separately; its real fingerprint is not in Discover
+            signature = event_signature(_census_event(row), row["exc_type"])
+            sig_to_issues[signature].add(row["issue"])
+
+        collapsed = {s: i for s, i in sig_to_issues.items() if len(i) > 1}
+        worst = max((len(i) for i in collapsed.values()), default=0)
+        # The remaining collapses are the SITE-AGNOSTIC classes (by design — one
+        # chronic timeout is one bucket) plus rows Sentry split on fields no
+        # before_send can see. What must not happen is a signature swallowing a
+        # large family of genuinely distinct issues.
+        assert worst <= 5, (
+            f"one signature now covers {worst} distinct Sentry issues — "
+            "a novel bug can hide behind an existing one's allowance"
+        )
+        assert len(collapsed) / max(1, len(sig_to_issues)) < 0.15
+
+    def test_the_incarnation_multiplier_is_corroborated_not_asserted(self, census):
+        """Codex C-CERT-SENTRY-R2 finding 3, second half.
+
+        563 distinct ``server_name`` values prove cardinality, not that each is
+        a restart. The corroboration is external and is recorded in
+        ``sentry_formation``: 11.9 Heroku releases/day measured over the
+        adjacent 16.8-day span, and 5-20 distinct releases/day inside the window
+        via Sentry. Every release restarts every dyno, so at 6 steady types a
+        12-release day mints ~72 hostnames — against an observed mean of 71.9.
+
+        This test pins the fixture-side facts that arithmetic rests on, so a
+        rebuild that changes the partition cannot silently change the budget.
+        """
+        dynos = collections.defaultdict(set)
+        for row in census["rows"]:
+            dynos[row["dyno"]].add(row["day"])
+        assert len(dynos) == CENSUS_DYNO_INCARNATIONS
+        single_day = sum(1 for days in dynos.values() if len(days) == 1)
+        assert single_day == CENSUS_SINGLE_DAY_INCARNATIONS
+        assert single_day / len(dynos) > 0.95, (
+            "incarnations now persist across days — they are not restarts and "
+            "the allowance-reset multiplier must be re-derived"
+        )
+        per_day = collections.defaultdict(set)
+        for row in census["rows"]:
+            per_day[row["day"]].add(row["dyno"])
+        mean = sum(len(v) for v in per_day.values()) / len(per_day)
+        assert abs(mean - CENSUS_MEAN_INCARNATIONS_PER_DAY) < 0.01
+        # the deploy rate is the same order as the churn it is offered to explain
+        assert 0.5 < (MEASURED_RELEASES_PER_DAY * len(STEADY_TYPES)) / mean < 2.0
+
     def test_the_replay_uses_process_and_queue_provenance(self, census):
         """Not a single synthetic transaction per class: the fixture is grouped
         by dyno incarnation, and the process model is derived from the Procfile."""
@@ -620,7 +923,7 @@ class TestFleetVolumeCeiling:
         assert len({r["dyno"] for r in rows}) > 500
         # 174 distinct (class, culprit, transaction) triples, against the
         # predecessor replay's 10 synthetic one-transaction-per-class rows.
-        assert len({(r["exc_type"], r["culprit"], r["transaction"]) for r in rows}) == 174
+        assert len({(r["exc_type"], r["culprit"], r["transaction"]) for r in rows}) == 176
         assert _processes_for({"culprit": "", "transaction": "app.tasks.poll_odds",
                                "logger": ""}, "process") == 4
         assert _processes_for({"culprit": "billiard.pool in mark_as_worker_lost",
@@ -630,9 +933,9 @@ class TestFleetVolumeCeiling:
         verdicts = collections.Counter()
         for row in census["rows"]:
             verdicts[classify(_census_event(row), None)] += row["count"]
-        assert verdicts[VERDICT_DROP] == 3_458
-        assert verdicts[VERDICT_THROTTLE] == 852
-        assert verdicts[VERDICT_PASS] == 2_274
+        assert verdicts[VERDICT_DROP] == 3_491
+        assert verdicts[VERDICT_THROTTLE] == 863
+        assert verdicts[VERDICT_PASS] == 2_230
         assert sum(verdicts.values()) == 6_584
 
 
@@ -706,11 +1009,34 @@ class TestBackstop:
 class TestFailOpen:
     """A filter bug must never take error reporting down with it."""
 
-    def test_malformed_events_do_not_raise(self):
+    #: All three of these degenerate to the SAME signature (``unknown|?|?``),
+    #: which is correct — there is nothing in them to tell apart. So each gets
+    #: its own filter: sharing one would test the backstop (a repeat of one
+    #: signature is capped, by design) rather than the fail-open property this
+    #: class exists for. At ``BACKSTOP_PER_WINDOW`` 3 the distinction was
+    #: invisible because three shapes fitted under the cap by luck.
+    MALFORMED = [
+        ({}, None),
+        ({"exception": None}, {}),
+        ({"exception": {"values": [None]}}, {}),
+    ]
+
+    @pytest.mark.parametrize("event,hint", MALFORMED)
+    def test_malformed_events_do_not_raise(self, event, hint):
         f = SentryVolumeFilter()
-        assert f({}, None) is not None
-        assert f({"exception": None}, {}) is not None
-        assert f({"exception": {"values": [None]}}, {}) is not None
+        assert f(event, hint) is not None
+        assert f.counts["dropped"] == 0, "a malformed event must never be DROPPED"
+
+    def test_malformed_events_share_one_signature_so_repeats_are_capped(self):
+        """The other direction, stated rather than left as a surprise: these
+        are indistinguishable, so a flood of them is one signature and IS
+        capped. Fail-open is about the first event, not about unbounded volume.
+        """
+        sigs = {event_signature(e or {}, "", h) for e, h in self.MALFORMED}
+        assert len(sigs) == 1
+        f = SentryVolumeFilter()
+        sent = sum(1 for e, h in self.MALFORMED if f(e, h) is not None)
+        assert sent == BACKSTOP_PER_WINDOW
 
     def test_internal_error_fails_open(self, monkeypatch):
         f = SentryVolumeFilter()
