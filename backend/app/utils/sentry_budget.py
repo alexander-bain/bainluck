@@ -372,6 +372,64 @@ def budget_verdict(
     }
 
 
+# ---------------------------------------------------------------------------
+# Boundary-aware accessors (C-CERT-SENTRY-R4 finding P1, queue 363)
+#
+# Every function above derives cycle length from the timestamp it is handed, and
+# is therefore correct. The defect Codex found is one level up: the filter
+# FROZE two of them at import (``BACKSTOP_PER_WINDOW``, ``BUDGET_VERDICT``), and
+# a dyno outlives a billing cycle. Its specimen: a process imported during a
+# 28-day cycle at quota 5,000 kept exporting ``fits: true, shortfall: 0,
+# cycle_days: 28`` after the next 31-day cycle opened, while a fresh calculation
+# said ``fits: false, shortfall: 8.26, cycle_days: 31``. The transition itself
+# smooths away the shortfall the acceptance requires — a false green produced by
+# the calendar rather than by anything changing.
+#
+# Recomputing per event is not an option: the cap is read on the hot path and
+# the solve is a search. So the accessors below memoise on the CYCLE, which is
+# the only thing the answer depends on: a cheap date comparison per call, and a
+# re-solve exactly once per boundary crossing.
+# ---------------------------------------------------------------------------
+
+_CACHE: dict = {"key": None, "cap": None, "verdict": None}
+
+
+def cycle_key(now: datetime | None = None) -> str:
+    """Identity of the billing cycle containing ``now``. The memo key."""
+    start, end = cycle_window(now)
+    return f"{start.date().isoformat()}:{(end - start).days}:{QUOTA_EVENTS_PER_MONTH}"
+
+
+def _refresh(now: datetime | None = None) -> None:
+    key = cycle_key(now)
+    if _CACHE["key"] == key:
+        return
+    _CACHE["key"] = key
+    _CACHE["cap"] = effective_backstop_per_window(now)
+    _CACHE["verdict"] = budget_verdict(now)
+
+
+def current_backstop_per_window(now: datetime | None = None) -> int:
+    """The cap in force RIGHT NOW, re-solved on a cycle boundary.
+
+    Read on the hot path, so it must stay cheap: one date comparison in the
+    common case.
+    """
+    _refresh(now)
+    return int(_CACHE["cap"])
+
+
+def current_budget_verdict(now: datetime | None = None) -> dict:
+    """The exported verdict, re-derived on a cycle boundary.
+
+    Returns a copy: the exported dict travels into counter payloads, and a
+    caller mutating the cache would make the next reader's verdict a function of
+    who read it first.
+    """
+    _refresh(now)
+    return dict(_CACHE["verdict"])
+
+
 #: True when the policy costs more than the quota affords at every searched cap.
 #: Read at import by ``app/utils/sentry_filter.py``, which logs it CRITICAL once
 #: — the "loudly" half of "impossible or loudly impossible".

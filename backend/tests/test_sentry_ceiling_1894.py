@@ -784,3 +784,143 @@ def test_a_real_redis_churn_error_is_still_dropped():
         }
     }
     assert classify(event, {}) == "drop"
+
+
+# =============================================================================
+# R4 finding P1 — a long-lived process must not carry its cycle across a reset
+# =============================================================================
+
+class TestThePolicyIsNotFrozenAtImport:
+    """C-CERT-SENTRY-R4, BLOCK: *"the shipping cap and exported budget verdict
+    freeze at import, so a live process crossing a 28->31-day billing cycle
+    hides the required 8.26/day shortfall."*
+
+    Every function in ``sentry_budget`` already derived cycle length from the
+    timestamp it was handed. The defect was one level up — ``sentry_filter``
+    read two of them ONCE, at import, and a dyno outlives a billing cycle. The
+    transition then smooths away a real shortfall, which is the worst direction
+    for a budget instrument to be wrong in: nothing changed, nobody acted, and
+    the number improved.
+    """
+
+    #: Inside the 28-day 2026-02-21 -> 2026-03-21 cycle.
+    FEB = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    #: Inside the 31-day 2026-03-21 -> 2026-04-21 cycle that follows it.
+    MAR = datetime(2026, 3, 25, 12, 0, tzinfo=timezone.utc)
+
+    def test_the_two_cycles_really_do_differ_in_length(self):
+        """Premise check. If these are the same length the specimen proves
+        nothing, and the test would pass for the wrong reason."""
+        from app.utils import sentry_budget
+
+        assert sentry_budget.cycle_length_days(self.FEB) == 28
+        assert sentry_budget.cycle_length_days(self.MAR) == 31
+
+    def test_the_verdict_follows_the_boundary(self, monkeypatch):
+        """Codex's exact specimen, at quota 5,000."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+
+        before = sentry_budget.current_budget_verdict(self.FEB)
+        after = sentry_budget.current_budget_verdict(self.MAR)
+
+        assert before["cycle_days"] == 28
+        assert after["cycle_days"] == 31, (
+            "the process carried the previous cycle across the reset — the "
+            "import-frozen verdict, restored"
+        )
+        assert after["shortfall_per_day"] == 8.26
+        assert after["fits"] is False
+
+    def test_the_enforced_cap_follows_the_boundary(self, monkeypatch):
+        """The other half: the cap the filter ENFORCES, not just what it reports."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 6_200)
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+
+        before = sentry_budget.current_backstop_per_window(self.FEB)
+        after = sentry_budget.current_backstop_per_window(self.MAR)
+        fresh = sentry_budget.effective_backstop_per_window(self.MAR)
+
+        assert after == fresh, (
+            f"enforced {after} after the reset, fresh solve says {fresh} "
+            f"(was {before} in the 28-day cycle)"
+        )
+
+    def test_the_filter_reads_live_not_the_import_snapshot(self):
+        """A named constant that still exists is not the same as a constant that
+        is still ENFORCED. Guards against a later edit re-pointing the hot path
+        at the frozen value."""
+        import inspect
+
+        from app.utils import sentry_filter
+
+        emit = inspect.getsource(sentry_filter.summarize_filter_counts)
+        assert "current_budget_verdict" in emit
+        assert "BUDGET_VERDICT" not in emit.replace("current_budget_verdict", "")
+
+        src = inspect.getsource(sentry_filter)
+        assert "limit=sentry_budget.current_backstop_per_window()" in src, (
+            "the backstop is enforced from the import-time snapshot again"
+        )
+
+    def test_the_import_snapshot_is_still_available_and_named_as_such(self):
+        """Kept deliberately: 'what did this process boot with' is a real
+        question, and answering it must not be confused with the live policy."""
+        from app.utils import sentry_filter
+
+        assert hasattr(sentry_filter, "BACKSTOP_PER_WINDOW_AT_IMPORT")
+        assert hasattr(sentry_filter, "BUDGET_VERDICT_AT_IMPORT")
+
+    def test_the_cache_does_not_re_solve_within_a_cycle(self, monkeypatch):
+        """It is read on the hot path. One date comparison in the common case,
+        not a search per event."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+        calls = {"n": 0}
+        real = sentry_budget.effective_backstop_per_window
+
+        def counted(now=None, base=None):
+            calls["n"] += 1
+            return real(now, base)
+
+        monkeypatch.setattr(sentry_budget, "effective_backstop_per_window", counted)
+
+        sentry_budget.current_backstop_per_window(self.MAR)
+        after_first = calls["n"]
+        for _ in range(50):
+            sentry_budget.current_backstop_per_window(self.MAR)
+
+        # One REFRESH costs several solves (``budget_verdict`` re-enters via
+        # shortfall + required-quota). What must not grow is the refresh count.
+        assert after_first > 0
+        assert calls["n"] == after_first, (
+            f"re-solved on {calls['n'] - after_first} extra calls inside one cycle"
+        )
+
+        # ...and crossing the boundary DOES pay for a refresh, or the memo is
+        # just the frozen constant with more ceremony.
+        sentry_budget.current_backstop_per_window(self.FEB)
+        assert calls["n"] > after_first
+
+    def test_an_exported_verdict_cannot_be_mutated_by_its_reader(self, monkeypatch):
+        """The dict travels into counter payloads. A caller mutating it would
+        make the next reader's verdict depend on who read it first."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+        first = sentry_budget.current_budget_verdict(self.MAR)
+        first["shortfall_per_day"] = 0.0
+        assert sentry_budget.current_budget_verdict(self.MAR)["shortfall_per_day"] != 0.0

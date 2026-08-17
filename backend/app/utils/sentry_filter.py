@@ -351,7 +351,14 @@ THROTTLE_WINDOW_S = 86400
 #: — deliberately, because muting the fleet to fit a bill re-breaks codex finding
 #: (b) and inverts the purpose of the instrument. That state is reported, not
 #: absorbed: see ``BUDGET_VERDICT`` below and the CRITICAL log beside it.
-BACKSTOP_PER_WINDOW = sentry_budget.effective_backstop_per_window()
+#: ⚠️ Import-time READING, kept only for readers that want "what did this
+#: process boot with". It is NOT what the filter enforces — see
+#: :func:`sentry_budget.current_backstop_per_window`. Freezing the enforced cap
+#: here is C-CERT-SENTRY-R4 finding P1: a dyno outlives a billing cycle, so a
+#: process that booted in a 28-day cycle went on enforcing its cap, and
+#: exporting its verdict, after a 31-day cycle opened.
+BACKSTOP_PER_WINDOW_AT_IMPORT = sentry_budget.effective_backstop_per_window()
+BACKSTOP_PER_WINDOW = BACKSTOP_PER_WINDOW_AT_IMPORT
 BACKSTOP_WINDOW_S = 86400
 _MAX_TRACKED_SIGNATURES = 512
 
@@ -359,7 +366,8 @@ _MAX_TRACKED_SIGNATURES = 512
 #: the exported counters so an operator reading the discard rate also sees the
 #: budget it is being spent against — a rate without its budget is the same
 #: uninterpretable number the old log line was.
-BUDGET_VERDICT = sentry_budget.budget_verdict()
+BUDGET_VERDICT_AT_IMPORT = sentry_budget.budget_verdict()
+BUDGET_VERDICT = BUDGET_VERDICT_AT_IMPORT
 
 if sentry_budget.BUDGET_OVERCOMMITTED:
     # The "loudly" half of "impossible or loudly impossible". Not an exception:
@@ -864,7 +872,9 @@ class SentryVolumeFilter:
         # PASS, but nothing is unbounded. A novel signature always gets its first
         # event through immediately; only a repeating one is capped.
         if self._throttle.allow(
-            signature, limit=BACKSTOP_PER_WINDOW, window_s=BACKSTOP_WINDOW_S
+            signature,
+            limit=sentry_budget.current_backstop_per_window(),
+            window_s=BACKSTOP_WINDOW_S,
         ):
             self._bump("passed")
             return event
@@ -966,7 +976,7 @@ def export_counts(snapshot: dict[str, int], uptime_s: float) -> None:
 
     payload = dict(snapshot)
     payload["window_s"] = round(uptime_s, 1)
-    payload["cap"] = BACKSTOP_PER_WINDOW
+    payload["cap"] = sentry_budget.current_backstop_per_window()
     # fast_fail: this runs on the exception path (gotcha #39). A churning
     # connection must degrade in a fraction of a second, not spend the full
     # 3-attempt retry budget while an error is waiting to be reported.
@@ -1052,7 +1062,7 @@ def summarize_filter_counts(rows: dict[str, dict]) -> dict:
         "over_ceiling": sentry_budget.over_discard_ceiling(discarded, window_s),
         "unidentified": totals.get("unidentified", 0),
         "not_error_passthrough": totals.get("not_error", 0),
-        "budget": BUDGET_VERDICT,
+        "budget": sentry_budget.current_budget_verdict(),
     }
 
 
