@@ -510,10 +510,14 @@ def test_ruling_numbers_are_unique() -> None:
 #: **Resolve by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree.** Do not take
 #: ours, do not take theirs, and do not add the deltas — two lanes each writing `67 -> 68` is one
 #: ruling each, not two on top of 68.
-#: Raised 71 -> 72 by queue 360 banking **075** (a derived budget may never fall below the
-#: phase's own measured floor) on `lane1/q360`, based on `origin/master` `1eb968ee` where the
-#: four-way collision above had already resolved to 71 by counting the merged tree.
-MINIMUM_BANKED_RULINGS = 72
+#: Raised 71 -> **73** by INT-080 merging TWO independent rulings in one wave:
+#: **075** (a derived budget may never fall below the phase's own measured floor, `lane1/q360`)
+#: and **076** (planner cost cannot rank two statements, `program/latency-57`). Both branches were
+#: cut from `origin/master` `1eb968ee` (71 files) and each independently wrote `71 -> 72`; two
+#: lanes each writing `71 -> 72` is one ruling each, NOT two on top of 72. Resolved the documented
+#: way — by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree, which is 73, and which
+#: is again nobody's side. This is the collision #1910 exists to make impossible.
+MINIMUM_BANKED_RULINGS = 73
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -1,0 +1,10 @@
+{
+  "adapter_version": "typeahead-adapter/v2",
+  "source": "https://api.bainluck.com/api/events/typeahead",
+  "probes": 46,
+  "fetch_ok": 46,
+  "fetch_failed": 0,
+  "evidence_fidelity": "exact",
+  "evidence_probes": 46,
+  "debug_evidence_requested": true
+}

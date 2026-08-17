@@ -3012,7 +3012,44 @@ celery_app.conf.beat_schedule = {
         #
         # A cold run cannot pile up behind the next beat: the task takes a Redis
         # single-run lock and SKIPS if one is already in flight.
-        "schedule": 30.0,
+        #
+        # ⚠️ 30.0 -> 10.0, LAT-P062. THE BEAT IS NO LONGER THE CADENCE; THE
+        # FLOOR IS. Read the two together or neither makes sense.
+        #
+        # At a 30s beat the single-run lock QUANTISED the pass period: a pass
+        # measures 27-38s wall, so it does not fit inside one beat, the next
+        # beat skips on the lock, and the real period jumps to ~60s — against a
+        # 45s response TTL. Measured on production v3829 over two settled
+        # reads: 27 real passes / 1396s and 31 / 1319s, mean period **51.7s and
+        # 42.5s**, straddling the TTL. Duty cycle 16/24 and 19/24.
+        #
+        # The pass/skip sequence shows it is a VARIANCE problem, not a mean one
+        # (the 42.5s mean is already under 45s):
+        #
+        #     PPPPPPPP.P...P...P.PPPPPPP...PPPPPPPPP.P.P...P...P
+        #
+        # The `PPPPPPPPP` stretches run at a ~31s period and are 100% warm; the
+        # `P...P...P` stretches run one pass per four beats, near 105s, and the
+        # head is dead for most of it.
+        #
+        # period = beat * ceil(wall / beat). At beat 30 with wall 27-38 that is
+        # {30, 60}; at beat 10 it is {30, 40} — both under the 45s TTL.
+        #
+        # A shorter beat on its own would also remove the only bound on how
+        # OFTEN the warmer may run, and the warmer is not free: it holds the
+        # database 73% of wall-clock at concurrency 4, ~2.9 backend-equivalents
+        # against a production baseline of ~3 ACTIVE backends. So the bound
+        # moves into the task as `MIN_PASS_PERIOD_SECONDS = 30`, which caps the
+        # load increase at +42% worst case (+6% to +29% expected).
+        #
+        # Consequence for whoever reads `recent_durations_ms` next: at beat 10
+        # roughly three of every four invocations are ~10ms lock skips, so the
+        # 50-entry window now covers ~12 real passes rather than ~27. Read the
+        # summary's new `period_s` field instead of reconstructing the cadence
+        # from the duration histogram — that is what it is for.
+        #
+        # Registered prediction and grading rows: `lat-p062-warmer-graded.md` §3.
+        "schedule": 10.0,
         "options": {"queue": "background"},
     },
     "precompute-discover-candidate-base": {
@@ -3524,19 +3561,42 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour="1,7,13,19"),  # Every 6 hours, offset 30min
         "options": {"queue": "background"},
     },
+    # ── CADENCE ↔ TTL HYGIENE, LAT-P062 (Item 3). All three below cache at
+    # `ex=3600` and were recomputing FOUR to SIX times per cache lifetime.
+    #
+    # The premise-check that gates this ran in LAT-P061 and PASSED: the writer
+    # is the scheduled task itself and it `setex`es unconditionally, so these
+    # caches DO extend on every pass — the mirror image of `/typeahead`'s early
+    # return, where a warm read extends nothing. That matters because it means
+    # the extra recomputes buy exactly NOTHING: the cache would not have expired
+    # either way, so every run past the second is pure waste rather than a
+    # freshness/cost trade.
+    #
+    # `*/30` keeps TWO refreshes inside every 3600s TTL — one is a single point
+    # of failure, so the cadence is not taken to `*/60`.
+    #
+    # ⚠️ Worth ~20 GB/day, which is **0.7%**. This is HYGIENE, NOT A FIX, and it
+    # must not be reported as one. It is folded in here only because the beat
+    # file was already open for the warmer change above, and because removing
+    # background read pressure from the buffer pool is the one thing that helps
+    # the trigram indexes #1866 is about — a rounding error with the right sign.
     "precompute-admin-audit-all": {
         "task": "app.tasks.precompute_admin_audit_all",
-        "schedule": crontab(minute="*/15"),  # Every 15 min — keeps /audit/all cache warm
+        # */15 -> */30 (LAT-P062). Was 4 recomputes per 3600s TTL; now 2.
+        "schedule": crontab(minute="*/30"),
         "options": {"queue": "background"},
     },
     "precompute-admin-link-rate": {
         "task": "app.tasks.precompute_admin_link_rate",
-        "schedule": crontab(minute="*/10"),  # Every 10 min — keeps /link-rate cache warm
+        # */10 -> */30 (LAT-P062). Was 6 recomputes per 3600s TTL; now 2.
+        "schedule": crontab(minute="*/30"),
         "options": {"queue": "background"},
     },
     "precompute-admin-matured-linkage": {
         "task": "app.tasks.precompute_admin_matured_linkage",
-        "schedule": crontab(minute="*/10"),  # Every 10 min — matured-linkage headline (Item 2)
+        # */10 -> */30 (LAT-P062). Was 6 recomputes per 3600s TTL; now 2.
+        # Matured-linkage headline (Item 2).
+        "schedule": crontab(minute="*/30"),
         "options": {"queue": "background"},
     },
 }

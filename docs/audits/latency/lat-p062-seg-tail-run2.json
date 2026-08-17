@@ -1,0 +1,1117 @@
+{
+  "captured_at_unix": 1786997848,
+  "captured_at_utc": "2026-08-17T20:17:28Z",
+  "captured_at_local": "2026-08-17T13:17:28 PDT",
+  "label": "LAT-P062 TAIL CONTROL run2 (disjoint never-warmed), v3829 post-index post-warmer-fix",
+  "api": "https://api.bainluck.com",
+  "arm": [
+    "borussia",
+    "sacramento",
+    "eurovision",
+    "reykjavik",
+    "kilkenny",
+    "wolverhampton",
+    "guadalajara",
+    "trondheim"
+  ],
+  "rounds": 3,
+  "rows": [
+    {
+      "round": 0,
+      "query": "borussia",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.143,
+          "tls": 147.481,
+          "server": 83.087,
+          "transfer": 3.095
+        },
+        "total_ms": 233.868
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.225,
+          "tls": 142.694,
+          "server": 81.065,
+          "transfer": 0.167
+        },
+        "total_ms": 224.21
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.001,
+        "connect": -0.082,
+        "tls": 4.787,
+        "server": 2.022,
+        "transfer": 2.928
+      },
+      "miss_cost_total_ms": 9.658
+    },
+    {
+      "round": 0,
+      "query": "sacramento",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.025,
+          "connect": 0.353,
+          "tls": 148.319,
+          "server": 82.046,
+          "transfer": 0.348
+        },
+        "total_ms": 231.4
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.272,
+          "tls": 174.141,
+          "server": 83.529,
+          "transfer": 0.266
+        },
+        "total_ms": 258.282
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.014,
+        "connect": 0.081,
+        "tls": -25.822,
+        "server": -1.483,
+        "transfer": 0.082
+      },
+      "miss_cost_total_ms": -26.882
+    },
+    {
+      "round": 0,
+      "query": "eurovision",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 1.05,
+          "tls": 169.852,
+          "server": 82.977,
+          "transfer": 0.211
+        },
+        "total_ms": 254.153
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.018,
+          "connect": 0.354,
+          "tls": 168.734,
+          "server": 80.734,
+          "transfer": 0.133
+        },
+        "total_ms": 250.104
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.008,
+        "connect": 0.696,
+        "tls": 1.118,
+        "server": 2.243,
+        "transfer": 0.078
+      },
+      "miss_cost_total_ms": 4.049
+    },
+    {
+      "round": 0,
+      "query": "reykjavik",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.122,
+          "tls": 142.828,
+          "server": 84.311,
+          "transfer": 0.191
+        },
+        "total_ms": 227.513
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.223,
+          "tls": 163.391,
+          "server": 87.203,
+          "transfer": 0.241
+        },
+        "total_ms": 251.133
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.001,
+        "connect": -0.101,
+        "tls": -20.563,
+        "server": -2.892,
+        "transfer": -0.05
+      },
+      "miss_cost_total_ms": -23.62
+    },
+    {
+      "round": 0,
+      "query": "kilkenny",
+      "miss": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.318,
+          "tls": 146.551,
+          "server": 83.275,
+          "transfer": 2.092
+        },
+        "total_ms": 232.301
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.019,
+          "connect": 0.338,
+          "tls": 151.065,
+          "server": 80.439,
+          "transfer": 4.849
+        },
+        "total_ms": 236.808
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.005,
+        "connect": -0.02,
+        "tls": -4.514,
+        "server": 2.836,
+        "transfer": -2.757
+      },
+      "miss_cost_total_ms": -4.507
+    },
+    {
+      "round": 0,
+      "query": "wolverhampton",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.285,
+          "tls": 145.283,
+          "server": 81.875,
+          "transfer": 0.148
+        },
+        "total_ms": 227.652
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.234,
+          "tls": 145.502,
+          "server": 83.512,
+          "transfer": 0.303
+        },
+        "total_ms": 229.637
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.051,
+        "tls": -0.219,
+        "server": -1.637,
+        "transfer": -0.155
+      },
+      "miss_cost_total_ms": -1.985
+    },
+    {
+      "round": 0,
+      "query": "guadalajara",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.153,
+          "tls": 146.638,
+          "server": 80.031,
+          "transfer": 0.261
+        },
+        "total_ms": 227.162
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.367,
+          "tls": 152.97,
+          "server": 85.105,
+          "transfer": 1.927
+        },
+        "total_ms": 240.472
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.005,
+        "connect": -0.214,
+        "tls": -6.332,
+        "server": -5.074,
+        "transfer": -1.666
+      },
+      "miss_cost_total_ms": -13.31
+    },
+    {
+      "round": 0,
+      "query": "trondheim",
+      "miss": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.027,
+          "connect": 0.296,
+          "tls": 150.098,
+          "server": 82.137,
+          "transfer": 0.345
+        },
+        "total_ms": 233.058
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.299,
+          "tls": 149.763,
+          "server": 85.011,
+          "transfer": 0.518
+        },
+        "total_ms": 235.686
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.016,
+        "connect": -0.003,
+        "tls": 0.335,
+        "server": -2.874,
+        "transfer": -0.173
+      },
+      "miss_cost_total_ms": -2.628
+    },
+    {
+      "round": 1,
+      "query": "borussia",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.187,
+          "tls": 153.706,
+          "server": 6136.459,
+          "transfer": 0.164
+        },
+        "total_ms": 6290.582
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.287,
+          "tls": 144.635,
+          "server": 80.551,
+          "transfer": 2.385
+        },
+        "total_ms": 227.933
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": -0.1,
+        "tls": 9.071,
+        "server": 6055.908,
+        "transfer": -2.221
+      },
+      "miss_cost_total_ms": 6062.649
+    },
+    {
+      "round": 1,
+      "query": "sacramento",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.159,
+          "tls": 148.981,
+          "server": 2966.218,
+          "transfer": 0.281
+        },
+        "total_ms": 3115.705
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.169,
+          "tls": 159.015,
+          "server": 84.073,
+          "transfer": 4.413
+        },
+        "total_ms": 247.755
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.003,
+        "connect": -0.01,
+        "tls": -10.034,
+        "server": 2882.145,
+        "transfer": -4.132
+      },
+      "miss_cost_total_ms": 2867.95
+    },
+    {
+      "round": 1,
+      "query": "eurovision",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.015,
+          "connect": 0.371,
+          "tls": 152.23,
+          "server": 2470.605,
+          "transfer": 0.191
+        },
+        "total_ms": 2623.485
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.323,
+          "tls": 153.111,
+          "server": 82.035,
+          "transfer": 0.302
+        },
+        "total_ms": 235.847
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": 0.048,
+        "tls": -0.881,
+        "server": 2388.57,
+        "transfer": -0.111
+      },
+      "miss_cost_total_ms": 2387.638
+    },
+    {
+      "round": 1,
+      "query": "reykjavik",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.159,
+          "tls": 146.805,
+          "server": 4794.232,
+          "transfer": 0.221
+        },
+        "total_ms": 4941.491
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.243,
+          "tls": 143.796,
+          "server": 88.758,
+          "transfer": 0.159
+        },
+        "total_ms": 233.025
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.003,
+        "connect": -0.084,
+        "tls": 3.009,
+        "server": 4705.474,
+        "transfer": 0.062
+      },
+      "miss_cost_total_ms": 4708.466
+    },
+    {
+      "round": 1,
+      "query": "kilkenny",
+      "miss": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.642,
+          "tls": 140.629,
+          "server": 4345.378,
+          "transfer": 0.166
+        },
+        "total_ms": 4486.881
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.311,
+          "tls": 148.483,
+          "server": 82.091,
+          "transfer": 0.173
+        },
+        "total_ms": 231.136
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": 0.331,
+        "tls": -7.854,
+        "server": 4263.287,
+        "transfer": -0.007
+      },
+      "miss_cost_total_ms": 4255.745
+    },
+    {
+      "round": 1,
+      "query": "wolverhampton",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.275,
+          "tls": 140.439,
+          "server": 4295.408,
+          "transfer": 0.205
+        },
+        "total_ms": 4436.39
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.194,
+          "tls": 156.152,
+          "server": 120.083,
+          "transfer": 0.2
+        },
+        "total_ms": 276.69
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.001,
+        "connect": 0.081,
+        "tls": -15.713,
+        "server": 4175.325,
+        "transfer": 0.005
+      },
+      "miss_cost_total_ms": 4159.7
+    },
+    {
+      "round": 1,
+      "query": "guadalajara",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.287,
+          "tls": 156.835,
+          "server": 3658.024,
+          "transfer": 0.173
+        },
+        "total_ms": 3815.403
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.293,
+          "tls": 142.103,
+          "server": 82.208,
+          "transfer": 0.167
+        },
+        "total_ms": 224.838
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.0,
+        "connect": -0.006,
+        "tls": 14.732,
+        "server": 3575.816,
+        "transfer": 0.006
+      },
+      "miss_cost_total_ms": 3590.565
+    },
+    {
+      "round": 1,
+      "query": "trondheim",
+      "miss": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.286,
+          "tls": 145.932,
+          "server": 3669.502,
+          "transfer": 0.405
+        },
+        "total_ms": 3816.206
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.312,
+          "tls": 156.287,
+          "server": 81.668,
+          "transfer": 0.337
+        },
+        "total_ms": 238.746
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.002,
+        "connect": -0.026,
+        "tls": -10.355,
+        "server": 3587.834,
+        "transfer": 0.068
+      },
+      "miss_cost_total_ms": 3577.46
+    },
+    {
+      "round": 2,
+      "query": "borussia",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.367,
+          "tls": 149.67,
+          "server": 3535.039,
+          "transfer": 4.704
+        },
+        "total_ms": 3689.876
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2008,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.313,
+          "tls": 152.015,
+          "server": 85.908,
+          "transfer": 2.342
+        },
+        "total_ms": 240.662
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.001,
+        "connect": 0.054,
+        "tls": -2.345,
+        "server": 3449.131,
+        "transfer": 2.362
+      },
+      "miss_cost_total_ms": 3449.214
+    },
+    {
+      "round": 2,
+      "query": "sacramento",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.338,
+          "tls": 156.617,
+          "server": 4864.714,
+          "transfer": 0.164
+        },
+        "total_ms": 5021.913
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1873,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.165,
+          "tls": 157.952,
+          "server": 83.05,
+          "transfer": 0.178
+        },
+        "total_ms": 241.414
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.002,
+        "connect": 0.173,
+        "tls": -1.335,
+        "server": 4781.664,
+        "transfer": -0.014
+      },
+      "miss_cost_total_ms": 4780.499
+    },
+    {
+      "round": 2,
+      "query": "eurovision",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.288,
+          "tls": 146.898,
+          "server": 4516.627,
+          "transfer": 14.931
+        },
+        "total_ms": 4678.808
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1789,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.351,
+          "tls": 146.942,
+          "server": 82.297,
+          "transfer": 2.985
+        },
+        "total_ms": 232.659
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.002,
+        "connect": -0.063,
+        "tls": -0.044,
+        "server": 4434.33,
+        "transfer": 11.946
+      },
+      "miss_cost_total_ms": 4446.149
+    },
+    {
+      "round": 2,
+      "query": "reykjavik",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.292,
+          "tls": 148.919,
+          "server": 3895.261,
+          "transfer": 2.526
+        },
+        "total_ms": 4047.077
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1316,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.3,
+          "tls": 146.08,
+          "server": 85.192,
+          "transfer": 0.207
+        },
+        "total_ms": 231.854
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.001,
+        "connect": -0.008,
+        "tls": 2.839,
+        "server": 3810.069,
+        "transfer": 2.319
+      },
+      "miss_cost_total_ms": 3815.223
+    },
+    {
+      "round": 2,
+      "query": "kilkenny",
+      "miss": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 2.165,
+          "tls": 149.068,
+          "server": 4543.15,
+          "transfer": 0.285
+        },
+        "total_ms": 4694.749
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 37,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.368,
+          "tls": 150.779,
+          "server": 85.033,
+          "transfer": 0.269
+        },
+        "total_ms": 236.527
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.0,
+        "connect": 1.797,
+        "tls": -1.711,
+        "server": 4458.117,
+        "transfer": 0.016
+      },
+      "miss_cost_total_ms": 4458.222
+    },
+    {
+      "round": 2,
+      "query": "wolverhampton",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.367,
+          "tls": 151.963,
+          "server": 4280.839,
+          "transfer": 2.487
+        },
+        "total_ms": 4435.741
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1573,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.355,
+          "tls": 145.635,
+          "server": 81.971,
+          "transfer": 2.274
+        },
+        "total_ms": 230.313
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": 0.012,
+        "tls": 6.328,
+        "server": 4198.868,
+        "transfer": 0.213
+      },
+      "miss_cost_total_ms": 4205.428
+    },
+    {
+      "round": 2,
+      "query": "guadalajara",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.269,
+          "tls": 155.087,
+          "server": 2516.279,
+          "transfer": 0.277
+        },
+        "total_ms": 2672.005
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1452,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.207,
+          "tls": 158.937,
+          "server": 83.089,
+          "transfer": 3.005
+        },
+        "total_ms": 245.344
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.062,
+        "tls": -3.85,
+        "server": 2433.19,
+        "transfer": -2.728
+      },
+      "miss_cost_total_ms": 2426.661
+    },
+    {
+      "round": 2,
+      "query": "trondheim",
+      "miss": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.374,
+          "tls": 161.715,
+          "server": 3082.915,
+          "transfer": 0.172
+        },
+        "total_ms": 3245.325
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 38,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.375,
+          "tls": 156.766,
+          "server": 81.02,
+          "transfer": 0.242
+        },
+        "total_ms": 238.479
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.0,
+        "connect": -0.001,
+        "tls": 4.949,
+        "server": 3001.895,
+        "transfer": -0.07
+      },
+      "miss_cost_total_ms": 3006.846
+    }
+  ],
+  "summary": {
+    "n_pairs_attempted": 24,
+    "n_pairs_usable": 16,
+    "excluded_pre_warmed": [
+      "borussia",
+      "sacramento",
+      "eurovision",
+      "reykjavik",
+      "kilkenny",
+      "wolverhampton",
+      "guadalajara",
+      "trondheim"
+    ],
+    "excluded_transport_error": [],
+    "budget_ms": 150,
+    "miss_total": {
+      "dns": {
+        "p50": 0.012,
+        "min": 0.009,
+        "max": 0.015
+      },
+      "connect": {
+        "p50": 0.292,
+        "min": 0.159,
+        "max": 2.165
+      },
+      "tls": {
+        "p50": 149.67,
+        "min": 140.439,
+        "max": 161.715
+      },
+      "server": {
+        "p50": 4280.839,
+        "min": 2470.605,
+        "max": 6136.459
+      },
+      "transfer": {
+        "p50": 0.277,
+        "min": 0.164,
+        "max": 14.931
+      }
+    },
+    "hit_total": {
+      "dns": {
+        "p50": 0.011,
+        "min": 0.009,
+        "max": 0.014
+      },
+      "connect": {
+        "p50": 0.311,
+        "min": 0.165,
+        "max": 0.375
+      },
+      "tls": {
+        "p50": 152.015,
+        "min": 142.103,
+        "max": 159.015
+      },
+      "server": {
+        "p50": 83.05,
+        "min": 80.551,
+        "max": 120.083
+      },
+      "transfer": {
+        "p50": 0.302,
+        "min": 0.159,
+        "max": 4.413
+      }
+    },
+    "miss_cost": {
+      "dns": {
+        "p50": 0.0,
+        "min": -0.003,
+        "max": 0.003
+      },
+      "connect": {
+        "p50": 0.012,
+        "min": -0.1,
+        "max": 1.797
+      },
+      "tls": {
+        "p50": -0.881,
+        "min": -15.713,
+        "max": 14.732
+      },
+      "server": {
+        "p50": 4175.325,
+        "min": 2388.57,
+        "max": 6055.908
+      },
+      "transfer": {
+        "p50": 0.006,
+        "min": -4.132,
+        "max": 11.946
+      }
+    },
+    "miss_cost_total_ms": {
+      "p50": 4159.7,
+      "min": 2387.638,
+      "max": 6062.649
+    },
+    "miss_total_wall_ms": {
+      "p50": 4435.741,
+      "min": 2623.485,
+      "max": 6290.582
+    },
+    "bytes_p50": 1573.0,
+    "largest_miss_cost_segment": {
+      "segment": "server",
+      "p50_ms": 4175.325,
+      "share_of_miss_cost": 1.0
+    }
+  }
+}
