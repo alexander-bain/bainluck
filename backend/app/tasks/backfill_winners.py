@@ -574,80 +574,6 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
     return stats
 
 
-async def _backfill_polymarket_winners():
-    """Set is_winner on Polymarket outcomes from settlement prices.
-
-    For resolved Polymarket markets, current_probability IS the settlement
-    price (updated to 1.0/0.0 when the market resolves). Only processes
-    markets where ALL outcomes have cleanly resolved (near 0 or 1).
-    """
-    stats = {"winners_set": 0, "losers_set": 0, "errors": []}
-
-    try:
-        async with get_task_session() as session:
-            # Only process markets where:
-            # 1. Market is resolved
-            # 2. No outcome already has authoritative is_winner (skip api_settlement etc.)
-            #    Pass2_guess winners are treated as unresolved so clean data can overwrite
-            # 3. All outcomes have current_probability near 0 or 1 (clean resolution)
-            result = await session.execute(text("""
-                    WITH cleanly_resolved AS (
-                        SELECT fm.id AS market_id
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.source = 'polymarket'
-                          AND fm.status = 'resolved'
-                        GROUP BY fm.id, fm.mutually_exclusive
-                        HAVING SUM(CASE WHEN fo.is_winner
-                                   AND fo.resolution_source NOT IN
-                                       """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
-                                   THEN 1 ELSE 0 END) = 0
-                           AND COUNT(*) FILTER (
-                               WHERE fo.current_probability >= 0.95
-                                  OR fo.current_probability <= 0.05
-                           ) = COUNT(*)
-                           -- Queue #167 Item 2 (#999): never price-resolve a
-                           -- mutually-exclusive market that has >1 near-certain
-                           -- outcome. A single-champion partition can have only
-                           -- ONE winner, but a stale neg_risk "Other"/catch-all
-                           -- quote pinned near 1.0 (gotcha #19) would be crowned
-                           -- alongside the real winner (the Women's Wimbledon
-                           -- two-winner bug: "Other" 1.00 + "Nosková" 0.9995).
-                           -- Defer these to authoritative Gamma settlement
-                           -- (Phase 3) instead of guessing from a stale price.
-                           AND NOT (fm.mutually_exclusive
-                                    AND COUNT(*) FILTER (
-                                        WHERE fo.current_probability >= 0.95
-                                    ) > 1)
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability >= 0.95),
-                        resolution_source = 'clean_resolution',
-                        last_updated = NOW()
-                    FROM cleanly_resolved cr
-                    WHERE fo.market_id = cr.market_id
-                      AND fo.current_probability IS NOT NULL
-                    RETURNING fo.is_winner
-                """))
-            rows = result.all()
-            stats["winners_set"] = sum(1 for r in rows if r[0])
-            stats["losers_set"] = sum(1 for r in rows if not r[0])
-
-            await session.commit()
-
-    except Exception as e:
-        stats["errors"].append(str(e))
-        logger.error("Polymarket winner backfill error: %s", e)
-
-    logger.info(
-        "Polymarket winner backfill: %d winners, %d losers, %d errors",
-        stats["winners_set"],
-        stats["losers_set"],
-        len(stats["errors"]),
-    )
-    return stats
-
-
 def _detect_golf_market_type(name: str) -> str | None:
     """Detect golf market type from market name or external_id."""
     lower = name.lower()
@@ -4837,6 +4763,27 @@ async def _backfill_polymarket_winners_from_api(
         "errors": [],
     }
 
+    # CAL-P065 (#1912). Work this rail declines and names an owner for. A bare
+    # counter could not say WHO was supposed to pick it up, so nobody could
+    # check whether they had; these carry the owner, and `_finish` below turns
+    # them into the terminal that stops a give-it-away run reading GREEN.
+    _handoffs: list = []
+
+    def _finish(s: dict) -> dict:
+        from app.utils.pm_market_ownership import gamma_terminal, handoff_payload
+
+        payload = handoff_payload(_handoffs)
+        s["handoff"] = payload
+        terminal, reason = gamma_terminal(
+            markets_checked=s.get("markets_checked", 0),
+            handed_off=payload["total"],
+            orphaned=payload["orphaned"],
+            errors=s.get("errors") or (),
+        )
+        s["terminal"] = terminal
+        s["terminal_reason"] = reason
+        return s
+
     # Resume from where last run left off
     from app.tasks.redis_state import get_redis_client
 
@@ -4884,7 +4831,11 @@ async def _backfill_polymarket_winners_from_api(
         # Wrapped around — reset cursor for next run
         _rc.delete(_offset_key)
         logger.info("Polymarket API winner backfill: nothing to do (reset cursor)")
-        return stats
+        # Still stamped: an un-terminalled early return classifies as the
+        # legacy unknown, i.e. exactly as green as before. `markets_checked`
+        # is 0 here, so this reports `checked_zero` — a wraparound and a
+        # starved run are not the same fact and must not read the same.
+        return _finish(stats)
 
     # Save cursor for next run
     max_id = max(row.id for row in markets)
@@ -4994,9 +4945,36 @@ async def _backfill_polymarket_winners_from_api(
         # 0x… ids are simply not addressable on this endpoint, so don't spend a
         # request discovering that. They are the CLOB rail's cohort (clob_resolve,
         # binding mapper spec) — counted here, owned there.
+        #
+        # CAL-P065 (#1912) — "owned there" WAS NOT TRUE, and this counter is
+        # where it hid. `clob_resolve_drain`'s scheduled invocation selected
+        # `_COHORT_DROPPED`, whose HAVING over all-NULL resolution_sources is
+        # NULL and never TRUE, so the receiving rail could not select the
+        # markets named here even in principle. 9,748 per run were handed to a
+        # predicate that excludes them by construction, and this task reported
+        # `health: healthy` throughout, because a bare `unsupported_lookup`
+        # count cannot distinguish a delegation from a discard (gotcha #53).
+        #
+        # The skip itself is still correct — Gamma answers 422 to a
+        # condition_id. What changed is that the handoff now NAMES its owner
+        # via the shared registry and rides the terminal below, so a run that
+        # gave away 97.5% of its pull can no longer read complete.
+        from app.utils.pm_market_ownership import Handoff, owner_of
+
         _addressable = [r for r in by_condition
                         if not str(r.external_id or "").startswith("0x")]
-        stats["unsupported_lookup"] = len(by_condition) - len(_addressable)
+        _handed = [r for r in by_condition
+                   if str(r.external_id or "").startswith("0x")]
+        stats["unsupported_lookup"] = len(_handed)
+        # Resolved through the registry rather than hard-coded, so a future
+        # re-assignment of the condition_id shape moves both rails at once.
+        _handoff_owner = owner_of("0x0") if _handed else None
+        _handoffs.append(Handoff(
+            to=_handoff_owner,
+            shape="condition_id",
+            count=len(_handed),
+            reason="gamma_markets_endpoint_rejects_condition_ids_422",
+        ))
         alive_conditions = [r for r in _addressable if r.external_id not in dead_cids]
         stats["skipped_dead"] = len(_addressable) - len(alive_conditions)
 
@@ -5381,7 +5359,7 @@ async def _backfill_polymarket_winners_from_api(
         stats["not_settled"],
         len(stats["errors"]),
     )
-    return stats
+    return _finish(stats)
 
 
 async def _resolve_winners_only(limit: int = 2000):

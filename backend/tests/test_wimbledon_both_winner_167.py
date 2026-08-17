@@ -38,13 +38,28 @@ class TestCleanResolutionMexSingleWinnerGuard:
     def test_clean_resolution_defers_multi_winner_mex(self):
         # The price-based clean_resolution pass must refuse to crown >1
         # near-certain outcome in a mutually-exclusive market.
+        #
+        # CAL-P065 (#1912) — RE-ANCHORED, and the reason is the finding. This
+        # asserted the literal `NOT (fm.mutually_exclusive` appeared ANYWHERE
+        # in the module, and the only place it appeared was inside
+        # `_backfill_polymarket_winners` — a function with ZERO callers, which
+        # #1912 had this queue delete as a decoy. The live pass had long since
+        # moved to the shared `INCOHERENT_FIELD_HAVING_SQL` fragment, so this
+        # test was pinning a hand-written duplicate in dead code and would have
+        # stayed green if the live guard had been removed outright.
+        #
+        # Anchored on the live site and on the shared fragment that IS the
+        # mechanism, so it now fails when the thing it names stops being true.
+        from app.utils.winner_field_coherence import INCOHERENT_FIELD_HAVING_SQL
+
         src = inspect.getsource(backfill_winners)
         assert "cleanly_resolved AS (" in src
+        assert "INCOHERENT_FIELD_HAVING_SQL" in src
         # The mex guard: NOT (mutually_exclusive AND >1 outcome cp >= 0.95).
-        assert "NOT (fm.mutually_exclusive" in src
+        assert "NOT (fm.mutually_exclusive" in INCOHERENT_FIELD_HAVING_SQL
         # The guard counts near-certain outcomes and requires more than one to
         # trip (the ">1 near-certain in a mex market" defer condition).
-        assert ") > 1)" in src
+        assert "> 1)" in INCOHERENT_FIELD_HAVING_SQL
 
     def test_group_by_carries_mutual_exclusive(self):
         # fm.mutually_exclusive must be a grouping column so the HAVING can

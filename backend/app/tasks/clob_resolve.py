@@ -298,6 +298,59 @@ def map_clob_to_outcome(
 # ---------------------------------------------------------------------------
 
 
+#: CAL-P065 (#1912) — the population this rail OWNS, both cohorts at once.
+#:
+#: The drain works ONE cohort per run and always will; what it owes is a
+#: truthful statement of the population behind that page. Before this, its
+#: summary said ``checked: 300, written: 0`` and nothing about the 25,264
+#: never-graded markets the Gamma rail had handed it, so a rail with a
+#: five-figure backlog and a rail with nothing to do returned the same shape.
+#:
+#: Deliberately a COUNT over the same `0x%`-and-uncrowned predicate both
+#: cohorts share, with neither cohort's HAVING applied — anything uncrowned is
+#: work this rail owns, whether a heuristic mis-graded it or nothing graded it
+#: at all. Cheap: it never leaves the database and spends no fetch budget.
+_OWNED_BACKLOG_SQL = """
+    SELECT count(*) FROM (
+        SELECT fm.id
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+          AND fm.external_id LIKE '0x%'
+        GROUP BY fm.id
+        HAVING bool_or(fo.is_winner) IS NOT TRUE
+    ) owned
+"""
+
+#: Budget for the backlog census. On expiry the count is ABSENT — reported as
+#: ``None`` with a reason — never a clean zero (gotcha #54). A zero backlog is
+#: the one reading that would let this rail claim ``complete``, so an
+#: unmeasured census must not be able to produce it by timing out.
+_BACKLOG_TIMEOUT_MS = 8_000
+
+
+async def owned_backlog(session) -> tuple[int | None, str]:
+    """``(count, reason)`` — how many markets this rail owns and has not graded.
+
+    ``(None, reason)`` on timeout or error. The caller must propagate the None
+    rather than substituting 0; :func:`clob_terminal` refuses to call a run
+    complete on an unmeasured backlog for exactly this reason.
+    """
+    try:
+        await session.execute(
+            text(f"SET LOCAL statement_timeout = {_BACKLOG_TIMEOUT_MS}")
+        )
+        row = (await session.execute(text(_OWNED_BACKLOG_SQL))).scalar()
+        return (int(row) if row is not None else None), "measured"
+    except Exception as e:  # noqa: BLE001 — an absent census must not kill the drain
+        logger.warning("clob_resolve: owned-backlog census unavailable: %s", e)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return None, f"unmeasured:{str(e)[:80]}"
+
+
 def _cohort_having(cohort: str) -> str:
     """The HAVING predicate selecting `cohort`, sharing every other candidate rule.
 
@@ -647,6 +700,7 @@ async def clob_resolve_drain(
     write_tiers: tuple = _DEFAULT_WRITE_TIERS,
     enable_ordinal: bool = False,
     ordinal_cap: int = _ORDINAL_FIRST_BATCH_CAP,
+    cohort: str = _COHORT_DROPPED,
 ) -> dict:
     """The writing drain. Resumable via a Redis cursor (newest market id first).
     Per market: fetch CLOB, classify+map per the binding spec, run the mandatory
@@ -658,18 +712,60 @@ async def clob_resolve_drain(
     Amendment 1: pass ``enable_ordinal=True`` and include ``'resolved_ordinal'``
     in ``write_tiers`` to write the ordinal class with resolution_source
     ='clob_ordinal'. Cumulative ordinal writes are capped at ``ordinal_cap``
-    (Redis-tracked) so the first batch stays <=2,000 until sanity is verified."""
+    (Redis-tracked) so the first batch stays <=2,000 until sanity is verified.
+
+    CAL-P065 (#1912) — TWO changes, and the difference between them matters.
+
+    ``cohort`` is now a parameter. It defaults to ``_COHORT_DROPPED``, so the
+    beat's behaviour is byte-for-byte unchanged, but the never-graded cohort is
+    REACHABLE for the first time. Writing it additionally requires
+    ``_WRITE_SOURCE_NEVER_GRADED`` licensing at the caller — the attended apply
+    rail — because 25,264 markets is not a thing a beat should decide to do.
+
+    Every run now also reports ``owned_backlog``: the whole `0x%`-uncrowned
+    population this rail owns, both cohorts, regardless of which one the page
+    worked. That is the anti-discard half. The Gamma rail hands this rail 9,748
+    markets per run under the comment "counted here, owned there"; until now
+    nothing on either side reported the size of "there", so the handoff and a
+    no-op were the same observation. The terminal is computed from that number,
+    so a page that wrote 0 against a five-figure backlog reads NOT-GREEN
+    instead of ``health: healthy``."""
     from app.tasks.base import get_task_session
     from app.services.polymarket_api import PolymarketAPIService
     from app.tasks.redis_state import get_redis_client
+    from app.utils.pm_market_ownership import (
+        RAIL_CLOB,
+        SHAPE_CONDITION_ID,
+        clob_terminal,
+    )
 
     ordinal_write = enable_ordinal and "resolved_ordinal" in write_tiers
     out: dict = {"dry_run": dry_run, "write_tiers": list(write_tiers),
-                 "enable_ordinal": enable_ordinal,
+                 "enable_ordinal": enable_ordinal, "cohort": cohort,
+                 "rail": RAIL_CLOB, "owns_shape": SHAPE_CONDITION_ID,
                  "checked": 0, "written": 0, "written_ordinal": 0,
                  "errors": [], "cursor_reset": False}
     for k in _COUNTERS:
         out[k] = 0
+
+    def _finish(o: dict) -> dict:
+        """Stamp the terminal on every exit path, including the early ones.
+
+        A return that skips this is a summary with no terminal, which
+        ``task_verdict`` classifies as the non-authoritative legacy unknown —
+        i.e. it reads exactly as green as it did before. The early
+        cursor-reset return was one such path.
+        """
+        terminal, reason = clob_terminal(
+            examined=o.get("checked", 0),
+            owned_backlog=o.get("owned_backlog"),
+            written=o.get("written", 0),
+            cursor_reset=bool(o.get("cursor_reset")),
+            errors=o.get("errors") or (),
+        )
+        o["terminal"] = terminal
+        o["terminal_reason"] = reason
+        return o
 
     before_id: int | None = None
     redis = None
@@ -686,7 +782,14 @@ async def clob_resolve_drain(
         logger.warning("clob_resolve_drain: redis unavailable: %s", e)
 
     async with get_task_session() as session:
-        rows = await _load_cohort(session, limit, before_id)
+        # The census FIRST, and in its own statement-timeout scope, so a page
+        # that later dies on the venue still reports what the rail is sitting
+        # on. `SET LOCAL` is transaction-scoped; the reads below are unaffected.
+        backlog, backlog_reason = await owned_backlog(session)
+        out["owned_backlog"] = backlog
+        out["owned_backlog_reason"] = backlog_reason
+
+        rows = await _load_cohort(session, limit, before_id, cohort=cohort)
         if not rows and before_id:
             out["cursor_reset"] = True
             if redis:
@@ -694,7 +797,7 @@ async def clob_resolve_drain(
                     redis.delete(_CURSOR_KEY)
                 except Exception:
                     pass
-            return out
+            return _finish(out)
         outcomes_by_market = await _load_outcomes(session, [r.id for r in rows])
 
     service = PolymarketAPIService()
@@ -777,4 +880,4 @@ async def clob_resolve_drain(
         except Exception as e:
             logger.warning("clob_resolve_drain: cursor advance failed: %s", e)
 
-    return out
+    return _finish(out)

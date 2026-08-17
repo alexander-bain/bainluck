@@ -238,6 +238,25 @@ class TestEnforcementScope:
             # above, and there is no reason to wait ten weeks to learn it twice.
             # Terminal comes from `kalshi_cliff._terminal`.
             "kalshi_cliff_drain",
+            # #1912 (CAL-P065): the two halves of the Polymarket ownership
+            # hole, enrolled TOGETHER because separately each one looked fine.
+            # The Gamma rail discarded 9,748 markets a run as
+            # `unsupported_lookup` — "counted here, owned there" — to a CLOB
+            # rail whose scheduled cohort predicate (`bool_or(resolution_source
+            # = ANY(...))` over all-NULL sources) could not select them at all.
+            # Both reported `health: healthy`, `failures_24h: 0`,
+            # `last_verdict: unverified`, while 25,264 fully venue-addressable
+            # markets went ungraded. This is the kalshi_trades shape again, one
+            # rail over, and this time the handoff made it look deliberate.
+            #
+            # Note the trap these two are the specimen for: adding a name here
+            # is NOT the fix. A summary with no `terminal` classifies as the
+            # non-authoritative legacy unknown, whose `blocks_success` is
+            # False, so enrolment alone would have left both green. Terminals
+            # come from `gamma_terminal` / `clob_terminal` in
+            # `app/utils/pm_market_ownership.py` and ship in the same change.
+            "polymarket_winners",
+            "clob_resolve_drain",
         }
 
     def test_enforced_task_partial_blocks_success(self):
