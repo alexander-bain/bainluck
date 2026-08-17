@@ -129,6 +129,48 @@ DONE_STATUSES = frozenset({COMPLETE, RESUMED})
 #: never a budget — but the only thing a never-completing phase can teach.
 FLOOR_STATUSES = frozenset({TIMEOUT, CANCELLED, FAILED})
 
+# --- Feasibility verdicts (CAL-P067, ruling 075's instrument) -----------------
+#
+# Four values, because the instrument previously had two and needed four. It
+# could say "a phase cannot fit" and it could say nothing; it had no way at all
+# to say "I could not tell", so every could-not-tell was emitted as a
+# nothing-to-report and read as an all-clear for sixteen consecutive beats.
+#
+# The distinction that matters is EVIDENCE CLASS, not magnitude:
+#
+# * A COMPLETED phase (or a completed unit of one) yields a duration. A duration
+#   settles feasibility in both directions.
+# * A CANCELLED phase yields elapsed-at-cancellation. That is a lower bound on
+#   an unknown cost, and it settles feasibility in ONE direction only — at or
+#   past the ceiling it proves the phase cannot fit; anywhere below the ceiling
+#   it proves nothing whatsoever, because the true cost may lie on either side.
+#
+# Comparing the second class as though it were the first is the whole defect.
+#: Measured to fit: a completed duration (whole phase, or one unit of it) that
+#: lands under the ceiling.
+FEASIBILITY_FEASIBLE = "feasible"
+#: Measured NOT to fit, conclusively — a completed unit larger than a whole
+#: beat, or a floor at/past the ceiling. No budget, checkpoint or resume helps.
+FEASIBILITY_INFEASIBLE = "infeasible"
+#: Evidence exists but does not settle it: a floor strictly below the ceiling
+#: and no completion. The phase ran that long and did not finish; its true cost
+#: is unknown and strictly greater. **Not** an all-clear.
+FEASIBILITY_INDETERMINATE = "indeterminate"
+#: No evidence at all — nothing has ever been measured for this phase.
+FEASIBILITY_NO_DATA = "no_data"
+
+#: Worst-first. The plan takes the worst verdict across its required phases,
+#: because the build publishes all-or-nothing: the weakest phase IS the plan.
+#: Both could-not-conclude states deliberately outrank ``feasible``, so a plan is
+#: never called feasible on the strength of the phases that happened to be
+#: measurable.
+FEASIBILITY_PRECEDENCE: tuple[str, ...] = (
+    FEASIBILITY_INFEASIBLE,
+    FEASIBILITY_INDETERMINATE,
+    FEASIBILITY_NO_DATA,
+    FEASIBILITY_FEASIBLE,
+)
+
 # Run terminal states, matching the corpus's ``run.terminal`` vocabulary.
 TERMINAL_COMPLETE = "complete"
 TERMINAL_PARTIAL = "partial"
@@ -206,6 +248,14 @@ class PhaseBudget:
     #: phase does not fit, but it can never say how long the phase takes.
     floor_ms: Optional[int] = None
     floor_observations: int = 0
+    #: Mean cost of ONE completed unit of a unit-staged phase, and the partition
+    #: it belongs to. This is a completed duration — the strongest evidence the
+    #: build produces about the futures phase — and until CAL-P067 no
+    #: feasibility check read it, which is why "is it converging?" had to be
+    #: answered by polling the durable cursor from outside the application.
+    unit_ms: Optional[int] = None
+    units_total: Optional[int] = None
+    units_done: Optional[int] = None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -217,6 +267,9 @@ class PhaseBudget:
             "observations": self.observations,
             "floor_ms": self.floor_ms,
             "floor_observations": self.floor_observations,
+            "unit_ms": self.unit_ms,
+            "units_total": self.units_total,
+            "units_done": self.units_done,
         }
 
 
@@ -258,22 +311,116 @@ class PhasePlan:
         """
         return _statement_timeout_for(self.available_ms)
 
+    def phase_feasibility(self, name: str) -> str:
+        """Can this phase fit a beat? — answered ONLY from measured cost.
+
+        The evidence ladder, strongest first. Each rung is a different KIND of
+        measurement, and the ordering is the whole correctness argument:
+
+        1. **A completed unit** (``unit_ms``, backed by ``units_done >= 1``).
+           The unit finished, so this is a duration. If one unit is larger than
+           a whole beat the phase is conclusively infeasible — a staged cursor
+           can carry work between beats but it cannot split a unit, so no amount
+           of resuming ever finishes it. Otherwise the phase converges.
+        2. **A completed phase** (``measured_input``). Also a duration; it fit
+           at least once, and ``derive_plan`` has already turned it into a
+           budget.
+        3. **A floor at or past the ceiling.** Elapsed-at-cancellation is only a
+           lower bound, but a lower bound past the ceiling still settles it: the
+           phase ran a whole reachable window and did not finish.
+        4. **A floor below the ceiling** — ``indeterminate``. The one rung that
+           used to be silently treated as rung 2's negation. ``1,181,045 <
+           1,350,000`` says the phase ran 1,181,045 ms without finishing; the
+           true cost is unknown and strictly greater, and may be on either side
+           of the ceiling. Concluding "fits" here is not a weak inference, it is
+           no inference at all.
+        5. **Nothing** — ``no_data``.
+        """
+        budget = self.by_name(name)
+        if budget is None:
+            return FEASIBILITY_NO_DATA
+        ceiling = self.max_phase_ms
+
+        if budget.unit_ms is not None and budget.units_done:
+            return (
+                FEASIBILITY_INFEASIBLE if budget.unit_ms >= ceiling else FEASIBILITY_FEASIBLE
+            )
+        if budget.measured_input and budget.observations:
+            return FEASIBILITY_FEASIBLE
+        if budget.floor_ms is not None:
+            return (
+                FEASIBILITY_INFEASIBLE
+                if budget.floor_ms >= ceiling
+                else FEASIBILITY_INDETERMINATE
+            )
+        return FEASIBILITY_NO_DATA
+
+    def _phases_with(self, verdict: str) -> tuple[str, ...]:
+        return tuple(
+            b.name
+            for b in self.budgets
+            if b.required and self.phase_feasibility(b.name) == verdict
+        )
+
     @property
     def infeasible_phases(self) -> tuple[str, ...]:
         """Required phases MEASURED to not fit the window.
 
-        A floor at the maximum a phase can ever run is not a slow phase, it is
-        a phase that has never once finished inside a whole beat — so no
-        budget, no checkpoint and no resume can rescue it, and the plan says so
-        instead of reporting a bland ``provisional`` for the sixteenth beat
-        running.
+        Unchanged in meaning and deliberately so — this is the CONCLUSIVE
+        bucket. What changed is that its emptiness is no longer the only thing
+        a reader sees: an empty list here now sits beside a verdict that says
+        whether the check concluded, so "nothing is broken" and "nothing was
+        checked" stop sharing a rendering.
         """
-        ceiling = self.max_phase_ms
-        return tuple(
-            b.name
-            for b in self.budgets
-            if b.required and b.floor_ms is not None and b.floor_ms >= ceiling
-        )
+        return self._phases_with(FEASIBILITY_INFEASIBLE)
+
+    @property
+    def indeterminate_phases(self) -> tuple[str, ...]:
+        """Required phases whose only evidence is a floor short of the ceiling."""
+        return self._phases_with(FEASIBILITY_INDETERMINATE)
+
+    @property
+    def unchecked_phases(self) -> tuple[str, ...]:
+        """Required phases with no measurement of any kind."""
+        return self._phases_with(FEASIBILITY_NO_DATA)
+
+    @property
+    def feasible_phases(self) -> tuple[str, ...]:
+        """Required phases a completed duration proves will fit."""
+        return self._phases_with(FEASIBILITY_FEASIBLE)
+
+    @property
+    def feasibility(self) -> str:
+        """The worst verdict across required phases (see FEASIBILITY_PRECEDENCE)."""
+        verdicts = {self.phase_feasibility(b.name) for b in self.budgets if b.required}
+        for verdict in FEASIBILITY_PRECEDENCE:
+            if verdict in verdicts:
+                return verdict
+        return FEASIBILITY_NO_DATA
+
+    def unit_projection(self, name: str) -> Optional[dict[str, int]]:
+        """How many units are left and how many beats that is, from MEASURED cost.
+
+        ``beats_remaining = -1`` keeps the convention ``_record_staged_rate``
+        already uses: it is not "unknown", it is "a whole beat cannot hold one
+        unit", which is a different and much worse fact than a large count.
+        """
+        budget = self.by_name(name)
+        if budget is None or budget.unit_ms is None or not budget.units_done:
+            return None
+        total = budget.units_total or 0
+        remaining = max(0, total - (budget.units_done or 0))
+        per_beat = self.max_phase_ms // budget.unit_ms
+        return {
+            "unit_ms": budget.unit_ms,
+            "units_total": total,
+            "units_done": budget.units_done or 0,
+            "units_remaining": remaining,
+            "units_per_beat": per_beat,
+            "beats_remaining": (
+                math.ceil(remaining / per_beat) if per_beat >= 1 else -1
+            ),
+        }
 
     def by_name(self, name: str) -> Optional[PhaseBudget]:
         for budget in self.budgets:
@@ -286,13 +433,23 @@ class PhasePlan:
         return sum(b.budget_ms or 0 for b in self.budgets)
 
     def as_payload(self) -> dict[str, Any]:
+        verdict = self.feasibility
         infeasible = self.infeasible_phases
+        units = {
+            b.name: projection
+            for b in self.budgets
+            if (projection := self.unit_projection(b.name)) is not None
+        }
         return {
-            # ``infeasible`` outranks the other two: a plan with a phase that
-            # cannot fit is not merely unmeasured, it is known to be unbuildable
-            # as cut, and that is the fact worth surfacing first.
+            # The feasibility verdict outranks the budget-derivation state, and
+            # BOTH could-not-conclude verdicts outrank a bland ``provisional``.
+            # Before CAL-P067 this field read ``provisional`` whether the plan
+            # had been checked and passed or never checked at all, and the
+            # sibling ``infeasible_phases: []`` said the same thing both ways.
             "status": (
-                "infeasible" if infeasible else ("provisional" if self.provisional else "measured")
+                verdict
+                if verdict != FEASIBILITY_FEASIBLE
+                else ("provisional" if self.provisional else "measured")
             ),
             "soft_limit_ms": self.soft_limit_ms,
             "hard_limit_ms": self.hard_limit_ms,
@@ -300,6 +457,18 @@ class PhasePlan:
             "deadline_ms": self.soft_limit_ms - self.cleanup_margin_ms,
             "declared_ms": self.declared_ms,
             "infeasible_phases": list(infeasible),
+            # The bucket that makes an empty ``infeasible_phases`` readable.
+            # Every required phase lands in exactly one of the four lists, so a
+            # reader can always tell which of the two empties they are holding.
+            "feasibility": {
+                "verdict": verdict,
+                "checked_against_ms": self.max_phase_ms,
+                "infeasible_phases": list(infeasible),
+                "indeterminate_phases": list(self.indeterminate_phases),
+                "unchecked_phases": list(self.unchecked_phases),
+                "feasible_phases": list(self.feasible_phases),
+                "units": units,
+            },
             "phases": [b.as_payload() for b in self.budgets],
         }
 
@@ -310,10 +479,36 @@ def _statement_timeout_for(budget_ms: int) -> int:
     return max(1, budget_ms - gap)
 
 
+def _decode_unit_cost(raw: Any) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """Validate one phase's measured unit cost, or return all-``None``.
+
+    Everything here degrades to ``None`` rather than to a number, because the
+    only thing worse than an absent feasibility check is a confident one built
+    on junk. ``units_done`` must be at least 1: ``unit_ms`` is a mean over
+    COMPLETED units, so with none completed there is no completed duration
+    behind it, whatever the field says.
+    """
+
+    def _pos_int(value: Any) -> Optional[int]:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return int(value) if value > 0 else None
+
+    if not isinstance(raw, dict):
+        return None, None, None
+    unit_ms = _pos_int(raw.get("unit_ms"))
+    units_total = _pos_int(raw.get("units_total"))
+    units_done = _pos_int(raw.get("units_done"))
+    if unit_ms is None or units_total is None or units_done is None:
+        return None, None, None
+    return unit_ms, units_total, units_done
+
+
 def derive_plan(
     history: Optional[dict[str, Any]] = None,
     *,
     floors: Optional[dict[str, Any]] = None,
+    unit_costs: Optional[dict[str, Any]] = None,
     phases: Iterable[str] = REQUIRED_PHASES,
     soft_limit_ms: int = SOFT_LIMIT_MS,
     hard_limit_ms: int = HARD_LIMIT_MS,
@@ -339,9 +534,24 @@ def derive_plan(
     longer than 1,355s by an unknown amount, so treating that as its duration
     would under-budget it by construction. It only lets the plan report a
     required phase as infeasible once its floor has swallowed the whole window.
+
+    **And it concludes in that direction ONLY (CAL-P067).** A floor *below* the
+    ceiling licenses nothing at all: the phase ran that long without finishing,
+    so its cost is unknown and strictly greater, and may sit on either side of
+    the ceiling. Such a phase reads ``indeterminate``, never feasible. This is
+    the defect ruling 075's own instrument shipped with — production's
+    ``floors[futures] = 1,181,045`` was ranked against a 1,350,000 ms ceiling,
+    passed, and rendered ``infeasible_phases: []``.
+
+    ``unit_costs`` maps a phase to ``{"unit_ms", "units_total", "units_done"}``
+    for unit-staged phases. Unlike a floor this IS a completed duration — the
+    mean of units that finished — so it settles feasibility in both directions,
+    and it is the only input that can. It is what ``_record_staged_rate``
+    already measures every beat and nothing previously read.
     """
     history = history or {}
     floors = floors or {}
+    unit_costs = unit_costs or {}
     raw: list[tuple[str, Optional[int], bool, int, Optional[int], int]] = []
     for name in phases:
         observations = [
@@ -379,6 +589,7 @@ def derive_plan(
     budgets = []
     for name, ms, flag, count, floor_ms, floor_count in raw:
         budget_ms = max(1, int(ms * scale)) if ms is not None else None
+        unit_ms, units_total, units_done = _decode_unit_cost(unit_costs.get(name))
         budgets.append(
             PhaseBudget(
                 name=name,
@@ -391,6 +602,9 @@ def derive_plan(
                 observations=count,
                 floor_ms=floor_ms,
                 floor_observations=floor_count,
+                unit_ms=unit_ms,
+                units_total=units_total,
+                units_done=units_done,
             )
         )
     return PhasePlan(
@@ -535,11 +749,48 @@ class PhaseLedger:
         #: finish. A counter that cannot say how many things it counted can only
         #: answer "where did the time go", never "how much is left".
         self.stage_counts: dict[str, int] = {}
+        #: The COMPLETED-only half of the two tallies above, and the only one a
+        #: cost may be derived from.
+        #:
+        #: CAL-P067. ``PhaseRunner.stage`` times its body "whatever happens
+        #: inside it" — deliberately, because the stage that blew up is the one
+        #: worth costing. The consequence is that ``stages[name]`` is a sum over
+        #: MIXED EVIDENCE KINDS: completed stretches, which are durations, plus
+        #: however far a cancelled one got, which is a lower bound on an unknown
+        #: duration. Their mean is not a cost of anything.
+        #:
+        #: It also biases in the dangerous direction. A beat runs N units and
+        #: the last is usually cancelled at the deadline, so the truncated
+        #: observation drags the mean DOWN and the phase looks cheaper than it
+        #: is — the instrument would under-state its way to ``feasible``, which
+        #: is the same mistake as ranking a floor against the ceiling, one level
+        #: down and harder to see.
+        self.stage_ok_totals: dict[str, int] = {}
+        self.stage_ok_counts: dict[str, int] = {}
 
     def record_stage(self, name: str, duration_ms: int) -> None:
-        """Add a stage observation. Repeats accumulate (7 diagnostic reads)."""
-        self.stages[name] = self.stages.get(name, 0) + max(0, int(duration_ms))
+        """Add a COMPLETED stage observation. Repeats accumulate (7 diagnostic reads).
+
+        Two-argument callers are unchanged and mean what they always meant: the
+        stretch ran to completion, so its elapsed time is a duration.
+        """
+        self.record_stage_outcome(name, duration_ms, completed=True)
+
+    def record_stage_outcome(self, name: str, duration_ms: int, *, completed: bool) -> None:
+        """Add a stage observation, recording whether the body finished.
+
+        Both tallies always move; only a completed stretch also lands in the
+        completed-only one. Keeping both is the point — the all-observations sum
+        still answers "where did the 967 seconds go", which is what stages were
+        built for, while the completed-only mean answers "what does one of these
+        cost", which is the only question feasibility may ask.
+        """
+        ms = max(0, int(duration_ms))
+        self.stages[name] = self.stages.get(name, 0) + ms
         self.stage_counts[name] = self.stage_counts.get(name, 0) + 1
+        if completed:
+            self.stage_ok_totals[name] = self.stage_ok_totals.get(name, 0) + ms
+            self.stage_ok_counts[name] = self.stage_ok_counts.get(name, 0) + 1
 
     def stage_mean_ms(self, name: str) -> float | None:
         """Mean cost of one ``name`` observation, or ``None`` if none were made.
@@ -548,11 +799,31 @@ class PhaseLedger:
         from a mean of zero and must not render as one (ruling 075, second
         clause). A caller that wants to publish the mean must decide what to say
         when there is no sample; it may not be handed a fabricated one.
+
+        Note this is the MIXED mean (see :attr:`stage_ok_totals`). It is the
+        right number for attributing elapsed time and the wrong one for costing
+        a unit; use :meth:`stage_completed_mean_ms` for the latter.
         """
         count = self.stage_counts.get(name, 0)
         if count <= 0:
             return None
         return self.stages.get(name, 0) / count
+
+    def stage_completed_count(self, name: str) -> int:
+        """How many ``name`` stretches ran to completion."""
+        return self.stage_ok_counts.get(name, 0)
+
+    def stage_completed_mean_ms(self, name: str) -> float | None:
+        """Mean cost of one COMPLETED ``name`` stretch, or ``None``.
+
+        ``None`` when nothing of that name has ever finished — which is a real
+        and important state (every unit cancelled) and must not be papered over
+        with the mean of the truncated attempts.
+        """
+        count = self.stage_ok_counts.get(name, 0)
+        if count <= 0:
+            return None
+        return self.stage_ok_totals.get(name, 0) / count
 
     def record_gauge(self, name: str, value: int) -> None:
         """Set a LEVEL, replacing any prior reading — CAL-P024c.
