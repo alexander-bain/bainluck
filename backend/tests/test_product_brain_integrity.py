@@ -510,7 +510,10 @@ def test_ruling_numbers_are_unique() -> None:
 #: **Resolve by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree.** Do not take
 #: ours, do not take theirs, and do not add the deltas — two lanes each writing `67 -> 68` is one
 #: ruling each, not two on top of 68.
-MINIMUM_BANKED_RULINGS = 71
+#: Raised 71 -> 72 by queue 360 banking **075** (a derived budget may never fall below the
+#: phase's own measured floor) on `lane1/q360`, based on `origin/master` `1eb968ee` where the
+#: four-way collision above had already resolved to 71 by counting the merged tree.
+MINIMUM_BANKED_RULINGS = 72
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
