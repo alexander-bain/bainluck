@@ -696,7 +696,14 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 home_team_name=espn_home,
                 away_team_name=espn_away,
                 commence_time=ee.date,
-                claim=_EC("espn", ee.espn_id),
+                # Ruling 048 arm B — THE canonical legitimate cross-source join.
+                # espn_home/espn_away/ee.date are read straight off the ESPN
+                # scoreboard entry that ee.espn_id names, so this claim's teams and
+                # date carry that id's authority even though the candidate row
+                # (created by Odds API) does not hold the espn_id yet. This is the
+                # join 048 explicitly preserves; if it ever stops joining, the
+                # ESPN-finds-Odds-row test in test_event_registry.py goes red.
+                claim=_EC("espn", ee.espn_id, schedule_derived=True),
                 commence_time_source="espn",
                 status=_create_status,
             )

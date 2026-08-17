@@ -811,19 +811,93 @@ async def _sample_events(client: httpx.AsyncClient, status: str, limit: int) -> 
         return []
 
 
+async def _run_provenance_meter(client: httpx.AsyncClient) -> dict:
+    """Ruling 048's declared cost, read as a number rather than assumed bounded.
+
+    This does NOT gate the duplicate_events verdict — 048 says duplicates are the
+    expected, accepted price of never eating a real game, so a non-zero count is
+    not a failure. What would be a failure is the count being unknown, or the
+    outstanding backlog growing while nothing drains.
+
+    Reports ``measured: False`` rather than a comfortable zero when it cannot
+    read — the 403-as-PASS history documented on ``_admin_headers`` is precisely
+    the bug this shape avoids.
+    """
+    headers = _admin_headers()
+    if not headers:
+        return {"measured": False, "reason": "ADMIN_TOKEN unset"}
+    try:
+        data = await _get_json(client, "/api/admin/events/duplicates", None, headers)
+    except Exception as exc:
+        return {"measured": False, "reason": _redact(exc)[:200]}
+    meter = (data or {}).get("provenance_meter")
+    if not isinstance(meter, dict) or not meter.get("measured"):
+        return {
+            "measured": False,
+            "reason": (meter or {}).get("reason") or "endpoint returned no meter",
+        }
+    return meter
+
+
 async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
     # A broad live+scheduled slate is where an unmerged duplicate would show.
     events = await _sample_events(client, "live", 200)
     events += await _sample_events(client, "scheduled", 200)
     dups = find_duplicate_events(events)
+    meter = await _run_provenance_meter(client)
+
+    # R6 (#1801, codex C-CERT-1801-R5 P2): the meter's own docstring names two
+    # failures — an unknown count, and a backlog growing while nothing drains —
+    # and neither could reach `passed`, which read `len(dups) == 0` alone. A
+    # meter that cannot fail a verdict is evidence, not a gate, and #1501 is the
+    # whole lesson about an absence that renders as health.
+    #
+    # 048 still stands: a non-zero duplicate COUNT is the accepted price and is
+    # not a failure. What fails is not being able to see the count at all.
+    meter_failures = []
+    if not meter.get("measured"):
+        meter_failures.append({
+            "detail": "provenance meter UNMEASURED — ruling 048's declared cost "
+                      f"is unknown, so it cannot be called bounded: "
+                      f"{meter.get('reason') or 'no reason given'}"
+        })
+    else:
+        # A SINGLE-READ invariant, deliberately, not a trend. The meter emits no
+        # prior value, so a `unreconciled > previous` comparison here would be
+        # dead code wearing the costume of a gate — which is the defect this
+        # whole check is being repaired for. If a trend is wanted later, persist
+        # the prior reading first and compare that; do not infer one.
+        #
+        # What one read CAN establish: 048 accepts duplicates because id-keyed
+        # reconciliation drains them. If rows were created unanchored and NOT
+        # ONE has ever reconciled, the draining half of the bargain is absent,
+        # and the accepted price has no bound.
+        created = meter.get("created_unanchored")
+        reconciled = meter.get("reconciled")
+        unreconciled = meter.get("unreconciled")
+        if isinstance(created, (int, float)) and isinstance(reconciled, (int, float)):
+            if created > 0 and reconciled == 0:
+                meter_failures.append({
+                    "detail": f"{created} rows created unanchored and ZERO ever "
+                              f"reconciled ({unreconciled} outstanding) — ruling "
+                              "048's accepted cost is only bounded by the "
+                              "reconciliation that is not happening"
+                })
+
     return {
         "flow": "duplicate_events",
         "checked": len(events),
-        "passed": len(dups) == 0,
+        "passed": len(dups) == 0 and not meter_failures,
         "failures": [{"detail": f"{d['sport']}: {d['home_team']} vs {d['away_team']} "
                                 f"appears {len(d['event_ids'])}x (ids {d['event_ids']})"}
-                     for d in dups],
-        "evidence": {"sampled": len(events), "duplicates": dups},
+                     for d in dups] + meter_failures,
+        "evidence": {
+            "sampled": len(events),
+            "duplicates": dups,
+            # Ruling 048: the declared cost, carried alongside the verdict so the
+            # trend is visible night over night.
+            "provenance_meter": meter,
+        },
     }
 
 

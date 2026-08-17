@@ -45,6 +45,18 @@ from app.tasks.redis_state import (
 
 logger = logging.getLogger(__name__)
 
+# Ruling 051 (#1841), Alex 2026-08-14: the sportsbook consensus floors at THREE
+# books. At or above the floor `betting` is written as the median; below it the
+# key is DROPPED from `Event.win_probability_sources` and the blend re-weights
+# over whatever remains fresh. Never frozen at a last value.
+#
+# Three, and not two, because the measured failure had three books left and was
+# already broken: fanduel 0.0140, betmgm 0.0288, rebet 0.1347 — a 10x spread in
+# which the median still had to pick one of them. Two books cannot have a median
+# at all in any meaningful sense. Below three there is no consensus to report,
+# and reporting one anyway is what produced 87-13 on event 15192596.
+BETTING_BOOK_FLOOR = 3
+
 
 def get_statpal_end_time(event) -> Optional[datetime]:
     """
@@ -511,9 +523,11 @@ async def _ingest_event_odds(
         # 5-0 in the 9th.
         #
         # A median cannot be carried by one book among three. It is NOT a
-        # complete fix: with a single book left, median == that book. The
-        # minimum-book-count refusal that would close the rest is a policy call
-        # and is NOT taken here — #1841 marks its shape "not ruled".
+        # complete fix on its own: with a single book left, median == that book.
+        # The minimum-book-count refusal that closes the rest WAS the open policy
+        # call, and Alex ruled it on 2026-08-14 — see BETTING_BOOK_FLOOR and
+        # ruling 051 below. Median and floor are complements: the floor decides
+        # whether we have a consensus at all, the median decides what it says.
         #
         # Same integrity question as #1844, one step upstream: that one is about
         # how a consensus is COMPARED, this one about what the consensus IS when
@@ -543,9 +557,37 @@ async def _ingest_event_odds(
         from sqlalchemy import update as _update
         from app.utils.aggregation import stamp_source_reading
         betting_val = round(avg_home, 4)
-        _current = stamp_source_reading(
-            event.win_probability_sources, "betting", betting_val
-        )
+        _book_count = len(all_home_probs)
+
+        if _book_count >= BETTING_BOOK_FLOOR:
+            _current = stamp_source_reading(
+                event.win_probability_sources, "betting", betting_val
+            )
+        else:
+            # ── RULING 051: below its evidence floor a source is ABSENT ──────
+            # Alex's ruled policy for #1841. Under the floor the sportsbook
+            # consensus is DROPPED — not written, not frozen, not down-weighted.
+            # The blend then re-weights over whichever sources are still fresh.
+            #
+            # The argument (ruling 051, and gotcha #53's best formulation):
+            # nothing downstream can tell "the books say 13%" from "the books
+            # SAID 13% before they stopped saying anything". Those are different
+            # facts and they must not render identically. A stale value left in
+            # place is indistinguishable from a live one, so the only honest
+            # representation of "we no longer know" is the key's ABSENCE.
+            #
+            # Removal — not merely skipping the write — is the load-bearing part:
+            # `betting` is very likely ALREADY in the JSONB from an earlier poll
+            # when there were still enough books. Skipping would leave exactly
+            # the frozen 0.1347 that rendered 87-13 for a team trailing 5-0.
+            _current = dict(event.win_probability_sources or {})
+            _current.pop("betting", None)
+            logger.info(
+                "event %s: betting DROPPED below floor — %d book(s) < %d "
+                "(would have written %.4f); blend re-weights over remaining "
+                "fresh sources (ruling 051 / #1841)",
+                event_id, _book_count, BETTING_BOOK_FLOOR, betting_val,
+            )
         # #1841: record HOW MANY books stand behind that number. A consensus of
         # one is not a consensus, and today nothing downstream can tell the
         # difference. `compute_aggregate_probability` skips keys absent from
@@ -560,20 +602,18 @@ async def _ingest_event_odds(
         # not nested inside the `betting` entry: the count describes the
         # measurement, not the reading, and every reader added since #1829
         # expects that entry to hold value/updated_at.
-        _current["betting_book_count"] = len(all_home_probs)
+        #
+        # Ruling 051: the count is written in BOTH directions — including when
+        # `betting` was just dropped. It describes the MEASUREMENT, not the
+        # reading, so "0 books stand behind a value that is no longer here" is a
+        # meaningful, readable statement, and it is what makes the drop visible
+        # to a human rather than silent.
+        _current["betting_book_count"] = _book_count
         await session.execute(
             _update(Event)
             .where(Event.id == event_id)
             .values(win_probability_sources=_current)
         )
-
-        if len(all_home_probs) <= 2:
-            logger.warning(
-                "event %s: betting consensus stands on only %d book(s) "
-                "(value %.4f) — books pull the moneyline when a game goes out "
-                "of reach (#1841)",
-                event_id, len(all_home_probs), betting_val,
-            )
     elif snapshots_processed:
         # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT
         # — the market has closed) and "we did not poll" (an absence) are the
@@ -733,7 +773,9 @@ async def _poll_mlb_pregame():
                 home_team_name=event_data["home_team"],
                 away_team_name=event_data["away_team"],
                 commence_time=commence_time,
-                claim=EventClaim("odds_api", event_data["id"]),
+                # Ruling 048 arm B: id and teams arrive together in one Odds API
+                # schedule record — this id names the very row these teams came from.
+                claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
                 commence_time_source="odds_api",
                 status="scheduled",
             )
@@ -1030,7 +1072,9 @@ async def _poll_all_odds():
                             home_team_name=event_data["home_team"],
                             away_team_name=event_data["away_team"],
                             commence_time=commence_time,
-                            claim=EventClaim("odds_api", event_data["id"]),
+                            # Ruling 048 arm B: id and teams arrive together in one Odds API
+                            # schedule record — this id names the very row these teams came from.
+                            claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
                             commence_time_source="odds_api",
                             status=event_status,
                         )
@@ -1428,7 +1472,9 @@ async def _poll_sport_odds(sport_key: str):
                     home_team_name=event_data["home_team"],
                     away_team_name=event_data["away_team"],
                     commence_time=commence_time,
-                    claim=EventClaim("odds_api", event_data["id"]),
+                    # Ruling 048 arm B: id and teams arrive together in one Odds API
+                    # schedule record — this id names the very row these teams came from.
+                    claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
                     commence_time_source="odds_api",
                     status=event_status,
                 )

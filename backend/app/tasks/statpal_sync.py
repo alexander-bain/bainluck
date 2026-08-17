@@ -147,7 +147,15 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             home_team_name=fixture.home_team,
                             away_team_name=fixture.away_team,
                             commence_time=fixture.start_time,
-                            claim=EventClaim("statpal", claim_id),
+                            # Ruling 048 arm B, but ONLY with a real fixture_id. The
+                            # fallback above synthesizes an id out of the two team
+                            # names — that is a label wearing an id's clothing
+                            # (ruling 042), it dereferences to nothing, and it must
+                            # not buy absorption. No fixture_id ⇒ create.
+                            claim=EventClaim(
+                                "statpal", claim_id,
+                                schedule_derived=bool(fixture.fixture_id),
+                            ),
                             commence_time_source="statpal",
                             status="scheduled",
                         )
@@ -257,7 +265,13 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         home_team_name=live_fix.home_team,
                         away_team_name=live_fix.away_team,
                         commence_time=live_fix.start_time,
-                        claim=EventClaim("statpal", claim_id),
+                        # Ruling 048 arm B, real fixture_id only — see the
+                        # season-schedule site above for why the name-synthesized
+                        # fallback id does not count as an anchor.
+                        claim=EventClaim(
+                            "statpal", claim_id,
+                            schedule_derived=bool(live_fix.fixture_id),
+                        ),
                         commence_time_source="statpal",
                         status="live",
                     )

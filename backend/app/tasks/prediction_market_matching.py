@@ -2289,6 +2289,17 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         home_team_name=team_a,
         away_team_name=team_b,
         commence_time=commence_time,
+        # RULING 048: schedule_derived stays FALSE here, deliberately. This is the
+        # population the ruling was written for. team_a/team_b were PARSED OUT OF
+        # THE MARKET NAME or ticker — a label, not a dereference (ruling 042) — and
+        # `commence_time` above may have just been replaced with `now`, which is not
+        # a game time at all (gotcha #14). Kalshi and Polymarket also have no id
+        # column on `events`, so arm A is unavailable too: there is nothing here to
+        # anchor an absorption to, and #1779/#1798 are what absorbing anyway cost.
+        #
+        # DO NOT set this True to "fix" a duplicate. Duplicates are the declared,
+        # bounded price; reconciliation drains them once a real id arrives. Setting
+        # it True re-opens the path that blended two games onto one row.
         claim=EventClaim(market.source, external_id),
         status=status,
     )
