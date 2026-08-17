@@ -426,3 +426,112 @@ SELECT indexrelname, idx_blks_read, idx_blks_hit, now() AS read_at
   FROM pg_statio_all_indexes
  WHERE indexrelname IN ('ix_futures_outcomes_name_trgm','ix_futures_name_trgm');
 ```
+
+---
+
+## §7 — LAT-P061 Items 2 and 3, taken after the directive's ordered work
+
+### Item 2 — the head cannot adapt. **Premise-check answered with a number, and the answer is neither branch the queue anticipated.**
+
+The queue asked for a number, not a proposal: *"measure how much the head would actually differ if the warmer's votes were excluded… If the answer is 'barely', say so and close it."*
+
+**Warmer head, live** (`GET /api/events/search/trending`, top 5 with scores, 2026-08-17 ~12:0x PDT):
+
+```
+red sox 1768 · celtics 1758 · yankees 1757 · world cup 1752 · patriots 1745
+```
+
+Against **1,632 warmer successes/24 h** — the scores are, to within a few percent, the warmer counting
+its own passes. LAT-P060's ~89%-self-echo measurement reproduces.
+
+**So what would the head be from the source it is nominally modelled on?** `search_query_logs`, 30 days,
+3,598 rows / 212 distinct:
+
+| rank | /search as logged | n |
+|---|---|---|
+| 1 | stanley cup | 90 |
+| 2 | world series | 84 |
+| 3 | masters winner | 80 |
+| 4 | nba champion | 79 |
+| 5 | yankees | 77 |
+
+**Overlap with the warmer head: 1 of 5.** Which looks damning — and then the timestamps were read.
+
+### 🔴 The comparison baseline is polluted too, by a different piece of our own automation
+
+```
+minute   rows  distinct_q  days
+07:10     783          32     26     <-- one minute a day, 26 of 30 days, 32 queries
+07:11      65          12      7
+04:24      42          42      2     <-- everything else looks like this
+```
+
+**848 of 3,598 rows (23.6%) land in the 07:10–07:11 window**, across 26 days, with 32 distinct queries.
+That is the **nightly gold-query sentinel (#1206)**, whose whole design is ~50 family-phrased queries
+run on a schedule — and *stanley cup / world series / masters winner / nba champion / ballon d'or /
+grammys / oscars* are exactly its phrasings. The top four rows of the "real" distribution are our own
+sentinel.
+
+**Re-ranked with the sentinel window excluded:**
+
+| rank | /search, sentinel excluded | n | warmer head rank |
+|---|---|---|---|
+| 1 | **yankees** | 77 | **3** |
+| 2 | **red sox** | 75 | **1** |
+| 3 | fed | 66 | — |
+| 4 | chiefs | 65 | — |
+| 5 | stanley cup | 64 | — |
+| 9 | world cup | 46 | **4** |
+| 10 | celtics | 44 | **2** |
+
+**The number: 2 of 5 overlap at rank 5.** The warmer's #2 (`celtics`) and #4 (`world cup`) are human
+ranks **10** and **9**; `fed` and `chiefs` are human top-4 and are **not warmed at all**.
+
+**Verdict — not "barely", and not a straightforward defect either.** The head is *plausible but stale*:
+every member is in the human top ~12, so nothing absurd is being warmed, but the ordering is frozen
+and two genuine top-4 queries are missing. The queue's proposed close ("a self-fulfilling head that
+happens to be the right head is a documentation problem") **does not apply** — it is not the right head.
+
+**The finding that outranks the original one, and it changes what a fix would even look like:**
+**both candidate head sources are contaminated by our own automation** — `search:trending:24h` by the
+typeahead warmer (~89%), `search_query_logs` by the gold sentinel (23.6%, concentrated at the top).
+There is currently **no clean user-query distribution in the system**. Any head-selection change would
+be tuning against a signal we generate, so the prerequisite is a **provenance flag on the logging
+path** (mark automation-originated searches at write time), not a smarter ranking. That is a small,
+well-scoped piece of work and it is the one that unblocks the rest.
+
+⚠️ Carried forward: LAT-P061's own staging file warns that **any future change letting warm passes hit
+the cache would silently stop the voting** (`/typeahead` votes on the miss path only), freezing the head
+completely. `-55` deliberately keeps missing, so it does not trip this — but it is now one refactor away.
+
+⚠️ Also noted, not chased: `search:trending:24h` calls `expire(key, 86400)` **on every write**
+(`events.py:4791`), so the key resets only after 24 h of total silence — which the warmer's ~96 s
+cadence guarantees never happens. The `:24h` in the name is not a window. The observed scores
+(~1,768 against ~1,632 passes/day) are consistent with roughly a day's accumulation rather than
+unbounded growth, so something is resetting it — Redis eviction or a restart is the likely candidate.
+**Unresolved, and flagged rather than asserted**: a key whose retention is set by an unidentified
+mechanism is not a measurement instrument.
+
+### Item 3 — cadence↔TTL hygiene: **premise-check answered, change NOT taken**
+
+The queue gates this on *"only if the beat file is already open"*. **It is not** — this window makes no
+beat-schedule change, so `beat_schedule_change: false` and `tests/test_tasks_wiring.py` is untouched.
+The premise-check it asked for was cheap, so it was taken anyway:
+
+> *"Check whether their caches, like `/typeahead`'s, fail to extend on a hit; if they do, the waste is
+> the only effect and the hygiene is free."*
+
+**Answer: they DO extend, and the mechanism is the mirror image of `/typeahead`'s.**
+`precompute_admin_health.py` writes with `ex=_ADMIN_HEALTH_CACHE_TTL` (3600) **unconditionally on every
+run** — the writer is the scheduled task itself, not a route that returns early on a cache hit. So each
+beat genuinely refreshes the TTL.
+
+**Therefore the waste is the only effect, and the hygiene is free.** `precompute-admin-link-rate` and
+`precompute-admin-matured-linkage` at `*/10` and `precompute-admin-audit-all` at `*/15` recompute six
+and four times per cache lifetime; five of six and three of four buy nothing but a slightly younger
+number. Worth ~20 GB/day (**0.7%** — real hygiene, and it must not be reported as a fix).
+
+**Recommendation for whoever next opens the beat file:** `*/10 → */30` and `*/15 → */30` keeps two
+refreshes inside every 3600 s TTL, preserving the deliberate slack the module comment describes
+(*"generous so a few skipped beats never empty it"*), while cutting the recompute count by ~3×.
+Declare `beat_schedule_change: true` and update the `test_tasks_wiring.py` allowlist (gotcha #12).
