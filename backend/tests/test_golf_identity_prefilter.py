@@ -1,33 +1,35 @@
-"""LAT-P058 / #1866 — the golf identity prefilter, the database's #1 evictor.
+"""LAT-P058 / #1866 — the golf identity prefilter, the database's former #1 evictor.
 
 `_build_completed_tournament` prefilters `futures_markets` down to golf before running
 `_is_golf_market` in Python. Measured on production v3817 that one statement was
 **533.7 GB/day of physical reads, 19% of every read the database performs** — 1,110
 calls/day, 492.2 MB each, mean 2,742 ms, on a user-facing route.
 
-It selects 7,169 rows out of 779,617 (0.92%) and pays a full sequential scan of a
-977 MB heap to find them, because `OR` defeats every index on the table.
+It selects 7,169 rows out of 779,617 (0.92%). Before the two partial indexes named in
+`GOLF_IDENTITY_INDEXES` it paid a full sequential scan of a 977 MB heap to find them.
+With them it is a `BitmapOr`: planner cost 128,191.5 -> 12,243.92, per-call physical
+reads 516.7 -> 2.395 MB, warm runtime ~2,900 ms -> ~18 ms.
 
-What these tests lock down:
+**There is exactly one shape, and this file no longer tests a second one (#1917).** A
+`UNION` rewrite was built, indexed and measured, and it is **4.79x SLOWER** than the
+`OR` while costing 2.8x less on paper — 94 of its 98 ms is a `HashAggregate` the `OR`
+never pays. It was refused (ruling 076, `lat-p061-split-scan-refused.md`) and deleted
+along with its `GOLF_IDENTITY_SPLIT_SCAN` flag, because measured-worse code behind a
+permanently-off switch is a trap rather than a rollback path. The tests that kept that
+branch green went with it: a maintained, passing test suite is exactly what made the
+dead branch read as an unfinished migration.
 
-1. **Set-equality of the two shapes.** The `UNION` shape is the one the covering
-   partial indexes can serve; it must select exactly what the `OR` selects. Proven
-   here against a seeded corpus that includes the adversarial cases (a row matching
-   ONLY the `external_id` branch, a row matching ONLY the category branch, a row
-   matching BOTH — which is where a `UNION ALL` would duplicate — and rows matching
-   neither).
-2. **The default is unchanged.** With no config var set, the shape is the `OR` that
-   shipped. This is load-bearing: `EXPLAIN` on production says the `UNION` costs
-   255,180 against the `OR`'s 128,191 *until the indexes exist*, so shipping it bare
-   would have DOUBLED the reads of the largest query in the database.
-3. **The flag parses the way the spec says it does**, so the Integrator's
-   `heroku config:set` and the code agree on what "on" means.
-4. **The four selected columns never drift** from what `_is_golf_market` and the slug
+What these tests lock down, all of it about the shape that actually runs:
+
+1. **The predicate selects what it claims to**, against a seeded corpus that includes
+   the adversarial cases (a row matching ONLY the `external_id` branch, a row matching
+   ONLY the category branch, a row matching BOTH, and rows matching neither).
+2. **`golf_identity_select()` emits ONE statement and takes no shape argument** — the
+   regression guard for #1917, so the split scan cannot quietly return.
+3. **The four selected columns never drift** from what `_is_golf_market` and the slug
    test actually read.
+4. **The index names stay in sync** with the DDL spec that created them.
 """
-
-import os
-from unittest import mock
 
 import pytest
 from sqlalchemy import Column, Integer, String, create_engine
@@ -35,7 +37,6 @@ from sqlalchemy.orm import Session, declarative_base
 
 from app.routes.golf import (
     GOLF_IDENTITY_INDEXES,
-    _golf_split_scan_enabled,
     golf_identity_select,
 )
 
@@ -61,7 +62,7 @@ class _FM(Base):
 #: (id, source, external_id, llm_sport_category) — the discriminating corpus.
 #: `expected` names which rows the prefilter must return, and why.
 _CORPUS = [
-    # matches BOTH branches — the row a `UNION ALL` would return twice
+    # matches BOTH branches — must appear exactly once
     (1, "odds_api", "golf_pga_championship_winner", "golf"),
     # matches the external_id branch ONLY (category is wrong/absent)
     (2, "odds_api", "golf_the_open_winner", "other"),
@@ -74,9 +75,9 @@ _CORPUS = [
     (7, "polymarket", "0xdeadbeef", None),
     (8, "odds_api", "soccer_epl_winner", "soccer"),
     # `golf_%`'s `_` is a LIKE single-char wildcard, not a literal: 'golfXwinner'
-    # matches today and must keep matching, or the rewrite is not equivalent.
+    # matches today and must keep matching.
     (9, "odds_api", "golfXwinner", None),
-    # ILIKE is case-insensitive; a plain `LIKE` rewrite would silently drop this.
+    # ILIKE is case-insensitive; a plain `LIKE` would silently drop this.
     (10, "odds_api", "GOLF_US_OPEN_WINNER", None),
 ]
 
@@ -107,98 +108,87 @@ def _ids(session, stmt):
 
 
 # --------------------------------------------------------------------------
-# 1 — set-equality
+# 1 — what the predicate selects
 # --------------------------------------------------------------------------
 
 
-def test_or_shape_selects_the_expected_rows(session):
-    assert _ids(session, golf_identity_select(split=False)) == _EXPECTED_IDS
+def test_selects_the_expected_rows(session):
+    assert _ids(session, golf_identity_select()) == _EXPECTED_IDS
 
 
-def test_union_shape_selects_the_expected_rows(session):
-    assert _ids(session, golf_identity_select(split=True)) == _EXPECTED_IDS
-
-
-def test_the_two_shapes_are_set_identical(session):
-    """The whole licence for the rewrite. Proven, not asserted by construction.
-
-    Production capture on v3817 agrees: 7,169 = 7,169 rows, symmetric difference
-    0/0, md5 of the ordered id list `0e7625c986754f8315b451c1003dd206` for both.
-    """
-    or_ids = _ids(session, golf_identity_select(split=False))
-    union_ids = _ids(session, golf_identity_select(split=True))
-    assert or_ids == union_ids
-    assert or_ids - union_ids == set()
-    assert union_ids - or_ids == set()
-
-
-def test_union_does_not_duplicate_a_row_matching_both_branches(session):
-    """Row 1 satisfies both branches. `UNION ALL` would emit it twice.
+def test_a_row_matching_both_branches_appears_exactly_once(session):
+    """Row 1 satisfies both branches of the `OR`.
 
     A duplicate is not cosmetic here: `_build_completed_tournament` appends to
     `matched_ids` in scan order and phase 2 re-orders by that list, so a doubled
-    id would double a market in the winner field.
+    id would double a market in the winner field. The `OR` cannot duplicate — this
+    asserts the property directly rather than trusting the shape, because it is the
+    property the caller depends on.
     """
-    rows = session.execute(golf_identity_select(split=True)).all()
-    ids = [row.id for row in rows]
+    ids = [row.id for row in session.execute(golf_identity_select()).all()]
     assert len(ids) == len(set(ids))
     assert ids.count(1) == 1
 
 
 def test_rows_matching_neither_branch_are_excluded(session):
-    both = _ids(session, golf_identity_select(split=False)) | _ids(
-        session, golf_identity_select(split=True)
-    )
-    assert both.isdisjoint({6, 7, 8})
+    assert _ids(session, golf_identity_select()).isdisjoint({6, 7, 8})
 
 
 def test_underscore_stays_a_like_wildcard_and_ilike_stays_case_insensitive(session):
     """Two ways a 'tidy-up' of the pattern would silently change the result set."""
-    for shape in (False, True):
-        ids = _ids(session, golf_identity_select(split=shape))
-        assert 9 in ids, "golf_% must keep matching 'golfXwinner' (_ is a wildcard)"
-        assert 10 in ids, "ILIKE must keep matching 'GOLF_US_OPEN_WINNER'"
+    ids = _ids(session, golf_identity_select())
+    assert 9 in ids, "golf_% must keep matching 'golfXwinner' (_ is a wildcard)"
+    assert 10 in ids, "ILIKE must keep matching 'GOLF_US_OPEN_WINNER'"
 
 
 # --------------------------------------------------------------------------
-# 2 — the default shape, and the flag
+# 2 — one shape, no switch (#1917 / ruling 076 regression guard)
 # --------------------------------------------------------------------------
 
 
-def test_default_shape_is_the_or_that_shipped():
-    """Bare-merge safety.
+def test_the_shape_is_the_indexed_or_and_there_is_only_one_statement():
+    """The deletion guard.
 
-    Production `EXPLAIN`: `OR` = one Seq Scan, total cost 128,191.5; `UNION` = two
-    Seq Scans + Sort + Unique, 255,180.0. Until the covering partial indexes exist
-    the `UNION` is a 1.99x regression on the single largest query in the database,
-    so the default must be the `OR`.
+    The `UNION` rewrite measured **4.79x slower** than this `OR` (≈88.2 ms vs
+    ≈18.4 ms warm median, 2.45x shared buffers) while the planner ranked it 2.8x
+    CHEAPER. It was refused and removed with its flag. If a `UNION` ever reappears
+    in this statement, the numbers that refused it are in ruling 076 — read them
+    before making this test pass.
     """
-    with mock.patch.dict(os.environ, {}, clear=False):
-        os.environ.pop("GOLF_IDENTITY_SPLIT_SCAN", None)
-        assert _golf_split_scan_enabled() is False
-        sql = str(golf_identity_select().compile(compile_kwargs={"literal_binds": True}))
-    assert "UNION" not in sql.upper()
-    assert " OR " in sql.upper()
+    sql = str(golf_identity_select().compile(compile_kwargs={"literal_binds": True}))
+    upper = sql.upper()
+    assert "UNION" not in upper
+    assert " OR " in upper
+    assert upper.count("FROM FUTURES_MARKETS") == 1
 
 
-@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on", " on "])
-def test_flag_on_values(raw):
-    with mock.patch.dict(os.environ, {"GOLF_IDENTITY_SPLIT_SCAN": raw}):
-        assert _golf_split_scan_enabled() is True
+def test_golf_identity_select_takes_no_shape_argument():
+    """No `split=`, and no config var behind it.
+
+    A default-off keyword is how the trap came back last time: unreachable in
+    production, green in CI, one `heroku config:set` from live.
+    """
+    import inspect
+
+    params = inspect.signature(golf_identity_select).parameters
+    assert params == {}, f"golf_identity_select must take no arguments, got {list(params)}"
+
+    src = inspect.getsource(golf_identity_select)
+    assert "split" not in src
+    assert "GOLF_IDENTITY_SPLIT_SCAN" not in src
 
 
-@pytest.mark.parametrize("raw", ["0", "false", "no", "off", "", "maybe"])
-def test_flag_off_values(raw):
-    with mock.patch.dict(os.environ, {"GOLF_IDENTITY_SPLIT_SCAN": raw}):
-        assert _golf_split_scan_enabled() is False
+def test_no_split_scan_flag_survives_in_the_module():
+    """Belt and braces: the env var name must not exist anywhere in the module.
 
+    `_golf_split_scan_enabled` and `_GOLF_SPLIT_SCAN_ENV` are deleted; this asserts
+    the deletion rather than the absence of a call site.
+    """
+    import app.routes.golf as golf_module
 
-def test_flag_selects_the_union_shape():
-    with mock.patch.dict(os.environ, {"GOLF_IDENTITY_SPLIT_SCAN": "1"}):
-        sql = str(golf_identity_select().compile(compile_kwargs={"literal_binds": True}))
-    assert "UNION" in sql.upper()
-    # Two independently indexable branches — one per index in the spec.
-    assert sql.upper().count("FROM FUTURES_MARKETS") == 2
+    assert not hasattr(golf_module, "_golf_split_scan_enabled")
+    assert not hasattr(golf_module, "_GOLF_SPLIT_SCAN_ENV")
+    assert not hasattr(golf_module, "_GOLF_SPLIT_SCAN_TRUE")
 
 
 # --------------------------------------------------------------------------
@@ -206,25 +196,21 @@ def test_flag_selects_the_union_shape():
 # --------------------------------------------------------------------------
 
 
-def test_both_shapes_expose_exactly_the_four_columns_the_caller_reads(session):
-    """`_is_golf_market` reads source/external_id/name; the slug test reads name.
-
-    Attribute access must survive the subquery wrapper the UNION shape adds — if it
-    does not, the caller fails at runtime rather than at import.
-    """
-    for shape in (False, True):
-        row = session.execute(golf_identity_select(split=shape)).first()
-        assert set(row._mapping.keys()) == {"id", "source", "external_id", "name"}
-        assert row.name.startswith("market ")
-        assert row.source
-        assert row.external_id
+def test_exposes_exactly_the_four_columns_the_caller_reads(session):
+    """`_is_golf_market` reads source/external_id/name; the slug test reads name."""
+    row = session.execute(golf_identity_select()).first()
+    assert set(row._mapping.keys()) == {"id", "source", "external_id", "name"}
+    assert row.name.startswith("market ")
+    assert row.source
+    assert row.external_id
 
 
 def test_index_names_are_declared_for_the_ddl_spec():
     """The spec, the DDL and the code must name the same two indexes.
 
-    `docs/audits/latency/lat-p058-golf-index-spec.md` is the Integrator's runbook;
-    this constant is what stops it drifting from the query it exists to serve.
+    These two indexes are LIVE and load-bearing: they are what turns this `OR` into
+    a `BitmapOr` instead of a seq scan of a 977 MB heap. The `UNION` was deleted;
+    the indexes were not, and must not be.
     """
     assert GOLF_IDENTITY_INDEXES == (
         "ix_fm_golf_identity_category",

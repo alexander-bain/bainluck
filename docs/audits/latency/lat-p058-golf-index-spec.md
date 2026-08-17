@@ -2,6 +2,26 @@
 
 **Status:** ⚠️ **EXECUTED 2026-08-15 by INT-072's predecessor cycle (INT-071). 2 of 3 built. This document has been CORRECTED from that run — see the execution record immediately below before running anything here.**
 
+> ## 🔴 READ BEFORE ANY OTHER LINE OF THIS DOCUMENT — the flip half is DEAD (#1917, ruling 076)
+>
+> This runbook has two halves: **a DDL half and a flag half.** The DDL half **succeeded and is the
+> whole win** — planner cost 128,191.5 → 12,243.92, per-call physical reads 516.7 → 2.395 MB (~216×,
+> 427.6 → 3.2 GB/day), warm runtime ~2,900 ms → ≈18 ms, all of it with the flag off.
+>
+> **The flag half is withdrawn permanently.** The `UNION` rewrite was measured **4.79× SLOWER** than
+> the `OR` it was meant to replace (≈88.2 ms vs ≈18.4 ms warm median, **2.45× shared buffers**) while
+> the planner ranked it 2.81× *cheaper* — an inversion of 13.5×. `GOLF_IDENTITY_SPLIT_SCAN`, the
+> `split=` parameter, the `UNION` branch and its tests are **deleted from the codebase**;
+> `golf_identity_select()` takes no arguments.
+>
+> **§5.3 (the gate) and §6 (the flip) are struck.** §5.3 *passed* on the regression and would
+> re-authorise it; it is replaced in place by §5.3′, ruling 076's four-step form, which is the
+> procedure for any future rewrite gate. §7's "plan only" rollback row and §5.4's `UNION`-queryid
+> note are struck for the same reason. Everything about the **indexes** below stands and is live.
+>
+> Sections marked "CORRECTION" in §0/§0b are **dated historical record** of how this was found, not
+> instructions. Do not action them.
+
 ---
 
 ## 0. EXECUTION RECORD — 2026-08-15, INT-071 (read this first)
@@ -304,7 +324,7 @@ VACUUM (ANALYZE) futures_markets;   -- minutes on a 977 MB heap; safe, online, i
 | P1 | disk headroom | `SELECT pg_size_pretty(pg_database_size(current_database()))` | **51 GB / 64 GB (79.75%) measured today.** The three indexes add **~35 MB**, and a `CONCURRENTLY` build needs transient space of the same order. Abort if free space is under 2 GB. |
 | P2 | no index of these names already exists, valid or invalid | `SELECT relname, indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid=c.oid WHERE relname LIKE 'ix_fm_golf_identity%' OR relname='ix_fm_source_created_at'` | any row with `indisvalid=false` — **drop it first** (see §7); a failed `CONCURRENTLY` leaves an INVALID index that is never used but IS maintained on every write |
 | P3 | no long-running transaction is open on `futures_markets` | `SELECT pid, state, now()-xact_start AS age, left(query,80) FROM pg_stat_activity WHERE xact_start IS NOT NULL AND now()-xact_start > interval '60 seconds' ORDER BY age DESC` | anything older than ~2 min. **`CREATE INDEX CONCURRENTLY` waits — twice — for every transaction that can see the table.** One 5.6-minute query stalls the whole build. There is a known 335,941 ms-mean `SELECT DISTINCT fos.outcome_id …` in this database; do not start while it is running. |
-| P4 | the flag is OFF | `heroku config:get GOLF_IDENTITY_SPLIT_SCAN -a bainluck` | any truthy value before the DDL has succeeded and §5 has verified the plan |
+| P4 | ~~the flag is OFF~~ **— VOID (#1917): there is no flag.** The var is deleted from the code and unset in production; nothing reads it. If `heroku config:get GOLF_IDENTITY_SPLIT_SCAN -a bainluck` ever returns non-empty, that is someone re-adding a var against ruling 076, not a precondition failure — unset it and read §5.3. | — | — |
 | P5 | the code half is deployed (or is not — either is fine) | `curl -s "$BAINLUCK_API/api/health"` | nothing. The DDL is safe with or without `program/latency-53` deployed: with the flag OFF the route still runs the `OR`, which merely *gains* a `BitmapOr` option. **The DDL may therefore run BEFORE the merge, and that is the preferred order.** |
 
 ### Timing constraints vs the drains
@@ -391,27 +411,59 @@ The count will have drifted (markets are created continuously); the md5 will not
 query from §2 and require `in_cur_not_new = 0` and `in_new_not_cur = 0`. ⚠️ `db-query` refuses a
 **leading** `WITH`; put the CTE after a `SELECT` or use scalar subqueries.
 
-**5.3 — THE GATE: the plan uses the indexes, on both branches**
+**5.3 — ~~THE GATE: the plan uses the indexes, on both branches~~ — WITHDRAWN. There is nothing to flip.**
 
-```json
-{"explain": true, "sql": "SELECT id, source, external_id, name FROM futures_markets WHERE external_id ILIKE 'golf_%' UNION SELECT id, source, external_id, name FROM futures_markets WHERE llm_sport_category = 'golf'"}
-```
+> ⛔ **DO NOT RUN THE STEP THAT USED TO BE HERE. IT PASSED, AND IT WAS WRONG BY 13.5×.**
+>
+> This step authorised flipping `GOLF_IDENTITY_SPLIT_SCAN` on two conditions: both `UNION` branches
+> planning as index scans (sound), **and** the `UNION`'s total cost coming in under the `OR`'s
+> 128,191.5 (**not a comparison at all**). LAT-P061 ran it. Both conditions passed, the second by a
+> landslide — the `UNION` planned at **4,361.77**, a claimed 2.81× cheaper. Then the lane took a
+> stopwatch to it:
+>
+> | | planner cost | warm median runtime | shared buffers |
+> |---|---|---|---|
+> | `OR` (live, post-index, `BitmapOr`) | 12,243.92 | **≈18.4 ms** | 1.00× |
+> | `UNION` | 4,361.77 | **≈88.2 ms** | **2.45×** |
+>
+> **The gate said 2.81× cheaper; the stopwatch said 4.79× dearer** — backwards by 13.5×, and by
+> 141× against the stale 128,191.5 bar the step quoted, which was the *pre-index* `OR`'s cost,
+> superseded by the very DDL the flip was waiting on. 94 of the `UNION`'s 98 ms is a `HashAggregate`
+> the `OR` never pays and the planner priced at nearly nothing. Following this runbook as written
+> flips the flag, records a green gate, and ships a 4.8× slowdown **with the gate as the evidence.**
+>
+> The flip is **withdrawn permanently** (LAT-P061). The flag, the `UNION` branch and its tests are
+> **deleted** (#1917, ruling 076 clause 2) — measured-worse code behind a permanently-off switch is
+> a trap, not a rollback path. `golf_identity_select()` now takes no arguments and emits one
+> statement. **There is no flag to set, so §6 is dead too.**
+>
+> Banked as **`docs/rulings/076-planner-cost-cannot-rank-two-statements.md`**. Full measurement:
+> `docs/audits/latency/lat-p061-split-scan-refused.md`.
 
-Require **`Index Only Scan`** (acceptable fallback: `Bitmap Index Scan`) naming
-`ix_fm_golf_identity_extid` on one branch **and** `ix_fm_golf_identity_category` on the other.
+**5.3′ — what this step should have been, and the form any future rewrite gate takes**
 
-> ⛔ **THE GATE IS PLAN SHAPE. IT IS NOT A COST NUMBER.** (LAT-P059, §0b CORRECTION 2.) This step
-> used to add "and a total cost well under 128,191.5". **That bar is now satisfiable while the fix
-> is absent**: with branch A indexed and branch B not, the `UNION` measured **128,033.85** — under
-> the bar, 0.998× the `OR`, and reading zero fewer pages, because branch B still Seq Scans the
-> 977 MB heap for 7,263 of the 7,343 rows. One cheap indexed branch drags the total under any
-> aggregate threshold you pick. **Read the node types. Both of them.**
+Kept, in ruling 076's four-step form, because the *procedure* outlives this particular rewrite. Use
+it for **any** flip that replaces statement A with statement B — none of the four steps is optional
+and step 1 alone is what the old 5.3 mistook for a gate.
 
-- **Both** branches showing an index scan ⇒ **flip the flag** (§6).
-- **Either branch still `Seq Scan` ⇒ DO NOT FLIP** — regardless of what the total cost says. Leave
-  the flag off, report the plan, and hand it back to the lane. The indexes are still a win on their own
-  via `BitmapOr` on the `OR` shape — check that too:
-  `{"explain": true, "sql": "SELECT id, source, external_id, name FROM futures_markets WHERE external_id ILIKE 'golf_%' OR llm_sport_category = 'golf'"}`
+1. **Shape first, as a PRECONDITION, never as the verdict.** The right indexes, the right scan
+   types, no surprise nodes. Cheap and fast to fail. For this rewrite that meant `Index Only Scan`
+   (fallback `Bitmap Index Scan`) naming `ix_fm_golf_identity_extid` on one branch and
+   `ix_fm_golf_identity_category` on the other. It passed — and the rewrite was still 4.8× worse.
+2. **Then the STOPWATCH, ALTERNATING.** `EXPLAIN (ANALYZE, BUFFERS)`, A/B/A/B on the live database,
+   **≥8 executions after warm-up**, medians reported with the spread. Alternating is not decoration:
+   an all-A-then-all-B run hands the second arm a cache the first arm loaded.
+3. **Report BUFFERS alongside time.** Time says what happened today; buffers say what happens when
+   the pool is under pressure. The `UNION`'s 2.45× buffer draw is the durable finding — the one that
+   would have bitten hardest exactly when the route matters.
+4. **Re-measure the bar; never re-quote it** (ruling 069). Any threshold carried from an earlier
+   window is stale by the table growth and the index builds that happened since.
+
+**A cost number may appear as corroboration. It may never be the criterion.** `EXPLAIN`-derived
+numbers gate **shape**; they do not gate **speed**.
+
+The DDL, separately, is a **win on its own** and stays — via `BitmapOr` on the surviving `OR`:
+`{"explain": true, "sql": "SELECT id, source, external_id, name FROM futures_markets WHERE external_id ILIKE 'golf_%' OR llm_sport_category = 'golf'"}`
 
 **5.4 — `pg_stat_statements`, before and after**
 
@@ -431,10 +483,14 @@ SELECT queryid, calls, round(mean_exec_time::numeric,1) AS mean_ms,
 
 ⚠️ `pg_stat_statements` is **cumulative** and this view is **at its 5,000-entry cap and evicting**
 (4,945 held when last read). So:
-- The `OR` queryid's counters do **not** reset when the flag flips — they simply stop growing. Read
-  the **delta over a fixed interval**, not the absolute.
-- The `UNION` is a **different statement with a different queryid**. Find it after the flip with
-  `WHERE query LIKE '%UNION%' AND query LIKE '%llm_sport_category%'` and record its new queryid.
+- Read the **delta over a fixed interval**, not the absolute. (The original bullet here said the
+  `OR`'s counters "stop growing when the flag flips" — ~~struck, #1917~~: there is no flip, the `OR`
+  is the only shape, and its counters keep growing forever. Delta-not-absolute still holds, for the
+  eviction reason above.)
+- ~~The `UNION` is a different statement with a different queryid; find it after the flip.~~
+  **Struck (#1917).** No `UNION` statement is ever emitted. If one shows up in `pg_stat_statements`
+  matching `'%UNION%' AND '%llm_sport_category%'`, that is a **regression to investigate**, not a
+  queryid to record.
 - **Errored statements are never recorded**, so the 37,482.9 ms max is a max over *successful* runs
   only; the true worst case is higher.
 
@@ -447,41 +503,56 @@ SELECT indexrelname, idx_scan, idx_tup_read
   FROM pg_stat_all_indexes
  WHERE indexrelname IN ('ix_fm_golf_identity_category','ix_fm_golf_identity_extid','ix_fm_source_created_at');
 ```
-Expect **one row per index that exists**. `idx_scan = 0` an hour after the flip means the planner is
-not using them ⇒ report back. **A missing ROW means the index does not exist — which is a different
-finding from `idx_scan = 0`, and the two must not be collapsed.** Measured 2026-08-17:
-`ix_fm_source_created_at` `idx_scan = 3,360`; the two golf indexes `0` (branch A's is valid but the
-flag is off, so nothing emits the `UNION` yet).
+Expect **one row per index that exists**. **A missing ROW means the index does not exist — which is a
+different finding from `idx_scan = 0`, and the two must not be collapsed.** Measured 2026-08-17:
+`ix_fm_source_created_at` `idx_scan = 3,360`; the two golf indexes `0`.
+
+⚠️ **That reading is superseded and its explanation was wrong-shaped.** It was taken when only branch
+A's index existed and the note attributed the two zeros to "the flag is off, so nothing emits the
+`UNION` yet". There is no flag and no `UNION` (#1917): the indexes are consumed by the **`OR`'s
+`BitmapOr`**, which is why they must be non-zero. Re-read them now that both are valid — a sustained
+`idx_scan = 0` on either means the planner has stopped using it for the `OR` and the 516.7 → 2.395
+MB/call win has silently reverted. That is the live check; the flip it used to gate does not exist.
 
 ---
 
-## 6. The flag
+## 6. ~~The flag~~ — DEAD. The flag does not exist.
 
-```bash
-heroku config:set GOLF_IDENTITY_SPLIT_SCAN=1 -a bainluck    # only after 5.3 passes
-```
+> ⛔ **DO NOT RUN `heroku config:set GOLF_IDENTITY_SPLIT_SCAN=1`.** There is no such config var and
+> no code reads one. `_GOLF_SPLIT_SCAN_ENV`, `_golf_split_scan_enabled()`, the `split=` parameter and
+> the `UNION` branch were **deleted** in #1917; `golf_identity_select()` takes no arguments and emits
+> exactly one statement, guarded by `test_golf_identity_prefilter.py`. Setting the var now does
+> nothing at all — which is the *second*-worst outcome, the worst being that someone reintroduces the
+> branch to make the runbook true again.
+>
+> Why, in one line: the `UNION` is **4.79× slower** than the `OR` it was meant to replace (≈88.2 ms
+> vs ≈18.4 ms warm median, 2.45× shared buffers). See §5.3 above and ruling 076.
+>
+> **The DDL was the whole win, and it landed with the flag off the entire time** — 516.7 → 2.395 MB
+> per call, ~2,900 ms → ≈18 ms, planner cost 128,191.5 → 12,243.92. Nothing about that result is
+> waiting on a flip.
 
-This restarts the dynos, which is the intended way for the change to take effect — the value is
-read at call time, never at import. Accepted truthy values: `1`, `true`, `yes`, `on`
-(case-insensitive, whitespace-trimmed). Anything else, including unset, is the `OR`.
-
-Then take the deploy read (§8) — twice, per ruling 064.
+The deploy read (§8) still applies to the **DDL**, twice, per ruling 064.
 
 ---
 
 ## 7. Rollback
 
-**This is the property the config gate buys, and it is why the gate exists:** rollback is one
-command and needs no revert commit, no deploy and no code review.
+Only the DDL is rollable back now, and only the last two rows below apply.
 
 | level | action | effect |
 |---|---|---|
-| plan only | `heroku config:unset GOLF_IDENTITY_SPLIT_SCAN -a bainluck` | back to the shipped `OR`, immediately, at the restart it triggers |
-| indexes too | `DROP INDEX CONCURRENTLY ix_fm_golf_identity_category, ix_fm_golf_identity_extid, ix_fm_source_created_at;` (one statement per call; `CONCURRENTLY` again, `statement_timeout = 0`) | back to today exactly |
+| ~~plan only~~ | ~~`heroku config:unset GOLF_IDENTITY_SPLIT_SCAN -a bainluck`~~ | **Struck (#1917).** There is no flag and no second plan to roll back to. The var is unset in production and unread by the code. |
+| indexes | `DROP INDEX CONCURRENTLY ix_fm_golf_identity_category, ix_fm_golf_identity_extid, ix_fm_source_created_at;` (one statement per call; `CONCURRENTLY` again, `statement_timeout = 0`) | back to pre-LAT-P058 exactly — **and back to 516.7 MB physically read per call, 19% of all database reads.** This is a real rollback with a large, measured cost; do not take it as the cheap option. |
 | a failed build | `DROP INDEX CONCURRENTLY <name>;` — **required**, not optional | an INVALID index is never *used* but is still *maintained on every write*, so leaving one is a permanent write tax |
 
-The code half needs no rollback: with the flag unset, `golf_identity_select()` emits the identical
-`OR` statement that ships on master today.
+**The paragraph that used to be here claimed config rollback as "the property the config gate buys,
+and why the gate exists".** That property was real and it was still not worth it: what the gate
+actually bought was a green certificate for a 4.79× regression (§5.3). A cheap rollback from a
+change that should never ship is not a mitigation — ruling 076.
+
+The code half needs no rollback: `golf_identity_select()` emits the same indexed `OR` it always did,
+now as its only shape.
 
 ---
 
