@@ -72,7 +72,7 @@ final class DiscoverFeedSWRTests: XCTestCase {
 
     private func bundleOnlyJSON() -> String {
         """
-        {"type":"bundle","score":95,"bundle":{"id":"b1","title":"Compare","kind":"comparison","items":[]}}
+        {"type":"bundle","score":95,"data":{"id":"b1","title":"Compare","kind":"comparison","items":[]}}
         """
     }
 

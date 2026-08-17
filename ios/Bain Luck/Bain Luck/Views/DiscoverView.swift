@@ -224,6 +224,15 @@ struct DiscoverView: View {
         }
     }
 
+    /// #1885: the interleave's finer run token — category narrowed by the story
+    /// key. Uses the SAME eligibility-gated bundle resolver as `itemCategory`, so
+    /// a bundle's family and its category always describe the same child.
+    private func itemFamily(_ item: FeedItem) -> String {
+        DiscoverCategory.family(item) { bundle in
+            Self.eligibleBundleItems(bundle).first ?? bundle.items.first
+        }
+    }
+
     /// Pure, testable staleness predicate powering the Discover stale gate
     /// (L2-191). Only AUTHORITATIVE lifecycle/date evidence settles a card:
     /// resolved/closed futures, past-resolution futures, and expired FINAL games.
@@ -713,12 +722,16 @@ struct DiscoverView: View {
         guard items.count > 2 else { return items }
         return FeedInterleave.byCategory(
             items, sportsCategories: sportsCats,
-            breakNonSportsRuns: true, category: itemCategory
+            breakNonSportsRuns: true, category: itemCategory, family: itemFamily
         )
     }
 
     private func groupedCategory(_ item: DiscoverGroupedItem) -> String {
         primaryItem(item).map(itemCategory) ?? "other"
+    }
+
+    private func groupedFamily(_ item: DiscoverGroupedItem) -> String {
+        primaryItem(item).map(itemFamily) ?? "other"
     }
 
     private func interleaveGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
@@ -727,7 +740,7 @@ struct DiscoverView: View {
         guard items.count > 2 else { return items }
         return FeedInterleave.byCategory(
             items, sportsCategories: sportsCats,
-            breakNonSportsRuns: true, category: groupedCategory
+            breakNonSportsRuns: true, category: groupedCategory, family: groupedFamily
         )
     }
 

@@ -543,6 +543,21 @@ _OBSCURE_PROCEDURAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The 50 states + DC + PR, as ONE copy. #1885 needed this list a second time and
+# the right move is a shared constant, not a paste: two enumerations of the same
+# closed set drift, and the drift is invisible until a state goes missing from
+# exactly one of them.
+_US_STATE_ALT = (
+    r"alabama|alaska|arizona|arkansas|california|colorado|connecticut|"
+    r"delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|"
+    r"kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|"
+    r"mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|"
+    r"new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|"
+    r"pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|"
+    r"utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|"
+    r"district of columbia|puerto rico"
+)
+
 _REGIONAL_US_ELECTION_RE = re.compile(
     r"("
     r"\b[A-Z]{2}[-\s]?\d{1,2}\b|"
@@ -550,18 +565,118 @@ _REGIONAL_US_ELECTION_RE = re.compile(
     r"\b(republican|democratic|gop|dem)\s+(nominee|primary)\b|"
     r"\b(governor|senate|house)\s+(nominee|primary)\b|"
     r"\b(lieutenant governor|secretary of state)\b|"
-    r"\b("
-    r"state|alabama|alaska|arizona|arkansas|california|colorado|connecticut|"
-    r"delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|"
-    r"kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|"
-    r"mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|"
-    r"new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|"
-    r"pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|"
-    r"utah|vermont|virginia|washington|west virginia|wisconsin|wyoming"
-    r")\s+attorney general\b"
+    r"\b(state|" + _US_STATE_ALT + r")\s+attorney general\b"
     r")",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# #1885 — sub-national elections had NO story key, so the diversity cap could
+# not see them as a family.
+#
+# The filed symptom was 11 of 30 cards on one page from the Taiwanese
+# county-magistrate family. Re-measuring on 2026-08-17 found that family had
+# rotated out and an identically-shaped one had taken its place (four Brazilian
+# state governor/senate races on the same page) — which is the whole argument
+# for keying on the OFFICE rather than on an enumerated place list. The existing
+# `_OBSCURE_PROCEDURAL_RE` names Hackney, Saxony and Thuringia one by one; that
+# is why nobody had heard of Taitung.
+#
+# Measured against 1,000 open election markets pulled from production
+# (`futures_markets`, status=open, name ILIKE any of election/governor/
+# magistrate/senate/mayor — TRUNCATED at the db-query 1,000-row cap and ordered
+# by name, so the sample is alphabetically biased and is a design corpus, not a
+# census): 566 of the 1,000 had NO story key at all.
+#
+# A uniform per-item penalty demotes such a family as a BLOCK; it does not break
+# it up. Only a story key creates diversity, because only a key is something the
+# cap can count.
+_FOREIGN_SUBNATIONAL_OFFICE_RE = re.compile(
+    r"\b(magistrate|prefectur\w*|provincial|chief minister|governador|"
+    r"intendente|voivode|oblast|krai|prefect)\b",
+    re.IGNORECASE,
+)
+
+_SUBNATIONAL_OFFICE_RE = re.compile(
+    r"\b(governor|gubernatorial|senate|house|state assembly)\b", re.IGNORECASE
+)
+
+_ELECTION_EVENT_RE = re.compile(
+    r"\b(election|winner|race|primary|runoff|nominee|matchup|advance|"
+    r"1st place|2nd place|3rd place)\b",
+    re.IGNORECASE,
+)
+
+_US_STATE_RE = re.compile(r"\b(" + _US_STATE_ALT + r")\b", re.IGNORECASE)
+
+# `AK-AL`, `TX-32` — a US congressional district. Deliberately case-SENSITIVE:
+# the two-letter postal code is what makes it a district rather than a word.
+_US_DISTRICT_RE = re.compile(r"\b[A-Z]{2}[-\s](?:\d{1,2}|AL)\b")
+
+# Federal-level markers. A market carrying one is national, not sub-national, and
+# must not be swept into either family. NOTE `federal` is deliberately ABSENT:
+# "Federal District Governor Election Winner" is Brazil's Distrito Federal, and
+# including the word misfiled it as American (caught while measuring, not after).
+_US_FEDERAL_RE = re.compile(
+    r"\b(u\.?s\.?|united states|congress|presidential|president|white house)\b",
+    re.IGNORECASE,
+)
+
+# A capitalised place immediately before the office — "Amapá Governor",
+# "Federal District Senate". The place must be capitalised (so "2028 Senate
+# winner" is NOT read as a place named 2028) while the office is matched
+# case-insensitively via a scoped inline flag (so "Ceará gubernatorial election"
+# still lands). `[^\W\d_]` is a letter in any script, which is what carries the
+# accented Brazilian and Mexican state names.
+_PLACE_BEFORE_OFFICE_RE = re.compile(
+    r"\b([A-Z][^\W\d_]+(?:\s+[A-Z][^\W\d_]+)?)\s+"
+    r"(?i:governor|gubernatorial|senate|house|state assembly)\b"
+)
+
+# Central-bank governors are not elections. "Who will be the next Governor of
+# the Bank of England?" satisfies office+event on the letter of it.
+_BANK_GOVERNOR_RE = re.compile(
+    r"\b(central bank|federal reserve|reserve bank|bank of)\b", re.IGNORECASE
+)
+
+
+def _subnational_election_story_key(name: str) -> str | None:
+    """Story key for a sub-national election, or None if this is not one.
+
+    Split out of `_story_key` so it is directly callable from tests — the #1885
+    mechanism was PROVEN by calling `_story_key` in a REPL and reading `None`,
+    and a fix for a defect found that way should keep the same probe available.
+    """
+    lower = name.lower()
+
+    # A national presidential race is not a local election, however many
+    # sub-national words its title carries ("Brazil Presidential Election First
+    # Round: 1st Place in Acre" names a state and is still a national market).
+    if "presidential" in lower:
+        return None
+    if _BANK_GOVERNOR_RE.search(name):
+        return None
+
+    # Arm A: offices that only exist sub-nationally and only outside the US.
+    # This is the arm that catches the county-magistrate family #1885 filed,
+    # and it caught the Russian oblast/krai families for free — which is the
+    # point of keying on the office.
+    if _FOREIGN_SUBNATIONAL_OFFICE_RE.search(name):
+        return "story:foreign_local_elections"
+
+    # Arm B: an office that exists in both, disambiguated by place. The US state
+    # list is a CLOSED set and the world's first-level divisions are not, so the
+    # closed set is the one enumerated and everything else falls out — the
+    # inverse of the borough-by-borough list that missed Taitung.
+    if _SUBNATIONAL_OFFICE_RE.search(name) and _ELECTION_EVENT_RE.search(name):
+        if _US_STATE_RE.search(name) or _US_DISTRICT_RE.search(name):
+            return "story:us_state_races"
+        if _US_FEDERAL_RE.search(name):
+            return None
+        if _PLACE_BEFORE_OFFICE_RE.search(name):
+            return "story:foreign_local_elections"
+
+    return None
 
 # Margin-of-victory + voter-turnout election markets — Alex product decision
 # (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
@@ -1055,6 +1170,16 @@ def _story_key(name: str, category: str) -> str | None:
 
     if category == "soccer" and not _TOP_TIER_SOCCER_RE.search(name):
         return "story:minor_soccer_leagues"
+
+    # #1885 — LAST in the cascade on purpose. Every key above is more specific
+    # than "this is a sub-national election", so a market that already belongs to
+    # a named story (a 2028 presidential primary, a regional US race the existing
+    # `_REGIONAL_US_ELECTION_RE` already claims) keeps the key it has. This arm
+    # only ever converts a `None` into a family, so it cannot re-home an existing
+    # one — which is what makes it safe to add to a cascade this long.
+    subnational = _subnational_election_story_key(name)
+    if subnational is not None:
+        return subnational
 
     return None
 
@@ -2313,6 +2438,19 @@ def diversify_quality_families(
         "story:regional_us_elections": 1,
         "story:niche_low_signal_sports": 1,
         "story:minor_soccer_leagues": 1,
+        # #1885. Two separate keys, deliberately, rather than folding both into
+        # `story:regional_us_elections` (cap 1): that key's cap is an existing
+        # Alex-set dial for school-board/city-council races, and quietly widening
+        # its membership to every state Senate race would change a shipped
+        # behaviour under cover of a bug fix. Separate keys mean the new families
+        # are tunable without touching the old one.
+        #
+        # 1 for the foreign family: 11 of 30 cards was the filed symptom, and a
+        # reader has no way to tell two Brazilian state races apart.
+        # 2 for US state races: a competitive Senate midterm is a legitimately
+        # national story, so the cap admits a pair rather than a single.
+        "story:foreign_local_elections": 1,
+        "story:us_state_races": 2,
     }
 
     for item in sorted_items:

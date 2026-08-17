@@ -58,14 +58,14 @@ final class DiscoverCategoryTests: XCTestCase {
         """)
     }
 
-    /// NOTE the `bundle` key. `FeedItem.init` reads bundles from a **separate**
-    /// `bundle` key, while production sends them under `data` — see
-    /// `testProductionBundleWireShapeIsDroppedByTheDecoder` below, which pins that
-    /// defect. This helper uses the shape the decoder actually accepts so the
-    /// classifier tests exercise the classifier rather than the decode bug.
+    /// The REAL production wire shape (#1886, fixed this cycle): a bundle's payload
+    /// is under `data`, exactly like every other card type. This helper used to send
+    /// a top-level `bundle` key — a shape no server has ever emitted — which is how
+    /// the classifier tests passed green over a decoder that dropped every live
+    /// bundle card.
     private func bundle(childJSON: String, id: String = "b1") throws -> FeedItem {
         try item("""
-        {"type":"bundle","score":89,"bundle":{"id":"\(id)","title":"T","kind":"theme",
+        {"type":"bundle","score":89,"data":{"id":"\(id)","title":"T","kind":"theme",
          "items":[\(childJSON)]}}
         """)
     }
@@ -154,29 +154,48 @@ final class DiscoverCategoryTests: XCTestCase {
         XCTAssertEqual(DiscoverCategory.of(try event(sport: nil)), "other")
     }
 
-    /// Pins a defect this cycle FOUND but did not fix, so the fix has a ready red.
+    /// #1886 — the flip of cycle 80's pinning test. This byte sequence is copied
+    /// from a real `GET /api/feed` bundle card; it USED to be asserted as throwing,
+    /// because `FeedItem.init` read bundles from a top-level `bundle` key that
+    /// production has never sent (measured 0/83 on 2026-08-14 and 0/60 on
+    /// 2026-08-17). Every bundle fell into the `futures` branch, threw on the
+    /// string `id`, and was eaten by `FeedResponse`'s tolerant skip loop — so the
+    /// curated theme cards had never rendered on iOS.
     ///
-    /// `FeedItem.init` reads bundles from a top-level `bundle` key. Production
-    /// sends them as `{"type":"bundle","data":{…}}` — measured: **0 of 83** live
-    /// feed items carried a `bundle` key, and all 6 bundle cards used `data`.
-    /// `type == "bundle"` therefore falls into the `else` branch, decodes `data` as
-    /// `FeedFuturesData`, throws on the string `id`, and `FeedResponse`'s tolerant
-    /// skip loop drops the card silently — so every theme card ("2028 Election",
-    /// "Fed & Rates", "Middle East") is invisible on iOS.
-    ///
-    /// Identical class to the L2-179 concept bug documented in `FeedItem.init`
-    /// itself, which is why the comment there says the native marquee never
-    /// appeared on device. When that is fixed, this test flips to a positive
-    /// assertion and `testBundleTakesItsCategoryFromItsChild_notOther`'s helper
-    /// should move back to the `data` shape.
-    func testProductionBundleWireShapeIsDroppedByTheDecoder() throws {
+    /// **This test fails on the old decoder** — it is the red the directive asked
+    /// for. Under the old code the `data` decode throws; under the new one it must
+    /// produce a populated bundle.
+    func testProductionBundleWireShapeDecodes() throws {
         let productionShape = """
         {"type":"bundle","score":89,"reason":"2 related markets","headline":"2028 Election",
          "data":{"id":"theme:story:us_2028_election:108326-108445","title":"2028 Election",
          "kind":"theme","item_count":2,"items":[\(Self.futuresChild)]}}
         """
-        XCTAssertThrowsError(try item(productionShape),
-                             "documents the live decode drop — see the doc comment")
+        let decoded = try item(productionShape)
+        let bundle = try XCTUnwrap(decoded.bundle, "the production wire shape must yield a bundle")
+        XCTAssertEqual(bundle.id, "theme:story:us_2028_election:108326-108445")
+        XCTAssertEqual(bundle.title, "2028 Election")
+        XCTAssertEqual(bundle.kind, "theme")
+        XCTAssertEqual(bundle.items.count, 1, "the bundle's children decode too")
+        XCTAssertEqual(bundle.items.first?.futures?.id, 7)
+        // The card no longer masquerades as a futures card.
+        XCTAssertNil(decoded.futures)
+        XCTAssertEqual(decoded.id, "bundle-theme:story:us_2028_election:108326-108445")
+    }
+
+    /// Gotcha #43 — BOTH directions. The bundle branch must not have cost the
+    /// `futures` fall-through, and a genuinely malformed element must still throw
+    /// so `FeedResponse`'s skip loop keeps its job.
+    func testFuturesFallThroughStillDecodesAndMalformedStillThrows() throws {
+        let futuresItem = try item(Self.futuresChild)
+        XCTAssertEqual(futuresItem.futures?.id, 7)
+        XCTAssertNil(futuresItem.bundle)
+
+        // A `futures` card carrying a bundle-shaped (string-id) payload is still a
+        // decode failure — the new branch keys on `type`, not on payload sniffing.
+        XCTAssertThrowsError(try item("""
+        {"type":"futures","score":90,"data":{"id":"not-an-int","name":"M?"}}
+        """))
     }
 
     func testSportsCategorySetIsTheOneSharedCopy() throws {
@@ -283,5 +302,174 @@ final class DiscoverCategoryTests: XCTestCase {
         let f = (0..<40).map { Stub(id: $0, cat: "basketball") }
         XCTAssertEqual(FeedInterleave.byCategory(f, sportsCategories: sportsCats,
                                                  breakNonSportsRuns: true, category: cat), f)
+    }
+
+    // MARK: - 4. #1885 — the story-family run, on the same replay
+
+    /// A card carrying both tokens the interleave now reads.
+    private struct FamStub: Equatable {
+        let id: Int
+        let cat: String
+        let story: String?
+        var family: String { story.map { "\(cat)|\($0)" } ?? cat }
+    }
+    private func fcat(_ s: FamStub) -> String { s.cat }
+    private func ffam(_ s: FamStub) -> String { s.family }
+
+    private func maxFamilyRun(_ xs: [FamStub]) -> Int {
+        var best = xs.isEmpty ? 0 : 1, cur = 1
+        for (a, b) in zip(xs, xs.dropFirst()) {
+            cur = a.family == b.family ? cur + 1 : 1
+            best = max(best, cur)
+        }
+        return best
+    }
+
+    private func maxCategoryRun(_ xs: [FamStub]) -> Int {
+        var best = xs.isEmpty ? 0 : 1, cur = 1
+        for (a, b) in zip(xs, xs.dropFirst()) {
+            cur = a.cat == b.cat ? cur + 1 : 1
+            best = max(best, cur)
+        }
+        return best
+    }
+
+    /// The MEASURED production shape #1885 was filed for, replayed: a small
+    /// sports partition that runs dry, then a long politics tail that is mostly
+    /// ONE story family. Numbers from `GET /api/feed?limit=30&offset=30`
+    /// (2026-08-14): 11 of 30 cards were the same sub-national election family.
+    /// Re-measured 2026-08-17: that specific family had rotated out and four
+    /// Brazilian state races had taken its place — same shape, different places,
+    /// which is why the backend key is cut on the office and not on a place list.
+    private func oneStoryTailFixture() -> [FamStub] {
+        var out = (0..<4).map { FamStub(id: $0, cat: "basketball", story: nil) }
+        // 11 same-family politics cards — the flood.
+        out += (0..<11).map {
+            FamStub(id: 100 + $0, cat: "politics", story: "story:foreign_local_elections")
+        }
+        // The variety that existed on the page and was never used to break it up.
+        out += [
+            FamStub(id: 200, cat: "politics", story: "story:us_2028_election"),
+            FamStub(id: 201, cat: "politics", story: "story:macro_rates"),
+            FamStub(id: 202, cat: "politics", story: nil),
+        ]
+        return out
+    }
+
+    /// THE PROOF the directive asked for: worst-case run on the replay.
+    func testStoryFamilyRunIsBrokenOnTheProductionReplay() {
+        let f = oneStoryTailFixture()
+
+        // Category-only — what shipped before #1885. `family` defaults to
+        // `category`, so this is exactly today's algorithm.
+        let before = FeedInterleave.byCategory(
+            f, sportsCategories: sportsCats, breakNonSportsRuns: true, category: fcat)
+
+        // Family-aware.
+        let after = FeedInterleave.byCategory(
+            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
+            category: fcat, family: ffam)
+
+        XCTAssertLessThan(
+            maxFamilyRun(after), maxFamilyRun(before),
+            """
+            worst-case STORY run must fall. before=\(maxFamilyRun(before)) \
+            after=\(maxFamilyRun(after)). This is the number #1773's reader \
+            reported as "six in a row" and #1885 traced to a nil story key.
+            """
+        )
+    }
+
+    /// Gotcha #43, direction two: the finer token must not lengthen the CATEGORY
+    /// run the cycle-80 guard exists to shorten. Buying story diversity with
+    /// category monotony would be trading one flood for another.
+    func testCategoryRunIsNotMadeWorseByTheFamilyTier() {
+        let f = oneStoryTailFixture()
+        let before = FeedInterleave.byCategory(
+            f, sportsCategories: sportsCats, breakNonSportsRuns: true, category: fcat)
+        let after = FeedInterleave.byCategory(
+            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
+            category: fcat, family: ffam)
+        XCTAssertLessThanOrEqual(maxCategoryRun(after), maxCategoryRun(before))
+    }
+
+    /// Monotonicity, stated as a test: with no story keys the family tier is
+    /// PROVABLY inert, because tier 2's predicate is then tier 1's predicate and
+    /// tier 1 already searched the same window.
+    func testFamilyTierIsBitForBitInertWithoutStoryKeys() {
+        for n in [0, 1, 2, 3, 5, 17, 50, 200] {
+            let f = (0..<n).map {
+                FamStub(id: $0,
+                        cat: ["politics", "politics", "basketball", "tech", "baseball"][$0 % 5],
+                        story: nil)
+            }
+            XCTAssertEqual(
+                FeedInterleave.byCategory(f, sportsCategories: sportsCats,
+                                          breakNonSportsRuns: true, category: fcat),
+                FeedInterleave.byCategory(f, sportsCategories: sportsCats,
+                                          breakNonSportsRuns: true,
+                                          category: fcat, family: ffam),
+                "supplying a family that equals the category must change nothing at n=\(n)")
+        }
+    }
+
+    /// No card invented, lost, or duplicated by the finer token.
+    func testFamilyAwareInterleavePreservesEveryCard() {
+        for n in [3, 17, 50, 200, 500] {
+            let f = (0..<n).map {
+                FamStub(id: $0,
+                        cat: ["politics", "politics", "basketball", "politics", "tech"][$0 % 5],
+                        story: $0 % 3 == 0 ? "story:foreign_local_elections" : nil)
+            }
+            let out = FeedInterleave.byCategory(
+                f, sportsCategories: sportsCats, breakNonSportsRuns: true,
+                category: fcat, family: ffam)
+            XCTAssertEqual(out.count, n, "count preserved at n=\(n)")
+            XCTAssertEqual(Set(out.map(\.id)), Set(f.map(\.id)), "id set preserved at n=\(n)")
+        }
+    }
+
+    /// The honest limit, pinned so nobody over-claims: reordering cannot create
+    /// variety that is not in the payload. If the whole tail is ONE family, the
+    /// run survives — which is precisely why #1885's real fix is the backend
+    /// story key (it makes the server's cap able to *count* the family and thin
+    /// it), and this interleave change is the safety half.
+    func testASingleFamilyTailCannotBeBrokenByReordering() {
+        let f = (0..<20).map {
+            FamStub(id: $0, cat: "politics", story: "story:foreign_local_elections")
+        }
+        let out = FeedInterleave.byCategory(
+            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
+            category: fcat, family: ffam)
+        XCTAssertEqual(out.count, 20)
+        XCTAssertEqual(maxFamilyRun(out), 20, "no reordering can separate 20 identical families")
+    }
+
+    /// The decode half: a card must actually carry the key the interleave reads.
+    func testFuturesCardDecodesTheServerStoryKey() throws {
+        let withKey = try item("""
+        {"type":"futures","score":90,"data":{"id":11,"name":"Taitung County Magistrate Election Winner",
+         "llm_sport_category":"politics","story_key":"story:foreign_local_elections","outcome_count":2}}
+        """)
+        XCTAssertEqual(withKey.futures?.storyKey, "story:foreign_local_elections")
+        XCTAssertEqual(DiscoverCategory.family(withKey), "politics|story:foreign_local_elections")
+
+        // Absent key → family degrades to the bare category, so an older backend
+        // behaves exactly as it does today.
+        let withoutKey = try futures(category: "politics")
+        XCTAssertNil(withoutKey.futures?.storyKey)
+        XCTAssertEqual(DiscoverCategory.family(withoutKey), "politics")
+    }
+
+    /// A bundle reports the family of the child it renders, following the same
+    /// resolver as `DiscoverCategory.of`.
+    func testBundleFamilyFollowsItsResolvedChild() throws {
+        let child = """
+        {"type":"futures","score":90,"data":{"id":7,"name":"M?","llm_sport_category":"politics",
+         "story_key":"story:macro_rates","outcome_count":1}}
+        """
+        let b = try bundle(childJSON: child)
+        XCTAssertEqual(DiscoverCategory.family(b), "politics|story:macro_rates")
+        XCTAssertEqual(DiscoverCategory.family(b) { _ in nil }, "other")
     }
 }

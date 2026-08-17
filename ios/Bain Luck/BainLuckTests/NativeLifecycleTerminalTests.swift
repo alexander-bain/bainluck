@@ -244,8 +244,10 @@ final class NativeLifecycleTerminalTests: XCTestCase {
 
     func testLiveConceptIsNotStaleButIsSuppressedAsEmptyEnvelope() throws {
         // Two independent rules, both correct: nothing about a live concept is
-        // *stale*, but it carries no outcome to predict, so #1486 fails it closed —
-        // exactly as web does (`feedItemSuppressionReason` → "empty_concept").
+        // *stale*, but THIS one carries no outcome to predict, so #1486 fails it
+        // closed — exactly as web does (`feedItemSuppressionReason` →
+        // "empty_concept"). Since #1882 a concept WITH a leader is admitted; this
+        // fixture has none, so the expectation is unchanged.
         let live = try concept(status: "\"live\"")
         XCTAssertFalse(DiscoverView.isStaleItem(live, now: now))
         XCTAssertEqual(DiscoverViewModel.suppressionReason(live), "empty_concept")
@@ -414,7 +416,7 @@ final class NativeLifecycleTerminalTests: XCTestCase {
         let bundle = try item("""
         {
           "type": "bundle", "score": 70,
-          "bundle": {
+          "data": {
             "id": "story:test", "title": "A story", "kind": "theme",
             "items": [
               { "type": "futures", "score": 60,

@@ -2349,6 +2349,22 @@ async def get_feed(
 
         # Remove internal sort/debug keys
         for item in paginated:
+            # #1885: PROMOTE the story key into the card before dropping the
+            # internal one. The server's own caps thin a family down, but the
+            # client re-orders what it is given (`FeedInterleave`), and it was
+            # doing that by CATEGORY alone — so eleven same-family politics cards
+            # were eleven indistinguishable "politics" cards to the only code
+            # that could have separated them. A cap the client cannot see is a
+            # cap the client will undo.
+            #
+            # Bundles already carry their own `story_key` inside `data` (the
+            # theme bundlers put it there), so they are left alone rather than
+            # overwritten with the wrapper's copy.
+            story_key = item.get("_quality_story_key")
+            data = item.get("data")
+            if story_key and isinstance(data, dict) and "story_key" not in data:
+                data["story_key"] = story_key
+
             item.pop("_sort_time", None)
             item.pop("_rank_score", None)
             item.pop("_quality_class", None)
@@ -7745,6 +7761,110 @@ async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict
         return None
 
 
+async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
+    """Resolve the FAVOURITE of an unsettled concept for its feed card (#1882).
+
+    The sibling of `_resolve_concept_champion` above, for the other end of the
+    lifecycle. That function answers "who won"; this one answers "who is favoured",
+    off the same `primary.competitors` list in the same cached envelope.
+
+    Why it is needed: `_score_event_concepts` serialises `fight_count` /
+    `entry_count` and no outcomes, so a card titled "Alexandre Pantoja vs Joshua
+    Van" renders as a title and "5 weekend markets" — a directory entry, on a
+    product whose whole premise is translating markets into probabilities. And
+    concepts carry `_marquee_pin`, so the least quantitative card type is
+    disproportionately likely to be the first thing a reader sees.
+
+    Measured 2026-08-17 against production `GET /api/event/{key}`: every live UFC
+    concept's envelope carries `primary.competitors` as `[{name, probability}]`
+    already sorted favourite-first (e.g. Joshua Van 0.5217 / Alexandre Pantoja
+    0.4783). Nothing new is computed here — the number exists and the feed simply
+    never asked for it.
+
+    Shaped to match `tournament`'s `golfers[0]` (`name` / `probability` /
+    `movement_24h`) so the iOS card reuses the tournament hero rather than
+    inventing a second one.
+
+    Best-effort in exactly the way its sibling is: any failure, an empty field, or
+    a competitor with no usable probability returns ``None`` and the card falls
+    back to today's count. It never fabricates a probability (the L2-159 frontend
+    contract).
+    """
+    try:
+        from app.utils.event_concept import get_adapter, parse_event_key
+
+        envelope = None
+        try:
+            # Same warm-envelope read as the champion resolver: gotcha #39 — no
+            # SYNC Redis call on the event loop, shared client, bounded op.
+            from app.utils.request_cache import (
+                bounded_redis_call,
+                get_shared_async_redis,
+            )
+
+            _concept_redis = await get_shared_async_redis()
+            _cached_res = await bounded_redis_call(
+                lambda: _concept_redis.get(f"bainluck:event_concept:{key}")
+            )
+            if _cached_res.is_ok:
+                import json as _json
+
+                cached = _cached_res.value
+                envelope = _json.loads(
+                    cached.decode() if isinstance(cached, bytes) else cached
+                )
+        except Exception:
+            envelope = None
+
+        if envelope is None:
+            domain, slug = parse_event_key(key)
+            adapter = get_adapter(domain)
+            if adapter is None:
+                return None
+            envelope = await adapter.build_event(slug, db)
+
+        if not envelope:
+            return None
+
+        primary = envelope.get("primary") or {}
+        competitors = [
+            c
+            for c in (primary.get("competitors") or [])
+            if isinstance(c, dict)
+            and (c.get("name") or "").strip()
+            and isinstance(c.get("probability"), (int, float))
+        ]
+        if not competitors:
+            return None
+
+        # Do NOT trust the envelope's ordering — take the max explicitly. The
+        # adapters sort favourite-first today, and a card that silently leads with
+        # the underdog because an adapter changed its sort is the #1860 "top line
+        # reads as the answer, and the answer is the complement" defect again.
+        leader = max(competitors, key=lambda c: float(c["probability"]))
+        probability = float(leader["probability"])
+
+        # An independent-binary field can sum well past 100% (gotcha #23); a
+        # single leader reading over 1.0 is corrupt rather than merely confident.
+        if not 0.0 <= probability <= 1.0:
+            return None
+
+        movement = leader.get("movement_24h")
+        if not isinstance(movement, (int, float)):
+            movement = leader.get("probability_change_24h")
+        return {
+            "name": (leader["name"] or "").strip(),
+            "probability": probability,
+            "movement_24h": (
+                float(movement) if isinstance(movement, (int, float)) else None
+            ),
+            "field_size": len(competitors),
+        }
+    except Exception as e:  # never break the feed for a probability flourish
+        logger.warning("Feed: failed to resolve concept leader for %s: %s", key, e)
+        return None
+
+
 async def _score_event_concepts(
     db: AsyncSession,
     now: datetime,
@@ -7834,6 +7954,17 @@ async def _score_event_concepts(
         # crown so TdF Sunday leads with "Tadej Pogačar — Won" instead of a bare
         # "Final result, see the recap". Best-effort; None keeps the recap fallback.
         _champion = await _resolve_concept_champion(db, c["key"]) if _is_whathit else None
+        # #1882: the favourite, for a concept that is NOT in its WHAT-HIT window.
+        # Deliberately mutually exclusive with `_champion` — "settled means
+        # settled" (standing Alex ruling): a card with a result must lead with the
+        # result, never with a probability that is now history. The exclusivity is
+        # enforced here, at the one place both are resolved, rather than left to
+        # each renderer to remember.
+        _leader = (
+            None
+            if _is_whathit
+            else await _resolve_concept_leader(db, c["key"])
+        )
         feed_items.append(
             {
                 "type": "concept",
@@ -7868,6 +7999,12 @@ async def _score_event_concepts(
                         if _champion and _champion.get("result_summary")
                         else {}
                     ),
+                    # #1882: the favourite and its probability, shaped like
+                    # `tournament`'s `golfers[0]` so the iOS card reuses the
+                    # tournament hero. Absent (not null) when there is no usable
+                    # field, so the renderer's "has a leader" test is a presence
+                    # test and an older client ignores it.
+                    **({"leader": _leader} if _leader else {}),
                 },
                 # #235 Item 4: pin while live OR in the T+36h WHAT-HIT window.
                 "_marquee_pin": pin_state in ("live", "whathit"),

@@ -46,12 +46,30 @@ enum FeedInterleave {
     ///   domain map **alone** takes the worst case from 6 to **8**. Map plus this
     ///   guard returns it to 5. A fix that admits data ships its safety half in
     ///   the same commit.
+    /// - Parameter family: a FINER token than `category` — the category narrowed
+    ///   by the server's story key (#1885). Defaults to `category`, which makes
+    ///   the second tier below provably inert and keeps every existing call
+    ///   bit-for-bit unchanged.
+    ///
+    ///   Why a second tier rather than replacing `category`: swapping the run
+    ///   test over to `family` wholesale would make the guard fire LESS often —
+    ///   two politics cards from different stories would stop counting as a run
+    ///   at all — and lengthen exactly the category runs the guard was built for.
+    ///   So the preference is ordered. Break the category run if anything in the
+    ///   window can; otherwise settle for breaking the STORY run, which is the
+    ///   case the eleven county-magistrate cards presented: every candidate in
+    ///   the window was `politics`, so tier one had nothing to offer and the page
+    ///   shipped one story eleven times.
     static func byCategory<T>(
         _ items: [T],
         sportsCategories: Set<String>,
         breakNonSportsRuns: Bool = false,
-        category: (T) -> String
+        category: (T) -> String,
+        family: ((T) -> String)? = nil
     ) -> [T] {
+        // A nested func, not a stored `let`: binding a non-escaping parameter to
+        // a local closure variable is a Swift escape error.
+        func familyOf(_ item: T) -> String { family?(item) ?? category(item) }
         var sports: [T] = []
         var nonSports: [T] = []
         sports.reserveCapacity(items.count)
@@ -75,8 +93,40 @@ enum FeedInterleave {
         var sportsIdx = 0
         var nonSportsIdx = 0
         var lastCategory = ""
+        var lastFamily = ""
         var sportsSinceNonSport = 0
         let maxSportsRun = nonSports.count >= 4 ? 2 : 3
+
+        /// The bounded look-ahead swap, shared by both drains.
+        ///
+        /// Tier 1 is the original rule: find a card in the next 5 whose CATEGORY
+        /// differs. Tier 2 (#1885) runs only when tier 1 found nothing, and
+        /// settles for a card whose FAMILY differs.
+        ///
+        /// Tier 2 is SKIPPED OUTRIGHT when no `family` closure was supplied. Not
+        /// an optimisation bolted on afterwards — it is what makes the inertness
+        /// structural instead of incidental: with `family == nil` the two
+        /// predicates are the same expression, so tier 2 could only re-find what
+        /// tier 1 just rejected. Leaving it to run anyway cost a second window
+        /// scan per emitted item and pushed the swap-heavy fixture in
+        /// `DiscoverInterleaveTests` from ~5,000 classifications to 6,949 — the
+        /// order was still correct, and the operation-count proof caught it
+        /// anyway, which is the entire reason that test counts operations rather
+        /// than timing them.
+        func swapInADifferentCard(_ buffer: inout [T], from idx: Int) {
+            let windowEnd = min(idx + 5, buffer.count)
+            guard idx < windowEnd else { return }
+            if let swapIdx = (idx..<windowEnd)
+                .first(where: { category(buffer[$0]) != lastCategory }) {
+                buffer.swapAt(idx, swapIdx)
+                return
+            }
+            guard family != nil else { return }
+            if let swapIdx = (idx..<windowEnd)
+                .first(where: { familyOf(buffer[$0]) != lastFamily }) {
+                buffer.swapAt(idx, swapIdx)
+            }
+        }
 
         while sportsIdx < sports.count || nonSportsIdx < nonSports.count {
             // Break a sports run (or drain the remaining non-sports once sports
@@ -88,18 +138,24 @@ enum FeedInterleave {
                 // pinned. Monotone by construction: when the next non-sports card
                 // does not repeat `lastCategory` the swap never fires and the
                 // output is bit-for-bit the pre-#1883 order.
-                if breakNonSportsRuns, category(nonSports[nonSportsIdx]) == lastCategory {
-                    let windowEnd = min(nonSportsIdx + 5, nonSports.count)
-                    if let swapIdx = (nonSportsIdx..<windowEnd)
-                        .first(where: { category(nonSports[$0]) != lastCategory }) {
-                        nonSports.swapAt(nonSportsIdx, swapIdx)
-                    }
+                // #1885: the trigger widens from "same category" to "same family",
+                // because a run of one STORY is the defect a reader actually
+                // reports ("six in a row"), and eleven cards of one story all
+                // read `politics` to the old test.
+                // Short-circuit ordered so the family probe is never evaluated
+                // when no `family` closure was supplied — op parity with the
+                // pre-#1885 path, not just order parity.
+                if breakNonSportsRuns,
+                   category(nonSports[nonSportsIdx]) == lastCategory
+                    || (family != nil && familyOf(nonSports[nonSportsIdx]) == lastFamily) {
+                    swapInADifferentCard(&nonSports, from: nonSportsIdx)
                 }
                 let item = nonSports[nonSportsIdx]
                 nonSportsIdx += 1
                 result.append(item)
                 sportsSinceNonSport = 0
                 lastCategory = category(item)
+                lastFamily = familyOf(item)
                 continue
             }
 
@@ -108,16 +164,13 @@ enum FeedInterleave {
                 // the front with the first differing card within the next 5 — an
                 // O(1) swap on the backing array, indices unchanged otherwise.
                 if category(sports[sportsIdx]) == lastCategory {
-                    let windowEnd = min(sportsIdx + 5, sports.count)
-                    if let swapIdx = (sportsIdx..<windowEnd)
-                        .first(where: { category(sports[$0]) != lastCategory }) {
-                        sports.swapAt(sportsIdx, swapIdx)
-                    }
+                    swapInADifferentCard(&sports, from: sportsIdx)
                 }
                 let item = sports[sportsIdx]
                 sportsIdx += 1
                 result.append(item)
                 lastCategory = category(item)
+                lastFamily = familyOf(item)
                 sportsSinceNonSport += 1
             } else if nonSportsIdx < nonSports.count {
                 // Unreachable in practice (the leading `if` already claims this
@@ -127,6 +180,7 @@ enum FeedInterleave {
                 result.append(item)
                 sportsSinceNonSport = 0
                 lastCategory = category(item)
+                lastFamily = familyOf(item)
             }
         }
 

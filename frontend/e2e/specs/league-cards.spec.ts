@@ -87,17 +87,48 @@ function isDateLadder(m: Market): boolean {
   return outs.every((o) => /^before\s+/i.test((o.name ?? "").trim()));
 }
 
+/**
+ * #1860 — the oracle reads `sections` as a MAPPING, which is what the server
+ * sends: `{"awards": Market[], "props": Market[], "more_markets": Market[]}`.
+ *
+ * It was previously typed `{markets?: Market[]}[]` and read with
+ * `(body.sections ?? []).flatMap(...)`, which throws `flatMap is not a function`
+ * on an object — so the acceptance test for this issue crashed inside its own
+ * payload reader and never evaluated the page at all. Measured against
+ * production 2026-08-17: `sections` is a dict of three lists and there is no
+ * top-level `markets` key.
+ *
+ * Note what the naive repair would have cost: making the reader merely
+ * *tolerant* (returning `[]` on an unexpected shape) would have zeroed
+ * `owed.binaries` and `owed.ladders`, and both retrofit assertions below are
+ * guarded by `if (owed.X > 0)`. The test would have gone GREEN having checked
+ * nothing. So an unreadable payload throws instead — a shape this test cannot
+ * read is a fact about the test, and it must say so.
+ */
 async function leaguePayload(): Promise<{ binaries: number; ladders: number; games: number }> {
   const res = await fetch(`${API_BASE}/api/leagues/${LEAGUE_KEY}`);
   if (!res.ok) return { binaries: -1, ladders: -1, games: -1 };
   const body = (await res.json()) as {
-    sections?: { markets?: Market[] }[];
-    markets?: Market[];
+    sections?: Record<string, Market[]> | null;
+    markets?: Market[] | null;
     upcoming_games?: unknown[];
     recent_results?: unknown[];
   };
-  const markets: Market[] = body.markets
-    ?? (body.sections ?? []).flatMap((s) => s.markets ?? []);
+
+  let markets: Market[];
+  if (Array.isArray(body.markets)) {
+    markets = body.markets;
+  } else if (body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)) {
+    markets = Object.values(body.sections).flatMap((list) => (Array.isArray(list) ? list : []));
+  } else {
+    throw new Error(
+      `GET /api/leagues/${LEAGUE_KEY} returned neither a 'markets' array nor a ` +
+        `'sections' mapping — top-level keys were [${Object.keys(body).join(", ")}]. ` +
+        `The oracle cannot grade the page against a payload it cannot read, and ` +
+        `reading zero markets would make every assertion below vacuously true.`,
+    );
+  }
+
   return {
     binaries: markets.filter(isBinary).length,
     ladders: markets.filter(isDateLadder).length,
@@ -198,13 +229,21 @@ test("league page renders the SHARED card system, not three local variants", asy
 
 /**
  * The other direction, per gotcha #43: a cap or a re-route must not empty an
- * adjacent surface. The shared `EventCard` is used by /sports, search and My
- * Stuff, and this queue put a `data-testid` on it — so the sports feed is
- * checked to have kept its cards, proving the shared component was not
- * disturbed by being marked.
+ * adjacent surface. The shared `EventCard` carries the `data-testid` this queue
+ * added, so one of its OTHER callers is checked to have kept its cards — proving
+ * the shared component was not disturbed by being marked.
+ *
+ * #1860: this pointed at `/sports` and failed, and the failure was the TEST's.
+ * `app/sports/page.tsx` does not import `EventCard` — it renders its own
+ * `data-testid="sports-card"` markup — so the control asserted that a surface
+ * which has never used the shared card must contain it, and read the resulting
+ * `30 wrappers, 0 shared cards` as a regression in a component it had not
+ * touched. Verified 2026-08-17: the importers are `app/sports/[key]`,
+ * `app/search`, `app/my-stuff` and `app/preferences`. The per-league route is
+ * the right control — it is a real reader path and it is populated in season.
  */
 test("the shared event card still populates its original surface", async ({ page, journey }) => {
-  const path = "/sports";
+  const path = "/sports/baseball_mlb";
   await page.goto(path, { waitUntil: "domcontentloaded" });
 
   await page
@@ -214,7 +253,6 @@ test("the shared event card still populates its original surface", async ({ page
     .catch(() => null);
 
   const cards = await page.locator(EVENT_CARD).count().catch(() => 0);
-  const sportsCards = await page.locator('[data-testid="sports-card"]').count().catch(() => 0);
   const mainText = await readContentRegionText(page);
 
   await journey.finish({
@@ -226,13 +264,15 @@ test("the shared event card still populates its original surface", async ({ page
     mainRegionNonBlank: mainText.trim().length > 40,
   });
 
-  // An empty slate is legitimate on /sports too, so the assertion is the
-  // CONDITIONAL one: where the feed drew its own card wrapper, the shared card
-  // must be inside it.
-  if (sportsCards > 0) {
+  // An out-of-season or empty slate is legitimate and is not failed. The claim
+  // is conditional on the page having rendered its own content: a populated
+  // league page that drew ZERO shared cards is the marked component having
+  // stopped rendering.
+  const owed = await leaguePayload();
+  if (owed.games > 0) {
     expect(
       cards,
-      `/sports rendered ${sportsCards} card wrapper(s) but no shared event card — ` +
+      `${path} owes ${owed.games} game(s) but rendered no [data-testid="event-card"] — ` +
         `marking the shared component must not have changed what it renders`,
     ).toBeGreaterThan(0);
   }

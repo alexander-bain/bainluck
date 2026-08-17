@@ -735,10 +735,26 @@ final class DiscoverViewModel: ObservableObject {
             return "empty_tournament"
         }
         if let concept = item.concept {
-            // Renderable only in the post-settlement WHAT-HIT window (a "FINAL / see
-            // the recap" result framing; a graded winner when present, #1219). A
-            // live/upcoming concept has nothing to predict → the #1486 empty tile.
-            return concept.marqueeWhathit == true ? nil : "empty_concept"
+            // #1882: now EXACTLY the tournament rule above — a leader OR a settled
+            // result — because the payload finally carries the same thing the
+            // tournament payload does.
+            //
+            // The old rule ("WHAT-HIT only") was the right call for the payload it
+            // was written against: #1486 failed live concepts closed because the
+            // card had nothing to predict, and an honest-empty is better than a
+            // bare tile. That premise is what changed. `_score_event_concepts` now
+            // serialises the favourite off the same envelope the champion already
+            // came from, so an upcoming F1 GP or UFC card CAN lead with a
+            // probability, and suppressing it would now be withholding a real
+            // answer rather than declining to invent one.
+            //
+            // Order matters and is not cosmetic: the settled check is not needed
+            // first here (the server never sends both), but the leader check is
+            // written second so that if that invariant ever breaks, a settled card
+            // still renders its result. Settled means settled.
+            if concept.marqueeWhathit == true { return nil }
+            if concept.leader != nil { return nil }
+            return "empty_concept"
         }
         if let bundle = item.bundle {
             // Recursion backstop — bundles are not expected to nest.
@@ -966,8 +982,15 @@ final class DiscoverViewModel: ObservableObject {
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
         FeedInterleave.byCategory(
             items, sportsCategories: sportsCategories,
-            breakNonSportsRuns: true, category: category(for:)
+            breakNonSportsRuns: true, category: category(for:), family: family(for:)
         )
+    }
+
+    /// #1885: the page-merge interleave's finer run token. Same default
+    /// first-child bundle rule as `category(for:)` — production paths sanitize
+    /// bundles upstream, so the two agree.
+    private static func family(for item: FeedItem) -> String {
+        DiscoverCategory.family(item)
     }
 
     /// #1883: delegates to the one shared classifier. This copy previously had no

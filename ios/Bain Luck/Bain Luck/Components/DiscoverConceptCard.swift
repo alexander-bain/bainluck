@@ -1,10 +1,16 @@
 import SwiftUI
 
 /// Native Discover card for an event-concept marquee hub — Tour de France, FIFA
-/// World Cup, a UFC fight card, an awards ceremony. Concept cards are hubs, not
-/// single markets, so this card is probability-free: it leads with the marquee
-/// name and (post-settlement) the graded champion, mirroring the web
-/// `ConceptFeedCard` treatment (FeedCard.tsx).
+/// World Cup, a UFC fight card, an awards ceremony.
+///
+/// #1882: this card is NO LONGER probability-free. Its header used to say
+/// "concept cards are hubs, not single markets, so this card is probability-free"
+/// — a true statement about the payload that read as a statement about the
+/// product, and the two are different claims. The hub really does have no single
+/// market; it does have a FAVOURITE, and the feed simply never asked the envelope
+/// for one. The card now leads with the marquee name plus either the graded
+/// champion (post-settlement) or the favourite's probability — the same
+/// treatment the tournament card gives `golfers[0]`.
 ///
 /// L2-179: before this card existed, the native decode path silently discarded
 /// every `concept`-type feed item, which is why the marquee never appeared on
@@ -117,6 +123,38 @@ struct NativeConceptDiscoverCard: View {
                                 .foregroundStyle(.white.opacity(0.8))
                                 .lineLimit(2)
                         }
+                    } else if let leader = data.leader {
+                        // #1882: the favourite. Rendered ONLY when not settled —
+                        // `whatHit` takes the branch above, so a result can never
+                        // be displaced by a stale probability even if a future
+                        // payload carried both.
+                        HStack(spacing: 6) {
+                            Text(leader.name)
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            Text(probabilityLabel(leader.probability))
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.white.opacity(0.22))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            if let movement = movementLabel(leader.movement24h) {
+                                Text(movement)
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            if let fieldSize = leader.fieldSize, fieldSize > 2 {
+                                // A 52% favourite in a two-way fight and a 52%
+                                // favourite in a 20-car field are different facts.
+                                Text("of \(fieldSize)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.7))
+                            }
+                        }
                     }
                 }
                 .padding(14)
@@ -137,6 +175,25 @@ struct NativeConceptDiscoverCard: View {
         .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { navigate() }
+    }
+
+    /// Whole-percent, matching the product's probability-first voice ("60% vs
+    /// 40%", never a price). Clamped because an independent-binary field can sum
+    /// past 100% (gotcha #23) and a card must not print 104%.
+    private func probabilityLabel(_ probability: Double) -> String {
+        let clamped = min(max(probability, 0), 1)
+        return "\(Int((clamped * 100).rounded()))%"
+    }
+
+    /// 24h movement in percentage POINTS, shown only when it is worth a glance.
+    /// Sub-point noise is suppressed rather than rounded to "+0", which reads as
+    /// a measured non-move rather than as an absence.
+    private func movementLabel(_ movement: Double?) -> String? {
+        guard let movement else { return nil }
+        let points = movement * 100
+        guard abs(points) >= 1 else { return nil }
+        let rounded = Int(points.rounded())
+        return rounded > 0 ? "▲\(rounded)" : "▼\(abs(rounded))"
     }
 
     @ViewBuilder

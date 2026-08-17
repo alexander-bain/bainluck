@@ -313,7 +313,9 @@ private func heatmapPreviewData(
         // terminal-lifecycle gate (`FeedLifecycle.futuresIsSettled`).
         resolved: nil,
         winner: nil,
-        winnerOpeningProbability: nil
+        winnerOpeningProbability: nil,
+        // #1885: a preview fixture belongs to no story family.
+        storyKey: nil
     )
 }
 #endif

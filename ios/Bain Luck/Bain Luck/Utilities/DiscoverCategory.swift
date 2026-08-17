@@ -106,6 +106,43 @@ enum DiscoverCategory {
         return "other"
     }
 
+    /// The interleave's **family** token: the category, narrowed by the server's
+    /// story key when there is one (#1885).
+    ///
+    /// Category alone could not see the defect this exists for. Eleven Taiwanese
+    /// county-magistrate markets on one page are eleven cards reading `politics`,
+    /// so every "is this a repeat?" test the interleave ran answered *no more
+    /// than* "yes, politics again" — true of a Fed decision and a French election
+    /// too. The story key is the only signal that distinguishes *the same story
+    /// told eleven times* from *a varied politics page*.
+    ///
+    /// Falls back to the bare category when the server sends no key, so a payload
+    /// from an older backend behaves exactly as it does today.
+    static func family(
+        _ item: FeedItem,
+        bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }
+    ) -> String {
+        let category = of(item, bundleChild: bundleChild)
+        guard let story = storyKey(item, bundleChild: bundleChild), !story.isEmpty else {
+            return category
+        }
+        return "\(category)|\(story)"
+    }
+
+    /// The server's story key for this card, following the same child-resolution
+    /// path `of(_:)` uses so a bundle reports the family of the child it renders.
+    static func storyKey(
+        _ item: FeedItem,
+        bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }
+    ) -> String? {
+        if let futures = item.futures { return futures.storyKey }
+        if let bundle = item.bundle {
+            guard let child = bundleChild(bundle) else { return nil }
+            return storyKey(child, bundleChild: bundleChild)
+        }
+        return nil
+    }
+
     /// Map a concept's raw domain onto the sport token the interleave understands.
     static func token(forDomain domain: String?) -> String {
         guard let lowered = domain?.lowercased(), !lowered.isEmpty else { return "other" }
