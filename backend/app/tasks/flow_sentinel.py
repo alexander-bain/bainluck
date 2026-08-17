@@ -59,6 +59,29 @@ EVENT_SAMPLE_SIZE = 10          # flow:sentinel_event_sample_size
 STALE_LIVE_HOURS = 12.0         # flow:sentinel_stale_live_hours
 # Feed-quality @20 targets (CLAUDE.md production audit target).
 FEED_QUALITY_TOP_N = 20
+
+# --- discover_first_page floor (UX-P089 / #1936) -----------------------------
+# The alarm Alex's "the live feed shows TWO cards" field test proves we lacked.
+#
+# It has TWO limbs, and the second one is the whole reason this exists. When that
+# report came in, `GET /api/feed` was returning FIFTY renderable cards for Alex's
+# own session id — a card-counting alarm would have been green throughout. What
+# he could not get was DELIVERY: a cold build for an identified principal was
+# measured at 4.3s / 4.3s / 11.7s, against a native client whose entire
+# initial-load budget is 6s and whose deadline error is non-retryable. A feed
+# that is built correctly and arrives after the reader has given up is starved.
+#
+# So: count the cards a client could render, AND time the build against the
+# client's real budget. A flow that measured only what the server produced would
+# have watched this whole incident go by.
+DISCOVER_FIRST_PAGE_FLOOR = 12  # flow:sentinel_discover_first_page_floor
+# `DiscoverViewModel.retryBudget` — the client's TOTAL initial-load budget, not a
+# per-attempt timeout. Kept as its own constant so the day someone changes it in
+# Swift, the mismatch is one grep away.
+DISCOVER_CLIENT_LOAD_BUDGET_S = 6.0  # flow:sentinel_discover_client_budget_s
+# The iOS first-page request shape, verbatim (`DiscoverViewModel.firstPageLimit`
+# = 50, `eventPct` = 0.15). Probing a different shape probes a different feed.
+DISCOVER_FIRST_PAGE_PARAMS = {"limit": "50", "offset": "0", "event_pct": "0.15"}
 # participation_family (#199): how many golf prop markets to detail-probe per run.
 PARTICIPATION_SAMPLE_SIZE = 8
 
@@ -144,6 +167,7 @@ _FLOW_AREA_LABELS = {
     "resolved_state": "area:calibration",
     "chart_density": "area:event-details",
     "category_discover": "area:discover-ranking",
+    "discover_first_page": "area:discover-ranking",
     "participation_family": "area:event-details",
     "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
@@ -160,6 +184,7 @@ _FLOW_TITLES = {
     "resolved_state": "settled/live event state incorrect",
     "chart_density": "user-visible charts below the density bar",
     "category_discover": "category / Discover first page empty or low-quality",
+    "discover_first_page": "Discover first page starved, or built too slowly for the client to receive",
     "participation_family": "non-ME prop family (make-cut/top-N) squashed to sum-100%",
     "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
@@ -175,6 +200,7 @@ _FLOW_TITLES = {
 # ---------------------------------------------------------------------------
 def _load_overrides() -> None:
     global CHART_DENSITY_MAX_BELOW_BAR_PCT, EVENT_SAMPLE_SIZE, STALE_LIVE_HOURS
+    global DISCOVER_FIRST_PAGE_FLOOR, DISCOVER_CLIENT_LOAD_BUDGET_S
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -183,6 +209,8 @@ def _load_overrides() -> None:
             ("flow:sentinel_chart_density_max_below_bar", "CHART_DENSITY_MAX_BELOW_BAR_PCT", float),
             ("flow:sentinel_event_sample_size", "EVENT_SAMPLE_SIZE", int),
             ("flow:sentinel_stale_live_hours", "STALE_LIVE_HOURS", float),
+            ("flow:sentinel_discover_first_page_floor", "DISCOVER_FIRST_PAGE_FLOOR", int),
+            ("flow:sentinel_discover_client_budget_s", "DISCOVER_CLIENT_LOAD_BUDGET_S", float),
         ):
             v = r.get(key)
             if v is not None:
@@ -499,6 +527,109 @@ def feed_event_card_count(feed_items: Any) -> int:
     if not isinstance(feed_items, list):
         return 0
     return sum(1 for i in feed_items if isinstance(i, dict) and i.get("type") == "event")
+
+
+def feed_renderable_card_count(feed_items: Any) -> int:
+    """Cards a CLIENT could actually render from a /api/feed page (UX-P089).
+
+    Not `len(items)`. The native and web surfaces both drop empty predictive
+    envelopes through the same rule (`DiscoverViewModel.suppressionReason`,
+    `feedItemSuppressionReason`), so an alarm that counted raw items would call a
+    page of fifty bare tiles a healthy feed. Mirrored here rather than imported
+    because the authority lives in Swift and TypeScript; the mirror is pinned by
+    `test_flow_sentinel.py` against a recorded production page.
+
+    Deliberately the PERMISSIVE reading of each rule. This is a floor alarm: it
+    should fire when the feed is genuinely starved, not litigate individual
+    cards. Over-counting risks a missed alarm; under-counting guarantees a noisy
+    one, and a noisy floor alarm gets muted, which is how you end up with no
+    alarm at all.
+    """
+    if not isinstance(feed_items, list):
+        return 0
+
+    def _renderable(item: Any, depth: int = 0) -> bool:
+        if not isinstance(item, dict):
+            return False
+        kind = item.get("type")
+        data = item.get("data")
+        if not isinstance(data, dict):
+            return False
+        if kind == "event":
+            return True
+        if kind == "futures":
+            if data.get("top_outcomes"):
+                return True
+            # Settled-but-open is the normal Kalshi shape (gotcha #33), and a
+            # result-carrying card is renderable — "settled means settled".
+            return bool(
+                data.get("resolved")
+                or (data.get("winner") or "").strip()
+                or (data.get("status") or "").lower()
+                in ("resolved", "closed", "settled", "finalized", "final")
+            )
+        if kind == "tournament":
+            return bool(data.get("golfers") or data.get("marquee_whathit"))
+        if kind == "concept":
+            return bool(data.get("marquee_whathit") or data.get("leader"))
+        if kind == "bundle":
+            if depth > 3:
+                return False
+            return any(_renderable(c, depth + 1) for c in (data.get("items") or []))
+        return False
+
+    return sum(1 for i in feed_items if _renderable(i))
+
+
+def discover_first_page_failures(
+    *,
+    renderable: int,
+    elapsed_s: float,
+    cache_status: str | None,
+    floor: int = DISCOVER_FIRST_PAGE_FLOOR,
+    budget_s: float = DISCOVER_CLIENT_LOAD_BUDGET_S,
+) -> list[dict]:
+    """The two-limb verdict for the Discover first page (UX-P089 / #1936).
+
+    Limb 1 — STARVED: fewer renderable cards than the floor.
+
+    Limb 2 — UNDELIVERABLE: the build outran the client's total load budget. Only
+    asserted on a genuine COLD build, and that condition is load-bearing rather
+    than defensive. A cache hit says nothing about build cost (it is an 8ms read),
+    so timing one and passing would be a vacuous green — the alarm would report
+    healthy precisely because it measured nothing. A cold build is the only
+    sample that carries the number, and it is also the exact request a returning
+    reader makes: identified principals get their own cache key with a 5s fresh
+    TTL and a 300s stale tier, so anyone away for five minutes is cold.
+    """
+    failures: list[dict] = []
+    if renderable < floor:
+        failures.append(
+            {
+                "limb": "starved",
+                "detail": (
+                    f"Discover first page returned {renderable} renderable cards "
+                    f"(floor {floor}) — the reader sees a near-empty feed"
+                ),
+                "renderable": renderable,
+                "floor": floor,
+            }
+        )
+    if cache_status == "miss" and elapsed_s > budget_s:
+        failures.append(
+            {
+                "limb": "undeliverable",
+                "detail": (
+                    f"cold Discover build took {elapsed_s:.2f}s against the native "
+                    f"client's {budget_s:.0f}s total load budget — the fetch is "
+                    f"cancelled and Discover settles to last-good or honest-empty, "
+                    f"however many cards the server built"
+                ),
+                "elapsed_s": round(elapsed_s, 3),
+                "budget_s": budget_s,
+            }
+        )
+    return failures
 
 
 def overnormalized_participation_family(
@@ -980,6 +1111,71 @@ async def _run_sports_feed_events(client: httpx.AsyncClient) -> dict:
         "passed": passed,
         "failures": failures,
         "evidence": {"live_sampled": live_count, "feed_event_cards": event_cards},
+    }
+
+
+async def _run_discover_first_page(client: httpx.AsyncClient) -> dict:
+    """Discover's first page must be full AND deliverable (UX-P089 / #1936).
+
+    Probes the iOS request shape under a UNIQUE session id, which is what makes
+    the sample cold: `feed_response_cache_key` gives every identified principal
+    its own key, so a fresh id is guaranteed to miss and therefore to carry a
+    real build time. It also puts the probe on the identified code path — the one
+    with the 5s fresh TTL that a returning reader actually walks — rather than
+    the anonymous key the pre-warm beat keeps warm and nobody signed in reads.
+
+    The probe writes one throwaway cache entry per run. Bounded and deliberate:
+    that entry is the cost of measuring the number that matters.
+    """
+    import uuid as _uuid
+
+    probe_session = f"flow-sentinel-{_uuid.uuid4()}"
+    started = _time.monotonic()
+    try:
+        resp = await client.get(
+            "/api/feed",
+            params=DISCOVER_FIRST_PAGE_PARAMS,
+            headers={"x-session-id": probe_session},
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        return _unknown_flow(
+            "discover_first_page",
+            f"/api/feed first-page probe errored: {str(exc)[:150]}",
+            probe="identified cold key",
+        )
+
+    wall_s = _time.monotonic() - started
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    renderable = feed_renderable_card_count(items)
+    cache_status = resp.headers.get("x-feed-cache")
+    # Prefer the server's own stage clock over wall time — it excludes network
+    # and TLS, so it is the number the client's budget is actually racing.
+    try:
+        elapsed_s = float(resp.headers["x-feed-elapsed-ms"]) / 1000.0
+    except (KeyError, TypeError, ValueError):
+        elapsed_s = wall_s
+
+    failures = discover_first_page_failures(
+        renderable=renderable, elapsed_s=elapsed_s, cache_status=cache_status
+    )
+    return {
+        "flow": "discover_first_page",
+        "checked": 1,
+        "passed": not failures,
+        "failures": failures,
+        "evidence": {
+            "items_returned": len(items) if isinstance(items, list) else 0,
+            "renderable_cards": renderable,
+            "floor": DISCOVER_FIRST_PAGE_FLOOR,
+            "server_elapsed_s": round(elapsed_s, 3),
+            "wall_s": round(wall_s, 3),
+            "client_load_budget_s": DISCOVER_CLIENT_LOAD_BUDGET_S,
+            "cache_status": cache_status,
+            "stages": resp.headers.get("x-feed-stages"),
+            "counts": resp.headers.get("x-feed-counts"),
+        },
     }
 
 
@@ -1799,6 +1995,7 @@ async def _run_flow_sentinel(
         ("duplicate_events", _run_duplicate_events),
         ("event_completeness", _run_event_completeness),
         ("sports_feed_events", _run_sports_feed_events),
+        ("discover_first_page", _run_discover_first_page),
         ("resolved_state", _run_resolved_state),
         ("chart_density", _run_chart_density),
         ("category_discover", _run_category_discover),
