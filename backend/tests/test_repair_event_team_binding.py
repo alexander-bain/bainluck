@@ -156,33 +156,31 @@ class TestRepairPlansAndApplies:
         assert by_side["home"]["after"]["id"] == 10736
 
     @pytest.mark.asyncio
-    async def test_apply_writes_both_sides_and_commits(self):
+    async def test_the_dry_run_emits_a_plan_whose_rows_are_the_ledger(self):
+        """The apply half of this rail lives in the plan-bound suite (queue 362).
+
+        What belongs HERE is the contract between the scan and the artifact: every
+        planned side, and nothing else, becomes a plan row carrying the before-id
+        the compare-and-set will assert.
+        """
         row = _row(
             id=15194469, home_team_name="Boston Red Sox", away_team_name="Arizona Diamondbacks",
             home_team_id=855, home_bound_name="Minnesota Twins", home_bound_sport=PRESEASON,
             away_team_id=10707, away_bound_name="Los Angeles Dodgers", away_bound_sport=MLB,
         )
         session = _FakeSession([row], TEAMS)
-        session.set_after([_row(
-            id=15194469, home_team_name="Boston Red Sox",
-            away_team_name="Arizona Diamondbacks",
-            home_team_id=10709, home_bound_name="Boston Red Sox", home_bound_sport=MLB,
-            away_team_id=10710, away_bound_name="Arizona Diamondbacks", away_bound_sport=MLB,
-        )])
 
-        result = await repair(session, apply=True)
+        result = await repair(session, apply=False)
 
-        assert result["census"]["applied"] == 2
-        assert session.commits == 1
-        assert sorted(session.updates) == sorted([
-            (15194469, "home", 10709), (15194469, "away", 10710),
-        ])
-        assert result["miswired_after"] == 0, "the after-census must prove the write landed"
+        assert result["census"]["planned"] == 2
+        assert result["plan_rows"] == 2
+        assert session.updates == [], "a dry-run writes nothing"
+        assert session.commits == 0
 
     @pytest.mark.asyncio
     async def test_sound_rows_are_left_alone(self):
         session = _FakeSession([_row()], TEAMS)
-        result = await repair(session, apply=True)
+        result = await repair(session, apply=False)
         assert result["census"]["planned"] == 0
         assert result["census"]["sound"] == 2
         assert session.updates == []
@@ -200,7 +198,7 @@ class TestFailsClosed:
         )
         session = _FakeSession([row], TEAMS)
 
-        result = await repair(session, apply=True)
+        result = await repair(session, apply=False)
 
         assert result["census"]["review"] == 1
         assert result["census"]["planned"] == 0
@@ -215,7 +213,7 @@ class TestFailsClosed:
         )
         session = _FakeSession([row], teams)
 
-        result = await repair(session, apply=True)
+        result = await repair(session, apply=False)
 
         assert result["census"]["review"] == 1
         assert session.updates == []
@@ -234,7 +232,7 @@ class TestFailsClosed:
         )
         session = _FakeSession([row], TEAMS)
 
-        result = await repair(session, apply=True)
+        result = await repair(session, apply=False)
 
         assert result["census"]["planned"] == 0
         assert result["census"]["review"] == 1
@@ -271,8 +269,12 @@ class TestRegisteredOnTheRail:
 
         params = inspect.signature(repair).parameters
         assert list(params)[:2] == ["session", "apply"]
-        # The dispatcher only forwards these four names.
+        # The dispatcher only forwards names the signature declares.
         assert "limit" in params and "sport" in params
+        # Queue 362: without this the dispatcher silently drops ?plan_hash= and
+        # every apply refuses with PLAN_HASH_MISMATCH for a reason that is true
+        # but deeply misleading — the operator DID pass one.
+        assert "plan_hash" in params
 
 
 class TestSinceIsBoundAsADate:
@@ -321,26 +323,24 @@ class TestSinceIsBoundAsADate:
         assert session.candidate_scans[0]["since"] == date(2026, 5, 1)
 
     @pytest.mark.asyncio
-    async def test_the_after_census_scan_also_binds_a_date(self):
-        """The second scan is the dangerous one: it runs only under apply=True
-        and only AFTER the commit, so binding a str there 500s a run whose
-        writes have already landed — the operator cannot tell what happened.
-        The first fix missed this occurrence; the mutation proof found it."""
-        row = _row(
-            id=15194469, home_team_name="Boston Red Sox",
-            home_team_id=855, home_bound_name="Minnesota Twins",
-            home_bound_sport=PRESEASON,
-        )
-        session = _FakeSession([row], TEAMS)
-        session.set_after([_row(id=15194469)])
+    async def test_only_one_candidate_scan_ever_runs(self):
+        """The 'after-census' second scan is GONE as of queue 362, and its removal
+        is asserted here rather than left as an absence somebody re-adds.
 
-        await repair(session, apply=True)
+        It used to run post-commit under apply=True — which made it the more
+        dangerous of the two date bindings, and this class was written for it. But
+        C-APPLY-PRE showed the scan was worse than fragile: re-measuring the whole
+        population after writing to it produced ``miswired_after=0``, a true number
+        that says nothing about whether the writes were the APPROVED ones. The apply
+        path now iterates the reviewed plan and verifies the plan's own events, so
+        there is exactly one candidate scan in this rail and it is the dry-run's.
+        """
+        session = _FakeSession([_row()], TEAMS)
 
-        assert len(session.candidate_scans) == 2, "expected a before and an after scan"
-        for i, scan in enumerate(session.candidate_scans):
-            assert isinstance(scan["since"], date), (
-                f"scan {i} bound since as {type(scan['since']).__name__}"
-            )
+        await repair(session, apply=False)
+
+        assert len(session.candidate_scans) == 1
+        assert isinstance(session.candidate_scans[0]["since"], date)
 
     def test_the_helper_rejects_an_unparseable_string(self):
         with pytest.raises(ValueError):

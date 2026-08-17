@@ -54,6 +54,40 @@ Zero candidates or more than one -> ``review``, never a guess.
 Dry-run is the default. Every planned change is returned in the ledger with the
 before and after id AND the dereferenced club name for both, so the plan is
 checkable without a second query.
+
+PLAN-BOUND APPLY (queue 362, answering Codex's C-APPLY-PRE BLOCK)
+-----------------------------------------------------------------
+
+    POST /api/admin/repairs/event-team-binding?apply=false
+        ...returns ``plan_hash`` and persists the plan artifact
+    POST /api/admin/repairs/event-team-binding?apply=true&plan_hash=<hash>
+
+Until queue 362 this rail's ``apply=true`` **re-derived its own work list**: it ran
+the same scan again and wrote whatever that scan found. Alex had approved a specific
+180-side population, and the rail could not tell that population from any other. The
+certification's executable specimen: reviewed set ``[(1001, away)]``, a candidate
+``2002:away`` that appeared after review, and the deployed function wrote **both**,
+committed, and reported ``miswired_after=0`` — a true statement about the population,
+and no statement whatsoever about whether the writes were the approved ones.
+
+An after-census proves the writes LANDED. Only a plan proves they were the writes
+APPROVED. So:
+
+* the dry-run emits a content-addressed :class:`BindingApplyPlan` and persists it;
+* ``apply=true`` without ``plan_hash`` is REFUSED (``PLAN_HASH_MISMATCH``), and so is
+  a hash that does not match the artifact's own re-derived address;
+* the apply **iterates the plan and nothing else** — the candidate scan does not run
+  on the apply path at all, so a row that appeared after review is not merely
+  rejected, it is never looked at;
+* every write is a **compare-and-set** on the exact ``before`` id the plan recorded.
+  A side whose binding moved since review is a side the reviewer did not see: it is
+  skipped, counted as ``CONCURRENT_ROW_DRIFT``, and named in the response;
+* the after-verification re-reads **the plan's own event ids** and reports each side's
+  landed state, rather than re-measuring the whole population.
+
+The primitives are the ones certified on the calibration rail
+(``app/utils/repair_apply_plan``) — reused, not re-implemented. Two copies of a gate
+is two gates to keep honest, and the second is always the one nobody re-reads.
 """
 
 from __future__ import annotations
@@ -130,10 +164,46 @@ _RESOLVE_SQL = text(
     """
 )
 
+# COMPARE-AND-SET. The ``AND <side>_team_id = :expected`` half is the whole point:
+# it is the plan's before-image asserted at write time, so a side that moved between
+# review and apply updates ZERO rows instead of being clobbered with a decision made
+# about a state that no longer exists. ``rowcount == 0`` is therefore a finding
+# (CONCURRENT_ROW_DRIFT), never a silent success.
 _UPDATE_SQL = {
-    "home": text("UPDATE events SET home_team_id = :tid WHERE id = :eid"),
-    "away": text("UPDATE events SET away_team_id = :tid WHERE id = :eid"),
+    "home": text(
+        "UPDATE events SET home_team_id = :tid WHERE id = :eid AND home_team_id = :expected"
+    ),
+    "away": text(
+        "UPDATE events SET away_team_id = :tid WHERE id = :eid AND away_team_id = :expected"
+    ),
 }
+
+# The after-verification reads ONLY the plan's own events. A fresh population scan
+# here is what produced the false comfort of `miswired_after=0`.
+_VERIFY_SQL = text(
+    """
+    SELECT e.id,
+           e.sport_id,
+           e.home_team_name,
+           e.home_team_id,
+           ht.name      AS home_bound_name,
+           ht.sport_id  AS home_bound_sport,
+           e.away_team_name,
+           e.away_team_id,
+           at.name      AS away_bound_name,
+           at.sport_id  AS away_bound_sport
+      FROM events e
+      LEFT JOIN teams ht ON ht.id = e.home_team_id
+      LEFT JOIN teams at ON at.id = e.away_team_id
+     WHERE e.id = ANY(:ids)
+    """
+)
+
+#: Durable identity of the reviewed plan artifact. ONE slot: a dry-run supersedes
+#: the previous plan, which is correct — the operator applies the plan they just
+#: read, and an apply against an older hash must fail loudly rather than find a
+#: convenient older artifact still lying around.
+PLAN_IDENTITY = "repair:event_team_binding:apply_plan"
 
 
 # The detector's predicate and the WRITE-TIME guard (#1918) are the same predicate,
@@ -145,6 +215,196 @@ from app.utils.team_binding_invariant import (  # noqa: E402
     normalize_club_name as _norm,
 )
 
+# The plan primitives are the ones certified on the calibration rail (CAL-P058 /
+# C-CERT-1852). Imported, never re-implemented.
+from app.utils.repair_apply_plan import (  # noqa: E402
+    BINDING_APPLY_PLAN_SCHEMA,
+    REASON_CONCURRENT_DRIFT,
+    REASON_OUTSIDE_APPROVED,
+    PlannedBinding,
+    bind_apply,
+    build_binding_plan,
+    decode_binding_plan,
+    mutations_outside_approved_keys,
+)
+
+
+async def _save_plan(plan) -> tuple[bool, str]:
+    """Persist the reviewed plan. ``(ok, note)`` — a failure is REPORTED.
+
+    On the durable snapshot rail rather than Redis, for the reason CAL-P058 gives:
+    a SETEX on an allkeys-lru instance can be evicted, and an operator who cannot be
+    handed a hash must be TOLD so, because the next thing they will do is try to apply.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=PLAN_IDENTITY,
+                schema_version=BINDING_APPLY_PLAN_SCHEMA,
+                payload=plan.as_payload(),
+                complete=True,
+                source="repair:event-team-binding",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        return False, f"plan persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"plan persist rejected: {result.get('status')}"
+
+
+async def _load_plan():
+    """``(plan, reason)`` — the artifact, re-digested from its own content."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            PLAN_IDENTITY,
+            expected_version=BINDING_APPLY_PLAN_SCHEMA,
+            max_age_s=14 * 86400,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"plan read raised: {type(exc).__name__}"
+    if not read.ok or read.envelope is None:
+        return None, f"plan artifact unreadable: {read.status}"
+    return decode_binding_plan(read.envelope.payload)
+
+
+async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, Any]:
+    """Write EXACTLY the reviewed plan, or refuse by name. Never re-derives.
+
+    The candidate scan is not called from this path. That is deliberate and is the
+    substance of the fix: a work list that can be recomputed at apply time is a work
+    list that can differ from the reviewed one, and no amount of after-measurement
+    can tell you afterwards which of the two you wrote.
+    """
+    plan, reason = await _load_plan()
+    ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
+    if not ok:
+        return {
+            "issue": "#1798",
+            "apply": True,
+            "applied": False,
+            "refused": True,
+            "reason_codes": refusals,
+            "presented_plan_hash": plan_hash,
+            "artifact_plan_hash": plan.plan_hash if plan is not None else None,
+            "artifact_note": reason,
+            "note": (
+                "Nothing was written. Re-run with apply=false to produce a plan, read it, "
+                "then pass its plan_hash back."
+            ),
+        }
+
+    applied: list[dict[str, Any]] = []
+    drifted: list[dict[str, Any]] = []
+    attempted_keys: list[str] = []
+
+    for row in plan.rows:
+        attempted_keys.append(row.row_key)
+        result = await session.execute(
+            _UPDATE_SQL[row.side],
+            {"tid": row.after_id, "eid": row.event_id, "expected": row.expected_before_id},
+        )
+        entry = {
+            "event_id": row.event_id,
+            "side": row.side,
+            "defect": row.defect,
+            "before": {"id": row.expected_before_id, "name": row.before_name},
+            "after": {"id": row.after_id, "name": row.after_name},
+            "matchup": row.matchup,
+        }
+        if (result.rowcount or 0) == 1:
+            applied.append(entry)
+            logger.info(
+                "#1798 re-bound event %s %s_team_id %s (%s) -> %s (%s) [plan %s]",
+                row.event_id, row.side, row.expected_before_id, row.before_name,
+                row.after_id, row.after_name, plan.plan_hash[:12],
+            )
+        else:
+            entry["reason_code"] = REASON_CONCURRENT_DRIFT
+            entry["reason"] = (
+                "the side's bound id is no longer the one the plan recorded — it moved "
+                "between review and apply, so this is not the row that was approved"
+            )
+            drifted.append(entry)
+
+    # Structural assertion, not decoration: prove the write set was a SUBSET of the
+    # approved set. It cannot fail while the loop above iterates the plan — which is
+    # the point. It is the tripwire for anyone who later re-introduces a scan here.
+    outside = mutations_outside_approved_keys(plan, attempted_keys)
+    if outside:
+        await session.rollback()
+        return {
+            "issue": "#1798",
+            "apply": True,
+            "applied": False,
+            "refused": True,
+            "reason_codes": [REASON_OUTSIDE_APPROVED],
+            "outside_approved_set": outside,
+            "note": "Rolled back. The apply attempted rows the reviewed plan never named.",
+        }
+
+    if applied:
+        await session.commit()
+
+    # Verify over the PLAN's own events, side by side. Not a population re-scan.
+    verified: dict[str, Any] = {"sound": 0, "still_defective": 0, "sides": []}
+    if plan.event_ids:
+        after_rows = (
+            await session.execute(_VERIFY_SQL, {"ids": list(plan.event_ids)})
+        ).mappings().all()
+        by_id = {r["id"]: r for r in after_rows}
+        for row in plan.rows:
+            r = by_id.get(row.event_id)
+            if r is None:
+                verified["sides"].append(
+                    {"event_id": row.event_id, "side": row.side, "state": "event_not_found"}
+                )
+                continue
+            defect = _classify(
+                r[f"{row.side}_team_name"],
+                r[f"{row.side}_bound_name"],
+                r[f"{row.side}_bound_sport"],
+                r["sport_id"],
+            )
+            if defect is None:
+                verified["sound"] += 1
+            else:
+                verified["still_defective"] += 1
+                verified["sides"].append({
+                    "event_id": row.event_id,
+                    "side": row.side,
+                    "state": defect,
+                    "bound_to": {
+                        "id": r[f"{row.side}_team_id"],
+                        "name": r[f"{row.side}_bound_name"],
+                    },
+                })
+
+    return {
+        "issue": "#1798",
+        "apply": True,
+        "applied": True,
+        "plan_hash": plan.plan_hash,
+        "plan_rows": len(plan.rows),
+        "census": {
+            "planned": len(plan.rows),
+            "applied": len(applied),
+            "drifted": len(drifted),
+        },
+        "verified_plan_sides": verified,
+        "ledger": applied,
+        "drift": drifted,
+        "note": (
+            "Bound to the reviewed plan: no candidate scan ran on this path, every write "
+            "was a compare-and-set on the plan's recorded before-id, and verification "
+            "re-read the plan's own events rather than the whole population."
+        ),
+    }
+
 
 async def repair(
     session,
@@ -152,18 +412,27 @@ async def repair(
     limit: Optional[int] = None,
     sport: Optional[str] = None,
     since: str = "2026-03-01",
+    plan_hash: Optional[str] = None,
 ) -> dict[str, Any]:
     """Re-bind events whose ``team_id`` dereferences to the wrong club (#1798).
 
     Args:
-        apply: False (default) plans only. True commits.
-        limit: max events scanned this call.
+        apply: False (default) plans only. True consumes a reviewed plan.
+        limit: max events scanned this call (dry-run only — an apply scans nothing).
         sport: optional comma-separated ``sport_id`` list overriding the MLB default.
-        since: only events at/after this commence_time are considered.
+        since: only events at/after this commence_time are considered (dry-run only).
+        plan_hash: content address of the reviewed dry-run. REQUIRED when ``apply``.
 
-    Returns a census plus a per-side ledger. Every ledger entry names the club the
-    id resolved to BEFORE and AFTER, because an id on its own is not reviewable.
+    A dry-run returns a census, a per-side ledger, and the ``plan_hash`` of the
+    persisted artifact. Every ledger entry names the club the id resolved to BEFORE
+    and AFTER, because an id on its own is not reviewable — and those names are
+    inside the content address, so a plan that swapped a club while keeping the ids
+    would be a different plan.
     """
+    if apply:
+        # The scan below does not run. See ``_apply_reviewed_plan``.
+        return await _apply_reviewed_plan(session, plan_hash)
+
     sport_ids = (
         [int(s) for s in sport.split(",") if s.strip()] if sport else list(_DEFAULT_SPORT_IDS)
     )
@@ -191,6 +460,7 @@ async def repair(
     }
     ledger: list[dict[str, Any]] = []
     review: list[dict[str, Any]] = []
+    planned_rows: list[PlannedBinding] = []
     resolve_cache: dict[tuple[int, str], list] = {}
 
     for row in rows:
@@ -251,47 +521,42 @@ async def repair(
                 "after": {"id": target_id, "name": target_name, "sport_id": row["sport_id"]},
             }
             census["planned"] += 1
-
-            if apply:
-                await session.execute(
-                    _UPDATE_SQL[side], {"tid": target_id, "eid": row["id"]}
-                )
-                census["applied"] += 1
-                entry["applied"] = True
-                logger.info(
-                    "#1798 re-bound event %s %s_team_id %s (%s) -> %s (%s)",
-                    row["id"], side, bound_id, bound_name, target_id, target_name,
-                )
-
             ledger.append(entry)
-
-    if apply and census["applied"]:
-        await session.commit()
-
-    # After-census: re-run the predicate over the SAME rows so the response proves
-    # the write landed rather than asserting it. A repair that reports success
-    # without re-measuring is the failure mode this whole rail exists to kill.
-    remaining = None
-    if apply and census["applied"]:
-        after = (
-            await session.execute(
-                _CANDIDATES_SQL,
-                {"sport_ids": sport_ids, "since": since_date, "lim": scan_limit},
+            planned_rows.append(
+                PlannedBinding(
+                    event_id=row["id"],
+                    side=side,
+                    expected_before_id=bound_id,
+                    before_name=bound_name,
+                    after_id=target_id,
+                    after_name=target_name,
+                    defect=defect,
+                    sport_id=row["sport_id"],
+                    matchup=entry["matchup"],
+                    commence_time=entry["commence_time"],
+                )
             )
-        ).mappings().all()
-        remaining = sum(
-            1
-            for r in after
-            for side in ("home", "away")
-            if _classify(
-                r[f"{side}_team_name"], r[f"{side}_bound_name"],
-                r[f"{side}_bound_sport"], r["sport_id"],
-            )
-        )
+
+    # The plan IS the deliverable of a dry-run. It is persisted even when empty is
+    # impossible to apply (bind_apply refuses PLAN_HAS_NOTHING_TO_APPLY), because an
+    # operator handed no hash at all cannot tell "nothing to do" from "the rail did
+    # not get that far".
+    plan = build_binding_plan(
+        planned_rows,
+        context={
+            "issue": "#1798",
+            "sport_ids": sport_ids,
+            "since": since_date.isoformat(),
+            "limit": scan_limit,
+            "scanned": len(rows),
+            "review_sides": len(review),
+        },
+    )
+    plan_saved, plan_note = await _save_plan(plan)
 
     return {
         "issue": "#1798",
-        "apply": apply,
+        "apply": False,
         # Echo the value actually used, not the caller's spelling of it.
         "scope": {
             "sport_ids": sport_ids,
@@ -299,12 +564,22 @@ async def repair(
             "limit": scan_limit,
         },
         "census": census,
-        "miswired_after": remaining,
+        "plan_hash": plan.plan_hash if plan_saved else None,
+        "plan_persisted": plan_saved,
+        "plan_note": plan_note,
+        "plan_rows": len(plan.rows),
+        "defect_counts": plan.defect_counts(),
+        "apply_command": (
+            f"POST …/repairs/event-team-binding?apply=true&plan_hash={plan.plan_hash}"
+            if plan_saved
+            else "NO PLAN HASH — the artifact did not persist; an apply would be refused"
+        ),
         "ledger": ledger,
         "review": review,
         "note": (
             "Detection dereferences the FK; it never compares a name to a name. "
             "Repair re-derives from the row's own team name within the event's own "
-            "sport_id and requires exactly one exact match — 0 or >1 goes to review."
+            "sport_id and requires exactly one exact match — 0 or >1 goes to review. "
+            "An apply consumes THIS plan by hash and re-derives nothing."
         ),
     }
