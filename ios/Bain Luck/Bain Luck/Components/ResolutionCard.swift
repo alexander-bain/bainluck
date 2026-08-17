@@ -22,13 +22,13 @@ struct NativeResolutionDigestCard: View {
                     .fill(Color.purple.opacity(0.12))
                     .frame(width: 44, height: 44)
                 Image(systemName: "checklist")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.body.weight(.bold))
                     .foregroundStyle(.purple)
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("RESOLVED")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.caption2.weight(.heavy))
                     .tracking(0.8)
                     .foregroundStyle(.purple)
 
@@ -44,7 +44,7 @@ struct NativeResolutionDigestCard: View {
             Spacer(minLength: 0)
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
         }
         .padding(14)
@@ -85,7 +85,7 @@ struct NativeFeedEndCard: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 28))
+                .font(.title)
                 .foregroundStyle(.green)
             Text("You're all caught up")
                 .font(.subheadline.weight(.bold))
