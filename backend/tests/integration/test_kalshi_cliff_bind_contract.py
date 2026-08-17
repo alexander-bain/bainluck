@@ -78,17 +78,21 @@ async def pg_session():
     await engine.dispose()
 
 
-async def _seed_one_recoverable_outcome(session):
+async def _seed_one_recoverable_outcome(
+    session, *, age_days=None, ext="KXBINDCONTRACT-26"
+):
     """One resolved Kalshi outcome inside the retention window, no snapshots.
 
     Inside the window and ahead of the epoch, so a working cold watermark
-    selects it and a broken one cannot reach the question at all.
+    selects it and a broken one cannot reach the question at all. ``age_days``
+    places it precisely, which the at-risk band contracts below need in order
+    to land on one side or the other of the grace edge.
     """
     from sqlalchemy import text
 
-    settled = datetime.now(timezone.utc) - timedelta(
-        days=PROVABLY_PURGED_AGE_DAYS - 5
-    )
+    if age_days is None:
+        age_days = PROVABLY_PURGED_AGE_DAYS - 5
+    settled = datetime.now(timezone.utc) - timedelta(days=age_days)
     # Raw `text()` INSERTs deliberately — this gate exists to exercise the
     # driver's own type coercion, and going through the ORM would let SQLAlchemy
     # adapt values on the way in, which is exactly the layer whose absence is
@@ -115,7 +119,7 @@ async def _seed_one_recoverable_outcome(session):
             {
                 "name": "Cliff drain bind contract market",
                 "settled": settled,
-                "ext": "KXBINDCONTRACT-26",
+                "ext": ext,
             },
         )
     ).scalar()
@@ -130,7 +134,7 @@ async def _seed_one_recoverable_outcome(session):
                 RETURNING id
                 """
             ),
-            {"mid": market_id, "ext": "KXBINDCONTRACT-26-YES"},
+            {"mid": market_id, "ext": f"{ext}-YES"},
         )
     ).scalar()
 
@@ -233,3 +237,101 @@ async def test_the_remaining_count_shares_the_bind_and_therefore_the_fix(
         "an exception here is the `remaining: {'count': null, 'error': "
         "'...DataError...'}' the endpoint was reporting."
     )
+
+
+# ==========================================================================
+# Queue 359 (#1892): the at-risk pass, at the same real boundary
+# ==========================================================================
+#
+# The at-risk pass is a SECOND watermark binding into the SAME timestamptz
+# comparison, so it is a second chance to make #1884's bind. The unit suite is
+# type-strict about it, but only asyncpg can reject the real thing — and only a
+# real Postgres can reject a typo in the band predicate. Both queries are
+# executed here for the same reason the cohort and remaining queries are: a
+# type contract is worth what the type system enforcing it is.
+
+
+async def test_the_at_risk_band_query_executes_against_real_postgres(pg_session):
+    """A cold at-risk watermark selects an outcome inside the 74-86d band."""
+    from sqlalchemy import text
+    from app.utils.kalshi_retention import AT_RISK_AGE_DAYS
+
+    outcome_id, _ = await _seed_one_recoverable_outcome(
+        pg_session, age_days=PROVABLY_PURGED_AGE_DAYS - 5   # 81d — in the band
+    )
+
+    rows = (
+        await pg_session.execute(
+            text(drain._AT_RISK_SQL),
+            {
+                "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                "at_risk_days": AT_RISK_AGE_DAYS,
+                "limit": 10,
+                **drain._at_risk_cursor_params(drain._default_state()),
+            },
+        )
+    ).fetchall()
+
+    assert [r.outcome_id for r in rows] == [outcome_id], (
+        "the at-risk pass must reach an outcome in the band. An exception here "
+        "is #1884's bind made a second time; zero rows is a band predicate that "
+        "excludes the population it names."
+    )
+
+
+async def test_the_at_risk_band_excludes_what_is_not_yet_at_risk(pg_session):
+    """The ceiling is load-bearing: without it the 'at-risk' pass is just a
+    second full sweep of the window competing with the main drain."""
+    from sqlalchemy import text
+    from app.utils.kalshi_retention import AT_RISK_AGE_DAYS
+
+    await _seed_one_recoverable_outcome(
+        pg_session, age_days=10, ext="KXBINDYOUNG-26"   # nowhere near the band
+    )
+
+    rows = (
+        await pg_session.execute(
+            text(drain._AT_RISK_SQL),
+            {
+                "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                "at_risk_days": AT_RISK_AGE_DAYS,
+                "limit": 10,
+                **drain._at_risk_cursor_params(drain._default_state()),
+            },
+        )
+    ).fetchall()
+
+    assert rows == []
+
+
+async def test_the_at_risk_count_separates_a_backlog_from_a_loss(pg_session):
+    """`ahead` is recoverable; `expiring_soon` has a deadline. One number for
+    both would make the alarm fire on work that is merely queued."""
+    from sqlalchemy import text
+    from app.utils.kalshi_retention import AT_RISK_AGE_DAYS
+
+    # 76d: in the band, comfortably clear of the grace edge (86 - 2 = 84d).
+    await _seed_one_recoverable_outcome(
+        pg_session, age_days=76, ext="KXBINDQUEUED-26"
+    )
+    # 85d: in the band AND past the grace edge — out of time.
+    await _seed_one_recoverable_outcome(
+        pg_session, age_days=85, ext="KXBINDDYING-26"
+    )
+
+    row = (
+        await pg_session.execute(
+            text(drain._AT_RISK_COUNT_SQL),
+            {
+                "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                "at_risk_days": AT_RISK_AGE_DAYS,
+                "expiry_edge_days": (
+                    PROVABLY_PURGED_AGE_DAYS - drain.AT_RISK_GRACE_DAYS
+                ),
+                **drain._at_risk_cursor_params(drain._default_state()),
+            },
+        )
+    ).one()
+
+    assert row.ahead == 2
+    assert row.expiring_soon == 1

@@ -53,6 +53,14 @@ class _FakeResult:
         return self._rows[0] if self._rows else None
 
 
+class _AtRiskCount:
+    """The row shape ``_count_at_risk`` reads."""
+
+    def __init__(self, ahead=0, expiring_soon=0):
+        self.ahead = ahead
+        self.expiring_soon = expiring_soon
+
+
 #: Bound parameters that land on a ``timestamptz`` column, and therefore must
 #: arrive as a ``datetime``. asyncpg does not cast at this boundary — psycopg2
 #: would have, which is why the habit is easy to keep and the failure is not.
@@ -82,10 +90,18 @@ class _FakeSession:
     than a description of the fake.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, at_risk_rows=None, at_risk_count=None,
+                 remaining_count=0):
         self._rows = rows
+        self._remaining_count = remaining_count
+        # The at-risk pass is a SEPARATE population on a SEPARATE watermark.
+        # Feeding it the main cohort's rows would have every test silently
+        # process each outcome twice, so it is empty unless a test asks for it.
+        self._at_risk_rows = at_risk_rows or []
+        self._at_risk_count = at_risk_count or _AtRiskCount()
         self.committed = 0
         self.bound_params = []
+        self.at_risk_queries = 0
 
     def _typecheck(self, params):
         if not params:
@@ -108,10 +124,15 @@ class _FakeSession:
         self._typecheck(params)
         if params:
             self.bound_params.append(dict(params))
+        if "/* at_risk_pass_count */" in sql:
+            return _FakeResult(rows=[self._at_risk_count])
+        if "/* at_risk_pass */" in sql:
+            self.at_risk_queries += 1
+            return _FakeResult(rows=self._at_risk_rows)
         if "ORDER BY fm.resolution_date ASC" in sql:
             return _FakeResult(rows=self._rows)
         if "count(*)" in sql:
-            return _FakeResult(scalar=0)
+            return _FakeResult(scalar=self._remaining_count)
         return _FakeResult()
 
     async def commit(self):
@@ -138,11 +159,16 @@ class _FakeService:
         pass
 
 
-def _install_fakes(monkeypatch, *, rows, candles_by_ticker, markets):
+def _install_fakes(
+    monkeypatch, *, rows, candles_by_ticker, markets,
+    at_risk_rows=None, at_risk_count=None, state=None, remaining_count=0,
+):
     """Wire the drain to in-memory doubles and capture what it persists."""
     import contextlib
 
-    session = _FakeSession(rows)
+    session = _FakeSession(rows, at_risk_rows=at_risk_rows,
+                           at_risk_count=at_risk_count,
+                           remaining_count=remaining_count)
     service = _FakeService(candles_by_ticker, markets)
     captured = {"state": drain._default_state(), "service": service,
                 "session": session}
@@ -151,8 +177,14 @@ def _install_fakes(monkeypatch, *, rows, candles_by_ticker, markets):
     async def _fake_session():
         yield session
 
+    def _load_state():
+        base = drain._default_state()
+        if state:
+            base.update(state)
+        return base
+
     monkeypatch.setattr(drain, "get_task_session", _fake_session)
-    monkeypatch.setattr(drain, "load_state", lambda: drain._default_state())
+    monkeypatch.setattr(drain, "load_state", _load_state)
     monkeypatch.setattr(
         drain, "save_state", lambda s: (captured.update(state=dict(s)), True)[1]
     )
@@ -612,3 +644,364 @@ class TestWiring:
         src = inspect.getsource(drain.run_cliff_drain)
         assert "deadline" in src
         assert task.soft_time_limit and task.soft_time_limit >= 780
+
+
+# ==========================================================================
+# Queue 359 (#1892): the cap is a shape problem, and liveness is what hid it
+# ==========================================================================
+
+
+def _at_risk_cohort(pairs, *, age_days):
+    """Rows inside the 74-86d band, oldest-first."""
+    base = datetime.now(timezone.utc) - timedelta(days=age_days)
+    return [
+        _Row(oid, ticker, base + timedelta(hours=i))
+        for i, (oid, ticker) in enumerate(pairs)
+    ]
+
+
+class TestAtRiskPass:
+    """A one-way watermark cannot serve a population that expires behind it.
+
+    The main cursor walks FORWARD through resolution_date while the retention
+    floor walks forward behind it, so a row examined at 20 days old is never
+    looked at again and dies at 86 regardless. Measured 2026-08-17: 15,712
+    uncovered outcomes sit behind the watermark inside the window, matching the
+    rail's own `empty_present + empty_unprobed` (15,792) — i.e. all of them.
+    """
+
+    def test_the_band_is_bounded_on_both_sides(self):
+        # Gotcha #41 in both directions at once: a floor so the sweep never
+        # spends itself on the provably-dead, and a ceiling so it is the band
+        # and not the whole window.
+        assert ">= now() - make_interval(days => :purge_days)" in drain._AT_RISK_SQL
+        assert "<  now() - make_interval(days => :at_risk_days)" in drain._AT_RISK_SQL
+
+    def test_the_band_uses_the_measured_constants_not_hand_counts(self):
+        # A predicate cannot consume a range written in prose (gotcha #35).
+        for literal in ("74", "86"):
+            assert literal not in drain._AT_RISK_SQL
+            assert literal not in drain._AT_RISK_COUNT_SQL
+
+    def test_the_band_is_ordered_closest_to_death_first(self):
+        assert "ORDER BY fm.resolution_date ASC, fo.id ASC" in drain._AT_RISK_SQL
+
+    def test_the_at_risk_pass_has_its_own_watermark(self):
+        """Sharing the main cursor would make the two passes fight over one
+        position and each would undo the other's progress."""
+        state = drain._default_state()
+        assert "at_risk_cursor_date" in state
+        assert "at_risk_cursor_id" in state
+        # Distinct keys, and the SQL reads the at-risk one.
+        src = inspect.getsource(drain.run_cliff_drain)
+        assert "_at_risk_cursor_params(state)" in src
+        assert 'state["at_risk_cursor_id"] = int(row.outcome_id)' in src
+
+    def test_at_risk_cursor_binds_a_datetime_not_an_iso_string(self):
+        """#1884 again: asyncpg does not cast at a timestamptz bind, and a
+        second watermark is a second chance to make the bind that self-blocked
+        the entire rail for its whole life."""
+        params = drain._at_risk_cursor_params({"at_risk_cursor_date": "2026-07-01"})
+        assert isinstance(params["cursor_date"], datetime)
+        assert params["cursor_date"].tzinfo is not None
+
+    @pytest.mark.asyncio
+    async def test_at_risk_rows_are_drained_and_their_watermark_advances(
+        self, monkeypatch
+    ):
+        at_risk = _at_risk_cohort([(91, "KX-DYING")], age_days=80)
+        captured = _install_fakes(
+            monkeypatch,
+            rows=[],
+            at_risk_rows=at_risk,
+            candles_by_ticker={"KX-DYING": [{"t": 1_750_000_000, "yes_price": 0.4}]},
+            markets={},
+        )
+
+        result = await drain.run_cliff_drain(limit=40)
+
+        assert result["run"]["at_risk_outcomes_seen"] == 1
+        assert result["run"]["at_risk_with_history"] == 1
+        assert result["run"]["snapshots_created"] == 1
+        assert captured["state"]["at_risk_cursor_id"] == 91
+
+    @pytest.mark.asyncio
+    async def test_the_at_risk_pass_runs_before_the_main_pass(self, monkeypatch):
+        """The reserve exists because a step promised 'later, bounded' is a
+        step that never runs — poll_kalshi's empty-event backfill is sitting on
+        exactly that promise and has never executed."""
+        order = []
+
+        at_risk = _at_risk_cohort([(101, "KX-BAND")], age_days=80)
+        main = _cohort([(102, "KX-MAIN")])
+        fakes = _install_fakes(
+            monkeypatch, rows=main, at_risk_rows=at_risk,
+            candles_by_ticker={}, markets={},
+        )
+        original = fakes["service"].get_market_candlesticks
+
+        async def _tracking(ticker, **kwargs):
+            order.append(ticker)
+            return await original(ticker, **kwargs)
+
+        fakes["service"].get_market_candlesticks = _tracking
+
+        await drain.run_cliff_drain(limit=40)
+
+        assert order == ["KX-BAND", "KX-MAIN"]
+
+    @pytest.mark.asyncio
+    async def test_the_at_risk_budget_is_a_fraction_of_the_run_not_the_whole(
+        self, monkeypatch
+    ):
+        """It must never be able to starve the main drain."""
+        fakes = _install_fakes(
+            monkeypatch, rows=[], candles_by_ticker={}, markets={},
+        )
+        result = await drain.run_cliff_drain(limit=400)
+        assert result["saturation"]["at_risk_limit"] == 100
+        assert result["saturation"]["at_risk_limit"] < 400
+        # And the query was actually issued with that bound.
+        band = [
+            p for p in fakes["session"].bound_params
+            if p.get("at_risk_days") is not None and "limit" in p
+        ]
+        assert band and band[0]["limit"] == 100
+
+    @pytest.mark.asyncio
+    async def test_expiring_rows_left_by_a_capped_pass_are_a_FAILED_run(
+        self, monkeypatch
+    ):
+        """The one condition here that is a LOSS and not a backlog."""
+        at_risk = _at_risk_cohort(
+            [(200 + i, f"KX-{i}") for i in range(25)], age_days=84
+        )
+        _install_fakes(
+            monkeypatch, rows=[], at_risk_rows=at_risk,
+            candles_by_ticker={}, markets={},
+            at_risk_count=_AtRiskCount(ahead=900, expiring_soon=120),
+        )
+
+        result = await drain.run_cliff_drain(limit=100, at_risk_limit=25)
+
+        assert result["saturation"]["at_risk_cap_bound"] is True
+        assert result["at_risk"]["expiring_soon"] == 120
+        assert result["terminal"] == "failed"
+        assert any("IMMINENT LOSS" in n for n in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_a_backlog_the_pass_worked_through_is_not_a_failure(
+        self, monkeypatch
+    ):
+        """Rows left ahead of a pass that ran out of ROWS is a contradiction;
+        only a pass that ran out of BUDGET is the rail failing."""
+        at_risk = _at_risk_cohort([(301, "KX-ONE")], age_days=80)
+        _install_fakes(
+            monkeypatch, rows=_cohort([(302, "KX-MAIN")]), at_risk_rows=at_risk,
+            candles_by_ticker={}, markets={},
+            at_risk_count=_AtRiskCount(ahead=0, expiring_soon=0),
+        )
+
+        result = await drain.run_cliff_drain(limit=100, at_risk_limit=25)
+
+        assert result["saturation"]["at_risk_cap_bound"] is False
+        assert result["terminal"] == "partial"
+
+    def test_an_unmeasurable_at_risk_count_never_trips_the_alarm(self):
+        """A missing probe is a finding, not a zero — and not a red either."""
+        assert drain._terminal(
+            {"outcomes_seen": 5}, False, True, [],
+            at_risk_expiring=None, at_risk_cap_bound=True,
+        ) == "partial"
+
+
+class TestSaturation:
+    """`outcomes_seen == limit` on every run is the signal, and nothing said so.
+
+    Measured across 21 consecutive production runs (#1892): exactly 400 every
+    single time. A rail quietly pinned at its cap looks identical to a rail
+    comfortably keeping up.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_run_that_hits_its_cap_says_so_loudly(self, monkeypatch):
+        rows = _cohort([(400 + i, f"KX-S{i}") for i in range(5)])
+        _install_fakes(monkeypatch, rows=rows, candles_by_ticker={}, markets={})
+
+        result = await drain.run_cliff_drain(limit=5, at_risk_limit=0)
+
+        assert result["saturation"]["cap_bound"] is True
+        assert result["saturation"]["outcomes_seen"] == 5
+        assert any("SATURATED" in n for n in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_a_run_under_its_cap_is_not_reported_as_saturated(
+        self, monkeypatch
+    ):
+        rows = _cohort([(500, "KX-U")])
+        _install_fakes(monkeypatch, rows=rows, candles_by_ticker={}, markets={})
+
+        result = await drain.run_cliff_drain(limit=50, at_risk_limit=0)
+
+        assert result["saturation"]["cap_bound"] is False
+        assert not any("SATURATED" in n for n in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_the_streak_is_what_distinguishes_pinned_from_busy(
+        self, monkeypatch
+    ):
+        """One capped run is a busy hour. Twenty-one is a cap-bound rail."""
+        rows = _cohort([(600 + i, f"KX-T{i}") for i in range(3)])
+        _install_fakes(
+            monkeypatch, rows=rows, candles_by_ticker={}, markets={},
+            state={"cap_bound_streak": 20, "runs": 20},
+        )
+
+        result = await drain.run_cliff_drain(limit=3, at_risk_limit=0)
+
+        assert result["saturation"]["cap_bound_streak"] == 21
+
+
+class TestConvergence:
+    """Is `remaining` FALLING — the question liveness cannot answer.
+
+    Every instrument on both #1892 and #1586 asked whether the task was
+    MOVING: runs incrementing, cursors distinct, fetch_errors zero, wraps
+    advancing. All read healthy. Movement is not progress.
+    """
+
+    def test_one_point_is_not_a_trend(self):
+        """#1892 was itself filed on a two-point 'trend' that reversed sign on
+        the third reading. One point must never be read optimistically."""
+        out = drain.convergence([{"run": 1, "at": "2026-08-17T00:00:00+00:00",
+                                  "remaining": 100}])
+        assert out["verdict"] == "insufficient_data"
+        assert out["samples"] == 1
+
+    def test_an_empty_ring_is_insufficient_not_converging(self):
+        assert drain.convergence([])["verdict"] == "insufficient_data"
+
+    def test_unmeasured_remainings_are_skipped_not_counted_as_zero(self):
+        """A failed count reads as `None`; treating it as 0 would fake a
+        collapse to an empty backlog."""
+        out = drain.convergence([
+            {"run": 1, "at": "2026-08-17T00:00:00+00:00", "remaining": None},
+            {"run": 2, "at": "2026-08-17T01:00:00+00:00", "remaining": None},
+        ])
+        assert out["verdict"] == "insufficient_data"
+        assert out["samples"] == 0
+
+    def test_a_falling_backlog_is_converging(self):
+        out = drain.convergence([
+            {"run": 25, "at": "2026-08-15T22:00:00+00:00", "remaining": 121818},
+            {"run": 65, "at": "2026-08-17T15:00:00+00:00", "remaining": 109830},
+        ])
+        assert out["verdict"] == "converging"
+        assert out["span_runs"] == 40
+        assert out["per_run"] == -299.7
+        assert out["runs_to_empty"] == 366
+
+    def test_a_rising_backlog_is_diverging(self):
+        out = drain.convergence([
+            {"run": 23, "at": "2026-08-15T18:00:00+00:00", "remaining": 121279},
+            {"run": 25, "at": "2026-08-15T20:00:00+00:00", "remaining": 121818},
+        ])
+        assert out["verdict"] == "diverging"
+        assert out["delta"] == 539
+
+    def test_a_flat_backlog_is_neither(self):
+        out = drain.convergence([
+            {"run": 1, "at": "2026-08-17T00:00:00+00:00", "remaining": 1000},
+            {"run": 20, "at": "2026-08-17T19:00:00+00:00", "remaining": 1005},
+        ])
+        assert out["verdict"] == "flat"
+
+    def test_convergence_never_raises_on_a_poisoned_ring(self):
+        """A metric that can crash the rail it measures is worse than no
+        metric (ruling 039)."""
+        assert drain.convergence("not a list")["verdict"] in (
+            "insufficient_data", "unmeasured"
+        )
+        assert drain.convergence([{"remaining": "x"}, None])["verdict"] == (
+            "insufficient_data"
+        )
+
+    @pytest.mark.asyncio
+    async def test_saturated_and_not_converging_is_stated_in_one_note(
+        self, monkeypatch
+    ):
+        """The exact conjunction gotcha #41 describes: a bounded run whose
+        bound sits below its inflow. Neither half alone says it."""
+        rows = _cohort([(700 + i, f"KX-C{i}") for i in range(2)])
+        _install_fakes(
+            monkeypatch, rows=rows, candles_by_ticker={}, markets={},
+            state={
+                "runs": 5,
+                "history": [
+                    {"run": 1, "at": "2026-08-17T00:00:00+00:00", "remaining": 500},
+                    {"run": 5, "at": "2026-08-17T04:00:00+00:00", "remaining": 500},
+                ],
+            },
+            remaining_count=500,
+        )
+
+        result = await drain.run_cliff_drain(limit=2, at_risk_limit=0)
+
+        assert result["saturation"]["cap_bound"] is True
+        assert result["convergence"]["verdict"] in ("flat", "diverging")
+        assert any("NOT CONVERGING" in n for n in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_the_ring_is_bounded(self, monkeypatch):
+        captured = _install_fakes(
+            monkeypatch, rows=[], candles_by_ticker={}, markets={},
+            state={"history": [
+                {"run": i, "at": "2026-08-17T00:00:00+00:00", "remaining": i}
+                for i in range(200)
+            ]},
+        )
+        await drain.run_cliff_drain(limit=10, at_risk_limit=0)
+        assert len(captured["state"]["history"]) == drain.CONVERGENCE_RING
+
+
+class TestDegenerateCandles:
+    """"No candles came back" and "every candle was 0 or 1" are not one fact."""
+
+    @pytest.mark.asyncio
+    async def test_all_degenerate_prices_are_not_reported_as_never_traded(
+        self, monkeypatch
+    ):
+        rows = _cohort([(800, "KX-DEGEN")])
+        _install_fakes(
+            monkeypatch, rows=rows, markets={},
+            candles_by_ticker={"KX-DEGEN": [
+                {"t": 1_750_000_000, "yes_price": 0.0},
+                {"t": 1_750_003_600, "yes_price": 1.0},
+            ]},
+        )
+
+        result = await drain.run_cliff_drain(limit=10, at_risk_limit=0)
+
+        assert result["run"]["degenerate_candles"] == 1
+        assert result["run"]["empty_present"] == 0
+        assert result["run"]["snapshots_created"] == 0
+
+
+class TestProgressEndpointBudget:
+    """#1892 §2: this issue's own instrument H12'd for two days.
+
+    `cliff_drain_progress` fired sequential probes at 25s EACH against
+    Heroku's 30s hard router cap, so once any two were slow the endpoint could
+    not succeed at all.
+    """
+
+    def test_the_probe_budgets_sum_to_under_the_router_cap(self):
+        probes = 3  # remaining + at_risk + census
+        assert drain.PROGRESS_PROBE_TIMEOUT_S * probes < 30
+
+    def test_the_human_path_is_tighter_than_the_task_path(self):
+        assert drain.PROGRESS_PROBE_TIMEOUT_S < drain.TASK_PROBE_TIMEOUT_S
+
+    def test_progress_passes_the_tighter_budget_to_every_probe(self):
+        src = inspect.getsource(drain.cliff_drain_progress)
+        assert src.count("timeout_s=PROGRESS_PROBE_TIMEOUT_S") == 3

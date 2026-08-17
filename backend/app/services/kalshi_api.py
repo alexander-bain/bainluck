@@ -1090,6 +1090,44 @@ class KalshiAPIService(BaseAPIClient):
             e for e in all_events.values()
             if not e.markets and e.category and "sport" in (e.category or "").lower()
         ]
+        # Queue 359 (#1586): how many of the events this method is about to
+        # hand back cannot possibly be ingested. The upsert loop's very first
+        # statement is `if not event.markets: continue`, so a market-less event
+        # is fetched, parsed, deduped, returned, counted — and dropped.
+        #
+        # This is the number that explains the capture gap, and nothing was
+        # recording it. Measured on the 2026-08-17 14:45 beat: 13,513 events
+        # fetched, **356 processed**. The scan report's `unreached_existing`
+        # (6,315 that beat, and always exactly `events_existing`) reads as if
+        # the loop ran out of time before the tail; `loop_deadline_hit` is
+        # False on all 24 beats in the ring and the loop in fact reached every
+        # event. It did not run out of budget. 97.4% of what it was handed had
+        # nothing in it to upsert.
+        #
+        # `_HEAVY_TOKENS` above is the deliberate half of that: those series are
+        # fetched WITHOUT nested markets on the stated promise that the backfill
+        # below picks their markets up per-event. The promise is not kept — the
+        # backfill is LAST in the fetch budget with no reserve of its own, and
+        # `_past_deadline()` is already true by the time control reaches it. It
+        # also only ever considered `sport`-categorised events, so a market-less
+        # non-sport event was never a candidate at all.
+        _tel["events_without_markets"] = sum(
+            1 for e in all_events.values() if not e.markets
+        )
+        _tel["market_backfill_candidates"] = len(empty_events)
+        _tel["market_backfill_skipped_past_deadline"] = bool(
+            empty_events and _past_deadline()
+        )
+        _tel["market_backfill_filled"] = 0
+        if empty_events and _past_deadline():
+            logger.warning(
+                "Kalshi fetch: the empty-event market backfill was SKIPPED "
+                "entirely — %d of %d fetched events carry zero markets and the "
+                "fetch deadline was already spent before this step. Every one "
+                "of them will be dropped by `if not event.markets: continue`. "
+                "This step has no reserved budget and is structurally last.",
+                _tel["events_without_markets"], len(all_events),
+            )
         if empty_events and not _past_deadline():
             logger.info(
                 "Backfilling markets for %d sports events with 0 nested markets",
@@ -1126,6 +1164,13 @@ class KalshiAPIService(BaseAPIClient):
                         event.event_ticker, e,
                     )
             logger.info("Backfilled markets for %d events", backfilled)
+            _tel["market_backfill_filled"] = backfilled
+            # Re-count: the backfill's whole job is to move events OUT of this
+            # bucket, so reporting the pre-backfill number would credit it with
+            # work it did not do.
+            _tel["events_without_markets"] = sum(
+                1 for e in all_events.values() if not e.markets
+            )
 
         # Queue 355 / #1845: close the arithmetic. `supplemented` counts only
         # dedup-guarded ADDITIONS, so main_scan_events + supplementary_events ==
