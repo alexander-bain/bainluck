@@ -7,6 +7,7 @@ migration. Scoring requires versioned Search probes with stable entity IDs.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -138,6 +139,137 @@ def require_entity_gold(rows: list[dict[str, Any]]) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# RULING 073 — CORPUS-MOVED. A disposition change with no code change is a
+# CORPUS event, not a ranking result.
+#
+# WHY THIS IS IN THE SCORER AND NOT IN A REPORT. LAT-P059 re-ran the armed null
+# control against production with no code change at all — same producer blob
+# `61de6598`, 46/46, fidelity `exact` — and three dispositions moved, all
+# upward: 39/44 -> 41/44, MRR 0.8913043478260869 -> 0.9347826086956522, zero
+# regressions. Read from the output alone that is a clean win. The cause was
+# none of it: all three old top-ranked entities had LEFT THE ELIGIBLE POOL.
+# "FedEx St. Jude Championship Winner" resolved and stopped out-ranking the Fed
+# Chair market; "Stanley Cup ... Carolina Hurricanes" resolved and stopped
+# out-ranking the hurricane market; `event:15191951` closed BETWEEN THE TWO
+# READS. The ranking did not improve. The distractors resolved.
+#
+# That is occurrence FOUR of "specimens pinned to live markets expire" and the
+# FIRST in the flattering direction — which is exactly why it needed a
+# mechanical guard rather than a note. A number that looks worse gets
+# investigated; a number that looks better gets banked. The asymmetry is in the
+# reader, so the fingerprint has to be in the instrument.
+#
+# The fingerprint is PER PROBE, deliberately. A run-level corpus hash answers
+# "did anything anywhere change?", which on a live market corpus is always yes
+# and therefore says nothing. Only the per-probe form can produce the sentence
+# the ruling requires: "these named specimens expired."
+#
+# It is a SET digest, not a sequence digest, and that is the whole hinge: a pool
+# whose MEMBERS changed is a corpus event, while a pool whose members merely
+# REORDERED is a ranking event and must still be graded. Hashing the ordered
+# list would have classified every genuine ranking change as CORPUS-MOVED and
+# quarantined the very thing the gold set exists to detect.
+
+
+def _pool_fingerprint(candidates: list[dict[str, Any]]) -> str:
+    """A stable digest over WHICH entities were eligible, ignoring their order."""
+    ids = sorted({str(c.get("entity_id")) for c in candidates if c.get("entity_id")})
+    return hashlib.sha256("\n".join(ids).encode()).hexdigest()[:16]
+
+
+#: How a disposition change is attributed. The fourth row is not decoration: it
+#: is the common case for anyone who ships a ranking change on Tuesday and reads
+#: it on Thursday, and the honest verdict there is "not attributable", not "win".
+_ATTRIBUTION = {
+    # (code_changed, pool_changed): verdict
+    (False, False): "REAL",
+    (False, True): "CORPUS-MOVED",
+    (True, False): "REAL",
+    (True, True): "CONFOUNDED",
+}
+
+
+def classify_disposition_changes(
+    previous: list[dict[str, Any]],
+    current: list[dict[str, Any]],
+    *,
+    code_changed: bool,
+) -> dict[str, Any]:
+    """Attribute every disposition change to the ranking or to the corpus.
+
+    `previous` and `current` are the `details` lists of two graded reports.
+    Returns the CORPUS-DELTA LINE the ruling makes mandatory on every gold read,
+    plus the quarantined subset that must NOT move the banked baseline.
+    """
+    prev_by_key = {row["probe_key"]: row for row in previous}
+    changes: list[dict[str, Any]] = []
+
+    for row in current:
+        before = prev_by_key.get(row["probe_key"])
+        if before is None:
+            changes.append({
+                "probe_key": row["probe_key"],
+                "verdict": "NEW-PROBE",
+                "before": None,
+                "after": row["disposition"],
+            })
+            continue
+        pool_changed = (
+            before.get("pool_fingerprint") != row.get("pool_fingerprint")
+            # A probe graded before this ruling carries no fingerprint. That is
+            # UNKNOWN, not "unchanged" — asserting equality from two absent
+            # values is the same defect one level up (gotcha #53), so it is
+            # surfaced as its own verdict rather than silently read as REAL.
+            if before.get("pool_fingerprint") and row.get("pool_fingerprint")
+            else None
+        )
+        if before["disposition"] == row["disposition"]:
+            continue
+        if pool_changed is None:
+            verdict = "UNATTRIBUTABLE-NO-FINGERPRINT"
+        else:
+            verdict = _ATTRIBUTION[(bool(code_changed), bool(pool_changed))]
+        changes.append({
+            "probe_key": row["probe_key"],
+            "verdict": verdict,
+            "before": before["disposition"],
+            "after": row["disposition"],
+            "pool_size_before": before.get("pool_size"),
+            "pool_size_after": row.get("pool_size"),
+            "expected_eligible_before": before.get("expected_entity_eligible"),
+            "expected_eligible_after": row.get("expected_entity_eligible"),
+            # The named specimens. This is the list an explicit re-baseline has
+            # to quote — "the baseline moves only by an explicit re-baseline
+            # NAMING the expired specimens" is unsatisfiable without it.
+            "left_pool": sorted(
+                set(before.get("pool_entity_ids") or []) - set(row.get("pool_entity_ids") or [])
+            )[:20],
+            "entered_pool": sorted(
+                set(row.get("pool_entity_ids") or []) - set(before.get("pool_entity_ids") or [])
+            )[:20],
+            "top_before": (before.get("actual_top") or {}).get("entity_id"),
+            "top_after": (row.get("actual_top") or {}).get("entity_id"),
+        })
+
+    quarantined = [c for c in changes if c["verdict"] == "CORPUS-MOVED"]
+    return {
+        "code_changed": bool(code_changed),
+        "changed": len(changes),
+        "real": sum(c["verdict"] == "REAL" for c in changes),
+        "corpus_moved": len(quarantined),
+        "confounded": sum(c["verdict"] == "CONFOUNDED" for c in changes),
+        "unattributable": sum(
+            c["verdict"] == "UNATTRIBUTABLE-NO-FINGERPRINT" for c in changes
+        ),
+        "new_probes": sum(c["verdict"] == "NEW-PROBE" for c in changes),
+        # Ruling 073: the banked baseline does NOT move on a quarantined delta.
+        # It moves only by an explicit re-baseline naming the expired specimens.
+        "baseline_may_move": not quarantined,
+        "changes": changes,
+    }
+
+
 def _score_probe(probe: dict[str, Any], record: dict[str, Any] | None) -> dict[str, Any]:
     identity = probe["identity"]
     oracle = probe["oracle"]["answer"]
@@ -205,6 +337,17 @@ def _score_probe(probe: dict[str, Any], record: dict[str, Any] | None) -> dict[s
             "surface": top.get("surface"),
             "item_type": top.get("item_type"),
         },
+        # RULING 073 — the eligible-pool fingerprint, per probe.
+        "pool_fingerprint": _pool_fingerprint(candidates),
+        "pool_size": len(candidates),
+        "pool_entity_ids": sorted(
+            {str(c.get("entity_id")) for c in candidates if c.get("entity_id")}
+        ),
+        # A probe whose EXPECTED entity has left the pool is not failing; it is
+        # VOID. Recorded separately from the disposition so the two can never be
+        # confused — "we got worse at ranking it" and "it stopped existing" are
+        # the same row today.
+        "expected_entity_eligible": bool(expected_rank) if not unmeasured else None,
     }
     if unmeasured:
         detail["fetch_error"] = fetch_error
@@ -392,6 +535,21 @@ def main() -> int:
         default="entity_top_1",
         help="entity_top_1 grades /typeahead rank 1; bucket_recall grades /search per bucket",
     )
+    # RULING 073.
+    parser.add_argument(
+        "--compare-against",
+        help="a previous graded report (JSON). Disposition changes are attributed "
+             "to the ranking or to the CORPUS by comparing per-probe eligible-pool "
+             "fingerprints.",
+    )
+    parser.add_argument(
+        "--code-changed",
+        action="store_true",
+        help="declare that ranking code changed between the two reads. With no "
+             "code change, a moved disposition is a CORPUS event and is "
+             "quarantined; with one, a moved disposition over a moved pool is "
+             "CONFOUNDED and attributable to neither.",
+    )
     args = parser.parse_args()
     if args.legacy_gold:
         require_entity_gold(parse_gold_markdown(args.legacy_gold))
@@ -408,10 +566,41 @@ def main() -> int:
         # non-zero so it can never be read as a clean pass.
         return 1 if report["unmeasured"] or report["bucket_recall_rate"] < 1.0 else 0
     report = evaluate_entity_probes(probes, results)
+
+    # RULING 073: every gold read carries a corpus-delta line. Without a
+    # comparison artifact there is nothing to diff, so the line SAYS that
+    # rather than being omitted — an absent corpus-delta and a clean one must
+    # not read the same.
+    if args.compare_against:
+        previous = json.loads(Path(args.compare_against).read_text())
+        report["corpus_delta"] = classify_disposition_changes(
+            previous.get("details") or [],
+            report["details"],
+            code_changed=args.code_changed,
+        )
+    else:
+        report["corpus_delta"] = {
+            "status": "NOT_COMPARED",
+            "reason": "no --compare-against artifact supplied; this read's "
+                      "absolute numbers are NOT comparable to a previous read "
+                      "(ruling 073)",
+        }
     print(json.dumps(report, indent=2))
     counts = report["lifecycle_counts"]
     if report["unmeasured"]:
         return 1
+    delta = report["corpus_delta"]
+    if delta.get("corpus_moved"):
+        # Loud, and non-zero. A quarantined delta is not a pass and not a
+        # failure of Search — it is a run whose score must not be banked, and
+        # the one outcome that must never slip through as "fine".
+        print(
+            f"CORPUS-MOVED: {delta['corpus_moved']} disposition change(s) "
+            f"quarantined; the banked baseline does NOT move. Re-baseline "
+            f"explicitly, naming the expired specimens.",
+            file=sys.stderr,
+        )
+        return 2
     return 1 if counts["fail"] or counts["regression"] or counts["xpass"] else 0
 
 

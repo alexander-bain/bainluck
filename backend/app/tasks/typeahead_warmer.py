@@ -63,6 +63,54 @@ So 30s, and the ORDER OF THE TWO EFFECTS IS THE REVERSE of the first draft:
   touch the same index pages, which the response cache cannot do — but it decays
   inside a minute, so nothing is allowed to rest on it.
 
+THAT GUARANTEE WAS FALSE IN PRODUCTION FOR THE WHOLE OF `-51`'s LIFE, and it
+failed in TWO independent ways. LAT-P059 measured the first, LAT-P060 the
+second; the fix needed both, which is why neither alone had been enough.
+
+**Hole 1 — the beat is 30s but a PASS took 38s.** The head was warmed one query
+at a time, so a pass ran 33-59s (median 38.0s, worst 58.9s) while the Redis
+run-lock serialised the beats behind it. Measured over 50 invocations / 1246s:
+**25 lock skips**, and an interval between real passes of **95.8s** — against a
+45s TTL. The head was cold for roughly half of every cycle.
+
+**Hole 2 — A PASS THAT HITS THE CACHE EXTENDS NOTHING, so cadence alone could
+never have fixed it.** `routes/events.py` returns the cached body *before* it
+reaches its own `setex`, so an entry's life is 45s from its last REBUILD and a
+warm read resets no clock. In the same 50-invocation window **12 beats ran a
+full 40-query pass in ~0.65s** — 40 Redis GETs, `terminal: complete`,
+`warmed: 40/40`, and nothing rebuilt. A green run that did no warming, which is
+the exact failure mode the rest of this module is built to refuse.
+
+Hole 2 turns the duty cycle into a SAWTOOTH rather than a ratio. With pass
+period T the rebuild period is `T*ceil(45/T)`, so the warm fraction is
+`45/(T*ceil(45/T))`:
+
+    T = 95.8s (as shipped)  ->  47.0%      T = 30s  ->  75.0%   <- NOT 100%
+    T = 60s                 ->  75.0%      T = 25s  ->  90.0%
+    T = 20s                 ->  75.0%      T = 15s  -> 100.0%
+
+Read the T=30 row: making the pass fit inside the beat — the obvious fix, and
+the one that was proposed — lands on 75%, and does so NON-MONOTONICALLY (a 20s
+pass is no better than a 30s one). Tuning a cadence against a TTL the warmer
+cannot refresh is tuning a sawtooth.
+
+SO THE FIX IS TWO CHANGES, and the module now does both:
+
+1. **`WARM_CONCURRENCY`** closes hole 1. A pass fans out over N sessions, so it
+   fits inside the beat and stops being skipped.
+2. **`REFRESH_AHEAD_SECONDS`** closes hole 2. A query whose cached entry is
+   near expiry has that entry DROPPED before the route is called, so the route
+   misses, recomputes, and writes a fresh 45s TTL. The rebuild period becomes
+   the pass period, and the duty cycle becomes `min(45, T)/T` = 100% for any
+   T < 45s — flat, not a sawtooth.
+
+The cost of (2), stated because it is a real if small regression: between the
+drop and the route's write there is a window in which a user typing that prefix
+pays a database read. It is bounded by ONE recompute, and because the warmer
+keeps the pages resident that recompute is the HOT cost (5-27ms), not the 1.4s
+cold cost. It replaces a 30-50s cold window per cycle with a ~20ms one, and it
+only ever fires on an entry that was seconds from expiring anyway.
+
 THE HEAD IS MEASURED, NEVER GUESSED. Three sources, in order, each one real:
 
 1. ``search:trending:24h`` — the Redis zset `/typeahead` itself writes on every
@@ -82,6 +130,8 @@ import asyncio
 import logging
 import time
 
+from contextlib import AsyncExitStack
+
 logger = logging.getLogger(__name__)
 
 #: How many head queries to warm per run. 40 sits just past the measured
@@ -95,6 +145,62 @@ DEFAULT_HEAD_SIZE = 40
 #: head — the same failure `event_concept_warmer.PER_KEY_TIMEOUT_SECONDS` exists
 #: to prevent, and the reason `/typeahead`'s own deadline is per-request.
 PER_QUERY_TIMEOUT_SECONDS = 10
+
+#: How many head queries are warmed at once. FOUR, and the number is bounded by
+#: measurement in both directions rather than picked for roundness:
+#:
+#: * FROM BELOW, by the worst pass rather than the median. The pass must clear
+#:   the 30s beat or the run-lock skips the next one, and the worst measured
+#:   pass was 58.9s. W=2 gives 29.5s — inside the beat by half a second, which
+#:   is no margin at all. W=4 gives 14.7s worst / ~9.5s median, a 2x margin.
+#: * FROM ABOVE, by what the concurrency does to the thing this task exists to
+#:   protect. These are 40 pg_trgm reads against a 1 GiB `shared_buffers`
+#:   (measured: `shared_buffers` = 131072 * 8kB), and production runs at 3
+#:   ACTIVE backends, so W=4 roughly doubles peak concurrent query work. That
+#:   is the real ceiling; connections are not (measured 2026-08-17:
+#:   `max_connections` 500, 21 in use — 479 free, so a connection argument for
+#:   any W in this range would be theatre).
+#: * A THIRD bound applies if this is ever consolidated onto ONE engine:
+#:   `base._get_task_engine()` is `pool_size=3, max_overflow=2`, so a single
+#:   engine can hand out at most FIVE concurrent connections. W=4 fits with one
+#:   spare; a larger W would silently serialise on pool checkout and the
+#:   concurrency would be a lie the summary could not see.
+#:
+#: Why concurrency is safe here at all, rather than merely tolerable: LAT-P056
+#: measured 95-98% of a cold query's time as `Shared I/O Read Time`. These are
+#: I/O-WAIT bound, which is the one case where concurrency overlaps waiting
+#: instead of multiplying work — and they contend for the buffer pool LESS than
+#: four different queries would, because they want the same index pages.
+WARM_CONCURRENCY = 4
+
+#: Rebuild a cached entry when it has less than this much life left, instead of
+#: reading it back and extending nothing (hole 2 in the module docstring).
+#:
+#: 35s = one 30s beat plus 5s of margin. The bound it has to satisfy: an entry
+#: must survive from this pass until the NEXT pass reaches the same query. Each
+#: query is warmed at a fixed offset inside the pass, so that gap is the pass
+#: PERIOD (the 30s beat), not the period plus the duration — which is why a
+#: 45s TTL has room for it at all, and why the margin can be small.
+#:
+#: Set this BELOW the beat and entries expire between passes; set it at or above
+#: the 45s TTL and every entry is rebuilt unconditionally, which is what the
+#: module did before and is merely wasteful rather than wrong. The `fresh` skip
+#: it enables is a safety valve for a shortened beat, not an optimisation for
+#: today's one — at a 30s beat against a 45s TTL an entry always has ~15s left
+#: when a pass reaches it, so today it rebuilds every time, by design.
+REFRESH_AHEAD_SECONDS = 35
+
+#: `/typeahead`'s response-cache key, mirrored from `routes/events.py`. Mirrored
+#: rather than imported for the same reason `_MAX_QUERY_CHARS` is — importing
+#: the route at module scope would make this task's import graph the route's.
+#: `test_typeahead_warmer.py` pins the two against each other, so a drift is a
+#: red test rather than a warmer that silently refreshes a key nobody reads.
+_CACHE_KEY_PREFIX = "bainluck:typeahead:"
+
+#: Redis `TTL` sentinels, named because `-2` and `-1` at a call site are two
+#: magic numbers that mean opposite things.
+_TTL_NO_KEY = -2
+_TTL_NO_EXPIRY = -1
 
 #: Only used when BOTH measured sources are empty (fresh Redis + empty table).
 #: Kept deliberately tiny: a static list is a guess about user behaviour, and a
@@ -197,11 +303,83 @@ async def resolve_head(session, limit: int) -> tuple[list[str], str]:
     return list(_STATIC_FLOOR[:limit]), "static_floor"
 
 
-async def _warm_one(session, q: str) -> dict:
+def _cache_ttl_seconds(q: str) -> int | None:
+    """Remaining life of `/typeahead`'s cached answer for `q`, in seconds.
+
+    Returns None when Redis cannot answer — and None means "do not skip", so an
+    unreadable Redis degrades into the old always-rebuild behaviour rather than
+    into a warmer that decides everything is fresh and stops working. Fails
+    toward doing the work, exactly as `_acquire_run_lock` fails open.
+
+    Redis TTL is THREE-VALUED and the two negatives mean opposite things, so
+    they are returned distinctly rather than collapsed (gotcha #53 — an absent
+    value and a zero value must never read the same):
+
+        >= 0                 seconds of life remaining
+        _TTL_NO_KEY   (-2)   nothing is cached; the route will miss on its own
+        _TTL_NO_EXPIRY(-1)   a key with no expiry, which should be impossible
+                             here and is treated as NEEDING a rebuild, not as
+                             infinitely fresh — an entry that never expires is
+                             a bug to correct, not a state to rest on
+        None                 REDIS DID NOT ANSWER. Not a TTL at all.
+
+    Collapsing the last one into "no key" was the first draft of this function
+    and it would have made an unreadable Redis report a successful rebuild.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        ttl = get_redis_client().ttl(_CACHE_KEY_PREFIX + q)
+    except Exception:  # noqa: BLE001 — a warmer never takes the app down
+        logger.warning("typeahead_warmer: ttl read failed for %r", q, exc_info=True)
+        return None
+
+    return None if ttl is None else int(ttl)
+
+
+def _drop_cached(q: str) -> bool:
+    """Force the next route call for `q` to MISS, so it recomputes and re-setexes.
+
+    This is the whole of hole 2's fix. The route writes its cache only on the
+    miss path, so the sole way a warmer can extend an entry's life is to make
+    the entry not be there.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().delete(_CACHE_KEY_PREFIX + q)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: cache drop failed for %r", q, exc_info=True)
+        return False
+
+
+async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS) -> dict:
     """Run ONE query through the route's own code path. Never raises."""
     from app.routes.events import typeahead_search
 
     started = time.monotonic()
+
+    # REFRESH-AHEAD. Before LAT-P060 this call went straight to the route, which
+    # returned the cached body without touching its TTL — so a "warm" of a warm
+    # entry was a 16ms Redis GET that reset no clock, and 12 of every 50 beats
+    # were exactly that. The entry is now dropped when it is close enough to
+    # expiry that it would not survive until the next pass.
+    ttl_before = _cache_ttl_seconds(q)
+
+    if ttl_before is not None and ttl_before > refresh_ahead:
+        # Genuinely fresh. Reported as its own reason rather than folded into
+        # `warmed`: a pass that skipped everything as fresh and a pass that
+        # rebuilt everything must not produce the same summary.
+        return {"q": q, "ok": True, "reason": "fresh",
+                "ttl_before": ttl_before, "dropped": False,
+                "seconds": round(time.monotonic() - started, 3)}
+
+    # Drop unless we KNOW there is nothing to drop. `None` (Redis silent) falls
+    # through to the drop attempt on purpose: we would rather issue a redundant
+    # DELETE than skip a needed one on the strength of a read that failed.
+    dropped = False if ttl_before == _TTL_NO_KEY else _drop_cached(q)
+
     try:
         await asyncio.wait_for(
             # PASS THE DEBUG FLAGS EXPLICITLY. They default to `Query(False)`,
@@ -220,17 +398,23 @@ async def _warm_one(session, q: str) -> dict:
             timeout=PER_QUERY_TIMEOUT_SECONDS,
         )
         return {"q": q, "ok": True, "reason": "warmed",
+                "ttl_before": ttl_before, "dropped": dropped,
                 "seconds": round(time.monotonic() - started, 3)}
     except asyncio.TimeoutError:
         # The route may have left an aborted transaction behind; the next query
-        # in the loop shares this session and would fail on a poisoned one.
+        # on THIS session would fail on a poisoned one. Under concurrency each
+        # worker owns its own session, so this contains the damage to one
+        # worker's slice of the head instead of the whole pass — the
+        # per-item-guard rule (gotcha #42) now holds at the session level too.
         await _safe_rollback(session)
         return {"q": q, "ok": False, "reason": "timeout",
+                "ttl_before": ttl_before, "dropped": dropped,
                 "seconds": round(time.monotonic() - started, 3)}
     except Exception:  # noqa: BLE001
         logger.warning("typeahead_warmer: %r failed", q, exc_info=True)
         await _safe_rollback(session)
         return {"q": q, "ok": False, "reason": "error",
+                "ttl_before": ttl_before, "dropped": dropped,
                 "seconds": round(time.monotonic() - started, 3)}
 
 
@@ -268,9 +452,39 @@ async def _safe_rollback(session) -> None:
         logger.warning("typeahead_warmer: rollback failed", exc_info=True)
 
 
+async def _warm_head_concurrently(sessions: list, head: list[str]) -> list[dict]:
+    """Warm `head` across `sessions`, one query in flight per session.
+
+    A worker-pool over a shared cursor rather than a per-worker slice, because
+    slices assume the queries cost the same and they do not — `seconds_max` was
+    5.6s against a ~1.0s mean, so one slow query in a static slice idles its
+    worker's whole remainder while another worker still has ten to go. Pulling
+    from a shared cursor is self-balancing and needs no estimate.
+
+    ONE query in flight per session is a hard invariant, not a tuning choice:
+    an `AsyncSession` is not safe for concurrent use, so a second coroutine on
+    the same session is a corruption bug, not a slowdown. The pool's width IS
+    the session count for that reason.
+    """
+    cursor = iter(range(len(head)))
+    results: list[dict | None] = [None] * len(head)
+
+    async def _worker(session) -> None:
+        for i in cursor:  # a shared iterator; next() is atomic under the GIL
+            results[i] = await _warm_one(session, head[i])
+
+    await asyncio.gather(*(_worker(s) for s in sessions))
+
+    # Order is preserved by index, so the summary reads in head order rather
+    # than in completion order — otherwise two identical passes would produce
+    # differently-ordered evidence and diffing them would be noise.
+    return [r for r in results if r is not None]
+
+
 async def _warm_typeahead(
     queries: list[str] | None = None,
     head_size: int = DEFAULT_HEAD_SIZE,
+    concurrency: int = WARM_CONCURRENCY,
 ) -> dict:
     """Warm the head of the `/typeahead` distribution. Returns a contract summary.
 
@@ -299,26 +513,44 @@ async def _warm_typeahead(
             "errors": [],
             "seconds_total": 0.0,
             "seconds_max": 0.0,
+            # Same KEYS as a real pass, so a consumer never has to branch on
+            # terminal to know whether a field exists. An absent field and a
+            # zero field must not read the same (gotcha #53) — here they are
+            # both present and both honestly zero.
+            "seconds_wall": 0.0,
+            "concurrency": max(1, int(concurrency)),
+            "rebuilt": 0,
+            "fresh": 0,
+            "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
         }
 
+    width = max(1, int(concurrency))
+    wall_started = time.monotonic()
     try:
-        async with get_task_session() as session:
+        async with AsyncExitStack() as stack:
+            sessions = [
+                await stack.enter_async_context(get_task_session())
+                for _ in range(width)
+            ]
+
             if queries is None:
-                head, source = await resolve_head(session, head_size)
+                head, source = await resolve_head(sessions[0], head_size)
             else:
                 head, source = [q.strip().lower() for q in queries], "explicit"
 
             head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
 
-            results = []
-            for q in head:
-                results.append(await _warm_one(session, q))
+            results = await _warm_head_concurrently(sessions[:width], head)
     finally:
         _release_run_lock()
+    seconds_wall = round(time.monotonic() - wall_started, 3)
 
     warmed = [r for r in results if r["ok"]]
     timeouts = [r for r in results if r["reason"] == "timeout"]
     errors = [r for r in results if r["reason"] == "error"]
+
+    rebuilt = [r for r in results if r["reason"] == "warmed"]
+    fresh = [r for r in results if r["reason"] == "fresh"]
 
     seconds = [r["seconds"] for r in results]
     summary = {
@@ -332,10 +564,27 @@ async def _warm_typeahead(
         "errors": [r["q"] for r in errors],
         "seconds_total": round(sum(seconds), 3),
         "seconds_max": round(max(seconds), 3) if seconds else 0.0,
+        # LAT-P060. `seconds_total` is the SUM of per-query times and is what it
+        # always was, so it stays comparable across the concurrency change. It
+        # is NO LONGER the pass duration — that is `seconds_wall`, and it is the
+        # number the 45s TTL has to be compared against. Reporting only the sum
+        # after adding concurrency would have shown a pass "not getting faster"
+        # while the thing that matters halved.
+        "seconds_wall": seconds_wall,
+        "concurrency": width,
+        # The two halves of hole 2, separated. `rebuilt` is work that actually
+        # reset a TTL; `fresh` is work correctly skipped. Before LAT-P060 every
+        # run reported `warmed: 40/40` whether it rebuilt forty entries or read
+        # forty warm ones back, and 12 of every 50 beats were the latter.
+        "rebuilt": len(rebuilt),
+        "fresh": len(fresh),
+        "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
     }
     logger.info(
-        "typeahead_warmer: %d/%d warmed from %s in %.1fs (%d timeouts, %d errors)",
-        len(warmed), len(head), source, summary["seconds_total"],
+        "typeahead_warmer: %d/%d warmed from %s (%d rebuilt, %d fresh) in %.1fs wall "
+        "/ %.1fs summed at width %d (%d timeouts, %d errors)",
+        len(warmed), len(head), source, len(rebuilt), len(fresh),
+        seconds_wall, summary["seconds_total"], width,
         len(timeouts), len(errors),
     )
     return summary
