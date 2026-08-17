@@ -411,10 +411,21 @@ class TestTheBuildReportsItsOwnMemory:
         for a level. An RSS of 400 recorded through it on 128 unit stages would
         publish 51,200.
         """
-        from app.utils.calibration_phase_ledger import PhaseLedger
+        from app.utils.calibration_phase_ledger import PhaseLedger, derive_plan
 
-        ledger = PhaseLedger.__new__(PhaseLedger)
-        ledger.stages = {}
+        # A REAL ledger, not ``__new__`` with ``stages`` hand-set. The shortcut
+        # built half an object, so it broke the moment CAL-P066 gave the counter
+        # a second store (``stage_counts``) — an AttributeError from a test whose
+        # subject is unchanged and still correct. ``derive_plan({}, floors={})``
+        # is pure: no DB, no plan file, no clock, so the constructor costs
+        # nothing the shortcut was avoiding.
+        ledger = PhaseLedger(
+            plan=derive_plan({}, floors={}),
+            population_version="q267",
+            owner="test",
+            generation=1,
+            input_fingerprint="fp",
+        )
         for _ in range(128):
             ledger.record_stage("read:futures_unit", 100)
             ledger.record_gauge("rss:at:read:futures_unit", 400)

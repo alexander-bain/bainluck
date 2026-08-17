@@ -517,10 +517,42 @@ class PhaseLedger:
         #: cleanup — without adding a phase the C124 contract would have to
         #: budget separately.
         self.stages: dict[str, int] = {}
+        #: How many observations went into each :attr:`stages` total.
+        #:
+        #: CAL-P066 (#1680). ``record_stage`` accumulates, so
+        #: ``read:futures_unit = 1,077,573`` is a SUM over an unknown number of
+        #: units. The divisor — how many units this beat actually ran, and so
+        #: what one costs — was recorded only by
+        #: ``_record_convergence_projection``, which runs AFTER the unit loop and
+        #: is therefore skipped on every beat that ends in
+        #: ``StagedFuturesIncomplete``, i.e. all of them. Production ledgers
+        #: carry the sum and not the count, and the producer's convergence had
+        #: to be reconstructed by polling the durable cursor from outside the
+        #: application every 60 seconds.
+        #:
+        #: Kept beside the sum rather than replacing it: the sum is what the
+        #: budget reasons about, the count is what says whether the build will
+        #: finish. A counter that cannot say how many things it counted can only
+        #: answer "where did the time go", never "how much is left".
+        self.stage_counts: dict[str, int] = {}
 
     def record_stage(self, name: str, duration_ms: int) -> None:
         """Add a stage observation. Repeats accumulate (7 diagnostic reads)."""
         self.stages[name] = self.stages.get(name, 0) + max(0, int(duration_ms))
+        self.stage_counts[name] = self.stage_counts.get(name, 0) + 1
+
+    def stage_mean_ms(self, name: str) -> float | None:
+        """Mean cost of one ``name`` observation, or ``None`` if none were made.
+
+        ``None`` is "this beat ran no such stage", which is a different fact
+        from a mean of zero and must not render as one (ruling 075, second
+        clause). A caller that wants to publish the mean must decide what to say
+        when there is no sample; it may not be handed a fabricated one.
+        """
+        count = self.stage_counts.get(name, 0)
+        if count <= 0:
+            return None
+        return self.stages.get(name, 0) / count
 
     def record_gauge(self, name: str, value: int) -> None:
         """Set a LEVEL, replacing any prior reading — CAL-P024c.
@@ -674,6 +706,11 @@ class PhaseLedger:
             "plan": self.plan.as_payload(),
             "phases": [self.records[n].as_payload() for n in self.order],
             "stages": dict(sorted(self.stages.items())),
+            # The divisor for every accumulating entry in ``stages`` above.
+            # Without it a sum of 1,077,573 ms is unreadable: it is one slow
+            # unit or ten ordinary ones, and those say opposite things about
+            # whether the build converges (CAL-P066, #1680).
+            "stage_counts": dict(sorted(self.stage_counts.items())),
             "elapsed_ms": self.elapsed_ms,
             "unmeasured_overhead_ms": self.unmeasured_overhead_ms,
             "completed_required": list(self.completed_required),
