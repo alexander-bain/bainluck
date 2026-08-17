@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 _CACHE_KEY = "bainluck:cohort_market_type"
 _CACHE_TTL = 86400
 
-@celery_app.task(bind=True, name="app.tasks.build_cohort_market_type", soft_time_limit=600, time_limit=660)
+@celery_app.task(bind=True, name="app.tasks.build_cohort_market_type", soft_time_limit=600, time_limit=660, queue="heavy")
 def build_cohort_market_type(self):
     return run_async(_build())
 

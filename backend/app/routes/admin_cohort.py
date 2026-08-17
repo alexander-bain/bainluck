@@ -52,7 +52,7 @@ async def cohort_market_type_build(
     # Enqueue background build via Celery if available, else run in background task
     try:
         from app.tasks import celery_app
-        celery_app.send_task("app.tasks.build_cohort_market_type")
+        celery_app.send_task("app.tasks.build_cohort_market_type", queue="heavy")
         return {"status": "enqueued", "task": "app.tasks.build_cohort_market_type", "cache_key": _CACHE_KEY}
     except Exception as e:
         # Fallback: run in FastAPI background task (still hits 30s limit, but try)
