@@ -493,7 +493,15 @@ def test_ruling_numbers_are_unique() -> None:
 #: comment used to name; the lane landed, so the gap closed. The ratchet asserts
 #: EQUALITY (`test_the_floor_tracks_reality_and_is_raised_when_a_ruling_is_banked`),
 #: so this is not optional bookkeeping — merging 067 without this line is red.
-MINIMUM_BANKED_RULINGS = 67
+#:
+#: Raised 67 -> 68 by LAT-P060 banking **073** (CORPUS-MOVED). ⚠️ INTEGRATOR: two other
+#: lanes hold an independent 67 -> 68 edit on this same line right now — `lane1/q358` (070)
+#: and `program/ux-72` (072). All three merged, the correct value is **70**, which is NOBODY'S
+#: side of the conflict. Resolve by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged
+#: tree; taking "ours" or "theirs" is wrong in every ordering. This is the one shared append
+#: region ruling 001 did not remove — separate ruling FILES cannot conflict, but the equality
+#: ratchet that counts them re-creates the collision on a single line.
+MINIMUM_BANKED_RULINGS = 68
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
