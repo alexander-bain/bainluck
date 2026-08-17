@@ -237,9 +237,10 @@ final class FeedConceptDecodeTests: XCTestCase {
     }
 
     func testSuppressionDropsLiveConceptKeepsWhatHitConcept() throws {
-        // The #1486 rule, and the reason a live Tour de France card does not appear
-        // natively — a DELIBERATE fail-closed ruling in exact parity with web, not a
-        // native decode defect.
+        // The #1486 rule: a concept with NOTHING to predict is failed closed, in
+        // exact parity with web. Still correct after #1882 — what changed is that
+        // a concept can now HAVE something to predict (see the leader tests
+        // below); one with neither a leader nor a result is still withheld.
         let live = try decodeItem("""
         { "type": "concept", "score": 90,
           "data": { "key": "cycling:tour-de-france-2026", "name": "Tour de France 2026",
@@ -254,6 +255,77 @@ final class FeedConceptDecodeTests: XCTestCase {
                     "winner": "Tadej Pogačar" } }
         """)
         XCTAssertNil(DiscoverViewModel.suppressionReason(settled))
+    }
+
+    // MARK: - #1882 — the concept leader
+
+    /// The measured production shape: `GET /api/event/event:ufc:26aug20`, whose
+    /// `primary.competitors` is `[{Joshua Van 0.5217}, {Alexandre Pantoja 0.4783}]`.
+    private static let leaderConceptJSON = """
+    { "type": "concept", "score": 90,
+      "data": { "key": "event:ufc:26aug20", "name": "Alexandre Pantoja vs Joshua Van",
+                "domain": "ufc", "status": "upcoming", "marquee_whathit": false,
+                "fight_count": 1,
+                "leader": { "name": "Joshua Van", "probability": 0.5217,
+                            "movement_24h": 0.031, "field_size": 2 } } }
+    """
+
+    func testConceptLeaderDecodes() throws {
+        let item = try decodeItem(Self.leaderConceptJSON)
+        let leader = try XCTUnwrap(item.concept?.leader)
+        XCTAssertEqual(leader.name, "Joshua Van")
+        XCTAssertEqual(leader.probability, 0.5217, accuracy: 0.0001)
+        XCTAssertEqual(leader.movement24h ?? 0, 0.031, accuracy: 0.0001)
+        XCTAssertEqual(leader.fieldSize, 2)
+    }
+
+    /// The suppression relaxation: an UPCOMING concept with a leader renders.
+    /// This is the case that produced #1882's report — a marquee card that had
+    /// a favourite and showed a market count.
+    func testUpcomingConceptWithALeaderIsRenderable() throws {
+        let item = try decodeItem(Self.leaderConceptJSON)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(item),
+                     "a concept that can state a probability must not be withheld")
+    }
+
+    /// Gotcha #43, the other direction: relaxing the rule must not admit the
+    /// empty tile #1486 closed. A concept with neither leader nor result is still
+    /// suppressed — asserted here beside the positive case so the pair cannot
+    /// drift apart.
+    func testConceptWithNeitherLeaderNorResultIsStillSuppressed() throws {
+        let bare = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:ufc:26sep01", "name": "A vs B", "domain": "ufc",
+                    "status": "upcoming", "marquee_whathit": false, "fight_count": 9 } }
+        """)
+        XCTAssertNil(bare.concept?.leader)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(bare), "empty_concept")
+    }
+
+    /// A payload with no `leader` key at all (an older backend) must decode, not
+    /// throw — the L2-179 lesson about a decoder meeting a shape it did not expect.
+    func testConceptWithoutALeaderKeyStillDecodes() throws {
+        let item = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:f1:monza", "name": "Italian Grand Prix",
+                    "domain": "f1", "status": "upcoming" } }
+        """)
+        XCTAssertNotNil(item.concept)
+        XCTAssertNil(item.concept?.leader)
+    }
+
+    /// Settled means settled: a WHAT-HIT concept stays renderable on its result,
+    /// and the result branch is reached before any leader branch.
+    func testSettledConceptRemainsRenderableAndResultLeads() throws {
+        let settled = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:ufc:26aug20", "name": "A vs B", "domain": "ufc",
+                    "status": "settled", "marquee_whathit": true, "winner": "A",
+                    "leader": { "name": "B", "probability": 0.9, "field_size": 2 } } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(settled))
+        XCTAssertEqual(settled.concept?.winner, "A",
+                       "the graded winner is what a settled card leads with, not the favourite")
     }
 
     func testSuppressionTournamentKeepsGolfersOrWhatHit() throws {

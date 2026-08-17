@@ -262,7 +262,7 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
         {
           "type": "bundle",
           "score": 95,
-          "bundle": {
+          "data": {
             "id": "\(id)",
             "title": "\(title)",
             "kind": "\(kind)",
@@ -284,7 +284,7 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
         {
           "type": "bundle",
           "score": 95,
-          "bundle": {
+          "data": {
             "id": "\(id)",
             "title": "\(title)",
             "kind": "\(kind)",

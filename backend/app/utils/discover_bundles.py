@@ -34,6 +34,14 @@ AUTHORED_STORY_TITLES = {
     # Politics / government
     "story:us_2028_election": "2028 Election",
     "story:regional_us_elections": "US Local Elections",
+    # #1885. "State Races" rather than "US State Races" — the feed's US-default
+    # voice, matching "Washington Power" beside it. "Around the World" rather
+    # than a literal "Foreign Local Elections": the family is Brazilian state
+    # governors, Taiwanese county magistrates and Russian oblast parliaments, and
+    # naming the mechanism ("sub-national", "foreign local") describes our
+    # taxonomy rather than the reader's interest.
+    "story:us_state_races": "State Races",
+    "story:foreign_local_elections": "Elections Around the World",
     "story:us_federal_power": "Washington Power",
     "story:us_government_stakes": "Government Stakes",
     # Economics / markets

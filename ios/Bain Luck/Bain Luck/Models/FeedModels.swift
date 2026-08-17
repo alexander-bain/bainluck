@@ -196,6 +196,12 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         if let f = futures { return "futures-\(f.id)" }
         if let t = tournament { return "tournament-\(t.key)" }
         if let c = concept { return "concept-\(c.key)" }
+        // #1886: bundles decode for the first time, so they reach this property for
+        // the first time too. Use the server's bundle id — the same identity
+        // `DiscoverViewModel.stableKey` and `DiscoverView` already derive — rather
+        // than the headline-composed fallback below, which would collide for two
+        // bundles sharing a title.
+        if let b = bundle { return "bundle-\(b.id)" }
         return [
             "feed",
             type,
@@ -218,7 +224,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, score, reason, headline, contextSummary, data, bundle
+        case type, score, reason, headline, contextSummary, data
         case personalized, baseScore, multiplier, personalizationReasons
     }
 
@@ -233,17 +239,43 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore = try c.decodeIfPresent(Int.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
-        bundle = try c.decodeIfPresent(FeedBundle.self, forKey: .bundle)
 
         if type == "event" {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
             futures = nil
             tournament = nil
             concept = nil
+            bundle = nil
         } else if type == "tournament" {
             tournament = try c.decodeIfPresent(FeedTournamentData.self, forKey: .data)
             event = nil
             futures = nil
+            concept = nil
+            bundle = nil
+        } else if type == "bundle" {
+            // #1886: bundles arrive as `{"type":"bundle","data":{…}}` — MEASURED,
+            // twice: 0 of 83 live items (2026-08-14) and 0 of 60 (2026-08-17)
+            // carried a top-level `bundle` key, and all four backend emitters in
+            // `app/utils/discover_bundles.py` serialise under `data`. The old
+            // decoder read a `bundle` key no server has ever sent, so `bundle` was
+            // ALWAYS nil, every bundle fell through to the `futures` branch below,
+            // and decoding a bundle's `data` as `FeedFuturesData` threw on the
+            // string `id` ("theme:story:us_2028_election:…" vs an Int). The
+            // FeedResponse skip loop then ate the card: the six curated theme cards
+            // ("2028 Election", "Fed & Rates", "Middle East"…) have never rendered.
+            //
+            // This is the L2-179 concept bug — see the branch directly below — in
+            // its own neighbour. The concept case got a branch; the bundle case
+            // never did, and the repaired copy is what hid the broken one.
+            //
+            // The fictional `bundle` key is DELETED rather than kept as a fallback:
+            // a tolerated second wire shape is the same "two rules" defect the
+            // cycle-80 classifier unification removed, and it is what let every
+            // bundle fixture in the suite agree with the bug for so long.
+            bundle = try c.decodeIfPresent(FeedBundle.self, forKey: .data)
+            event = nil
+            futures = nil
+            tournament = nil
             concept = nil
         } else if type == "concept" {
             // L2-179: event-concept marquee cards (Tour de France, World Cup, UFC
@@ -255,11 +287,13 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             event = nil
             futures = nil
             tournament = nil
+            bundle = nil
         } else {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
             tournament = nil
             concept = nil
+            bundle = nil
         }
     }
 
@@ -344,8 +378,42 @@ nonisolated struct FeedConceptData: Decodable, Identifiable, Sendable {
     /// crown. Never fabricated — render gracefully when absent.
     let winner: String?
     let resultSummary: String?
+    /// #1882: the favourite and its probability for a concept that is NOT settled.
+    /// Mutually exclusive with `winner` by construction on the server — settled
+    /// means settled, so a card with a result never also carries a live
+    /// probability. Absent when the concept has no usable field, which is what
+    /// keeps the honest-empty path (#1486) intact.
+    let leader: FeedConceptLeader?
 
     var id: String { key }
+}
+
+/// #1882: the favourite of an unsettled concept. Deliberately the same shape as
+/// `FeedTournamentGolfer` so the concept card can reuse the tournament hero
+/// rather than inventing a second probability treatment.
+nonisolated struct FeedConceptLeader: Decodable, Sendable {
+    let name: String
+    let probability: Double
+    let movement24h: Double?
+    /// How many competitors the probability was chosen from — a two-way fight and
+    /// a 20-car field mean different things at the same number.
+    let fieldSize: Int?
+
+    /// The `…24h` decode hazard L2-225 documented on `FeedTournamentGolfer`, met
+    /// again here. `.convertFromSnakeCase` capitalises each component after an
+    /// underscore with `String.capitalized`, and `"24h".capitalized` is `"24H"` —
+    /// the digit is not a letter, so the `h` is treated as the word's first
+    /// letter. The server's `movement_24h` therefore arrives as `movement24H`.
+    ///
+    /// Worth noting how this was caught: the class was already written down, in
+    /// the sibling struct 300 lines below, and it still cost a build — the test
+    /// asserting a real movement value is what found it, not the reading. A
+    /// documented hazard is not a solved one, which is exactly why L2-225 called
+    /// it "a CLASS, not an instance".
+    enum CodingKeys: String, CodingKey {
+        case name, probability, fieldSize
+        case movement24h = "movement24H"
+    }
 }
 
 // MARK: - Feed Event Data
@@ -415,6 +483,13 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let resolved: Bool?
     let winner: String?
     let winnerOpeningProbability: Double?
+    /// #1885: the server's story family for this market ("story:russia_ukraine",
+    /// "story:foreign_local_elections"), promoted out of the backend's internal
+    /// `_quality_story_key` in `routes/feed.py`. Nil when the market belongs to no
+    /// named family — which is the majority, and is exactly why the interleave
+    /// must degrade to plain category rather than treat nil as a family of its
+    /// own. Decoded from `story_key` via `.convertFromSnakeCase`.
+    let storyKey: String?
 }
 
 // MARK: - Discover Card Archetype

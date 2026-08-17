@@ -119,14 +119,14 @@ final class DiscoverViewModelLoadTests: XCTestCase {
     /// A comparison bundle carrying one renderable futures child.
     private func bundleWithChildJSON(id: String, childId: Int) -> String {
         """
-        {"type":"bundle","score":95,"bundle":{"id":"\(id)","title":"Compare","kind":"comparison","items":[\(futuresJSON(childId))]}}
+        {"type":"bundle","score":95,"data":{"id":"\(id)","title":"Compare","kind":"comparison","items":[\(futuresJSON(childId))]}}
         """
     }
 
     /// A comparison bundle with no children — contributes no renderable card.
     private func emptyBundleJSON(id: String) -> String {
         """
-        {"type":"bundle","score":95,"bundle":{"id":"\(id)","title":"Compare","kind":"comparison","items":[]}}
+        {"type":"bundle","score":95,"data":{"id":"\(id)","title":"Compare","kind":"comparison","items":[]}}
         """
     }
 
