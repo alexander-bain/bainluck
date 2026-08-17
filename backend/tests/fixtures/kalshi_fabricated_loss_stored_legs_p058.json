@@ -1,0 +1,1036 @@
+{
+ "KXARGPREMDIVSPREAD-26JUL28BANCAS": [
+  {
+   "external_id": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN3",
+   "id": 9000004,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN4",
+   "id": 9000005,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXARGPREMDIVSPREAD-26JUL28BANCAS-CAS2",
+   "id": 9000006,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXARGPREMDIVSPREAD-26JUL28BANCAS-CAS3",
+   "id": 9000007,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN2",
+   "id": 9000008,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  }
+ ],
+ "KXPGAR1LEAD-COPC26": [
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MKIN",
+   "id": 9000019,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JKAN",
+   "id": 9000020,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NDUN",
+   "id": 9000021,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ALON",
+   "id": 9000022,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BSTO",
+   "id": 9000023,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JDAH",
+   "id": 9000024,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BGAR",
+   "id": 9000025,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AECK",
+   "id": 9000026,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-WPUM",
+   "id": 9000027,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CBEZ",
+   "id": 9000028,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ZBAU",
+   "id": 9000029,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JGUE",
+   "id": 9000030,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-HSPR",
+   "id": 9000031,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MDEM",
+   "id": 9000032,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SMAZ",
+   "id": 9000033,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MHUB",
+   "id": 9000034,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JVAN",
+   "id": 9000035,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JOLE",
+   "id": 9000036,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MMCG",
+   "id": 9000037,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DWIL",
+   "id": 9000038,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JKO",
+   "id": 9000039,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TMOO",
+   "id": 9000040,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PKIZ",
+   "id": 9000041,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-EGRI",
+   "id": 9000042,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NSHI",
+   "id": 9000043,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MSCH",
+   "id": 9000044,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TMON",
+   "id": 9000045,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JHAH",
+   "id": 9000046,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-LGRI",
+   "id": 9000047,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SNOH",
+   "id": 9000048,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KAPH",
+   "id": 9000049,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DRIL",
+   "id": 9000050,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-LLIS",
+   "id": 9000051,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SPOW",
+   "id": 9000052,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RRAM",
+   "id": 9000053,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RLAN",
+   "id": 9000054,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-YKAT",
+   "id": 9000055,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DSKI",
+   "id": 9000056,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ASVE",
+   "id": 9000057,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BMAR",
+   "id": 9000058,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RPAL",
+   "id": 9000059,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SOHA",
+   "id": 9000060,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PNYH",
+   "id": 9000061,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AWIS",
+   "id": 9000062,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DWAL",
+   "id": 9000063,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CYOU",
+   "id": 9000064,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JLOW",
+   "id": 9000065,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RJOH",
+   "id": 9000066,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CLAM",
+   "id": 9000067,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JOVE",
+   "id": 9000068,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NNOR",
+   "id": 9000069,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JDUF",
+   "id": 9000070,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CKIM",
+   "id": 9000071,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PPET",
+   "id": 9000072,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ACOO",
+   "id": 9000073,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SSOD",
+   "id": 9000074,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CCHA",
+   "id": 9000075,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CVIL",
+   "id": 9000076,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SJAM",
+   "id": 9000077,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BSNE",
+   "id": 9000078,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KROY",
+   "id": 9000079,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ATOS",
+   "id": 9000080,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-HSIL",
+   "id": 9000081,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SGAR",
+   "id": 9000082,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-FSCH",
+   "id": 9000083,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MASC",
+   "id": 9000084,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KVEN",
+   "id": 9000085,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ICAN",
+   "id": 9000086,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BROB",
+   "id": 9000087,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JPAU",
+   "id": 9000088,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DWU",
+   "id": 9000089,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KYU",
+   "id": 9000090,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JSEN",
+   "id": 9000091,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NTHO",
+   "id": 9000092,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MSTE",
+   "id": 9000093,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NVON",
+   "id": 9000094,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-HLEB",
+   "id": 9000095,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DBRY",
+   "id": 9000096,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RPAR",
+   "id": 9000097,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CREA",
+   "id": 9000098,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TCLE",
+   "id": 9000099,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KSTA",
+   "id": 9000100,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TPEN",
+   "id": 9000101,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DRAV",
+   "id": 9000102,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TVAI",
+   "id": 9000103,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JVEE",
+   "id": 9000104,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CRAM",
+   "id": 9000105,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RSTR",
+   "id": 9000106,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-WGOR",
+   "id": 9000107,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-GSAR",
+   "id": 9000108,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-VWHA",
+   "id": 9000109,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NLEM",
+   "id": 9000110,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TLAW",
+   "id": 9000111,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BSIL",
+   "id": 9000112,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TROS",
+   "id": 9000113,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PMAL",
+   "id": 9000114,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TKAN",
+   "id": 9000115,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JSTA",
+   "id": 9000116,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DLIU",
+   "id": 9000117,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PWAR",
+   "id": 9000118,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-FCEL",
+   "id": 9000119,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JSAN",
+   "id": 9000120,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CHOF",
+   "id": 9000121,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-EBOW",
+   "id": 9000122,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RGOU",
+   "id": 9000123,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BHAA",
+   "id": 9000124,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NHAR",
+   "id": 9000125,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MELV",
+   "id": 9000126,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-FGOM",
+   "id": 9000127,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TDUN",
+   "id": 9000128,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MHEL",
+   "id": 9000129,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RCAB",
+   "id": 9000130,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-UCOU",
+   "id": 9000131,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BBRO",
+   "id": 9000132,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JBYR",
+   "id": 9000133,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TCRO",
+   "id": 9000134,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-GHIG",
+   "id": 9000135,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ADEL",
+   "id": 9000136,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-LCLA",
+   "id": 9000137,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JGIR",
+   "id": 9000138,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KHIR",
+   "id": 9000139,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BJAM",
+   "id": 9000140,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AGAR",
+   "id": 9000141,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-NELV",
+   "id": 9000142,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SBAE",
+   "id": 9000143,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-PFIS",
+   "id": 9000144,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AEWA",
+   "id": 9000145,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DGAV",
+   "id": 9000146,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JDAN",
+   "id": 9000147,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RHOE",
+   "id": 9000148,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SCRO",
+   "id": 9000149,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-BHOS",
+   "id": 9000150,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RBRE",
+   "id": 9000151,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JCAM",
+   "id": 9000152,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RCAM",
+   "id": 9000153,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-ZDOU",
+   "id": 9000154,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DFRI",
+   "id": 9000155,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AHAD",
+   "id": 9000156,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-TCOL",
+   "id": 9000157,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-KHUS",
+   "id": 9000158,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JGUM",
+   "id": 9000159,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-AIYE",
+   "id": 9000160,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-CBLA",
+   "id": 9000161,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-RHOS",
+   "id": 9000162,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DGEM",
+   "id": 9000163,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-JHIG",
+   "id": 9000164,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-SJAE",
+   "id": 9000165,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-DCHA",
+   "id": 9000166,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-HHIG",
+   "id": 9000167,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MHUG",
+   "id": 9000168,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-MROZ",
+   "id": 9000169,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXPGAR1LEAD-COPC26-WMCG",
+   "id": 9000170,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  }
+ ],
+ "KXRDDT-26JULDAU": [
+  {
+   "external_id": "KXRDDT-26JULDAU-P129000000",
+   "id": 9000009,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P130000000",
+   "id": 9000010,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P136000000",
+   "id": 9000011,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P132000000",
+   "id": 9000012,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P128000000",
+   "id": 9000013,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-131500000",
+   "id": 9000014,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P134000000",
+   "id": 9000015,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P135000000",
+   "id": 9000016,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P133000000",
+   "id": 9000017,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-P131000000",
+   "id": 9000018,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXRDDT-26JULDAU-TICKER-WE-INVENTED",
+   "id": 9000171,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  }
+ ],
+ "KXUSLGAME-26JUL24BIRNEW": [
+  {
+   "external_id": "KXUSLGAME-26JUL24BIRNEW-NEW",
+   "id": 9000001,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXUSLGAME-26JUL24BIRNEW-BIR",
+   "id": 9000002,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "external_id": "KXUSLGAME-26JUL24BIRNEW-TIE",
+   "id": 9000003,
+   "is_winner": false,
+   "resolution_source": "api_settlement"
+  }
+ ]
+}

@@ -1871,12 +1871,42 @@ async def _sync_polymarket_resolved_status():
 async def _backfill_polymarket_volume(max_pages: int = 200):
     """Backfill per-outcome volume for Polymarket from the Gamma API.
 
+    ⚠️ **SUPERSEDED AND NEVER WIRED — do not schedule this. See
+    ``app/tasks/repair_polymarket_evidence.py`` (#1870, CAL-P060).**
+
+    Three things measured on 2026-08-14 that this docstring previously asserted
+    the opposite of. They are recorded here rather than in a commit message
+    because the next person to find this function will read the docstring:
+
+    1. **It has no caller.** No Celery task, no beat entry, no route. Its only
+       reference outside this ``def`` is a test that reads its SOURCE TEXT with
+       ``inspect.getsource`` and asserts substrings appear in it. Every one of
+       those assertions passes on a function that has never executed. The 28.6%
+       of Polymarket outcomes that do carry volume come from forward capture in
+       ``_process_event_batch``, not from here.
+    2. **``order="volume", ascending=False`` does not sort by volume.** It is a
+       LEXICOGRAPHIC sort on the volume string. Measured first page:
+       ``99.99999999999999``, ``999.96``, ``99.996``, ``9.999343``. So "the
+       meaningful-volume markets are filled before the long tail" is false — a
+       $12M market sorts under ``1`` and lands near the end, and a market with
+       volume ``0`` sorts last of all. That is why Polymarket has exactly 0.00%
+       confirmed-zero rows: they are the last rows this would ever reach.
+    3. **``offset`` caps at 2000** (2000 → 200, 2050 → 422). Total addressable
+       population ~2,100 markets, forever; the ``wrapped`` branch below can
+       never fire. Against a NULL cohort in the tens of thousands the pager is
+       not slow, it is bounded away from the answer.
+
+    Kept, not deleted, because the census that measures the hole still reasons
+    about what filled the 28.6% — and because a deleted function cannot warn
+    anyone. The original description follows, with its false claim struck:
+
     Polymarket polling stored only event-level AGGREGATE volume; per-outcome
     (per-condition) volume was never written, so ~all resolved Polymarket
     outcomes have NULL ``volume`` — which blocks the traded/untraded
     calibration tag for that source. This pages CLOSED markets from Gamma
-    (each carries ``conditionId`` + ``volume``) high-volume-first and
-    bulk-updates ``fo.volume`` keyed on condition_id / _yes / _no.
+    (each carries ``conditionId`` + ``volume``) in what it BELIEVES is
+    high-volume-first order (see 2 above — it is not) and bulk-updates
+    ``fo.volume`` keyed on condition_id / _yes / _no.
 
     VP-efficient + queue-safe: bulk set-based writes (one ``UPDATE ... FROM
     unnest`` per page, not per row), Redis offset cursor (resumable),

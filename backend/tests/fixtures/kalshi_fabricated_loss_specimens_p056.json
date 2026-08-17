@@ -1,0 +1,860 @@
+{
+ "KXUSLGAME-26JUL24BIRNEW": [
+  {
+   "ticker": "KXUSLGAME-26JUL24BIRNEW-NEW",
+   "status": "finalized",
+   "result": "scalar"
+  },
+  {
+   "ticker": "KXUSLGAME-26JUL24BIRNEW-BIR",
+   "status": "finalized",
+   "result": "scalar"
+  },
+  {
+   "ticker": "KXUSLGAME-26JUL24BIRNEW-TIE",
+   "status": "finalized",
+   "result": "scalar"
+  }
+ ],
+ "KXARGPREMDIVSPREAD-26JUL28BANCAS": [
+  {
+   "ticker": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN3",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN4",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXARGPREMDIVSPREAD-26JUL28BANCAS-CAS2",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXARGPREMDIVSPREAD-26JUL28BANCAS-CAS3",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXARGPREMDIVSPREAD-26JUL28BANCAS-BAN2",
+   "status": "finalized",
+   "result": "no"
+  }
+ ],
+ "KXRDDT-26JULDAU": [
+  {
+   "ticker": "KXRDDT-26JULDAU-P129000000",
+   "status": "finalized",
+   "result": "yes"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P130000000",
+   "status": "finalized",
+   "result": "yes"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P136000000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P132000000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P128000000",
+   "status": "finalized",
+   "result": "yes"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-131500000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P134000000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P135000000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P133000000",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXRDDT-26JULDAU-P131000000",
+   "status": "finalized",
+   "result": "no"
+  }
+ ],
+ "KXPGAR1LEAD-COPC26": [
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MKIN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JKAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NDUN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ALON",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BSTO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JDAH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BGAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AECK",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-WPUM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CBEZ",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ZBAU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JGUE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-HSPR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MDEM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SMAZ",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MHUB",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JVAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JOLE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MMCG",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DWIL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JKO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TMOO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PKIZ",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-EGRI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NSHI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MSCH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TMON",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JHAH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-LGRI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SNOH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KAPH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DRIL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-LLIS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SPOW",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RRAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RLAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-YKAT",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DSKI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ASVE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BMAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RPAL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SOHA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PNYH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AWIS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DWAL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CYOU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JLOW",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RJOH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CLAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JOVE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NNOR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JDUF",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CKIM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PPET",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ACOO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SSOD",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CCHA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CVIL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SJAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BSNE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KROY",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ATOS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-HSIL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SGAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-FSCH",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MASC",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KVEN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ICAN",
+   "status": "finalized",
+   "result": "scalar"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BROB",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JPAU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DWU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KYU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JSEN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NTHO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MSTE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NVON",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-HLEB",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DBRY",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RPAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CREA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TCLE",
+   "status": "finalized",
+   "result": "scalar"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KSTA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TPEN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DRAV",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TVAI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JVEE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CRAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RSTR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-WGOR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-GSAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-VWHA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NLEM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TLAW",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BSIL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TROS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PMAL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TKAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JSTA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DLIU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PWAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-FCEL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JSAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CHOF",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-EBOW",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RGOU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BHAA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NHAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MELV",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-FGOM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TDUN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MHEL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RCAB",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-UCOU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BBRO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JBYR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TCRO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-GHIG",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ADEL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-LCLA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JGIR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KHIR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BJAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AGAR",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-NELV",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SBAE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-PFIS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AEWA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DGAV",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JDAN",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RHOE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SCRO",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-BHOS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RBRE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JCAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RCAM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-ZDOU",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DFRI",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AHAD",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-TCOL",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-KHUS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JGUM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-AIYE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-CBLA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-RHOS",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DGEM",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-JHIG",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-SJAE",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-DCHA",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-HHIG",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MHUG",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-MROZ",
+   "status": "finalized",
+   "result": "no"
+  },
+  {
+   "ticker": "KXPGAR1LEAD-COPC26-WMCG",
+   "status": "finalized",
+   "result": "no"
+  }
+ ]
+}

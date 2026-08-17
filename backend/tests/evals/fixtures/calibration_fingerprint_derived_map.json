@@ -48,7 +48,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "8d8d2143457542d0",
+      "definition_sha16": "46267b4e37ce1dab",
       "impact": "sql_shaping",
       "name": "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
       "origin": "app.utils.resolution_authority:CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
