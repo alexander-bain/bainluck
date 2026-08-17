@@ -1,9 +1,9 @@
-"""Admin cohort-market-type ECE table — league×source×market_type sorted descending by ECE."""
+"""Admin cohort-market-type ECE table — league×source×market_type×band × week, sorted descending by ECE."""
 import json
 import time
 from fastapi import APIRouter, Query, Request, BackgroundTasks
 from fastapi import Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -166,3 +166,99 @@ async def cohort_market_type_full(
     if cached:
         return cached
     return JSONResponse(status_code=202, content={"status": "no cached table yet"})
+
+
+@router.get("/admin/cohort-market-type/weekly")
+async def cohort_market_type_weekly(
+    request: Request,
+    secret: str = Query(""),
+):
+    _check_admin_secret(secret, request=request)
+    cached = _load_cached()
+    if cached and "weekly_by_cohort" in cached:
+        return {"weekly_by_cohort": cached["weekly_by_cohort"], "weekly": cached.get("weekly", []), "generated_at": cached.get("generated_at")}
+    return JSONResponse(status_code=202, content={"status": "no cached weekly yet, POST /build first"})
+
+
+@router.get("/admin/cohort-views", response_class=HTMLResponse)
+async def cohort_views_html(request: Request, secret: str = Query("")):
+    # Allow secret via query or Bearer header; if missing, render a prompt
+    from app.routes.admin_utils import bearer_credentials
+    token = secret or bearer_credentials(request)
+    # Simple auto-refreshing HTML that fetches the heavy JSON and renders sorted by ECE
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Cohort Views — ECE by source×league×type×band × week</title>
+<meta http-equiv="refresh" content="60">
+<style>
+body{{font-family:system-ui,sans-serif;margin:24px;background:#0a0a0a;color:#e5e5e5}}
+a{{color:#60a5fa}}
+table{{border-collapse:collapse;width:100%;font-size:13px}}
+th,td{{border:1px solid #333;padding:6px 8px;text-align:left;white-space:nowrap}}
+th{{background:#1a1a1a;position:sticky;top:0}}
+tr:nth-child(even){{background:#111}}
+.badge{{padding:2px 6px;border-radius:4px;font-size:11px}}
+.green{{background:#065f46;color:#a7f3d0}}
+.red{{background:#7f1d1d;color:#fecaca}}
+.notprov{{background:#422006;color:#fde68a}}
+.muted{{color:#9ca3af}}
+</style></head><body>
+<h1>Cohort Views — league × source × market_type × band <span class="muted" style="font-weight:normal">sorted desc by ECE</span></h1>
+<p class="muted">Auto-refreshes every 60s. Heavy table built in worker (Celery heavy queue, ~90s). Graded share &lt;50% ⇒ <code>NOT-PROVABLE-selection-biased</code> per today's ruling. Band = 0-10%..90-100% (4th axis). Weekly trend for Monday scoreboard below.</p>
+<div id="meta" class="muted">Loading…</div>
+<h2>Top by ECE (heavy, with band + graded_share)</h2>
+<table id="tbl"><thead><tr><th>rank</th><th>source</th><th>league</th><th>type</th><th>band</th><th>n</th><th>q</th><th>graded_share</th><th>ECE</th><th>gap pp</th><th>verdict</th></tr></thead><tbody></tbody></table>
+<h2>Weekly — last 6 weeks per cohort (is it improving?)</h2>
+<div id="weekly" class="muted">Loading weekly…</div>
+<script>
+const SECRET = "{token}";
+async function fetchJSON(url) {{
+  const headers = {{}};
+  if (SECRET) headers["Authorization"] = "Bearer " + SECRET;
+  const sep = url.includes("?") ? "&" : "?";
+  const q = SECRET ? sep + "secret=" + encodeURIComponent(SECRET) : "";
+  const r = await fetch(url + q, {{headers}});
+  if (!r.ok) throw new Error(r.status + " " + await r.text());
+  return r.json();
+}}
+async function load() {{
+  const meta = document.getElementById("meta");
+  const tbody = document.querySelector("#tbl tbody");
+  const weeklyDiv = document.getElementById("weekly");
+  try {{
+    const data = await fetchJSON("/api/admin/cohort-market-type");
+    if (data.status) {{ meta.textContent = data.message + " (debug: " + JSON.stringify(data.debug||"") + ")"; return; }}
+    const byBand = data.by_band_worst || data.by_band || [];
+    const rows = (byBand.length ? byBand : data.by_ece || []).slice(0,100);
+    meta.textContent = `Rows ${{data.rows}} cohorts ${{data.cohorts}} sufficient ${{data.sufficient}} — generated ${{new Date((data.generated_at||0)*1000).toLocaleString()}}`;
+    tbody.innerHTML = "";
+    rows.forEach((c,i) => {{
+      const tr = document.createElement("tr");
+      const v = c.verdict || "";
+      const vc = v.startsWith("GREEN") ? "green" : v.startsWith("RED") ? "red" : "notprov";
+      tr.innerHTML = `<td>${{i+1}}</td><td>${{c.source}}</td><td>${{c.league_category}}</td><td>${{c.market_type}}</td><td>${{c.probability_band||c.band_idx||""}}</td><td>${{c.n}}</td><td>${{c.independent_questions}}</td><td>${{c.graded_share!=null ? (c.graded_share*100).toFixed(1)+"%" : "—"}}</td><td>${{ (c.ece*100).toFixed? (c.ece*100).toFixed(2) : c.ece }}</td><td>${{(c.signed_error*100).toFixed(2)}}</td><td><span class="badge ${{vc}}">${{v}}</span></td>`;
+      tbody.appendChild(tr);
+    }});
+    // Weekly
+    if (data.weekly_by_cohort) {{
+      let html = '<table><thead><tr><th>cohort</th><th>weekly ECE (last 6)</th></tr></thead><tbody>';
+      let n=0;
+      for (const [k, series] of Object.entries(data.weekly_by_cohort)) {{
+        if (n++>20) break;
+        const eces = series.map(s=> `${{s.week}}:${{(s.ece*100).toFixed(1)}}`).join(" → ");
+        html += `<tr><td>${{k}}</td><td>${{eces}}</td></tr>`;
+      }}
+      html += '</tbody></table>';
+      weeklyDiv.innerHTML = html;
+    }} else {{
+      weeklyDiv.textContent = "No weekly data yet (heavy build pending)";
+    }}
+  }} catch(e) {{
+    meta.textContent = "Error: " + e.message;
+    weeklyDiv.textContent = "";
+  }}
+}}
+load();
+setInterval(load, 60000);
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
