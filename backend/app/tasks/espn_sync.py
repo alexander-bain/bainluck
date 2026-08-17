@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import ESPN_SPORT_MAPPING
+from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
@@ -452,10 +453,32 @@ async def _process_live_sport(
         # Upsert team records with ESPN data (colors, logos)
         home_team = await upsert_team_fn(session, event.home_team_name, ee.home_team, event.sport_id, team_cache, stats)
         away_team = await upsert_team_fn(session, event.away_team_name, ee.away_team, event.sport_id, team_cache, stats)
-        if home_team and event.home_team_id != home_team.id:
+        # #1918. This path is name-keyed and sound by construction today (`upsert_team`
+        # resolves within `event.sport_id` from the event's own name), but it OVERWRITES
+        # an existing id rather than only filling NULLs — so it is the one site where a
+        # future loosening of `upsert_team`'s fuzzy fallback could replace a correct
+        # binding with a wrong one. The guard costs nothing and states the invariant here
+        # too, rather than leaving it true by accident.
+        if event.home_team_id != getattr(home_team, "id", None) and accept_team_binding(
+            side="home",
+            row_name=event.home_team_name,
+            team=home_team,
+            event_sport_id=event.sport_id,
+            source="espn",
+            event_id=event.id,
+            stats=stats,
+        ):
             event.home_team_id = home_team.id
             changed = True
-        if away_team and event.away_team_id != away_team.id:
+        if event.away_team_id != getattr(away_team, "id", None) and accept_team_binding(
+            side="away",
+            row_name=event.away_team_name,
+            team=away_team,
+            event_sport_id=event.sport_id,
+            source="espn",
+            event_id=event.id,
+            stats=stats,
+        ):
             event.away_team_id = away_team.id
             changed = True
 
