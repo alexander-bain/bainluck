@@ -204,8 +204,88 @@ class Handoff:
             "reason": self.reason,
             # An owner-less handoff is not a handoff. Named in the payload so
             # it is legible on the health surface without re-deriving it.
-            "orphaned": self.to is None,
+            #
+            # ``count > 0`` because an ORPHAN IS WORK WITH NO OWNER, and zero
+            # work is not orphaned work. A rail that declined nothing records
+            # ``Handoff(to=None, count=0)`` — there was no shape to look an
+            # owner up for — and without this clause every clean run rendered
+            # ``"orphaned": true`` in ``items[]`` beside a count of zero. The
+            # aggregate in :func:`handoff_payload` was always right (it sums
+            # counts), so the lie was confined to the per-item flag an operator
+            # actually reads. Found by CAL-P066 replacing this module's
+            # source-text tests with behavioural ones.
+            "orphaned": self.to is None and int(self.count) > 0,
         }
+
+
+@dataclass(frozen=True)
+class ByIdRouting:
+    """How the Gamma by-id path splits its candidates. Exhaustive and disjoint.
+
+    ``addressable`` and ``handed`` partition the input: every candidate is in
+    exactly one, so ``len(handed)`` and ``len(input) - len(addressable)`` are
+    the same number by construction rather than by two authors agreeing. That
+    equality used to live in the reader's head — the count was written as the
+    subtraction, and a test asserted on the literal text of it, so a refactor
+    that enumerated the complement instead broke the test while preserving the
+    arithmetic exactly (INT-080). Making the partition the returned object
+    removes the question.
+    """
+
+    addressable: tuple[Any, ...]
+    handed: tuple[Any, ...]
+    handoff: Handoff
+
+    @property
+    def unsupported_lookup(self) -> int:
+        """The count the Gamma rail reports for work it cannot address."""
+        return len(self.handed)
+
+
+def split_gamma_by_id_candidates(
+    rows: Iterable[Any], reason: str = "gamma_markets_endpoint_rejects_condition_ids_422"
+) -> ByIdRouting:
+    """Route the by-condition candidates of the Gamma rail.
+
+    A ``condition_id`` is not addressable on Gamma's ``GET /markets/{id}`` — it
+    answers ``422``, measured against production 2026-08-07 — so those rows are
+    HANDED to their registered owner rather than spent as a request. Everything
+    else stays on the Gamma path.
+
+    Two properties this function exists to guarantee, both of which were
+    previously only true by inspection:
+
+    * **The handed rows never reach the batch loop**, so they cannot contribute
+      to the ``rate_limited`` counter or trip the ``>=80%`` throttle
+      circuit-breaker. A structural refusal and a throttle are different facts
+      and must stay different numbers (gotcha #36, CAL-P003).
+    * **The owner is resolved through the registry**, not hard-coded, so
+      re-assigning the ``condition_id`` shape moves both rails at once.
+
+    A row with a blank ``external_id`` stays ADDRESSABLE, deliberately and as
+    before: it is unidentifiable rather than mis-addressed, the Gamma path will
+    record it as an ``api_miss``, and routing it to a handoff with no owner
+    would turn an ordinary miss into a ``failed`` terminal.
+    """
+    rows = tuple(rows)
+    handed = tuple(
+        r
+        for r in rows
+        if market_shape(getattr(r, "external_id", None)) == SHAPE_CONDITION_ID
+    )
+    _handed_ids = {id(r) for r in handed}
+    addressable = tuple(r for r in rows if id(r) not in _handed_ids)
+    return ByIdRouting(
+        addressable=addressable,
+        handed=handed,
+        handoff=Handoff(
+            # ``owner_of_shape`` rather than a literal: one registry, one answer.
+            to=owner_of_shape(SHAPE_CONDITION_ID) if handed else None,
+            shape=SHAPE_CONDITION_ID,
+            count=len(handed),
+            reason=reason,
+        ),
+    )
 
 
 def handoff_payload(handoffs: Iterable[Handoff]) -> dict[str, Any]:

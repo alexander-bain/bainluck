@@ -4959,22 +4959,17 @@ async def _backfill_polymarket_winners_from_api(
         # condition_id. What changed is that the handoff now NAMES its owner
         # via the shared registry and rides the terminal below, so a run that
         # gave away 97.5% of its pull can no longer read complete.
-        from app.utils.pm_market_ownership import Handoff, owner_of
+        from app.utils.pm_market_ownership import split_gamma_by_id_candidates
 
-        _addressable = [r for r in by_condition
-                        if not str(r.external_id or "").startswith("0x")]
-        _handed = [r for r in by_condition
-                   if str(r.external_id or "").startswith("0x")]
-        stats["unsupported_lookup"] = len(_handed)
-        # Resolved through the registry rather than hard-coded, so a future
-        # re-assignment of the condition_id shape moves both rails at once.
-        _handoff_owner = owner_of("0x0") if _handed else None
-        _handoffs.append(Handoff(
-            to=_handoff_owner,
-            shape="condition_id",
-            count=len(_handed),
-            reason="gamma_markets_endpoint_rejects_condition_ids_422",
-        ))
+        # The split, the count and the named owner come back as one object, so
+        # the partition cannot drift from the number reported for it. INT-080:
+        # the previous form computed the same count as a subtraction and a test
+        # asserted on that literal expression, so an equivalent rewrite failed a
+        # gate while changing no behaviour. The routing is testable directly now.
+        _routing = split_gamma_by_id_candidates(by_condition)
+        _addressable = list(_routing.addressable)
+        stats["unsupported_lookup"] = _routing.unsupported_lookup
+        _handoffs.append(_routing.handoff)
         alive_conditions = [r for r in _addressable if r.external_id not in dead_cids]
         stats["skipped_dead"] = len(_addressable) - len(alive_conditions)
 
