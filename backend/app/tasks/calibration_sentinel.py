@@ -50,6 +50,10 @@ from app.tasks.precompute_calibration import (
     market_is_esports_multi_bundle,
     market_needs_mex_normalization,
 )
+from app.utils.calibration_provability import (
+    PROVABILITY_NOT_PROVABLE,
+    provability_from_share,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +221,10 @@ DISP_EXCLUSION_WORKING = "exclusion_working"
 DISP_REAL_BREAK = "real_break"
 DISP_EXCLUSION_HARMS = "exclusion_harms"
 DISP_PUBLISHED_UNKNOWN = "published_unknown"
+#: CAL-P067. Not a fifth sibling of the four above — a disposition that
+#: OUTRANKS all of them, because it is about whether the pair of numbers means
+#: anything, not about what the pair says.
+DISP_NOT_PROVABLE = "not_provable_selection_biased"
 
 
 def raw_vs_published(
@@ -224,6 +232,7 @@ def raw_vs_published(
     published_mce: float | None,
     published_n: int,
     threshold: float,
+    graded_share: float | None = None,
 ) -> tuple[str, str]:
     """``(disposition, why)`` from the RAW and PUBLISHED miscalibration pair.
 
@@ -244,7 +253,20 @@ def raw_vs_published(
     every instrument we have — coverage rises, the raw number looks fine, and
     the published number nobody computed is the only place it shows. Nothing
     looks for this today.
+
+    **CAL-P067 puts one check in front of all four (Fable ruling).** If under
+    half of the cell's resolved outcomes are graded, neither number means
+    anything about the population, and the four dispositions above are all
+    statements about the graded subset. ``exclusion_working`` is the dangerous
+    one: the exclusion may well be working on the quarter we can see, and that
+    licenses nothing about the three-quarters we cannot. So this short-circuits
+    rather than being weighed alongside — a false all-clear averaged with a true
+    finding is still a false all-clear.
     """
+    if graded_share is not None:
+        verdict, share, why = provability_from_share(graded_share)
+        if verdict == PROVABILITY_NOT_PROVABLE:
+            return DISP_NOT_PROVABLE, why
     if raw_mce is None:
         return DISP_PUBLISHED_UNKNOWN, "raw MCE unavailable"
     if published_mce is None:

@@ -20,6 +20,11 @@ import {
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
+  anyNotProvable,
+  provabilityPresentation,
+  type ProvabilityCell,
+} from "@/lib/calibrationProvability";
+import {
   groupSourcesByProvider,
   shapeBreakdownIsSymmetric,
   SHAPE_BREAKDOWN_MIN_N,
@@ -313,6 +318,26 @@ export default function CalibrationPage() {
   }, [normalized, sources, cohortFilter]);
 
   // Per-category metrics for the breakdown table
+  // CAL-P067 item 4: the selection-bias verdict is computed BACKEND-side (it
+  // needs the ungraded denominator, which never reaches the browser) and rides
+  // on `by_category`. These rows are computed here from buckets, so the verdict
+  // has to be joined on by category key. A category the backend did not annotate
+  // simply carries no verdict, and `provabilityPresentation` renders that as the
+  // pre-rule row — which is right: the backend states an absent census once, in
+  // `provability_census`, rather than badging every row.
+  const provabilityByCategory = useMemo(() => {
+    const map = new Map<string, ProvabilityCell>();
+    for (const cell of data?.by_category ?? []) {
+      if (!cell?.category) continue;
+      map.set(normalizeCat(cell.category), {
+        provability: cell.provability,
+        graded_share: cell.graded_share,
+        provability_reason: cell.provability_reason,
+      });
+    }
+    return map;
+  }, [data]);
+
   const categoryMetrics = useMemo(() => {
     if (!normalized) return [];
     return categories.map(cat => {
@@ -321,9 +346,16 @@ export default function CalibrationPage() {
       const catMCE = mce(catBuckets);
       const catECE = ece(catBuckets);
       const catBrier = brierScore(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
-      return { category: cat, n: catN, mce: catMCE, ece: catECE, brier: catBrier };
+      return {
+        category: cat,
+        n: catN,
+        mce: catMCE,
+        ece: catECE,
+        brier: catBrier,
+        ...(provabilityByCategory.get(cat) ?? {}),
+      };
     });
-  }, [normalized, categories, cohortFilter]);
+  }, [normalized, categories, cohortFilter, provabilityByCategory]);
 
   // Queue 316 item 2: one row per PROVIDER, not per source key. Three of the
   // five live keys are the Odds API answering three question shapes, and the
@@ -1351,6 +1383,26 @@ export default function CalibrationPage() {
         <p className="text-xs text-text-muted mb-4">
           Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
         </p>
+        {/* CAL-P067 item 4 (Fable ruling): the selection-bias disclosure. This
+            is deliberately NOT phrased as a sample-size caveat — the two look
+            alike and have opposite remedies. More data fixes a small sample; it
+            does not fix a sample chosen by the thing you are measuring. */}
+        {anyNotProvable(categoryMetrics) && (
+          <p
+            className="text-xs text-orange-800 bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4"
+            data-testid="calibration-selection-bias-note"
+          >
+            <strong>Some rows are marked &ldquo;not provable&rdquo;.</strong> A calibration
+            number answers &ldquo;when we said 30%, how often did it happen?&rdquo; &mdash; which
+            needs a graded result. So a category&rsquo;s curve is built only from its
+            <em> graded</em> outcomes. Where fewer than half are graded, the curve describes
+            that graded minority rather than the category, and the ungraded rest is not a
+            random rest: it is concentrated in whole market types our graders have not yet
+            covered. We show those numbers struck through with the graded share, because a
+            wider error bar would be the wrong fix for the wrong problem. They become
+            provable as grading coverage passes 50%, not as more data arrives.
+          </p>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -1363,28 +1415,122 @@ export default function CalibrationPage() {
               </tr>
             </thead>
             <tbody>
-              {[...categoryMetrics].sort((a, b) => a.ece - b.ece).map(cm => (
+              {[...categoryMetrics].sort((a, b) => a.ece - b.ece).map(cm => {
+                // CAL-P067 (Fable ruling): a cell graded under 50% is measured
+                // on a sample selected on the property being measured, so the
+                // pp figures below are not a measurement of the category. We
+                // keep the numbers visible — a biased estimate is still the
+                // estimate — but strike the confident formatting and say why.
+                // Decision logic lives in lib/calibrationProvability so it is
+                // testable without mounting the page.
+                const prov = provabilityPresentation(cm);
+                const notProvable = prov.showNotProvableBadge;
+                const shareUnknown = prov.showUnknownBadge;
+                return (
                 <tr key={cm.category} className="border-t border-surface-border"
-                  data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}>
+                  data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}
+                  data-provability={cm.provability ?? "unset"}
+                  data-graded-share={cm.graded_share ?? ""}>
                   <td className="py-2 pr-4 font-medium text-text-primary">
                     {categoryLabel(cm.category)}
+                    {notProvable && (
+                      <span
+                        data-testid="calibration-not-provable-badge"
+                        title={prov.title}
+                        className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-orange-300 text-orange-700 bg-orange-50"
+                      >
+                        {prov.badgeLabel}
+                      </span>
+                    )}
+                    {shareUnknown && (
+                      <span
+                        data-testid="calibration-provability-unknown-badge"
+                        title={prov.title}
+                        className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted"
+                      >
+                        {prov.badgeLabel}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
-                  <td className={`py-2 pr-4 text-right tabular-nums font-semibold ${
-                    cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"
+                  <td className={`py-2 pr-4 text-right tabular-nums ${
+                    notProvable
+                      ? "font-normal text-text-muted line-through decoration-orange-400/60"
+                      : `font-semibold ${cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"}`
                   }`}>
                     {cm.ece.toFixed(1)}pp
                   </td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-text-muted">
+                  <td className={`py-2 pr-4 text-right tabular-nums text-text-muted ${
+                    notProvable ? "line-through decoration-orange-400/60" : ""
+                  }`}>
                     {cm.mce.toFixed(1)}pp
                   </td>
-                  <td className="py-2 text-right tabular-nums">{cm.brier.toFixed(4)}</td>
+                  <td className={`py-2 text-right tabular-nums ${
+                    notProvable ? "text-text-muted line-through decoration-orange-400/60" : ""
+                  }`}>{cm.brier.toFixed(4)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       </section>
+
+      {/* CAL-P067 item 5 — the quarantine disclosure (Alex ruling).
+          Rows held OUT of the published curves pending review. The point of
+          publishing this is that a quarantine and a silent drop are
+          indistinguishable from the outside: both just make the denominator
+          smaller. Stating the count, the reason and the status is what makes it
+          an exclusion rather than a disappearance, and what makes it
+          reversible. Triage owns the flag write; this surface owns saying so. */}
+      {data.quarantine && data.quarantine.length > 0 && (() => {
+        const held = data.quarantine!;
+        const total = held.reduce((s, q) => s + (q.outcomes || 0), 0);
+        return (
+          <section
+            className="bg-surface-card rounded-xl p-5 border border-surface-border"
+            data-testid="calibration-quarantine"
+            data-quarantine-total={total}
+          >
+            <h2 className="text-title-3 text-text-primary mb-1">
+              Held out, under review<CohortTag cohort={cohort} />
+            </h2>
+            <p className="text-xs text-text-muted mb-4">
+              {total.toLocaleString()} resolved {total === 1 ? "outcome is" : "outcomes are"}{" "}
+              excluded from every curve on this page while we check them. They are not
+              graded, not counted, and not deleted &mdash; a held-out row is a stated
+              exclusion we can reverse, which is the difference between a quarantine and a
+              quietly shorter denominator.
+            </p>
+            <ul className="space-y-2">
+              {held.map((q, i) => (
+                <li
+                  key={`${q.reason}-${i}`}
+                  className="flex items-start justify-between gap-4 border-t border-surface-border pt-2 text-sm"
+                  data-testid="calibration-quarantine-row"
+                  data-reason={q.reason}
+                  data-outcomes={q.outcomes}
+                >
+                  <div>
+                    <span className="font-medium text-text-primary">{q.reason}</span>
+                    {q.note && (
+                      <span className="block text-xs text-text-muted mt-0.5">{q.note}</span>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="tabular-nums font-semibold text-text-primary">
+                      {q.outcomes.toLocaleString()}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-wide text-orange-700">
+                      under review
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })()}
 
       {/* Too-thin-to-grade honest note (L2-80 Item 4) — answers the friends-and-family
           skeptic ("what about the weird / novelty / long-shot markets?") without faking

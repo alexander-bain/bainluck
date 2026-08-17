@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils.calibration_provability import MIN_GRADED_SHARE, annotate_cells
 
 # Queue #257 Item 1: the in-request calibration fallback used to re-implement the
 # whole CTE chain + wilson_ci / bootstrap_mce_ci / _compute_horizon_mce here (a
@@ -865,6 +866,7 @@ async def public_calibration(
         out["producer"] = stall
         if stall["stalled"]:
             availability = _never_stronger(availability, AVAILABILITY_STALE)
+        _apply_provability(out)
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(
@@ -1525,6 +1527,82 @@ _HORIZONS = [
 
 # Minimum outcomes per horizon to include it in the response
 _MIN_OUTCOMES_PER_HORIZON = 50
+
+
+#: CAL-P067 item 4. Per-category ``resolved outcomes`` denominators for the
+#: selection-bias rule, keyed by ``llm_sport_category``.
+#:
+#: EMPTY, and deliberately so. The numerator (graded outcomes) is the ``n``
+#: already on every published cell; the denominator is a
+#: ``futures_outcomes x futures_markets`` aggregate, which is the exact query
+#: class CAL-P066 documented as planner-hostile — every such join drives from a
+#: Seq Scan on ``futures_outcomes``, so a category filter does not restrict it.
+#: Measured this window: a single-category count hit ``statement_timeout``.
+#: Obtaining it needs CAL-P066's recursive id-range bisection, which is a
+#: measurement task rather than a rendering one.
+#:
+#: The rule ships complete and inert: populate this (or the Redis key below) and
+#: every published cell annotates on the next request, with no further code.
+PROVABILITY_CENSUS: dict[str, int] = {}
+
+#: Why the census is absent, stated ONCE in the payload rather than as fifteen
+#: "unmeasured" badges in the UI. The discipline is the same one CAL-P067's
+#: ruling-075 fix enforces — a check that did not run must say so — but the
+#: honest place to say it once is the payload, not once per row on a public page.
+PROVABILITY_CENSUS_ABSENT_REASON = (
+    "per-category resolved-outcome denominators are not measured yet: the "
+    "futures_outcomes x futures_markets aggregate times out (CAL-P066's Seq Scan "
+    "finding) and needs recursive id-range bisection. Until then no cell's graded "
+    "share is known, so no cell is asserted provable."
+)
+
+
+def _apply_provability(out: dict) -> None:
+    """Annotate published category cells with the selection-bias verdict.
+
+    Fable ruling, CAL-P067: a cell graded under 50% is measured on a sample
+    selected on the property being measured, so it renders NOT-PROVABLE with the
+    graded share shown.
+
+    Two modes, and the split is the point:
+
+    * **Census present** — every cell is annotated. Biased cells flip to
+      ``not_provable_selection_biased``; a cell the census does not cover reads
+      ``unknown``, never ``provable``.
+    * **Census absent** — cells are left alone and the payload carries a single
+      ``provability_census: {measured: false, reason}``. Stating "we cannot check
+      this" once, machine-readably, is honest; stamping it on fifteen public rows
+      is noise that would train readers to ignore the badge that matters.
+
+    Never raises: an annotation bug must not be able to take /api/calibration
+    down. A failure degrades to the unannotated payload plus a stated reason,
+    which is the same fail-safe direction as the rule itself.
+    """
+    try:
+        cells = out.get("by_category")
+        if not isinstance(cells, list):
+            return
+        if not PROVABILITY_CENSUS:
+            out["provability_census"] = {
+                "measured": False,
+                "reason": PROVABILITY_CENSUS_ABSENT_REASON,
+                "min_graded_share": MIN_GRADED_SHARE,
+            }
+            return
+        out["by_category"] = annotate_cells(
+            cells, resolved_by_category=PROVABILITY_CENSUS
+        )
+        out["provability_census"] = {
+            "measured": True,
+            "categories": len(PROVABILITY_CENSUS),
+            "min_graded_share": MIN_GRADED_SHARE,
+        }
+    except Exception as exc:  # noqa: BLE001 — never the reason the page is down
+        logger.warning("calibration provability annotation failed: %s", exc)
+        out["provability_census"] = {
+            "measured": False,
+            "reason": f"annotation_failed: {str(exc)[:160]}",
+        }
 
 
 def _compute_horizon_mce(buckets: list[dict]) -> float | None:
