@@ -18,13 +18,15 @@ transactional session and RETURNS its own before/after census in the response bo
              | winner-field-repair | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
-             | polymarket-evidence-census | polymarket-evidence }
+             | polymarket-evidence-census | polymarket-evidence
+             | pm-never-graded-census | pm-never-graded }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
      handoff file over the ref. Re-synced 2026-08-12 with the registry; if you
      add a repair, add it HERE in the same commit — a third drift would prove
-     the comment above was decoration.)
+     the comment above was decoration. Re-synced again 2026-08-17, CAL-P065,
+     adding the two pm-never-graded entries in the commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank``
@@ -210,6 +212,43 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat.
     "polymarket-evidence": (
         "app.tasks.repair_polymarket_evidence",
+        "repair",
+    ),
+    # CAL-P065 (#1912): the 25,264 Polymarket markets NOBODY EVER GRADED. Their
+    # `is_winner=false` is the COLUMN DEFAULT, not a verdict — `resolution_source`
+    # is NULL on every leg — so a bare zero-winner count cannot tell them from
+    # the 3,824 a heuristic actively mis-graded, and the two need OPPOSITE fixes.
+    # Read-only census of the WHOLE never-graded population split by category,
+    # deliberately not filtered to tennis: 25,264 is tennis ALONE, and promising
+    # a drain rate against an unsized population is how the CLOB rail ended up
+    # scheduled at 1,200 checks/day against a five-figure backlog. A census
+    # timeout returns `measured: false` with a reason, NEVER a zero (gotcha #54).
+    "pm-never-graded-census": (
+        "app.tasks.repair_pm_never_graded",
+        "census",
+    ),
+    # CAL-P065 (#1912): the WRITE half. Asks the CLOB venue per market and plans
+    # ONLY the confident tiers (resolved_direct / resolved_name_match) that also
+    # pass the mandatory name-concordance and date-sanity guards; void,
+    # ambiguous, integrity-refused and not-at-venue leave with a NAMED verdict
+    # and a number (ruling 054 — exclusions are counted, not skipped). The
+    # cohort is defined by the ABSENCE of a grade, so the venue's answer is the
+    # only thing permitted to crown an outcome: nothing is inferred from a price
+    # (gotcha #21). Writes `resolution_source='clob_never_graded'`, a DISTINCT
+    # source so the whole cohort is revertible in one predicate. Touches no
+    # prices.
+    # The dry-run emits a content-addressed PLAN and `apply=true` consumes it —
+    # `?plan_hash=` is REQUIRED, nothing is re-derived at apply time, the write
+    # is compare-and-set on the exact prior state (`resolution_source IS NULL
+    # AND is_winner IS NOT TRUE`), and the calibration invalidation is a
+    # PERSISTED DEBT: `success:false` with `legs_written>0` is honest — retry
+    # the same plan_hash, do not re-plan (CAL-P062 pattern).
+    # Capped at APPLY_MARKET_CAP=40 markets per call, by module constant.
+    # ATTENDED ONLY: never wire this to a beat. Ruling 046 — it joins the wave
+    # with its OWN read; landing it beside another apply makes both
+    # unattributable.
+    "pm-never-graded": (
+        "app.tasks.repair_pm_never_graded",
         "repair",
     ),
 }
