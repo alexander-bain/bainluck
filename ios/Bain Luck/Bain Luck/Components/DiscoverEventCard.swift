@@ -100,6 +100,10 @@ struct NativeEventDiscoverCard: View {
                     endPoint: .bottomTrailing
                 )
                 .overlay(
+                    // Decorative watermark at 0.08 opacity — never read, so it
+                    // is deliberately NOT ramped (#1772). Scaling it would move
+                    // a background glyph behind live text for no legibility
+                    // gain. The census guard exempts exactly this line.
                     Text(sportEmoji(for: event.sport))
                         .font(.system(size: 96))
                         .opacity(0.08)
@@ -109,7 +113,7 @@ struct NativeEventDiscoverCard: View {
                     // Top row: sport label + live badge
                     HStack {
                         Text(sportLabel)
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.78))
                             .padding(.horizontal, 8)
@@ -124,7 +128,7 @@ struct NativeEventDiscoverCard: View {
                                     .fill(.white)
                                     .frame(width: 5, height: 5)
                                 Text("LIVE")
-                                    .font(.system(size: 9, weight: .heavy))
+                                    .font(.caption2.weight(.heavy))
                             }
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
@@ -132,7 +136,7 @@ struct NativeEventDiscoverCard: View {
                             .background(Color.red.opacity(0.85), in: Capsule())
                         } else if isDone {
                             Text("FINAL")
-                                .font(.system(size: 9, weight: .heavy))
+                                .font(.caption2.weight(.heavy))
                                 .foregroundStyle(.white.opacity(0.78))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -154,7 +158,7 @@ struct NativeEventDiscoverCard: View {
 
                         VStack(spacing: 2) {
                             Text(statusText)
-                                .font(.system(size: isLive ? 11 : 13, weight: .heavy).monospacedDigit())
+                                .font((isLive ? Font.caption2 : Font.footnote).weight(.heavy).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.7))
                         }
                         .frame(width: 50)
@@ -195,7 +199,7 @@ struct NativeEventDiscoverCard: View {
                                 .foregroundStyle(awayColor)
                             Spacer()
                             Text("Win Probability")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.caption2.weight(.medium))
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Text(formatProbability(homeProbability))
@@ -232,7 +236,7 @@ struct NativeEventDiscoverCard: View {
                         message: Text(shareMessage)
                     ) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
                             .padding(8)
                             .background(Color.secondary.opacity(0.10), in: Circle())
@@ -287,7 +291,7 @@ struct NativeEventDiscoverCard: View {
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
                     .overlay(
                         Text(String(name.split(separator: " ").last ?? "").prefix(3).uppercased())
-                            .font(.system(size: 12, weight: .heavy))
+                            .font(.caption.weight(.heavy))
                             .foregroundStyle(.white)
                     )
             }

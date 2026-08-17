@@ -22,14 +22,29 @@ final class BugReportReceiptTests: XCTestCase {
         defaults = UserDefaults(suiteName: suiteName)
         BugReportReceiptStore.defaults = defaults
         BugReportDraftStore.defaults = defaults
+        BugReportRejectionStore.defaults = defaults
     }
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
         BugReportReceiptStore.defaults = .standard
         BugReportDraftStore.defaults = .standard
+        BugReportRejectionStore.defaults = .standard
         BugReportOutbox.send = { try await APIClient.shared.submitBugReport($0) }
         super.tearDown()
+    }
+
+    /// The real production answer to a 5,001-character description, captured
+    /// on 2026-08-17 against `POST /api/feedback/bug-report`. Used verbatim so
+    /// these tests are pinned to what the server actually says, not to a
+    /// plausible-looking invention (fixture-from-production standard).
+    private static let productionOversizeBody = """
+    {"detail":[{"type":"value_error","loc":["body","description"],\
+    "msg":"Value error, Description too long (max 5000 chars)"}]}
+    """
+
+    private func oversizeRefusal() -> APIError {
+        .httpError(statusCode: 422, body: Self.productionOversizeBody)
     }
 
     private func submission(
@@ -258,6 +273,180 @@ final class BugReportReceiptTests: XCTestCase {
         await BugReportOutbox.flush()
 
         XCTAssertLessThanOrEqual(attempts, 10, "flush must be bounded")
+    }
+
+    // MARK: - The poison pill (#1847, UX-P088)
+
+    func testAPermanentRefusalDoesNotBlockTheReportsBehindIt() async {
+        // THE BUG, stated as a test. A 5,001-char description returns a
+        // deterministic 422. Queued at the head of a FIFO outbox that stopped
+        // at the first failure, it blocked every later report forever — on
+        // every foreground, until the cap silently deleted it.
+        BugReportDraftStore.saveDraft(submission(description: "the over-long one"))
+        BugReportDraftStore.saveDraft(submission(description: "queued behind it"))
+
+        var delivered: [String] = []
+        BugReportOutbox.send = { [self] sub in
+            if sub.description == "the over-long one" { throw oversizeRefusal() }
+            delivered.append(sub.description ?? "")
+            return BugReportResponse(status: "ok", id: 147)
+        }
+
+        let result = await BugReportOutbox.flush()
+
+        XCTAssertEqual(delivered, ["queued behind it"],
+                       "the report behind a refused one must still be delivered")
+        XCTAssertEqual(result.sent, 1)
+        XCTAssertEqual(result.rejected, 1)
+        XCTAssertEqual(result.remaining, 0, "the queue drains rather than jamming")
+        XCTAssertEqual(BugReportReceiptStore.mostRecent?.id, 147)
+    }
+
+    func testARefusedReportIsKeptWithItsReasonNotDestroyed() async {
+        BugReportDraftStore.saveDraft(submission(description: "way too long"))
+        BugReportOutbox.send = { [self] _ in throw oversizeRefusal() }
+
+        await BugReportOutbox.flush()
+
+        XCTAssertEqual(BugReportDraftStore.pendingCount, 0, "it leaves the queue")
+        let rejection = try! XCTUnwrap(BugReportRejectionStore.mostRecent)
+        XCTAssertEqual(rejection.statusCode, 422)
+        XCTAssertEqual(rejection.description, "way too long",
+                       "the rejection list holds the only surviving copy of the text")
+        XCTAssertTrue(rejection.reason.contains("5,000"),
+                      "the reason names the actual limit, not a status number")
+    }
+
+    func testATransientFailureStillStopsTheFlushAndKeepsEverything() async {
+        // Both directions (gotcha #43): draining past a refusal must NOT turn
+        // into draining past a dead network, which would burn the whole queue
+        // against a server that is merely down.
+        BugReportDraftStore.saveDraft(submission(description: "first"))
+        BugReportDraftStore.saveDraft(submission(description: "second"))
+
+        var attempts = 0
+        BugReportOutbox.send = { _ in
+            attempts += 1
+            throw APIError.httpError(statusCode: 503, body: nil)
+        }
+
+        let result = await BugReportOutbox.flush()
+
+        XCTAssertEqual(attempts, 1, "a 5xx is 'not now' — stop and keep the queue")
+        XCTAssertEqual(result.rejected, 0)
+        XCTAssertEqual(result.remaining, 2)
+        XCTAssertEqual(BugReportRejectionStore.count, 0, "nothing was refused")
+    }
+
+    func testRateLimitAndTimeoutAreTransientDespiteBeing4xx() {
+        // 429 and 408 are the two 4xx that mean "come back", not "never".
+        // Treating them as refusals would throw away a perfectly good report
+        // during exactly the burst #1909 documented.
+        XCTAssertFalse(BugReportOutbox.isPermanentRefusal(
+            APIError.httpError(statusCode: 429, body: nil)))
+        XCTAssertFalse(BugReportOutbox.isPermanentRefusal(
+            APIError.httpError(statusCode: 408, body: nil)))
+        XCTAssertFalse(BugReportOutbox.isPermanentRefusal(
+            APIError.networkError(underlying: NSError(domain: "t", code: 1))))
+        XCTAssertFalse(BugReportOutbox.isPermanentRefusal(
+            APIError.httpError(statusCode: 500, body: nil)))
+
+        XCTAssertTrue(BugReportOutbox.isPermanentRefusal(
+            APIError.httpError(statusCode: 422, body: nil)))
+        XCTAssertTrue(BugReportOutbox.isPermanentRefusal(
+            APIError.httpError(statusCode: 413, body: nil)))
+    }
+
+    func testTheSameReportRefusedTwiceKeepsOneEntry() async {
+        BugReportDraftStore.saveDraft(submission(description: "too long"))
+        BugReportOutbox.send = { [self] _ in throw oversizeRefusal() }
+        await BugReportOutbox.flush()
+
+        // Re-filed identically after the user taps Submit again.
+        BugReportDraftStore.saveDraft(submission(description: "too long"))
+        await BugReportOutbox.flush()
+
+        XCTAssertEqual(BugReportRejectionStore.count, 1)
+    }
+
+    func testDiscardingARejectionRequiresAnExplicitId() async {
+        BugReportDraftStore.saveDraft(submission(description: "too long"))
+        BugReportOutbox.send = { [self] _ in throw oversizeRefusal() }
+        await BugReportOutbox.flush()
+
+        let rejection = try! XCTUnwrap(BugReportRejectionStore.mostRecent)
+        BugReportRejectionStore.discard(id: "some-other-report")
+        XCTAssertEqual(BugReportRejectionStore.count, 1, "only the named one goes")
+
+        BugReportRejectionStore.discard(id: rejection.id)
+        XCTAssertEqual(BugReportRejectionStore.count, 0)
+    }
+
+    // MARK: - The cap no longer loses a report in silence
+
+    func testCapEvictionIsCounted() {
+        for i in 1...(BugReportDraftStore.maxDrafts + 2) {
+            BugReportDraftStore.saveDraft(submission(description: "report \(i)"))
+        }
+
+        XCTAssertEqual(BugReportDraftStore.pendingCount, BugReportDraftStore.maxDrafts)
+        XCTAssertEqual(BugReportDraftStore.droppedCount, 2,
+                       "an eviction the user is never told about is a lost report")
+    }
+
+    func testStayingUnderTheCapDropsNothing() {
+        for i in 1...BugReportDraftStore.maxDrafts {
+            BugReportDraftStore.saveDraft(submission(description: "report \(i)"))
+        }
+        XCTAssertEqual(BugReportDraftStore.droppedCount, 0)
+    }
+
+    // MARK: - Clock independence (gotcha #44, sweep class)
+
+    func testRejectionStoreBehavesIdenticallyAtEveryPointInAYear() {
+        // Gotcha #44's sweep, in Swift. Every date-carrying store here is
+        // checked against 12 monthly instants plus a far-future one, because a
+        // fixture that only ever runs "now" hides anything that branches on the
+        // clock — and three of this repo's four instances of that bug were
+        // found only by sweeping.
+        let base = Date(timeIntervalSince1970: 1_770_000_000)
+        var instants = (0..<12).map { base.addingTimeInterval(Double($0) * 30 * 86_400) }
+        instants.append(base.addingTimeInterval(400 * 86_400))
+
+        for (index, instant) in instants.enumerated() {
+            BugReportRejectionStore.clear()
+            BugReportReceiptStore.clear()
+
+            let rejection = BugReportRejectionStore.record(
+                draftKey: "k", description: "text", page: "Discover",
+                statusCode: 422, rejectedAt: instant
+            )
+            let receipt = BugReportReceiptStore.record(
+                id: 1, description: "text", page: "Discover", submittedAt: instant
+            )
+
+            XCTAssertEqual(rejection.rejectedAt, instant, "instant \(index) round-trips")
+            XCTAssertEqual(receipt.submittedAt, instant, "instant \(index) round-trips")
+            XCTAssertEqual(BugReportRejectionStore.count, 1,
+                           "storage must not depend on when it happened (instant \(index))")
+            XCTAssertEqual(rejection.reason,
+                           BugReportRejectionStore.reason(forStatus: 422),
+                           "the sentence shown must not vary with the clock (instant \(index))")
+        }
+    }
+
+    // MARK: - The client-side limit that prevents the refusal at source
+
+    func testClientLimitMatchesTheServerValidator() {
+        // If these drift, the app either blocks reports the server would have
+        // accepted, or mints the poison report this whole section is about.
+        // Server: `check_description_length` rejects `len(v) > 5000`.
+        XCTAssertEqual(BugReportView.maxDescriptionLength, 5_000)
+        XCTAssertLessThan(
+            BugReportView.descriptionSoftWarningLength,
+            BugReportView.maxDescriptionLength,
+            "the counter has to appear BEFORE the limit to be any use"
+        )
     }
 
     // MARK: - The shake entry point

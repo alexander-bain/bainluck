@@ -33,6 +33,16 @@ struct NativeFuturesDiscoverCard: View {
     var onContextExpand: (() -> Void)? = nil
     var onContextCollapse: (() -> Void)? = nil
 
+    /// #1772 — the hero percentage, ramped.
+    ///
+    /// `Font.system(size:weight:)` does NOT scale with Dynamic Type, and there
+    /// is no `system(size:relativeTo:)` for it — that variant only exists on
+    /// `Font.custom`. `@ScaledMetric` is the real mechanism: 52pt at the
+    /// default setting, scaled by the same curve `.largeTitle` uses, so the
+    /// numeral and the `.headline` name beneath it move together instead of
+    /// drifting apart.
+    @ScaledMetric(relativeTo: .largeTitle) private var heroNumeralSize: CGFloat = 52
+
     private var gradient: (Color, Color) {
         sportCategoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? sportDefaultGradient
     }
@@ -76,7 +86,7 @@ struct NativeFuturesDiscoverCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text(categoryLabel)
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.78))
                             .padding(.horizontal, 8)
@@ -87,7 +97,7 @@ struct NativeFuturesDiscoverCard: View {
 
                         if isTrending(data) {
                             Label("Trending", systemImage: "flame.fill")
-                                .font(.system(size: 9, weight: .heavy))
+                                .font(.caption2.weight(.heavy))
                                 .foregroundStyle(.orange)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -99,9 +109,27 @@ struct NativeFuturesDiscoverCard: View {
 
                     if let leader {
                         HStack(alignment: .bottom, spacing: 10) {
-                            Text("\(Int((leaderProbability * 100).rounded()))%")
-                                .font(.system(size: 52, weight: .black).monospacedDigit())
+                            // #1772: the hero numeral and the name below it used
+                            // to use DIFFERENT metrics — 52pt frozen over a
+                            // `.headline` that scales. Raise the text size and
+                            // only the name grew, the bottom-aligned HStack got
+                            // tight, and `minimumScaleFactor` compressed the
+                            // string until the trailing `%` read as a subscript.
+                            // That is the glyph in Alex's report #143.
+                            //
+                            // Both now ramp together. `%` is split into its own
+                            // Text because it is not a digit: inside a
+                            // `monospacedDigit()` run it kept proportional
+                            // metrics against black-weight numerals, so it was
+                            // the first glyph to lose width under compression.
+                            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                                Text("\(Int((leaderProbability * 100).rounded()))")
+                                    .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
+                                Text("%")
+                                    .font(.system(size: heroNumeralSize, weight: .black))
+                            }
                                 .minimumScaleFactor(0.76)
+                                .lineLimit(1)
                                 .foregroundStyle(.white)
                                 .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
 
@@ -148,14 +176,14 @@ struct NativeFuturesDiscoverCard: View {
                 HStack(spacing: 8) {
                     if let sources = data.sources, sources.count > 1 {
                         Text(sources.map { $0.uppercased() }.joined(separator: " + "))
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Color.blue.opacity(0.10), in: Capsule())
                     } else if let src = data.source {
                         Text(src.uppercased())
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -175,7 +203,7 @@ struct NativeFuturesDiscoverCard: View {
                         message: Text(shareMessage)
                     ) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
                             .padding(8)
                             .background(Color.secondary.opacity(0.10), in: Circle())
@@ -213,6 +241,9 @@ struct NativeFuturesDiscoverCard: View {
     private var heroBackground: some View {
         LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
             .overlay(
+                // Decorative watermark at 0.10 opacity — never read, so it is
+                // deliberately NOT ramped (#1772). The census guard exempts
+                // exactly this line.
                 Text(categoryEmoji(data.llmSportCategory))
                     .font(.system(size: 96))
                     .opacity(0.10)
