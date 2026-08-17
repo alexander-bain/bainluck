@@ -259,21 +259,35 @@ def test_no_score_is_mutated_by_the_composition() -> None:
 
 
 def test_route_uses_ONE_composition_and_gates_only_the_games_prefix() -> None:
-    source = inspect.getsource(get_feed)
+    # #1923 moved the composition out of `get_feed` and into the shared display
+    # chain, so the served path is now TWO functions. The contract is unchanged
+    # and the assertion is widened rather than relaxed: exactly one
+    # prefix-writing call across the whole served path. Anchoring on `get_feed`
+    # alone would now pass while a second `compose_lead` sat in the chain.
+    served_path = inspect.getsource(get_feed) + inspect.getsource(
+        feed_module.apply_discover_display_chain
+    )
 
     # Exactly one prefix-writing CALL. Two is the defect, whatever their order.
     # Matched with the open paren so the route's own explanation of the C185
     # defect — which necessarily names both retired passes — is not a false hit.
-    assert source.count("compose_lead(") == 1
-    assert "_pin_marquee_items(" not in source
-    assert "lead_with_tonights_games(" not in source
+    assert served_path.count("compose_lead(") == 1
+    assert "_pin_marquee_items(" not in served_path
+    assert "lead_with_tonights_games(" not in served_path
 
-    call_at = source.index("feed_items = compose_lead(")
-    call_block = source[call_at : call_at + 400]
-    assert "include_tonights_games=(" in call_block
-    assert "not my_teams_only" in call_block
-    assert "event_pct is not None and event_pct < 0.3" in call_block
-    assert "or not include_events" in call_block
+    chain = inspect.getsource(feed_module.apply_discover_display_chain)
+    call_at = chain.index("items = compose_lead(")
+    call_block = chain[call_at : call_at + 200]
+    assert "include_tonights_games=discover_mode" in call_block
+
+    # The gate is now a named variable, so pin its DEFINITION — otherwise the
+    # three clauses could be quietly widened and this test would still pass on
+    # the name alone.
+    gate_at = chain.index("discover_mode = ")
+    gate_block = chain[gate_at : gate_at + 200]
+    assert "not my_teams_only" in gate_block
+    assert "event_pct is not None and event_pct < 0.3" in gate_block
+    assert "or not include_events" in gate_block
 
 
 def test_the_displacing_pass_is_gone_from_the_route_module() -> None:

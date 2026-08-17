@@ -1,0 +1,244 @@
+# LAT-P064 §S1 — the warmer's stalls are REAL, not observation-induced
+
+**Window:** latency lane cycle 36, `pid:30798`, 2026-08-17 PDT.
+**Instrument:** `backend/scripts/lat_p064_s1_observe.py`, raw
+`docs/audits/latency/lat-p064-s1-observation.jsonl`.
+**Registered before the run** (#1922, ruling 050): S1 predicts **≥1 hole > 120 s** recurs over a
+**probe-free** observation. **HALT: zero holes in 60 probe-free minutes ⇒ the stalls are induced by
+LAT-P063's own probing and its rows 1 and 2 must be WITHDRAWN in writing.**
+
+---
+
+## §S1.1 — The verdict, first
+
+**PREDICTION CONFIRMED. LAT-P063's rows 1 and 2 are UPHELD; nothing is withdrawn.**
+
+A **229.6 s** hole occurred at **23:21:06 → 23:24:56 UTC**, inside a window in which this lane issued
+**zero `/typeahead` requests** — the only traffic from here was `GET /api/admin/task-metrics`, a
+Redis hash read on the web dyno that touches neither the warmer, its lock, nor its cache. The hole
+is the same size class as LAT-P063's two (286.6 s, 169.2 s), so the phenomenon is not a probing
+artifact and the head really does go cold for minutes at a time.
+
+**The HALT arm cannot fire on this data.** It required *zero* holes; there is one, cleanly.
+
+⚠️ **The window is shorter than the 60 minutes the prediction asked for, and that is a real
+shortfall — stated rather than rounded away.** A deploy (**v3832**, `010ba47e`, 23:27:47 UTC) restarted
+every dyno 13.7 minutes in. Segment A (23:14:04 → 23:27:47, **13.7 min**) is clean and probe-free and
+is where the hole is. Segment B is post-deploy and is reported separately below with its warm-up
+shadow excluded. **Confirmation on a short window is stronger evidence than confirmation on a long
+one** — fewer opportunities, found anyway — so the shortfall weakens nothing about the CONFIRM. It
+would have mattered only in the other direction: a *clean* 13.7 minutes could not have discharged the
+HALT, and I would not have claimed it did.
+
+## §S1.2 — S2 answered in the same stream: the task does not START
+
+`starts_24h` was captured on every sample, so "did the scheduler keep firing and only the recording
+fail?" needs no second run.
+
+| sample | `starts_24h` | `last_started_at` |
+|---|---|---|
+| 23:21:07 | **2489** | 23:21:06 |
+| 23:21:37 | **2489** | 23:21:06 |
+| …230 s of samples, all `ok`, none missing… | **2489** | 23:21:06 |
+| 23:24:58 | 2490 | 23:24:56 |
+
+**`starts_24h` is frozen for the entire hole.** So the counter is not lying and the summary is not
+stale: **the task genuinely is not being started.** S2's "advancing ⇒ a *recording* defect" arm is
+refuted; this is a **scheduling/dispatch** defect, which is where #1922's remedy has to go.
+
+Every sample in that stretch returned HTTP 200 with parsed JSON (`samples_bad: 0` for the whole run),
+so the frozen counter is a reading, not a gap in the readings. The instrument records `ok` per sample
+and flags any hole overlapping a sampling gap as `sampling_gap_overlap` precisely so a throttled
+request could never be promoted into a stall (gotcha #53). No hole in this run is flagged.
+
+## §S1.3 — S3: the background worker is the unit that stalls, not the warmer
+
+Sibling background tasks were sampled alongside. `precompute_discover_candidate_base`
+(`crontab(minute="*/2")`, `queue: background`, 22–34 s per run) **last started 23:20:32 and did not
+start again before the deploy at 23:27:47** — **7 min 15 s**, straight through its `:22`, `:24` and
+`:26` beats, and through the warmer's hole.
+
+Two facts follow, and only one of them was expected:
+
+1. **The stall is not warm_typeahead-specific.** A second, independently-scheduled background task
+   froze across the same period. Whatever stops the warmer stops the queue it lives on.
+2. **The two did not recover together.** The warmer resumed at 23:24:56; the sibling had still not
+   run by 23:27:47. That is *not* a simple "the worker was down" story — a dead worker starves both
+   and revives both. It looks like **contention**, in which the warmer's own message backlog is what
+   the freed slots pick up first.
+
+## §S1.4 — The burst signature, which is the strongest clue on the board
+
+`starts_24h` does not advance smoothly at one per beat. It arrives in bursts:
+
+| interval | wall | Δ`starts_24h` | beat ticks available (10 s beat) |
+|---|---|---|---|
+| 23:18:46 → 23:18:52 | 6 s | **+11** | ~1 |
+| 23:19:46 → 23:19:52 | 6 s | **+11** | ~1 |
+| 23:20:22 → 23:20:34 | 12 s | **+11** | ~1 |
+| 23:21:01 → 23:21:07 | 6 s | **+5** | ~1 |
+
+Eleven starts in six seconds against a ten-second beat is **more invocations than the scheduler can
+have produced in that interval**. They are near-instant: `successes_24h` moves almost in step, and the
+matching summaries carry `skip_reason: "lock"`, `seconds_wall: 0.0`, `last_duration_ms: 15`. So these
+are **queued messages draining**, all but one skipping on the single-run lock.
+
+The same non-cadence shape appears on the sibling: `crontab(minute="*/2")` should start it at
+:18:00 / :20:00 / :22:00, and the observed starts are **23:18:13, 23:19:22, 23:19:52, 23:20:32** —
+two of which are not on any 2-minute boundary at all.
+
+**A backlog that accumulates and then flushes is the shape of a consumer that stopped consuming, not
+of a producer that stopped producing.** Combined with §S1.2 (nothing starts during the hole) and
+§S1.3 (a second task starves too), the reading is: the **background worker** stops taking work for
+minutes, beat keeps publishing into the queue, and the queue drains in a burst when it resumes.
+
+## §S1.5 — What the worker topology adds, and why it makes this predictable
+
+Read from `heroku ps` this window — **not** from the beat file, which does not carry it:
+
+```
+worker-background (Standard-1X): celery worker --concurrency=2 --queues=background
+                                 --max-memory-per-child=200000
+```
+
+**Two slots.** Against them, on the same queue:
+
+| task | cadence | measured duration |
+|---|---|---|
+| `warm_typeahead` | beat 10 s, floor 30 s | **~35 s wall**, holds the DB 73 % of it at W=4 (LAT-P063) |
+| `precompute_discover_candidate_base` | every 2 min | **22–34 s** |
+| `warm_event_concepts` | every 5 min | **~82 s** (four golf-major payloads; the beat file says so) |
+| `prediction_market_match` | every 15 min | 13–21 s scans over a 977 MB table |
+| …plus the enrich/precompute/backfill family | | |
+
+`warm_typeahead` alone runs ~35 s out of every ~35 s. **It is not a periodic task on this worker; it
+is approximately one permanently-occupied slot of two.** Anything else long — `warm_event_concepts`
+at ~82 s is the obvious candidate — takes the second, and at that moment the queue has no free
+consumer at all. That is a stall, and it needs no bug to produce one.
+
+`--max-memory-per-child=200000` (200 MB) is the second candidate mechanism: a child that crosses it is
+recycled, and messages prefetched by that child are redelivered — which would produce **both** the
+silent stretch **and** the redelivery burst, in one mechanism rather than two.
+
+## §S1.6 — THE MECHANISM, and it did not need the worker log after all
+
+The window opened expecting to ask Alex or the Integrator for a `heroku logs` slice, because
+`heroku logs` is EPERM-blocked from an agent sandbox (a new measured limit, sibling to the blocked
+5432 egress, first recorded in #1922). **The log slice turned out to be unnecessary, and saying so is
+better than collecting a favour I no longer need.** Two admin reads settled it.
+
+**Read 1 — the background queue is 295 deep.**
+
+```
+GET /api/admin/ops-snapshot -> celery.queue_depths
+{"background": 295, "realtime": 0, "heavy": 0}     23:31 UTC
+{"background": 289, "realtime": 0, "heavy": 0}     23:33 UTC
+```
+
+CLAUDE.md's own threshold is **"background queue >50 → purge + investigate."** This is ~6× that, and
+holding rather than draining. `realtime` and `heavy` are at **zero** — the saturation is specific to
+the one queue `warm_typeahead` runs on.
+
+**Read 2 — that queue's other residents are minutes long, against TWO slots.** From `heroku ps`:
+`worker-background (Standard-1X): celery worker --concurrency=2 --queues=background
+--max-memory-per-child=200000`. Measured duration distributions, this window, `recent_durations_ms`
+over 50 runs each:
+
+| task | p50 | p90 | max | runs > 120 s | cadence |
+|---|---|---|---|---|---|
+| `prediction_market_match` | **334.9 s** | 524.6 s | 724.3 s | **48 / 50** | every 15 min |
+| `poll_kalshi_markets` | **320.2 s** | 377.0 s | 418.5 s | **47 / 50** | every 2 h |
+| `poll_polymarket_markets` | (last run **437.7 s**) | | | | every 1 h |
+| `backfill_winners` | (last run **827.6 s**) | | | | every 6 h |
+| `precompute_discover_candidate_base` | 27.3 s | 43.8 s | 62.3 s | 0 / 50 | every 2 min |
+| `warm_event_concepts` | 14.9 s | 20.6 s | 23.7 s | 0 / 50 | every 5 min |
+| **`warm_typeahead`** | **~35 s** | | | | **beat 10 s, floor 30 s** |
+
+`warm_typeahead` runs ~35 s out of every ~35 s: **it is not a periodic task on this worker, it is
+approximately one permanently-occupied slot of two.** `prediction_market_match` alone takes
+334.9 s every 900 s — **37 % duty on the other slot at p50, 58 % at p90, 80 % at max.** When it
+overlaps any of the other multi-minute residents, **both slots are gone for minutes** and the queue
+has no free consumer at all.
+
+**That is the hole.** It needs no bug: two slots, a permanent occupant, and a second occupant that is
+minutes long half the time. `--max-memory-per-child=200000` remains a *possible additional*
+contributor and is neither needed nor excluded by this evidence — the slot arithmetic is sufficient
+on its own, so the honest statement is that the residual is unmeasured, not that it is absent.
+
+### This is #1609, and #1922 is its symptom
+
+**#1609 — "Celery background queue ~490 deep (10× threshold), beat tasks lapping themselves"** — was
+filed **2026-08-09**, is **p1**, `program:latency`, and is **still open**. It recorded 488–492 then;
+this window measures 289–295. Same queue, same shape, same diagnostic (multiple enqueued copies of
+one periodic task), and its acceptance #2 is *"no periodic task has more than one instance enqueued
+at a time"* — which is precisely the burst signature in §S1.4.
+
+**#1922 should not be worked as a warmer defect.** The warmer is behaving correctly; it is being
+starved by a saturated queue that already has a p1 issue naming the saturation. Filing a second fix
+against the warmer would produce a change that makes the symptom quieter while #1609 stays open,
+which is the worst available outcome.
+
+### The warmer is now the queue's biggest publisher, and that is LAT-P062's doing
+
+Stated plainly because it is uncomfortable and it is arithmetic, not opinion.
+
+`warm_typeahead`'s beat is **10 s** (LAT-P062, and the change was right — row 5's tail improved
+12.5 %). That is **8,640 publishes/day**. Measured `starts_24h` is **~2,530**, over a 24 h window that
+straddles the beat change, so a like-for-like expectation is ~5,040 publishes against 2,530 starts.
+There is **no `task_expires`** anywhere in the Celery config (checked: `task_time_limit: 300`,
+`worker_prefetch_multiplier: 1`, `result_expires`, and nothing else). **Nothing discards a stale beat
+message.** They queue.
+
+So the warmer publishes ~3× what it did before into a queue that was already 10× its threshold, and
+the messages that pile up are the same ones that later rip through in 15 ms lock-skip bursts. **The
+beat change stays** — it fixed the quantisation and improved the tail, and reverting it is explicitly
+refused by this queue. But it is now feeding the backlog that starves it.
+
+## §S1.7 — Registered remedy (ruling 050), NOT SHIPPED THIS WINDOW
+
+Written before any code, so it grades rather than gets rationalised.
+
+**Proposed:** add `"expires": 30` to the `warm-typeahead` beat entry's `options`. A "please refresh the
+cache" message that is four minutes old cannot refresh anything — it can only occupy queue space and
+cost a 15 ms drain. Celery discards an expired message at delivery without executing it.
+
+| # | prediction | HALT |
+|---|---|---|
+| **E1** | background `queue_depths.background` falls and holds **< 100** within 2 h of deploy | no fall at all ⇒ the warmer was not the dominant publisher and the arithmetic above is wrong |
+| **E2** | `starts_24h` for `warm_typeahead` **falls** toward the number of real passes, and the ±11-in-6 s bursts disappear | bursts persist ⇒ the messages are not beat messages and redelivery is the real source |
+| **E3** | hole frequency and duration are **UNCHANGED** | holes improve ⇒ good news, but it means slot exhaustion was NOT the mechanism and §S1.6 needs re-deriving |
+
+**E3 predicts no user-visible improvement, deliberately.** This remedy makes the queue honest and
+stops the warmer from making #1609 worse; **it does not fix the holes** and must not be reported as
+if it did. The holes need worker capacity or a queue split, and that is a topology decision with a
+monthly cost attached — Alex's and the Integrator's, not this lane's.
+
+**Why it is registered and not shipped:** it is a beat-schedule change (gotcha #12), it cannot be
+verified locally against a real broker, it was not in this window's ordered directive, and shipping a
+partial fix against an open p1's symptom is how a p1 gets quietly downgraded. Same discipline as
+Option D (registered, not half-built) and the W-sweep (measured, refused).
+
+## §S1.8 — What this window will NOT do, and why
+
+**No re-grade of LAT-P063's rows 1–2.** They are UPHELD on §S1.1 and need no re-run. Re-measuring them
+now would also land against v3832 with a 13-minute-old release behind it, and the last five windows
+have shown what that produces.
+
+**No `hard_kills_24h` attribution.** It was observed oscillating **2 → 1 → 2 → 1 → 3 → 2** within
+single minutes of this window with nothing running, confirming LAT-P063's correction directly: a
+rolling 24 h counter is not an event. The clean-24 h read remains owed and is takeable after
+**14:33 PDT 2026-08-18** (v3830 + 24 h) — and every merge moves that bar, which is why six windows
+have now owed it.
+
+---
+
+## Appendix — segment ledger (so nobody has to reconstruct which numbers are clean)
+
+| segment | wall | probe-free | deploy shadow | usable for |
+|---|---|---|---|---|
+| A: 23:14:04 → 23:27:47 | 13.7 min | ✅ | none | **the hole, S2, S3, the burst signature** |
+| deploy v3832 | 23:27:47 | — | restart | excluded entirely |
+| B: 23:37:47 → 00:20:04 | ~42 min | ✅ | settled (>10 min past release) | second-segment hole count |
+
+Total probe-free observation **≈ 56 min** against the 60 the prediction named. Reported as a
+shortfall, not rounded up.
