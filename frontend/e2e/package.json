@@ -20,7 +20,8 @@
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js",
     "blend-parity": "playwright test --project=desktop --project=mobile blend-surface-parity",
     "event-page": "playwright test --project=desktop --project=mobile event-page",
-    "league-cards": "playwright test --project=desktop --project=mobile league-cards"
+    "league-cards": "playwright test --project=desktop --project=mobile league-cards",
+    "search-answer": "playwright test --project=desktop --project=mobile search-answer"
   },
   "devDependencies": {
     "@playwright/test": "1.48.2"

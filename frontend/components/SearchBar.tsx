@@ -441,6 +441,10 @@ export default function SearchBar({
               onMouseEnter={() => setSelectedIndex(idx)}
               role="option"
               aria-selected={idx === selectedIndex}
+              // UX-P086: same marks as the phone overlay, so one browser pack
+              // grades both surfaces and the desktop side stays the control.
+              data-testid="search-suggestion"
+              data-suggestion-type={suggestion.type}
               className={`w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors ${
                 idx === selectedIndex ? "bg-surface-elevated" : "hover:bg-surface-elevated/50"
               }`}
@@ -482,7 +486,7 @@ export default function SearchBar({
                     // as space allows, with a movement arrow when |Δ24h| ≥ 2pts.
                     const { leader, second, movement } = sub.answer;
                     return (
-                      <div className="text-xs text-text-secondary truncate">
+                      <div className="text-xs text-text-secondary truncate" data-testid="search-answer">
                         <span className="text-text-primary font-medium">
                           {leader.name} {toPercent(leader.probability)}%
                         </span>

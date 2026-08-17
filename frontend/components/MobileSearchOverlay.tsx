@@ -232,6 +232,12 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
           <button
             key={`${s.type}-${s.text}-${idx}`}
             onClick={() => selectSuggestion(s)}
+            // UX-P086: marked so the browser rail can photograph THIS surface.
+            // #1620's fix shipped in cycle 35 and was never rendered-proven on a
+            // phone; the desktop and phone rows are now marked identically so one
+            // pack grades both and neither can drift unphotographed again.
+            data-testid="search-suggestion"
+            data-suggestion-type={s.type}
             className="w-full text-left px-5 py-3 flex items-center gap-3 hover:bg-surface-elevated/50 active:bg-surface-elevated"
           >
             <span className="text-base flex-shrink-0 w-6 text-center">
@@ -252,7 +258,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
                   // #993 Slice A, finally on the phone: lead with the answer.
                   const { leader, second, movement } = sub.answer;
                   return (
-                    <div className="text-xs text-text-secondary truncate mt-0.5">
+                    <div className="text-xs text-text-secondary truncate mt-0.5" data-testid="search-answer">
                       <span className="text-text-primary font-medium">
                         {leader.name} {toPercent(leader.probability)}%
                       </span>
