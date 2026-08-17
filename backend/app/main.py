@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
+from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -225,6 +225,7 @@ app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin La
 app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"])
 app.include_router(admin_cockpit.router, prefix="/api", tags=["Admin Cockpit"])
 app.include_router(admin_file_issue.router, prefix="/api", tags=["Admin File Issue"])
+app.include_router(admin_cohort.router, prefix="/api", tags=["Admin Cohort"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(user.router, prefix="/api/me", tags=["User"])
 app.include_router(user.shared_router, prefix="/api/shared", tags=["Shared"])
