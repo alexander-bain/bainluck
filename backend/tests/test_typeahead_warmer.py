@@ -23,7 +23,9 @@ miss still builds inline in the route, so turning the task off makes
 """
 
 import asyncio
+import math
 import re
+import time
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -88,11 +90,18 @@ def _patch_session_factory(made: list):
 
 
 class _FakeRedis:
-    def __init__(self, members=(), lock_taken=False, ttls=None):
+    def __init__(self, members=(), lock_taken=False, ttls=None, last_pass_start=None):
         self._members = list(members)
         self.store = {}
         if lock_taken:
             self.store[warmer._LOCK_KEY] = b"1"
+        # LAT-P062: the min-period floor reads the previous pass's start stamp.
+        # Seeded as a REAL stored value rather than special-cased in `get`, so
+        # the round-trip through `set`/`get` (including the bytes encoding) is
+        # the thing under test — ruling 072: a fake that agrees with the code
+        # instead of with Redis proves only that the code agrees with itself.
+        if last_pass_start is not None:
+            self.store[warmer._LAST_PASS_START_KEY] = repr(float(last_pass_start)).encode()
         self.deleted = []
         self.ttls = dict(ttls or {})
 
@@ -106,6 +115,9 @@ class _FakeRedis:
         self.store[key] = value.encode() if isinstance(value, str) else value
         return True
 
+    def get(self, key):
+        return self.store.get(key)
+
     def delete(self, key):
         self.deleted.append(key)
         self.store.pop(key, None)
@@ -117,6 +129,20 @@ class _FakeRedis:
         if key in self.ttls:
             return self.ttls[key]
         return -2 if key not in self.store else -1
+
+
+def _ok_route():
+    """A `/typeahead` stand-in that succeeds and asserts nothing.
+
+    The debug-flag contract has its own dedicated tests above; these cadence
+    tests need a route that simply returns, so a failure here is unambiguously
+    about the cadence and not about the route stub.
+    """
+
+    async def _route(*, q, debug_evidence, debug_timing, db):
+        return {"suggestions": [], "query": q}
+
+    return _route
 
 
 def _patch_redis(redis):
@@ -859,30 +885,258 @@ class TestTheWidthIsBoundedByTheEngineItUses:
             f"{pool + overflow} connections one task engine can supply"
         )
 
-    def test_a_pass_at_this_width_fits_inside_the_beat(self):
-        """The arithmetic the whole queue is about, pinned as a test.
+    def test_the_pass_period_the_beat_can_produce_fits_under_the_ttl(self):
+        """The arithmetic the whole queue is about, pinned against MEASUREMENT.
 
-        Worst measured serial pass 58.9s (2026-08-17, 50 invocations). The beat
-        is 30s. If a pass cannot clear the beat the run-lock skips the next one
-        and the repaint period doubles — which is hole 1, restated.
+        ⚠️ This test replaces `test_a_pass_at_this_width_fits_inside_the_beat`,
+        which asserted `58.9 / WARM_CONCURRENCY < 30 * 0.75` and PASSED — on a
+        projection production then refuted. The projected 14.7s pass measured
+        **27.4-38.1s** on v3829, because concurrency 4 bought 1.2x wall while
+        inflating per-query time 3.3x. A test that grades a PROJECTION cannot
+        notice that (ruling 074: a predicate over work performed, not a proxy).
+
+        What actually has to hold is a property of the PERIOD, not the pass:
+        an entry must be rebuilt before its 45s TTL runs out. With a run-lock
+        serialising beats, the period quantises to `beat * ceil(wall / beat)`.
         """
-        worst_serial_s = 58.9
-        beat_s = 30
-        projected = worst_serial_s / warmer.WARM_CONCURRENCY
-        assert projected < beat_s * 0.75, (
-            f"a worst-case pass projects to {projected:.1f}s at width "
-            f"{warmer.WARM_CONCURRENCY}, which does not clear the {beat_s}s "
-            f"beat with margin"
+        ttl_s = 45
+        beat_s = _warm_typeahead_beat_seconds()
+        # The measured envelope on v3829, not a projection.
+        for wall_s in (27.4, 30.9, 36.2, 38.1):
+            period = beat_s * math.ceil(wall_s / beat_s)
+            assert period < ttl_s, (
+                f"a {wall_s}s pass on a {beat_s}s beat quantises to a {period}s "
+                f"period, which is not under the {ttl_s}s TTL — the head goes "
+                f"cold between passes and the duty cycle cannot reach 100%"
+            )
+
+    def test_the_floor_bounds_how_hard_the_warmer_may_hit_the_database(self):
+        """The other half of the beat change, and the reason it is safe.
+
+        A short beat removes dead time AND removes the only bound on how often
+        the warmer runs. The warmer already holds the database ~73% of
+        wall-clock at concurrency 4; the floor is what stops a shorter beat
+        turning that into ~100%.
+        """
+        assert warmer.MIN_PASS_PERIOD_SECONDS >= _warm_typeahead_beat_seconds(), (
+            "a floor below the beat bounds nothing — the beat would already be "
+            "the tighter constraint"
+        )
+        assert warmer.MIN_PASS_PERIOD_SECONDS < 45, (
+            "a floor at or above the 45s TTL would itself guarantee the head "
+            "goes cold, which is the bug, not the guard"
         )
 
-    def test_refresh_ahead_covers_a_whole_beat(self):
-        """Below one beat, entries expire between passes and the fix is void."""
-        beat_s = 30
-        assert warmer.REFRESH_AHEAD_SECONDS >= beat_s, (
-            f"REFRESH_AHEAD_SECONDS={warmer.REFRESH_AHEAD_SECONDS} is under the "
-            f"{beat_s}s beat, so an entry can expire before the next pass"
+    def test_refresh_ahead_is_inert_at_every_reachable_period_and_that_is_stated(self):
+        """The constant is kept, its old justification is not.
+
+        ⚠️ Replaces `test_refresh_ahead_covers_a_whole_beat`, which asserted
+        `REFRESH_AHEAD_SECONDS >= beat` on the reasoning that the gap an entry
+        must survive is "the pass PERIOD (the 30s beat)". Production measured
+        the period at **42.5-51.7s**, not 30s.
+
+        A threshold T can skip an entry only when `T < 45 - P`. At every period
+        this scheduler can produce, that bound is far below 35 — so `fresh: 0`
+        (observed on 5 of 5 production passes) is arithmetic, not a tuning miss.
+        The test pins the SAFE direction: T must stay high enough that the skip
+        never fires, because a skip would drop an entry with seconds of life
+        left and let it expire before the next pass.
+        """
+        ttl_s = 45
+        beat_s = _warm_typeahead_beat_seconds()
+        largest_useful_t = ttl_s - max(beat_s, warmer.MIN_PASS_PERIOD_SECONDS)
+        assert warmer.REFRESH_AHEAD_SECONDS > largest_useful_t, (
+            f"REFRESH_AHEAD_SECONDS={warmer.REFRESH_AHEAD_SECONDS} has dropped "
+            f"to where the `fresh` skip can fire (largest useful T is "
+            f"{largest_useful_t}s). A skip at that margin drops an entry that "
+            f"then expires before the next pass — it buys pass time by "
+            f"re-opening the cold window refresh-ahead exists to close."
         )
-        assert warmer.REFRESH_AHEAD_SECONDS < 45, (
-            "at or above the 45s TTL every entry is rebuilt unconditionally and "
-            "the `fresh` skip can never fire"
+        assert warmer.REFRESH_AHEAD_SECONDS < ttl_s, (
+            "at or above the 45s TTL the threshold stops being a threshold; "
+            "keep it a bound that COULD fire if the period ever collapsed"
         )
+
+
+def _warm_typeahead_beat_seconds() -> float:
+    """The live beat for `warm-typeahead`, read from the schedule, never quoted.
+
+    Reading it makes the tests above fail when somebody retunes the cadence
+    without re-deriving the period arithmetic — which is exactly how the old
+    30s-beat assertions came to be asserting a refuted model.
+    """
+    from app.tasks import celery_app
+
+    schedule = celery_app.conf.beat_schedule["warm-typeahead"]["schedule"]
+    return float(getattr(schedule, "total_seconds", lambda: schedule)())
+
+
+class TestThePassCanStateItsOwnCadence:
+    """LAT-P062: `period_s`, `expired`, and the floor.
+
+    Every duty-cycle grade on #1866 so far has been INFERRED — from a client
+    probe, or reconstructed from a 50-entry duration histogram. Ruling 074 says
+    an instrument reports the work it did; "how long since I last did it" and
+    "was the entry already dead when I got there" are the two halves of that,
+    and neither was answerable from the summary.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_floor_suppresses_a_pass_that_is_too_soon(self):
+        redis = _FakeRedis(last_pass_start=time.time() - 5)
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert summary["terminal"] == "skipped"
+        assert summary["skip_reason"] == "min_period"
+        assert summary["period_s"] == pytest.approx(5, abs=1.5)
+        assert classify_summary(summary) != "green"
+
+    @pytest.mark.asyncio
+    async def test_the_floor_releases_the_lock_it_took_to_check(self):
+        """Checked UNDER the lock, so two beats cannot both pass the check.
+
+        The cost of that is a lock this pass must hand back. If it does not,
+        `_LOCK_TTL_SECONDS` (120s) wedges the warmer for four times the floor —
+        a guard against too-frequent passes turning into no passes at all.
+        """
+        redis = _FakeRedis(last_pass_start=time.time() - 1)
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session):
+            await warmer._warm_typeahead(queries=["red sox"])
+
+        assert warmer._LOCK_KEY in redis.deleted, (
+            "the floor took the run-lock to check itself and never released it"
+        )
+        assert warmer._LOCK_KEY not in redis.store
+
+    @pytest.mark.asyncio
+    async def test_a_pass_past_the_floor_runs_and_reports_its_period(self):
+        redis = _FakeRedis(last_pass_start=time.time() - 120)
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session), \
+                patch("app.routes.events.typeahead_search", _ok_route()):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert summary["terminal"] == "complete"
+        assert summary["skip_reason"] is None
+        assert summary["period_s"] == pytest.approx(120, abs=2)
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_previous_start_does_not_suppress_the_pass(self):
+        """Fails toward DOING the work, like every other Redis read here.
+
+        A fresh Redis, a restarted dyno and an unreadable key all land here. If
+        any of them suppressed the pass, a Redis blip would stop the warmer
+        while it reported a tidy `skipped` — the shape this whole file exists
+        to refuse.
+        """
+        redis = _FakeRedis()  # no last_pass_start at all
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session), \
+                patch("app.routes.events.typeahead_search", _ok_route()):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert summary["terminal"] == "complete"
+        assert summary["period_s"] is None, (
+            "an unknown period must be None, never 0.0 — zero reads as two "
+            "passes starting at the same instant (gotcha #53)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_future_previous_start_does_not_suppress_the_pass(self):
+        """Clock skew between dynos must not be able to wedge the warmer.
+
+        A future stamp makes `now - previous` negative, and a negative delta
+        compares as `< MIN_PASS_PERIOD_SECONDS` — so the naive form suppresses
+        every pass, forever, and reports `skipped` while doing it. This is the
+        ahead-drift failure the lane-lock protocol already ruled on, relocated
+        into a scheduler.
+        """
+        redis = _FakeRedis(last_pass_start=time.time() + 3600)
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session), \
+                patch("app.routes.events.typeahead_search", _ok_route()):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert summary["terminal"] == "complete", (
+            "a future last-pass stamp suppressed the pass — the floor treats a "
+            "negative gap as 'a pass just ran'"
+        )
+        assert summary["period_s"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_pass_records_its_start_so_the_next_one_can_measure_it(self):
+        redis = _FakeRedis()
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session), \
+                patch("app.routes.events.typeahead_search", _ok_route()):
+            await warmer._warm_typeahead(queries=["red sox"])
+
+        assert warmer._LAST_PASS_START_KEY in redis.store, (
+            "a pass that does not record its start makes every subsequent "
+            "`period_s` unknown, and the floor unenforceable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_expired_counts_only_a_missing_key_not_every_non_positive_ttl(self):
+        """-2, -1 and None are three different answers (gotcha #53).
+
+        Only -2 means "the entry was gone and a user typing this prefix paid a
+        database read". -1 is a key with no expiry (a bug to fix, not a cold
+        entry) and None is Redis declining to answer. A `<= 0` test would fold
+        all three into the one number a duty-cycle grade rests on.
+        """
+        redis = _FakeRedis(
+            ttls={
+                warmer._CACHE_KEY_PREFIX + "gone": warmer._TTL_NO_KEY,
+                warmer._CACHE_KEY_PREFIX + "immortal": warmer._TTL_NO_EXPIRY,
+                warmer._CACHE_KEY_PREFIX + "stale": 4,
+            }
+        )
+        session = _FakeSession()
+
+        with _patch_redis(redis), _patch_session(session), \
+                patch("app.routes.events.typeahead_search", _ok_route()):
+            summary = await warmer._warm_typeahead(
+                queries=["gone", "immortal", "stale"]
+            )
+
+        assert summary["rebuilt"] == 3, "all three are under the threshold"
+        assert summary["fresh"] == 0
+        assert summary["expired"] == 1, (
+            f"expected exactly the -2 entry to count as expired, got "
+            f"{summary['expired']} — -1 and a live-but-stale TTL are not "
+            f"'the head was cold'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_two_skips_are_distinguishable(self):
+        """A wedged lock and a too-tight floor are opposite diagnoses.
+
+        Both produce `terminal: skipped` with every count at zero. Without
+        `skip_reason` the summaries are byte-identical, and the operator reading
+        "the warmer skipped 40 of 50 beats" cannot tell whether a pass is stuck
+        or whether the floor is doing its job.
+        """
+        lock_held = _FakeRedis(lock_taken=True)
+        too_soon = _FakeRedis(last_pass_start=time.time() - 1)
+        session = _FakeSession()
+
+        with _patch_redis(lock_held), _patch_session(session):
+            a = await warmer._warm_typeahead(queries=["red sox"])
+        with _patch_redis(too_soon), _patch_session(session):
+            b = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert a["terminal"] == b["terminal"] == "skipped"
+        assert a["skip_reason"] == "lock"
+        assert b["skip_reason"] == "min_period"
+        assert a["skip_reason"] != b["skip_reason"]
+        assert set(a) == set(b), "the two skip shapes must not drift apart"

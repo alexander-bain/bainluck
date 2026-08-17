@@ -188,7 +188,70 @@ WARM_CONCURRENCY = 4
 #: it enables is a safety valve for a shortened beat, not an optimisation for
 #: today's one — at a 30s beat against a 45s TTL an entry always has ~15s left
 #: when a pass reaches it, so today it rebuilds every time, by design.
+#:
+#: ⚠️ LAT-P062 CORRECTION — the bound above is REFUTED, and the value is kept
+#: anyway. The paragraph reasons from "that gap is the pass PERIOD (the 30s
+#: beat)". It is not. The measured period is **42.5–51.7s** across two
+#: production reads, because a ~31s pass does not fit inside a 30s beat and the
+#: run-lock quantises the period up. So the arithmetic that matters is:
+#:
+#:     an entry's remaining TTL when a pass reaches it is  45 - P
+#:     a threshold T skips it only when                    T < 45 - P
+#:
+#:     P = 42.5s  ->  the largest useful T is 2.5s
+#:     P = 51.7s  ->  nothing is ever fresh; no T works at all
+#:
+#: `fresh: 0` on 5 of 5 observed production passes is therefore not a tuning
+#: miss, it is the only reachable value — and LOWERING T into that band would be
+#: actively harmful, because skipping an entry with 2.5s of life left means it
+#: expires before the next pass arrives. A staleness-aware skip would buy pass
+#: time by re-opening the cold window refresh-ahead exists to close.
+#:
+#: The value stays at 35 because the value is not what is wrong: it is inert, it
+#: is inert in the SAFE direction (always rebuild), and it becomes live again if
+#: the period ever drops below 10s. What was wrong is the justification, and a
+#: constant whose stated justification is refuted is the trap ruling 076 banks.
+#: The period is fixed by `MIN_PASS_PERIOD_SECONDS` and the beat, not by T.
 REFRESH_AHEAD_SECONDS = 35
+
+#: The pass may not START more often than this. A floor, not a cadence.
+#:
+#: LAT-P062 shortened the beat from 30s to 10s to stop the run-lock quantising
+#: the pass period up to ~60s (a ~31s pass cannot fit inside a 30s beat, so
+#: every other beat skipped and the period straddled the 45s TTL — measured duty
+#: cycle 17.5 of 24). A shorter beat removes dead time, but on its own it also
+#: removes the only thing that was bounding how often the warmer may run.
+#:
+#: That bound matters because the warmer is not free: it holds the database for
+#: 73% of wall-clock at concurrency 4 — roughly 2.9 backend-equivalents against
+#: a production baseline of ~3 ACTIVE backends. Halving the period would double
+#: that. So the floor keeps the load increase bounded and STATED: period moves
+#: from a 42.5–51.7s mean to ~40s (+6% to +29% warmer DB work), and can never go
+#: below 30s (+42%, the worst case) however fast a pass becomes.
+#:
+#: 30s rather than 45s because the entry has to be rebuilt strictly BEFORE it
+#: expires, not as it expires; and rather than 35s because the floor should not
+#: bind at today's ~31s wall — it is a rail, not the mechanism.
+MIN_PASS_PERIOD_SECONDS = 30
+
+#: Unix timestamp of the last pass START. Read to enforce the floor and to
+#: report `period_s`, which is the number the 45s TTL actually has to be
+#: compared against — and which, until LAT-P062, the task could not state about
+#: itself. Every duty-cycle grade so far has been inferred from a client probe
+#: or reconstructed from a duration histogram; ruling 074 asks an instrument to
+#: report the work it did, and "how long since I last did it" is half of that.
+#:
+#: Deliberately a plain key rather than part of the run-lock: the lock's whole
+#: contract is that it disappears (`_LOCK_TTL_SECONDS`, so a killed worker
+#: cannot wedge the warmer), and a value that must OUTLIVE the pass cannot share
+#: a key whose job is to expire during it.
+_LAST_PASS_START_KEY = "bainluck:typeahead_warmer:last_pass_start"
+
+#: Long enough that a pass gap is still readable after a worker outage, short
+#: enough that a stale value cannot suppress passes forever. A missing value
+#: means "no floor" — fails toward DOING the work, like every other Redis read
+#: in this module.
+_LAST_PASS_START_TTL_SECONDS = 3600
 
 #: `/typeahead`'s response-cache key, mirrored from `routes/events.py`. Mirrored
 #: rather than imported for the same reason `_MAX_QUERY_CHARS` is — importing
@@ -445,6 +508,47 @@ def _release_run_lock() -> None:
         logger.warning("typeahead_warmer: lock release failed", exc_info=True)
 
 
+def _seconds_since_last_pass(now: float) -> float | None:
+    """Seconds since the previous pass STARTED, or None if that is unknown.
+
+    None is returned for every reason a caller might otherwise conflate: no
+    previous pass recorded, Redis unreadable, or a stored value that will not
+    parse. All three mean the same thing to the floor — **do not suppress** —
+    and none of them may be reported as a period of 0.0, which would read as
+    two passes starting simultaneously (gotcha #53).
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(_LAST_PASS_START_KEY)
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: last-pass read failed", exc_info=True)
+        return None
+    if raw is None:
+        return None
+    try:
+        previous = float(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+    except (TypeError, ValueError):
+        logger.warning("typeahead_warmer: last-pass value unparseable: %r", raw)
+        return None
+    delta = now - previous
+    # A negative delta means the clock moved backwards or another dyno wrote a
+    # future timestamp. Refuse it rather than let it read as "a pass just ran",
+    # which would suppress this one.
+    return delta if delta >= 0 else None
+
+
+def _record_pass_start(now: float) -> None:
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().set(
+            _LAST_PASS_START_KEY, repr(now), ex=_LAST_PASS_START_TTL_SECONDS
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: last-pass write failed", exc_info=True)
+
+
 async def _safe_rollback(session) -> None:
     try:
         await session.rollback()
@@ -497,14 +601,16 @@ async def _warm_typeahead(
     """
     from app.tasks.base import get_task_session
 
-    if not _acquire_run_lock():
-        # A skip is an accounted-for outcome, not a success and not damage: the
-        # head IS being warmed, by the run that holds the lock. It gets its own
-        # terminal value so a warmer that skips every single beat — a wedged
-        # lock — cannot hide inside `complete`.
-        logger.info("typeahead_warmer: another run holds the lock, skipping")
+    def _no_work(skip_reason: str, period_s: float | None) -> dict:
+        # A skip is an accounted-for outcome, not a success and not damage. It
+        # gets a NO_WORK terminal so a warmer that skips every single beat
+        # cannot hide inside `complete`, and it carries `skip_reason` so the two
+        # skips are never conflated: "another pass is running" and "the previous
+        # pass was too recent" are opposite diagnoses. A wedged lock and a
+        # too-tight floor would otherwise produce the identical summary.
         return {
             "terminal": "skipped",
+            "skip_reason": skip_reason,
             "completed": 0,
             "total": 0,
             "head_source": "none",
@@ -521,8 +627,32 @@ async def _warm_typeahead(
             "concurrency": max(1, int(concurrency)),
             "rebuilt": 0,
             "fresh": 0,
+            "expired": 0,
             "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
+            # `None`, not 0.0, when the gap is unknown. Zero would read as two
+            # passes starting at the same instant.
+            "period_s": None if period_s is None else round(period_s, 3),
+            "min_period_s": MIN_PASS_PERIOD_SECONDS,
         }
+
+    if not _acquire_run_lock():
+        logger.info("typeahead_warmer: another run holds the lock, skipping")
+        return _no_work("lock", None)
+
+    # THE FLOOR, checked under the lock so two beats cannot both pass it. Read
+    # after acquiring rather than before, because the check-then-act would
+    # otherwise race exactly the way the lock exists to prevent.
+    now = time.time()
+    since_last = _seconds_since_last_pass(now)
+    if since_last is not None and since_last < MIN_PASS_PERIOD_SECONDS:
+        _release_run_lock()
+        logger.info(
+            "typeahead_warmer: last pass started %.1fs ago (floor %ds), skipping",
+            since_last, MIN_PASS_PERIOD_SECONDS,
+        )
+        return _no_work("min_period", since_last)
+
+    _record_pass_start(now)
 
     width = max(1, int(concurrency))
     wall_started = time.monotonic()
@@ -551,6 +681,10 @@ async def _warm_typeahead(
 
     rebuilt = [r for r in results if r["reason"] == "warmed"]
     fresh = [r for r in results if r["reason"] == "fresh"]
+    # `_TTL_NO_KEY` exactly, never "falsy" and never "<= 0": `None` means Redis
+    # did not answer and `_TTL_NO_EXPIRY` (-1) means a key with no expiry. All
+    # three are non-positive and all three mean different things.
+    expired = [r for r in results if r.get("ttl_before") == _TTL_NO_KEY]
 
     seconds = [r["seconds"] for r in results]
     summary = {
@@ -578,13 +712,35 @@ async def _warm_typeahead(
         # forty warm ones back, and 12 of every 50 beats were the latter.
         "rebuilt": len(rebuilt),
         "fresh": len(fresh),
+        # `None` on a pass that RAN. Present on both shapes because the summary
+        # contract is that a consumer never branches on `terminal` to know
+        # whether a field exists — `test_a_skipped_run_carries_the_same_keys_as_
+        # a_real_one` is that contract, and it caught this field the first time
+        # it was added to only one shape.
+        "skip_reason": None,
+        # LAT-P062. `rebuilt` cannot distinguish an entry that was ALIVE-but-
+        # stale from one that was ALREADY DEAD when the pass reached it, and
+        # those are opposite diagnoses: the first says the threshold fired as
+        # designed, the second says the head was cold and a user typing that
+        # prefix paid a database read. Every duty-cycle grade so far has had to
+        # infer this from a client probe. `expired` is the pass answering it
+        # directly — `ttl_before == -2`, i.e. no key at all.
+        "expired": len(expired),
         "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
+        # The number the 45s TTL actually has to be compared against, and the
+        # one the task could not previously state about itself. `None` when the
+        # previous start is unknown (first pass after a restart, or Redis
+        # unreadable) — never 0.0, which would read as a zero-length period.
+        "period_s": None if since_last is None else round(since_last, 3),
+        "min_period_s": MIN_PASS_PERIOD_SECONDS,
     }
     logger.info(
-        "typeahead_warmer: %d/%d warmed from %s (%d rebuilt, %d fresh) in %.1fs wall "
-        "/ %.1fs summed at width %d (%d timeouts, %d errors)",
-        len(warmed), len(head), source, len(rebuilt), len(fresh),
+        "typeahead_warmer: %d/%d warmed from %s (%d rebuilt, %d fresh, %d expired) "
+        "in %.1fs wall / %.1fs summed at width %d, %s since last pass "
+        "(%d timeouts, %d errors)",
+        len(warmed), len(head), source, len(rebuilt), len(fresh), len(expired),
         seconds_wall, summary["seconds_total"], width,
+        "unknown" if since_last is None else f"{since_last:.1f}s",
         len(timeouts), len(errors),
     )
     return summary
