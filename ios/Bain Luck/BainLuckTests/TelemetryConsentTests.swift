@@ -169,4 +169,90 @@ final class TelemetryConsentTests: XCTestCase {
         XCTAssertFalse(consent.isGranted)
         XCTAssertTrue(consent.needsChoice)
     }
+
+    // MARK: - #1937 — asked every launch (Alex's field report)
+
+    /// The defect, stated as the launch sequence that produced it.
+    ///
+    /// Swift runs stored-property initializers BEFORE the `init()` body, so
+    /// `Bain_LuckApp`'s `@State ... = TelemetryConsent.shared.needsChoice` was
+    /// evaluated before that same `init()` called `initialize()`. A fresh
+    /// authority that has not been hydrated must therefore answer this question
+    /// from STORAGE, or the prompt reappears forever however correctly the
+    /// choice was saved.
+    func testNeedsChoiceIsFalseBeforeInitializeWhenAChoiceWasSaved() {
+        // Launch 1: the user answers.
+        let first = makeConsent(SpySink())
+        first.initialize()
+        XCTAssertEqual(first.set(.analytics), .saved)
+
+        // Launch 2: a brand-new authority over the SAME storage, asked before
+        // anything hydrates it — exactly the @State seed's moment.
+        let second = makeConsent(SpySink())
+        XCTAssertFalse(
+            second.needsChoice,
+            "the prompt must not reappear on a launch where a choice is already saved")
+    }
+
+    /// The same read, for the OTHER answer. A refusal is a recorded choice too,
+    /// and re-asking someone who declined is the worse half of this bug.
+    func testARecordedRefusalAlsoSuppressesTheAskBeforeInitialize() {
+        let first = makeConsent(SpySink())
+        first.initialize()
+        XCTAssertEqual(first.set(.none), .saved)
+
+        let second = makeConsent(SpySink())
+        XCTAssertFalse(second.needsChoice, "a refusal must never be re-asked")
+        XCTAssertFalse(second.isGranted, "and it must still be honoured")
+    }
+
+    /// The prompt MUST still appear on a genuinely first launch — the fix must
+    /// not suppress the ask, only stop it repeating.
+    func testAFirstLaunchStillAsks() {
+        XCTAssertTrue(makeConsent(SpySink()).needsChoice)
+    }
+
+    /// Reading before hydration must not silently become a grant. Deny-by-default
+    /// is the standing rule, and the pre-initialize window is exactly where a
+    /// mistake here would leak.
+    func testReadingBeforeInitializeNeverGrants() {
+        let first = makeConsent(SpySink())
+        first.initialize()
+        _ = first.set(.all)
+
+        let second = makeConsent(SpySink())
+        _ = second.needsChoice          // the pre-hydration read
+        XCTAssertFalse(
+            second.isGranted,
+            "a stored grant is only in force once initialize() has APPLIED it to the SDKs")
+        let sink = SpySink()
+        let third = TelemetryConsent(defaults: defaults, sink: sink)
+        third.initialize()
+        XCTAssertTrue(third.isGranted)
+        XCTAssertEqual(sink.analyticsEnabled, [true], "and applying it reaches the SDK")
+    }
+
+    /// `storedLevel` must read storage without touching the SDKs — that
+    /// independence is what lets it be called before `FirebaseApp.configure()`.
+    func testStoredLevelTouchesNoSDK() {
+        let first = makeConsent(SpySink())
+        first.initialize()
+        _ = first.set(.analytics)
+
+        let sink = SpySink()
+        let second = TelemetryConsent(defaults: defaults, sink: sink)
+        XCTAssertEqual(second.storedLevel, .analytics)
+        XCTAssertTrue(sink.analyticsEnabled.isEmpty)
+        XCTAssertTrue(sink.crashlyticsEnabled.isEmpty)
+        XCTAssertEqual(sink.resetCount, 0)
+    }
+
+    /// After hydration the in-memory value wins, so a revocation made this
+    /// launch is reflected immediately rather than read back off stale storage.
+    func testAfterInitializeTheInMemoryChoiceGoverns() {
+        let consent = makeConsent(SpySink())
+        consent.initialize()
+        _ = consent.set(.analytics)
+        XCTAssertFalse(consent.needsChoice)
+    }
 }

@@ -114,13 +114,34 @@ describe("ConceptFeedCard (Sports tab) WHAT-HIT", () => {
   }
 
   test("whathit shows a FINAL chip and suppresses the live-framing reason", () => {
+    // #1935: this case now carries a result_summary. It used to pass a bare
+    // `marquee_whathit: true`, which the empty-envelope classifier no longer
+    // admits — a settled card with no winner AND no summary can only print
+    // "see the recap", which is a settled card that cannot say what happened.
+    // The behaviour this test exists for (FINAL chip, live-framing reason
+    // replaced by the settled recap invite) is unchanged and still asserted.
+    const html = renderToStaticMarkup(
+      <FeedCard
+        item={conceptItem({
+          marquee_whathit: true,
+          result_summary: "Decided on the final stage",
+        })}
+      />,
+    );
+    expect(html).toContain("FINAL");
+    // The live-framing reason line is replaced by what actually happened. With a
+    // summary on the payload the card leads with THAT rather than the generic
+    // "see the recap" invite, which is the better of the two settled framings —
+    // the invite is the fallback for a card that has nothing more specific.
+    expect(html).not.toContain("184 riders in the peloton");
+    expect(html).toContain("Decided on the final stage");
+  });
+
+  test("#1935: a whathit concept with NO nameable result renders nothing", () => {
     const html = renderToStaticMarkup(
       <FeedCard item={conceptItem({ marquee_whathit: true })} />,
     );
-    expect(html).toContain("FINAL");
-    // The live-framing reason line is replaced by the settled recap invite.
-    expect(html).not.toContain("184 riders in the peloton");
-    expect(html).toContain("see the recap");
+    expect(html).toBe("");
   });
 
   test("whathit + winner in payload leads with the champion + Won", () => {

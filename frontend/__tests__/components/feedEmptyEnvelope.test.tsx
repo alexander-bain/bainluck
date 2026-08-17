@@ -172,12 +172,41 @@ describe("feedItemSuppressionReason — the envelope matrix", () => {
     expect(feedItemSuppressionReason(settledConcept(), NOW)).toBeNull();
   });
 
-  test("WHAT-HIT concept without a graded winner still renderable (FINAL/recap, #1219)", () => {
+  // #1935 REVERSES this case. It was added for #1219 on the reading that the
+  // "FINAL / see the recap" framing is itself an answer. It is not: with no
+  // winner and no summary, `ConceptCard` renders the name and a "Final result"
+  // chip — a settled card that cannot say what happened, which is the #1486
+  // empty tile with a badge on it. `_resolve_concept_champion` returns null for
+  // an ungradeable crown by design, so this is a normal production shape.
+  test("WHAT-HIT concept with NO nameable result → empty_concept (#1935)", () => {
     const item = {
       type: "concept",
       data: { key: "k", name: "Race", domain: "cycling", status: "completed", marquee_whathit: true },
     } as unknown as FeedItem;
+    expect(feedItemSuppressionReason(item, NOW)).toBe("empty_concept");
+  });
+
+  test("WHAT-HIT concept with only a result_summary → renderable (#1935)", () => {
+    const item = {
+      type: "concept",
+      data: {
+        key: "k", name: "Race", domain: "cycling", status: "completed",
+        marquee_whathit: true, result_summary: "Decided on the final stage",
+      },
+    } as unknown as FeedItem;
     expect(feedItemSuppressionReason(item, NOW)).toBeNull();
+  });
+
+  test("WHAT-HIT tournament with an EMPTY field → empty_tournament (#1935)", () => {
+    // TournamentCard renders its entire hero inside `{leader && ...}` where
+    // `leader = golfers[0]`, so this card was a gradient, two chips and a title.
+    // Native added a matching arm in L2-224 as a parity fix with THIS behaviour;
+    // both surfaces were admitting a card neither could render.
+    const item = {
+      type: "tournament",
+      data: { key: "k", name: "The Open 2026", golfers: [], marquee_whathit: true },
+    } as unknown as FeedItem;
+    expect(feedItemSuppressionReason(item, NOW)).toBe("empty_tournament");
   });
 
   test("navigational collection with a renderable child (bundle) → renderable", () => {

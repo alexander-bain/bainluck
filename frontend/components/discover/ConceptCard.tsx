@@ -101,6 +101,19 @@ export function ConceptCard({
             <div className="mt-1.5 bg-white/20 text-white text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full">
               Final result
             </div>
+            {/* #1935: the summary was only rendered inside the winner branch
+                above, so an ungraded-but-summarised concept printed a title and
+                a "Final result" chip and nothing else. `result_summary` is a
+                real, authoritative answer when the crown could not be graded —
+                the one thing this branch can honestly say. Rendering it here is
+                also what lets BOTH surfaces share one admit rule
+                (`feedItemSuppressionReason`: winner OR summary); without it web
+                would have to encode a narrower rule than native, and a
+                divergence between the two classifiers is the defect class this
+                queue is already closing twice over. */}
+            {resultSummary && (
+              <div className="text-white/80 text-xs mt-1.5">{resultSummary}</div>
+            )}
           </>
         ) : (
           <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg">
