@@ -165,6 +165,36 @@ minutes long half the time. `--max-memory-per-child=200000` remains a *possible 
 contributor and is neither needed nor excluded by this evidence — the slot arithmetic is sufficient
 on its own, so the honest statement is that the residual is unmeasured, not that it is absent.
 
+### A SECOND hole, caught with occupancy coverage running — the slots are directly observable
+
+A second hole occurred at **23:33:45 → 23:35:51 (126.4 s)**, this time with the S3 sampler already
+running across 18 background tasks at 10 s. The slot ledger, read from their `last_started_at` and
+`last_duration_ms`:
+
+| task | started | duration | occupies until |
+|---|---|---|---|
+| `warm_typeahead` (last pass before the hole) | 23:33:45 | 32.1 s | 23:34:17 |
+| `warm_event_concepts` | 23:33:46 | 14.7 s | 23:34:01 |
+| **`precompute_admin_link_rate`** | **23:34:52** | **120.8 s** | **~23:36:53** |
+| `precompute_discover_candidate_base` | 23:35:11 | 26.8 s | ~23:35:38 |
+| **`warm_typeahead` resumes** | **23:35:51** | | |
+
+**The warmer resumes 13 seconds after `precompute_discover_candidate_base` releases the second slot —
+while `precompute_admin_link_rate` is still holding the first.** That is not an inference from
+aggregate duty cycles; it is the queue handing a freed slot to the waiting task, watched directly.
+`starts_24h` held flat at **2577** across the whole hole and moved to 2578 on resumption.
+
+⚠️ **This hole sits 6 minutes after the v3832 release — inside the 10-minute warm-up shadow this
+document declared**, so it is **NOT counted in the clean hole rate**; §S1.1's 229.6 s hole is the one
+that carries the verdict. It is reported here because the *mechanism* it exhibits is not
+shadow-sensitive: a 120.8 s task holding a slot is a 120.8 s task holding a slot, and the resumption
+timing is exact either way. Using a shadowed observation for the mechanism while excluding it from
+the rate is the distinction — stated, so nobody has to guess which way it was counted.
+
+`precompute_admin_link_rate` earns its own line: **84.6 s then 120.8 s** on consecutive runs. It is
+an *admin cache warmer* — nothing user-facing waits on it — and it holds one slot of two for two
+minutes at a time.
+
 ### This is #1609, and #1922 is its symptom
 
 **#1609 — "Celery background queue ~490 deep (10× threshold), beat tasks lapping themselves"** — was
