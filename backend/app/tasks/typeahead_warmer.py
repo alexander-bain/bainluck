@@ -149,10 +149,26 @@ PER_QUERY_TIMEOUT_SECONDS = 10
 #: How many head queries are warmed at once. FOUR, and the number is bounded by
 #: measurement in both directions rather than picked for roundness:
 #:
-#: * FROM BELOW, by the worst pass rather than the median. The pass must clear
-#:   the 30s beat or the run-lock skips the next one, and the worst measured
-#:   pass was 58.9s. W=2 gives 29.5s — inside the beat by half a second, which
-#:   is no margin at all. W=4 gives 14.7s worst / ~9.5s median, a 2x margin.
+#: * FROM BELOW, by the pass wall against the 45s response TTL. ⚠️ This bullet
+#:   USED to divide a 58.9s serial pass by W and claim "W=2 gives 29.5s, W=4
+#:   gives 14.7s worst / ~9.5s median". Those were PROJECTIONS and production
+#:   refuted them: the real W=4 pass measures 29-43s, never 14.7s (LAT-P062).
+#:   Replaced with the MEASURED paired sweep (LAT-P063, 9 alternating arms, all
+#:   40 entries force-rebuilt so the arms do equal work — see
+#:   `docs/audits/latency/lat-p063-wsweep-graded.md`):
+#:
+#:       W       wall/rebuild     DB-work/rebuild     vs W=4 wall
+#:       1          2.880              2.880            1.91x
+#:       2          1.869              3.730            1.24x
+#:       4          1.506              5.752            1.00x
+#:
+#:   The binding constraint is `period ~= max(seconds_wall, MIN_PASS_PERIOD)`
+#:   against the 45s TTL. Live W=4 wall is 32s median (29.4-42.6s range), so
+#:   W=2 scales to ~40s median with an upper tail OVER 45s, and W=1 to ~62s.
+#:   LAT-P063 measured, 20 passes for 20, that EVERY pass with period > 45s
+#:   lost cached entries (up to 39 of 40) and no pass under 45s lost any.
+#:   Crossing the TTL does not degrade the head gradually; it empties it.
+#:   So W=4 is not padding — it is the margin between the pass and the TTL.
 #: * FROM ABOVE, by what the concurrency does to the thing this task exists to
 #:   protect. These are 40 pg_trgm reads against a 1 GiB `shared_buffers`
 #:   (measured: `shared_buffers` = 131072 * 8kB), and production runs at 3
@@ -166,11 +182,32 @@ PER_QUERY_TIMEOUT_SECONDS = 10
 #:   spare; a larger W would silently serialise on pool checkout and the
 #:   concurrency would be a lie the summary could not see.
 #:
-#: Why concurrency is safe here at all, rather than merely tolerable: LAT-P056
-#: measured 95-98% of a cold query's time as `Shared I/O Read Time`. These are
-#: I/O-WAIT bound, which is the one case where concurrency overlaps waiting
-#: instead of multiplying work — and they contend for the buffer pool LESS than
-#: four different queries would, because they want the same index pages.
+#: 🔴 THE JUSTIFICATION THAT USED TO SIT HERE IS REFUTED. IT READ:
+#:
+#:     "LAT-P056 measured 95-98% of a cold query's time as `Shared I/O Read
+#:      Time`. These are I/O-WAIT bound, which is the one case where
+#:      concurrency overlaps waiting instead of multiplying work — and they
+#:      contend for the buffer pool LESS than four different queries would,
+#:      because they want the same index pages."
+#:
+#: Work that merely overlaps waiting does not get 1.9x more EXPENSIVE PER UNIT
+#: as the fan-out widens, and it does. LAT-P063's sweep measures DB work per
+#: rebuild rising 2.880 -> 3.730 -> 5.752 across W = 1 -> 2 -> 4: concurrency
+#: multiplies work here, it does not overlap it. 40 concurrent trigram scans
+#: against a 1 GiB `shared_buffers` contend for the very pages they are all
+#: trying to keep resident — they want the same index pages, and that is why
+#: they evict each other rather than why they cost less.
+#:
+#: THE VALUE SURVIVES ITS OWN REFUTATION, for a different reason than the one
+#: it was chosen for: W=4 costs 1.54x the DB work of W=2 and buys a 1.24x
+#: shorter pass, and the pass wall is what has to clear the 45s TTL. We are
+#: buying TTL margin with database work, knowingly. Narrowing was measured and
+#: REFUSED this window (ruling 050 prediction registered first); the ship rule,
+#: the numbers and the refusal are in `lat-p063-wsweep-graded.md`.
+#:
+#: This cost is a workaround, not a design. The 688.6 MB trigram surface it
+#: exists to hold resident is 67% of the buffer pool; Option D replaces it with
+#: ~140 MB, after which this whole constant should stop being load-bearing.
 WARM_CONCURRENCY = 4
 
 #: Rebuild a cached entry when it has less than this much life left, instead of
