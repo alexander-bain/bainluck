@@ -373,3 +373,58 @@ class TestUnreachedExistingArithmetic:
 
     def test_never_negative(self):
         assert self._unreached_existing(100, 2000, 99999) == 0
+
+
+# ==========================================================================
+# Queue 359 (#1586): the counter that actually explains the capture gap
+# ==========================================================================
+
+
+class TestMarketlessEventTelemetry:
+    """13,513 events fetched, 356 processed — and no counter said why.
+
+    The scan report's `unreached_existing` reads as "the loop ran out of time
+    before the tail", and it is an artifact: it is derived as
+    ``n_existing - max(0, processed - n_new)``, i.e. it treats
+    ``events_processed`` as a POSITION in the fetched list. It is not a
+    position — it is only incremented after a market upsert succeeds, and the
+    loop's first statement is ``if not event.markets: continue``. Because
+    ``processed`` (356) is always far below ``n_new`` (7,198), the clamp makes
+    ``unreached_existing`` identically equal to ``events_existing`` on every
+    beat, which is exactly what all 24 beats in the production ring show.
+    ``loop_deadline_hit`` is False on all 24 — the loop reached everything.
+
+    So the real number is how many fetched events carry no markets at all, and
+    these tests keep it recorded.
+    """
+
+    def _source(self):
+        import inspect
+
+        from app.services.kalshi_api import KalshiAPIService
+
+        return inspect.getsource(KalshiAPIService._fetch_all_events_unfiltered)
+
+    def test_marketless_events_are_counted(self):
+        src = self._source()
+        assert '_tel["events_without_markets"]' in src
+        assert "if not e.markets" in src
+
+    def test_the_backfill_records_whether_it_ran_at_all(self):
+        """A step that never executes and a step with nothing to do return the
+        same silence (gotcha #53). One of them is a defect."""
+        src = self._source()
+        assert '_tel["market_backfill_candidates"]' in src
+        assert '_tel["market_backfill_skipped_past_deadline"]' in src
+        assert '_tel["market_backfill_filled"]' in src
+
+    def test_a_skipped_backfill_is_loud(self):
+        src = self._source()
+        skipped = src.index("market_backfill_skipped_past_deadline")
+        assert "logger.warning" in src[skipped:skipped + 900]
+
+    def test_the_count_is_retaken_after_the_backfill_runs(self):
+        """Reporting the pre-backfill number would credit the backfill with
+        work it did not do."""
+        src = self._source()
+        assert src.count('_tel["events_without_markets"] = sum(') == 2

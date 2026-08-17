@@ -89,6 +89,8 @@ import time
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
 
+from app.utils import sentry_budget
+
 logger = logging.getLogger(__name__)
 
 
@@ -337,9 +339,44 @@ THROTTLE_WINDOW_S = 86400
 #: incarnations a day a genuinely high-frequency class is still plainly visible
 #: fleet-wide. What IS lost is repeat-within-one-process detail, which is the
 #: cheapest information in the system to give up.
-BACKSTOP_PER_WINDOW = 1
+#:
+#: **#1894 / C-CERT-SENTRY-R3 finding 1: this is no longer a typed number.** It is
+#: SOLVED from the quota by ``app/utils/sentry_budget.py`` — the largest cap whose
+#: complete priced cost (census replay + novel-signature reserve + the watchdog
+#: fail-open ceiling that the old model asserted beside itself instead of inside
+#: itself) fits ``quota / days-in-this-cycle`` with the 12% floor taken off.
+#:
+#: You cannot set this above affordance because you do not set it. When nothing
+#: is affordable the solve returns 0 and this floors at ``MINIMUM_VIABLE_CAP``
+#: — deliberately, because muting the fleet to fit a bill re-breaks codex finding
+#: (b) and inverts the purpose of the instrument. That state is reported, not
+#: absorbed: see ``BUDGET_VERDICT`` below and the CRITICAL log beside it.
+BACKSTOP_PER_WINDOW = sentry_budget.effective_backstop_per_window()
 BACKSTOP_WINDOW_S = 86400
 _MAX_TRACKED_SIGNATURES = 512
+
+#: The full arithmetic as a readable dict, computed once at import. Carried into
+#: the exported counters so an operator reading the discard rate also sees the
+#: budget it is being spent against — a rate without its budget is the same
+#: uninterpretable number the old log line was.
+BUDGET_VERDICT = sentry_budget.budget_verdict()
+
+if sentry_budget.BUDGET_OVERCOMMITTED:
+    # The "loudly" half of "impossible or loudly impossible". Not an exception:
+    # refusing to boot the API because Sentry's plan is one tier too small would
+    # be a monitoring system taking production down to protect its own bill.
+    logger.critical(
+        "sentry_budget OVERCOMMITTED: policy prices %.2f/day against %.2f/day "
+        "affordable (quota %d over a %d-day cycle); shortfall %.2f/day; a "
+        "monthly quota of >=%d closes it at cap %d",
+        BUDGET_VERDICT["priced_per_day"],
+        BUDGET_VERDICT["affordable_per_day"],
+        BUDGET_VERDICT["quota_per_month"],
+        BUDGET_VERDICT["cycle_days"],
+        BUDGET_VERDICT["shortfall_per_day"],
+        BUDGET_VERDICT["required_monthly_quota"],
+        BUDGET_VERDICT["backstop_per_window"],
+    )
 
 
 class _SignatureThrottle:
@@ -545,6 +582,93 @@ SITE_AGNOSTIC_EXC_NAMES = frozenset({
 })
 
 
+#: Event ``type`` values that are NOT errors and must never be judged by an
+#: error-volume policy (#1894).
+#:
+#: ``sentry_sdk/client.py:872-875`` excludes only ``type == "transaction"`` from
+#: ``before_send``. Everything else arrives here, including Celery Beat cron
+#: check-ins — which ``CeleryIntegration(monitor_beat_tasks=True)``
+#: (``app/tasks/__init__.py:617``) emits once per due-task dispatch via
+#: ``sentry_sdk/integrations/celery/beat.py:152``.
+#:
+#: Two independent reasons either of which is sufficient:
+#:
+#: 1. A check-in is monitoring, not an error. Throttling it does not save error
+#:    quota; it silently disables Sentry Crons for every beat task.
+#: 2. ``client.py:883`` records a ``before_send`` drop as
+#:    ``data_category="error"`` — **hardcoded, whatever the event actually was**.
+#:    So dropping a check-in does not merely fail to help the error budget, it
+#:    CORRUPTS the metric the budget is enforced against. Measured 2026-08-14..16:
+#:    18,761 / 19,202 / 19,066 "errors" per day that were not errors.
+NON_ERROR_EVENT_TYPES = frozenset({"check_in", "log", "metric", "feedback", "profile"})
+
+#: Low-cardinality identity field per event type, for events that carry no
+#: exception and no frames. ``check_in_id`` is deliberately NOT used: it is a
+#: fresh uuid per event, so keying on it would give every check-in its own
+#: signature and defeat throttling in the opposite direction.
+_TYPE_DISCRIMINATORS = {"check_in": "monitor_slug", "transaction": "transaction"}
+
+#: What the signature is when the event supplied nothing to identify it with.
+#: A distinct, NAMED value rather than a coincidence of empty strings, because
+#: the whole #1894 defect was an absence wearing the costume of an identity.
+UNIDENTIFIED_SIGNATURE = "unidentified|?|?"
+
+_VARIABLE_TOKEN_RE = re.compile(r"\b(?:0x)?[0-9a-f]{6,}\b|\d+", re.IGNORECASE)
+
+
+def _message_shape(text: str) -> str:
+    """A message with its variable parts collapsed, so repeats group.
+
+    Messages carry hostnames, pids, row ids and hour-values, which is exactly how
+    one condition ends up spending a whole month's quota as a thousand distinct
+    issues (the reason :func:`event_signature` prefers the failure site). When
+    the message is the ONLY identity an event has, it still must not be used raw.
+    """
+    return _VARIABLE_TOKEN_RE.sub("#", text)[:120].strip()
+
+
+def _structural_identity(event: dict[str, Any]) -> str:
+    """Identity for an event with no exception, no frames, no culprit, no transaction.
+
+    **This is the general form of the #1894 defect.** The old signature was
+    ``f"{exc_name or 'unknown'}|{where}|{site}"`` with every part independently
+    able to be unknown, so any event shape that supplies none of them collapsed
+    to one string — and ``BACKSTOP_PER_WINDOW`` then destroyed all but the first
+    per process per day. Cron check-ins were the instance that got measured; the
+    defect is that the collapse is silent and shape-agnostic, so the next event
+    class to arrive without a stack inherits the same fate.
+
+    The fix is a fallback that keeps descending instead of giving up: the event's
+    declared ``type``, then a bounded per-type discriminator, then the shape of
+    its message, and only then an explicitly NAMED unidentified bucket that the
+    counters report rather than silently absorb.
+    """
+    event = event or {}
+    etype = str(event.get("type") or "event")
+
+    field = _TYPE_DISCRIMINATORS.get(etype)
+    if field:
+        value = event.get(field)
+        if value:
+            return f"type:{etype}|{field}:{value}"
+
+    for key in ("monitor_slug", "logger", "server_name"):
+        value = event.get(key)
+        if value:
+            return f"type:{etype}|{key}:{value}"
+
+    text = _message_text(event)
+    if text:
+        return f"type:{etype}|msg:{_message_shape(text)}"
+
+    return UNIDENTIFIED_SIGNATURE
+
+
+def is_non_error_event(event: dict[str, Any]) -> bool:
+    """True when this event is not an error and the policy must not judge it."""
+    return str((event or {}).get("type") or "") in NON_ERROR_EVENT_TYPES
+
+
 def event_signature(event: dict[str, Any], exc_name: str, hint: dict[str, Any] | None = None) -> str:
     """``class | where | failure-site`` — the throttling key.
 
@@ -566,7 +690,13 @@ def event_signature(event: dict[str, Any], exc_name: str, hint: dict[str, Any] |
         parts = [str(p) for p in fingerprint if p and str(p) != "{{ default }}"]
         site = "fp:" + "|".join(parts) if parts else "signal"
         return f"{exc_name}|{where}|{site}"
-    return f"{exc_name or 'unknown'}|{where}|{_failure_site(event, hint)}"
+    site = _failure_site(event, hint)
+    # #1894: when class, transaction AND failure site are all absent, the old
+    # code emitted "unknown|?|?" — one bucket for every unidentifiable event in
+    # the process. Descend into the event's own shape instead of collapsing.
+    if not exc_name and where == "?" and site == "?":
+        return _structural_identity(event)
+    return f"{exc_name or 'unknown'}|{where}|{site}"
 
 
 # =============================================================================
@@ -618,8 +748,26 @@ class SentryVolumeFilter:
     def __init__(self) -> None:
         self._throttle = _SignatureThrottle()
         self._lock = threading.Lock()
-        self.counts = {"passed": 0, "dropped": 0, "throttled": 0, "backstopped": 0}
-        self._last_log = 0.0
+        #: ``not_error`` and ``unidentified`` are new in #1894 and both exist to
+        #: make a previously silent path countable. ``not_error`` is the cron /
+        #: telemetry passthrough; ``unidentified`` is every event the signature
+        #: fallback still could not name, which is the early warning that a new
+        #: event shape has arrived and needs a discriminator.
+        self.counts = {
+            "passed": 0,
+            "dropped": 0,
+            "throttled": 0,
+            "backstopped": 0,
+            "not_error": 0,
+            "unidentified": 0,
+        }
+        self._started_at = time.monotonic()
+        # Start the 60s clock NOW rather than at 0.0. With 0.0 the first event a
+        # process ever sees fires the summary immediately — which in a test run
+        # that builds hundreds of filter instances means hundreds of Redis
+        # round-trips, and in production means a burst at every dyno boot.
+        self._last_log = self._started_at
+        self._export_muted_until = 0.0
 
     def _bump(self, key: str) -> None:
         with self._lock:
@@ -638,7 +786,35 @@ class SentryVolumeFilter:
                 return
             self._last_log = now
             snapshot = dict(self.counts)
+            uptime = max(1.0, now - self._started_at)
         logger.info("sentry_filter: %s", snapshot)
+        # #1894 finding 2: a per-process log line is not observability. Alex:
+        # "a discard counter nobody can read is the same defect one level up."
+        # Push the same numbers somewhere a reader who is not this process can
+        # get them (ops-snapshot reads the aggregate).
+        self._export(snapshot, uptime)
+
+    def _export(self, snapshot: dict[str, int], uptime_s: float) -> None:
+        """Best-effort push of this process's counters to the shared census.
+
+        Called at most once a minute, from the 60s log tick — deliberately NOT
+        from every event. gotcha #39 still applies (the biggest error class IS
+        Redis being unreachable, and this code runs on the exception path), so
+        three things bound the exposure: the bounded client's 5s socket timeout,
+        a 5-minute mute after any failure so an outage is paid for once rather
+        than every minute, and a total swallow of the exception. A filter that
+        cannot report its counters must still filter.
+        """
+        if not EXPORT_ENABLED:
+            return
+        now = time.monotonic()
+        if now < self._export_muted_until:
+            return
+        try:
+            export_counts(snapshot, uptime_s)
+        except Exception:
+            self._export_muted_until = now + 300
+            logger.debug("sentry_filter: counter export unavailable", exc_info=True)
 
     def __call__(
         self, event: dict[str, Any], hint: dict[str, Any] | None = None
@@ -652,6 +828,15 @@ class SentryVolumeFilter:
     def _decide(
         self, event: dict[str, Any], hint: dict[str, Any] | None
     ) -> dict[str, Any] | None:
+        # #1894, BEFORE any tier decision: an error-volume policy may only judge
+        # errors. A cron check-in that reaches this function has already been
+        # mis-typed by the SDK (client.py:872-875 excludes only transactions);
+        # dropping it here would disable Sentry Crons AND bill the loss to the
+        # error category (client.py:883 hardcodes data_category="error").
+        if is_non_error_event(event):
+            self._bump("not_error")
+            return event
+
         verdict = classify(event, hint)
         if verdict == VERDICT_DROP:
             self._bump("dropped")
@@ -660,6 +845,11 @@ class SentryVolumeFilter:
 
         exc_name, _, _ = _exc_identity(event, hint)
         signature = event_signature(event, exc_name, hint)
+        if signature == UNIDENTIFIED_SIGNATURE:
+            # Countable, not silent. The old code had no way to distinguish "one
+            # signature repeated 19,000 times" from "19,000 events we could not
+            # tell apart", and those need opposite responses.
+            self._bump("unidentified")
 
         if verdict == VERDICT_THROTTLE:
             if self._throttle.allow(
@@ -719,3 +909,162 @@ def build_before_send() -> Callable[[dict, dict | None], dict | None]:
     """Construct the filter. One instance per process (state is per-process)."""
     install_logger_ignores()
     return SentryVolumeFilter()
+
+
+# =============================================================================
+# Observability — #1894 finding 2, second half
+#
+# Alex, 2026-08-17: "a discard counter nobody can read is the same defect one
+# level up." Before this, the ONLY record of what the filter destroyed was
+# `logger.info("sentry_filter: %s", ...)` on each dyno, once a minute. Finding
+# that number required already suspecting the problem AND reaching `heroku logs`
+# — and in this sandbox the logs CLI is EPERM-blocked, so #1894 had to be read
+# through the Platform API. A counter behind that much friction is not observed.
+#
+# Idiom deliberately copied from `redis_state.get_hard_kill_census()`: each
+# process writes its own self-expiring key; a reader SCANs the prefix and totals
+# them. Self-expiring matters here — ~72 process incarnations a day means a hash
+# of permanent per-process fields would grow without bound and would keep
+# reporting dead processes' discards as if they were current.
+# =============================================================================
+
+#: One key per live process incarnation. TTL slightly over an hour so a dyno that
+#: dies stops contributing within the hour instead of forever.
+FILTER_COUNTS_PREFIX = "bainluck:sentry:filter_counts:"
+FILTER_COUNTS_TTL_S = 3900
+
+#: The census is a PRODUCTION instrument. Off the dyno there is no fleet to
+#: aggregate, and leaving it on made a unit-test run open a Redis connection for
+#: every filter instance the census replay constructs — hundreds of them, each
+#: paying the client's connect retry budget. ``export_counts`` itself stays
+#: callable regardless, so the export path is still directly testable; this gates
+#: only the automatic push from the 60s tick.
+EXPORT_ENABLED = bool(os.getenv("DYNO"))
+
+
+def _process_identity() -> str:
+    """Stable within one process, distinct across incarnations."""
+    import socket
+
+    try:
+        host = socket.gethostname()
+    except Exception:  # pragma: no cover - hostname is never load-bearing
+        host = "unknown"
+    return f"{host}:{os.getpid()}"
+
+
+def export_counts(snapshot: dict[str, int], uptime_s: float) -> None:
+    """Write this process's counters to the shared census. Raises on failure.
+
+    Raising is deliberate — the caller (:meth:`SentryVolumeFilter._export`) owns
+    the swallow and the failure mute, so this function stays testable and a
+    direct caller gets a real error instead of a silent no-op.
+    """
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    payload = dict(snapshot)
+    payload["window_s"] = round(uptime_s, 1)
+    payload["cap"] = BACKSTOP_PER_WINDOW
+    # fast_fail: this runs on the exception path (gotcha #39). A churning
+    # connection must degrade in a fraction of a second, not spend the full
+    # 3-attempt retry budget while an error is waiting to be reported.
+    get_redis_client(fast_fail=True).setex(
+        FILTER_COUNTS_PREFIX + _process_identity(),
+        FILTER_COUNTS_TTL_S,
+        json.dumps(payload),
+    )
+
+
+def _read_filter_counts() -> dict[str, dict]:
+    """``{process identity: counters}`` across every live SDK process."""
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    rows: dict[str, dict] = {}
+    r = get_redis_client()
+    for key in r.keys(f"{FILTER_COUNTS_PREFIX}*"):
+        key_str = key.decode() if isinstance(key, bytes) else key
+        raw = r.get(key_str)
+        if not raw:
+            continue
+        try:
+            rows[key_str[len(FILTER_COUNTS_PREFIX):]] = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
+#: Counter keys that represent an event the filter DESTROYED. ``not_error`` is
+#: excluded on purpose: a passthrough is the opposite of a discard, and folding
+#: it in here would let the cron fix look like the flood it removed.
+_DISCARD_KEYS = ("dropped", "throttled", "backstopped")
+
+
+def summarize_filter_counts(rows: dict[str, dict]) -> dict:
+    """Aggregate per-process counters into one verdict-carrying reading.
+
+    Pure over ``rows`` so it unit-tests without Redis.
+
+    The two things this must never do, both of them #1894's own failure mode:
+    report a rate without the window that makes it a rate, and report an ABSENCE
+    of reporting processes as a healthy zero.
+    """
+    if not rows:
+        return {
+            "status": "no_data",
+            "processes": 0,
+            "discarded": 0,
+            "discarded_per_day": None,
+            "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
+            "over_ceiling": None,
+            "note": "no SDK process has reported counters — an absence, not a zero",
+        }
+
+    totals: dict[str, int] = {}
+    window_s = 0.0
+    for row in rows.values():
+        for key, value in row.items():
+            if key in ("window_s", "cap"):
+                continue
+            try:
+                totals[key] = totals.get(key, 0) + int(value)
+            except (TypeError, ValueError):
+                continue
+        try:
+            window_s = max(window_s, float(row.get("window_s") or 0))
+        except (TypeError, ValueError):
+            pass
+
+    discarded = sum(totals.get(k, 0) for k in _DISCARD_KEYS)
+    window_s = max(window_s, 1.0)
+    per_day = discarded * 86_400.0 / window_s
+    return {
+        "status": "ok",
+        "processes": len(rows),
+        "counts": totals,
+        "discarded": discarded,
+        "window_s": round(window_s, 1),
+        "discarded_per_day": round(per_day, 1),
+        "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
+        "over_ceiling": sentry_budget.over_discard_ceiling(discarded, window_s),
+        "unidentified": totals.get("unidentified", 0),
+        "not_error_passthrough": totals.get("not_error", 0),
+        "budget": BUDGET_VERDICT,
+    }
+
+
+def filter_discard_census() -> dict:
+    """The reading an operator (or ``/api/admin/ops-snapshot``) consumes."""
+    try:
+        return summarize_filter_counts(_read_filter_counts())
+    except Exception as exc:  # noqa: BLE001
+        # A read failure is NOT "no discards". Say which one it is.
+        return {
+            "status": "unavailable",
+            "error_class": exc.__class__.__name__,
+            "over_ceiling": None,
+            "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
+        }
