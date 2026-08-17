@@ -85,4 +85,31 @@ describe("both search dropdowns share one row implementation", () => {
     expect(src).toMatch(/futures-answer/);
     expect(src).toMatch(/futures-label/);
   });
+
+  /**
+   * UX-P086 — the marks the browser rail photographs through.
+   *
+   * The parity guard above proves the two surfaces share an IMPLEMENTATION. It
+   * cannot prove either one still renders in production, which is why #1620
+   * stayed open for eight days after its code merged: shipped, correct, and
+   * never photographed. `frontend/e2e/specs/search-answer.spec.ts` closes that
+   * with a real phone viewport against the real deployment, and it finds the
+   * rows through these testids.
+   *
+   * So the marks are load-bearing evidence plumbing, not decoration: drop one
+   * and the rail stops finding rows on that surface, which reads as "no
+   * suggestions rendered" — a false RED that would be debugged on the wrong
+   * side. Worse, drop it from only ONE surface and the rail silently grades a
+   * single viewport while the summary still says desktop and mobile, which is
+   * the exact asymmetry #1620 is about.
+   */
+  test.each(SURFACES)("%s marks its rows for the browser rail", (file) => {
+    const src = source(file);
+    expect(src).toMatch(/data-testid="search-suggestion"/);
+    expect(src).toMatch(/data-suggestion-type=/);
+  });
+
+  test.each(SURFACES)("%s marks its answer subtitle for the browser rail", (file) => {
+    expect(source(file)).toMatch(/data-testid="search-answer"/);
+  });
 });
