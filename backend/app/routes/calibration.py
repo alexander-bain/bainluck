@@ -813,6 +813,7 @@ async def public_calibration(
     from app.utils.calibration_publish_gate import (
         SERVE_MAX_AGE_S,
         payload_age_s,
+        producer_stall,
         snapshot_verdict,
     )
 
@@ -834,6 +835,37 @@ async def public_calibration(
             return CALIBRATION_POPULATION_VERSION
         except Exception:  # noqa: BLE001 — a version we can't read isn't a mismatch
             return None
+
+    def _serve(payload: dict, availability: str) -> dict:
+        """The ONE exit for every payload this endpoint returns (#1680).
+
+        Two things happen here and nowhere else, so no tier can forget either:
+
+        1. **The producer declares itself.** ``producer`` carries the artifact's
+           age, the beat cadence, how many publishes were missed and the named
+           threshold — on every answer, not only the dated ones. A ``fresh``
+           response that quietly means "under seven days" is exactly how a
+           four-day publishing outage kept reading as healthy.
+        2. **A stalled producer weakens the declaration.** ``fresh`` is bounded
+           by ``SERVE_MAX_AGE_S`` (7d) because that is when the durable copy
+           expires — a sensible bound for *serving*, and a nonsense one for a
+           task that runs hourly. Past :data:`PRODUCER_STALL_AGE_S` the honest
+           word is ``stale``, and ``never_stronger`` guarantees this can only
+           ever move the claim down: a ``degraded`` payload stays ``degraded``.
+
+        Not a 503. Ruling CAL-P017 (Alex, 2026-08-08) is standing and load-
+        bearing here: every tier was once bounded by the same constant, they all
+        refused in the same instant, and /calibration went dark. Stale-with-
+        declaration beats dark. This adds a word, never a refusal — and the
+        1-4 min post-release 503 (``_unavailable``) is a different path
+        entirely, untouched.
+        """
+        out = dict(payload)
+        stall = producer_stall(out)
+        out["producer"] = stall
+        if stall["stalled"]:
+            availability = _never_stronger(availability, AVAILABILITY_STALE)
+        return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(
         payload: dict, reason: str, verdict=None, availability: str = AVAILABILITY_STALE
@@ -876,9 +908,7 @@ async def public_calibration(
         elif isinstance(payload.get("generated_at"), str):
             cache["generated_at"] = payload["generated_at"]
         out["cache"] = cache
-        return _declare(
-            out, _never_stronger(payload.get(AVAILABILITY_FIELD), availability)
-        )
+        return _serve(out, availability)
 
     def _unavailable(reason: str) -> JSONResponse:
         """The typed unavailable response — honest, actionable, never opaque.
@@ -959,7 +989,7 @@ async def public_calibration(
             memo_state = (
                 AVAILABILITY_FRESH if memo_age <= SERVE_MAX_AGE_S else AVAILABILITY_STALE
             )
-        return _declare(_cache["data"], memo_state)
+        return _serve(_cache["data"], memo_state)
 
     # 2. Redis precomputed cache (survives deploys) — shared async client + a
     #    hard-bounded op so a Redis stall can never block the loop or the router.
@@ -1040,9 +1070,9 @@ async def public_calibration(
                         "degraded (%s: %s)",
                         main_verdict.status, main_verdict.reason,
                     )
-                    data = _declare(data, AVAILABILITY_DEGRADED)
+                    data = _serve(data, AVAILABILITY_DEGRADED)
                 else:
-                    data = _declare(data, AVAILABILITY_FRESH)
+                    data = _serve(data, AVAILABILITY_FRESH)
                 _cache["data"] = data
                 _cache["timestamp"] = now
                 _rc.remember_last_good(_lg_key, data)

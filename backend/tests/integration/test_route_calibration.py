@@ -353,6 +353,14 @@ class TestCalibrationPublicEndpoint:
             # substitute content without a declared state, and the only way to
             # check an absolute is by enumeration.
             "availability",
+            # #1680: the second serve-time declaration, and for the same reason.
+            # `availability` says WHAT was served; this says whether the thing
+            # that builds it is still running — age in seconds, the beat cadence,
+            # missed beats, and the named threshold. They are separate facts and
+            # conflating them is the defect: for four days a stopped producer
+            # answered 200 and the only word for it was "stale", the same word a
+            # forty-minute-old memo gets.
+            "producer",
         }
 
     async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):

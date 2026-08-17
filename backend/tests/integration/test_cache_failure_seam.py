@@ -259,6 +259,11 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     # before it went out indistinguishable from a validated curve.
     availability = out.pop("availability")
     assert availability == "degraded"
+    # #1680: the second serve-time declaration. ``generated_at`` here is the
+    # literal string "t", so the age is UNKNOWN — and unknown is not healthy
+    # (gotcha #53), which is why this stub's producer verdict is `stalled`.
+    producer = out.pop("producer")
+    assert producer["age_s"] is None and producer["stalled"] is True
     assert out == payload
 
 

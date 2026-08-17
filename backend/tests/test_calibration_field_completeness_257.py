@@ -329,17 +329,29 @@ async def test_route_serves_the_shared_compute_payload_unaltered():
     than compared into the payload. Every content field is still required to be
     byte-identical, which is the property this test exists for: the route is not
     a second builder.
+
+    #1680 adds the second and, for the same reason, the last: ``producer`` says
+    how many beats have passed since this artifact was BUILT, which is a fact
+    about now rather than about the numbers — a builder writing its own
+    "0 beats missed" would be stating a tautology. The envelope keys are
+    enumerated below rather than filtered by a prefix, so a third one cannot
+    join them by accident and quietly widen what "unaltered" excuses.
     """
     import time as _time
+
+    envelope_keys = {"availability", "producer"}
 
     shared = await compute_calibration_payload(_FakeDB())
     calibration._cache = {"data": shared, "timestamp": _time.time()}
 
     routed = await calibration.public_calibration(db=_FakeDB())
 
-    assert {k: v for k, v in routed.items() if k != "availability"} == shared
+    assert {k: v for k, v in routed.items() if k not in envelope_keys} == shared
     # Freshly built, served from the memo of a validated main copy.
     assert routed["availability"] == "fresh"
+    # ...and the builder did not write the serve-time declaration itself.
+    assert not envelope_keys & set(shared)
+    assert routed["producer"]["stalled"] is False
 
 
 @pytest.mark.asyncio

@@ -107,6 +107,33 @@ SERVE_MAX_AGE_S = 7 * 86400
 #: anything.
 COHORT_MIN_N = 1000
 
+#: The producer's beat cadence: ``precompute-calibration-main`` is
+#: ``crontab(minute=15)`` in ``app.tasks.__init__``. Named here because every
+#: age judgement about this artifact is really a count of missed publishes, and
+#: a bare number of seconds hides that.
+PUBLISH_INTERVAL_S = 3600
+
+#: How many consecutive missed publishes make **the producer** the story rather
+#: than the cache. Derived, not picked:
+#:
+#: * The ``main`` Redis key carries ``_MAIN_CACHE_TTL`` = 2h, so a copy served by
+#:   a perfectly HEALTHY producer can legitimately be two beats old. A threshold
+#:   at or below that would call working days stalled.
+#: * One further beat for a slow build, one for margin.
+#:
+#: The result is deliberately LOOSER than the data-quality watchdog's
+#: ``calibration_publish_age`` alarm (2 beats): the watchdog pages an operator on
+#: suspicion, this states a fact to every anonymous reader, and the response must
+#: never be the one crying wolf. Four hours still catches #1680 — a four-DAY
+#: outage — roughly twenty-four times over.
+PRODUCER_STALL_BEATS = 4
+
+#: The threshold, as a named constant rather than an inline multiplication.
+#: Past this the payload is not merely "a cache copy that lapsed" — nothing has
+#: been BUILT for this long, which is #1680's failure and the one an age field
+#: alone did not make legible.
+PRODUCER_STALL_AGE_S = PUBLISH_INTERVAL_S * PRODUCER_STALL_BEATS
+
 
 # --------------------------------------------------------------------------
 # Read side — is a cached snapshot trustworthy?
@@ -250,6 +277,40 @@ def payload_age_s(payload: Any, *, now: Optional[datetime] = None) -> Optional[f
         return None
     reference = now or datetime.now(timezone.utc)
     return (reference - generated).total_seconds()
+
+
+def producer_stall(payload: Any, *, now: Optional[datetime] = None) -> dict:
+    """Declare, on the response itself, whether the PRODUCER is still running.
+
+    #1680, named failure: ``precompute_calibration_main`` published nothing
+    between 2026-08-14T00:16Z and this queue — 88 consecutive beats died on a
+    statement timeout — and the endpoint answered ``200`` the whole time. The
+    payload was not silent about its *age*: ``cache.age_s`` and ``generated_at``
+    were both present, and ruling CAL-P017 is explicit that stale-with-
+    declaration beats dark, so a 503 for age is deliberately NOT the fix.
+
+    What was missing is that **age and producer-health are different facts** and
+    only one of them was being stated. ``availability = "stale"`` is the same
+    word for a memo that lapsed forty minutes ago and for an artifact nothing has
+    rebuilt in four days, so a reader who wanted the second could only get it by
+    knowing the beat cadence, doing the division, and picking a threshold — three
+    things a consumer should never have to supply. This states it once, here,
+    against :data:`PRODUCER_STALL_AGE_S`.
+
+    ``stalled`` is ``True`` when the age is UNKNOWN. Gotcha #53: an absent
+    timestamp and a healthy one are not the same reading, and the reassuring one
+    must not be the default. The memo tier already applies exactly this rule
+    (unknown age ⇒ not fresh); this keeps the producer verdict consistent with it.
+    """
+    age = payload_age_s(payload, now=now)
+    return {
+        "task": "precompute_calibration_main",
+        "interval_s": PUBLISH_INTERVAL_S,
+        "stall_after_s": PRODUCER_STALL_AGE_S,
+        "age_s": None if age is None else round(age),
+        "beats_missed": None if age is None else max(0, int(age // PUBLISH_INTERVAL_S)),
+        "stalled": True if age is None else age > PRODUCER_STALL_AGE_S,
+    }
 
 
 # --------------------------------------------------------------------------
