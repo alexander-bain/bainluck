@@ -435,11 +435,82 @@ def report(found: Findings, truth: dict, rows: list, summary_only: bool) -> None
             print(f"      {side}_team_id={team_id} -> '{actual}'   row says '{expected}'")
 
 
+def emit_json(found: Findings, truth: dict, rows: list, start, end, path: str) -> None:
+    """Write findings machine-readably, for the settlement-contamination census (339T item 3).
+
+    The printed report is for a human; this is for the next script in the chain. It carries
+    the SCORE PAIR on both sides deliberately -- a downstream re-grade adjudication needs the
+    evidence, not the verdict, and re-reading it out of a text report is how a transcription
+    error becomes a wrong is_winner.
+    """
+    payload = {
+        "range": {"start": start.date().isoformat(), "end": end.date().isoformat()},
+        "truth_games": len(truth),
+        "our_rows": len(rows),
+        "statsapi_unmatched": found.statsapi_unmatched,
+        "wrong_score": [
+            {
+                "event_id": row.id, "espn_id": g.espn_id, "game_pk": g.game_pk,
+                "label": g.label(), "commence_ours": row.commence.isoformat(),
+                "commence_truth": g.commence.isoformat(), "status_ours": row.status,
+                "status_truth": g.status,
+                "ours": [row.away_score, row.home_score],
+                "truth": [g.away_score, g.home_score],
+            }
+            for g, row in found.wrong_score
+        ],
+        "stuck_live": [
+            {
+                "event_id": row.id, "espn_id": g.espn_id, "label": g.label(),
+                "ours": [row.away_score, row.home_score],
+                "truth": [g.away_score, g.home_score], "status_truth": g.status,
+            }
+            for g, row in found.stuck_live
+        ],
+        "misdated": [
+            {
+                "event_id": row.id, "espn_id": g.espn_id, "drift_hours": round(hours, 2),
+                "commence_ours": row.commence.isoformat(),
+                "commence_truth": g.commence.isoformat(), "status_ours": row.status,
+            }
+            for g, row, hours in found.misdated
+        ],
+        "missing_rekey": [
+            {
+                "truth_espn_id": g.espn_id, "label": g.label(),
+                "impostor_event_id": row.id, "impostor_holds_espn_id": row.espn_id,
+                "impostor_commence": row.commence.isoformat(),
+            }
+            for g, row in found.missing_rekey
+        ],
+        "missing": [
+            {"espn_id": g.espn_id, "game_pk": g.game_pk, "label": g.label(),
+             "commence": g.commence.isoformat()}
+            for g in found.missing
+        ],
+        "duplicate_id": [
+            {"espn_id": g.espn_id, "label": g.label(),
+             "event_ids": [r.id for r in held]}
+            for g, held in found.duplicate_id
+        ],
+        "team_miswired": [
+            {"event_id": row.id, "side": side, "team_id": team_id,
+             "dereferences_to": actual, "row_says": expected,
+             "commence": row.commence.isoformat()}
+            for row, side, team_id, actual, expected in found.team_miswired
+        ],
+    }
+    with open(path, "w") as fh:
+        json.dump(payload, fh, indent=2)
+    print(f"\n[emitted {path}]")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--start", required=True, help="YYYY-MM-DD (UTC)")
     ap.add_argument("--end", required=True, help="YYYY-MM-DD (UTC), inclusive")
     ap.add_argument("--summary", action="store_true", help="counts only, no per-finding detail")
+    ap.add_argument("--json", dest="json_path", help="also write findings as JSON to this path")
     args = ap.parse_args()
 
     start = _parse_iso(f"{args.start}T00:00:00Z")
@@ -455,6 +526,8 @@ def main() -> int:
     found = reconcile(truth, rows, teams)
     found.statsapi_unmatched = unmatched
     report(found, truth, rows, args.summary)
+    if args.json_path:
+        emit_json(found, truth, rows, start, end, args.json_path)
     return 1 if found.total() else 0
 
 
