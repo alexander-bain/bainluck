@@ -63,7 +63,92 @@ against 2,746 ms mean and 186.6 MB physically read per call before. `Actual` tim
 
 `GOLF_IDENTITY_SPLIT_SCAN` is unset and untouched. **`ix_fm_golf_identity_category` — branch B's index — does not exist**, so flipping now would run the `UNION` with one unindexed branch, and unindexed the `UNION` costs **255,180** against the `OR`'s **128,191**. Step 5.3's preconditions are not met. **The branch-B call belongs to the latency lane**: rebuild it, or change the shape. Do not flip until it is built and `EXPLAIN` shows both branches indexed.
 
+> ⚠️ **The 255,180 figure above is now STALE.** It was measured when NEITHER golf index existed. One
+> of the two is now valid, which changes the number but NOT the verdict — see §0b CORRECTION 2. Do
+> not re-derive "is it still 2×?" as the flip test; it is no longer 2×, and it is still wrong to flip.
+
 ---
+
+## 0b. LAT-P059 RE-READ — 2026-08-17, and two of this document's own checks are now unsafe
+
+Production Phase-0 re-read, 2026-08-17 ~09:2x PDT / 16:2x UTC, Heroku commit `3fce7867`, PG 17.10.
+The catalogue confirms INT-071's end state three days on, with the two valid indexes having grown:
+
+| index | `indisvalid` | `indisready` | size |
+|---|---|---|---|
+| `ix_fm_source_created_at` | ✅ true | true | **7,520 kB** (was 6,088 kB) |
+| `ix_fm_golf_identity_extid` | ✅ true | true | **40 kB** (was 16 kB) |
+| `ix_fm_golf_identity_category` | ⛔ **false** | **false** | **0 bytes — still not built, still inert** |
+
+`GOLF_IDENTITY_SPLIT_SCAN` re-read: **still unset**. So **both halves of the ruling-050 prediction
+are still missing** — the DDL half is 2 of 3, and the flag half has not happened. Per the Fable
+directive (*"grade the registered prediction only after BOTH halves exist … or grade nothing and
+name the missing half"*), **LAT-P059 graded nothing.** The `OR` statement is unchanged and slightly
+worse than baseline: `queryid 184240953744049829` now reads **516.7 MB/call** at **mean 2,913.3 ms**,
+against the 492.5 MB / 2,741.3 ms banked on 2026-08-14.
+
+### 🔴 CORRECTION 1 — §5.4's index-usage query can never return a row
+
+The "worth reading, since it is the whole point" query filters `pg_stat_user_indexes` on **`relname`**.
+In that view **`relname` is the TABLE name; the index name is `indexrelname`.** As written it returns
+**zero rows, always** — measured both ways this window:
+
+```
+... FROM pg_stat_user_indexes WHERE relname     IN ('ix_fm_...')  ->  0 rows
+... FROM pg_stat_all_indexes  WHERE indexrelname IN ('ix_fm_...')  ->  3 rows, real counters
+```
+
+This is the failure shape the program keeps finding: **a verification step that cannot pass.** Its
+stated reading — *"`idx_scan = 0` an hour after the flip means the planner is not using them"* — is
+one short step from an empty result set, and an empty result set is not `idx_scan = 0` (gotcha #53:
+an empty answer is a response shape, not a fact). §5.4 is corrected in place below.
+
+### 🔴 CORRECTION 2 — §5.3's numeric cost bar now PASSES while branch B still Seq Scans
+
+Both shapes re-`EXPLAIN`ed this window against the **current, partially-indexed** catalogue:
+
+| shape | plan | total cost |
+|---|---|---|
+| `OR` (today's default) | one Seq Scan | **128,261.89** |
+| `UNION` (gated) | Index Only Scan `ix_fm_golf_identity_extid` (45.89) **+ Seq Scan branch B (127,864.28)** + Sort + Unique | **128,033.85** |
+
+The `UNION` is now **0.998×** the `OR` — not the 1.99× regression this document was written against.
+The reason is that branch A's index landed and branch A is tiny; **branch B, which carries 7,263 of
+the 7,343 rows, still sequentially scans the whole 977 MB heap.**
+
+**The verdict is unchanged — DO NOT FLIP — but the reason has changed, and the numeric criterion has
+silently inverted.** §5.3 says to require "a total cost **well under 128,191.5**". Today's `UNION`
+costs 128,033.85, which **is** under 128,191.5. A reader applying the numeric bar literally would
+conclude the gate passes, flip the flag, and buy a Sort + Unique for a 0.2% cost change and no
+reduction whatsoever in physical reads.
+
+**So the gate is PLAN SHAPE, never a cost ratio.** The binding condition is the one sentence:
+*both* branches must show an `Index Only Scan` / `Bitmap Index Scan`. A cost number cannot express
+it, because one indexed branch out of two can drag the total under the bar while the expensive
+branch is untouched. §5.3 is corrected in place below.
+
+### ✅ The A2 index is in active production use — measured, not assumed
+
+`ix_fm_source_created_at`: **`idx_scan = 3,360`**, `idx_tup_read = 278,374,078`. It is being chosen
+by the planner and is doing work. This remains the one part of LAT-P058 that has actually landed,
+and it needed neither the code half nor the flag.
+
+### Retry for the one remaining index
+
+Nothing about the DDL needs re-derivation — statement (1) in §3 is correct as written, now that
+`lock_timeout` is `60s`. Preconditions re-read this window: **P1 disk 51 GB (unchanged, ~13 GB free,
+well over the 2 GB floor); P3 zero transactions older than 60 s; P4 flag off.** P2 needs one
+addition, because the ground has changed:
+
+> **P2 (amended).** `ix_fm_golf_identity_category` **already exists as a not-ready stub**
+> (`indisvalid=false, indisready=false`, 0 bytes). `CREATE INDEX CONCURRENTLY` will fail on the
+> duplicate name. **`DROP INDEX CONCURRENTLY ix_fm_golf_identity_category;` first.** It is inert —
+> a not-ready index is not maintained on writes — so this is a correctness precondition for the
+> retry, **not** an active-harm cleanup, and it is not urgent on its own. INT-071's attempt to drop
+> it was stopped by a session guardrail on encoded production DDL; that guardrail was respected and
+> the stub was left in place deliberately.
+
+After it goes valid, run §5.3 as **plan shape**, and only then §6.
 
 **Status:** SPEC. The lane wrote it; the lane does not run it.
 **Addressee:** the Integrator, as a `heroku run:detached` one-off dyno operation.
@@ -313,13 +398,18 @@ query from §2 and require `in_cur_not_new = 0` and `in_new_not_cur = 0`. ⚠️
 ```
 
 Require **`Index Only Scan`** (acceptable fallback: `Bitmap Index Scan`) naming
-`ix_fm_golf_identity_extid` on one branch and `ix_fm_golf_identity_category` on the other, and a
-total cost **well under 128,191.5** (today's `OR` cost — the bar the `UNION` must beat, not the
-255,180 it costs unindexed).
+`ix_fm_golf_identity_extid` on one branch **and** `ix_fm_golf_identity_category` on the other.
 
-- Both branches indexed ⇒ **flip the flag** (§6).
-- **Either branch still `Seq Scan` ⇒ DO NOT FLIP.** The `UNION` would be a 2× regression. Leave the
-  flag off, report the plan, and hand it back to the lane. The indexes are still a win on their own
+> ⛔ **THE GATE IS PLAN SHAPE. IT IS NOT A COST NUMBER.** (LAT-P059, §0b CORRECTION 2.) This step
+> used to add "and a total cost well under 128,191.5". **That bar is now satisfiable while the fix
+> is absent**: with branch A indexed and branch B not, the `UNION` measured **128,033.85** — under
+> the bar, 0.998× the `OR`, and reading zero fewer pages, because branch B still Seq Scans the
+> 977 MB heap for 7,263 of the 7,343 rows. One cheap indexed branch drags the total under any
+> aggregate threshold you pick. **Read the node types. Both of them.**
+
+- **Both** branches showing an index scan ⇒ **flip the flag** (§6).
+- **Either branch still `Seq Scan` ⇒ DO NOT FLIP** — regardless of what the total cost says. Leave
+  the flag off, report the plan, and hand it back to the lane. The indexes are still a win on their own
   via `BitmapOr` on the `OR` shape — check that too:
   `{"explain": true, "sql": "SELECT id, source, external_id, name FROM futures_markets WHERE external_id ILIKE 'golf_%' OR llm_sport_category = 'golf'"}`
 
@@ -351,11 +441,17 @@ SELECT queryid, calls, round(mean_exec_time::numeric,1) AS mean_ms,
 Also worth reading, since it is the whole point:
 
 ```sql
-SELECT relname, idx_scan, idx_tup_read
-  FROM pg_stat_user_indexes
- WHERE relname IN ('ix_fm_golf_identity_category','ix_fm_golf_identity_extid','ix_fm_source_created_at');
+-- CORRECTED (LAT-P059). The original filtered on `relname`, which in this view is the
+-- TABLE name, not the index name -- so it returned ZERO ROWS, always. See §0b CORRECTION 1.
+SELECT indexrelname, idx_scan, idx_tup_read
+  FROM pg_stat_all_indexes
+ WHERE indexrelname IN ('ix_fm_golf_identity_category','ix_fm_golf_identity_extid','ix_fm_source_created_at');
 ```
-`idx_scan = 0` an hour after the flip means the planner is not using them ⇒ report back.
+Expect **one row per index that exists**. `idx_scan = 0` an hour after the flip means the planner is
+not using them ⇒ report back. **A missing ROW means the index does not exist — which is a different
+finding from `idx_scan = 0`, and the two must not be collapsed.** Measured 2026-08-17:
+`ix_fm_source_created_at` `idx_scan = 3,360`; the two golf indexes `0` (branch A's is valid but the
+flag is off, so nothing emits the `UNION` yet).
 
 ---
 

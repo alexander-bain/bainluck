@@ -1,0 +1,716 @@
+{
+  "total": 46,
+  "measured": 46,
+  "unmeasured": 0,
+  "coverage": 1.0,
+  "unmeasured_probes": [],
+  "entity_top_1_rate": 0.9130434782608695,
+  "mean_reciprocal_rank": 0.9347826086956522,
+  "lifecycle_counts": {
+    "pass": 41,
+    "fail": 3,
+    "xfail": 1,
+    "xpass": 1,
+    "regression": 0
+  },
+  "per_query_class": {
+    "ambiguity": {
+      "total": 1,
+      "passed": 1
+    },
+    "category_as_query": {
+      "total": 1,
+      "passed": 1
+    },
+    "concept_rule": {
+      "total": 1,
+      "passed": 1
+    },
+    "entertainment": {
+      "total": 4,
+      "passed": 4
+    },
+    "events": {
+      "total": 8,
+      "passed": 7
+    },
+    "family_specific": {
+      "total": 3,
+      "passed": 3
+    },
+    "full_question": {
+      "total": 1,
+      "passed": 0
+    },
+    "politics_econ": {
+      "total": 6,
+      "passed": 5
+    },
+    "qualified_entity": {
+      "total": 1,
+      "passed": 1
+    },
+    "real_history": {
+      "total": 5,
+      "passed": 5
+    },
+    "self_reference": {
+      "total": 1,
+      "passed": 1
+    },
+    "teams": {
+      "total": 7,
+      "passed": 7
+    },
+    "tech": {
+      "total": 6,
+      "passed": 5
+    },
+    "weather_misc": {
+      "total": 1,
+      "passed": 1
+    }
+  },
+  "details": [
+    {
+      "probe_key": "search-gold-2026-fifa-world-cup-001",
+      "probe_version": 1,
+      "query_class": "real_history",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:soccer:world-cup-2026",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-2026-nba-champion-001",
+      "probe_version": 1,
+      "query_class": "real_history",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:350",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-ai-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "ENTITY_NOT_TOP",
+      "disposition": "fail",
+      "expected_rank": null,
+      "reciprocal_rank": 0.0,
+      "actual_top": {
+        "entity_id": "market:55261749",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-apple-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:109349",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-best-picture-001",
+      "probe_version": 1,
+      "query_class": "entertainment",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:6173044",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-british-open-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:golf:the-open-championship",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-bruins-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:boston-bruins",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-celtics-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:boston-celtics",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-dancing-with-the-stars-001",
+      "probe_version": 1,
+      "query_class": "family_specific",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:186450",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-election-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:112897",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-fable-001",
+      "probe_version": 1,
+      "query_class": "self_reference",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:52755874",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-fed-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "PASS",
+      "disposition": "xpass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:2656292",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-golf-001",
+      "probe_version": 1,
+      "query_class": "category_as_query",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "hub:golf",
+        "surface": "hub",
+        "item_type": "hub"
+      }
+    },
+    {
+      "probe_key": "search-gold-grammys-001",
+      "probe_version": 1,
+      "query_class": "entertainment",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:awards:grammys",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-hurricane-001",
+      "probe_version": 1,
+      "query_class": "weather_misc",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:56775660",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-inflation-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "ENTITY_NOT_TOP",
+      "disposition": "fail",
+      "expected_rank": 2,
+      "reciprocal_rank": 0.5,
+      "actual_top": {
+        "entity_id": "market:4428390",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-iphone-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:109349",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-ipo-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:113758",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-march-madness-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:9459614",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-masters-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:golf:the-masters",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-nba-finals-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "ENTITY_NOT_TOP",
+      "disposition": "fail",
+      "expected_rank": 2,
+      "reciprocal_rank": 0.5,
+      "actual_top": {
+        "entity_id": "market:413",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-nba-lebron-james-next-team-001",
+      "probe_version": 1,
+      "query_class": "real_history",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:10054167",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-openai-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:113184",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-oscars-001",
+      "probe_version": 1,
+      "query_class": "entertainment",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:awards:oscars",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-patriots-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:new-england-patriots",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-pats-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:new-england-patriots",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-president-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:112897",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-rate-cut-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:113032",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-recession-001",
+      "probe_version": 1,
+      "query_class": "politics_econ",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:108622",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-red-sox-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:boston-red-sox-mlb",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-revs-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:new-england-revolution",
+        "surface": "team",
+        "item_type": "team"
+      }
+    },
+    {
+      "probe_key": "search-gold-spacex-001",
+      "probe_version": 1,
+      "query_class": "tech",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:113758",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-stranger-things-001",
+      "probe_version": 1,
+      "query_class": "entertainment",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:114237",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-super-bowl-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:86832",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-survivor-001",
+      "probe_version": 1,
+      "query_class": "family_specific",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:109525",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-taylor-swift-madison-001",
+      "probe_version": 1,
+      "query_class": "qualified_entity",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:33283003",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-taylor-swift-pregnant-by-001",
+      "probe_version": 1,
+      "query_class": "real_history",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:112868",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-the-open-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:golf:the-open-championship",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-the-open-championship-winner-001",
+      "probe_version": 1,
+      "query_class": "real_history",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:golf:the-open-championship",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-tush-push-001",
+      "probe_version": 1,
+      "query_class": "concept_rule",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:113466",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-us-open-001",
+      "probe_version": 1,
+      "query_class": "ambiguity",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:tennis:2026-women-s-us-open-winner-tennis",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-where-will-taylor-swift-and-travis-kelce-s-weddi-001",
+      "probe_version": 1,
+      "query_class": "full_question",
+      "code": "NO_RESULTS",
+      "disposition": "xfail",
+      "expected_rank": null,
+      "reciprocal_rank": 0.0,
+      "actual_top": null
+    },
+    {
+      "probe_key": "search-gold-world-cup-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "concept:event:soccer:world-cup-2026",
+        "surface": "concept",
+        "item_type": "concept"
+      }
+    },
+    {
+      "probe_key": "search-gold-world-series-001",
+      "probe_version": 1,
+      "query_class": "events",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:114584",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-wwe-001",
+      "probe_version": 1,
+      "query_class": "family_specific",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "market:12434043",
+        "surface": "market",
+        "item_type": "futures"
+      }
+    },
+    {
+      "probe_key": "search-gold-yankees-001",
+      "probe_version": 1,
+      "query_class": "teams",
+      "code": "PASS",
+      "disposition": "pass",
+      "expected_rank": 1,
+      "reciprocal_rank": 1.0,
+      "actual_top": {
+        "entity_id": "team:new-york-yankees-mlb",
+        "surface": "team",
+        "item_type": "team"
+      }
+    }
+  ]
+}

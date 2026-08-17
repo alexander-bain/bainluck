@@ -1,0 +1,64 @@
+{
+ "t0": "2026-08-17T16:24:39Z",
+ "t1": "2026-08-17T16:47:18Z",
+ "interval_s": 1359.0,
+ "rows": [
+  {
+   "queryid": -6729221129999282418,
+   "d_calls": 4,
+   "d_blocks": 8,
+   "mb_per_s": 0.0,
+   "gb_per_day": 0.0
+  },
+  {
+   "queryid": -5968390436689514332,
+   "d_calls": 2,
+   "d_blocks": 158668,
+   "mb_per_s": 0.91,
+   "gb_per_day": 77.0
+  },
+  {
+   "queryid": -2626243287596648543,
+   "d_calls": 0,
+   "d_blocks": 0,
+   "mb_per_s": 0.0,
+   "gb_per_day": 0.0
+  },
+  {
+   "queryid": -749027317737976872,
+   "d_calls": 0,
+   "d_blocks": 0,
+   "mb_per_s": 0.0,
+   "gb_per_day": 0.0
+  },
+  {
+   "queryid": 184240953744049829,
+   "d_calls": 17,
+   "d_blocks": 881500,
+   "mb_per_s": 5.07,
+   "gb_per_day": 427.6
+  },
+  {
+   "queryid": 1186417916192834599,
+   "d_calls": 0,
+   "d_blocks": 0,
+   "mb_per_s": 0.0,
+   "gb_per_day": 0.0
+  },
+  {
+   "queryid": 5028865687801582843,
+   "d_calls": 0,
+   "d_blocks": 0,
+   "mb_per_s": 0.0,
+   "gb_per_day": 0.0
+  },
+  {
+   "queryid": 8206311991729879112,
+   "d_calls": 2,
+   "d_blocks": 103071,
+   "mb_per_s": 0.59,
+   "gb_per_day": 50.0
+  }
+ ],
+ "total_gb_per_day_these8": 554.5
+}
