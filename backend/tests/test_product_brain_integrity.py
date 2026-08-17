@@ -501,7 +501,16 @@ def test_ruling_numbers_are_unique() -> None:
 #: tree; taking "ours" or "theirs" is wrong in every ordering. This is the one shared append
 #: region ruling 001 did not remove — separate ruling FILES cannot conflict, but the equality
 #: ratchet that counts them re-creates the collision on a single line.
-MINIMUM_BANKED_RULINGS = 70
+#:
+#: Raised 68 -> 69 by LAT-P061 banking **074** (a green pass names the work it did) on
+#: `program/latency-56`, stacked on `-55`. ⚠️ INTEGRATOR: the three-way collision named above is
+#: now FOUR-way and the arithmetic is unchanged in kind — `lane1/q358` (070) and `program/ux-72`
+#: (072) still hold independent `67 -> 68` edits, and this branch carries `-55`'s 073 plus this
+#: 074. **With all four merged the correct value is 71**, which is again nobody's side.
+#: **Resolve by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree.** Do not take
+#: ours, do not take theirs, and do not add the deltas — two lanes each writing `67 -> 68` is one
+#: ruling each, not two on top of 68.
+MINIMUM_BANKED_RULINGS = 71
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

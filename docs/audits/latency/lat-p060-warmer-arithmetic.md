@@ -433,6 +433,52 @@ after a restart pay cold reads by construction.
 
 ---
 
+## §8.1 — AMENDMENT to row 4, made by LAT-P061 BEFORE any post-fix read. Row 4 as written grades PASS on unchanged pre-fix code.
+
+**Disclosed, not rewritten.** Ruling 050 registers a prediction so it cannot be tuned to the result;
+the row above is left standing exactly as registered. This amendment sits below it, is dated before
+the post-fix read exists, and states what forced it.
+
+`-55` had still not deployed when LAT-P061 opened (`/api/health` = `160a7cdb`; `last_result_summary`
+carried no `concurrency`/`seconds_wall`/`rebuilt`/`fresh`). So LAT-P061 re-read the **same pre-fix
+task, same code, nothing changed**, and the bands had moved:
+
+| band | LAT-P060 (pre-fix, 50 inv / 1,438 s) | LAT-P061 (pre-fix, 50 inv / 1,418 s) |
+|---|---|---|
+| lock skips `< 100 ms` | 25 | **12** |
+| **no-op `0.6–0.9 s`** | **12** | **0** |
+| **no-op `~300–400 ms`** | — | **13** |
+| real passes `> 1 s` | 13 | **25** |
+| max pass | 74.2 s | **65.7 s** |
+
+**Row 4 reads "no-op 0.6–0.9 s band 12 → 0" and the honest answer today is already 0 — on code that
+has not changed.** The no-op band did not close; it MOVED. Its duration is 40 sequential Redis GETs,
+which measures Redis, not the warmer. A grader applying row 4 literally would have scored the
+refresh-ahead fix as working before it shipped.
+
+**Row 4 is therefore re-expressed as a predicate over work performed, per ruling 074:**
+
+| # | prediction (amended) | pass | HALT |
+|---|---|---|---|
+| 4′ | on every pass reporting `terminal: complete`, **`rebuilt > 0`**; the count of complete-passes-with-`rebuilt == 0` goes **13 → 0** | 0 such passes across both runs | any surviving complete-pass with `rebuilt == 0` ⇒ refresh-ahead is not reaching the key the route reads — check the prefix, not the threshold |
+
+`rebuilt` is a field `-55` adds precisely so this is answerable directly. Row 4′ cannot move when
+Redis gets faster, and it is the question row 4 was always trying to ask.
+
+⚠️ **Row 3 inherits the same defect and is left standing with a warning rather than amended**, because
+it is closer to safe: "lock skips 25 → 0" is a count of a real behaviour (a beat that found the lock
+held), but its `< 100 ms` band is still a duration proxy. The pre-fix skip count moved 25 → 12 on
+unchanged code. **Grade row 3 against the concurrent pre-fix read (12), not against the registered 25**,
+and treat any non-zero as the failure it describes.
+
+**Consequence for row 1, stated because it is the one that matters:** the duty-cycle numbers this
+window read on unchanged code — pre-warmed **13/24** and **8/24**, mean **10.5** — sit inside
+LAT-P059's (14, 7) and LAT-P060's (14, 8) ranges. The pre-fix duty cycle is confirmed stable at
+**~11 of 24 across six runs and three windows**, which is the baseline row 1's `≥ 20` is measured
+against. That part of the registration is sound.
+
+---
+
 ## §9 — Filed, not fixed: the head is a feedback loop the warmer feeds itself
 
 Not in scope and **not touched**, but measured in passing and too load-bearing to leave unrecorded.
