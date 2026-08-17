@@ -23,6 +23,7 @@ from app.routes.admin_utils import (
     _resolve_admin_email,
 )
 from app.services import get_db, get_db_rw
+from app.utils.card_integrity import field_coherence
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
 from app.utils.labeling_queue import load_reviewed_ranking_keys
@@ -297,6 +298,25 @@ def _serialize_labeling_candidate(
         }
         for outcome in outcomes[:5]
     ]
+    # #1933 / queue 363. Alex graded on the NATIVE surface and saw the precise
+    # defect #1873 fixed — because #1873 landed in `admin_label_pass.py` only,
+    # and native comes through here. Without this gate the card renders
+    # `top_outcomes[0]` as the probability even when the field cannot be
+    # coherent (independent Kalshi binaries routinely sum well past 100% —
+    # gotcha #23), i.e. it prints a number that cannot be true. Honest-empty,
+    # ruling 027: withhold the field and say why.
+    #
+    # The gate is the SAME `field_coherence` the web pass uses. That is the
+    # point — the two surfaces diverged because the fix was scoped to the
+    # endpoint that carried the bug report rather than to the class.
+    coherence = field_coherence(
+        [
+            float(outcome.current_probability)
+            if outcome.current_probability is not None
+            else None
+            for outcome in outcomes
+        ]
+    )
     category = (
         market.llm_sport_category
         or (market.sport.name if market.sport else None)
@@ -341,8 +361,15 @@ def _serialize_labeling_candidate(
         "story_key": quality.story_key,
         "ladder": quality.is_ladder_or_bucket,
         "reasons": quality.reasons,
-        "top_outcomes": top_outcomes,
-        "rendered_probability": top_outcomes[0]["probability"] if top_outcomes else None,
+        "top_outcomes": top_outcomes if coherence["coherent"] else None,
+        "rendered_probability": (
+            top_outcomes[0]["probability"]
+            if coherence["coherent"] and top_outcomes
+            else None
+        ),
+        "field_coherent": coherence["coherent"],
+        "field_sum": coherence["sum"],
+        "field_withheld_reason": None if coherence["coherent"] else coherence["reason"],
         "resolution_date": (
             market.resolution_date.isoformat() if market.resolution_date else None
         ),
