@@ -203,6 +203,90 @@ def severity_for(mce: float, is_new_format: bool) -> str:
     return "P2"
 
 
+# --- #1911: raw vs published ------------------------------------------------
+
+#: Minimum surviving outcomes before a published MCE means anything. An
+#: exclusion that leaves nine rows behind has not produced a well-calibrated
+#: cell; it has produced a cell too small to judge, and reporting 0.0pp for it
+#: would be the loudest possible false all-clear.
+PUBLISHED_MIN_N = 200
+
+#: The four dispositions. Named as verbs about the EXCLUSION, because that is
+#: the thing whose behaviour the pair of numbers actually describes.
+DISP_EXCLUSION_WORKING = "exclusion_working"
+DISP_REAL_BREAK = "real_break"
+DISP_EXCLUSION_HARMS = "exclusion_harms"
+DISP_PUBLISHED_UNKNOWN = "published_unknown"
+
+
+def raw_vs_published(
+    raw_mce: float | None,
+    published_mce: float | None,
+    published_n: int,
+    threshold: float,
+) -> tuple[str, str]:
+    """``(disposition, why)`` from the RAW and PUBLISHED miscalibration pair.
+
+    #1911. The sentinel mines the raw, un-excluded population — its own
+    docstring says so — and had no view of the curve users see. So a cohort a
+    shipped exclusion ALREADY FIXES filed at full raw severity: #1142 went in
+    as a P1 at 21.33pp against a published 3.69pp, under a 5.0pp threshold.
+
+    Why no threshold tuning fixes that, since it is the first thing anyone
+    tries: coverage counts EXCLUDED rows, and the disposition depends on what
+    the REMAINING rows do. #1142's exclusion drops 23.0% of the cohort and
+    takes it from 21.33pp to 3.69pp — because the rows it drops are the
+    miscalibrated ones. A cell can be 5%-covered and fully fixed, or
+    60%-covered and still broken. Coverage cannot answer the question.
+
+    The third case is the one worth the build. An exclusion that removes GOOD
+    rows and leaves the curve WORSE than the raw population is invisible to
+    every instrument we have — coverage rises, the raw number looks fine, and
+    the published number nobody computed is the only place it shows. Nothing
+    looks for this today.
+    """
+    if raw_mce is None:
+        return DISP_PUBLISHED_UNKNOWN, "raw MCE unavailable"
+    if published_mce is None:
+        return (
+            DISP_PUBLISHED_UNKNOWN,
+            f"only {published_n} outcomes survive the shipped exclusions "
+            f"(floor {PUBLISHED_MIN_N}) — too few to judge the published curve, "
+            f"so the raw {raw_mce:.2f}pp is the only number that stands up",
+        )
+
+    raw_over = raw_mce >= threshold
+    pub_over = published_mce >= threshold
+
+    if raw_over and not pub_over:
+        return (
+            DISP_EXCLUSION_WORKING,
+            f"raw {raw_mce:.2f}pp is over the {threshold:.1f}pp threshold but the "
+            f"published curve is {published_mce:.2f}pp (n={published_n}) — the "
+            f"shipped exclusion is doing its job and users are not seeing this",
+        )
+    if raw_over and pub_over:
+        return (
+            DISP_REAL_BREAK,
+            f"raw {raw_mce:.2f}pp AND published {published_mce:.2f}pp "
+            f"(n={published_n}) are both over {threshold:.1f}pp — the exclusion "
+            f"does not reach this, and users see it",
+        )
+    if not raw_over and pub_over:
+        return (
+            DISP_EXCLUSION_HARMS,
+            f"raw {raw_mce:.2f}pp is UNDER the {threshold:.1f}pp threshold but the "
+            f"published curve is {published_mce:.2f}pp (n={published_n}) — an "
+            f"exclusion is removing good rows and making the curve WORSE. Nothing "
+            f"else looks for this",
+        )
+    return (
+        DISP_EXCLUSION_WORKING,
+        f"raw {raw_mce:.2f}pp and published {published_mce:.2f}pp are both under "
+        f"{threshold:.1f}pp",
+    )
+
+
 def hook_signature(buckets: list[dict]) -> bool:
     """True if the cohort shows the high-cp-low-winrate 'hook' (the sign-flip /
     placeholder signature): the top confidence bands (cp >= 0.7) resolve well
@@ -404,17 +488,43 @@ SELECT
     -- outcome can be both void and malformed_binary), so they can neither be
     -- summed into a union nor maxed into one. Only an OR inside a single CASE
     -- gives the true union, and it costs nothing extra here.
-    SUM(CASE WHEN (n_outcomes = 2 AND n_winners <> 1)
+    SUM(CASE WHEN {known_union} THEN 1 ELSE 0 END) AS any_known_n,
+    -- #1911 (CAL-P065): THE PUBLISHED CURVE, on the same pass.
+    --
+    -- The three sums above this line describe the RAW population. These three
+    -- describe what a user actually sees: the same rows with the shipped
+    -- exclusions applied. It is the identical predicate, negated — which is
+    -- why it is interpolated from one fragment rather than re-typed, so the
+    -- raw and published views can never drift apart by an edit to one of them.
+    --
+    -- The sentinel filed #1142 at 21.33pp raw against 3.69pp published because
+    -- it had no way to compute the second number. No coverage tuning could
+    -- have fixed that: coverage counts EXCLUDED rows, and the disposition
+    -- depends on what the REMAINING rows do. Those are not related by a
+    -- fraction — #1142's exclusion drops 23.0% of the cohort and takes the
+    -- cell from 21.33pp to 3.69pp precisely because the dropped rows are the
+    -- miscalibrated ones.
+    SUM(CASE WHEN {known_union} THEN 0 ELSE 1 END) AS pub_n,
+    SUM(CASE WHEN {known_union} THEN 0 WHEN is_winner THEN 1 ELSE 0 END) AS pub_winners,
+    SUM(CASE WHEN {known_union} THEN 0 ELSE cp END) AS pub_sum_prob,
+    MIN(created_at) AS min_created_at
+FROM base
+GROUP BY 1, 2, 3, 4, 5, 6
+"""
+
+#: The shipped-exclusion union, as ONE expression. Interpolated four times into
+#: the mining scan — once to COUNT the excluded rows, three times to build the
+#: published aggregate from their complement. Written once because a raw view
+#: and a published view that disagree about what "excluded" means would produce
+#: a confident comparison between two different populations.
+_KNOWN_UNION_SQL = """(
+                   (n_outcomes = 2 AND n_winners <> 1)
                    OR (category = 'esports' AND n_outcomes >= 3 AND n_winners >= 2)
                    OR (mutually_exclusive AND n_outcomes >= 3 AND n_winners = 1 AND cp_sum > 1.15)
                    OR resolution_source IN {void_in}
                    OR resolution_source IN {heuristic_in}
                    OR is_kalshi_prop_threshold
-             THEN 1 ELSE 0 END) AS any_known_n,
-    MIN(created_at) AS min_created_at
-FROM base
-GROUP BY 1, 2, 3, 4, 5, 6
-"""
+             )"""
 
 # Events population: moneyline home/away split (2-way). Draws are intentionally
 # LEFT IN as losses for both sides — that's exactly what surfaces the soccer
@@ -456,6 +566,14 @@ SELECT
     0 AS void_n,
     0 AS heuristic_n,
     0 AS kalshi_prop_threshold_n,
+    0 AS any_known_n,
+    -- #1911: events carry no per-outcome exclusion flags, so the published
+    -- population IS the raw one. Emitted explicitly rather than left to a
+    -- default, so an events cohort reports a real published MCE equal to its
+    -- raw one instead of a missing number that reads as "under threshold".
+    COUNT(*) AS pub_n,
+    SUM(win) AS pub_winners,
+    SUM(cp) AS pub_sum_prob,
     NULL::timestamptz AS min_created_at
 FROM sides
 GROUP BY category, bucket
@@ -473,6 +591,12 @@ def _in_list(items: tuple[str, ...]) -> str:
 _FUTURES_MINING_SQL = _FUTURES_MINING_SQL.format(
     void_in=_in_list(_VOID_SOURCES),
     heuristic_in=_in_list(_HEURISTIC_SOURCES),
+    # #1911: rendered ONCE, substituted into all four sites. The raw and
+    # published aggregates are the two sides of this single predicate.
+    known_union=_KNOWN_UNION_SQL.format(
+        void_in=_in_list(_VOID_SOURCES),
+        heuristic_in=_in_list(_HEURISTIC_SOURCES),
+    ),
     # CAL-P013: imported, never re-typed. If the curve's band or regex moves,
     # the sentinel's explanation moves with it in the same commit.
     prop_threshold=kalshi_prop_threshold_exclude_sql(
@@ -506,6 +630,12 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     # groups by (source, category, series, structure, bucket), so no OUTCOME is
     # counted by two rows and summing the per-row unions IS the cohort union.
     cohort["overlap_counts"][_UNION_KEY] += row.get("any_known_n") or 0
+    # #1911: the published curve, accumulated in lockstep with the raw one.
+    pb = cohort["published_buckets"][row["bucket"]]
+    pb["n"] += row.get("pub_n") or 0
+    pb["winners"] += row.get("pub_winners") or 0
+    pb["sum_prob"] += float(row.get("pub_sum_prob") or 0.0)
+    cohort["published_n"] += row.get("pub_n") or 0
     mca = row.get("min_created_at")
     if mca is not None:
         cur = cohort["min_created_at"]
@@ -522,6 +652,8 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
         "category": d.get("category"),
         "buckets": _empty_buckets(),
         "total_n": 0,
+        "published_buckets": _empty_buckets(),
+        "published_n": 0,
         "overlap_counts": {
             "malformed_binary": 0,
             "esports_multi_bundle": 0,
@@ -538,6 +670,14 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
 def _finalize_cohort(cohort: dict, now_ts: float) -> dict:
     buckets = cohort["buckets"]
     cohort["mce"] = _compute_horizon_mce(buckets, weighted=True)
+    # #1911: the same metric over the same cohort with the shipped exclusions
+    # applied. `None` when the exclusions leave too little behind to say
+    # anything — an absent number, never a flattering zero (gotcha #54).
+    cohort["published_mce"] = (
+        _compute_horizon_mce(cohort["published_buckets"], weighted=True)
+        if cohort.get("published_n", 0) >= PUBLISHED_MIN_N
+        else None
+    )
     mca = cohort["min_created_at"]
     is_new = False
     if mca is not None:
@@ -810,7 +950,26 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
         parts.append(f"- `{d}` = `{v}`")
     parts += [
         "",
-        f"**n-weighted MCE:** {cohort['mce']:.2f}pp  ",
+        # #1911 — RAW and PUBLISHED, always together, always with their n.
+        # These were one line reading "n-weighted MCE", which is the RAW,
+        # un-excluded population. #1142 was filed as a P1 on that line at
+        # 21.33pp while users were looking at 3.69pp. A reader of the old body
+        # had no way to notice, because the body did not contain the number
+        # that would have contradicted it.
+        f"**n-weighted MCE (RAW, un-excluded):** {cohort['mce']:.2f}pp "
+        f"over {cohort['total_n']} resolved outcomes  ",
+        (
+            f"**n-weighted MCE (PUBLISHED — what users see):** "
+            f"{cohort['published_mce']:.2f}pp over {cohort.get('published_n', 0)} "
+            f"outcomes surviving the shipped exclusions  "
+            if cohort.get("published_mce") is not None
+            else f"**n-weighted MCE (PUBLISHED):** not computable — only "
+                 f"{cohort.get('published_n', 0)} outcomes survive the shipped "
+                 f"exclusions (floor {PUBLISHED_MIN_N}). An ABSENT number, not a "
+                 f"clean one.  "
+        ),
+        f"**Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
+        f"{cohort.get('disposition_why', 'not evaluated')}  ",
         f"**Sample size:** {cohort['total_n']} resolved outcomes  ",
         f"**Population/table provenance:** `{cohort['provenance']}` "
         f"({'events ground-truth (scores)' if cohort['provenance']=='events' else 'futures_outcomes'})  ",
@@ -839,6 +998,24 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
     if cohort["provenance"] == "events" and (cohort["category"] or "").startswith("soccer_"):
         parts.append("- soccer_2way (draw omission): structural — events soccer moneyline")
     parts.append("")
+
+    if cohort.get("disposition") == DISP_EXCLUSION_HARMS:
+        parts += [
+            "### ⚠️ A SHIPPED EXCLUSION IS MAKING THIS CURVE WORSE",
+            "",
+            cohort.get("disposition_why", ""),
+            "",
+            "This is the class #1911 was built to expose, and it is the reason "
+            "the published view exists. The raw population is UNDER threshold; "
+            "applying the shipped exclusions pushes it OVER. That means the "
+            "exclusion is not removing miscalibrated rows — it is removing "
+            "well-calibrated ones, and the curve users read is worse than the "
+            "data we hold.",
+            "",
+            "Do not tune coverage. Find which exclusion class is responsible "
+            "(the overlap table above) and check what it is dropping.",
+            "",
+        ]
 
     if explained_by:
         branch = _PLAYBOOK_BRANCHES.get(explained_by, "see docs/calibration-diagnosis-playbooks.md")
@@ -1271,16 +1448,43 @@ async def _run_calibration_sentinel(
             )
             c["explained_by"] = explained_by
             c["coverage"] = coverage
-            if explained_by:
+
+            # #1911 — the published curve, beside the raw number that flagged.
+            # Deliberately computed AFTER classify_coverage and kept separate
+            # from it: coverage is a statement about the rows removed, this is
+            # a statement about the rows left, and conflating them is the exact
+            # error that made #1142 unfixable by tuning.
+            threshold = (
+                SENTINEL_NEW_MCE_THRESHOLD if c["is_new_format"]
+                else SENTINEL_MCE_THRESHOLD
+            )
+            disposition, disposition_why = raw_vs_published(
+                c["mce"], c.get("published_mce"), c.get("published_n", 0), threshold
+            )
+            c["disposition"] = disposition
+            c["disposition_why"] = disposition_why
+            if disposition == DISP_EXCLUSION_WORKING:
                 stats["explained"] += 1
             else:
                 stats["unexplained"] += 1
+                if disposition == DISP_EXCLUSION_HARMS:
+                    stats["exclusion_harms"] = stats.get("exclusion_harms", 0) + 1
 
             finding = {
                 "fingerprint": c["fingerprint"],
                 "dims": c["dims"],
                 "mce": round(c["mce"], 2),
                 "n": c["total_n"],
+                # Both numbers ride EVERY finding, with their n — #1911's
+                # acceptance. A body carrying one of them is a body that cannot
+                # be argued with.
+                "published_mce": (
+                    round(c["published_mce"], 2)
+                    if c.get("published_mce") is not None else None
+                ),
+                "published_n": c.get("published_n", 0),
+                "disposition": disposition,
+                "disposition_why": disposition_why,
                 "provenance": c["provenance"],
                 "is_new_format": c["is_new_format"],
                 "hook_signature": c["hook_signature"],
@@ -1311,9 +1515,37 @@ async def _run_calibration_sentinel(
     # --- Filing (outside the session; httpx calls) ---
     # Suppress cohorts explained by a shipped exclusion in a live run so the
     # sentinel doesn't re-file known work; still surface them in the findings.
-    candidates = [c for c in flagged if not (suppress_known and c.get("explained_by"))]
+    # #1911: a cohort whose PUBLISHED curve is under threshold must not file.
+    # That is the #1142 case — 21.33pp raw, 3.69pp published, filed as a P1
+    # against a cell the shipped exclusion already fixes. It is suppressed for
+    # the same reason an `explained_by` cohort is (do not re-file known work),
+    # and like that one it still SURFACES in `findings` carrying both numbers,
+    # so a working exclusion becomes visible rather than invisible.
+    #
+    # `exclusion_harms` and `published_unknown` deliberately still file: the
+    # first is a defect nothing else looks for, and the second means the
+    # published number could not be computed, which is not permission to
+    # assume it is fine.
+    def _suppressed(c: dict) -> bool:
+        if not suppress_known:
+            return False
+        return bool(c.get("explained_by")) or (
+            c.get("disposition") == DISP_EXCLUSION_WORKING
+        )
+
+    candidates = [c for c in flagged if not _suppressed(c)]
     candidates.sort(
-        key=lambda c: (0 if c.get("explained_by") else 1, c["mce"] or 0), reverse=True
+        key=lambda c: (
+            # An exclusion that makes the curve WORSE outranks everything: it
+            # is the only class here no other instrument can see. Note the
+            # polarity — this list sorts `reverse=True`, so the HIGH value is
+            # the one that files first (which is why "unexplained" is 1 below,
+            # not 0).
+            1 if c.get("disposition") == DISP_EXCLUSION_HARMS else 0,
+            0 if c.get("explained_by") else 1,
+            c["mce"] or 0,
+        ),
+        reverse=True,
     )
     candidates = dedup_overlapping(candidates)
     stats["file_candidates_deduped"] = len(candidates)

@@ -124,14 +124,47 @@ def test_new_write_source_is_distinct_from_the_existing_clob_sources():
 # ---------------------------------------------------------------------------
 
 
-def test_never_graded_cohort_has_no_write_path_yet():
-    """The drain must not be able to reach the new cohort. If a later queue wires
-    it up, this test is the deliberate, test-visible act that records it."""
+def test_never_graded_cohort_is_reachable_only_by_explicit_argument():
+    """CAL-P065 (#1912) — the deliberate, test-visible act this test asked for.
+
+    It used to read:
+
+        drain_src = inspect.getsource(clob_resolve.clob_resolve_drain)
+        assert _COHORT_NEVER_GRADED not in drain_src
+        assert _WRITE_SOURCE_NEVER_GRADED not in drain_src
+
+    and it said of itself: *"If a later queue wires it up, this test is the
+    deliberate, test-visible act that records it."* This is that queue.
+
+    Worth recording HOW it behaved when the wiring actually landed, because it
+    is the argument for the whole behavioral-specimen turn. The drain gained a
+    ``cohort`` parameter that reaches the never-graded population — the exact
+    change the test existed to catch — and the test **passed anyway**. It greps
+    for the string VALUES (``"never_graded"``, ``"clob_never_graded"``), which
+    a parameter named ``cohort`` never spells. It would equally have failed on
+    a comment that merely mentioned the words. A source-string test is blind to
+    the change it was written for and loud about changes that do not matter.
+
+    So the property is now stated as behaviour: the default is the dropped
+    cohort, the wider cohort requires someone to ASK for it by name, and an
+    unrecognised value falls back closed. The write half is guarded by the
+    specimen suite (``tests/test_pm_market_ownership.py``), which drives the
+    real function and asserts on the UPDATE it issues.
+    """
     from app.tasks import clob_resolve
 
-    drain_src = inspect.getsource(clob_resolve.clob_resolve_drain)
-    assert _COHORT_NEVER_GRADED not in drain_src
-    assert _WRITE_SOURCE_NEVER_GRADED not in drain_src
+    sig = inspect.signature(clob_resolve.clob_resolve_drain)
+    assert sig.parameters["cohort"].default == _COHORT_DROPPED
+
+    # Reachable — but only by naming it.
+    assert _cohort_having(_COHORT_NEVER_GRADED) != _cohort_having(_COHORT_DROPPED)
+    assert "bool_and(fo.resolution_source IS NULL)" in _cohort_having(
+        _COHORT_NEVER_GRADED
+    )
+
+    # And the 25,264-market write stays an attended apply: the never-graded
+    # write source is not in the drain's default tiers, so no beat can reach it.
+    assert _WRITE_SOURCE_NEVER_GRADED not in clob_resolve._DEFAULT_WRITE_TIERS
 
 
 def test_batch0_writes_nothing():
