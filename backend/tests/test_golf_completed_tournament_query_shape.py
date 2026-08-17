@@ -51,10 +51,13 @@ from app.routes import golf as golf_route
 SRC = inspect.getsource(golf_route._build_completed_tournament)
 
 # LAT-P058/#1866 moved the phase-1 predicate and projection out of the function body
-# and into `golf_identity_select`, so that the `OR` can be swapped for an indexable
-# `UNION` once the covering partial indexes exist. The invariants below did not move
-# with it — they follow the code. See `test_golf_identity_prefilter.py` for the
-# set-equality proof between the two shapes.
+# and into `golf_identity_select`. The original reason was to let the `OR` be swapped
+# for an indexable `UNION`; that swap was measured 4.79x SLOWER and REFUSED (ruling
+# 076), and the alternative shape plus its flag were deleted in #1917. The extraction
+# stays because the narrow projection is worth naming on its own — but there is now
+# exactly ONE shape, and `golf_identity_select()` takes no arguments. The invariants
+# below did not move with the code; they follow it. See
+# `test_golf_identity_prefilter.py` for the one-statement guard.
 PREFILTER_SRC = inspect.getsource(golf_route.golf_identity_select)
 
 

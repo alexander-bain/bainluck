@@ -1,0 +1,1132 @@
+{
+  "captured_at_unix": 1787005877,
+  "captured_at_utc": "2026-08-17T22:31:17Z",
+  "captured_at_local": "2026-08-17T15:31:17 PDT",
+  "label": "LAT-P063 head run4 v3830 settled",
+  "api": "https://api.bainluck.com",
+  "arm": [
+    "red sox",
+    "patriots",
+    "celtics",
+    "yankees",
+    "bruins",
+    "world cup",
+    "masters",
+    "election"
+  ],
+  "rounds": 3,
+  "rows": [
+    {
+      "round": 0,
+      "query": "red sox",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.256,
+          "tls": 143.607,
+          "server": 82.726,
+          "transfer": 5.996
+        },
+        "total_ms": 232.646
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.019,
+          "connect": 0.332,
+          "tls": 182.79,
+          "server": 83.206,
+          "transfer": 0.161
+        },
+        "total_ms": 266.588
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.009,
+        "connect": -0.076,
+        "tls": -39.183,
+        "server": -0.48,
+        "transfer": 5.835
+      },
+      "miss_cost_total_ms": -33.942
+    },
+    {
+      "round": 0,
+      "query": "patriots",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.258,
+          "tls": 146.022,
+          "server": 136.347,
+          "transfer": 0.168
+        },
+        "total_ms": 282.871
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.255,
+          "tls": 139.805,
+          "server": 82.228,
+          "transfer": 0.216
+        },
+        "total_ms": 222.579
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.003,
+        "tls": 6.217,
+        "server": 54.119,
+        "transfer": -0.048
+      },
+      "miss_cost_total_ms": 60.292
+    },
+    {
+      "round": 0,
+      "query": "celtics",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.165,
+          "tls": 180.872,
+          "server": 80.269,
+          "transfer": 0.203
+        },
+        "total_ms": 261.66
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.2,
+          "tls": 151.255,
+          "server": 118.512,
+          "transfer": 0.176
+        },
+        "total_ms": 270.209
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": -0.035,
+        "tls": 29.617,
+        "server": -38.243,
+        "transfer": 0.027
+      },
+      "miss_cost_total_ms": -8.549
+    },
+    {
+      "round": 0,
+      "query": "yankees",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.021,
+          "connect": 0.178,
+          "tls": 143.456,
+          "server": 80.851,
+          "transfer": 3.087
+        },
+        "total_ms": 227.65
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.231,
+          "tls": 187.286,
+          "server": 86.532,
+          "transfer": 2.199
+        },
+        "total_ms": 276.313
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.01,
+        "connect": -0.053,
+        "tls": -43.83,
+        "server": -5.681,
+        "transfer": 0.888
+      },
+      "miss_cost_total_ms": -48.663
+    },
+    {
+      "round": 0,
+      "query": "bruins",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.252,
+          "tls": 144.58,
+          "server": 125.744,
+          "transfer": 0.353
+        },
+        "total_ms": 270.994
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.233,
+          "tls": 144.541,
+          "server": 81.525,
+          "transfer": 0.197
+        },
+        "total_ms": 226.556
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": 0.019,
+        "tls": 0.039,
+        "server": 44.219,
+        "transfer": 0.156
+      },
+      "miss_cost_total_ms": 44.438
+    },
+    {
+      "round": 0,
+      "query": "world cup",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.118,
+          "tls": 184.347,
+          "server": 83.0,
+          "transfer": 0.163
+        },
+        "total_ms": 267.73
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.236,
+          "tls": 145.658,
+          "server": 123.578,
+          "transfer": 1.397
+        },
+        "total_ms": 270.97
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.0,
+        "connect": -0.118,
+        "tls": 38.689,
+        "server": -40.578,
+        "transfer": -1.234
+      },
+      "miss_cost_total_ms": -3.24
+    },
+    {
+      "round": 0,
+      "query": "masters",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.275,
+          "tls": 465.939,
+          "server": 83.309,
+          "transfer": 0.5
+        },
+        "total_ms": 550.088
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.155,
+          "tls": 145.873,
+          "server": 170.0,
+          "transfer": 2.858
+        },
+        "total_ms": 319.124
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.005,
+        "connect": 0.12,
+        "tls": 320.066,
+        "server": -86.691,
+        "transfer": -2.358
+      },
+      "miss_cost_total_ms": 230.964
+    },
+    {
+      "round": 0,
+      "query": "election",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.298,
+          "tls": 143.398,
+          "server": 83.022,
+          "transfer": 2.664
+        },
+        "total_ms": 229.452
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.202,
+          "tls": 147.193,
+          "server": 84.134,
+          "transfer": 4.503
+        },
+        "total_ms": 236.175
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.003,
+        "connect": 0.096,
+        "tls": -3.795,
+        "server": -1.112,
+        "transfer": -1.839
+      },
+      "miss_cost_total_ms": -6.723
+    },
+    {
+      "round": 1,
+      "query": "red sox",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.838,
+          "tls": 155.054,
+          "server": 86.179,
+          "transfer": 0.186
+        },
+        "total_ms": 242.319
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.018,
+          "connect": 0.32,
+          "tls": 145.655,
+          "server": 88.323,
+          "transfer": 5.762
+        },
+        "total_ms": 240.183
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.008,
+        "connect": 0.518,
+        "tls": 9.399,
+        "server": -2.144,
+        "transfer": -5.576
+      },
+      "miss_cost_total_ms": 2.136
+    },
+    {
+      "round": 1,
+      "query": "patriots",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.241,
+          "tls": 148.209,
+          "server": 83.9,
+          "transfer": 6.35
+        },
+        "total_ms": 238.788
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.261,
+          "tls": 144.437,
+          "server": 83.49,
+          "transfer": 0.205
+        },
+        "total_ms": 228.469
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.004,
+        "connect": -0.02,
+        "tls": 3.772,
+        "server": 0.41,
+        "transfer": 6.145
+      },
+      "miss_cost_total_ms": 10.319
+    },
+    {
+      "round": 1,
+      "query": "celtics",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.306,
+          "tls": 142.66,
+          "server": 82.731,
+          "transfer": 0.191
+        },
+        "total_ms": 225.947
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.182,
+          "tls": 146.716,
+          "server": 83.109,
+          "transfer": 0.216
+        },
+        "total_ms": 230.31
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.124,
+        "tls": -4.056,
+        "server": -0.378,
+        "transfer": -0.025
+      },
+      "miss_cost_total_ms": -4.363
+    },
+    {
+      "round": 1,
+      "query": "yankees",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.307,
+          "tls": 149.137,
+          "server": 88.886,
+          "transfer": 5.866
+        },
+        "total_ms": 244.273
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.017,
+          "connect": 0.299,
+          "tls": 148.862,
+          "server": 82.237,
+          "transfer": 0.665
+        },
+        "total_ms": 232.157
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.003,
+        "connect": 0.008,
+        "tls": 0.275,
+        "server": 6.649,
+        "transfer": 5.201
+      },
+      "miss_cost_total_ms": 12.116
+    },
+    {
+      "round": 1,
+      "query": "bruins",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.221,
+          "tls": 145.837,
+          "server": 88.257,
+          "transfer": 2.921
+        },
+        "total_ms": 237.303
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.3,
+          "tls": 163.004,
+          "server": 83.73,
+          "transfer": 0.206
+        },
+        "total_ms": 247.371
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.004,
+        "connect": -0.079,
+        "tls": -17.167,
+        "server": 4.527,
+        "transfer": 2.715
+      },
+      "miss_cost_total_ms": -10.068
+    },
+    {
+      "round": 1,
+      "query": "world cup",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.013,
+          "connect": 0.249,
+          "tls": 142.253,
+          "server": 83.215,
+          "transfer": 0.24
+        },
+        "total_ms": 226.04
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.015,
+          "connect": 0.197,
+          "tls": 144.102,
+          "server": 83.862,
+          "transfer": 0.124
+        },
+        "total_ms": 228.384
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.002,
+        "connect": 0.052,
+        "tls": -1.849,
+        "server": -0.647,
+        "transfer": 0.116
+      },
+      "miss_cost_total_ms": -2.344
+    },
+    {
+      "round": 1,
+      "query": "masters",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.195,
+          "tls": 144.247,
+          "server": 84.014,
+          "transfer": 0.205
+        },
+        "total_ms": 228.863
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.237,
+          "tls": 153.117,
+          "server": 87.636,
+          "transfer": 5.547
+        },
+        "total_ms": 246.631
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.007,
+        "connect": -0.042,
+        "tls": -8.87,
+        "server": -3.622,
+        "transfer": -5.342
+      },
+      "miss_cost_total_ms": -17.768
+    },
+    {
+      "round": 1,
+      "query": "election",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.27,
+          "tls": 143.686,
+          "server": 85.41,
+          "transfer": 6.484
+        },
+        "total_ms": 235.912
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.011,
+          "connect": 0.243,
+          "tls": 148.795,
+          "server": 82.174,
+          "transfer": 6.591
+        },
+        "total_ms": 237.882
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.027,
+        "tls": -5.109,
+        "server": 3.236,
+        "transfer": -0.107
+      },
+      "miss_cost_total_ms": -1.97
+    },
+    {
+      "round": 2,
+      "query": "red sox",
+      "miss": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.251,
+          "tls": 189.816,
+          "server": 85.575,
+          "transfer": 0.297
+        },
+        "total_ms": 276.153
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 2199,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.019,
+          "connect": 0.327,
+          "tls": 143.504,
+          "server": 80.737,
+          "transfer": 9.257
+        },
+        "total_ms": 233.931
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.007,
+        "connect": -0.076,
+        "tls": 46.312,
+        "server": 4.838,
+        "transfer": -8.96
+      },
+      "miss_cost_total_ms": 42.222
+    },
+    {
+      "round": 2,
+      "query": "patriots",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.324,
+          "tls": 147.043,
+          "server": 4360.625,
+          "transfer": 0.181
+        },
+        "total_ms": 4508.27
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1723,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.012,
+          "connect": 0.396,
+          "tls": 147.53,
+          "server": 84.277,
+          "transfer": 0.474
+        },
+        "total_ms": 232.751
+      },
+      "pre_warmed": false,
+      "miss_cost_ms": {
+        "dns": 0.002,
+        "connect": -0.072,
+        "tls": -0.487,
+        "server": 4276.348,
+        "transfer": -0.293
+      },
+      "miss_cost_total_ms": 4275.519
+    },
+    {
+      "round": 2,
+      "query": "celtics",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.245,
+          "tls": 142.16,
+          "server": 79.36,
+          "transfer": 0.129
+        },
+        "total_ms": 221.957
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1450,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.306,
+          "tls": 154.235,
+          "server": 85.27,
+          "transfer": 3.176
+        },
+        "total_ms": 243.094
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.004,
+        "connect": -0.061,
+        "tls": -12.075,
+        "server": -5.91,
+        "transfer": -3.047
+      },
+      "miss_cost_total_ms": -21.137
+    },
+    {
+      "round": 2,
+      "query": "yankees",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.014,
+          "connect": 0.317,
+          "tls": 148.98,
+          "server": 88.133,
+          "transfer": 4.183
+        },
+        "total_ms": 241.824
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1996,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.229,
+          "tls": 143.512,
+          "server": 85.016,
+          "transfer": 0.26
+        },
+        "total_ms": 229.169
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.002,
+        "connect": 0.088,
+        "tls": 5.468,
+        "server": 3.117,
+        "transfer": 3.923
+      },
+      "miss_cost_total_ms": 12.655
+    },
+    {
+      "round": 2,
+      "query": "bruins",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.015,
+          "connect": 0.348,
+          "tls": 142.924,
+          "server": 82.234,
+          "transfer": 7.066
+        },
+        "total_ms": 232.662
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1838,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.255,
+          "tls": 145.151,
+          "server": 85.049,
+          "transfer": 2.912
+        },
+        "total_ms": 233.478
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.093,
+        "tls": -2.227,
+        "server": -2.815,
+        "transfer": 4.154
+      },
+      "miss_cost_total_ms": -0.816
+    },
+    {
+      "round": 2,
+      "query": "world cup",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.313,
+          "tls": 144.586,
+          "server": 80.16,
+          "transfer": 6.458
+        },
+        "total_ms": 231.612
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1917,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.331,
+          "tls": 146.379,
+          "server": 88.232,
+          "transfer": 2.882
+        },
+        "total_ms": 237.908
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": 0.007,
+        "connect": -0.018,
+        "tls": -1.793,
+        "server": -8.072,
+        "transfer": 3.576
+      },
+      "miss_cost_total_ms": -6.296
+    },
+    {
+      "round": 2,
+      "query": "masters",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.256,
+          "tls": 144.698,
+          "server": 83.484,
+          "transfer": 0.207
+        },
+        "total_ms": 228.706
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1790,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.01,
+          "connect": 0.134,
+          "tls": 147.087,
+          "server": 81.702,
+          "transfer": 4.159
+        },
+        "total_ms": 233.142
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.001,
+        "connect": 0.122,
+        "tls": -2.389,
+        "server": 1.782,
+        "transfer": -3.952
+      },
+      "miss_cost_total_ms": -4.436
+    },
+    {
+      "round": 2,
+      "query": "election",
+      "miss": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.009,
+          "connect": 0.296,
+          "tls": 150.706,
+          "server": 83.076,
+          "transfer": 0.187
+        },
+        "total_ms": 234.343
+      },
+      "hit": {
+        "http_code": 200,
+        "bytes": 1758,
+        "num_connects": 1,
+        "reused_connection": false,
+        "seg_ms": {
+          "dns": 0.016,
+          "connect": 0.32,
+          "tls": 194.881,
+          "server": 117.244,
+          "transfer": 10.065
+        },
+        "total_ms": 322.624
+      },
+      "pre_warmed": true,
+      "miss_cost_ms": {
+        "dns": -0.007,
+        "connect": -0.024,
+        "tls": -44.175,
+        "server": -34.168,
+        "transfer": -9.878
+      },
+      "miss_cost_total_ms": -88.281
+    }
+  ],
+  "summary": {
+    "n_pairs_attempted": 24,
+    "n_pairs_usable": 1,
+    "excluded_pre_warmed": [
+      "red sox",
+      "patriots",
+      "celtics",
+      "yankees",
+      "bruins",
+      "world cup",
+      "masters",
+      "election",
+      "red sox",
+      "patriots",
+      "celtics",
+      "yankees",
+      "bruins",
+      "world cup",
+      "masters",
+      "election",
+      "red sox",
+      "celtics",
+      "yankees",
+      "bruins",
+      "world cup",
+      "masters",
+      "election"
+    ],
+    "excluded_transport_error": [],
+    "budget_ms": 150,
+    "miss_total": {
+      "dns": {
+        "p50": 0.014,
+        "min": 0.014,
+        "max": 0.014
+      },
+      "connect": {
+        "p50": 0.324,
+        "min": 0.324,
+        "max": 0.324
+      },
+      "tls": {
+        "p50": 147.043,
+        "min": 147.043,
+        "max": 147.043
+      },
+      "server": {
+        "p50": 4360.625,
+        "min": 4360.625,
+        "max": 4360.625
+      },
+      "transfer": {
+        "p50": 0.181,
+        "min": 0.181,
+        "max": 0.181
+      }
+    },
+    "hit_total": {
+      "dns": {
+        "p50": 0.012,
+        "min": 0.012,
+        "max": 0.012
+      },
+      "connect": {
+        "p50": 0.396,
+        "min": 0.396,
+        "max": 0.396
+      },
+      "tls": {
+        "p50": 147.53,
+        "min": 147.53,
+        "max": 147.53
+      },
+      "server": {
+        "p50": 84.277,
+        "min": 84.277,
+        "max": 84.277
+      },
+      "transfer": {
+        "p50": 0.474,
+        "min": 0.474,
+        "max": 0.474
+      }
+    },
+    "miss_cost": {
+      "dns": {
+        "p50": 0.002,
+        "min": 0.002,
+        "max": 0.002
+      },
+      "connect": {
+        "p50": -0.072,
+        "min": -0.072,
+        "max": -0.072
+      },
+      "tls": {
+        "p50": -0.487,
+        "min": -0.487,
+        "max": -0.487
+      },
+      "server": {
+        "p50": 4276.348,
+        "min": 4276.348,
+        "max": 4276.348
+      },
+      "transfer": {
+        "p50": -0.293,
+        "min": -0.293,
+        "max": -0.293
+      }
+    },
+    "miss_cost_total_ms": {
+      "p50": 4275.519,
+      "min": 4275.519,
+      "max": 4275.519
+    },
+    "miss_total_wall_ms": {
+      "p50": 4508.27,
+      "min": 4508.27,
+      "max": 4508.27
+    },
+    "bytes_p50": 1723.0,
+    "largest_miss_cost_segment": {
+      "segment": "server",
+      "p50_ms": 4276.348,
+      "share_of_miss_cost": 1.0
+    }
+  }
+}
