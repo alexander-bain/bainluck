@@ -66,6 +66,29 @@ SENTINEL_NEW_FORMAT_DAYS = 30
 # A cohort whose flagged outcomes are >= this fraction explained by a shipped
 # exclusion is "already covered" and is suppressed in a live run.
 SENTINEL_COVERAGE_THRESHOLD = 0.40  # calibration:sentinel_coverage_threshold
+
+# The known-class vocabulary, in ONE place. Everything that walks the overlap
+# classes — the fold, the coverage decision, the issue renderer — reads this
+# tuple. #1904 happened because the renderer carried its OWN hard-coded tuple of
+# six names and `kalshi_prop_threshold` was added to the diagnosis without being
+# added there, so on #1142/#1143 the single class that explains the cell was the
+# one class the reader could not see. A vocabulary duplicated at N sites drifts
+# at N-1 of them; this is the fix for the class, not just the instance.
+KNOWN_CLASS_KEYS: tuple[str, ...] = (
+    "poly_placeholder",
+    "esports_multi_bundle",
+    "malformed_binary",
+    "mex_normalization",
+    "kalshi_prop_threshold",
+    "void",
+    "heuristic",
+)
+
+# Exact union of the SCAN-COUNTED known classes, computed in SQL on the same pass
+# (#1905). Not a class itself — it never names a playbook branch and is skipped
+# when picking the dominant class. `poly_placeholder` is absent from it by
+# construction: it comes from a bounded snapshot sample, not the mining scan.
+_UNION_KEY = "__any_known__"
 # Bound the number of flagged cohorts we build a (snapshot-touching) evidence
 # census for, so a pathological run can't grind the snapshot table.
 SENTINEL_MAX_EVIDENCE_COHORTS = 40
@@ -220,6 +243,28 @@ def classify_coverage(
     open at once). The soccer 2-way draw class is
     structural (an events-table soccer moneyline), so it's keyed off category +
     provenance rather than a per-outcome flag.
+
+    #1905 — COVERAGE IS THE UNION, NOT THE MAX. This used to pick the single
+    largest class and compare *that* to the threshold, so a cohort two shipped
+    exclusions cover 30% + 14% scored 0.30 and filed as a fully UNEXPLAINED P1.
+    Two of the six calibration cells on the 2026-08-17 red list exist only
+    because of it, and one by a rounding margin:
+
+      #1896 tennis/binary  malformed_binary 39.6%  vs 40.0% -> filed by 0.4pp
+      #1144 poly/politics  mex_normalization 37.6% vs 40.0% -> filed by 2.4pp
+      #1895 poly/mma       malformed 30.2% + poly_placeholder 14.0% -> union
+                           <=44.2% would have cleared
+
+    The classes are NOT disjoint (one outcome can be both void and malformed),
+    so summing the fractions overstates. The exact union is counted in SQL on the
+    same scan and arrives as ``_UNION_KEY``; use it when present. ``poly_placeholder``
+    is estimated post-hoc from a bounded snapshot SAMPLE and so cannot join that
+    exact union — the honest combination is therefore ``max(exact_union,
+    poly_placeholder)``, which is still a strict LOWER bound on the true union and
+    strictly better than the old max-over-singletons.
+
+    The RETURNED NAME stays the dominant class, because that is what selects the
+    playbook branch a reader follows. Only the number being thresholded changes.
     """
     # Structural known class: events-table soccer moneyline == the draw-omission
     # (soccer_2way) exclusion. Events are grouped by sport family (soccer_epl ->
@@ -230,12 +275,55 @@ def classify_coverage(
     best_key = None
     best_frac = 0.0
     for key, frac in overlap_fractions.items():
+        if key == _UNION_KEY:
+            continue
         if frac > best_frac:
             best_frac = frac
             best_key = key
-    if best_frac >= SENTINEL_COVERAGE_THRESHOLD:
-        return best_key, best_frac
-    return None, best_frac
+
+    # Coverage judged on the union; naming still by the dominant class. The
+    # AUTOMATIC decision uses the LOWER bound, because suppressing a real break
+    # ships miscalibration to users while over-filing only makes noise. Where the
+    # bounds straddle the threshold the cell still files, but the body says so
+    # out loud rather than claiming "UNEXPLAINED" — see coverage_bounds.
+    lower, _upper = coverage_bounds(overlap_fractions)
+    if lower >= SENTINEL_COVERAGE_THRESHOLD:
+        return best_key, lower
+    return None, lower
+
+
+def coverage_bounds(overlap_fractions: dict[str, float]) -> tuple[float, float]:
+    """(lower, upper) bounds on the fraction of a cohort explained by shipped
+    exclusions.
+
+    Two kinds of number arrive here and they cannot be combined exactly:
+
+    * the SCAN-COUNTED classes, whose true union is counted in SQL on the mining
+      pass and is therefore exact (``_UNION_KEY``); and
+    * ``poly_placeholder``, estimated from a bounded snapshot SAMPLE, which
+      cannot join that union because the sample does not carry the other classes'
+      flags.
+
+    So the honest answer is an interval, not a point:
+
+        lower = max(exact_union, poly_placeholder)   # they might fully overlap
+        upper = min(1.0, exact_union + poly_placeholder)  # or be disjoint
+
+    #1895 is exactly this shape: malformed_binary 30.2% + poly_placeholder 14.0%
+    => somewhere in [30.2%, 44.2%], and the 40% threshold sits INSIDE that
+    interval. Neither "explained" nor "unexplained" is a true statement about it.
+    Reporting a single number there — in either direction — invents a fact, which
+    is the gotcha #53 move this file keeps having to unlearn.
+    """
+    exact = overlap_fractions.get(_UNION_KEY, 0.0)
+    placeholder = overlap_fractions.get("poly_placeholder", 0.0)
+    singles = [f for k, f in overlap_fractions.items() if k != _UNION_KEY]
+    # Guard older cached findings that predate the exact union column: fall back
+    # to the largest single class so they keep their previous reading instead of
+    # collapsing to 0% coverage and re-filing everything.
+    lower = max([exact, placeholder] + (singles or [0.0]))
+    upper = max(lower, min(1.0, exact + placeholder))
+    return lower, upper
 
 
 # The cohort "views" — each maps a fine-grained scan row to a cohort key, or None
@@ -311,6 +399,18 @@ SELECT
     SUM(CASE WHEN resolution_source IN {void_in} THEN 1 ELSE 0 END) AS void_n,
     SUM(CASE WHEN resolution_source IN {heuristic_in} THEN 1 ELSE 0 END) AS heuristic_n,
     SUM(CASE WHEN is_kalshi_prop_threshold THEN 1 ELSE 0 END) AS kalshi_prop_threshold_n,
+    -- #1905: the EXACT union of the five scan-counted known classes, on the same
+    -- pass. The per-class SUMs above double-count any outcome in two classes (an
+    -- outcome can be both void and malformed_binary), so they can neither be
+    -- summed into a union nor maxed into one. Only an OR inside a single CASE
+    -- gives the true union, and it costs nothing extra here.
+    SUM(CASE WHEN (n_outcomes = 2 AND n_winners <> 1)
+                   OR (category = 'esports' AND n_outcomes >= 3 AND n_winners >= 2)
+                   OR (mutually_exclusive AND n_outcomes >= 3 AND n_winners = 1 AND cp_sum > 1.15)
+                   OR resolution_source IN {void_in}
+                   OR resolution_source IN {heuristic_in}
+                   OR is_kalshi_prop_threshold
+             THEN 1 ELSE 0 END) AS any_known_n,
     MIN(created_at) AS min_created_at
 FROM base
 GROUP BY 1, 2, 3, 4, 5, 6
@@ -402,6 +502,10 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     cohort["overlap_counts"]["void"] += row["void_n"]
     cohort["overlap_counts"]["heuristic"] += row["heuristic_n"]
     cohort["overlap_counts"]["kalshi_prop_threshold"] += row["kalshi_prop_threshold_n"]
+    # Exact per-scan-row union folds additively across rows: the mining scan
+    # groups by (source, category, series, structure, bucket), so no OUTCOME is
+    # counted by two rows and summing the per-row unions IS the cohort union.
+    cohort["overlap_counts"][_UNION_KEY] += row.get("any_known_n") or 0
     mca = row.get("min_created_at")
     if mca is not None:
         cur = cohort["min_created_at"]
@@ -425,6 +529,7 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
             "void": 0,
             "kalshi_prop_threshold": 0,
             "heuristic": 0,
+            _UNION_KEY: 0,
         },
         "min_created_at": None,
     }
@@ -455,12 +560,41 @@ def _finalize_cohort(cohort: dict, now_ts: float) -> dict:
 # Evidence census (per flagged cohort) — the snapshot-touching part, bounded to
 # the flagged cohorts only.
 # ---------------------------------------------------------------------------
+# Series-family, rendered exactly as _FUTURES_MINING_SQL computes it. Kept as one
+# expression so the evidence pack and the census can never disagree about what
+# "series=KXNHLGOAL" means.
+_SERIES_FAMILY_SQL = (
+    "CASE WHEN fm.source IN ('kalshi', 'datagolf') "
+    "THEN split_part(fm.external_id, '-', 1) "
+    "ELSE COALESCE(fm.llm_sport_category, 'unknown') END"
+)
+
+
 def _cohort_where(dims: dict) -> tuple[str, dict]:
     """Build a WHERE clause + params restricting the futures scan to a cohort.
 
     Only futures cohorts get the snapshot census (events have no snapshot bid
-    evidence and no placeholder class). Series/structure dims are honored where
-    present.
+    evidence and no placeholder class).
+
+    #1903 — SERIES IS NOW ACTUALLY HONORED. This docstring used to promise
+    "Series/structure dims are honored where present" while the body filtered on
+    source and category alone, so for any cohort keyed by ``series`` the evidence
+    pack was drawn from the WHOLE source or the WHOLE category. That is not a
+    cosmetic mismatch: on #1142, titled ``series=KXNHLGOAL``, every sample row
+    came back ``KXATPMATCH-*`` / ``KXMLBKS-*``, and every one of them read
+    ``cp~0.995, winner=YES`` — the off-cohort rows looked HEALTHY and flatly
+    contradicted the cohort census printed six lines above them. A reader who
+    trusted the evidence pack was steered away from a real break.
+
+    ``structure`` is NOT expressible here, because it depends on a per-market
+    outcome COUNT rather than on any column of ``fm``. Putting a correlated count
+    in this WHERE would run it over the whole category before the caller's LIMIT
+    could bound anything. It is applied by ``_structure_predicate`` instead, after
+    the candidate set is capped — see the callers.
+
+    The census itself was never affected (it folds rows grouped by
+    series_family/structure_class), which is why #1142's MCE reproduced exactly.
+    Only the evidence pack leaked.
     """
     clauses = ["fm.status = 'resolved'"]
     params: dict[str, Any] = {}
@@ -470,7 +604,33 @@ def _cohort_where(dims: dict) -> tuple[str, dict]:
     if "category" in dims:
         clauses.append("COALESCE(fm.llm_sport_category, 'unknown') = :cat")
         params["cat"] = dims["category"]
+    if "series" in dims:
+        clauses.append(f"{_SERIES_FAMILY_SQL} = :series")
+        params["series"] = dims["series"]
     return " AND ".join(clauses), params
+
+
+def _structure_predicate(dims: dict) -> str | None:
+    """SQL predicate selecting the cohort's ``structure`` class, or None.
+
+    Written against two columns the caller must expose on its bounded candidate
+    set: ``n_out`` (count of cp-bearing outcomes on the market) and
+    ``mutually_exclusive``. Mirrors the CASE in _FUTURES_MINING_SQL exactly.
+
+    Separate from _cohort_where because it needs a per-market aggregate: applied
+    in the WHERE it would force a correlated count over the full category ahead
+    of any LIMIT, which is the runaway shape the :cap bounds exist to prevent.
+    """
+    structure = dims.get("structure")
+    if structure == "binary":
+        return "n_out = 2"
+    if structure == "mex_multi":
+        return "n_out >= 3 AND mutually_exclusive"
+    if structure == "multi_nonmex":
+        return "n_out >= 3 AND NOT COALESCE(mutually_exclusive, false)"
+    if structure == "single":
+        return "n_out <= 1"   # the mining CASE's ELSE branch
+    return None
 
 
 async def _placeholder_fraction(session, dims: dict) -> float | None:
@@ -483,6 +643,13 @@ async def _placeholder_fraction(session, dims: dict) -> float | None:
         return None
     where, params = _cohort_where(dims)
     params["cap"] = 3000
+    # #1903: same post-cap structure filter as _sample_rows. Without it a
+    # structure-keyed poly cohort's placeholder fraction was measured over the
+    # whole category — and that fraction is one of the inputs to the
+    # explained/unexplained decision, so the leak reached the verdict, not just
+    # the prose.
+    struct_pred = _structure_predicate(dims)
+    struct_where = f"WHERE {struct_pred}" if struct_pred else ""
     # Bounded SAMPLE: the per-outcome NOT EXISTS over snapshots is the one op that
     # can run away over a whole category, so cap the candidate set first (a 3000-row
     # sample gives a fine fraction estimate) — the budget-guard "bound the inner op"
@@ -490,22 +657,33 @@ async def _placeholder_fraction(session, dims: dict) -> float | None:
     sql = text(f"""
         WITH sample AS (
             SELECT fo.id AS oid,
+                   fo.market_id AS market_id,
+                   COALESCE(fm.mutually_exclusive, false) AS mutually_exclusive,
                    COALESCE(fo.calibration_probability, fo.opening_probability) AS cp
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE {where}
               AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
             LIMIT :cap
+        ), sized AS (
+            SELECT s.*, (
+                SELECT COUNT(*) FROM futures_outcomes fo2
+                WHERE fo2.market_id = s.market_id
+                  AND COALESCE(fo2.calibration_probability, fo2.opening_probability) IS NOT NULL
+            ) AS n_out
+            FROM sample s
+        ), cohort AS (
+            SELECT * FROM sized {struct_where}
         )
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN cp BETWEEN 0.45 AND 0.55
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
-                          WHERE fos.outcome_id = sample.oid
+                          WHERE fos.outcome_id = cohort.oid
                             AND (fos.yes_bid > 0 OR fos.last_price > 0))
                      THEN 1 ELSE 0 END) AS placeholder
-        FROM sample
+        FROM cohort
     """)
     res = (await session.execute(sql, params)).first()
     if not res or not res.total:
@@ -521,21 +699,38 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
     where, params = _cohort_where(dims)
     params["lim"] = limit
     params["cap"] = 5000
+    # #1903: structure is applied AFTER the candidate cap, via a correlated count
+    # over the (<= :cap) sampled rows — each one an index lookup on
+    # futures_outcomes(market_id). In the WHERE it would count outcomes for every
+    # market in the category before any LIMIT applied, which is exactly the
+    # runaway the cap exists to prevent.
+    struct_pred = _structure_predicate(dims)
+    struct_where = f"WHERE {struct_pred}" if struct_pred else ""
     # Bound the candidate set before the top-N sort so a huge cohort can't force a
     # full-category sort (same inner-op-bounding discipline as the placeholder census).
     sql = text(f"""
         WITH sample AS (
             SELECT fm.source AS source, fm.external_id AS external_id, fo.name AS outcome,
                    COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
-                   fo.is_winner AS is_winner, fo.resolution_source AS resolution_source
+                   fo.is_winner AS is_winner, fo.resolution_source AS resolution_source,
+                   fo.market_id AS market_id,
+                   COALESCE(fm.mutually_exclusive, false) AS mutually_exclusive
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE {where}
               AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.6
             LIMIT :cap
+        ), sized AS (
+            SELECT s.*, (
+                SELECT COUNT(*) FROM futures_outcomes fo2
+                WHERE fo2.market_id = s.market_id
+                  AND COALESCE(fo2.calibration_probability, fo2.opening_probability) IS NOT NULL
+            ) AS n_out
+            FROM sample s
         )
         SELECT source, external_id, outcome, cp, is_winner, resolution_source
-        FROM sample
+        FROM sized
+        {struct_where}
         ORDER BY cp DESC
         LIMIT :lim
     """)
@@ -564,6 +759,15 @@ _PLAYBOOK_BRANCHES = {
     "void": "denominator fix (did_not_play/withdrew; #762) — read-side, no regrade",
     "heuristic": "curve-exclude then authoritative re-resolve (guess-family poison; #754/gotcha #21)",
     "soccer_2way": "3-way capture (draw column; #1011) — historical rows excluded, no regrade",
+    # #1904: the class was counted in the diagnosis but had no branch here, so
+    # even once it is printed the reader is sent to the playbook index rather
+    # than to the exclusion that already handles the cell.
+    "kalshi_prop_threshold": (
+        "curve-exclusion (Kalshi 'Player: N+' prop-threshold ladder; CAL-P013) — "
+        "read-side, no regrade. The published curve ALREADY drops these rows, so "
+        "compare the cell's RAW MCE against the published one before treating it "
+        "as a break: on #1142 that was 21.33pp raw vs 3.69pp published"
+    ),
 }
 
 
@@ -619,10 +823,19 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
         "### Overlap vs known classes",
     ]
     fracs = cohort["overlap_fractions"]
-    for k in ("poly_placeholder", "esports_multi_bundle", "malformed_binary",
-              "mex_normalization", "void", "heuristic"):
+    # #1904: iterate the SHARED vocabulary, never a local copy of it.
+    for k in KNOWN_CLASS_KEYS:
         if k in fracs:
             parts.append(f"- {k}: {fracs[k]*100:.1f}% of outcomes")
+    if _UNION_KEY in fracs:
+        # #1905: the number the threshold is actually applied to. Printing only
+        # the per-class rows let a reader reconstruct a max and reach a different
+        # verdict than the sentinel did.
+        parts.append(
+            f"- **union of the above (exact, excl. poly_placeholder): "
+            f"{fracs[_UNION_KEY]*100:.1f}% of outcomes** — this is the figure "
+            f"compared against the {SENTINEL_COVERAGE_THRESHOLD*100:.0f}% coverage threshold"
+        )
     if cohort["provenance"] == "events" and (cohort["category"] or "").startswith("soccer_"):
         parts.append("- soccer_2way (draw omission): structural — events soccer moneyline")
     parts.append("")
@@ -639,13 +852,38 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
             "reference.",
         ]
     else:
-        parts += [
-            "### Diagnosis: UNEXPLAINED by any shipped exclusion",
-            "No known class covers this break above threshold — this is a candidate "
-            "NEW break. Follow the row-trace protocol in "
-            "`docs/calibration-diagnosis-playbooks.md` (Step 2) before any fix, and "
-            "assume-our-bug + verify-before-regrade (gotcha #21).",
-        ]
+        lower, upper = coverage_bounds(fracs)
+        if upper >= SENTINEL_COVERAGE_THRESHOLD > lower:
+            # #1905: the threshold sits INSIDE the coverage interval, so neither
+            # "explained" nor "unexplained" is a true statement. #1895 is exactly
+            # this: malformed_binary 30.2% + poly_placeholder 14.0% => [30.2%,
+            # 44.2%]. It files (the lower bound governs the automatic decision,
+            # because a suppressed real break is the worse error) but it must NOT
+            # claim to be a new break.
+            parts += [
+                "### Diagnosis: AMBIGUOUS — shipped exclusions may already cover this",
+                f"Coverage by shipped exclusions is **between {lower*100:.1f}% and "
+                f"{upper*100:.1f}%**, and the {SENTINEL_COVERAGE_THRESHOLD*100:.0f}% "
+                f"threshold falls inside that interval. The bound is wide because "
+                f"`poly_placeholder` is estimated from a bounded snapshot SAMPLE and "
+                f"cannot join the exact SQL-counted union of the other classes, so we "
+                f"do not know how much the two overlap.",
+                "",
+                "**Resolve the bound before treating this as a new break.** Measure the "
+                "true overlap on this cohort (are the ~0.50 no-bid placeholders the "
+                "same rows as the winner-count != 1 markets, or different ones?). If "
+                "the union clears the threshold, close with the exclusion reference "
+                "rather than opening an investigation.",
+            ]
+        else:
+            parts += [
+                "### Diagnosis: UNEXPLAINED by any shipped exclusion",
+                f"No known class covers this break above threshold (union "
+                f"{lower*100:.1f}%) — this is a candidate "
+                "NEW break. Follow the row-trace protocol in "
+                "`docs/calibration-diagnosis-playbooks.md` (Step 2) before any fix, and "
+                "assume-our-bug + verify-before-regrade (gotcha #21).",
+            ]
 
     samples = cohort.get("sample_rows") or []
     if samples:

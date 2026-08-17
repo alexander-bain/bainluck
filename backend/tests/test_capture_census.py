@@ -4,7 +4,10 @@ Covers the pure aggregation + alarm layer over already-fetched rows, so the
 same logic the calibration sentinel runs every sweep is verified without a DB.
 """
 
+from datetime import datetime, timezone
+
 from app.utils.capture_census import (
+    MIN_GAMES_FOR_CAPTURE_ALARM,
     MassCounts,
     capture_findings,
     drift_findings,
@@ -12,6 +15,13 @@ from app.utils.capture_census import (
     tally_market_rows,
     tally_source_split,
 )
+
+# Pinned clocks for the season gate (#1906). Real dates in real phases, never
+# `datetime.now().replace(...)` — gotcha #44 is explicit that pinning an HOUR
+# pins nothing, and that a seasonal assertion must not contain an `if`.
+IN_SEASON_NBA = datetime(2026, 1, 15, tzinfo=timezone.utc)   # NBA regular season
+OFFSEASON_NFL = datetime(2026, 8, 17, tzinfo=timezone.utc)   # NFL preseason (#1897)
+IN_SEASON_NFL = datetime(2026, 11, 15, tzinfo=timezone.utc)  # NFL regular season
 
 
 def _mkt(sport, name, ext, outc, well, volp, voln, art):
@@ -42,7 +52,11 @@ def test_starved_class_flags_when_moneyline_below_one_per_game():
         "moneyline": MassCounts(markets=40, outcomes=80),
         "other": MassCounts(markets=5, outcomes=5),
     }}
-    findings = capture_findings(games, by_sc)
+    # #1906: the clock is PINNED, mid-NBA-regular-season. Before the season gate
+    # landed this test read the wall clock and so was green from late October to
+    # mid-April and red the rest of the year — gotcha #44 sitting latent in the
+    # suite. It is pinned to a DATE (a real phase), not to an hour of today.
+    findings = capture_findings(games, by_sc, now=IN_SEASON_NBA)
     kinds = {f.kind for f in findings}
     assert "starved_class" in kinds
     starved = next(f for f in findings if f.kind == "starved_class")
@@ -172,3 +186,73 @@ def test_source_passrate_drift():
     findings = drift_findings(prev, curr)
     assert any(f.kind == "drift" and f.cohort == "kalshi/baseball_mlb"
                for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# #1906 — the capture axis needs an n-floor and a season window.
+#
+# Both directions are asserted, per gotcha #43: the artifact must be DOWNGRADED
+# *and* the genuine alarm must survive. A guard tested in one direction only is
+# how the diversity-cap fix emptied the Sports tab.
+#
+# And the downgrade is never a disappearance: WATCH still SURFACES the finding
+# with the reason named in `detail`. An alarm that vanishes is indistinguishable
+# from an alarm that never fired (gotcha #53), which is the whole failure this
+# instrument keeps re-creating.
+# ---------------------------------------------------------------------------
+
+def _starved(games_n, sport="americanfootball_nfl", now=None):
+    """A cohort that ALWAYS trips the raw moneyline-per-game rule."""
+    games = {sport: games_n}
+    by_sc = {sport: {"moneyline": MassCounts(markets=0, outcomes=0)}}
+    found = capture_findings(games, by_sc, now=now)
+    return next((f for f in found if f.kind == "starved_class"), None)
+
+
+def test_small_n_downgrades_to_watch_but_still_surfaces():
+    # #1900 was filed as a REAL P2 off FOUR games. One missing market flips that
+    # ratio, so it cannot carry a filing.
+    f = _starved(4, now=IN_SEASON_NFL)
+    assert f is not None, "the finding must still SURFACE, not vanish"
+    assert f.severity == "WATCH"
+    assert "floor" in f.detail and "4 games" in f.detail
+
+
+def test_n_floor_boundary_is_inclusive_on_the_real_side():
+    # Exactly at the floor files; one below does not. Pins the comparison
+    # direction so a later `<` -> `<=` slip is caught.
+    assert _starved(MIN_GAMES_FOR_CAPTURE_ALARM, now=IN_SEASON_NFL).severity == "REAL"
+    assert _starved(MIN_GAMES_FOR_CAPTURE_ALARM - 1, now=IN_SEASON_NFL).severity == "WATCH"
+
+
+def test_offseason_downgrades_to_watch_even_with_plenty_of_games():
+    # #1897: 19 NFL games, 2026-08-07..08-16 — preseason only. The detector's
+    # premise ("a game without a winner market is impossible") is not true of
+    # NFL preseason. n is deliberately well OVER the floor here, so this proves
+    # the SEASON gate fired and not the n-floor.
+    f = _starved(500, now=OFFSEASON_NFL)
+    assert f is not None
+    assert f.severity == "WATCH"
+    assert "offseason" in f.detail.lower()
+
+
+def test_in_season_core_sport_with_enough_games_still_files_real():
+    # The other direction. The instrument must not have been silenced.
+    f = _starved(500, now=IN_SEASON_NFL)
+    assert f is not None
+    assert f.severity == "REAL"
+    assert "WATCH not REAL" not in f.detail
+
+
+def test_season_gate_only_applies_to_leagues_with_known_bands():
+    # season_windows returns "in_season" for anything it has no bands for, so an
+    # unmapped core sport must NOT be silenced by the calendar. Mapping more
+    # leagues than season_windows knows would be coverage theatre.
+    f = _starved(500, sport="soccer_epl", now=OFFSEASON_NFL)
+    assert f is not None and f.severity == "REAL"
+
+
+def test_capture_findings_defaults_to_real_clock_without_now():
+    # `now` is optional; omitting it must not raise. (Value not asserted — that
+    # would reintroduce the wall-clock dependency this whole block removes.)
+    assert _starved(500, sport="soccer_epl") is not None
