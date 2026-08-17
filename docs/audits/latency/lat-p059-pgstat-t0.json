@@ -1,0 +1,1 @@
+{"columns":["queryid","calls","shared_blks_read","mean_ms","total_ms"],"rows":[[-6729221129999282418,11238,259981762,"2620.59","29450159.2"],[184240953744049829,9014,596155196,"2913.25","26260078.3"]],"row_count":2,"truncated":false,"duration_ms":327.1,"sql_fingerprint":"653ec8019aa3798b"}T0_UTC=2026-08-17T16:21:10Z
