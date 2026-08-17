@@ -30,6 +30,30 @@ def c24(i): return int(sum(v for _,v in (i.get('stats') or {}).get('24h') or [])
 for i in sorted(issues, key=c24, reverse=True):
     print(f'  {i[\"shortId\"]:14s} {c24(i):>6d} evts/24h  (life {str(i.get(\"count\",\"?\")):>7}) {i[\"title\"][:55]}')"
 
+# Sentry INGEST LIVENESS (#1894) — run this BEFORE reading the issues list above.
+# The issues list cannot tell "no errors happened" from "Sentry accepted nothing".
+# stats_v2 can: it reports `accepted` alongside every client/server discard reason.
+source .env.claude && curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+  "https://sentry.io/api/0/organizations/alexander-bain/stats_v2/?field=sum(quantity)&category=error&category=transaction&groupBy=category&groupBy=outcome&groupBy=reason&interval=1d&statsPeriod=1d" \
+  | python3 -c "import json,sys
+d=json.load(sys.stdin)
+agg={}
+for g in d.get('groups',[]):
+    b=g['by']; k=(b.get('category'),b.get('outcome'),b.get('reason'))
+    agg[k]=sum(g['series']['sum(quantity)'])
+err_acc=sum(v for (c,o,_),v in agg.items() if c=='error' and o=='accepted')
+txn_acc=sum(v for (c,o,_),v in agg.items() if c=='transaction' and o=='accepted')
+print(f'SENTRY INGEST 24h: error/accepted={err_acc} transaction/accepted={txn_acc}')
+for (c,o,r),v in sorted(agg.items(), key=lambda kv:-kv[1]):
+    if o!='accepted' and v: print(f'  discard {c}/{o}/{r} = {v}')
+if err_acc==0 and txn_acc>0:
+    print('  VERDICT: RED — MUTED CHANNEL. Zero errors accepted while transactions flow.')
+    print('  Every other Sentry reading in this health check is VACUOUS. Say so explicitly.')
+elif err_acc==0 and txn_acc==0:
+    print('  VERDICT: RED — no telemetry of ANY kind accepted; the whole SDK/transport read is dead.')
+else:
+    print('  VERDICT: GREEN — the error channel is live, so a quiet issues list means quiet.')"
+
 # Heroku — dyno status + DB connections
 heroku apps:info -a bainluck 2>&1 | grep "Dynos:"
 heroku pg:info -a bainluck 2>&1 | grep "Connections:"
@@ -158,7 +182,22 @@ For each section, present:
 #### Sections (in priority order):
 
 **A. Production Stability**
-- Sentry: any issue with >100 events **in the last 24h** (sum of `stats["24h"]`, NOT the lifetime `count`) → 🔴. A high lifetime `count` on a chronic that is quiet in 24h is not a fresh fire.
+- **Sentry ingest liveness — read this FIRST, and it is a HARD FAIL, not an advisory (#1894).**
+  The gate is not "did the stats_v2 call return"; a report existing is not a report passing.
+  The RED condition, stated exactly:
+  **`error/accepted` summed over the last 24h == 0 WHILE `transaction/accepted` over the same 24h > 0 → 🔴 RED.**
+  That combination is the muted-channel signature: the transport is demonstrably working
+  (transactions are landing), so a zero on errors is the *instrument* being silent, never
+  production being clean. Also 🔴 if `error/accepted == 0` and `transaction/accepted == 0`
+  (nothing is being accepted at all). 🟢 only when `error/accepted > 0`.
+  On RED you MUST: (a) name the dominant discard reason from the printed breakdown
+  (`rate_limited/error_usage_exceeded` = monthly quota gone; `client_discard/before_send` = our
+  own `app/utils/sentry_filter.py` is eating them; `client_discard/ratelimit_backoff` = SDK
+  backing off from a 429), and (b) mark **every other Sentry-derived line in this health check
+  as VACUOUS in the written briefing** — an issues list read through a muted channel is an
+  absence rendered as a measurement (gotcha #53), which is exactly how #1894 went 14 days unseen.
+  Never write "Sentry: clean" or "no error regression" on a run where this gate is RED.
+- Sentry: any issue with >100 events **in the last 24h** (sum of `stats["24h"]`, NOT the lifetime `count`) → 🔴. A high lifetime `count` on a chronic that is quiet in 24h is not a fresh fire. **Only meaningful if the ingest-liveness gate above is 🟢.**
 - Heroku: dyno up, DB connections reasonable (<18)
 - CI: last 3 runs passing
 - Celery: background queue >50 → 🔴, >20 → 🟡

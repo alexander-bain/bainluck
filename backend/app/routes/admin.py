@@ -1834,6 +1834,25 @@ async def get_ops_snapshot(
     else:
         snapshot["sentry"] = sentry_read.value
 
+    # 7b. What our own before_send DESTROYED, and the budget it spent (#1894).
+    # The `sentry` field above reports what Sentry ACCEPTED — which is zero
+    # whenever the quota is gone, and was zero for 14 days while ~19k events/day
+    # were being eaten one layer earlier by our own filter. Acceptance and
+    # discard are different facts and neither implies the other, so they are
+    # reported side by side. Alex, 2026-08-17: "a discard counter nobody can
+    # read is the same defect one level up."
+    try:
+        from app.utils.sentry_filter import filter_discard_census
+
+        snapshot["sentry_filter"] = filter_discard_census()
+    except Exception as exc:  # noqa: BLE001
+        snapshot["sentry_filter"] = {
+            "status": "error",
+            "error_class": exc.__class__.__name__,
+            "error": health_reads.redact(exc),
+            "over_ceiling": None,
+        }
+
     # 8. Celery / queue health.
     depths: dict = {}
     for q in ("background", "realtime", "heavy"):
