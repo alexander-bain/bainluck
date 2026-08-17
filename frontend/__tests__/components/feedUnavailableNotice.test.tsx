@@ -17,8 +17,10 @@ describe("FeedUnavailableNotice (L2-238)", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('data-testid="discover-feed-unavailable"');
     expect(html).toContain('data-variant="empty"');
-    // The words the Discover page already uses for a failed load.
-    expect(html).toContain("Failed to load feed");
+    // UX-P087 (#1909) retired L2-238's "reuse the page's existing words"
+    // constraint — those words named neither a why nor a when (ruling 027). The
+    // default reason is still the typed-degradation one, unchanged for /sports.
+    expect(html).toContain("The feed is catching up");
     expect(html).toContain("Try again");
     expect(html).toContain("<button");
     // The bare verb phrase is not a sufficient accessible name (L2-237).

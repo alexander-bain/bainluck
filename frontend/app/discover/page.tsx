@@ -9,7 +9,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
-import FeedUnavailableNotice from "@/components/discover/FeedUnavailableNotice";
+import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -742,6 +742,33 @@ export default function DiscoverPage() {
     mutateFeed();
   }, [mutateFeed]);
 
+  /**
+   * UX-P087 (#1909) — retry a FAILED load without reloading the document.
+   *
+   * This control used to be `window.location.reload()`. On the failure that
+   * actually happens — several people or several tabs behind one address burning
+   * the 60/min anonymous budget — a full reload re-fires every request on the
+   * page and is rate-limited again, so the only affordance offered was the one
+   * action guaranteed not to work. `mutateFeed()` re-requests the feed alone,
+   * which is both the cheapest retry and the only one with a chance of landing
+   * inside the same minute.
+   */
+  const handleRetryFailedLoad = useCallback(() => {
+    mutateFeed();
+  }, [mutateFeed]);
+
+  /**
+   * Which honest state a failed load earns. A rate limit and an outage want
+   * different sentences from the reader's point of view: one is "wait a moment",
+   * the other is "this is not your fault and nothing here is stale".
+   *
+   * `ApiError.status` is set by `apiFetch` for every non-OK response; a thrown
+   * timeout or a dead network carries no status and lands on `error`, which is
+   * the honest reading — we do not know which side failed.
+   */
+  const feedFailureReason: FeedFailureReason =
+    (feedError as { status?: number } | undefined)?.status === 429 ? "rate_limited" : "error";
+
   // Graceful end-of-feed refresh: reset paging state, scroll to top, revalidate
   // page 1. This is the web reload affordance (web has no pull-to-refresh).
   const handleRefreshFeed = useCallback(() => {
@@ -1133,16 +1160,18 @@ export default function DiscoverPage() {
       <main className="max-w-7xl mx-auto px-4 py-4">
         {isLoading && <DiscoverSkeletonGrid />}
 
+        {/* UX-P087 (#1909): the same component the typed-UNAVAILABLE case uses,
+            told by REASON. It was an inline copy of that markup with different
+            words and a document reload; two renderings of "the feed is not here"
+            drifting apart is how one of them ends up saying something untrue.
+            No latch: this branch is derived from SWR's error on every render, so
+            a successful revalidation clears it without any reset of its own. */}
         {!isLoading && feedError && !data && (
-          <div className="text-center py-20 text-text-muted" data-testid="discover-feed-error" role="alert">
-            <p className="text-text-secondary text-sm">Failed to load feed</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-3 text-sm text-accent-brand hover:underline transition-colors"
-            >
-              Try again
-            </button>
-          </div>
+          <FeedUnavailableNotice
+            onRetry={handleRetryFailedLoad}
+            variant="empty"
+            reason={feedFailureReason}
+          />
         )}
 
         {/* L2-238: the backend typed this response `unavailable`. It knows

@@ -70,6 +70,48 @@ describe("false-green fixtures — every one of these must FAIL", () => {
     assert.ok(ids.includes("content.main_region_nonblank"));
   });
 
+  it("UX-P087 (#1909): the BOOLEAN path must not claim the region was blank", () => {
+    // The verdict stays FAIL — that part was always right. What was wrong is the
+    // sentence attached to it. All this path receives is a boolean derived from
+    // a threshold the spec chose and did not disclose, and it reported
+    // "main region rendered blank" as a fact. On run 32009921496 that sentence
+    // was untrue: Discover had rendered "Failed to load feed / Try again", 29
+    // characters against the consent pack's `> 40`. A P2 was filed against a
+    // blank screen the app never showed.
+    //
+    // Gotcha #53's shape inside the grader: the emptier of two readings stated
+    // as a finding. The detail must describe what was OBSERVED (a false boolean)
+    // and name the signal that would settle it.
+    const observation = healthy({ mainRegionNonBlank: false });
+    const check = evaluateJourney(observation).assertions.find(
+      (a) => a.assertion_id === "content.main_region_nonblank"
+    );
+    assert.equal(check.ok, false, "the verdict must still be a failure");
+    assert.ok(
+      !/rendered blank/i.test(check.detail),
+      `the boolean path must not assert blankness it cannot observe — got: ${check.detail}`
+    );
+    assert.ok(
+      /mainRegion/.test(check.detail),
+      "the detail must name the measurement form that would make this gradeable"
+    );
+  });
+
+  it("the MEASUREMENT path may say 'blank' — because it discloses the numbers", () => {
+    // The other direction, so the fixture above cannot be satisfied by banning
+    // the word everywhere. `classifyMainRegion` states the observation
+    // ("N chars of content (min M)"), so its wording is a measurement, not a
+    // guess — and a reader can check it.
+    const observation = healthy({
+      mainRegion: { textLength: 3, skeletonTextLength: 0, visibleSkeletonCount: 0 },
+    });
+    const check = evaluateJourney(observation).assertions.find(
+      (a) => a.assertion_id === "content.main_region_nonblank"
+    );
+    assert.equal(check.ok, false);
+    assert.ok(/chars of content/.test(check.detail), `expected disclosed counts, got: ${check.detail}`);
+  });
+
   it("THE C96 P1 REGRESSION: a duration recorded for a card that never appeared", () => {
     // The exact old-spec behaviour — `.catch(() => {})` then record
     // `Date.now() - t0` anyway. It must fail on BOTH counts.

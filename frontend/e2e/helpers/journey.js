@@ -316,11 +316,32 @@ function evaluateJourney(observation) {
       )
     );
   } else if (typeof o.mainRegionNonBlank === "boolean") {
+    //     UX-P087 (#1909): the boolean path must NOT state blankness as a fact.
+    //
+    //     All this branch receives is `true`/`false` from a threshold the spec
+    //     chose and did not disclose (the consent pack's is `length > 40`). It
+    //     used to report `"main region rendered blank"`, and on run 32009921496
+    //     that sentence was simply untrue: the page rendered "Failed to load feed
+    //     / Try again" — 29 characters, correct, visible in the run's own
+    //     screenshot. The wording sent a P2 to be filed against a blank screen
+    //     the app never showed.
+    //
+    //     This is gotcha #53's shape inside the grader — an emptier reading
+    //     asserted as a fact about the world — and the fix is the same one: say
+    //     what was actually observed, and name the signal that would settle it.
+    //     The VERDICT is unchanged; only the claim it makes about itself is.
     assertions.push(
       assertion(
         "content.main_region_nonblank",
         o.mainRegionNonBlank === true,
-        o.mainRegionNonBlank === true ? null : "main region rendered blank"
+        o.mainRegionNonBlank === true
+          ? null
+          : "the journey's own main-region check returned false — a pre-computed " +
+              "boolean, so the threshold and the observed text are NOT visible here. " +
+              "This does not establish that the region was blank: a short honest " +
+              "state grades the same as an empty one. Read the terminal screenshot, " +
+              "and convert the journey to `mainRegion` measurements to make the " +
+              "distinction gradeable."
       )
     );
   } else {

@@ -1,5 +1,6 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
+import { leagueOwed } from "../helpers/leagueCardOracle";
 
 /**
  * UX-P083 (#1860) — the RENDERED half of ruling 047 on the league page.
@@ -28,13 +29,30 @@ import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
  * the component uses, HOW MANY binaries and ladders the page owes. The DOM is
  * then checked against that independent count.
  *
- * The partition rules are deliberately restated here rather than imported from
+ * The partition rules are deliberately restated rather than imported from
  * `lib/leagueCards`: importing the implementation would make this the
  * constant-oracle family (gotcha #121) — the test comparing production to the
- * very function production reads, asserting nothing. They are kept narrow and
- * the spec asserts a FLOOR rather than an exact equality where the restatement
- * could legitimately diverge, so a rule refinement does not red the rail
- * spuriously.
+ * very function production reads, asserting nothing. They now live in
+ * `helpers/leagueCardOracle.js`, and `__tests__/lib/leagueCardOracleParity.test.ts`
+ * runs the restatement and the component's own classifiers over the same
+ * production payload and fails when they disagree. Independence is what makes
+ * this an instrument; the parity test is what keeps the independent copy honest.
+ *
+ * ── UX-P087: WHY THE RESTATEMENT IS NOW FAITHFUL, NOT "SAFELY STRICT" ──
+ *
+ * This spec's first real run (32055873206) failed `16 rows for 15 binaries` and
+ * was read as ruling 047 regressing. It was not: the page rendered SIXTEEN
+ * binaries as SIXTEEN rows, one row each. The oracle required `length === 2` and
+ * therefore could not see the one-sided `Shohei Ohtani: Cy Young and MVP Winner`
+ * (`Yes 1%`) that `binaryAnswer` counts on purpose.
+ *
+ * The old header called the strictness safe because it made the assertions
+ * "floors". Two of them were. The binary one was a CEILING, and an under-counting
+ * oracle lowers a ceiling onto a correct page. **An oracle is only safely strict
+ * in the direction of the assertion that consumes it** — so the rules are stated
+ * faithfully and the two market assertions are exact equalities. The equality
+ * also closes a hole the ceiling never could: under `rows <= owed`, a page that
+ * dropped every binary row rendered zero rows and PASSED.
  *
  * ── DELIBERATE LIMITS, STATED ──
  *
@@ -63,77 +81,24 @@ const LEAGUE_KEY = "baseball_mlb";
 
 const API_BASE = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").replace(/\/$/, "");
 
-type Outcome = { name?: string | null; probability?: number | null };
-type Market = { id?: number; name?: string; top_outcomes?: Outcome[] | null; outcome_count?: number };
-
 /**
- * Restated partition rules (see the header on why these are not imported).
+ * What the page owes, from the payload — the independent half of the oracle.
  *
- * A binary is a two-outcome market whose outcomes are Yes and No. A date ladder
- * is a market whose outcomes are all "Before <date>"-shaped. Both are
- * intentionally stricter than the component's, so this oracle UNDER-counts
- * rather than over-counts and the DOM assertions below stay floors.
- */
-function isBinary(m: Market): boolean {
-  const outs = m.top_outcomes ?? [];
-  if (outs.length !== 2) return false;
-  const names = outs.map((o) => (o.name ?? "").trim().toLowerCase());
-  return names.includes("yes") && names.includes("no");
-}
-
-function isDateLadder(m: Market): boolean {
-  const outs = m.top_outcomes ?? [];
-  if (outs.length < 3) return false;
-  return outs.every((o) => /^before\s+/i.test((o.name ?? "").trim()));
-}
-
-/**
- * #1860 — the oracle reads `sections` as a MAPPING, which is what the server
- * sends: `{"awards": Market[], "props": Market[], "more_markets": Market[]}`.
+ * `sections` is a MAPPING, which is what the server sends: `{"awards": [...],
+ * "props": [...], "more_markets": [...]}`, with no top-level `markets` key. It
+ * was once typed as an array and read with `.flatMap`, which threw
+ * `flatMap is not a function` — so this acceptance test crashed inside its own
+ * payload reader and never evaluated the page at all. `leagueMarkets` THROWS on
+ * a shape it cannot read rather than tolerating one, because tolerance would
+ * zero every count and make the assertions below vacuously true.
  *
- * It was previously typed `{markets?: Market[]}[]` and read with
- * `(body.sections ?? []).flatMap(...)`, which throws `flatMap is not a function`
- * on an object — so the acceptance test for this issue crashed inside its own
- * payload reader and never evaluated the page at all. Measured against
- * production 2026-08-17: `sections` is a dict of three lists and there is no
- * top-level `markets` key.
- *
- * Note what the naive repair would have cost: making the reader merely
- * *tolerant* (returning `[]` on an unexpected shape) would have zeroed
- * `owed.binaries` and `owed.ladders`, and both retrofit assertions below are
- * guarded by `if (owed.X > 0)`. The test would have gone GREEN having checked
- * nothing. So an unreadable payload throws instead — a shape this test cannot
- * read is a fact about the test, and it must say so.
+ * A non-OK response is reported as `-1` rather than `0`: the guards below are
+ * `> 0`, so a dead API skips the retrofit assertions instead of passing them.
  */
 async function leaguePayload(): Promise<{ binaries: number; ladders: number; games: number }> {
   const res = await fetch(`${API_BASE}/api/leagues/${LEAGUE_KEY}`);
   if (!res.ok) return { binaries: -1, ladders: -1, games: -1 };
-  const body = (await res.json()) as {
-    sections?: Record<string, Market[]> | null;
-    markets?: Market[] | null;
-    upcoming_games?: unknown[];
-    recent_results?: unknown[];
-  };
-
-  let markets: Market[];
-  if (Array.isArray(body.markets)) {
-    markets = body.markets;
-  } else if (body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)) {
-    markets = Object.values(body.sections).flatMap((list) => (Array.isArray(list) ? list : []));
-  } else {
-    throw new Error(
-      `GET /api/leagues/${LEAGUE_KEY} returned neither a 'markets' array nor a ` +
-        `'sections' mapping — top-level keys were [${Object.keys(body).join(", ")}]. ` +
-        `The oracle cannot grade the page against a payload it cannot read, and ` +
-        `reading zero markets would make every assertion below vacuously true.`,
-    );
-  }
-
-  return {
-    binaries: markets.filter(isBinary).length,
-    ladders: markets.filter(isDateLadder).length,
-    games: (body.upcoming_games?.length ?? 0) + (body.recent_results?.length ?? 0),
-  };
+  return leagueOwed(await res.json());
 }
 
 test("league page renders the SHARED card system, not three local variants", async ({ page, journey }) => {
@@ -201,7 +166,14 @@ test("league page renders the SHARED card system, not three local variants", asy
     ).toBeGreaterThan(0);
   }
 
-  // Retrofit 3 — ONE row per binary, never two.
+  // Retrofit 3 — ONE row per binary, never two, and never none.
+  //
+  // EXACT, in both directions, because the oracle is faithful (UX-P087) and both
+  // directions are real news:
+  //   too many  → the two-row (Yes AND No) presentation is back, or a shape that
+  //               is not a binary is leaking into the block;
+  //   too few   → binaries are silently vanishing. The old `<= owed` ceiling
+  //               could not see that at all — zero rows passed it.
   if (owed.binaries > 0) {
     expect(
       hasBinaryBlock,
@@ -210,20 +182,25 @@ test("league page renders the SHARED card system, not three local variants", asy
     ).toBe(true);
     expect(
       binaryRows,
-      `${owed.binaries} binary/ies must occupy at most ${owed.binaries} rows; ` +
-        `${binaryRows} rows means the two-row (Yes AND No) presentation is back. ` +
+      `${owed.binaries} binary/ies must occupy exactly ${owed.binaries} rows; the page ` +
+        `rendered ${binaryRows}. MORE means the two-row (Yes AND No) presentation is ` +
+        `back or a non-binary is leaking in; FEWER means binaries are being dropped. ` +
         `Rows: ${JSON.stringify(rowTexts.slice(0, 6))}`,
-    ).toBeLessThanOrEqual(owed.binaries);
+    ).toBe(owed.binaries);
   }
 
-  // Retrofit 2 — date ladders render as the shared heatmap kernel, whole.
+  // Retrofit 2 — date ladders render as the shared heatmap kernel, whole. Also
+  // exact: every ladder in the section is serialised, so every one is owed a
+  // QuantityGroup, and a ladder falling back to `PropGroupCard` shows up here as
+  // a missing one rather than as a card nobody counted.
   if (owed.ladders > 0) {
     expect(
       ladderCards,
       `the payload carries ${owed.ladders} date ladder(s) but the page rendered ` +
-        `${ladderCards} inside [data-league-block="ladders"] — ladders are routing ` +
-        `through PropGroupCard again (probability-sorted and truncated at 6 of 8)`,
-    ).toBeGreaterThan(0);
+        `${ladderCards} inside [data-league-block="ladders"] — a shortfall means ladders ` +
+        `are routing through PropGroupCard again (probability-sorted and truncated at ` +
+        `6 of 8); a surplus means something that is not a ladder is being drawn as one`,
+    ).toBe(owed.ladders);
   }
 });
 

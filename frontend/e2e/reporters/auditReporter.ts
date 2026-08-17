@@ -10,6 +10,10 @@ import type {
 } from "@playwright/test/reporter";
 
 import { buildRunManifest, validateManifest, type JourneyRecord } from "../helpers/manifest";
+import {
+  reconcileJourneyVerdict,
+  reconcileRunCounts,
+} from "../helpers/manifestReconciliation";
 import { ATTACHMENT_NAME } from "../fixtures/audit";
 
 /**
@@ -25,6 +29,12 @@ export default class AuditReporter implements Reporter {
   private readonly journeys: JourneyRecord[] = [];
   private readonly startedAt = new Date();
   private outDir = process.env.AUDIT_OUT_DIR || "audit-out";
+  /**
+   * #1915 — how many journey slots the RUNNER says ended badly, keyed the same
+   * way the journey list is, so retries collapse identically. Reconciled against
+   * the manifest's own `failed_count` in `onEnd`.
+   */
+  private readonly runnerOutcome = new Map<string, boolean>();
 
   onBegin(_config: FullConfig, suite: Suite): void {
     this.selected = suite.allTests().length;
@@ -39,9 +49,25 @@ export default class AuditReporter implements Reporter {
       record = JSON.parse(fs.readFileSync(attachment.path, "utf8")) as JourneyRecord;
     }
 
+    // #1915 — did the TEST end badly, whatever the journey record says?
+    const attemptFailed = result.status !== test.expectedStatus;
+
     if (record) {
+      // #1915 [P1] — the manifest must not stamp `pass` over a failing spec.
+      // `journey.finish()` seals this record BEFORE the spec's own `expect()`
+      // calls run, so the verdict is DERIVED here rather than recorded twice.
+      // The rule, the measured incident and the downgrade-only asymmetry all
+      // live in `helpers/manifestReconciliation.js`, where they are contract-
+      // testable without a Playwright install.
+      reconcileJourneyVerdict(record, {
+        attemptFailed,
+        status: result.status,
+        errorMessage: result.errors[0]?.message,
+      });
+
       // Retries: keep the last attempt for a given journey+project.
       const key = `${record.journey_id}::${record.project}`;
+      this.runnerOutcome.set(key, attemptFailed);
       const existing = this.journeys.findIndex((j) => `${j.journey_id}::${j.project}` === key);
       if (existing >= 0) this.journeys[existing] = record;
       else this.journeys.push(record);
@@ -58,6 +84,7 @@ export default class AuditReporter implements Reporter {
     // branch runs. Emitting `null` here made a required field absent and turned
     // an honest infra_error into a schema violation.
     const configuredViewport = project?.use?.viewport ?? null;
+    this.runnerOutcome.set(`${journeyId}::${project?.name ?? "unknown"}`, attemptFailed);
     this.journeys.push({
       journey_id: journeyId,
       project: project?.name ?? "unknown",
@@ -95,6 +122,17 @@ export default class AuditReporter implements Reporter {
   async onEnd(result: FullResult): Promise<void> {
     fs.mkdirSync(this.outDir, { recursive: true });
 
+    // #1915 acceptance 2 — the manifest's failure count and the runner's must
+    // agree, and a disagreement is a HARD error rather than a silent divergence.
+    const { forcedResult, notes: reconciliationNotes } = reconcileRunCounts({
+      journeys: this.journeys,
+      runnerFailures: [...this.runnerOutcome.values()].filter(Boolean).length,
+    });
+    const notes: string[] = [
+      ...(result.status === "interrupted" ? ["playwright run was interrupted"] : []),
+      ...reconciliationNotes,
+    ];
+
     const manifest = buildRunManifest({
       runId: process.env.GITHUB_RUN_ID || "local",
       runUrl:
@@ -131,7 +169,8 @@ export default class AuditReporter implements Reporter {
       },
       selectedCount: this.selected,
       journeys: this.journeys,
-      notes: result.status === "interrupted" ? ["playwright run was interrupted"] : [],
+      result: forcedResult,
+      notes,
     });
 
     const manifestPath = path.join(this.outDir, "manifest.json");
