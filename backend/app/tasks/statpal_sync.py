@@ -22,6 +22,7 @@ from sqlalchemy import select, update, and_, or_, func
 
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
+from app.utils.team_binding_invariant import accept_team_binding
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,12 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     details = []
 
     total_created = 0
+
+    # #1918. A refusal here means an upstream index proposed a club that is not the
+    # one this row names — previously invisible, because the write simply succeeded.
+    # Surfaced in the task result so a spike is a finding rather than a log line
+    # nobody reads (the same treatment `refused_anchored` got on the merge rail).
+    binding_stats: dict = {}
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -177,10 +184,34 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         session, "statpal", our_key,
                         source_name=fixture.away_team,
                     )
-                    if home_team and not event.home_team_id:
+                    # #1918: `resolve_team` reads `team_identity_mapping`, and 15 of
+                    # the 30 statpal/baseball_mlb rows in that table name one club and
+                    # point at another (one poisoned batch, 2026-03-25, never updated
+                    # since). The exact-source_name hit is step 2 — the service's
+                    # highest-confidence path — so nothing downstream doubts it, and
+                    # this line wrote ~5 wrong-club sides a day. Dereference before
+                    # binding; on refusal leave the column NULL for a name-keyed
+                    # binder to fill correctly next cycle.
+                    if not event.home_team_id and accept_team_binding(
+                        side="home",
+                        row_name=event.home_team_name,
+                        team=home_team,
+                        event_sport_id=event.sport_id,
+                        source="statpal",
+                        event_id=event.id,
+                        stats=binding_stats,
+                    ):
                         event.home_team_id = home_team.id
                         updated = True
-                    if away_team and not event.away_team_id:
+                    if not event.away_team_id and accept_team_binding(
+                        side="away",
+                        row_name=event.away_team_name,
+                        team=away_team,
+                        event_sport_id=event.sport_id,
+                        source="statpal",
+                        event_id=event.id,
+                        stats=binding_stats,
+                    ):
                         event.away_team_id = away_team.id
                         updated = True
 
@@ -312,6 +343,12 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "events_created": total_created,
         "total_fixtures_fetched": total_fixtures,
         "sports": details,
+        # Always present, and 0 is the meaningful reading — an absent key would make
+        # "the guard found nothing" indistinguishable from "the guard did not run".
+        "team_binding_refused": binding_stats.get("team_binding_refused", 0),
+        "team_binding_refused_detail": {
+            k: v for k, v in binding_stats.items() if k != "team_binding_refused"
+        },
     }
 
 

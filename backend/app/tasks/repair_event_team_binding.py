@@ -136,20 +136,14 @@ _UPDATE_SQL = {
 }
 
 
-def _norm(value: Optional[str]) -> str:
-    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
-
-
-def _classify(row_name: str, bound_name: Optional[str],
-              bound_sport: Optional[int], event_sport: int) -> Optional[str]:
-    """Return the defect class for one side, or None when the binding is sound."""
-    if bound_name is None:
-        return None
-    if _norm(bound_name) != _norm(row_name):
-        return "cross_club"
-    if bound_sport is not None and bound_sport != event_sport:
-        return "wrong_sport"
-    return None
+# The detector's predicate and the WRITE-TIME guard (#1918) are the same predicate,
+# defined once in `app/utils/team_binding_invariant` and imported by both. Keeping two
+# copies is how a repair rail ends up certifying rows its own writer would refuse — or
+# worse, repairing toward a shape the guard then rejects on the next ingest.
+from app.utils.team_binding_invariant import (  # noqa: E402
+    binding_defect as _classify,
+    normalize_club_name as _norm,
+)
 
 
 async def repair(
