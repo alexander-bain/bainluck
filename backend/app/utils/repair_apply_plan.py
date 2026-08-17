@@ -63,6 +63,12 @@ _PLAN_NS = "calibration-repair-apply-plan"
 BINDING_APPLY_PLAN_SCHEMA = "event-team-binding-apply-plan/v1"
 _BINDING_PLAN_NS = "event-team-binding-apply-plan"
 
+#: The THIRD rail (#1796/#1902, queue 363) — attended event CREATE from venue
+#: truth. Same reasoning for the separate schema and namespace: a create plan and
+#: a re-bind plan must never be interchangeable at an apply.
+CREATE_PLAN_SCHEMA = "event-create-from-truth-plan/v1"
+_CREATE_PLAN_NS = "event-create-from-truth-plan"
+
 #: Refusal codes. The first three are the canonical corpus's own spelling; the
 #: rest are this rail's additions and are named the same way — a verb about what
 #: the rail refused to do, never a bare "error".
@@ -74,6 +80,13 @@ REASON_OUTSIDE_APPROVED = "MUTATION_OUTSIDE_APPROVED_SET"
 REASON_IDENTITY_DRIFT = "DRY_RUN_APPLY_IDENTITY_DRIFT"
 REASON_CURSOR_SKIP = "CURSOR_SKIPS_UNPROCESSED"
 REASON_CONCURRENT_DRIFT = "CONCURRENT_ROW_DRIFT"
+
+#: CREATE-rail refusals. ``TRUTH_ID_ALREADY_PRESENT`` is the create analogue of
+#: ``CONCURRENT_ROW_DRIFT``: it retires ONE row and never its siblings, because
+#: the ordinary pipeline creating a game between review and apply is the system
+#: working, not a fault. ``TRUTH_ID_SET_DRIFT`` is the artifact's own gate.
+REASON_TRUTH_ID_PRESENT = "TRUTH_ID_ALREADY_PRESENT"
+REASON_TRUTH_SET_DRIFT = "TRUTH_ID_SET_DRIFT"
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +468,234 @@ def decode_binding_plan(raw: Any) -> tuple[BindingApplyPlan | None, str]:
     if plan.plan_hash != raw.get("plan_hash"):
         return None, REASON_PLAN_CORRUPT
     return plan, "ok"
+
+
+# ---------------------------------------------------------------------------
+# The CREATE plan (#1796/#1902, queue 363) — the third rail on this pattern
+#
+# Alex, 2026-08-17, ruling the four MC decisions: attended event-CREATE from
+# venue truth is APPROVED, as the pattern — provider anchors, plan artifact,
+# pre-cert, always attended.
+#
+# A create differs from the two update rails in exactly one structural way, and
+# every difference below follows from it: THE BEFORE STATE IS ABSENCE. There is
+# no ``expected_before_id`` to compare against, because the thing being compared
+# does not exist. The compare half of the compare-and-set is therefore the
+# existence check itself, and it MUST happen inside the create transaction — a
+# check before the transaction is a read of a world the write then changes,
+# which is the #1798 defect restated in the create direction.
+#
+# Two rules this rail inherits from what the population-2 census cost to learn:
+#
+#   1. **Keyed on the truth id, never on (teams, date).** A doubleheader is two
+#      real games with identical clubs on an identical date. An existence check
+#      keyed on the matchup would refuse the second one as a duplicate of the
+#      first, and the 328-game set contains doubleheaders. R5 hit this blind spot
+#      and R6 answered it in the merge primitive; the create rail must not have
+#      to learn it a third time.
+#   2. **The reviewed object is a SET OF IDS, not a count.** A count is a claim
+#      about the world's current state that the ordinary pipeline repairs on its
+#      own, so it expires while nothing is wrong (the Aug 10-12 ``2/14 -> 16/0``
+#      inversion). :func:`create_gate` therefore compares SETS.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlannedCreate:
+    """One game the dry-run decided to create, with the truth it read.
+
+    ``truth_id`` is the provider's own id for the game (ESPN's, for the MLB
+    population) and is this row's whole identity — it is the existence key, the
+    row key, and the anchor a reviewer can dereference themselves.
+    """
+
+    truth_id: str
+    provider: str
+    home_team_id: int
+    away_team_id: int
+    home_name: str
+    away_name: str
+    commence_time: str
+    sport_id: int | None = None
+    label: str | None = None
+
+    @property
+    def row_key(self) -> str:
+        return f"{self.provider}:{self.truth_id}"
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "truth_id": self.truth_id,
+            "provider": self.provider,
+            "home_team_id": int(self.home_team_id),
+            "away_team_id": int(self.away_team_id),
+            "home_name": self.home_name,
+            "away_name": self.away_name,
+            "commence_time": self.commence_time,
+            "sport_id": self.sport_id,
+            "label": self.label,
+        }
+
+    def digest_line(self) -> str:
+        """Every field the create WRITES.
+
+        ``commence_time`` is INSIDE the address here, where the binding rail
+        deliberately left it outside. That is not an inconsistency: the binding
+        rail only ever displayed the kickoff, so a corrected time there must not
+        invalidate a reviewed plan, whereas here the timestamp is a value being
+        written into a new row. A create plan whose start times changed since
+        review is a create plan the reviewer did not approve.
+
+        ``label`` stays out — it is prose assembled for the reviewer from the
+        fields above, and re-wording it must not mint a new address.
+        """
+        return "|".join(
+            [
+                self.provider,
+                self.truth_id,
+                str(int(self.home_team_id)),
+                str(int(self.away_team_id)),
+                self.home_name,
+                self.away_name,
+                self.commence_time,
+            ]
+        )
+
+
+@dataclass(frozen=True)
+class CreatePlan:
+    """The reviewed CREATE set, as a content-addressed object."""
+
+    rows: tuple[PlannedCreate, ...] = ()
+    context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return self.rows
+
+    @property
+    def row_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(r.row_key for r in self.rows))
+
+    @property
+    def truth_ids(self) -> tuple[str, ...]:
+        return tuple(sorted({r.truth_id for r in self.rows}))
+
+    @property
+    def plan_hash(self) -> str:
+        lines = sorted(r.digest_line() for r in self.rows)
+        return input_fingerprint(_CREATE_PLAN_NS, str(len(lines)), *lines)
+
+    def duplicate_truth_ids(self) -> list[str]:
+        """Truth ids named more than once. Must be empty: two plan rows for one
+        provider id would create the same game twice."""
+        seen: dict[str, int] = {}
+        for r in self.rows:
+            seen[r.truth_id] = seen.get(r.truth_id, 0) + 1
+        return sorted(k for k, n in seen.items() if n > 1)
+
+    def doubleheaders(self) -> list[str]:
+        """Truth ids sharing a (clubs, **UTC** calendar date) tuple with another row.
+
+        NOT a defect — reported so the reviewer knows the plan contains them and
+        so a future existence check keyed on the matchup fails loudly here rather
+        than silently dropping the second game of a twin bill.
+
+        Keyed on the UTC date, which OVER-reports: two night games on consecutive
+        Eastern dates straddle a single UTC date and are flagged as a twin bill
+        (the 328-row plan's only hit is exactly this — Dodgers @ Yankees at
+        00:08Z and 23:20Z on 2026-07-19, i.e. the evenings of July 18 and 19 ET).
+        Left as-is on purpose: this is a REVIEW flag, and a flag that over-reports
+        costs a reviewer one glance, while one that under-reports loses a real
+        game. The property that actually protects the twin bill is the row key
+        being the truth id, and that holds regardless of what this reports.
+        """
+        buckets: dict[tuple[int, int, str], list[str]] = {}
+        for r in self.rows:
+            key = (int(r.home_team_id), int(r.away_team_id), r.commence_time[:10])
+            buckets.setdefault(key, []).append(r.truth_id)
+        return sorted(tid for ids in buckets.values() if len(ids) > 1 for tid in ids)
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "schema": CREATE_PLAN_SCHEMA,
+            "plan_hash": self.plan_hash,
+            "row_count": len(self.rows),
+            "truth_id_count": len(self.truth_ids),
+            "duplicate_truth_ids": self.duplicate_truth_ids(),
+            "doubleheader_truth_ids": self.doubleheaders(),
+            "rows": [r.as_payload() for r in self.rows],
+            "context": dict(self.context),
+        }
+
+
+def build_create_plan(
+    rows: Iterable[PlannedCreate], *, context: Mapping[str, Any] | None = None
+) -> CreatePlan:
+    return CreatePlan(rows=tuple(rows), context=dict(context or {}))
+
+
+def decode_create_plan(raw: Any) -> tuple[CreatePlan | None, str]:
+    """``(plan, reason)``. The stored address is RE-DERIVED, never believed."""
+    if not isinstance(raw, Mapping):
+        return None, REASON_PLAN_MISSING
+    if raw.get("schema") != CREATE_PLAN_SCHEMA:
+        return None, REASON_PLAN_CORRUPT
+    raw_rows = raw.get("rows")
+    if not isinstance(raw_rows, list):
+        return None, REASON_PLAN_CORRUPT
+    rows: list[PlannedCreate] = []
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        try:
+            rows.append(
+                PlannedCreate(
+                    truth_id=str(row["truth_id"]),
+                    provider=str(row["provider"]),
+                    home_team_id=int(row["home_team_id"]),
+                    away_team_id=int(row["away_team_id"]),
+                    home_name=str(row["home_name"]),
+                    away_name=str(row["away_name"]),
+                    commence_time=str(row["commence_time"]),
+                    sport_id=row.get("sport_id"),
+                    label=row.get("label"),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, REASON_PLAN_CORRUPT
+    ctx = raw.get("context")
+    plan = CreatePlan(
+        rows=tuple(rows), context=dict(ctx) if isinstance(ctx, Mapping) else {}
+    )
+    if plan.plan_hash != raw.get("plan_hash"):
+        return None, REASON_PLAN_CORRUPT
+    if plan.duplicate_truth_ids():
+        return None, REASON_PLAN_CORRUPT
+    return plan, "ok"
+
+
+def create_gate(
+    plan: CreatePlan, rederived_missing_ids: Iterable[str]
+) -> tuple[bool, list[str]]:
+    """The truth-id gate, spelled exactly as the artifact states it.
+
+    *"Apply may proceed only when a re-derivation at apply time produces a
+    MISSING id set whose intersection with THIS set is THIS set."*
+
+    In other words every reviewed id must STILL be missing. An id that has since
+    been created is not an error in the world — it is the ordinary pipeline doing
+    its job — but it IS an id the plan may no longer act on, and it is named
+    rather than skipped, because "the plan shrank and nobody said so" is how a
+    reviewed population quietly becomes a different one.
+
+    Returns ``(ok, no_longer_missing)``. Callers drop the named rows and keep
+    their siblings; a wholesale refusal would let one upstream create cancel 327
+    approved ones.
+    """
+    still_missing = {str(i) for i in rederived_missing_ids}
+    no_longer = sorted(set(plan.truth_ids) - still_missing)
+    return (not no_longer), no_longer
 
 
 # ---------------------------------------------------------------------------
