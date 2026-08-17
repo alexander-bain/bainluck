@@ -510,7 +510,14 @@ def test_ruling_numbers_are_unique() -> None:
 #: **Resolve by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree.** Do not take
 #: ours, do not take theirs, and do not add the deltas — two lanes each writing `67 -> 68` is one
 #: ruling each, not two on top of 68.
-MINIMUM_BANKED_RULINGS = 71
+#: Raised 71 -> 72 by LAT-P062 banking **076** (planner cost cannot rank two statements) on
+#: `program/latency-57`, cut fresh from `origin/master` `1eb968ee` (71 ruling files, floor 71).
+#: ⚠️ INTEGRATOR: `lane1/q360` holds an INDEPENDENT `71 -> 72` edit for **075**. With both merged
+#: the correct value is **73**, which is again nobody's side. **Resolve by COUNTING
+#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree** — do not take ours, do not take theirs,
+#: and do not add the deltas. Two lanes each writing `71 -> 72` is one ruling each, not two on top
+#: of 72. (Same arithmetic as the four-way collision INT-078 resolved by counting.)
+MINIMUM_BANKED_RULINGS = 72
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -1,0 +1,23 @@
+{
+  "method": "pg_stat_statements cumulative counters read twice over a FIXED interval; the DELTA is the measurement. Cumulative values are dominated by pre-index history and must never be quoted as a current rate.",
+  "queryid": 184240953744049829,
+  "deployed_commit": "1eb968ee",
+  "heroku_release": "v3829",
+  "t0": {"utc": "2026-08-17T20:05:53.427752+00:00", "epoch": 1786997153.427752, "total_shared_blks_read": 11793060649, "golf_shared_blks_read": 599560025, "golf_calls": 9198},
+  "t1": {"utc": "2026-08-17T20:20:21.735563+00:00", "epoch": 1786998021.735563},
+  "interval_s": 868.3,
+  "delta": {
+    "db_wide_blocks": 3834151,
+    "db_wide_mb_per_s": 34.50,
+    "golf_blocks": 4038,
+    "golf_calls": 12,
+    "golf_mb_per_s": 0.0363,
+    "golf_mb_per_call": 2.629,
+    "golf_share_of_all_physical_reads_pct": 0.105
+  },
+  "baseline_lat_p058": {"db_wide_mb_per_s": 79.1, "golf_mb_per_call": 516.7, "golf_share_of_all_physical_reads_pct": 19},
+  "graded": {
+    "lat_p058_s8_row3_db_read_rate": "PASS and beaten — predicted 79.1 -> ~62 MB/s (a 21% cut); measured 34.50 MB/s (a 56% cut). Caveat: different windows and hour-classes; other workloads also changed.",
+    "lat_p058_s8_row4_typeahead_tail": "CONFIRMED, no halt — predicted 0-15% improvement and explicitly NOT predicted to be fixed; measured NO improvement (client p50 worse, bootstrap 95% CI excludes improvement). 44.6 MB/s of read pressure was removed and the tail did not move."
+  }
+}
