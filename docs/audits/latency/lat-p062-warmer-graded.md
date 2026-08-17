@@ -334,3 +334,44 @@ shipping, not after.
 | **the W-sweep** (`WARM_CONCURRENCY` 1 / 2 / 4 paired) | requires setting a production constant and deploying, three times; this lane does not deploy | a queue with a config-var or a deploy slot. Grade on `seconds_total` **and** `seconds_wall` together — §2's whole point is that they moved in opposite directions |
 | **`period_s` / `expired` in production** | shipped this window, not yet deployed | after the merge deploys, `task-metrics?task=warm_typeahead` → `last_result_summary` carries both. **Their ABSENCE means the old code is deployed and §3 does not grade** |
 | **the second paired gold read** | needs a *second* fingerprinted artifact; this window produced the first | next window: `--compare-against docs/audits/latency/capture-lat-p062-gold-read-v3829.graded.json` |
+
+---
+
+## §9 — Gates, including the ones that did NOT run
+
+| gate | result |
+|---|---|
+| **full backend suite** | **15,859 passed · 65 skipped · 3 xfailed · 0 failed** in **691.72 s**. **`PYTEST_EXIT_CODE=0`**, written into `/tmp/lat-p062-fullsuite.log` and read back **from the file** — never piped (gotcha #54), and the value is `0`, not a non-1 harness story (#124). Ran concurrently with another lane's pytest, which is why it took 11m32s rather than the usual ~11m. |
+| focused: `test_typeahead_warmer.py` + `test_tasks_wiring.py` | 77 passed, `PYTEST_EXIT_CODE=0`. The wiring allowlist needed no edit — no task names were added or removed, only three schedules and one float changed. |
+| focused: `test_product_brain_integrity.py` | 158 passed, `PYTEST_EXIT_CODE=0`. Ledger snapshot named per ruling 063: `digest=e43dc0e247bc`, `mtime=2026-08-17T20:14:45Z`, `claims=48`, `deviations=0`, `dropped=0`. |
+| **mutation testing** | **8 of 8 caught.** Each mutation was asserted to have APPLIED before the run, and the source was verified byte-identical to its backup afterwards. |
+| ruff | **zero added** — 5 findings on master for the three changed files, 4 after. All pre-existing `E402`. |
+| `git log origin/master..HEAD` | checked before **every** commit (gotcha #47): only this window's own commits, no sibling passengers. |
+
+### The eight mutations, and what each one proves
+
+| # | mutation | caught by |
+|---|---|---|
+| M1 | drop the negative-delta guard in `_seconds_since_last_pass` | `test_a_future_previous_start_does_not_suppress_the_pass` — a future stamp makes the gap negative, which compares `< 30` and suppresses **every** pass forever while reporting a tidy `skipped` |
+| M2 | `expired` counts every non-positive TTL (`<= 0`) instead of `== -2` | `test_expired_counts_only_a_missing_key_not_every_non_positive_ttl` — folds `-1` (no expiry) and `None` (Redis silent) into the number a duty-cycle grade rests on |
+| M3 | floor-skip does not release the run-lock | `test_the_floor_releases_the_lock_it_took_to_check` — `_LOCK_TTL_SECONDS` (120 s) would wedge the warmer for 4× the floor |
+| M4 | unknown `period_s` reported as `0.0` instead of `None` | `test_an_unknown_previous_start_does_not_suppress_the_pass` — zero reads as two passes starting at the same instant |
+| M5 | `_record_pass_start` never called | `test_a_pass_records_its_start_so_the_next_one_can_measure_it` — every subsequent `period_s` unknown and the floor unenforceable |
+| M6 | floor not enforced at all | `test_the_floor_suppresses_a_pass_that_is_too_soon` |
+| M7 | beat reverted to 30 s | `test_the_pass_period_the_beat_can_produce_fits_under_the_ttl` |
+| M8 | beat set to 15 s | same test — **period 45 == TTL, zero margin.** This is the mutation worth having: 15 s *looks* like a fix and is not one |
+
+### Gates that did NOT run, named rather than implied (ruling 065)
+
+| gate | why | addressee |
+|---|---|---|
+| **frontend `npm run build` / `typecheck` / `jest`** | **zero frontend files changed.** Not applicable, not skipped. | — |
+| **`xcodebuild`** | **zero native files changed.** Not applicable. | — |
+| **real-Postgres tests** | no local Postgres in this sandbox (`initdb` dies on `shmget`). CI-only, as always. | **Integrator** — declared owed, not implied |
+| **the deployed read of `period_s` / `expired`** | this lane does not deploy. The registered prediction in §3 grades **after** the merge releases. | **LAT-P063**, with the exit condition in §8 |
+| **`hard_kills_24h` on a clean 24 h** | v3829 released 12:30:40 PDT today; a clean window does not exist yet | **LAT-P063**, any read after 12:30 PDT 2026-08-18 |
+
+⚠️ **BASE DRIFT, stated because gates prove something about the commit you TESTED.** These gates ran
+on base **`1eb968ee`**. If `origin/master` has moved by the time this is integrated, do **not** read
+this green suite as green on the newer tip — the Integrator rebases and re-certifies
+(PROGRAM-LANES rule 2).
