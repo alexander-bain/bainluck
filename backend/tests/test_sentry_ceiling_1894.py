@@ -246,6 +246,167 @@ class TestDiscardCeilingIsDeclaredAndObservable:
 
 
 # =============================================================================
+# R4 — the ceiling derives from declared NEED, never from raw quota
+# =============================================================================
+
+#: Fixed instant inside the measured 07-21 -> 08-21 cycle, so ``cycle_length_days``
+#: is 31 by construction and not by whatever day the suite happens to run
+#: (gotcha #44: an anchor that branches on the clock is not an anchor).
+_IN_CYCLE = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+
+
+class TestTheCeilingDerivesFromNeedNotQuota:
+    """``C-CERT-SENTRY-R4`` refused to arm, and its reason was one line:
+
+        ``DISCARD_CEILING_PER_DAY = QUOTA_EVENTS_PER_MONTH``
+
+    At the 5,000-event plan that produced 5,000/day, which is a defensible
+    blindness ceiling. At the 50,000 plan it produces 50,000/day, under which the
+    measured 19,066/day cron blindness renders healthy. The ceiling was never
+    wrong by arithmetic — it was a *budget* wearing a *ceiling's* name, and the
+    two agreed only for as long as the plan did not change.
+
+    Alex, 2026-08-17: *the ceiling derives from declared NEED, capped well under
+    quota, never raw quota.*
+    """
+
+    def test_the_ceiling_is_not_simply_the_quota(self):
+        """The whole defect, forbidden by name and through the pre-existing
+        public surface — so a later refactor that keeps these function names but
+        quietly restores ``= QUOTA_EVENTS_PER_MONTH`` is still caught.
+
+        This is the one assertion in the class that fails against the old code
+        for a BEHAVIOURAL reason rather than a missing attribute.
+        """
+        from app.utils import sentry_budget
+
+        assert (
+            sentry_budget.DISCARD_CEILING_PER_DAY
+            != sentry_budget.QUOTA_EVENTS_PER_MONTH
+        ), (
+            "the discard ceiling is the monthly quota again — a plan upgrade "
+            "now raises the blindness allowance with it (C-CERT-SENTRY-R4)"
+        )
+
+    def test_the_predicate_itself_tracks_need_not_the_frozen_constant(
+        self, monkeypatch
+    ):
+        """``over_discard_ceiling`` is what every consumer actually calls. If the
+        deriver is correct but the predicate still reads a stale import-time
+        number, nothing user-visible changed."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        assert sentry_budget.over_discard_ceiling(19_066, 86_400, now=_IN_CYCLE)
+        assert not sentry_budget.over_discard_ceiling(1_269, 86_400, now=_IN_CYCLE)
+
+    def test_the_old_coupling_would_go_blind_on_the_known_specimen(self):
+        """The executable specimen. Not a story about a defect — the defect,
+        run. If this ever stops failing under the old rule, the rule was fine
+        and this whole class is unnecessary."""
+        from app.utils import sentry_budget
+
+        old_rule_ceiling = 50_000  # == QUOTA_EVENTS_PER_MONTH on the current plan
+        assert not (19_066 > old_rule_ceiling), (
+            "premise check: 19,066/day must be UNDER the old quota-derived "
+            "ceiling — that is what made it blind"
+        )
+        assert sentry_budget.discard_ceiling_per_day(_IN_CYCLE) < old_rule_ceiling
+
+    @pytest.mark.parametrize("quota", [5_000, 50_000])
+    def test_the_blindness_specimen_is_over_ceiling_at_every_plan(
+        self, monkeypatch, quota
+    ):
+        """19,066/day (the cron instance, 2026-08-16) and 64,039/day (R3) must
+        both breach at BOTH plans. A ceiling a plan upgrade can switch off is not
+        a ceiling."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", quota)
+        ceiling = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+        assert 19_066 > ceiling, f"19,066/day renders healthy at quota {quota}"
+        assert 64_039 > ceiling, f"64,039/day renders healthy at quota {quota}"
+
+    @pytest.mark.parametrize("quota", [5_000, 50_000])
+    def test_a_healthy_day_is_still_under_it(self, monkeypatch, quota):
+        """The other direction, or the fix is just a lower number that cries
+        wolf. Measured healthy accepted volume was 770-1,269/day."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", quota)
+        assert 1_269 < sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+    def test_a_tenfold_quota_raise_does_not_tenfold_the_ceiling(self, monkeypatch):
+        """The property R4 actually wants. The ceiling may move with need — the
+        solved cap genuinely rises when more is affordable — but it must not
+        TRACK the plan."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        small = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        big = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+        assert big / small < 2.0, (
+            f"a 10x quota raise moved the ceiling {big / small:.1f}x "
+            f"({small} -> {big}) — the ceiling is still tracking the plan"
+        )
+
+    def test_the_ceiling_is_one_cycle_of_declared_need(self, monkeypatch):
+        """Derived, and the derivation is checkable rather than asserted."""
+        import math
+
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        expected = math.ceil(
+            sentry_budget.declared_need_per_day(_IN_CYCLE)
+            * sentry_budget.cycle_length_days(_IN_CYCLE)
+        )
+        assert sentry_budget.discard_ceiling_per_day(_IN_CYCLE) == expected
+
+    def test_the_ceiling_never_exceeds_the_quota(self, monkeypatch):
+        """Quota's one remaining role, and it is a clamp in the safe direction
+        only. Past the quota the ceiling has stopped bounding anything."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 500)
+        v = sentry_budget.discard_ceiling_verdict(_IN_CYCLE)
+        assert v["ceiling_per_day"] <= 500
+        assert v["clamped_by_quota"] is True
+
+    def test_the_share_of_quota_is_reported_not_silently_enforced(self, monkeypatch):
+        """A *fractional* clamp would be a quota-derived ceiling on every
+        occasion it binds — and at the 5,000 default it binds immediately, which
+        would reinstate exactly the coupling this class removes. So 'well under
+        quota' is measured and reported, and a violation is loud."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        assert sentry_budget.discard_ceiling_verdict(_IN_CYCLE)["well_under_quota"]
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        v = sentry_budget.discard_ceiling_verdict(_IN_CYCLE)
+        assert v["well_under_quota"] is False, (
+            "at a plan the policy cannot even afford cap 1 on, the ceiling is "
+            "NOT comfortably under quota, and the verdict must say so"
+        )
+        assert v["derived_from"] == "declared_need_per_day * cycle_days"
+
+    def test_the_exported_constant_agrees_with_the_function(self):
+        """``sentry_filter`` reads the module constant on the exception path.
+        The two must not drift — a constant that disagrees with its own deriver
+        is the typed literal R3 deleted, restored by the back door."""
+        from app.utils import sentry_budget
+
+        assert (
+            sentry_budget.DISCARD_CEILING_PER_DAY
+            == sentry_budget.discard_ceiling_per_day()
+        )
+
+
+# =============================================================================
 # Finding 1 — the budget is DIVIDED OUT of the quota, not compared to it
 # =============================================================================
 
