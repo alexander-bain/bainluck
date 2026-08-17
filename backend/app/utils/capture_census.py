@@ -39,6 +39,64 @@ MIN_VOLUME_COVERAGE = 0.5   # fraction of outcomes with non-NULL volume
 # Sources with no volume/trade concept — excluded from the volume-based bar.
 NO_VOLUME_SOURCES = frozenset({"odds_api", "odds_api_bookmaker", "datagolf"})
 
+# --- #1906: an n-floor and a season window on the per-game alarms -------------
+# The only guard used to be `if games == 0: continue`, so a ratio computed over a
+# handful of fixtures could file a REAL P2. On the 2026-08-17 sweep that produced
+# three findings out of four that were season-boundary or small-n artifacts:
+#
+#   #1897 NFL/moneyline      19 games, 2026-08-07..08-16 — PRESEASON ONLY
+#   #1899 EPL/other          27 markets over 2 fixtures, both 07-27 friendlies
+#   #1900 Ligue 1/moneyline  filed off FOUR games — one missing market flips it
+#
+# This re-creates on the capture axis exactly the crying-wolf class that
+# season_windows.py was written to kill for the grid sentinel and for the
+# watchdog's Tier-1 coverage-drop alarm (CLAUDE.md, r197). The diagnosis
+# playbook's own Step 0 sets the bar at n ~ 30 and it was never applied here.
+#
+# Findings are DOWNGRADED to WATCH, never dropped: an alarm that disappears is
+# indistinguishable from an alarm that never fired (gotcha #53), so the reason is
+# always named in the detail string.
+MIN_GAMES_FOR_CAPTURE_ALARM = 30
+
+# odds-api sport key -> the grid league slug season_windows keys its bands on.
+# Only the four leagues it actually has bands for: league_phase() returns
+# "in_season" for anything unknown ("never suppress what we aren't sure about"),
+# so mapping more would be a no-op that merely looks like coverage.
+_SEASON_LEAGUE_SLUG = {
+    "baseball_mlb": "mlb",
+    "basketball_nba": "nba",
+    "icehockey_nhl": "nhl",
+    "americanfootball_nfl": "nfl",
+}
+
+
+def _capture_severity(sport: str, games: int, now=None) -> tuple[str, str]:
+    """(severity, suffix) for a per-game capture alarm on ``sport``.
+
+    REAL — and therefore file-worthy — requires all three of: a sport whose
+    expectation genuinely holds, enough games to compute a ratio on, and a
+    calendar phase in which games are actually being played.
+    """
+    if sport not in CORE_TEAM_SPORTS:
+        return "WATCH", ""
+    if games < MIN_GAMES_FOR_CAPTURE_ALARM:
+        return "WATCH", (
+            f" WATCH not REAL: {games} games is under the {MIN_GAMES_FOR_CAPTURE_ALARM}-game "
+            f"floor, so one missing market can move this ratio — too few to file on."
+        )
+    slug = _SEASON_LEAGUE_SLUG.get(sport)
+    if slug:
+        from app.utils.season_windows import is_quiet, league_phase
+
+        if is_quiet(slug, now):
+            return "WATCH", (
+                f" WATCH not REAL: {slug.upper()} is currently "
+                f"{league_phase(slug, now)} — a thin or absent slate is expected, "
+                f"and preseason/exhibition fixtures do not carry the same market "
+                f"coverage as the regular season."
+            )
+    return "REAL", ""
+
 # Team-ball sports where "~1 game-winner (moneyline) market per game" is a
 # genuine expectation AND the classifier's "Team at/vs Team" recognizer applies.
 # ONLY these get a REAL (files an issue) starved_class / classifier_leak alarm —
@@ -211,6 +269,7 @@ def capture_findings(
     games_by_sport: dict[str, int],
     by_sport_class: dict[str, dict[str, MassCounts]],
     by_source_sport: Optional[dict[tuple[str, str], MassCounts]] = None,
+    now=None,
 ) -> list[CaptureFinding]:
     """Cross-sectional alarms for THIS sweep (no history needed).
 
@@ -219,6 +278,13 @@ def capture_findings(
     * passrate_outlier: a (source, sport) whose volume-based well-traded rate is
       a low outlier vs the same source's other sports (drift-vs-baseline is
       added by the sentinel, which owns the stored history).
+
+    ``now`` is an INJECTABLE clock (defaults to real time) used only for the
+    season-phase check. It exists so a test can pin a date instead of branching
+    on the wall clock: gotcha #44's whole subject is that a seasonal assertion
+    graded against `datetime.now()` is green for part of the year and red for the
+    rest, and the three previous instances were all "fixed" by pinning an hour
+    rather than by removing the clock. Pass a real date; assert a real phase.
     """
     findings: list[CaptureFinding] = []
 
@@ -229,8 +295,11 @@ def capture_findings(
         total_markets = sum(mc.markets for mc in classes.values()) or 1
         ml = classes.get("moneyline", MassCounts()).markets
         other = classes.get("other", MassCounts()).markets
-        # REAL (files) only where the expectation genuinely holds; else WATCH.
-        sev = "REAL" if sport in CORE_TEAM_SPORTS else "WATCH"
+        # REAL (files) only where the expectation genuinely holds, there are
+        # enough games to compute a ratio on, and the league is actually playing
+        # (#1906). `suffix` names the downgrade reason so a WATCH is never a
+        # silent disappearance.
+        sev, suffix = _capture_severity(sport, games, now)
         if ml / games < MONEYLINE_PER_GAME_FLOOR:
             findings.append(CaptureFinding(
                 kind="starved_class",
@@ -239,7 +308,7 @@ def capture_findings(
                 detail=(f"{ml} moneyline markets across {games} games "
                         f"= {ml/games:.2f}/game (< {MONEYLINE_PER_GAME_FLOOR}). "
                         f"A game without a winner market is impossible — a "
-                        f"missing/mis-classified class, not a fact."),
+                        f"missing/mis-classified class, not a fact." + suffix),
             ))
         if other / total_markets > OTHER_SHARE_CEILING:
             findings.append(CaptureFinding(
@@ -248,7 +317,7 @@ def capture_findings(
                 severity=sev,
                 detail=(f"'other' is {other/total_markets:.0%} of {total_markets} "
                         f"markets (> {OTHER_SHARE_CEILING:.0%}). The classifier "
-                        f"is failing to recognize known classes for {sport}."),
+                        f"is failing to recognize known classes for {sport}." + suffix),
             ))
 
     if by_source_sport:
