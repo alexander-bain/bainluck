@@ -106,8 +106,24 @@ async def run_graded_share_census(
     max_pages: int = 40,
     start_cursor: int = 0,
     prior: Optional[dict[str, Any]] = None,
+    deadline_s: Optional[float] = None,
 ) -> dict[str, Any]:
     """Page the resolved population and accumulate per-category graded share.
+
+    CAL-P069 adds ``deadline_s``, because ``max_pages`` is the wrong bound for
+    a caller that lives behind a request timeout. A page is 400 markets, but a
+    page's COST is not fixed — measured in production 2026-08-18, one page is
+    ~562 ms of outcome aggregation, while this module's own per-page
+    ``statement_timeout`` allows a single pathological page 20 s. So a page
+    count cannot bound wall clock, and 40 pages is anywhere from 22 s to
+    thirteen minutes. The HTTP caller needs the bound it can actually honour.
+
+    Both bounds are kept and ``stopped_on`` says which one fired. That matters
+    more than it looks: a run stopped by its deadline and a run stopped by its
+    page count return the same shape, and an operator who cannot tell them apart
+    will raise ``max_pages`` against a deadline that was never going to let it
+    run — the same could-not-tell-why class this rail's own reason strings exist
+    to close.
 
     Bounded by ``max_pages`` so an attended call cannot run away; the returned
     ``cursor`` resumes the next call exactly where this one stopped. ``prior``
@@ -132,8 +148,14 @@ async def run_graded_share_census(
     pages_failed = int((prior or {}).get("pages_failed") or 0)
     failed_ranges: list[list[int]] = list((prior or {}).get("failed_ranges") or [])
     exhausted = False
+    stopped_on = "max_pages"
 
     for _ in range(max_pages):
+        # Checked BEFORE the page, never after: a deadline enforced on the way
+        # out has already spent the overrun it exists to prevent.
+        if deadline_s is not None and (time.monotonic() - started) >= deadline_s:
+            stopped_on = "deadline"
+            break
         try:
             await session.execute(text(f"SET LOCAL statement_timeout = {PAGE_TIMEOUT_MS}"))
             rows = (
@@ -146,10 +168,12 @@ async def run_graded_share_census(
             pages_failed += 1
             failed_ranges.append([cursor, -1])
             logger.warning("graded-share census: market page from %s failed: %s", cursor, exc)
+            stopped_on = "page_failure"
             break
 
         if not rows:
             exhausted = True
+            stopped_on = "exhausted"
             break
 
         ids = [r[0] for r in rows]
@@ -180,6 +204,7 @@ async def run_graded_share_census(
         cursor = page_hi
         if len(rows) < PAGE_MARKETS:
             exhausted = True
+            stopped_on = "exhausted"
             break
 
     complete = exhausted and pages_failed == 0
@@ -195,6 +220,11 @@ async def run_graded_share_census(
         "pages_failed": pages_failed,
         "failed_ranges": failed_ranges,
         "elapsed_s": round(time.monotonic() - started, 2),
+        # WHICH bound fired. A deadline stop and a page-count stop are the same
+        # shape and want opposite responses from the operator (wait vs. raise
+        # the limit), so the run says which rather than leaving it to be
+        # inferred from arithmetic on elapsed_s.
+        "stopped_on": stopped_on,
         # The consumer must be able to tell "this covered everything" from "this
         # stopped early", without inferring it from a count.
         "usable_as_denominator": complete,
