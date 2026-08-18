@@ -43,9 +43,12 @@ function verdictClass(v: string) {
   return "bg-yellow-900 text-yellow-200 border-yellow-700";
 }
 
+const STALE_HOURS = 6;
+
 export default function CohortViewsPage() {
   const { secret } = useAdminAuth();
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
 
   const fetcher = useCallback(async (url: string) => {
     const res = await adminFetch(url, secret);
@@ -61,6 +64,23 @@ export default function CohortViewsPage() {
 
   const rows: CohortRow[] = (data?.by_band_worst || data?.by_band || data?.by_ece || []).slice(0, 100);
   const weekly = data?.weekly_by_cohort || {};
+  const ageHours = data?.generated_at ? (Date.now() / 1000 - data.generated_at) / 3600 : null;
+  const isStale = ageHours !== null && ageHours > STALE_HOURS;
+  const eceLabel = (data as unknown as { ece_label?: string })?.ece_label;
+
+  const handleRebuild = useCallback(async () => {
+    setRebuildMsg("Enqueuing…");
+    try {
+      const res = await adminFetch("/api/admin/cohort-market-type/build", secret, { method: "POST" });
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      const j = await res.json();
+      setRebuildMsg(`Enqueued: ${j.status || j.task || "ok"} — reload in ~90s`);
+    } catch (e) {
+      setRebuildMsg(`Error: ${(e as Error).message}`);
+    } finally {
+      setTimeout(() => setRebuildMsg(null), 5000);
+    }
+  }, [secret]);
 
   return (
     <div className="p-6 space-y-6">
@@ -71,7 +91,7 @@ export default function CohortViewsPage() {
         ideal="Every cell GREEN (≤5pp) or NOT-PROVABLE with a plan; no RED"
         subtitle="Band = 0-10%..90-100% (4th axis). Weekly for Monday scoreboard. Auto-refreshes every 60s."
       />
-      <div className="flex items-center gap-4 text-sm">
+      <div className="flex items-center gap-4 text-sm flex-wrap">
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
           Auto-refresh every 60s
@@ -79,8 +99,16 @@ export default function CohortViewsPage() {
         <button onClick={() => mutate()} className="px-3 py-1 rounded border border-zinc-700 hover:bg-zinc-800">
           Refresh now
         </button>
+        <button onClick={handleRebuild} className="px-3 py-1 rounded border border-amber-700 bg-amber-950 text-amber-200 hover:bg-amber-900">
+          Rebuild (POST /build)
+        </button>
+        {rebuildMsg && <span className="text-amber-300">{rebuildMsg}</span>}
         {data?.generated_at && (
-          <span className="text-zinc-400">Generated {new Date(data.generated_at * 1000).toLocaleString()}</span>
+          <span className="text-zinc-400">
+            Generated {new Date(data.generated_at * 1000).toLocaleString()}
+            {isStale && <span className="ml-2 px-2 py-0.5 rounded bg-red-900 text-red-200 border border-red-700">STALE — {ageHours!.toFixed(1)}h old (&gt;{STALE_HOURS}h)</span>}
+            {eceLabel && <span className="ml-2 text-zinc-500">({eceLabel})</span>}
+          </span>
         )}
         <a href={`${API_URL}/api/admin/cohort-views`} target="_blank" rel="noreferrer" className="text-blue-400 underline">
           Open backend HTML

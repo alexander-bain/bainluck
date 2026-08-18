@@ -332,11 +332,39 @@ def _question_pairs(
 
 
 def expected_calibration_error(rows: list[dict[str, Any]], bins: int = 10) -> float:
+    """Delegate to the ONE canonical ECE definition.
+
+    Imports and calls ``app.tasks.precompute_calibration._compute_horizon_mce``
+    so the sweep and the calibration sentinel cannot drift (same n-weighted
+    10-bin |actual − predicted|, in pp). Falls back to the local n-weighted
+    implementation only if the import fails (e.g., in minimal test harnesses).
+    """
     if not rows:
         return 0.0
+    # Build 10-bucket accumulators as the sentinel does: n, winners, sum_prob
+    buckets: list[dict[str, Any]] = []
+    # Group rows into bins exactly as the sentinel's bucketing does
     groups: list[list[dict[str, Any]]] = [[] for _ in range(bins)]
     for row in rows:
         groups[min(int(row["probability"] * bins), bins - 1)].append(row)
+    for g in groups:
+        if not g:
+            continue
+        buckets.append({
+            "n": len(g),
+            "winners": sum(r["actual"] for r in g),
+            "sum_prob": sum(r["probability"] for r in g),
+        })
+    try:
+        from app.tasks.precompute_calibration import _compute_horizon_mce  # canonical
+
+        # _compute_horizon_mce is weighted=True, returns pp (already *100, rounded)
+        val = _compute_horizon_mce(buckets, weighted=True)
+        if val is not None:
+            return val / 100.0  # sentinel returns pp, sweep returns fraction
+    except Exception:
+        pass
+    # Fallback: local n-weighted (identical to sentinel's weighted=True)
     return sum(
         len(group) / len(rows)
         * abs(_mean(r["probability"] for r in group) - _mean(r["actual"] for r in group))
