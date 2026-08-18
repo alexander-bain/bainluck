@@ -1,0 +1,207 @@
+{
+ "event_id": 15191702,
+ "status": "closed",
+ "home_team": "Pittsburgh Pirates",
+ "away_team": "Boston Red Sox",
+ "player_props": [],
+ "other": [
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates",
+   "outcome_name": "No",
+   "probability": 0.5,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates",
+   "outcome_name": "Yes",
+   "probability": 0.5,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Will there be a run scored in the first inning?: Boston Red Sox vs. Pittsburgh Pirates",
+   "outcome_name": "No",
+   "probability": 0.53,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Will there be a run scored in the first inning?: Boston Red Sox vs. Pittsburgh Pirates",
+   "outcome_name": "Yes",
+   "probability": 0.47,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Brandon Lowe: Home Runs O/U 0.5",
+   "probability": 1.0,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Esmerlyn Valdez: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Ronny Simon: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Ceddanne Rafaela: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Caleb Durbin: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Bryan Reynolds: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Adley Rutschman: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Masataka Yoshida: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Wilyer Abreu: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Jake Mangum: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Jarren Duran: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Willson Contreras: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Nick Sogard: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Nick Gonzales: Home Runs O/U 0.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Masataka Yoshida: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Esmerlyn Valdez: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Bryan Reynolds: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Brandon Lowe: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Adley Rutschman: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Ronny Simon: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Ceddanne Rafaela: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Caleb Durbin: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Willson Contreras: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Jake Mangum: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Jarren Duran: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Wilyer Abreu: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Nick Sogard: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Nick Gonzales: Home Runs O/U 1.5",
+   "probability": null,
+   "source": "polymarket"
+  },
+  {
+   "market_name": "Boston Red Sox vs. Pittsburgh Pirates - Player Props",
+   "outcome_name": "Bubba Chandler: Strikeouts O/U 4.5",
+   "probability": 0.9995,
+   "source": "polymarket"
+  }
+ ]
+}

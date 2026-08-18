@@ -68,9 +68,54 @@ function group(id: string, overrides: Partial<Parameters<typeof groupPlayerProps
  * memo (`fixtures/playerPropsGroupingLegacy.ts`, lifted verbatim from f46716ed):
  * if the two disagree about anything on a real payload, this fails.
  */
+/**
+ * UX-P097 AMENDS THE ORACLE'S PREMISE, DELIBERATELY AND IN ONE FIELD ONLY.
+ *
+ * The oracle above was written for an EXTRACTION (UX-P056), where "changed
+ * nothing" was the whole claim. #1976 §5 is the first intentional BEHAVIOUR
+ * change to this module since, so a bare `toEqual(legacy)` now asserts that a
+ * fixed bug is still present.
+ *
+ * The bug: every `other`-derived rung was pushed with a hardcoded
+ * `threshold: 0.5`, whatever line its label stated. On these very fixtures that
+ * collapsed real strikeout LADDERS ("… O/U 1.5" / "2.5" / "3.5" / "4.5" / "5.5")
+ * onto a single fake 0.5 rung. `parsePropLabel` had parsed the real line all
+ * along; the pass discarded it.
+ *
+ * The oracle is NARROWED, not weakened or deleted: everything except the rung
+ * threshold is still held byte-identical against the pre-change memo, so any
+ * OTHER divergence — a lost player, a moved card, a changed probability, a new
+ * dropped row — still reds this. The changed field is then held separately,
+ * against the labels themselves, by `describe("the corrected thresholds …")`.
+ */
+// Rungs are additionally compared ORDER-INSENSITIVELY, for the same reason and
+// no further: with real thresholds the ladder now sorts by its actual line
+// instead of by insertion, so the same rungs arrive in a different order. The
+// SET of rungs is still held exactly — a lost, gained or altered rung reds.
+const withoutRungThresholds = (players: unknown) => {
+  const stripped = JSON.parse(
+    JSON.stringify(players, (k, v) => (k === "threshold" ? "<held-separately>" : v)),
+  );
+  const sortRungs = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(sortRungs);
+      return;
+    }
+    if (node && typeof node === "object") {
+      const obj = node as Record<string, unknown>;
+      if (Array.isArray(obj.rungs)) {
+        obj.rungs.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      }
+      Object.values(obj).forEach(sortRungs);
+    }
+  };
+  sortRungs(stripped);
+  return stripped;
+};
+
 describe("the extraction changed nothing — new module vs pre-change memo", () => {
   for (const id of Object.keys(CAPTURES)) {
-    it(`produces byte-identical players on ${id}`, () => {
+    it(`produces identical players on ${id}, thresholds aside`, () => {
       const c = CAPTURES[id];
       const legacy = groupPlayerPropsLegacy(
         { player_props: c.player_props, other: c.other },
@@ -81,10 +126,51 @@ describe("the extraction changed nothing — new module vs pre-change memo", () 
         null,
       );
       const { players, dropped } = group(id);
-      expect(players).toEqual(legacy);
+      expect(withoutRungThresholds(players)).toEqual(withoutRungThresholds(legacy));
       expect(dropped).toEqual([]);
     });
   }
+});
+
+describe("the corrected thresholds are the lines the labels state (#1976 §5)", () => {
+  for (const id of Object.keys(CAPTURES)) {
+    it(`every rung on ${id} matches a line its own label carries`, () => {
+      const c = CAPTURES[id];
+      // Every "O/U <n>" line present in this capture's `other` labels.
+      const linesInLabels = new Set<number>();
+      for (const o of c.other) {
+        const m = /O\/U\s*(\d+(?:\.\d+)?)/i.exec(o.outcome_name || "");
+        if (m) linesInLabels.add(Number(m[1]));
+      }
+      // Every "O/U <n>" line present in this capture's player_prop labels too —
+      // those rows already carried a real threshold before this change.
+      for (const p of c.player_props) {
+        if (typeof p.threshold === "number") linesInLabels.add(p.threshold);
+      }
+
+      const { players } = group(id);
+      const thresholds = players.flatMap((pl) =>
+        pl.stats.flatMap((s) =>
+          s.rungs?.length ? s.rungs.map((r) => r.threshold) : [s.threshold],
+        ),
+      ).filter((t): t is number => typeof t === "number");
+
+      expect(thresholds.length).toBeGreaterThan(0);
+      for (const t of thresholds) {
+        expect(linesInLabels.has(t)).toBe(true);
+      }
+    });
+  }
+
+  it("15191146 recovers the strikeout ladder the 0.5 default flattened", () => {
+    const { players } = group("15191146");
+    const laddered = players
+      .flatMap((p) => p.stats.filter((s) => s.type.toLowerCase() === "strikeouts"))
+      .flatMap((s) => (s.rungs?.length ? s.rungs.map((r) => r.threshold) : [s.threshold]));
+    // The legacy behaviour was every one of these at 0.5.
+    expect(new Set(laddered).size).toBeGreaterThan(1);
+    expect(laddered).not.toContain(0.5);
+  });
 });
 
 describe("groupPlayerProps over the two production payloads", () => {

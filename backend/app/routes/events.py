@@ -6080,6 +6080,30 @@ _PLAYER_PROP_RE = re.compile(
 )
 _THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
+# Polymarket names a player prop "<Player>: <Stat> O/U <line>" — the line is on the
+# MARKET, and the outcomes are a bare "Over"/"Under". That shape has to be told apart
+# from a genuine total that also carries "O/U" ("Cardinals vs. Reds: O/U 10.5") and
+# from a team stat total ("Yankees at Red Sox: Total Runs"). A bare stat-word search
+# is NOT enough to do it — it matches both of those too (#1976 §5), so the test is
+# structural: a non-matchup subject, then a stat word, then the O/U line.
+_PLAYER_PROP_OU_RE = re.compile(
+    r"^\s*(?P<who>[^:]{2,60}?)\s*:\s*(?P<stat>[^:]*?)\bO/U\b\s*\d+(?:\.\d+)?\s*$",
+    re.IGNORECASE,
+)
+# "Yankees vs Red Sox", "Boston at Atlanta" — a matchup subject means the line belongs
+# to the GAME, not to a person.
+_MATCHUP_SUBJECT_RE = re.compile(r"\b(?:vs\.?|at)\b", re.IGNORECASE)
+
+
+def _is_player_prop_ou_market(name: str) -> bool:
+    """True for Polymarket's "<Player>: <Stat> O/U <line>" player-prop shape."""
+    m = _PLAYER_PROP_OU_RE.match(name or "")
+    if not m:
+        return False
+    if _MATCHUP_SUBJECT_RE.search(m.group("who")):
+        return False
+    return bool(_PLAYER_PROP_RE.search(m.group("stat")))
+
 # Matches per-player outcome names inside team stat markets.
 # Kalshi uses "PlayerName: X+" format for individual player contracts
 # within team-level markets (e.g., "Joel Embiid: 1+" inside "Team at Team: Steals").
@@ -6147,6 +6171,16 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
 
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
+        # ...but a NAMED PLAYER in front of the line makes it a player prop, which
+        # is the exact test the Over/Under branch below already applies. This
+        # branch was missing it, and "o/u" is tested here first — so Polymarket's
+        # "<Player>: <Stat> O/U <line>" shape never reached the player check and
+        # classified as a game total. On a Polymarket-only game that is the WHOLE
+        # prop set, and the totals path then reads the line from the OUTCOME name
+        # ("Over"/"Under" — no number), so every row dropped and the page served
+        # six empty sections over a complete prop set. #1976 §5.
+        if _is_player_prop_ou_market(name):
+            return "player_prop"
         if "team" in lower:
             return "team_total"
         if any(x in lower for x in _HALF_PATTERNS):
@@ -6858,9 +6892,17 @@ async def get_game_markets(
                 market_period = _extract_period_from_name(market.name, "")
 
         if market_type in ("game_total", "half_total", "quarter_total", "team_total"):
-            # Extract thresholds with probabilities
+            # Extract thresholds with probabilities.
+            # Same provider split as the player_prop branch below (#1976 §5):
+            # Kalshi puts the line in the OUTCOME ("Over 8.5"), Polymarket puts it
+            # in the MARKET ("Reds vs. Cardinals: O/U 10.5") and leaves the outcome
+            # a bare "Over"/"Under". Without the fallback every Polymarket total
+            # hit the `continue` below and the section rendered empty.
+            market_threshold = _extract_threshold(market.name)
             for o in market_outcomes:
                 threshold = _extract_threshold(o.name)
+                if threshold is None:
+                    threshold = market_threshold
                 if threshold is None:
                     continue
                 name_lower = o.name.lower().strip()
@@ -6915,8 +6957,17 @@ async def get_game_markets(
                 })
 
         elif market_type == "player_prop":
+            # Where the LINE lives is provider-specific, and assuming Kalshi's
+            # placement is what emptied the Polymarket-only pages (#1976 §5):
+            #   Kalshi      market "Reds at Cardinals: Home Runs", outcome "Soto: 2+"
+            #   Polymarket  market "Juan Soto: Home Runs O/U 1.5", outcome "Over"
+            # So fall back to the market name when the outcome carries no number.
+            # Computed once per market, not per outcome — it cannot vary within one.
+            market_threshold = _extract_threshold(market.name)
             for o in market_outcomes:
                 threshold = _extract_threshold(o.name)
+                if threshold is None:
+                    threshold = market_threshold
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 if prob is None:
                     continue
