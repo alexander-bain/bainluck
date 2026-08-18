@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
-from app.utils.calibration_provability import MIN_GRADED_SHARE, annotate_cells
+from app.utils.calibration_provability import (
+    CELL_POPULATION,
+    MIN_GRADED_SHARE,
+    UNIT_OUTCOMES,
+    GradedShareCensus,
+    annotate_cells,
+)
 
 # Queue #257 Item 1: the in-request calibration fallback used to re-implement the
 # whole CTE chain + wilson_ci / bootstrap_mce_ci / _compute_horizon_mce here (a
@@ -1602,11 +1608,20 @@ def provability_payload_fields(
             },
         }
     return {
-        "by_category": annotate_cells(cells, resolved_by_category=census),
+        "by_category": annotate_cells(
+            cells,
+            census=GradedShareCensus(
+                by_key=census,
+                unit=UNIT_OUTCOMES,
+                population=CELL_POPULATION,
+            ),
+        ),
         "provability_census": {
             "measured": True,
             "categories": len(census),
             "min_graded_share": MIN_GRADED_SHARE,
+            "unit": UNIT_OUTCOMES,
+            "population": CELL_POPULATION,
         },
     }
 
