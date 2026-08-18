@@ -924,3 +924,161 @@ class TestThePolicyIsNotFrozenAtImport:
         first = sentry_budget.current_budget_verdict(self.MAR)
         first["shortfall_per_day"] = 0.0
         assert sentry_budget.current_budget_verdict(self.MAR)["shortfall_per_day"] != 0.0
+
+
+class TestTheDisplayedCeilingIsTheEnforcedCeiling:
+    """``C-CERT-SENTRY-R4`` BLOCK: ops displayed 5,292 and evaluated against 5,859.
+
+    Neither number was miscomputed. The display read the import-time constant
+    ``DISCARD_CEILING_PER_DAY``; the verdict called ``discard_ceiling_per_day()``
+    live. Between them sat a band of discard rates that the ops page calls a
+    breach and the enforcement does not — and a reader of the payload has no way
+    to know which of the two they are looking at.
+
+    They split for two reasons that are both guaranteed to happen again, not for
+    an exotic one:
+
+    * a web dyno outlives a billing cycle, so a 28-day ceiling frozen at boot is
+      carried into a 31-day cycle;
+    * a quota change lands after the dyno booted — which is exactly what was
+      done on 2026-08-14, when ``SENTRY_QUOTA_EVENTS_PER_MONTH`` was raised in
+      the release AFTER the one that shipped the ceiling, deliberately and in
+      that order.
+
+    This is the same family as #53 / #124 / rulings 071 and 072: an instrument
+    reporting confidently about a quantity it did not measure. The fix is
+    structural rather than a corrected constant — ONE derivation per read, whose
+    value is both reported and compared against.
+    """
+
+    def test_the_census_ceiling_is_the_one_the_verdict_used(self, monkeypatch):
+        """The property, stated so no arithmetic can satisfy it accidentally.
+
+        The frozen constant is moved far away from the live derivation and the
+        census is driven through its real path. If the display ever reads the
+        constant again, ``ceiling_per_day`` comes back as the stale number while
+        ``over_ceiling`` was decided by the live one — which is R4 exactly.
+        """
+        from app.utils import sentry_budget, sentry_filter
+
+        live = sentry_budget.discard_ceiling_per_day()
+        monkeypatch.setattr(sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000)
+
+        # A rate strictly inside the band between the two candidate ceilings.
+        rate = live + 1
+        rows = {"p1": {"window_s": 86_400.0, "cap": 1, "dropped": rate}}
+        census = sentry_filter.summarize_filter_counts(rows)
+
+        assert census["ceiling_per_day"] == live, (
+            "the census displayed the frozen constant while judging against the "
+            "live derivation — C-CERT-SENTRY-R4's 5,292-vs-5,859 split"
+        )
+        assert census["over_ceiling"] is True
+        assert census["discarded_per_day"] > census["ceiling_per_day"]
+
+    def test_a_rate_just_UNDER_the_displayed_ceiling_is_not_a_breach(self):
+        """The other direction, so 'always True' cannot pass this class."""
+        from app.utils import sentry_budget, sentry_filter
+
+        live = sentry_budget.discard_ceiling_per_day()
+        rows = {"p1": {"window_s": 86_400.0, "cap": 1, "dropped": live - 1}}
+        census = sentry_filter.summarize_filter_counts(rows)
+
+        assert census["over_ceiling"] is False
+        assert census["ceiling_per_day"] == live
+
+    def test_the_verdict_helper_and_the_census_cannot_disagree(self):
+        """``over_discard_ceiling`` is the same derivation, not a second one.
+
+        It is still called from elsewhere, so it must not be allowed to drift
+        back into being an independent computation.
+        """
+        from app.utils import sentry_budget
+
+        live = sentry_budget.discard_ceiling_per_day()
+        for rate in (live - 1, live, live + 1):
+            reading = sentry_budget.discard_ceiling_reading(rate, 86_400.0)
+            assert reading["over_ceiling"] == sentry_budget.over_discard_ceiling(
+                rate, 86_400.0
+            )
+            assert reading["ceiling_per_day"] == live
+
+    def test_the_no_data_and_unavailable_paths_also_show_the_live_ceiling(
+        self, monkeypatch
+    ):
+        """An operator reading the empty census must not be shown a stale bound.
+
+        These paths report ``over_ceiling: None`` — correctly, since there is
+        nothing to judge — but they still PRINT a ceiling, and a stale one there
+        is the same lie with no verdict attached to contradict it.
+        """
+        from app.utils import sentry_budget, sentry_filter
+
+        live = sentry_budget.discard_ceiling_per_day()
+        monkeypatch.setattr(sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000)
+
+        empty = sentry_filter.summarize_filter_counts({})
+        assert empty["ceiling_per_day"] == live
+        assert empty["over_ceiling"] is None
+
+        def _boom():
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(sentry_filter, "_read_filter_counts", _boom)
+        unavailable = sentry_filter.filter_discard_census()
+        assert unavailable["status"] == "unavailable"
+        assert unavailable["ceiling_per_day"] == live
+
+    def test_R4s_literal_numbers_and_what_5500_a_day_actually_is(self, monkeypatch):
+        """5,292 vs 5,859, reproduced exactly — and the 5,500 specimen resolved.
+
+        The split is the CYCLE LENGTH, measured here rather than inferred: at the
+        50,000 quota a 31-day cycle derives **5,859** and a 28-day cycle derives
+        **5,292**. So a dyno that booted in February and is still up in March
+        displays 5,292 while enforcing 5,859. That is R4's pair of numbers, and
+        neither is a typo or a bad constant.
+
+        🔴 **The directive's specimen said 5,500/day should read
+        ``over_ceiling: true``. Under this fix it reads FALSE, and that is
+        deliberate** — flagged rather than quietly resolved either way.
+
+        5,500 sits inside the band precisely because the two candidates
+        disagree. Picking the lower one is more conservative and is also
+        *stale on purpose*: it would mean the ceiling an operator is held to
+        depends on which month a dyno last restarted in, which is not a ceiling.
+        The live derivation for the cycle we are actually in is 5,859, so 5,500
+        is genuinely under it.
+
+        If Alex wants the conservative reading instead, it is one line in
+        ``discard_ceiling_reading`` — which is the entire benefit of there being
+        one derivation. This test pins whichever is chosen so the choice cannot
+        drift back into being an accident.
+        """
+        import importlib
+
+        from app.utils import sentry_budget
+
+        monkeypatch.setenv("SENTRY_QUOTA_EVENTS_PER_MONTH", "50000")
+        sb = importlib.reload(sentry_budget)
+        try:
+            march = datetime(2026, 3, 25, tzinfo=timezone.utc)
+            february = datetime(2026, 2, 25, tzinfo=timezone.utc)
+
+            assert sb.cycle_length_days(march) == 31
+            assert sb.cycle_length_days(february) == 28
+            assert sb.discard_ceiling_per_day(march) == 5_859
+            assert sb.discard_ceiling_per_day(february) == 5_292
+
+            # The band R4 found, named as an interval rather than as two numbers.
+            in_march = sb.discard_ceiling_reading(5_500, 86_400.0, march)
+            assert in_march["ceiling_per_day"] == 5_859
+            assert in_march["over_ceiling"] is False
+
+            # And the same rate IS a breach inside a 28-day cycle — because the
+            # ceiling genuinely is lower then, not because a constant went stale.
+            in_february = sb.discard_ceiling_reading(5_500, 86_400.0, february)
+            assert in_february["ceiling_per_day"] == 5_292
+            assert in_february["over_ceiling"] is True
+        finally:
+            monkeypatch.delenv("SENTRY_QUOTA_EVENTS_PER_MONTH", raising=False)
+            importlib.reload(sentry_budget)
