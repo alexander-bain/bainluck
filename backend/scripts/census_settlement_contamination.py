@@ -118,85 +118,11 @@ def db_query(sql: str, limit: int = 1000) -> list:
     return rows
 
 
-_TICKER_DATE_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{2})")
-_MONTHS = {m: i + 1 for i, m in enumerate(
-    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-)}
-
-
-def ticker_game_date(external_id: str | None) -> date | None:
-    """The date the MARKET says it is about, from its own ticker. ``None`` if absent.
-
-    Kalshi game tickers carry ``YYMONDD`` immediately after the series prefix
-    (``KXMLBTOTAL-26AUG051940MINKC`` -> 2026-08-05), in US Eastern, and gotcha #14
-    says to trust it over ``commence_time`` for game matching — the venue's
-    ``commence_time`` is frequently the close time.
-
-    Returning ``None`` for an unparseable ticker is deliberate and load-bearing: a
-    market whose identity we cannot read is NOT thereby in agreement with its event.
-    It is unknown, and :func:`market_identity_disputed` must not mark it certain.
-    """
-    if not external_id:
-        return None
-    m = _TICKER_DATE_RE.search(external_id)
-    if not m:
-        return None
-    yy, mon, dd = m.group(1), m.group(2), m.group(3)
-    month = _MONTHS.get(mon)
-    if month is None:
-        return None
-    try:
-        return date(2000 + int(yy), month, int(dd))
-    except ValueError:
-        return None
-
-
-def market_identity_disputed(external_id: str | None, commence_time) -> bool:
-    """True when the market's OWN id names a different game-date than its event.
-
-    QUEUE 362, and it is the ordering ruling arriving a FOURTH time — market
-    identity is identity too.
-
-    The specimen: outcome rows ``217508565``–``217508571`` sit on market
-    ``58609021``, whose ticker is ``KXMLBTOTAL-26AUG051940MINKC`` — the **Aug 5**
-    MIN@KC game. It is linked to event ``15187509``, which is soundly and correctly
-    the **Aug 6** game. Nothing about the EVENT is disputed, so the old
-    :func:`disputed` check waved it through as "identity certain" and the census
-    declared 3 of its rows adjudicable — computing a grade for the Aug 5 market from
-    the Aug 6 game's truth. Four further rows sat inside the "AGREES ANYWAY"
-    exclusion, agreeing with a score belonging to neither game.
-
-    A market bound to the wrong game is exactly as un-adjudicable as an event
-    wearing the wrong id, and for the same reason: the truth we would pair it with
-    is some other game's.
-    """
-    ticker_date = ticker_game_date(external_id)
-    if ticker_date is None or commence_time is None:
-        return False
-    event_date = _eastern_date(commence_time)
-    if event_date is None:
-        return False
-    return ticker_date != event_date
-
-
-def _eastern_date(commence_time) -> date | None:
-    """The event's game-date in US Eastern, which is the calendar the ticker uses.
-
-    Comparing against the UTC date would manufacture a disagreement for every night
-    game — a 19:40 ET first pitch is the NEXT UTC day — and a census that cries wolf
-    on most of its population teaches its reader to skip it.
-    """
-    if isinstance(commence_time, str):
-        try:
-            commence_time = datetime.fromisoformat(commence_time)
-        except ValueError:
-            return None
-    if not isinstance(commence_time, datetime):
-        return None
-    if commence_time.tzinfo is None:
-        commence_time = commence_time.replace(tzinfo=timezone.utc)
-    return commence_time.astimezone(ZoneInfo("America/New_York")).date()
+from app.utils.market_identity import (  # ONE implementation — see that module
+    eastern_game_date as _eastern_date,
+    market_identity_disputed,
+    ticker_game_date,
+)
 
 
 def _split_label(label: str) -> tuple[str, str]:

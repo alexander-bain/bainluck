@@ -246,6 +246,167 @@ class TestDiscardCeilingIsDeclaredAndObservable:
 
 
 # =============================================================================
+# R4 — the ceiling derives from declared NEED, never from raw quota
+# =============================================================================
+
+#: Fixed instant inside the measured 07-21 -> 08-21 cycle, so ``cycle_length_days``
+#: is 31 by construction and not by whatever day the suite happens to run
+#: (gotcha #44: an anchor that branches on the clock is not an anchor).
+_IN_CYCLE = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+
+
+class TestTheCeilingDerivesFromNeedNotQuota:
+    """``C-CERT-SENTRY-R4`` refused to arm, and its reason was one line:
+
+        ``DISCARD_CEILING_PER_DAY = QUOTA_EVENTS_PER_MONTH``
+
+    At the 5,000-event plan that produced 5,000/day, which is a defensible
+    blindness ceiling. At the 50,000 plan it produces 50,000/day, under which the
+    measured 19,066/day cron blindness renders healthy. The ceiling was never
+    wrong by arithmetic — it was a *budget* wearing a *ceiling's* name, and the
+    two agreed only for as long as the plan did not change.
+
+    Alex, 2026-08-17: *the ceiling derives from declared NEED, capped well under
+    quota, never raw quota.*
+    """
+
+    def test_the_ceiling_is_not_simply_the_quota(self):
+        """The whole defect, forbidden by name and through the pre-existing
+        public surface — so a later refactor that keeps these function names but
+        quietly restores ``= QUOTA_EVENTS_PER_MONTH`` is still caught.
+
+        This is the one assertion in the class that fails against the old code
+        for a BEHAVIOURAL reason rather than a missing attribute.
+        """
+        from app.utils import sentry_budget
+
+        assert (
+            sentry_budget.DISCARD_CEILING_PER_DAY
+            != sentry_budget.QUOTA_EVENTS_PER_MONTH
+        ), (
+            "the discard ceiling is the monthly quota again — a plan upgrade "
+            "now raises the blindness allowance with it (C-CERT-SENTRY-R4)"
+        )
+
+    def test_the_predicate_itself_tracks_need_not_the_frozen_constant(
+        self, monkeypatch
+    ):
+        """``over_discard_ceiling`` is what every consumer actually calls. If the
+        deriver is correct but the predicate still reads a stale import-time
+        number, nothing user-visible changed."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        assert sentry_budget.over_discard_ceiling(19_066, 86_400, now=_IN_CYCLE)
+        assert not sentry_budget.over_discard_ceiling(1_269, 86_400, now=_IN_CYCLE)
+
+    def test_the_old_coupling_would_go_blind_on_the_known_specimen(self):
+        """The executable specimen. Not a story about a defect — the defect,
+        run. If this ever stops failing under the old rule, the rule was fine
+        and this whole class is unnecessary."""
+        from app.utils import sentry_budget
+
+        old_rule_ceiling = 50_000  # == QUOTA_EVENTS_PER_MONTH on the current plan
+        assert not (19_066 > old_rule_ceiling), (
+            "premise check: 19,066/day must be UNDER the old quota-derived "
+            "ceiling — that is what made it blind"
+        )
+        assert sentry_budget.discard_ceiling_per_day(_IN_CYCLE) < old_rule_ceiling
+
+    @pytest.mark.parametrize("quota", [5_000, 50_000])
+    def test_the_blindness_specimen_is_over_ceiling_at_every_plan(
+        self, monkeypatch, quota
+    ):
+        """19,066/day (the cron instance, 2026-08-16) and 64,039/day (R3) must
+        both breach at BOTH plans. A ceiling a plan upgrade can switch off is not
+        a ceiling."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", quota)
+        ceiling = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+        assert 19_066 > ceiling, f"19,066/day renders healthy at quota {quota}"
+        assert 64_039 > ceiling, f"64,039/day renders healthy at quota {quota}"
+
+    @pytest.mark.parametrize("quota", [5_000, 50_000])
+    def test_a_healthy_day_is_still_under_it(self, monkeypatch, quota):
+        """The other direction, or the fix is just a lower number that cries
+        wolf. Measured healthy accepted volume was 770-1,269/day."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", quota)
+        assert 1_269 < sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+    def test_a_tenfold_quota_raise_does_not_tenfold_the_ceiling(self, monkeypatch):
+        """The property R4 actually wants. The ceiling may move with need — the
+        solved cap genuinely rises when more is affordable — but it must not
+        TRACK the plan."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        small = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        big = sentry_budget.discard_ceiling_per_day(_IN_CYCLE)
+
+        assert big / small < 2.0, (
+            f"a 10x quota raise moved the ceiling {big / small:.1f}x "
+            f"({small} -> {big}) — the ceiling is still tracking the plan"
+        )
+
+    def test_the_ceiling_is_one_cycle_of_declared_need(self, monkeypatch):
+        """Derived, and the derivation is checkable rather than asserted."""
+        import math
+
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        expected = math.ceil(
+            sentry_budget.declared_need_per_day(_IN_CYCLE)
+            * sentry_budget.cycle_length_days(_IN_CYCLE)
+        )
+        assert sentry_budget.discard_ceiling_per_day(_IN_CYCLE) == expected
+
+    def test_the_ceiling_never_exceeds_the_quota(self, monkeypatch):
+        """Quota's one remaining role, and it is a clamp in the safe direction
+        only. Past the quota the ceiling has stopped bounding anything."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 500)
+        v = sentry_budget.discard_ceiling_verdict(_IN_CYCLE)
+        assert v["ceiling_per_day"] <= 500
+        assert v["clamped_by_quota"] is True
+
+    def test_the_share_of_quota_is_reported_not_silently_enforced(self, monkeypatch):
+        """A *fractional* clamp would be a quota-derived ceiling on every
+        occasion it binds — and at the 5,000 default it binds immediately, which
+        would reinstate exactly the coupling this class removes. So 'well under
+        quota' is measured and reported, and a violation is loud."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 50_000)
+        assert sentry_budget.discard_ceiling_verdict(_IN_CYCLE)["well_under_quota"]
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        v = sentry_budget.discard_ceiling_verdict(_IN_CYCLE)
+        assert v["well_under_quota"] is False, (
+            "at a plan the policy cannot even afford cap 1 on, the ceiling is "
+            "NOT comfortably under quota, and the verdict must say so"
+        )
+        assert v["derived_from"] == "declared_need_per_day * cycle_days"
+
+    def test_the_exported_constant_agrees_with_the_function(self):
+        """``sentry_filter`` reads the module constant on the exception path.
+        The two must not drift — a constant that disagrees with its own deriver
+        is the typed literal R3 deleted, restored by the back door."""
+        from app.utils import sentry_budget
+
+        assert (
+            sentry_budget.DISCARD_CEILING_PER_DAY
+            == sentry_budget.discard_ceiling_per_day()
+        )
+
+
+# =============================================================================
 # Finding 1 — the budget is DIVIDED OUT of the quota, not compared to it
 # =============================================================================
 
@@ -623,3 +784,143 @@ def test_a_real_redis_churn_error_is_still_dropped():
         }
     }
     assert classify(event, {}) == "drop"
+
+
+# =============================================================================
+# R4 finding P1 — a long-lived process must not carry its cycle across a reset
+# =============================================================================
+
+class TestThePolicyIsNotFrozenAtImport:
+    """C-CERT-SENTRY-R4, BLOCK: *"the shipping cap and exported budget verdict
+    freeze at import, so a live process crossing a 28->31-day billing cycle
+    hides the required 8.26/day shortfall."*
+
+    Every function in ``sentry_budget`` already derived cycle length from the
+    timestamp it was handed. The defect was one level up — ``sentry_filter``
+    read two of them ONCE, at import, and a dyno outlives a billing cycle. The
+    transition then smooths away a real shortfall, which is the worst direction
+    for a budget instrument to be wrong in: nothing changed, nobody acted, and
+    the number improved.
+    """
+
+    #: Inside the 28-day 2026-02-21 -> 2026-03-21 cycle.
+    FEB = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    #: Inside the 31-day 2026-03-21 -> 2026-04-21 cycle that follows it.
+    MAR = datetime(2026, 3, 25, 12, 0, tzinfo=timezone.utc)
+
+    def test_the_two_cycles_really_do_differ_in_length(self):
+        """Premise check. If these are the same length the specimen proves
+        nothing, and the test would pass for the wrong reason."""
+        from app.utils import sentry_budget
+
+        assert sentry_budget.cycle_length_days(self.FEB) == 28
+        assert sentry_budget.cycle_length_days(self.MAR) == 31
+
+    def test_the_verdict_follows_the_boundary(self, monkeypatch):
+        """Codex's exact specimen, at quota 5,000."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+
+        before = sentry_budget.current_budget_verdict(self.FEB)
+        after = sentry_budget.current_budget_verdict(self.MAR)
+
+        assert before["cycle_days"] == 28
+        assert after["cycle_days"] == 31, (
+            "the process carried the previous cycle across the reset — the "
+            "import-frozen verdict, restored"
+        )
+        assert after["shortfall_per_day"] == 8.26
+        assert after["fits"] is False
+
+    def test_the_enforced_cap_follows_the_boundary(self, monkeypatch):
+        """The other half: the cap the filter ENFORCES, not just what it reports."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 6_200)
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+
+        before = sentry_budget.current_backstop_per_window(self.FEB)
+        after = sentry_budget.current_backstop_per_window(self.MAR)
+        fresh = sentry_budget.effective_backstop_per_window(self.MAR)
+
+        assert after == fresh, (
+            f"enforced {after} after the reset, fresh solve says {fresh} "
+            f"(was {before} in the 28-day cycle)"
+        )
+
+    def test_the_filter_reads_live_not_the_import_snapshot(self):
+        """A named constant that still exists is not the same as a constant that
+        is still ENFORCED. Guards against a later edit re-pointing the hot path
+        at the frozen value."""
+        import inspect
+
+        from app.utils import sentry_filter
+
+        emit = inspect.getsource(sentry_filter.summarize_filter_counts)
+        assert "current_budget_verdict" in emit
+        assert "BUDGET_VERDICT" not in emit.replace("current_budget_verdict", "")
+
+        src = inspect.getsource(sentry_filter)
+        assert "limit=sentry_budget.current_backstop_per_window()" in src, (
+            "the backstop is enforced from the import-time snapshot again"
+        )
+
+    def test_the_import_snapshot_is_still_available_and_named_as_such(self):
+        """Kept deliberately: 'what did this process boot with' is a real
+        question, and answering it must not be confused with the live policy."""
+        from app.utils import sentry_filter
+
+        assert hasattr(sentry_filter, "BACKSTOP_PER_WINDOW_AT_IMPORT")
+        assert hasattr(sentry_filter, "BUDGET_VERDICT_AT_IMPORT")
+
+    def test_the_cache_does_not_re_solve_within_a_cycle(self, monkeypatch):
+        """It is read on the hot path. One date comparison in the common case,
+        not a search per event."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+        calls = {"n": 0}
+        real = sentry_budget.effective_backstop_per_window
+
+        def counted(now=None, base=None):
+            calls["n"] += 1
+            return real(now, base)
+
+        monkeypatch.setattr(sentry_budget, "effective_backstop_per_window", counted)
+
+        sentry_budget.current_backstop_per_window(self.MAR)
+        after_first = calls["n"]
+        for _ in range(50):
+            sentry_budget.current_backstop_per_window(self.MAR)
+
+        # One REFRESH costs several solves (``budget_verdict`` re-enters via
+        # shortfall + required-quota). What must not grow is the refresh count.
+        assert after_first > 0
+        assert calls["n"] == after_first, (
+            f"re-solved on {calls['n'] - after_first} extra calls inside one cycle"
+        )
+
+        # ...and crossing the boundary DOES pay for a refresh, or the memo is
+        # just the frozen constant with more ceremony.
+        sentry_budget.current_backstop_per_window(self.FEB)
+        assert calls["n"] > after_first
+
+    def test_an_exported_verdict_cannot_be_mutated_by_its_reader(self, monkeypatch):
+        """The dict travels into counter payloads. A caller mutating it would
+        make the next reader's verdict depend on who read it first."""
+        from app.utils import sentry_budget
+
+        monkeypatch.setattr(
+            sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
+        )
+        first = sentry_budget.current_budget_verdict(self.MAR)
+        first["shortfall_per_day"] = 0.0
+        assert sentry_budget.current_budget_verdict(self.MAR)["shortfall_per_day"] != 0.0

@@ -39,6 +39,16 @@ Every number below is either **measured** (and carries the measurement) or
    filter's ``BACKSTOP_PER_WINDOW`` is that return value. You cannot set the cap
    above affordance because you do not set the cap.
 
+4b. **The blindness ceiling is a function of NEED, not of the plan** (added
+   2026-08-17 on Alex's ruling, after ``C-CERT-SENTRY-R4`` refused to arm).
+   :func:`discard_ceiling_per_day` is one cycle of :func:`declared_need_per_day`.
+   The line it replaces was ``= QUOTA_EVENTS_PER_MONTH``, which was defensible
+   only by coincidence: at the 5,000 plan a cycle of need is 4,656/day, so the
+   two agreed within 7% and nobody could see which one the reasoning rested on.
+   At 50,000 they diverge tenfold and the 19,066/day measured blindness renders
+   healthy. Quota now enters in one direction only — as a clamp that can lower
+   the ceiling, never raise it.
+
 4. **When nothing fits, it says so by name.** If even cap 1 is unaffordable the
    solve returns 0, :data:`BUDGET_OVERCOMMITTED` goes True, and
    :func:`budget_shortfall_per_day` / :func:`required_monthly_quota` carry the
@@ -362,6 +372,64 @@ def budget_verdict(
     }
 
 
+# ---------------------------------------------------------------------------
+# Boundary-aware accessors (C-CERT-SENTRY-R4 finding P1, queue 363)
+#
+# Every function above derives cycle length from the timestamp it is handed, and
+# is therefore correct. The defect Codex found is one level up: the filter
+# FROZE two of them at import (``BACKSTOP_PER_WINDOW``, ``BUDGET_VERDICT``), and
+# a dyno outlives a billing cycle. Its specimen: a process imported during a
+# 28-day cycle at quota 5,000 kept exporting ``fits: true, shortfall: 0,
+# cycle_days: 28`` after the next 31-day cycle opened, while a fresh calculation
+# said ``fits: false, shortfall: 8.26, cycle_days: 31``. The transition itself
+# smooths away the shortfall the acceptance requires — a false green produced by
+# the calendar rather than by anything changing.
+#
+# Recomputing per event is not an option: the cap is read on the hot path and
+# the solve is a search. So the accessors below memoise on the CYCLE, which is
+# the only thing the answer depends on: a cheap date comparison per call, and a
+# re-solve exactly once per boundary crossing.
+# ---------------------------------------------------------------------------
+
+_CACHE: dict = {"key": None, "cap": None, "verdict": None}
+
+
+def cycle_key(now: datetime | None = None) -> str:
+    """Identity of the billing cycle containing ``now``. The memo key."""
+    start, end = cycle_window(now)
+    return f"{start.date().isoformat()}:{(end - start).days}:{QUOTA_EVENTS_PER_MONTH}"
+
+
+def _refresh(now: datetime | None = None) -> None:
+    key = cycle_key(now)
+    if _CACHE["key"] == key:
+        return
+    _CACHE["key"] = key
+    _CACHE["cap"] = effective_backstop_per_window(now)
+    _CACHE["verdict"] = budget_verdict(now)
+
+
+def current_backstop_per_window(now: datetime | None = None) -> int:
+    """The cap in force RIGHT NOW, re-solved on a cycle boundary.
+
+    Read on the hot path, so it must stay cheap: one date comparison in the
+    common case.
+    """
+    _refresh(now)
+    return int(_CACHE["cap"])
+
+
+def current_budget_verdict(now: datetime | None = None) -> dict:
+    """The exported verdict, re-derived on a cycle boundary.
+
+    Returns a copy: the exported dict travels into counter payloads, and a
+    caller mutating the cache would make the next reader's verdict a function of
+    who read it first.
+    """
+    _refresh(now)
+    return dict(_CACHE["verdict"])
+
+
 #: True when the policy costs more than the quota affords at every searched cap.
 #: Read at import by ``app/utils/sentry_filter.py``, which logs it CRITICAL once
 #: — the "loudly" half of "impossible or loudly impossible".
@@ -372,26 +440,123 @@ BUDGET_OVERCOMMITTED = solve_backstop_per_window() < MINIMUM_VIABLE_CAP
 # The DISCARD ceiling — Finding 2's declared, observable number
 # =============================================================================
 
-#: Discards/day above which the filter has stopped being a budget instrument and
-#: become a blindfold.
-#:
-#: Derived, not chosen: it is the monthly quota. If we destroy more events in ONE
-#: DAY than the plan buys in a MONTH, whatever we are discarding is no longer
-#: "noise we decided not to pay for" — it is the shape of production, unread.
-#: Measured against it: the C-CERT-SENTRY-R3 reading of 64,039/day is 12.8x over,
-#: and the cron instance alone (19,066 on 2026-08-16) is 3.8x over, while a
-#: healthy live-quota day (770-1,269 accepted) sits comfortably under.
-DISCARD_CEILING_PER_DAY = QUOTA_EVENTS_PER_MONTH
+def declared_need_per_day(
+    now: datetime | None = None,
+    base_per_day: float | None = None,
+) -> float:
+    """Events/day the policy DECLARES it needs to keep, at the solved cap.
+
+    This is :func:`priced_daily_total` under the name that says what it is FOR.
+    It is a statement about how much of production we have decided we must be
+    able to see — which is the only quantity a blindness ceiling can honestly be
+    a function of.
+    """
+    return priced_daily_total(
+        effective_backstop_per_window(now, base_per_day), base_per_day
+    )
 
 
-def over_discard_ceiling(discarded: int, window_s: float) -> bool:
+#: The ceiling must sit under this share of the monthly quota to count as "well
+#: under" it. NOT a tuning knob and NOT the deriver — a *verdict threshold*:
+#: :func:`discard_ceiling_verdict` reports the share and whether it clears this,
+#: so "well under quota" is an observable property rather than an assumption.
+CEILING_WELL_UNDER_QUOTA_SHARE = 0.5
+
+
+def discard_ceiling_per_day(
+    now: datetime | None = None,
+    base_per_day: float | None = None,
+) -> int:
+    """Discards/day above which the filter has stopped being a budget instrument
+    and become a blindfold.
+
+    **Derived from declared NEED, never from raw quota** (Alex, 2026-08-17).
+
+    One CYCLE of declared need. The reasoning the original constant had right:
+    if we destroy in ONE DAY more than a MONTH of the traffic we declared we must
+    be able to see, what we are discarding is no longer "noise we decided not to
+    pay for" — it is the shape of production, unread. The reasoning it had wrong
+    was the noun. It used the monthly *quota* as the stand-in for a month of
+    need, and at the 5,000-event plan those two numbers happened to coincide
+    within 7% (a cycle of need is 4,656/day; the quota was 5,000). **That
+    coincidence is the entire reason the coupling survived review** — and it
+    dissolved the moment the plan changed: at 50,000/month the same line derives
+    a 50,000/day ceiling, under which the measured 19,066/day blindness specimen
+    renders healthy. A ceiling that a plan upgrade raises tenfold is not a
+    ceiling; it is a budget restated in the wrong units. ``C-CERT-SENTRY-R4``
+    refused to arm on exactly this.
+
+    Quota now enters in one direction only, as a hard clamp: the ceiling may
+    never EXCEED the monthly quota, because past that point it has stopped
+    bounding anything. It is deliberately not clamped at a *fraction* of quota —
+    a fractional clamp is still a quota-derived ceiling on every occasion it
+    binds, and at today's 5,000 default it would bind immediately, reinstating
+    the coupling this function exists to remove. Whether the result is
+    comfortably under quota is therefore *reported*
+    (:func:`discard_ceiling_verdict`), not silently enforced.
+
+    Measured, both plans, 31-day cycle:
+
+    ==============  ==========  ================  ====================
+    quota/month     ceiling/day  19,066/day        64,039/day (R3)
+    ==============  ==========  ================  ====================
+    5,000           4,656        over (4.1x)       over (13.8x)
+    50,000          5,859        over (3.3x)       over (10.9x)
+    ==============  ==========  ================  ====================
+
+    A tenfold quota raise moves the ceiling 1.26x — it moves at all only because
+    the solved cap rises with affordance, which is need genuinely increasing.
+    """
+    need_per_cycle = declared_need_per_day(now, base_per_day) * cycle_length_days(now)
+    return int(min(math.ceil(need_per_cycle), QUOTA_EVENTS_PER_MONTH))
+
+
+def discard_ceiling_verdict(
+    now: datetime | None = None,
+    base_per_day: float | None = None,
+) -> dict:
+    """The ceiling with the reading that keeps it honest.
+
+    A ceiling handed over without whether it is *bounding* anything gets read as
+    whatever the reader already believed — the same gotcha #53 shape that let a
+    50,000/day ceiling pass as a ceiling.
+    """
+    ceiling = discard_ceiling_per_day(now, base_per_day)
+    share = ceiling / QUOTA_EVENTS_PER_MONTH if QUOTA_EVENTS_PER_MONTH else float("inf")
+    return {
+        "ceiling_per_day": ceiling,
+        "declared_need_per_day": round(declared_need_per_day(now, base_per_day), 2),
+        "cycle_days": cycle_length_days(now),
+        "quota_per_month": QUOTA_EVENTS_PER_MONTH,
+        "share_of_quota": round(share, 4),
+        "well_under_quota": share < CEILING_WELL_UNDER_QUOTA_SHARE,
+        "clamped_by_quota": ceiling == QUOTA_EVENTS_PER_MONTH,
+        "derived_from": "declared_need_per_day * cycle_days",
+    }
+
+
+#: Import-time reading, kept as a name because ``sentry_filter`` reads it on the
+#: exception path where a function call per event is not free. Recomputed by
+#: :func:`discard_ceiling_per_day` for any caller that has a ``now``.
+DISCARD_CEILING_PER_DAY = discard_ceiling_per_day()
+
+
+def over_discard_ceiling(
+    discarded: int, window_s: float, now: datetime | None = None
+) -> bool:
     """True when the discard RATE breaches the ceiling.
 
     Rate, never count: a count handed over without the window that makes it a
     rate is not a measurement (the LAT-P024 reason), and a process that has been
     up for ten minutes would otherwise look healthier than one up for a day
     purely by being younger.
+
+    Derives the ceiling LIVE rather than reading the import-time constant. The
+    constant freezes the cycle length at whatever it was when the dyno booted,
+    and a web dyno routinely outlives a billing cycle — so a February boot would
+    carry a 28-day ceiling into a 31-day cycle and quietly under-report. Cheap
+    to do: this runs once per census read, not once per event.
     """
     if window_s <= 0:
         return False
-    return (discarded * 86_400.0 / window_s) > DISCARD_CEILING_PER_DAY
+    return (discarded * 86_400.0 / window_s) > discard_ceiling_per_day(now)
