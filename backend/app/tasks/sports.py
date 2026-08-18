@@ -597,6 +597,7 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
     """Find and merge duplicate events. Runs as Celery background task."""
     from sqlalchemy import text as sa_text
     from app.tasks.base import get_task_session
+    from app.utils.event_absorption_guard import assert_absorbable_now
     from app.utils.event_merge_invariant import (
         UnanchoredMergeRefused,
         assert_mergeable,
@@ -671,6 +672,7 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
         merged_count = 0
         skipped_count = 0
         refused_count = 0
+        uncorroborated_count = 0
         delete_ids = []
 
         for row in pairs:
@@ -754,6 +756,35 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                 }
 
             if not dry_run:
+                # #1947: the LAST check before anything is destroyed, on the rows
+                # as the database holds them right now, locked FOR UPDATE. The
+                # `assert_mergeable` above ran on values from the candidate
+                # SELECT and on arm A alone — and arm A is not sufficient:
+                # production holds espn_id values shared by genuinely different
+                # games. Until this call existed, the `< 21600` in the SQL above
+                # was the ONLY thing standing between that and a deleted game,
+                # and it lives in one caller's query string, not in the rule.
+                try:
+                    await assert_absorbable_now(
+                        session,
+                        keep_id=keep_id,
+                        orphan_id=orphan_id,
+                        context="merge_duplicate_events",
+                    )
+                except UnanchoredMergeRefused as exc:
+                    # A SEPARATE counter from `refused_unanchored`, deliberately.
+                    # That one means "arm A said no" — the SQL and the Python
+                    # disagreed about a shared id. This one means "arm A said
+                    # yes and the evidence did not back it up", which is the
+                    # #1947 collision class and a different thing to go and
+                    # look at. Folding them together would hide whichever is
+                    # rarer behind whichever is not.
+                    uncorroborated_count += 1
+                    logger.warning(
+                        "merge_duplicate_events refused a pair at delete time: %s", exc
+                    )
+                    continue
+
                 # Absorb metadata (only fill NULLs)
                 non_null = {k: v for k, v in absorb.items() if v is not None}
                 if non_null:
@@ -794,6 +825,10 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             # Python guard disagreed, which is either drift in this query or a
             # provider column added in one place and not the other.
             "refused_unanchored": refused_count,
+            # #1947: arm A passed and the corroboration did not. A non-zero
+            # count here is a pair the pre-guard drain would have DELETED —
+            # worth an eye, not an alarm, since the invariant refused it.
+            "refused_uncorroborated": uncorroborated_count,
             "deleted": len(delete_ids) if not dry_run else 0,
         }
 

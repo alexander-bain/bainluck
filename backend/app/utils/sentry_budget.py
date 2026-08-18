@@ -541,6 +541,54 @@ def discard_ceiling_verdict(
 DISCARD_CEILING_PER_DAY = discard_ceiling_per_day()
 
 
+def discard_ceiling_reading(
+    discarded: int,
+    window_s: float,
+    now: datetime | None = None,
+    base_per_day: float | None = None,
+) -> dict:
+    """The ceiling, the rate, and the verdict — from ONE derivation.
+
+    ``C-CERT-SENTRY-R4`` BLOCK, 2026-08-17: the ops census **displayed 5,292 and
+    evaluated against 5,859.** Both numbers were honestly computed and neither
+    was wrong on its own terms — the display read the import-time constant, the
+    verdict called :func:`discard_ceiling_per_day` live — but a reader cannot
+    tell that from the payload, and between the two of them sits a band of
+    discard rates the page calls a breach and the enforcement does not.
+
+    They split for the ordinary reasons, both of which are guaranteed to recur:
+    a web dyno outlives a billing cycle (28 days frozen at boot vs 31 live), and
+    a quota change lands after the dyno booted — which happened on 2026-08-14,
+    when ``SENTRY_QUOTA_EVENTS_PER_MONTH`` was deliberately raised in the release
+    AFTER the one that shipped the ceiling.
+
+    So there is now exactly one derivation per read, and **the number reported is
+    the number compared against, by construction.** Nothing downstream may
+    recompute the ceiling for display — the sibling values in this dict come from
+    the same local, which is the only arrangement no future edit can drift.
+
+    Which value it is, stated so the choice is visible rather than inherited: the
+    LIVE derivation, per :func:`over_discard_ceiling`'s standing reasoning that
+    the frozen constant carries a stale cycle length. Preferring the lower,
+    frozen number would be more conservative; it would also be stale on purpose.
+    That is a one-line change HERE if Alex wants it the other way, which is the
+    point of deriving it once.
+    """
+    ceiling = discard_ceiling_per_day(now, base_per_day)
+    if window_s <= 0:
+        return {
+            "ceiling_per_day": ceiling,
+            "discarded_per_day": None,
+            "over_ceiling": None,
+        }
+    per_day = discarded * 86_400.0 / window_s
+    return {
+        "ceiling_per_day": ceiling,
+        "discarded_per_day": round(per_day, 1),
+        "over_ceiling": per_day > ceiling,
+    }
+
+
 def over_discard_ceiling(
     discarded: int, window_s: float, now: datetime | None = None
 ) -> bool:
@@ -556,7 +604,9 @@ def over_discard_ceiling(
     and a web dyno routinely outlives a billing cycle — so a February boot would
     carry a 28-day ceiling into a 31-day cycle and quietly under-report. Cheap
     to do: this runs once per census read, not once per event.
+
+    Delegates to :func:`discard_ceiling_reading` so that this verdict and the
+    ceiling an operator is shown can never be two different derivations again
+    (``C-CERT-SENTRY-R4``).
     """
-    if window_s <= 0:
-        return False
-    return (discarded * 86_400.0 / window_s) > discard_ceiling_per_day(now)
+    return bool(discard_ceiling_reading(discarded, window_s, now)["over_ceiling"])

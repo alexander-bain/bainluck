@@ -1028,7 +1028,11 @@ def summarize_filter_counts(rows: dict[str, dict]) -> dict:
             "processes": 0,
             "discarded": 0,
             "discarded_per_day": None,
-            "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
+            # Derived live, like every other display of this number. The
+            # import-time constant froze the cycle length at boot; showing it
+            # here is how R4's 5,292-displayed / 5,859-enforced split reached an
+            # operator's screen.
+            "ceiling_per_day": sentry_budget.discard_ceiling_per_day(),
             "over_ceiling": None,
             "note": "no SDK process has reported counters — an absence, not a zero",
         }
@@ -1050,16 +1054,19 @@ def summarize_filter_counts(rows: dict[str, dict]) -> dict:
 
     discarded = sum(totals.get(k, 0) for k in _DISCARD_KEYS)
     window_s = max(window_s, 1.0)
-    per_day = discarded * 86_400.0 / window_s
+    # ONE derivation (C-CERT-SENTRY-R4). The rate, the ceiling and the verdict
+    # come from the same call, so the number shown IS the number compared
+    # against. Reading the ceiling separately for display is what split them.
+    reading = sentry_budget.discard_ceiling_reading(discarded, window_s)
     return {
         "status": "ok",
         "processes": len(rows),
         "counts": totals,
         "discarded": discarded,
         "window_s": round(window_s, 1),
-        "discarded_per_day": round(per_day, 1),
-        "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
-        "over_ceiling": sentry_budget.over_discard_ceiling(discarded, window_s),
+        "discarded_per_day": reading["discarded_per_day"],
+        "ceiling_per_day": reading["ceiling_per_day"],
+        "over_ceiling": reading["over_ceiling"],
         "unidentified": totals.get("unidentified", 0),
         "not_error_passthrough": totals.get("not_error", 0),
         "budget": sentry_budget.current_budget_verdict(),
@@ -1076,5 +1083,5 @@ def filter_discard_census() -> dict:
             "status": "unavailable",
             "error_class": exc.__class__.__name__,
             "over_ceiling": None,
-            "ceiling_per_day": sentry_budget.DISCARD_CEILING_PER_DAY,
+            "ceiling_per_day": sentry_budget.discard_ceiling_per_day(),
         }

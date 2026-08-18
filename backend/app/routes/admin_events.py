@@ -12,6 +12,7 @@ from app.models import Event, FuturesMarket
 from app.models.models import LineMovementAnalysis
 from app.services import get_db, get_db_rw
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
+from app.utils.event_absorption_guard import assert_absorbable_now
 from app.utils.event_merge_invariant import assert_mergeable, shared_provider_id_sql
 
 router = APIRouter()
@@ -615,6 +616,16 @@ async def merge_duplicate_events_sql(
         return {"dry_run": False, "merged": 0, "deleted": 0}
 
     try:
+        # #1947: both arms, re-read FOR UPDATE inside this transaction, for every
+        # pair, BEFORE the batch delete below. This rail's SELECT also carries a
+        # `< 21600` window; that number is now the invariant's, not this query's,
+        # and a hand-edit here can no longer remove the protection.
+        for row in pairs:
+            await assert_absorbable_now(
+                db, keep_id=row.keeper_id, orphan_id=row.orphan_id,
+                context="merge_duplicate_events_sql",
+            )
+
         # Step 2: Absorb metadata per keeper
         for row in pairs:
             set_clauses = []
