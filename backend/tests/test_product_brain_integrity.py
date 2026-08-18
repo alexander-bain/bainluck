@@ -517,7 +517,11 @@ def test_ruling_numbers_are_unique() -> None:
 #: lanes each writing `71 -> 72` is one ruling each, NOT two on top of 72. Resolved the documented
 #: way — by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree, which is 73, and which
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
-MINIMUM_BANKED_RULINGS = 74
+#: INT-085 merge (lane1/q365 + lane1/q366 onto the INT-084 wave): HEAD said 74, q366 said 77,
+#: and neither is the merged truth — q365 banks 078 and q366 banks 079-082. Resolved the
+#: documented way again, by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree,
+#: which is 79, and which is nobody's side.
+MINIMUM_BANKED_RULINGS = 79
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
