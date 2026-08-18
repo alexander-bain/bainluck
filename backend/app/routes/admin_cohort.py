@@ -182,11 +182,8 @@ async def cohort_market_type_weekly(
 
 @router.get("/admin/cohort-views", response_class=HTMLResponse)
 async def cohort_views_html(request: Request, secret: str = Query("")):
-    # Allow secret via query or Bearer header; if missing, render a prompt
-    from app.routes.admin_utils import bearer_credentials
-    token = secret or bearer_credentials(request)
-    # Simple auto-refreshing HTML that fetches the heavy JSON and renders sorted by ECE
-    html = f"""<!doctype html>
+    _check_admin_secret(secret, request=request)
+    html = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Cohort Views — ECE by source×league×type×band × week</title>
 <meta http-equiv="refresh" content="60">
 <style>
@@ -205,18 +202,23 @@ tr:nth-child(even){{background:#111}}
 <h1>Cohort Views — league × source × market_type × band <span class="muted" style="font-weight:normal">sorted desc by ECE</span></h1>
 <p class="muted">Auto-refreshes every 60s. Heavy table built in worker (Celery heavy queue, ~90s). Graded share &lt;50% ⇒ <code>NOT-PROVABLE-selection-biased</code> per today's ruling. Band = 0-10%..90-100% (4th axis). Weekly trend for Monday scoreboard below.</p>
 <div id="meta" class="muted">Loading…</div>
+<div id="auth" class="muted" style="margin:8px 0;display:none">Enter admin secret: <input id="secretInput" type="password" placeholder="ADMIN_TOKEN" style="background:#1a1a1a;color:#e5e5e5;border:1px solid #333;padding:4px 8px"> <button id="saveSecret" style="padding:4px 8px">Save</button></div>
 <h2>Top by ECE (heavy, with band + graded_share)</h2>
 <table id="tbl"><thead><tr><th>rank</th><th>source</th><th>league</th><th>type</th><th>band</th><th>n</th><th>q</th><th>graded_share</th><th>ECE</th><th>gap pp</th><th>verdict</th></tr></thead><tbody></tbody></table>
 <h2>Weekly — last 6 weeks per cohort (is it improving?)</h2>
 <div id="weekly" class="muted">Loading weekly…</div>
 <script>
-const SECRET = "{token}";
-async function fetchJSON(url) {{
-  const headers = {{}};
-  if (SECRET) headers["Authorization"] = "Bearer " + SECRET;
+function getSecret() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("secret") || localStorage.getItem("bainluck_admin_secret") || "";
+}
+async function fetchJSON(url) {
+  const secret = getSecret();
+  const headers = {};
+  if (secret) headers["Authorization"] = "Bearer " + secret;
   const sep = url.includes("?") ? "&" : "?";
-  const q = SECRET ? sep + "secret=" + encodeURIComponent(SECRET) : "";
-  const r = await fetch(url + q, {{headers}});
+  const q = secret ? sep + "secret=" + encodeURIComponent(secret) : "";
+  const r = await fetch(url + q, {headers});
   if (!r.ok) throw new Error(r.status + " " + await r.text());
   return r.json();
 }}
@@ -257,6 +259,16 @@ async function load() {{
     weeklyDiv.textContent = "";
   }}
 }}
+// Auth prompt handling
+const authDiv = document.getElementById("auth");
+const input = document.getElementById("secretInput");
+const saveBtn = document.getElementById("saveSecret");
+function checkAuth() {
+  if (!getSecret()) { authDiv.style.display = "block"; }
+  else { authDiv.style.display = "none"; }
+}
+if (saveBtn) saveBtn.onclick = () => { localStorage.setItem("bainluck_admin_secret", input.value); checkAuth(); load(); };
+checkAuth();
 load();
 setInterval(load, 60000);
 </script>
