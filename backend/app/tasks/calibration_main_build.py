@@ -1074,6 +1074,7 @@ async def _record_staged_convergence(runner: PhaseRunner) -> None:
         drift = payload.get("roster_drift_units")
         if isinstance(drift, int) and not isinstance(drift, bool) and drift >= 0:
             runner.ledger.record_gauge("staged:units_drifted", drift)
+        _record_drift_coverage(runner, payload, committed)
         _record_staged_rate(runner, banked=len(committed))
     except Exception as exc:  # noqa: BLE001 — an unreadable cursor is not a lost ledger
         logger.warning("calibration staged convergence read failed: %s", exc)
@@ -1081,6 +1082,51 @@ async def _record_staged_convergence(runner: PhaseRunner) -> None:
             runner.ledger.record_gauge("staged:convergence_reason:read_raised", 1)
         except Exception:  # noqa: BLE001 — the ledger write is what matters
             pass
+
+
+def _record_drift_coverage(
+    runner: PhaseRunner, payload: dict[str, Any], committed: list[Any]
+) -> None:
+    """How many banked units ``staged:units_drifted`` was able to look at.
+
+    CAL-P069. ``roster_drift`` counts a unit only when it is BOTH banked AND
+    carries a stored digest, and its docstring states exactly why::
+
+        A unit with no stored digest is not counted, because "we cannot tell"
+        must not be published as "it did not drift" — that is the empty-200
+        mistake of gotcha #53 one table over.
+
+    The rule is right. The problem is that the counter obeying it emits a bare
+    integer, so a reader cannot tell 0-because-nothing-drifted from
+    0-because-nothing-was-checkable. Measured on production 2026-08-18 03:32Z:
+    ``committed_units = 119``, ``unit_digests = 113``, so **6 banked units were
+    outside the counter's reach** — and the ledger published
+    ``staged:units_drifted: 0``. The docstring's own failure mode, at the site
+    that documents it. Fourth instance of this class in four windows
+    (CAL-P067's ``infeasible_phases: []``, CAL-P068's ``graded_share = 1.0``
+    absent-denominator fallback, and the unit-cost mean before it).
+
+    Deliberately mechanism-independent. The 6 uncovered units equalled that
+    beat's ``units_this_beat`` exactly, which points at the digest for a unit
+    landing one beat after the commit that banks it — but the counter is
+    correct and needed whether that is a write-ordering lag, a prune, or a
+    pre-CAL-P028 cursor tail. Diagnosing the cause is not a precondition for
+    refusing to render an unmeasurable population as a measured zero.
+
+    Emits a COVERAGE pair, never a corrected drift figure: this function has no
+    digests to compare and must not invent a verdict for the units it is
+    reporting as unverifiable.
+    """
+    digests = payload.get("unit_digests")
+    if not isinstance(digests, dict):
+        # The cursor carries no digest map at all, so drift is unmeasurable for
+        # every banked unit — a much louder fact than a partial gap, and one
+        # that must not fall through to a coverage number of zero-out-of-zero.
+        runner.ledger.record_gauge("staged:drift_coverage_reason:no_digest_map", 1)
+        return
+    uncheckable = sum(1 for name in committed if name not in digests)
+    runner.ledger.record_gauge("staged:units_drift_checkable", len(committed) - uncheckable)
+    runner.ledger.record_gauge("staged:units_drift_uncheckable", uncheckable)
 
 
 #: The stage ``_run_staged_futures`` times once per unit. Named here because
