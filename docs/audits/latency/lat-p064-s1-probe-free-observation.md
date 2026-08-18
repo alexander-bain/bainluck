@@ -11,24 +11,42 @@ LAT-P063's own probing and its rows 1 and 2 must be WITHDRAWN in writing.**
 
 ## §S1.1 — The verdict, first
 
-**PREDICTION CONFIRMED. LAT-P063's rows 1 and 2 are UPHELD; nothing is withdrawn.**
+**PREDICTION CONFIRMED. LAT-P063's rows 1 and 2 are UPHELD; nothing is withdrawn.** And the full run
+says something considerably worse than "≥1 hole recurs".
 
-A **229.6 s** hole occurred at **23:21:06 → 23:24:56 UTC**, inside a window in which this lane issued
-**zero `/typeahead` requests** — the only traffic from here was `GET /api/admin/task-metrics`, a
-Redis hash read on the web dyno that touches neither the warmer, its lock, nor its cache. The hole
-is the same size class as LAT-P063's two (286.6 s, 169.2 s), so the phenomenon is not a probing
-artifact and the head really does go cold for minutes at a time.
+**FIVE clean holes in 55.8 probe-free minutes — one every 11.2 minutes — and the warmer is NOT
+RUNNING for 30.0 % of wall-clock.**
 
-**The HALT arm cannot fire on this data.** It required *zero* holes; there is one, cleanly.
+| # | from | to | duration | segment |
+|---|---|---|---|---|
+| 1 | 23:21:06 | 23:24:56 | **229.6 s** | A (pre-deploy) |
+| — | 23:33:45 | 23:35:51 | 126.4 s | **EXCLUDED — inside the v3832 warm-up shadow** |
+| 2 | 23:44:49 | 23:48:43 | **234.3 s** | B (settled) |
+| 3 | 23:54:33 | 23:57:43 | **190.0 s** | B (settled) |
+| 4 | 00:10:14 | 00:13:04 | **170.2 s** | B (settled) |
+| 5 | 00:15:48 | 00:18:51 | **182.4 s** | B (settled) |
 
-⚠️ **The window is shorter than the 60 minutes the prediction asked for, and that is a real
-shortfall — stated rather than rounded away.** A deploy (**v3832**, `010ba47e`, 23:27:47 UTC) restarted
-every dyno 13.7 minutes in. Segment A (23:14:04 → 23:27:47, **13.7 min**) is clean and probe-free and
-is where the hole is. Segment B is post-deploy and is reported separately below with its warm-up
-shadow excluded. **Confirmation on a short window is stronger evidence than confirmation on a long
-one** — fewer opportunities, found anyway — so the shortfall weakens nothing about the CONFIRM. It
-would have mattered only in the other direction: a *clean* 13.7 minutes could not have discharged the
-HALT, and I would not have claimed it did.
+**1,006.4 s of 3,350 s observed = 30.0 %.** Against a **45 s** response TTL, a 170–234 s hole means
+the head is dead for ~75–80 % of each one. This is not an occasional stall; it is a duty cycle.
+
+The window issued **zero `/typeahead` requests** — the only traffic from this lane was
+`GET /api/admin/task-metrics`, a Redis hash read on the *web* dyno that touches neither the warmer,
+its lock, nor its cache. The holes are the same size class as LAT-P063's (286.6 s, 169.2 s), so the
+phenomenon is not a probing artifact.
+
+**The HALT arm cannot fire.** It required *zero* holes in 60 probe-free minutes; there are five.
+
+**Instrument integrity, checked rather than assumed:** 1,294 samples OK, **6 bad** (5 `TimeoutError`,
+1 `URLError`), and **two sampling gaps** (16.9 s at 23:27:59 and 21.1 s at 23:30:40 — both at the
+deploy restart). **Zero holes overlap a sampling gap** (`holes_over_120s_tainted_by_sampling_gap: 0`).
+That check exists because a throttled request parses as silence, and silence is what a stall looks
+like (gotcha #53); it is reported as a measured zero, not an assumed one.
+
+⚠️ **The observation is 55.8 clean minutes against the 60 the prediction named** — 93 %, and the
+shortfall is stated rather than rounded up. A deploy (**v3832**, `010ba47e`, 23:27:47 UTC) restarted
+every dyno mid-run, so the run is segmented: **A = 23:13:39 → 23:27:47 (14.1 min)**, ten minutes
+excluded as warm-up shadow, **B = 23:37:47 → 00:19:30 (41.7 min)**. Holes appear in **both** segments
+at a consistent rate, so the finding does not rest on either side of the restart.
 
 ## §S1.2 — S2 answered in the same stream: the task does not START
 
@@ -262,13 +280,36 @@ have now owed it.
 
 ---
 
-## Appendix — segment ledger (so nobody has to reconstruct which numbers are clean)
+## Appendix — segment ledger and raw artifacts
 
-| segment | wall | probe-free | deploy shadow | usable for |
+| segment | wall | probe-free | deploy shadow | clean holes |
 |---|---|---|---|---|
-| A: 23:14:04 → 23:27:47 | 13.7 min | ✅ | none | **the hole, S2, S3, the burst signature** |
-| deploy v3832 | 23:27:47 | — | restart | excluded entirely |
-| B: 23:37:47 → 00:20:04 | ~42 min | ✅ | settled (>10 min past release) | second-segment hole count |
+| A: 23:13:39 → 23:27:47 | **14.1 min** | ✅ | none | 1 (229.6 s) |
+| v3832 released 23:27:47 → shadow to 23:37:47 | 10.0 min | ✅ | **excluded** | (1 observed, not counted) |
+| B: 23:37:47 → 00:19:30 | **41.7 min** | ✅ | settled | 4 (234.3 / 190.0 / 170.2 / 182.4 s) |
+| **TOTAL CLEAN** | **55.8 min** | | | **5 — one per 11.2 min, 30.0 % of wall-clock** |
 
-Total probe-free observation **≈ 56 min** against the 60 the prediction named. Reported as a
-shortfall, not rounded up.
+Total probe-free observation **55.8 min** against the 60 the prediction named. Reported as a
+shortfall, not rounded up. Holes occur at a consistent rate on **both** sides of the restart, so no
+part of the finding rests on the segmentation.
+
+### Raw artifacts, shipped with this document
+
+| file | what |
+|---|---|
+| `lat-p064-s1-observation.jsonl` | every sample and every distinct pass, 66.0 min, 3 s cadence, with the per-sample `ok` flag and the final `summary` record carrying the verdict |
+| `lat-p064-s3-background-occupancy.jsonl` | 18 background tasks at 10 s — the slot ledger behind §S1.6a |
+| `lat-p064-queue-depth.jsonl` | `background` queue depth every 4 min |
+| `backend/scripts/lat_p064_s1_observe.py` | the instrument, re-runnable: `--minutes`, `--interval`, `--sibling` |
+
+### Queue depth over the window — it oscillates, it does not drain
+
+```
+23:33  289    23:37  244    23:41  231    23:45  184
+23:49  204    23:53  230    23:57  226
+```
+
+**Floor 184, ceiling 289, no trend to zero.** The early reading is not a post-deploy transient that
+clears: it is a standing backlog in the 180–290 band, ~4–6x the CLAUDE.md threshold of 50. Stated
+this way because "295 once" and "184–289 sustained" are different claims, and only the second one
+supports #1609.

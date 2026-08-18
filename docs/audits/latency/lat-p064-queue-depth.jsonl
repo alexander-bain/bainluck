@@ -1,0 +1,12 @@
+{"t": "2026-08-17T23:33:01.983716+00:00", "ok": true, "queue_depths": {"background": 289, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 86, "degraded": 4, "critical": 7}}
+{"t": "2026-08-17T23:37:04.262612+00:00", "ok": true, "queue_depths": {"background": 244, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 18, "healthy": 87, "degraded": 4, "critical": 7}}
+{"t": "2026-08-17T23:41:05.777551+00:00", "ok": true, "queue_depths": {"background": 231, "realtime": 7, "heavy": 0}, "task_health": {"no_data": 18, "healthy": 85, "degraded": 6, "critical": 7}}
+{"t": "2026-08-17T23:45:08.398724+00:00", "ok": true, "queue_depths": {"background": 184, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 18, "healthy": 85, "degraded": 6, "critical": 7}}
+{"t": "2026-08-17T23:49:10.478517+00:00", "ok": true, "queue_depths": {"background": 204, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 18, "healthy": 85, "degraded": 6, "critical": 7}}
+{"t": "2026-08-17T23:53:12.359931+00:00", "ok": true, "queue_depths": {"background": 230, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 85, "degraded": 6, "critical": 6}}
+{"t": "2026-08-17T23:57:14.095430+00:00", "ok": true, "queue_depths": {"background": 226, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 85, "degraded": 6, "critical": 6}}
+{"t": "2026-08-18T00:01:15.931531+00:00", "ok": true, "queue_depths": {"background": 266, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 86, "degraded": 6, "critical": 5}}
+{"t": "2026-08-18T00:05:18.044216+00:00", "ok": true, "queue_depths": {"background": 292, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 86, "degraded": 6, "critical": 5}}
+{"t": "2026-08-18T00:09:26.965882+00:00", "ok": true, "queue_depths": {"background": 291, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 20, "healthy": 86, "degraded": 5, "critical": 5}}
+{"t": "2026-08-18T00:13:28.918632+00:00", "ok": true, "queue_depths": {"background": 284, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 19, "healthy": 87, "degraded": 5, "critical": 5}}
+{"t": "2026-08-18T00:17:30.772932+00:00", "ok": true, "queue_depths": {"background": 304, "realtime": 0, "heavy": 0}, "task_health": {"no_data": 20, "healthy": 86, "degraded": 5, "critical": 5}}
