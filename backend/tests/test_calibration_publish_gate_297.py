@@ -211,11 +211,17 @@ def test_zero_population_is_rejected_even_with_buckets():
 
 
 def test_population_collapse_is_rejected():
-    """The observed failure: ~1M outcomes fell to roughly a third."""
+    """The observed failure: ~1M outcomes fell to roughly a third.
+
+    CAL-P070 split rule 2 by direction, so this refusal is now named
+    ``population_shrink`` — the same bar (±5%), the same numbers in the message,
+    a code that says which direction. A shrink is the one move elapsed time
+    cannot produce, so it is never excused by anything #1955 added.
+    """
     verdict = evaluate_publish(payload(outcomes=340_000), payload(outcomes=1_000_000))
 
     assert not verdict.ok
-    assert "population_drift" in verdict.codes
+    assert "population_shrink" in verdict.codes
     assert "-66.0%" in verdict.summary()
 
 
@@ -940,7 +946,8 @@ async def test_rejection_files_one_deduped_issue_with_the_diff():
     assert filed.call_count == 1
     verdict = filed.call_args.args[0]
     assert isinstance(verdict, PublishVerdict)
-    assert "population_drift" in verdict.codes
+    # 1,000,000 -> 300,000 is a SHRINK; CAL-P070 names the direction.
+    assert "population_shrink" in verdict.codes
 
 
 @pytest.mark.asyncio

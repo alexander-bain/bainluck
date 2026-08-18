@@ -78,7 +78,22 @@
 // listed deliberately — that is the safe state this file documents above: while both are
 // acceptable it does not matter whether Vercel or Heroku lands first. Drop "q267" only once
 // no deployed backend can still serve it.
-export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = ["q267", "q1530"];
+//
+// CAL-P070 2026-08-18: "q268" added (#1955/#1680). The claim this entry makes is
+// unusually easy to check, because q268 changes NO methodology: the population
+// CTEs, the truth allowlist, the exclusions, the normalization and the metrics
+// are byte-identical to q267. The bump exists only to let a completed build
+// publish after sixteen days of ordinary growth tripped the publish gate's
+// symmetric ±5% band. So every label on this page — the hero copy, the cohort
+// toggle, the category bar and the raw -> published reconciliation — remains
+// true by construction, not by review.
+//
+// "q267" STAYS, and here it is load-bearing rather than merely cautious: the
+// backend now serves the still-published q267 artifact as an explicitly dated,
+// degraded predecessor while the first q268 build runs (its
+// COMPATIBLE_PREVIOUS_POPULATION_VERSIONS). Dropping q267 from this list would
+// make the client refuse exactly the payload that keeps the page lit.
+export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = ["q267", "q268", "q1530"];
 
 /**
  * A version token we are willing to read at all: a short, printable

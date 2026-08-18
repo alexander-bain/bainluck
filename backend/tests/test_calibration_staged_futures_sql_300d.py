@@ -188,16 +188,18 @@ class TestRepresentativeTieAuthority:
             module.REPRESENTATIVE_TIE_AUTHORITY = original
         assert _main_input_fingerprint() == before
 
-    def test_population_version_is_not_bumped(self):
+    def test_the_tie_authority_is_not_versioned_with_the_population(self):
         """An identity delta is not a population change.
 
-        Bumping the version here would take /calibration DARK — ``snapshot_verdict``
-        refuses a cached artifact whose version is not the one the deployed build
-        expects, and the replacement cannot exist until the next successful beat
-        (the 2026-08-02 incident, reverted the same hour).
+        Queue 300D's point, and it is unaffected by CAL-P070's bump: the tie
+        authority carries its own version precisely so a population bump cannot
+        smuggle an identity change, and vice versa. What this asserts is the
+        SEPARATION — the population version was pinned here as a literal, which
+        made this test fail on a legitimate, unrelated population bump while
+        proving nothing about the authority it is named for.
         """
-        assert CALIBRATION_POPULATION_VERSION == "q267"
         assert REPRESENTATIVE_TIE_AUTHORITY == "canonical-outcome-id/v1"
+        assert REPRESENTATIVE_TIE_AUTHORITY != CALIBRATION_POPULATION_VERSION
 
 
 class TestShippedState:

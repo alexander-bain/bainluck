@@ -845,6 +845,31 @@ async def public_calibration(
         except Exception:  # noqa: BLE001 — a version we can't read isn't a mismatch
             return None
 
+    def _compatible_versions() -> tuple[str, ...]:
+        """The operator's explicit rollover declaration, or nothing.
+
+        CAL-P070 / #1955. A version bump used to take this page DARK for the
+        length of one build: the dyno boots expecting the new version, every
+        cached artifact still carries the old one, all four tiers refuse in the
+        same instant and the answer is a 503 (tried 2026-08-02, reverted the same
+        hour). The ratified rollover contract has always said what should happen
+        instead — ``deploy-before-candidate`` serves the predecessor as
+        ``previous_degraded``: dated, provenanced, read-only — and no code
+        implemented it, so the contract passed 26/26 while production went dark.
+        This is the wire.
+
+        Empty is the safe default and the honest one: an unreadable declaration
+        is not a declaration, so the page refuses exactly as it does today.
+        """
+        try:
+            from app.tasks.precompute_calibration import (
+                COMPATIBLE_PREVIOUS_POPULATION_VERSIONS,
+            )
+
+            return tuple(COMPATIBLE_PREVIOUS_POPULATION_VERSIONS)
+        except Exception:  # noqa: BLE001 — no declaration => no compatibility
+            return ()
+
     def _serve(payload: dict, availability: str) -> dict:
         """The ONE exit for every payload this endpoint returns (#1680).
 
@@ -914,10 +939,38 @@ async def public_calibration(
                 cache["age_s"] = round(verdict.age_s)
             if verdict.generated_at:
                 cache["generated_at"] = verdict.generated_at
+            # A predecessor artifact must SAY it is one. Serving q267 numbers
+            # while the build is labelled q268 and declaring only "stale" would
+            # be a true statement standing in for the load-bearing one.
+            if getattr(verdict, "is_previous_version", False):
+                cache["population_version"] = verdict.population_version
+                cache["expected_population_version"] = _expected_version()
+                cache["version_relation"] = "previous"
         elif isinstance(payload.get("generated_at"), str):
             cache["generated_at"] = payload["generated_at"]
         out["cache"] = cache
         return _serve(out, availability)
+
+    def _previous_version(payload: dict, verdict, reason: str) -> dict:
+        """Serve a DECLARED-compatible predecessor: dated, degraded, read-only.
+
+        ``read_only`` is the contract's word and it is the reason this is a
+        function rather than three call sites. Every other dated tier ends with
+        ``remember_last_good`` + a process-cache seed, which is right for a copy
+        of the CURRENT population and wrong here: promoting a predecessor into
+        the current version's caches is ``may_seed_current``, which the rollover
+        contract forbids in every case that serves one. So this path persists
+        NOTHING. The cost is one Redis GET per request while the first build
+        under the new version runs; the alternative is the previous version
+        outliving its own rollover window because we kept re-saving it.
+        """
+        logger.warning(
+            "calibration: serving DECLARED-compatible predecessor %r (expected %r, "
+            "reason=%s) — dated, degraded and read-only until the first build "
+            "under the current version publishes",
+            verdict.population_version, _expected_version(), reason,
+        )
+        return _degraded(payload, reason, verdict, availability=AVAILABILITY_DEGRADED)
 
     def _unavailable(reason: str) -> JSONResponse:
         """The typed unavailable response — honest, actionable, never opaque.
@@ -1036,8 +1089,15 @@ async def public_calibration(
             # last-good gets the full check because it can be ancient and written
             # under a different contract.
             main_verdict = snapshot_verdict(
-                data, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
+                data,
+                expected_version=_expected_version(),
+                max_age_s=SERVE_MAX_AGE_S,
+                compatible_versions=_compatible_versions(),
             )
+            if main_verdict.is_previous_version:
+                return _previous_version(
+                    data, main_verdict, "population_version_superseded"
+                )
             if main_verdict.status != "wrong_version":
                 # Queue 324 / ruling 025 — THE HOLE THIS CLOSES. The condition
                 # above accepts three verdicts, not one: ``ok``, ``too_old`` and
@@ -1119,7 +1179,12 @@ async def public_calibration(
                     data,
                     expected_version=_expected_version(),
                     max_age_s=SERVE_MAX_AGE_S,
+                    compatible_versions=_compatible_versions(),
                 )
+                if verdict.is_previous_version:
+                    return _previous_version(
+                        data, verdict, "main_key_absent_version_superseded"
+                    )
                 if verdict.is_servable:
                     # Queue #284 Item 3: build the stale-marked copy BEFORE it is
                     # memoized, so a later same-dyno Tier-1 hit cannot serve an
@@ -1167,6 +1232,36 @@ async def public_calibration(
                 expected_version=_expected_version(),
                 max_age_s=SERVE_MAX_AGE_S,
             )
+            # CAL-P070: a durable row the ENVELOPE refused on version may still
+            # be a declared-compatible predecessor. Nothing is relaxed to find
+            # out — the envelope's own check keeps biting, and this branch serves
+            # only when the payload's ``population_version`` INDEPENDENTLY names
+            # a declared predecessor. Two defences that must agree, because the
+            # envelope's ``schema_version`` column and the payload's
+            # ``population_version`` are written separately and CAN disagree
+            # (300B's ``test_durable_wrong_version_does_not_fall_through_to_a_
+            # build`` is exactly that row: ancient envelope, current payload) —
+            # so a single relaxed check here would have served it.
+            if (
+                durable.status == "wrong_version"
+                and durable.envelope is not None
+                and isinstance(durable.envelope.payload, dict)
+            ):
+                payload = durable.envelope.payload
+                verdict = snapshot_verdict(
+                    payload,
+                    expected_version=_expected_version(),
+                    max_age_s=SERVE_MAX_AGE_S,
+                    compatible_versions=_compatible_versions(),
+                )
+                if verdict.is_previous_version:
+                    degraded = _previous_version(
+                        payload, verdict, "durable_version_superseded"
+                    )
+                    degraded["provenance"] = durable.envelope.provenance(
+                        served_from="durable"
+                    )
+                    return degraded
             if durable.ok and isinstance(durable.envelope.payload, dict):
                 payload = durable.envelope.payload
                 # The envelope already proved version, checksum, completeness and
@@ -1174,7 +1269,10 @@ async def public_calibration(
                 # row can be ancient and written under an older payload contract —
                 # the same reason the Redis last-good keeps it.
                 verdict = snapshot_verdict(
-                    payload, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
+                    payload,
+                    expected_version=_expected_version(),
+                    max_age_s=SERVE_MAX_AGE_S,
+                    compatible_versions=_compatible_versions(),
                 )
                 if verdict.is_servable:
                     degraded = _degraded(
@@ -1247,6 +1345,14 @@ async def public_calibration(
     #    not mean what the current page says they mean, and no banner fixes that.
     #    Nor does this touch the publish gate: #1517's "a bad build must never
     #    replace a good one" governs what gets WRITTEN, and is untouched here.
+    #
+    #    CAL-P070 does not relax this tier either, and that is deliberate rather
+    #    than an omission: ``compatible_versions`` is passed at the tiers ABOVE,
+    #    all of which are bounded by SERVE_MAX_AGE_S, so a declared-compatible
+    #    predecessor is servable for as long as an ordinary dated copy is and
+    #    refused after — which is exactly the rollover contract's
+    #    ``previous-expired-refused`` case. An over-age predecessor is the one
+    #    combination nobody has declared anything about, so it stays refused.
     if _remaining_ms() > 0:
         try:
             from app.services.durable_snapshots import read_snapshot

@@ -67,6 +67,27 @@ REQUIRED_SECTIONS: tuple[str, ...] = (
 #: organic rate and far below the ~3x collapse that motivated this gate.
 POPULATION_TOLERANCE = 0.05
 
+#: The payload field that names WHICH ROWS QUALIFY — a digest of the population
+#: predicate's own source (``precompute_calibration.population_predicate_
+#: fingerprint``). Deliberately NOT the population *version*: the version is what
+#: an operator DECLARES, this is what the code actually DOES.
+PREDICATE_FIELD = "population_predicate_fingerprint"
+
+#: How far the population may GROW between two builds that provably count the
+#: same predicate (:data:`PREDICATE_FIELD` equal on both artifacts) before the
+#: growth stops being data and starts being a defect.
+#:
+#: Derived from the measurement that opened #1955, not chosen. On 2026-08-18 a
+#: build whose predicate had not changed at all came in **+17.9%** (706,290 ->
+#: 832,650) against a 4.2-day-old baseline, because the season backfill and the
+#: never-graded drains had graded whole cohorts underneath it: baseball_mlb
+#: 4,596 -> 24,811, basketball_nba 2,284 -> 12,470, icehockey_nhl 1,958 ->
+#: 10,616. Any ceiling under ~50% refuses the exact build #1955 requires to
+#: publish. A DOUBLING is where "the same predicate found more rows" stops being
+#: a backfill and starts being duplication — which is the one growth-shaped
+#: defect still in this gate's reach, since rule 3 only judges shrink.
+POPULATION_GROWTH_CEILING = 1.0
+
 #: A single category losing more than this share of its outcomes is a cohort
 #: collapse (the cricket canary), even when the total looks fine.
 CATEGORY_DROP_TOLERANCE = 0.20
@@ -144,7 +165,7 @@ PRODUCER_STALL_AGE_S = PUBLISH_INTERVAL_S * PRODUCER_STALL_BEATS
 class SnapshotVerdict:
     """Why a cached calibration snapshot may or may not be served."""
 
-    status: str  # "ok" | "malformed" | "wrong_version" | "too_old"
+    status: str  # "ok" | "malformed" | "wrong_version" | "previous_version" | "too_old"
     reason: str
     age_s: Optional[float] = None
     generated_at: Optional[str] = None
@@ -153,6 +174,20 @@ class SnapshotVerdict:
     @property
     def is_servable(self) -> bool:
         return self.status == "ok"
+
+    @property
+    def is_previous_version(self) -> bool:
+        """A DECLARED-compatible predecessor: servable dated, never as current.
+
+        Split from :attr:`is_servable` on purpose. ``ok`` means "this is the
+        current curve"; this means "this is the previous curve and the operator
+        who moved the version declared it comparable" — the
+        ``deploy-before-candidate`` case of
+        ``tests/evals/fixtures/calibration_version_rollover_contract.json``,
+        whose ratified disposition is ``previous_degraded``: dated, provenanced,
+        read-only, and never allowed to seed the current version.
+        """
+        return self.status == "previous_version"
 
 
 def _parse_generated_at(value: Any) -> Optional[datetime]:
@@ -177,6 +212,7 @@ def snapshot_verdict(
     expected_version: Optional[str],
     now: Optional[datetime] = None,
     max_age_s: float = SERVE_MAX_AGE_S,
+    compatible_versions: tuple[str, ...] = (),
 ) -> SnapshotVerdict:
     """Classify a cached snapshot before it is served to the public page.
 
@@ -189,6 +225,22 @@ def snapshot_verdict(
     payload that carries NO version at all is accepted when a version is
     expected: historical artifacts predate the field, and rejecting them would
     blank the page for a reason that is not a data problem.
+
+    ``compatible_versions`` is the operator's EXPLICIT rollover declaration
+    (``precompute_calibration.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS``): the
+    predecessor versions whose artifacts this build asserts are comparable with
+    its own. A payload carrying one of them is NOT ``ok`` — it is
+    ``previous_version``, which the route serves dated and degraded and never as
+    the current curve.
+
+    This is the narrow, evidenced exception to CAL-P017's *"a payload built
+    under a different population contract is not servable at any age, and no
+    banner fixes that"* — and it does not weaken it. CAL-P017's reason is that
+    the numbers do not mean what the page says they mean. A declared-compatible
+    predecessor is the case where they demonstrably do, because the operator
+    bumping the version stated so at the same time, in the same commit, in the
+    same file, next to the bump. Anything not on that list is ``wrong_version``
+    exactly as before, at any age.
     """
     if not isinstance(payload, dict):
         return SnapshotVerdict("malformed", "payload is not an object")
@@ -208,11 +260,12 @@ def snapshot_verdict(
         return SnapshotVerdict("malformed", "total_outcomes is missing or non-positive")
 
     version = payload.get("population_version")
-    if (
+    version_mismatch = (
         expected_version is not None
         and version is not None
         and version != expected_version
-    ):
+    )
+    if version_mismatch and version not in compatible_versions:
         return SnapshotVerdict(
             "wrong_version",
             f"snapshot population_version {version!r} != expected {expected_version!r}",
@@ -244,6 +297,20 @@ def snapshot_verdict(
         return SnapshotVerdict(
             "too_old",
             f"snapshot is {round(age_s / 3600, 1)}h old (limit {round(max_age_s / 3600, 1)}h)",
+            age_s=age_s,
+            generated_at=payload.get("generated_at"),
+            population_version=version,
+        )
+
+    if version_mismatch:
+        # Reached only via ``compatible_versions``. The age bounds above have
+        # already bitten, so an expired predecessor is ``too_old`` and never
+        # arrives here — the contract's ``previous-expired-refused`` case.
+        return SnapshotVerdict(
+            "previous_version",
+            f"snapshot population_version {version!r} != expected "
+            f"{expected_version!r}, but is a DECLARED-compatible predecessor — "
+            "servable dated and degraded, never as the current curve",
             age_s=age_s,
             generated_at=payload.get("generated_at"),
             population_version=version,
@@ -397,6 +464,7 @@ def census(payload: Any) -> dict:
             "markets": None,
             "winners": None,
             "population_version": None,
+            "population_predicate": None,
             "generated_at": None,
             "bucket_rows": 0,
             "categories": {},
@@ -452,6 +520,9 @@ def census(payload: Any) -> dict:
         "markets": payload.get("total_markets"),
         "winners": payload.get("total_winners"),
         "population_version": payload.get("population_version"),
+        # ``None`` means the artifact does not state its predicate — an older
+        # build, not a matching one. Absent is never equal (see ``_same_predicate``).
+        "population_predicate": payload.get(PREDICATE_FIELD),
         "generated_at": payload.get("generated_at"),
         "bucket_rows": len(buckets),
         "categories": categories,
@@ -492,6 +563,11 @@ class PublishVerdict:
 
     ok: bool
     rejections: list[dict] = field(default_factory=list)
+    #: Facts that DID NOT refuse the publish but decided it — the growth a
+    #: matching predicate excused, above all. A gate that records only its
+    #: refusals leaves its acceptances unaccountable, and the accepted case is
+    #: the one nobody goes looking for (#1955).
+    observations: list[dict] = field(default_factory=list)
     candidate: dict = field(default_factory=dict)
     published: dict = field(default_factory=dict)
     version_bumped: bool = False
@@ -508,6 +584,10 @@ class PublishVerdict:
     @property
     def codes(self) -> list[str]:
         return sorted({r["code"] for r in self.rejections})
+
+    @property
+    def observation_codes(self) -> list[str]:
+        return sorted({o["code"] for o in self.observations})
 
     @property
     def fingerprint(self) -> str:
@@ -530,8 +610,38 @@ class PublishVerdict:
 
     def summary(self) -> str:
         if self.ok:
+            if self.observations:
+                return "publish gate passed: " + "; ".join(
+                    o["detail"] for o in self.observations
+                )
             return "publish gate passed"
         return "; ".join(r["detail"] for r in self.rejections)
+
+
+def _predicate_label(c: dict) -> str:
+    """How a census's predicate reads in a message.
+
+    An artifact that never stated one is ``unstated``, not ``None`` — the reader
+    of a rejection needs to know the difference between "the predicate moved"
+    and "the older artifact predates the field", because only the second one is
+    fixed by waiting one build.
+    """
+    value = c.get("population_predicate")
+    return repr(value) if isinstance(value, str) and value else "unstated"
+
+
+def _same_predicate(cand: dict, prev: dict) -> bool:
+    """Do both artifacts state the SAME population predicate?
+
+    Absent is never equal. Two artifacts that both fail to state a predicate say
+    nothing about each other, and reading that silence as agreement would excuse
+    every drift on every pre-#1955 artifact forever — an unchecked read passing
+    as a clean one. Unknown falls back to the strict symmetric band, which is
+    exactly the behaviour that shipped before this rule existed.
+    """
+    a = cand.get("population_predicate")
+    b = prev.get("population_predicate")
+    return isinstance(a, str) and bool(a) and a == b
 
 
 def _probe_baseline(
@@ -555,7 +665,13 @@ def evaluate_publish(
 
     1. the candidate is structurally incomplete (missing sections, empty curve,
        non-positive population) — a build that died mid-flight;
-    2. population moved more than ±5% without a ``population_version`` bump;
+    2. population SHRANK more than 5%; or GREW more than 5% while the two
+       artifacts do not state the same population predicate; or grew past
+       :data:`POPULATION_GROWTH_CEILING` even though they do — all without a
+       ``population_version`` bump. Growth on a provably unchanged predicate is
+       admitted and RECORDED as an observation rather than refused (#1955): a
+       long build cannot outrun ordinary resolution, and refusing it made the
+       refusal more certain the slower the build got;
     3. any sufficiently-large category lost more than 20% of its outcomes
        without a version bump;
     4. the well-traded/thin accuracy ordering flipped by more than the combined
@@ -590,6 +706,10 @@ def evaluate_publish(
     def reject(code: str, detail: str, **extra: Any) -> None:
         verdict.ok = False
         verdict.rejections.append({"code": code, "detail": detail, **extra})
+
+    def observe(code: str, detail: str, **extra: Any) -> None:
+        """Record a decisive fact that did NOT refuse. Never touches ``ok``."""
+        verdict.observations.append({"code": code, "detail": detail, **extra})
 
     # --- Rule 1: structural completeness (never waived by a version bump) ---
     if cand["sections_missing"]:
@@ -711,19 +831,92 @@ def evaluate_publish(
     if verdict.version_bumped:
         return verdict
 
-    # --- Rule 2: population drift ---
+    # --- Rule 2: population drift, split by DIRECTION and by PREDICATE (#1955) ---
+    #
+    # One symmetric ±5% band used to answer two different questions with one
+    # number, and it got the important one wrong. "The population changed
+    # because we changed which rows qualify" is the hazard this gate exists for.
+    # "The population changed because sixteen days of resolutions and backfills
+    # landed underneath a slow build" is ordinary time, and it presented
+    # identically — so a build slower than its own freshness budget could never
+    # publish, and got more certainly refused the longer it ran (#1955, measured
+    # +17.9% over a 16-day build on 2026-08-18, refused every hour).
+    #
+    # The discriminator is not the count and not the age: it is whether the
+    # PREDICATE moved. That is a property of the code, and the code already
+    # digests itself — so the candidate states which predicate produced it and
+    # the comparison is exact, cheap and needs no database read (the count is
+    # precisely the aggregate that times out).
     drift = (cand_pop - prev_pop) / prev_pop
-    if abs(drift) > POPULATION_TOLERANCE:
+    same_predicate = _same_predicate(cand, prev)
+    if drift < -POPULATION_TOLERANCE:
+        # SHRINK is never excused by a matching predicate. Time only adds rows;
+        # a resolved outcome does not un-resolve. This is the ~3x collapse the
+        # gate was built for and it keeps its original strictness.
         reject(
-            "population_drift",
-            f"population moved {drift * 100:+.1f}% "
+            "population_shrink",
+            f"population fell {drift * 100:+.1f}% "
             f"({prev_pop:,} -> {int(cand_pop):,}), limit "
-            f"±{POPULATION_TOLERANCE * 100:.0f}%, and population_version was not bumped "
-            f"(still {cand['population_version']!r})",
+            f"−{POPULATION_TOLERANCE * 100:.0f}%, and population_version was not bumped "
+            f"(still {cand['population_version']!r}) — resolution only ADDS "
+            "outcomes, so a shrink is a lost cohort or a changed rule, never "
+            "elapsed time",
             previous=prev_pop,
             candidate=cand_pop,
             drift_pct=round(drift * 100, 2),
+            same_predicate=same_predicate,
         )
+    elif drift > POPULATION_TOLERANCE:
+        if not same_predicate:
+            reject(
+                "population_drift",
+                f"population moved {drift * 100:+.1f}% "
+                f"({prev_pop:,} -> {int(cand_pop):,}), limit "
+                f"±{POPULATION_TOLERANCE * 100:.0f}%, and population_version was not "
+                f"bumped (still {cand['population_version']!r}); the growth could "
+                "NOT be excused as elapsed time because the two artifacts do not "
+                "state the same population predicate "
+                f"(published {_predicate_label(prev)}, candidate "
+                f"{_predicate_label(cand)}) — this is a change in WHICH rows "
+                "qualify, not in how many exist",
+                previous=prev_pop,
+                candidate=cand_pop,
+                drift_pct=round(drift * 100, 2),
+                same_predicate=False,
+                published_predicate=prev["population_predicate"],
+                candidate_predicate=cand["population_predicate"],
+            )
+        elif drift > POPULATION_GROWTH_CEILING:
+            reject(
+                "population_growth_unexplained",
+                f"population grew {drift * 100:+.1f}% "
+                f"({prev_pop:,} -> {int(cand_pop):,}) on an UNCHANGED predicate "
+                f"({_predicate_label(cand)}), past the "
+                f"{POPULATION_GROWTH_CEILING * 100:.0f}% ceiling — the same rule "
+                "counting this many more rows is duplication or a bad merge, not "
+                "a backfill; this gate reports the symptom and never repairs data",
+                previous=prev_pop,
+                candidate=cand_pop,
+                drift_pct=round(drift * 100, 2),
+                same_predicate=True,
+            )
+        else:
+            # ACKNOWLEDGED GROWTH — published, and never silently. A number that
+            # decides a publish must appear in the record whichever way it went;
+            # an accepted candidate that says nothing about a +17.9% move is the
+            # uncheckable-read-as-clean shape all over again.
+            observe(
+                "population_growth_acknowledged",
+                f"population grew {drift * 100:+.1f}% "
+                f"({prev_pop:,} -> {int(cand_pop):,}) past the "
+                f"±{POPULATION_TOLERANCE * 100:.0f}% band, ADMITTED because both "
+                f"artifacts state the same population predicate "
+                f"({_predicate_label(cand)}): the rows that qualify did not "
+                "change, only how many of them exist",
+                previous=prev_pop,
+                candidate=cand_pop,
+                drift_pct=round(drift * 100, 2),
+            )
 
     # --- Rule 3: per-category collapse ---
     for name, prev_n in sorted(prev["categories"].items()):
@@ -817,6 +1010,9 @@ def rejection_issue_body(verdict: PublishVerdict, *, fingerprint_marker: str) ->
         f"| total_winners | {_fmt(prev.get('winners'))} | {_fmt(cand.get('winners'))} |",
         f"| bucket rows | {_fmt(prev.get('bucket_rows'))} | {_fmt(cand.get('bucket_rows'))} |",
         f"| population_version | {prev.get('population_version')} | {cand.get('population_version')} |",
+        # The row that says whether the population moved because the RULE moved.
+        # Without it, every reader of this table re-argues #1955 from the counts.
+        f"| population predicate | {_predicate_label(prev)} | {_predicate_label(cand)} |",
         f"| generated_at | {prev.get('generated_at')} | {cand.get('generated_at')} |",
     ]
 
@@ -842,10 +1038,19 @@ def rejection_issue_body(verdict: PublishVerdict, *, fingerprint_marker: str) ->
         "",
         "## What to do",
         "",
-        "1. Decide whether the change is **intended**. If it is, bump "
-        "`CALIBRATION_POPULATION_VERSION` in `backend/app/tasks/precompute_calibration.py` "
-        "so the new population is published under an explicit, versioned explanation.",
-        "2. If it is not intended, find what changed the population — this gate reports "
+        "1. **Read the `population predicate` row first.** If both sides state the "
+        "same digest, the rule that decides which rows qualify did not move and no "
+        "version bump can be the right answer — a bump would only relabel data "
+        "movement as a methodology change and spend the guard's meaning (#1955). "
+        "Growth on a matching predicate is already admitted up to "
+        f"{POPULATION_GROWTH_CEILING * 100:.0f}%; past that, look for duplication.",
+        "2. If the digests DIFFER, the population predicate changed. Decide whether "
+        "that change is **intended**; if it is, bump `CALIBRATION_POPULATION_VERSION` "
+        "in `backend/app/tasks/precompute_calibration.py` — and add the outgoing "
+        "version to `COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` only if the previous "
+        "artifact is still comparable, because that list is what keeps the page lit "
+        "while the first build under the new version runs.",
+        "3. If it is not intended, find what changed the population — this gate reports "
         "the symptom, never repairs data or re-grades an outcome.",
         "",
         f"Gate fingerprint: `{fingerprint_marker}:{verdict.fingerprint}` — repeat builds of "

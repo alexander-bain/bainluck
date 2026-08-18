@@ -396,3 +396,105 @@ async def test_a_stale_copy_is_never_cached_as_though_it_were_fresh(monkeypatch)
     await calibration.public_calibration(db=object())
 
     assert client.gets.count("bainluck:calibration:main") > reads_after_first
+
+
+# ---------------------------------------------------------------------------
+# CAL-P070 (#1955): a version bump is not an outage
+# ---------------------------------------------------------------------------
+#
+# 2026-08-02: the version was bumped, ``snapshot_verdict`` refused every cached
+# artifact as ``wrong_version`` the instant the dyno booted, /calibration went
+# dark, and the bump was reverted within the hour. The ratified rollover contract
+# already said what should happen — ``deploy-before-candidate`` serves the
+# predecessor DATED, DEGRADED and READ-ONLY — but no code implemented it, so the
+# corpus passed 26/26 while production 503'd. These drive the real handler
+# through the real bump.
+
+
+async def test_a_declared_predecessor_keeps_the_page_lit_after_a_bump(monkeypatch):
+    from app.routes import calibration
+    from app.tasks import precompute_calibration as pc
+
+    previous = _payload(outcomes=706_290, version="q267")
+    monkeypatch.setattr(pc, "CALIBRATION_POPULATION_VERSION", "q268")
+    monkeypatch.setattr(pc, "COMPATIBLE_PREVIOUS_POPULATION_VERSIONS", ("q267",))
+    _use(monkeypatch, _FakeRedis(main=json.dumps(previous)))
+    _no_compute(monkeypatch)
+
+    out = await calibration.public_calibration(db=object())
+
+    assert out["total_outcomes"] == 706_290, "the page must not go dark on a bump"
+    # ...but it must never claim to be the current curve.
+    assert out["availability"] == "degraded"
+    assert out["cache"]["status"] == "stale"
+    assert out["cache"]["reason"] == "population_version_superseded"
+    assert out["cache"]["population_version"] == "q267"
+    assert out["cache"]["expected_population_version"] == "q268"
+    assert out["cache"]["version_relation"] == "previous"
+
+
+async def test_an_undeclared_predecessor_is_still_dark_after_a_bump(monkeypatch):
+    """CAL-P017 is intact where nobody declared anything.
+
+    The declaration is the whole difference. Without it a cross-version artifact
+    is still refused at every tier — which is the correct outcome for a bump that
+    really did move the methodology.
+    """
+    from app.routes import calibration
+    from app.tasks import precompute_calibration as pc
+
+    previous = _payload(outcomes=706_290, version="q267")
+    monkeypatch.setattr(pc, "CALIBRATION_POPULATION_VERSION", "q268")
+    monkeypatch.setattr(pc, "COMPATIBLE_PREVIOUS_POPULATION_VERSIONS", ())
+    _use(monkeypatch, _FakeRedis(main=json.dumps(previous), last_good=json.dumps(previous)))
+    monkeypatch.setattr(rc, "CALIBRATION_COMPUTE_DEADLINE_MS", 100)
+
+    body = unavailable_body(await calibration.public_calibration(db=object()))
+
+    assert body["status"] == "unavailable"
+
+
+async def test_a_predecessor_is_never_promoted_into_the_current_caches(monkeypatch):
+    """``read_only`` / ``may_seed_current: false``, and it is load-bearing.
+
+    Every other dated tier ends with ``remember_last_good``. Doing that here
+    would re-save the predecessor on every request, so it would outlive its own
+    rollover window and the page would keep serving q267 numbers long after a
+    q268 build existed to replace them.
+    """
+    from app.routes import calibration
+    from app.tasks import precompute_calibration as pc
+
+    previous = _payload(outcomes=706_290, version="q267")
+    monkeypatch.setattr(pc, "CALIBRATION_POPULATION_VERSION", "q268")
+    monkeypatch.setattr(pc, "COMPATIBLE_PREVIOUS_POPULATION_VERSIONS", ("q267",))
+    _use(monkeypatch, _FakeRedis(main=json.dumps(previous)))
+    _no_compute(monkeypatch)
+
+    await calibration.public_calibration(db=object())
+
+    assert calibration._cache["data"] is None, "a predecessor must not seed the process cache"
+    assert rc.recall_last_good("calibration:main", max_age_s=SERVE_MAX_AGE_S) is None
+
+
+async def test_the_first_current_build_immediately_displaces_the_predecessor(monkeypatch):
+    """Recovery: the rollover window closes by itself, on the first publish."""
+    from app.routes import calibration
+    from app.tasks import precompute_calibration as pc
+
+    monkeypatch.setattr(pc, "CALIBRATION_POPULATION_VERSION", "q268")
+    monkeypatch.setattr(pc, "COMPATIBLE_PREVIOUS_POPULATION_VERSIONS", ("q267",))
+    client = _use(
+        monkeypatch, _FakeRedis(main=json.dumps(_payload(outcomes=706_290, version="q267")))
+    )
+    _no_compute(monkeypatch)
+
+    superseded = await calibration.public_calibration(db=object())
+    assert superseded["availability"] == "degraded"
+
+    client.set_main(json.dumps(_payload(outcomes=832_650, version="q268")))
+
+    recovered = await calibration.public_calibration(db=object())
+    assert recovered["total_outcomes"] == 832_650
+    assert recovered["availability"] == "fresh"
+    assert recovered.get("cache", {}).get("status") != "stale"
