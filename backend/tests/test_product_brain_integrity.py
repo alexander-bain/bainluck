@@ -531,7 +531,18 @@ def test_ruling_numbers_are_unique() -> None:
 #: integrator's (a READY whose branch head moved is withdrawn), 086 is latency's, 087 is ux's
 #: second. The allocation came from RULING-CLAIMS.md, not from counting files — counting files
 #: is how you get the FLOOR, reading the ledger is how you get the NUMBER.
-MINIMUM_BANKED_RULINGS = 84
+#:
+#: INT-087 merge (program/latency-62 = LAT-P069) raises 84 -> **85 BY COUNTING**, eighth
+#: consecutive cycle and the same rule. HEAD said 84, the branch said 83, and — as every time —
+#: neither is the merged truth. The branch banks **088** (a lane may rebase when arriving
+#: un-rebased is guaranteed-red; Fable, #1609/#1621); master separately holds **084** and **087**,
+#: which the branch does not. Union of `docs/rulings/[0-9][0-9][0-9]-*.md` across both sides,
+#: counted rather than added: 85. The branch's own comment states the rule it is resolved by —
+#: "COUNT, never take a side" (#1910) — and its warning came true: `ux` did merge first
+#: (`c5eecff4`), so the merged tree holds both files and the count is higher again.
+#: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber. Every number
+#: 060-088 is now banked.
+MINIMUM_BANKED_RULINGS = 85
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

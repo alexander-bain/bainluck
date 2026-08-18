@@ -119,6 +119,31 @@ result, every other non-zero is a story about the harness.
 (pytest usage error on a relative path) and **1** (a `cd`'s exit code, over a stale log of
 a failure that had already been fixed); gotcha **#54**, whose prescribed
 `cmd > /tmp/gate.txt` fix is what creates the reused path.
+### 8. Duration is not occupancy.
+
+**The occupant is whoever holds the slot when you look.** A task's p50 duration answers
+"how long does one run take"; a pool's share answers "who is in the way". They are
+different questions and the first cannot be substituted for the second, because
+occupancy is *duration x frequency* against a fixed number of slots — a long task that
+runs four times a day can be a rounding error, and a short one that runs constantly can
+own the pool.
+
+Queue depth (`LLEN`) is not occupancy either: it is backlog, and it is blind to an
+arrival a free slot consumes in 100 ms. Both are corroborating evidence at best;
+**neither may headline a finding about contention.** To measure occupancy, count
+slot-observations — sample the worker's `active` set and see who is actually there.
+
+*Named failure:* #224/#1609 spent an entire program cycle chasing `backfill_winners` on
+the strength of a p50 of **13.7 minutes**, the largest duration on the board. Direct
+measurement of celery's `active` set — 122 slot-observations over 62 minutes — found it
+in **zero** of them. It runs 4x/day: **2.45 %** of a 2-slot pool. The actual occupants
+were `warm_typeahead` (26.2 %), `match_prediction_markets` (12.3 %) and the two
+`turbo_collapse` tasks (11.5 % + 6.6 %) — one of which had **no gauge at all**
+(ruling 086). The right statistic was available the whole time; the wrong one was
+merely easier to read.
+
+*Corollary:* an instrument that reports the wrong quantity confidently outranks a
+missing one in cost, because a missing instrument is owed and a wrong one is believed.
 
 ---
 

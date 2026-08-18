@@ -1968,6 +1968,36 @@ async def get_ops_snapshot(
             "error": health_reads.redact(exc),
         }
 
+    # 8c. The `turbo_collapse` pair's budget derivation (LAT-P069, #1609/#224).
+    #
+    # These two are the largest instrumented occupants of the 2-slot `background`
+    # pool and they carry `soft_time_limit=3600` each — on their declared
+    # schedule (`:30` and `:45` of the same hours) a long pair can hold BOTH
+    # slots for an hour.
+    #
+    # This block exists because of ruling 086, which this lane banked: **a
+    # working gauge nobody reads is the same as no gauge.** Shipping a
+    # derivation with no reader would be the identical defect one level up. What
+    # it renders today is `could_not_measure` for both tasks, and that is the
+    # honest state, not a gap: the instrumentation that produces
+    # `recent_durations_ms` for these two rides `program/latency-61` and is not
+    # deployed yet. Per ruling 075's second clause the refusal is rendered as a
+    # refusal, carrying the measured floor and the sample count that produced
+    # it, and NEVER as a default number.
+    try:
+        from app.tasks.redis_state import get_task_metrics
+        from app.utils.turbo_collapse_budget import WIRED_SOFT_TIME_LIMIT_S, derive_all
+
+        snapshot["turbo_collapse_budget"] = derive_all(
+            {task: (get_task_metrics(task) or {}) for task in WIRED_SOFT_TIME_LIMIT_S}
+        )
+    except Exception as exc:  # noqa: BLE001
+        snapshot["turbo_collapse_budget"] = {
+            "status": "error",
+            "error_class": exc.__class__.__name__,
+            "error": health_reads.redact(exc),
+        }
+
     snapshot["completeness"] = health_reads.completeness(reads)
     # Travels with the payload so a reader can tell WHICH cycle produced
     # `sentry_filter.ceiling_per_day` — the number is otherwise indistinguishable
