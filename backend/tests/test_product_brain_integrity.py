@@ -531,7 +531,13 @@ def test_ruling_numbers_are_unique() -> None:
 #: halves resolved the documented way (`docs/rulings/README.md`): the later lane renumbers ITS OWN
 #: file upward — 078 -> **086** (the working gauge nobody reads is the same as no gauge; Fable,
 #: #1501/#1609) — and the floor comes from COUNTING the merged tree, which is 82.
-MINIMUM_BANKED_RULINGS = 82
+#: LAT-P069 banks **088** (a lane may rebase when arriving un-rebased is guaranteed-red; Fable,
+#: #1609/#1621) on `program/latency-62`, stacked on `-61`. 82 -> **83 by COUNTING** this tree,
+#: not by adding one to anything. ⚠️ The directive named that ruling `087`; `087` was already
+#: claimed by `ux` (`program/ux-83`/`-84`), so it moved to 088 — a ruling number in a directive
+#: is a proposal, the ledger is the allocator (ruling 069). If `ux` merges first the merged tree
+#: holds both files and the count is higher again: COUNT, never take a side (#1910).
+MINIMUM_BANKED_RULINGS = 83
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
