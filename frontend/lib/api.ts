@@ -1977,6 +1977,8 @@ export interface CalibrationData {
   // cohort still counted in the curve (Kalshi excludes all bands, poly only the
   // near-0.50 placeholder band).
   exclusion_symmetry?: CalibrationExclusionSymmetry | null;
+  /** CAL-P067 item 5: rows held out of the published curves pending review. */
+  quarantine?: CalibrationQuarantine[] | null;
   generated_at: string;
 }
 
@@ -2004,6 +2006,37 @@ export interface CalibrationCategoryMetric {
   mce?: number | null;
   n: number;
   gated?: boolean;
+  /**
+   * CAL-P067 (Fable ruling): whether this cell's curve is a measurement of its
+   * population or only of the graded part of it.
+   *
+   * A calibration cell answers "when we said 30%, how often did it happen?",
+   * which needs a grade — so the rows in the curve are exactly the graded rows
+   * and the selection criterion IS the measured property. Under a 50% graded
+   * share the number is not provable, and the page says so instead of printing
+   * a confident pp figure. `unknown` means the graded share was never measured,
+   * which is NOT a pass.
+   */
+  provability?: "provable" | "not_provable_selection_biased" | "unknown";
+  /** Graded / resolved for this cell. Shown whenever the verdict is not `provable`. */
+  graded_share?: number | null;
+  provability_reason?: string;
+}
+
+/**
+ * CAL-P067 item 5: outcomes held OUT of the published curves pending review.
+ *
+ * Alex ruled the 2,069 date-disagreement outcomes out of published curves as
+ * under-review. They are neither graded-and-counted nor quietly dropped: a
+ * quarantine is a stated, dated, reversible exclusion, and the page discloses
+ * its size so the curve's denominator is never silently short.
+ */
+export interface CalibrationQuarantine {
+  reason: string;
+  outcomes: number;
+  status: "under_review";
+  note?: string;
+  opened?: string | null;
 }
 
 /** L2-73 §E: the corrections log — "what we found and fixed" (trust panel). */

@@ -3,6 +3,7 @@
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils.calibration_provability import MIN_GRADED_SHARE, annotate_cells
 
 # Queue #257 Item 1: the in-request calibration fallback used to re-implement the
 # whole CTE chain + wilson_ci / bootstrap_mce_ci / _compute_horizon_mce here (a
@@ -1525,6 +1527,88 @@ _HORIZONS = [
 
 # Minimum outcomes per horizon to include it in the response
 _MIN_OUTCOMES_PER_HORIZON = 50
+
+
+#: CAL-P067 item 4. Per-category ``resolved outcomes`` denominators for the
+#: selection-bias rule, keyed by ``llm_sport_category``.
+#:
+#: EMPTY, and deliberately so. The numerator (graded outcomes) is the ``n``
+#: already on every published cell; the denominator is a
+#: ``futures_outcomes x futures_markets`` aggregate, which is the exact query
+#: class CAL-P066 documented as planner-hostile — every such join drives from a
+#: Seq Scan on ``futures_outcomes``, so a category filter does not restrict it.
+#: Measured this window: a single-category count hit ``statement_timeout``.
+#: Obtaining it needs CAL-P066's recursive id-range bisection, which is a
+#: measurement task rather than a rendering one.
+#:
+#: The rule ships complete and inert: populate this (or the Redis key below) and
+#: every published cell annotates on the next request, with no further code.
+PROVABILITY_CENSUS: dict[str, int] = {}
+
+#: Why the census is absent, stated ONCE in the payload rather than as fifteen
+#: "unmeasured" badges in the UI. The discipline is the same one CAL-P067's
+#: ruling-075 fix enforces — a check that did not run must say so — but the
+#: honest place to say it once is the payload, not once per row on a public page.
+PROVABILITY_CENSUS_ABSENT_REASON = (
+    "per-category resolved-outcome denominators are not measured yet: the "
+    "futures_outcomes x futures_markets aggregate times out (CAL-P066's Seq Scan "
+    "finding) and needs recursive id-range bisection. Until then no cell's graded "
+    "share is known, so no cell is asserted provable."
+)
+
+
+def provability_payload_fields(
+    cells: list[dict], *, census: Optional[dict[str, int]] = None
+) -> dict[str, Any]:
+    """The selection-bias annotation, ready for **the BUILDER** to merge.
+
+    Deliberately NOT called from ``_serve``, and that is the whole design note.
+
+    CAL-P067 first wired this into the route and
+    ``test_route_serves_the_shared_compute_payload_unaltered`` refused it —
+    correctly. That test enumerates its envelope keys rather than prefix-matching
+    them precisely so a third cannot "join them by accident and quietly widen
+    what unaltered excuses", and the criterion for joining is that the key is a
+    **serve-time** fact the builder could not know: ``availability`` (which tier
+    answered) and ``producer`` (how many beats since build) qualify.
+
+    Provability does not. Whether a cell's graded share clears 50% is a fact
+    about the DATA, not about which tier served it, and a builder writing it
+    would be stating a measurement rather than a tautology. So its home is
+    ``compute_calibration_payload`` and the route stays what Queue 300B made it:
+    not a second builder.
+
+    It cannot move there this window — that function is inside
+    ``_main_input_fingerprint``'s digest and editing it resets the in-flight
+    staged cursor (ruling 009). So the logic lives here, tested and callable,
+    and the one-line call site is owed to the queue that lands after the
+    producer publishes.
+
+    Returns ``{"by_category": [...], "provability_census": {...}}``. With no
+    census the cells come back untouched and the census block says ``measured:
+    false`` with a reason — stating "we cannot check this" once, machine-
+    readably, rather than stamping it on fifteen public rows.
+    """
+    if not isinstance(cells, list):
+        return {}
+    census = census if census is not None else PROVABILITY_CENSUS
+    if not census:
+        return {
+            "by_category": cells,
+            "provability_census": {
+                "measured": False,
+                "reason": PROVABILITY_CENSUS_ABSENT_REASON,
+                "min_graded_share": MIN_GRADED_SHARE,
+            },
+        }
+    return {
+        "by_category": annotate_cells(cells, resolved_by_category=census),
+        "provability_census": {
+            "measured": True,
+            "categories": len(census),
+            "min_graded_share": MIN_GRADED_SHARE,
+        },
+    }
 
 
 def _compute_horizon_mce(buckets: list[dict]) -> float | None:

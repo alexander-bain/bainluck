@@ -195,11 +195,18 @@ def test_infeasibility_is_measured_against_the_reachable_ceiling_not_the_window(
 
 
 def test_a_floor_inside_the_window_is_recorded_but_not_infeasible():
-    """A phase that merely ran long once is not condemned — it just has a floor."""
+    """A phase that merely ran long once is not condemned — it just has a floor.
+
+    CAL-P067 amends the second half of this: not-condemned is not the same as
+    cleared. The phase ran 120,000 ms and did NOT finish, so its cost is unknown
+    and strictly greater than that — the status is ``indeterminate``, where it
+    used to be a bland ``provisional`` that read as an all-clear.
+    """
     plan = derive_plan({}, floors={PHASE_SPORTS: [120_000]})
     assert plan.by_name(PHASE_SPORTS).floor_ms == 120_000
     assert plan.infeasible_phases == ()
-    assert plan.as_payload()["status"] == "provisional"
+    assert plan.indeterminate_phases == (PHASE_SPORTS,)
+    assert plan.as_payload()["status"] == "indeterminate"
 
 
 def test_a_measured_phase_keeps_its_budget_even_with_an_older_floor():
@@ -214,12 +221,22 @@ def test_a_measured_phase_keeps_its_budget_even_with_an_older_floor():
     assert plan.infeasible_phases == ()
 
 
-def test_no_floors_leaves_every_plan_field_exactly_as_before():
-    """Item 1's constraint: absent evidence, nothing about the plan moves."""
+def test_no_floors_leaves_the_budget_fields_alone_but_says_it_checked_nothing():
+    """Item 1's constraint holds for the BUDGET fields: absent evidence, no
+    budget is invented and no floor is recorded.
+
+    CAL-P067 splits the rendering off from that constraint. "Nothing about the
+    plan moves" was the bug, not the requirement — with no evidence at all the
+    plan used to emit ``provisional`` + ``infeasible_phases: []``, which is
+    indistinguishable from a plan that was checked and passed. The budget fields
+    still do not move; the VERDICT now says ``no_data`` out loud.
+    """
     plan = derive_plan({})
     assert plan.infeasible_phases == ()
-    assert plan.as_payload()["status"] == "provisional"
     assert all(b.floor_ms is None and b.floor_observations == 0 for b in plan.budgets)
+    assert all(b.budget_ms is None for b in plan.budgets)
+    assert plan.as_payload()["status"] == "no_data"
+    assert plan.unchecked_phases == REQUIRED_PHASES
 
 
 def test_ledger_reports_a_floor_for_a_timed_out_phase_and_no_observation():
@@ -971,7 +988,11 @@ def test_a_provisional_plan_is_honestly_reported_as_unmeasured():
     errors = evaluate_case(row)
     assert "PHASE_BUDGET_GUESSED" in errors
     assert "PHASE_BUDGET_MISSING" in errors
-    assert runner.ledger.plan.as_payload()["status"] == "provisional"
+    # CAL-P067: ``no_data`` is the same honesty this test was already asserting,
+    # said more precisely. The plan was built from an empty history, so it did
+    # not merely fail to derive budgets — it had nothing to check feasibility
+    # against either, and the status now distinguishes those.
+    assert runner.ledger.plan.as_payload()["status"] == "no_data"
 
 
 # =============================================================================

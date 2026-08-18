@@ -47,11 +47,14 @@ from app.utils.calibration_phase_ledger import (
     CANCELLED,
     DONE_STATUSES,
     FAILED,
+    FEASIBILITY_INDETERMINATE,
+    FEASIBILITY_NO_DATA,
     FRESH,
     HARD_LIMIT_MS,
     INVALIDATE,
     MAIN_BUILD_TASK,
     MAIN_CHECKPOINT_SCHEMA,
+    PHASE_FUTURES,
     PHASE_LEDGER_SCHEMA,
     PHASE_OUTPUT_KEYS,
     RESUMABLE_PHASES,
@@ -477,12 +480,22 @@ class PhaseRunner:
         that blew up is the one worth knowing the cost of. Stages carry no
         budget and no resume semantics — they exist purely so no part of the
         build is unaccounted for.
+
+        CAL-P067 adds the one bit that was missing: WHETHER the body finished.
+        Recording the raising stretch is right, and silently pooling it with the
+        completed ones is not — a truncated observation is a lower bound, and a
+        mean taken over both is not a cost. The two tallies stay separate in the
+        ledger so a feasibility check can be handed the completed one.
         """
         started = time.monotonic()
+        completed = False
         try:
             yield
+            completed = True
         finally:
-            self.ledger.record_stage(name, int((time.monotonic() - started) * 1000))
+            self.ledger.record_stage_outcome(
+                name, int((time.monotonic() - started) * 1000), completed=completed
+            )
             # CAL-P024c: the build is being hard-killed on a 512MB dyno, and a
             # SIGKILL leaves no traceback naming where the memory went. Sampled
             # here because a stage boundary is the only place in the build that
@@ -765,14 +778,18 @@ NULL_RUNNER = NullPhaseRunner()
 # =============================================================================
 
 
-async def load_phase_history() -> tuple[dict[str, list[int]], dict[str, list[int]]]:
-    """Prior runs' per-phase durations and floors, or ``({}, {})``.
+async def load_phase_measurements() -> tuple[
+    dict[str, list[int]], dict[str, list[int]], dict[str, Any]
+]:
+    """Everything prior beats measured: durations, floors, and unit costs.
 
-    ``{}`` is the honest answer to every read problem: with no history the plan
-    is provisional and nothing pretends to a measured budget it does not have.
-    The two are read together off the one durable row — floors are what the
-    beats that never completed a phase have to say, and they are worth exactly
-    one extra key rather than a second read.
+    One durable read for all three, because they live on one row and they are
+    always wanted together — a plan built from two of them is a plan reasoning
+    from partial evidence about whether it can reason at all.
+
+    ``({}, {}, {})`` is the honest answer to every read problem: with nothing
+    read, nothing is measured, and :func:`derive_plan` renders ``no_data``
+    rather than a reassuring empty finding.
     """
     from app.services.durable_snapshots import read_snapshot_standalone
 
@@ -780,13 +797,27 @@ async def load_phase_history() -> tuple[dict[str, list[int]], dict[str, list[int
         LEDGER_IDENTITY, expected_version=PHASE_LEDGER_SCHEMA, max_age_s=STATE_MAX_AGE_S
     )
     if not read.ok or read.envelope is None or not isinstance(read.envelope.payload, dict):
-        return {}, {}
-    history = read.envelope.payload.get("history")
-    floors = read.envelope.payload.get("floors")
+        return {}, {}, {}
+    payload = read.envelope.payload
+    history = payload.get("history")
+    floors = payload.get("floors")
+    unit_costs = payload.get("unit_costs")
     return (
         merge_history(history, {}) if isinstance(history, dict) else {},
         merge_history(floors, {}) if isinstance(floors, dict) else {},
+        unit_costs if isinstance(unit_costs, dict) else {},
     )
+
+
+async def load_phase_history() -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+    """Prior runs' per-phase durations and floors, or ``({}, {})``.
+
+    The two-value view of :func:`load_phase_measurements`, kept because that is
+    what the save path wants: it merges history and floors and has no use for
+    the unit costs, which are a level rather than a rolling window.
+    """
+    history, floors, _ = await load_phase_measurements()
+    return history, floors
 
 
 async def load_main_checkpoint(
@@ -1088,6 +1119,23 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     mean_ms = runner.ledger.stage_mean_ms(STAGED_UNIT_STAGE)
     ran = runner.ledger.stage_counts.get(STAGED_UNIT_STAGE, 0)
     runner.ledger.record_gauge("staged:units_this_beat", ran)
+
+    # CAL-P067: the completed-only cost, recorded beside the mixed one rather
+    # than replacing it. ``unit_ms_mean`` above averages over every unit the
+    # beat TIMED, including the one cancelled at the deadline, so it is the
+    # right number for attributing elapsed time and the wrong one for costing a
+    # unit. Feasibility reads this pair; the operator-facing gauges above keep
+    # the values CAL-P066 published, so nothing that reads them moves.
+    completed_units = runner.ledger.stage_completed_count(STAGED_UNIT_STAGE)
+    completed_mean = runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE)
+    runner.ledger.record_gauge("staged:units_completed_this_beat", completed_units)
+    if completed_mean is None:
+        # Every unit this beat was cancelled. Distinct from "no unit ran", and
+        # the state in which no unit cost may be quoted at all.
+        runner.ledger.record_gauge("staged:unit_cost_reason:no_unit_completed", 1)
+    else:
+        runner.ledger.record_gauge("staged:unit_ms_mean_completed", int(completed_mean))
+
     if mean_ms is None:
         # A beat that ran no unit at all. The most important beat to be able to
         # see, and the one an absent stage would render as "fine" (gotcha #53).
@@ -1114,6 +1162,30 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     )
 
 
+def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
+    """This beat's MEASURED unit cost for the staged futures phase, if any.
+
+    Emitted only when a unit actually COMPLETED — ``stage_completed_mean_ms``
+    returns ``None`` otherwise and nothing is written, so a beat in which every
+    unit was cancelled contributes no cost rather than a truncated one. The
+    consumer (``derive_plan``) re-validates all three fields anyway; this side
+    simply refuses to invent them.
+    """
+    mean_ms = runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE)
+    if mean_ms is None or mean_ms <= 0:
+        return {}
+    banked = int(runner.ledger.stages.get("staged:units_banked", 0) or 0)
+    if banked <= 0:
+        return {}
+    return {
+        PHASE_FUTURES: {
+            "unit_ms": int(mean_ms),
+            "units_total": STAGED_FUTURES_BUCKETS,
+            "units_done": banked,
+        }
+    }
+
+
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:
     """Persist the phase ledger + rolling history. Returns ``ok`` or ``error``.
 
@@ -1137,6 +1209,15 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
         prior_history, prior_floors = {}, {}
     payload["history"] = merge_history(prior_history, runner.ledger.observations())
     payload["floors"] = merge_history(prior_floors, runner.ledger.floors())
+    # CAL-P067: the measured per-unit cost has to survive the beat that measured
+    # it, or the next plan is back to having only a floor to reason from — which
+    # is the state this whole fix exists to stop rendering as an all-clear.
+    # Unlike history/floors this is a LEVEL, not a rolling window: it describes
+    # where the staged build currently stands, so the newest reading replaces
+    # the previous one rather than accumulating beside it.
+    unit_costs = _unit_costs_from(runner)
+    if unit_costs:
+        payload["unit_costs"] = unit_costs
 
     result = await publish_snapshot_standalone(
         DurableEnvelope.build(
@@ -1166,20 +1247,34 @@ async def build_runner(
     owner = run_owner()
     generation = generation_for(datetime.now(timezone.utc))
     try:
-        history, floors = await load_phase_history()
+        history, floors, unit_costs = await load_phase_measurements()
     except Exception as exc:  # noqa: BLE001 — no history just means provisional
         logger.warning("calibration phase ledger: history read failed: %s", exc)
-        history, floors = {}, {}
-    plan = derive_plan(history, floors=floors)
+        history, floors, unit_costs = {}, {}, {}
+    plan = derive_plan(history, floors=floors, unit_costs=unit_costs)
     if plan.infeasible_phases:
         # Loud, because no amount of checkpointing or resuming fixes it: the
         # phase as cut is bigger than the whole beat.
         logger.error(
-            "calibration phase plan is INFEASIBLE — required phase(s) %s have a "
-            "measured floor at or beyond the %dms window; the build cannot "
-            "complete as currently cut",
+            "calibration phase plan is INFEASIBLE — required phase(s) %s are "
+            "MEASURED not to fit the %dms window; the build cannot complete as "
+            "currently cut",
             ", ".join(plan.infeasible_phases),
             plan.available_ms,
+        )
+    elif plan.feasibility in (FEASIBILITY_INDETERMINATE, FEASIBILITY_NO_DATA):
+        # CAL-P067. This branch is the fix's whole point: it did not exist, so
+        # the sixteenth unmeasurable beat logged nothing at all and the payload
+        # said ``infeasible_phases: []``. "I could not check" now has a voice.
+        logger.warning(
+            "calibration phase plan feasibility is %s — indeterminate=%s "
+            "unchecked=%s (checked against %dms). This is NOT an all-clear: no "
+            "completed duration exists for those phases, so whether the build "
+            "fits its window is unknown, not fine.",
+            plan.feasibility,
+            ", ".join(plan.indeterminate_phases) or "none",
+            ", ".join(plan.unchecked_phases) or "none",
+            plan.max_phase_ms,
         )
 
     try:
