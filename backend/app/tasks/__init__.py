@@ -2604,6 +2604,14 @@ def rebuild_typeahead_index(
           python3 -c "from app.tasks import rebuild_typeahead_index as t; \\
                       print(t.apply(kwargs={'budget_seconds': 1500}).get())"
 
+    ⚠️ `.apply()` AND NOT `.delay()`, and the difference is not stylistic.
+    `.apply()` runs the task EAGERLY in the one-off dyno's own process, where
+    the pool's time limits do not apply, so a 1500s budget is honoured.
+    `.delay()` would hand it to a WORKER, where the 150s soft limit above kills
+    it at 150s — the run would look like it accepted a 1500s budget and would
+    silently bank a tenth of it. The budget argument is not a promise the worker
+    can keep; only the eager path can.
+
     Note `run:detached` — a non-detached `heroku run` silently fails to execute
     in this sandbox (gotcha #48), so verify by census, never by stdout.
     """
