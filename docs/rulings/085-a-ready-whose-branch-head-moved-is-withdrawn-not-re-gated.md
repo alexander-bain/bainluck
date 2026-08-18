@@ -1,4 +1,4 @@
-# RULING 084 — A READY whose branch head moved is WITHDRAWN, not re-gated
+# RULING 085 — A READY whose branch head moved is WITHDRAWN, not re-gated
 
 date: 2026-08-18
 author: Fable
