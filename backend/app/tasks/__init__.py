@@ -3675,6 +3675,70 @@ for _beat_entry in celery_app.conf.beat_schedule.values():
         _beat_entry.setdefault("options", {})["queue"] = "heavy"
 
 
+# =============================================================================
+# #1609 HYGIENE — bound the lifetime of a cache-warmer beat message.
+#
+# ⚠️ THIS IS HYGIENE, NOT THE CURE, AND IT IS LABELLED SO ON PURPOSE.
+# The cure for #1609 is the topology change above (the three multi-minute
+# residents moved off `background`). This block ships BEHIND it and carries a
+# registered CONTROL that predicts NO user-visible improvement from it alone:
+#
+#   E1  background depth falls and holds < 100 within 2 h        (expected)
+#   E2  `starts_24h` falls toward real passes; the burst pattern
+#       (+11 starts in 6 s of 15 ms lock-skips) disappears        (expected)
+#   E3  `warm_typeahead` HOLE FREQUENCY AND DURATION UNCHANGED    (expected)
+#
+# E3 is the honest control. If someone later reports "expires fixed #1609",
+# E3 is the row that says it did not: this shortens the QUEUE, it does not
+# return a SLOT. A remedy that makes the depth number look better while the
+# starvation continues is worse than no remedy, because it retires the alarm.
+#
+# There was no `task_expires` anywhere in this config (LAT-P064 §1922-E):
+# nothing discarded a stale beat message, so `warm_typeahead`'s 10 s beat
+# published 8,640 messages/day against ~2,530 measured starts and the surplus
+# ripped through later in bursts. #1609's own queue sample showed the same
+# shape for `precompute_discover_candidate_base` (x6 enqueued) and
+# `refresh_open_commentary` (x5) — which is acceptance criterion 2 on that
+# issue, "no periodic task has more than one instance enqueued at a time".
+#
+# THE RULE IS ONE BEAT PERIOD, not a per-task magic number. For an idempotent
+# cache warmer, a message still queued when its successor is published is by
+# definition superseded — running it recomputes a value that is about to be
+# recomputed. `expires` is therefore set to exactly one period, and a guard
+# test asserts both that every name here exists and that the value never
+# exceeds the beat's own period.
+#
+# Deliberately NOT expired: anything that writes durable rows. Dropping a
+# superseded WARM is free; dropping a superseded WRITE loses data.
+# =============================================================================
+_EXPIRING_WARMER_BEATS = {
+    # beat name -> expires seconds (== one beat period)
+    # ⚠️ 10, NOT the 30 LAT-P064 registered — and the deviation is deliberate.
+    # That 30 was reasoned from MIN_PASS_PERIOD_SECONDS (the task's own floor on
+    # REAL passes). But `expires` bounds the MESSAGE, not the pass, and the beat
+    # publishes every 10 s: at 30 s, three messages are alive at once and the
+    # lapping this is meant to stop is re-admitted at 1/3 scale. The guard test
+    # `test_1609_expires_never_exceeds_the_beat_period` is what caught it.
+    # Cost of 10, stated: when a slot frees, the warmer waits up to 10 s for the
+    # next beat instead of picking up a queued backlog instantly. LAT-P064
+    # measured that resumption at 13 s with a backlog present, so this is inside
+    # the noise — and it is one more reason E3 predicts no visible improvement.
+    "warm-typeahead": 10,
+
+    "precompute-discover-candidate-base": 120,   # */2 min — #1609 saw 6 enqueued
+    "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only
+                                             # OpenAI caller, so dropping stale work saves spend
+    "warm-event-concepts": 300,              # */5 min
+}
+
+for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():
+    # No silent skip: a renamed beat must fail loudly here rather than quietly
+    # lose its bound. The guard test asserts the same thing at collection time.
+    celery_app.conf.beat_schedule[_warmer_beat].setdefault("options", {})[
+        "expires"
+    ] = _expires_s
+
+
 # Queue 300R Item 1 — targeted result suppression. Must run AFTER the beat
 # schedule exists (it is derived from it) and after every task decorator has
 # run. Beat-only tasks with no HTTP dispatcher stop writing a celery-task-meta

@@ -464,6 +464,56 @@ class TestHeavyQueueRouting:
         }
         assert not leaked, f"backfills leaked onto heavy: {leaked}"
 
+    def test_1609_warmer_beats_carry_an_expires_bound(self):
+        """#1609 hygiene: every listed cache-warmer beat has `expires` <= its period.
+
+        HYGIENE, NOT THE CURE — the registered control E3 predicts warmer hole
+        frequency is UNCHANGED by this alone. Guarded anyway because the failure
+        mode is silent: with no `expires`, a 10 s beat published 8,640
+        messages/day against ~2,530 real starts and the surplus arrived later in
+        bursts. An `expires` LONGER than the period would re-admit exactly that.
+        """
+        from app.tasks import _EXPIRING_WARMER_BEATS, celery_app as app
+
+        missing = set(_EXPIRING_WARMER_BEATS) - set(app.conf.beat_schedule)
+        assert not missing, (
+            f"_EXPIRING_WARMER_BEATS names beats that do not exist (renamed?): {missing}"
+        )
+
+        unbounded = {
+            name: app.conf.beat_schedule[name].get("options", {}).get("expires")
+            for name in _EXPIRING_WARMER_BEATS
+            if app.conf.beat_schedule[name].get("options", {}).get("expires")
+            != _EXPIRING_WARMER_BEATS[name]
+        }
+        assert not unbounded, f"warmer beats missing their expires bound: {unbounded}"
+
+    def test_1609_expires_never_exceeds_the_beat_period(self):
+        """`expires` longer than the period cannot discard a superseded message.
+
+        This is the arithmetic the bound rests on, asserted rather than trusted:
+        if expires > period, the next message is published while the stale one
+        is still valid, and the queue laps exactly as before.
+        """
+        from app.tasks import _EXPIRING_WARMER_BEATS, celery_app as app
+
+        too_long = {}
+        for name, expires_s in _EXPIRING_WARMER_BEATS.items():
+            schedule = app.conf.beat_schedule[name]["schedule"]
+            if isinstance(schedule, (int, float)):
+                period_s = float(schedule)
+            else:
+                # crontab(minute="*/N") -> N minutes. Derive it; do not hardcode.
+                minutes = sorted(schedule.minute)
+                period_s = (
+                    (minutes[1] - minutes[0]) * 60.0 if len(minutes) > 1 else 3600.0
+                )
+            if expires_s > period_s:
+                too_long[name] = (expires_s, period_s)
+        assert not too_long, (
+            f"expires exceeds beat period (cannot discard a superseded message): {too_long}"
+        )
+
     def test_all_heavy_tasks_registered(self):
         from app.tasks import HEAVY_TASKS, celery_app as app
         registered = set(app.tasks.keys())
