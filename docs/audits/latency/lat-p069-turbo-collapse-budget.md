@@ -169,10 +169,27 @@ worth more than the patch.
 The directive's ask: split the elevated window into **router-queue vs app vs DB** time, so
 "system-wide contention" becomes an attributed mechanism rather than a description.
 
-**Instrument:** Heroku sets `X-Request-Start` on every inbound request at the *router*, so
-`app_received_at − X-Request-Start` is **router-queue time, free, no code change**. The app's own
-timing minus its DB time gives the third term. `?debug_timing` already exists on the team route
-(`project_team_route_latency_1197`) and is the precedent for the app/DB split.
+**Instrument — and it is NOT free yet. Measured, not assumed:**
+
+The directive's premise is that "Heroku `X-Request-Start` gives queue time free". Heroku does send
+the header on every inbound request, so the *data* is free. **The app never reads it:**
+
+```
+grep -rn "X-Request-Start\|x-request-start\|request_start" backend/app/   ->  0 hits
+grep -c  "debug_timing" backend/app/routes/golf.py                        ->  0
+```
+
+So **both** terms of the requested split are currently unreachable:
+
+| term | status | what it needs |
+|---|---|---|
+| **router queue** | ⛔ unreachable | middleware reading `X-Request-Start` and recording `now − header`. Nothing in `app/` touches the header today. |
+| **app vs DB** | ⛔ unreachable *on golf* | `?debug_timing` exists on the **events** routes (`app/routes/events.py`, the #1197 precedent) and **zero** times in `app/routes/golf.py`. |
+
+**This is a one-queue build, not a curl.** Recording it precisely because "the header is free"
+and "the measurement is free" are different claims, and the second one is what the probe was
+scoped against. Heroku router logs would answer it without app changes, but `heroku logs` is
+EPERM-blocked from an agent session, so that path is closed here.
 
 **The measured window to re-create:** loaded p50 **4.583 s** / p90 **15.260 s** / max **26.714 s**,
 against quiet p50 2.096 s / p90 2.451 s / max 3.193 s, with `/api/health` at 0.370 s (vs 0.240) and
