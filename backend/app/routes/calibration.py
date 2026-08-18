@@ -1,5 +1,6 @@
 """Public calibration endpoint — no auth required, cached for 1 hour."""
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -12,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
-from app.utils.calibration_provability import MIN_GRADED_SHARE, annotate_cells
+from app.utils.calibration_provability import (
+    CELL_POPULATION,
+    MIN_GRADED_SHARE,
+    UNIT_OUTCOMES,
+    GradedShareCensus,
+    annotate_cells,
+)
 
 # Queue #257 Item 1: the in-request calibration fallback used to re-implement the
 # whole CTE chain + wilson_ci / bootstrap_mce_ci / _compute_horizon_mce here (a
@@ -1541,9 +1548,47 @@ _MIN_OUTCOMES_PER_HORIZON = 50
 #: Obtaining it needs CAL-P066's recursive id-range bisection, which is a
 #: measurement task rather than a rendering one.
 #:
-#: The rule ships complete and inert: populate this (or the Redis key below) and
-#: every published cell annotates on the next request, with no further code.
+#: In-process override, for tests and for a hand-supplied census. Normally EMPTY
+#: — the live denominator comes from the durable artifact the census rail writes
+#: (:func:`load_provability_census`), because a constant in code is stale by
+#: construction and this population grows continuously.
 PROVABILITY_CENSUS: dict[str, int] = {}
+
+
+def load_provability_census() -> dict[str, int]:
+    """Per-category resolved-outcome denominators from the census rail, or ``{}``.
+
+    CAL-P068 item 2 — what makes the selection-bias rule live rather than inert.
+    Reads the artifact ``app.tasks.calibration_graded_share`` publishes, and
+    returns ``{}`` for every failure mode, because ``{}`` renders as
+    "graded share not measured" and that is the honest reading of a census we
+    could not load.
+
+    Crucially it also returns ``{}`` for a census that loaded fine but did NOT
+    cover the whole population. ``census_from_payload`` enforces that, and the
+    reason is one-directional: a denominator missing part of its own population
+    is too small, every graded share computed from it is too large, and cells
+    would flip from NOT-PROVABLE to provable. Of the two ways to be wrong, only
+    one silently un-protects the page.
+    """
+    if PROVABILITY_CENSUS:
+        return dict(PROVABILITY_CENSUS)
+    try:
+        from app.tasks.calibration_graded_share import census_from_payload
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(GRADED_SHARE_CACHE_KEY)
+        if not raw:
+            return {}
+        census = census_from_payload(json.loads(raw))
+        return dict(census.by_key) if census is not None else {}
+    except Exception as exc:  # noqa: BLE001 — never the reason the page is down
+        logger.warning("graded-share census read failed: %s", exc)
+        return {}
+
+
+#: Where the census rail publishes, and the route reads.
+GRADED_SHARE_CACHE_KEY = "bainluck:calibration:graded_share_census"
 
 #: Why the census is absent, stated ONCE in the payload rather than as fifteen
 #: "unmeasured" badges in the UI. The discipline is the same one CAL-P067's
@@ -1591,7 +1636,7 @@ def provability_payload_fields(
     """
     if not isinstance(cells, list):
         return {}
-    census = census if census is not None else PROVABILITY_CENSUS
+    census = census if census is not None else load_provability_census()
     if not census:
         return {
             "by_category": cells,
@@ -1602,11 +1647,20 @@ def provability_payload_fields(
             },
         }
     return {
-        "by_category": annotate_cells(cells, resolved_by_category=census),
+        "by_category": annotate_cells(
+            cells,
+            census=GradedShareCensus(
+                by_key=census,
+                unit=UNIT_OUTCOMES,
+                population=CELL_POPULATION,
+            ),
+        ),
         "provability_census": {
             "measured": True,
             "categories": len(census),
             "min_graded_share": MIN_GRADED_SHARE,
+            "unit": UNIT_OUTCOMES,
+            "population": CELL_POPULATION,
         },
     }
 

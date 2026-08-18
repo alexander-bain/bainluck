@@ -32,10 +32,20 @@ from app.utils.calibration_provability import (
     PROVABILITY_NOT_PROVABLE,
     PROVABILITY_PROVABLE,
     PROVABILITY_UNKNOWN,
+    UNIT_OUTCOMES,
+    GradedShareCensus,
     annotate_cells,
     graded_share,
     provability,
 )
+
+
+def _census(by_key):
+    """A coherent census for these tests: outcome-level, all-source — the units
+    a published cell actually carries (CAL-P068's guard)."""
+    return GradedShareCensus(
+        by_key=by_key, unit=UNIT_OUTCOMES, population="all_sources_resolved"
+    )
 
 # CAL-P066's census, the two cells the directive says flip immediately.
 SOCCER_GRADED, SOCCER_RESOLVED = 98_381, 393_524  # 25.0%
@@ -122,7 +132,7 @@ def test_annotate_marks_each_cell_and_never_drops_one():
     ]
     out = annotate_cells(
         cells,
-        resolved_by_category={"soccer": SOCCER_RESOLVED, "baseball": 200_000},
+        census=_census({"soccer": SOCCER_RESOLVED, "baseball": 200_000}),
     )
     assert len(out) == 2
     by_cat = {c["category"]: c for c in out}
@@ -136,7 +146,7 @@ def test_annotate_leaves_the_mce_untouched():
     estimate is still the estimate; we decline to present it as a measurement,
     we do not silently substitute a different one."""
     cells = [{"category": "soccer", "mce": 3.54, "n": SOCCER_GRADED}]
-    out = annotate_cells(cells, resolved_by_category={"soccer": SOCCER_RESOLVED})
+    out = annotate_cells(cells, census=_census({"soccer": SOCCER_RESOLVED}))
     assert out[0]["mce"] == 3.54
     assert out[0]["n"] == SOCCER_GRADED
 
@@ -146,26 +156,26 @@ def test_a_category_with_no_denominator_annotates_unknown_not_provable():
     no denominator for this cell". Absent the census, this is EVERY cell, so
     getting it wrong would paint the whole page green."""
     cells = [{"category": "soccer", "mce": 3.54, "n": SOCCER_GRADED}]
-    out = annotate_cells(cells, resolved_by_category={})
+    out = annotate_cells(cells, census=_census({}))
     assert out[0]["provability"] == PROVABILITY_UNKNOWN
     assert out[0]["graded_share"] is None
 
 
 def test_annotate_tolerates_a_missing_resolved_map_entirely():
     cells = [{"category": "soccer", "mce": 3.54, "n": 10}]
-    out = annotate_cells(cells, resolved_by_category=None)
+    out = annotate_cells(cells, census=None)
     assert out[0]["provability"] == PROVABILITY_UNKNOWN
 
 
 def test_annotate_does_not_mutate_its_input():
     cells = [{"category": "soccer", "mce": 3.54, "n": SOCCER_GRADED}]
-    annotate_cells(cells, resolved_by_category={"soccer": SOCCER_RESOLVED})
+    annotate_cells(cells, census=_census({"soccer": SOCCER_RESOLVED}))
     assert "provability" not in cells[0]
 
 
 def test_a_cell_without_a_category_is_still_annotated_unknown():
     """No key to look the denominator up by is a could-not-check, not a pass."""
-    out = annotate_cells([{"mce": 1.0, "n": 500}], resolved_by_category={"soccer": 10})
+    out = annotate_cells([{"mce": 1.0, "n": 500}], census=_census({"soccer": 10}))
     assert out[0]["provability"] == PROVABILITY_UNKNOWN
 
 

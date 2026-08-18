@@ -38,7 +38,8 @@ Three states, deliberately, exactly as CAL-P067's ruling-075 fix has four:
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, Optional
 
 #: A cell must be at least half graded before its curve is a measurement of the
 #: population rather than of the graded subset. A half is not a tuned number and
@@ -49,6 +50,82 @@ MIN_GRADED_SHARE = 0.50
 PROVABILITY_PROVABLE = "provable"
 PROVABILITY_NOT_PROVABLE = "not_provable_selection_biased"
 PROVABILITY_UNKNOWN = "unknown"
+
+
+# --- The units-coherence guard (CAL-P068) ------------------------------------
+#
+# CAL-P067 came one line from populating this rule's census with the #1912 MC
+# pack's per-category table. The numbers looked made for each other: soccer
+# reads 34,619 of 138,650 = 25.0%, exactly the figure the ruling quotes.
+#
+# They are not the same population and not even the same UNIT — that census is
+# MARKET-level and Polymarket-`0x`-only, while a published cell's ``n`` is
+# OUTCOME-level and all-source. The division yields 0.7096, and measured against
+# the pre-guard code it did not merely slip past the incoherence check: it
+# returned **provable**. A confident PASS off two different populations, on a
+# public page.
+#
+# The old guard only refused a ratio above 1.0, and there is no fixing that by
+# widening the range, because **a ratio does not carry units**. By the time you
+# hold 0.7096 the information needed to reject it is gone. The only guard that
+# works is refusing to compute the ratio at all until both sides have DECLARED
+# what they count — so the census is a typed value, not a mapping, and a bare
+# dict is a TypeError rather than a silent assumption.
+UNIT_OUTCOMES = "outcomes"
+UNIT_MARKETS = "markets"
+_VALID_UNITS = frozenset({UNIT_OUTCOMES, UNIT_MARKETS})
+
+#: What a published calibration cell's ``n`` counts. Cells pool every source, so
+#: a denominator scoped to one source understates the graded share of every cell
+#: it touches — the same error as the unit mismatch, one axis over.
+CELL_NUMERATOR_UNIT = UNIT_OUTCOMES
+CELL_POPULATION = "all_sources_resolved"
+
+
+@dataclass(frozen=True)
+class GradedShareCensus:
+    """Per-key denominators, with the two facts that make them safe to divide by.
+
+    ``unit`` and ``population`` are required and validated at construction. That
+    is the whole design: the failure this prevents is not a bad number, it is a
+    number whose provenance was never stated, and a value object is the only
+    place to demand it before arithmetic can happen.
+    """
+
+    by_key: Mapping[str, Any]
+    unit: str
+    population: str
+
+    def __post_init__(self) -> None:
+        if self.unit not in _VALID_UNITS:
+            raise ValueError(
+                f"GradedShareCensus.unit must be one of {sorted(_VALID_UNITS)}, "
+                f"got {self.unit!r} — an undeclared or unknown unit is the state "
+                "this guard exists to make unreachable"
+            )
+        if not self.population or not isinstance(self.population, str):
+            raise ValueError(
+                "GradedShareCensus.population must name the scope it counted "
+                "(e.g. 'all_sources_resolved') — a denominator scoped to one "
+                "source understates every all-source cell it touches"
+            )
+
+    def incoherence(self) -> Optional[str]:
+        """Why this census may not be divided into a published cell, or ``None``."""
+        if self.unit != CELL_NUMERATOR_UNIT:
+            return (
+                f"census counts {self.unit} but a published cell's n counts "
+                f"{CELL_NUMERATOR_UNIT} — the ratio would be two different "
+                "populations in two different units, and a plausible-looking "
+                "value below 1.0 is exactly how that passes unnoticed"
+            )
+        if self.population != CELL_POPULATION:
+            return (
+                f"census population is {self.population!r} but published cells "
+                f"pool {CELL_POPULATION!r} — a narrower denominator understates "
+                "the graded share of every cell it touches"
+            )
+        return None
 
 
 def _count(value: Any) -> Optional[int]:
@@ -151,7 +228,7 @@ def provability_from_share(share: Any) -> tuple[str, Optional[float], str]:
 def annotate_cells(
     cells: Iterable[dict[str, Any]],
     *,
-    resolved_by_category: Optional[dict[str, Any]] = None,
+    census: Optional[GradedShareCensus] = None,
     graded_key: str = "n",
     category_key: str = "category",
 ) -> list[dict[str, Any]]:
@@ -162,16 +239,44 @@ def annotate_cells(
     next. The MCE and n are passed through untouched — this rule governs how a
     number is presented, never what it is.
 
-    A category absent from ``resolved_by_category`` annotates ``unknown``, which
-    with no census loaded is every cell. That is the intended reading: absent a
-    denominator the page must say it cannot tell, not paint itself green.
+    ``census`` must be a :class:`GradedShareCensus`, never a bare mapping. A
+    mapping carries no unit and no population, and accepting one is precisely
+    how CAL-P067's near-miss would have shipped: a market-level Polymarket-only
+    table divided into an outcome-level all-source cell, returning ``provable``
+    off a 0.7096 "share". A ``TypeError`` here is cheaper than that.
+
+    An incoherent census annotates **every** cell ``unknown`` with the reason —
+    the fault is in the denominator, so it poisons the whole table, not the one
+    cell someone happened to check. A category simply absent from a coherent
+    census also reads ``unknown``: absent a denominator the page says it cannot
+    tell, rather than painting itself green.
     """
-    resolved_by_category = resolved_by_category or {}
+    if census is not None and not isinstance(census, GradedShareCensus):
+        raise TypeError(
+            "annotate_cells(census=...) requires a GradedShareCensus, not "
+            f"{type(census).__name__}. A bare mapping carries no unit and no "
+            "population, which is the exact shape of the CAL-P067 near-miss: "
+            "market-level counts divided into outcome-level cells, passing as a "
+            "share of 0.71."
+        )
+
+    incoherent = census.incoherence() if census is not None else None
+    by_key: Mapping[str, Any] = census.by_key if census is not None else {}
+
     out: list[dict[str, Any]] = []
     for cell in cells:
         annotated = dict(cell)
+        if incoherent is not None:
+            annotated["provability"] = PROVABILITY_UNKNOWN
+            annotated["graded_share"] = None
+            annotated["provability_reason"] = (
+                f"graded share NOT computed — {incoherent}. Refusing to divide is "
+                "the honest answer; the ratio would have looked like one."
+            )
+            out.append(annotated)
+            continue
         category = cell.get(category_key)
-        resolved = resolved_by_category.get(category) if category is not None else None
+        resolved = by_key.get(category) if category is not None else None
         verdict, share, why = provability(cell.get(graded_key), resolved)
         annotated["provability"] = verdict
         annotated["graded_share"] = share
