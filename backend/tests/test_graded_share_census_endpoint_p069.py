@@ -123,9 +123,12 @@ def wired(monkeypatch):
         if redis_obj is not None:
             redis = redis_obj
 
-        async def _census(session, *, max_pages, start_cursor, prior):
+        async def _census(session, *, max_pages, start_cursor, prior, deadline_s=None):
             seen.update(
-                max_pages=max_pages, start_cursor=start_cursor, prior=prior
+                max_pages=max_pages,
+                start_cursor=start_cursor,
+                prior=prior,
+                deadline_s=deadline_s,
             )
             return payload
 
@@ -164,7 +167,7 @@ async def test_it_resumes_from_the_persisted_cursor(wired):
     install(_payload(cursor=900), redis_obj=redis)
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=False, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=False, db=object()
     )
 
     assert seen["start_cursor"] == 400
@@ -181,7 +184,7 @@ async def test_reset_discards_the_prior_deliberately(wired):
     install(_payload(cursor=100), redis_obj=redis)
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=True, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=True, db=object()
     )
 
     assert seen["start_cursor"] == 0
@@ -200,7 +203,7 @@ async def test_an_unreadable_prior_refuses_rather_than_restarting_at_zero(wired)
     install(_payload(), redis_obj=_Redis(fail_get=True))
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=False, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=False, db=object()
     )
 
     assert out["status"] == "error"
@@ -221,7 +224,7 @@ async def test_an_incomplete_census_is_persisted_but_still_refused_as_a_divisor(
     redis = install(_payload(), redis_obj=_Redis())
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=False, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=False, db=object()
     )
 
     assert out["status"] == "ok"
@@ -243,7 +246,7 @@ async def test_a_complete_census_says_so_and_stops_advertising_a_next_call(wired
     )
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=False, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=False, db=object()
     )
 
     assert out["complete"] is True
@@ -263,7 +266,7 @@ async def test_a_failed_write_is_not_reported_as_ok(wired):
     install(_payload(), redis_obj=_Redis(fail_set=True))
 
     out = await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=5, reset=False, db=object()
+        request=None, secret="x", max_pages=5, deadline_s=18.0, reset=False, db=object()
     )
 
     assert out["status"] == "computed_not_persisted"
@@ -271,13 +274,120 @@ async def test_a_failed_write_is_not_reported_as_ok(wired):
 
 
 @pytest.mark.asyncio
-async def test_the_bound_the_operator_asked_for_is_the_bound_that_runs(wired):
-    """An attended rail whose limit is ignored is an unattended rail."""
+async def test_the_bounds_the_operator_asked_for_are_the_bounds_that_run(wired):
+    """An attended rail whose limits are ignored is an unattended rail.
+
+    Both are asserted because they bind in different situations and the wrong
+    one alone is worse than neither: ``max_pages`` without a deadline is what
+    put a variable-cost walk behind a fixed request timeout in the first place.
+    """
     install, seen = wired
     install(_payload(), redis_obj=_Redis())
 
     await adq.run_calibration_graded_share_census(
-        request=None, secret="x", max_pages=7, reset=False, db=object()
+        request=None, secret="x", max_pages=7, deadline_s=9.5, reset=False, db=object()
     )
 
     assert seen["max_pages"] == 7
+    assert seen["deadline_s"] == 9.5
+
+
+# ── the rail's own bounds ─────────────────────────────────────────────────────
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _Session:
+    """Answers the rail's two queries; every market page is full, so it never ends."""
+
+    def __init__(self, per_page=400):
+        self.per_page = per_page
+        self.pages = 0
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "statement_timeout" in sql:
+            return _Rows([])
+        if "FROM futures_markets" in sql:
+            self.pages += 1
+            hi = self.pages * self.per_page
+            return _Rows([(i,) for i in range(hi - self.per_page + 1, hi + 1)])
+        return _Rows([("hockey", 10, 4)])
+
+    async def rollback(self):  # pragma: no cover - not exercised here
+        pass
+
+
+@pytest.mark.asyncio
+async def test_the_deadline_stops_the_walk_and_names_itself():
+    """The bound that actually protects an HTTP caller, and it says it fired.
+
+    ``max_pages`` is left enormous on purpose: if the page count were the thing
+    stopping this, the assertion on ``stopped_on`` would be vacuous.
+    """
+    from app.tasks.calibration_graded_share import run_graded_share_census
+
+    out = await run_graded_share_census(
+        _Session(), max_pages=100_000, start_cursor=0, deadline_s=0.05
+    )
+
+    assert out["stopped_on"] == "deadline"
+    assert out["complete"] is False
+    assert out["usable_as_denominator"] is False
+    assert out["cursor"] > 0, "a deadline stop must still bank its progress"
+
+
+@pytest.mark.asyncio
+async def test_a_page_ceiling_stop_is_distinguishable_from_a_deadline_stop():
+    """Two stops, same shape, opposite operator response — so they must differ.
+
+    Raising ``max_pages`` against a deadline that was never going to allow it is
+    the concrete mistake this field exists to prevent.
+    """
+    from app.tasks.calibration_graded_share import run_graded_share_census
+
+    out = await run_graded_share_census(
+        _Session(), max_pages=3, start_cursor=0, deadline_s=600.0
+    )
+
+    assert out["stopped_on"] == "max_pages"
+    assert out["pages_ok"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_end_is_reported_as_exhausted_not_as_a_bound():
+    """The success path (gotcha #43): only this one may be used as a divisor."""
+    from app.tasks.calibration_graded_share import run_graded_share_census
+
+    class _Short(_Session):
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "FROM futures_markets" in sql and "statement_timeout" not in sql:
+                self.pages += 1
+                return _Rows([(1,), (2,)])  # short page => end of population
+            return await super().execute(stmt, params)
+
+    out = await run_graded_share_census(
+        _Short(), max_pages=100, start_cursor=0, deadline_s=600.0
+    )
+
+    assert out["stopped_on"] == "exhausted"
+    assert out["complete"] is True
+    assert out["usable_as_denominator"] is True
+
+
+@pytest.mark.asyncio
+async def test_no_deadline_preserves_the_pre_p069_contract():
+    """``deadline_s=None`` must behave exactly as CAL-P068 shipped it."""
+    from app.tasks.calibration_graded_share import run_graded_share_census
+
+    out = await run_graded_share_census(_Session(), max_pages=2, start_cursor=0)
+
+    assert out["stopped_on"] == "max_pages"
+    assert out["pages_ok"] == 2

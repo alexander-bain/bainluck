@@ -3617,7 +3617,8 @@ async def backfill_progress(
 async def run_calibration_graded_share_census(
     request: Request,
     secret: str = Query(None),
-    max_pages: int = Query(40, ge=1, le=400, description="Market pages this call may run"),
+    max_pages: int = Query(200, ge=1, le=2000, description="Ceiling on pages; the deadline usually binds first"),
+    deadline_s: float = Query(18.0, ge=1.0, le=25.0, description="Wall-clock budget for this call"),
     reset: bool = Query(False, description="Discard the prior partial and restart at cursor 0"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3632,11 +3633,21 @@ async def run_calibration_graded_share_census(
     reports while working correctly on an unmeasured population. This endpoint
     is the missing call.
 
-    Attended and bounded on purpose — ``max_pages`` caps the work, and the
-    returned ``cursor`` is the input to the next call, so a full pass is a
+    Attended and bounded on purpose, and the binding bound is **wall clock, not
+    pages**. Measured in production 2026-08-18, one 400-market page costs
+    ~562 ms — but the rail allows a single pathological page 20 s under its own
+    ``statement_timeout``, so a page count cannot bound a request that has to
+    return. ``deadline_s`` defaults to 18 s, inside the 30 s router limit;
+    ``max_pages`` stays as a ceiling and normally does not fire. The response's
+    ``stopped_on`` says which bound did, because "raise the limit" and "just
+    call again" are opposite responses to identically-shaped results.
+
+    The returned ``cursor`` is the input to the next call, so a full pass is a
     handful of curls rather than one request that must not time out. The census
     is built as a cursor rail precisely because the whole-population aggregate
-    times out (CAL-P066's Seq Scan finding); nothing here re-attempts it.
+    times out (CAL-P066's Seq Scan finding) — re-confirmed this window, where a
+    SINGLE category still hit ``statement_timeout`` while a 400-market page
+    returned in 562 ms. Nothing here re-attempts the aggregate.
 
     **Composes rather than replaces.** Each call merges into the persisted
     partial, so an interrupted pass resumes instead of restarting. ``reset=true``
@@ -3680,7 +3691,11 @@ async def run_calibration_graded_share_census(
         }
 
     payload = await run_graded_share_census(
-        db, max_pages=max_pages, start_cursor=start_cursor, prior=prior
+        db,
+        max_pages=max_pages,
+        start_cursor=start_cursor,
+        prior=prior,
+        deadline_s=deadline_s,
     )
 
     write = "ok"
@@ -3701,6 +3716,7 @@ async def run_calibration_graded_share_census(
         "complete": payload.get("complete"),
         "usable_as_denominator": payload.get("usable_as_denominator"),
         "reason": payload.get("reason"),
+        "stopped_on": payload.get("stopped_on"),
         "pages_ok": payload.get("pages_ok"),
         "pages_failed": payload.get("pages_failed"),
         "failed_ranges": payload.get("failed_ranges"),
@@ -3712,7 +3728,10 @@ async def run_calibration_graded_share_census(
         "next_call": (
             None
             if payload.get("exhausted")
-            else f"POST /api/admin/calibration/graded-share-census?max_pages={max_pages}"
+            else (
+                "POST /api/admin/calibration/graded-share-census"
+                f"?max_pages={max_pages}&deadline_s={deadline_s}"
+            )
         ),
     }
 
