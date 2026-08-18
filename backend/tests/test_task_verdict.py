@@ -238,6 +238,17 @@ class TestEnforcementScope:
             # above, and there is no reason to wait ten weeks to learn it twice.
             # Terminal comes from `kalshi_cliff._terminal`.
             "kalshi_cliff_drain",
+            # #1798 (queue 364): the ruling-048 reconciliation drain, the SECOND
+            # enrolled at birth. Enrolling it is not a formality — this task's
+            # entire purpose is to make an accepted-but-unmeasured cost visible,
+            # so a GREEN run of it that reconciled nothing would restore exactly
+            # the blindness it was built to end. Measured on its first census:
+            # 500 unanchored rows, 0 reconciled, and all 500 classified
+            # NO_ANCHOR_CHANNEL — their creating provider has no id column on
+            # `events`, so the id that ruling 048's bounding clause waits for has
+            # nowhere to land. `terminal` is `no_work` on any zero and `failed`
+            # with `measured: false` when the census itself could not run.
+            "reconcile_unanchored_events",
         }
 
     def test_enforced_task_partial_blocks_success(self):

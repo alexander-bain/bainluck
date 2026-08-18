@@ -227,6 +227,14 @@ ENFORCED_TASKS = frozenset({
     # `complete` only when the window is caught up, `failed` when the watermark
     # could not be persisted (unresumable progress will simply be redone).
     "kalshi_cliff_drain",              # terminal + errors + watermark
+    # #1798 / ruling 048 (queue 364). Enrolled FROM BIRTH, per #1884, and this is
+    # the task that most needs it: it exists to make an accepted-but-unmeasured
+    # cost visible, so a run of it that reads GREEN while reconciling nothing
+    # would restore exactly the blindness it was built to end. Its terminal is
+    # `no_work` — never `complete` — whenever `reconciled == 0`, and it carries
+    # `measured: false` + `terminal: failed` when the census itself could not run,
+    # so "there is nothing to drain" and "I could not look" stay distinct.
+    "reconcile_unanchored_events",     # terminal + measured + census + errors
 })
 
 

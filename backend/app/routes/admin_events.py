@@ -366,6 +366,33 @@ async def delete_duplicate_events(
     return {"deleted": result.rowcount, "event_ids": ids}
 
 
+@router.post("/events/reconcile-unanchored")
+async def reconcile_unanchored_events_endpoint(
+    request: Request,
+    secret: str = Query(None),
+    apply: bool = Query(False),
+    limit: int = Query(1000, ge=1, le=5000),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """#1798 / ruling 048 — run the reconciliation drain and return its verdict.
+
+    The scheduled beat is the ongoing rail; this is how a person gets a dated
+    reading on demand, which is what a HELD gate written in verdict form needs.
+    ``apply`` DELETEs and is therefore gated on the destructive check, not merely
+    the read secret.
+    """
+    _check_admin_secret(secret, request=request)
+    if apply:
+        _check_admin_destructive(request=request)
+
+    from app.tasks.reconcile_unanchored_events import reconcile, summarize_for_operator
+
+    result = await reconcile(db, apply=apply, limit=limit)
+    if apply:
+        await db.commit()
+    return {**result, "operator_line": summarize_for_operator(result)}
+
+
 @router.get("/events/duplicates")
 async def list_duplicate_events(
     request: Request, secret: str = Query(None),

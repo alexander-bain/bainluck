@@ -546,6 +546,7 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_kalshi_candlestick",
     "app.tasks.backfill_kalshi_history",
     "app.tasks.kalshi_cliff_drain",
+    "app.tasks.reconcile_unanchored_events",
     "app.tasks.backfill_kalshi_settled",
     "app.tasks.backfill_kalshi_trades",
     "app.tasks.backfill_kalshi_volume",
@@ -2310,7 +2311,27 @@ def enrich_taxonomy_llm(self, event_limit: int = 50, market_limit: int = 30):
     return _tracked_run("enrich_taxonomy_llm", _enrich_taxonomy_llm_impl(event_limit, market_limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.reconcile_unanchored_events")
+def reconcile_unanchored_events_task(self, apply: bool = False, limit: int = 1000):
+    """Ruling 048's bounding clause, finally given an implementation (#1798).
+
+    048 accepts rising duplicates as a BOUNDED cost, bounded because "id-keyed
+    reconciliation drains the duplicate when an id arrives". That drain never
+    existed: the provenance meter has read `created 500 / reconciled 0` since the
+    ruling landed. Until this runs, the accepted cost has no bound.
+
+    DRY-RUN by default — the apply path DELETEs. Enrolled in ENFORCED_TASKS from
+    birth (#1884 precedent) with a real `terminal`, because a drain with nothing
+    to drain must not report SUCCESS (gotcha #53 / #683's ten green weeks)."""
+    from app.tasks.reconcile_unanchored_events import run_reconcile_unanchored
+    return _tracked_run(
+        "reconcile_unanchored_events",
+        run_reconcile_unanchored(apply=apply, limit=limit),
+    )
+
+
 # --- Duplicate Event Cleanup ---
+
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.merge_duplicate_events")
 def merge_duplicate_events_task(self, dry_run: bool = True):
@@ -2778,6 +2799,18 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_links",
         "schedule": crontab(minute=50),  # Every hour — roster matching is cheap, large backlog to clear
         "kwargs": {"limit": 2000, "use_llm": False},
+    },
+    # #1798 / ruling 048: the reconciliation drain the acceptance ASSUMED.
+    # Runs 12 minutes before the half-hour merge sweep so an id that arrived
+    # since the last cycle is reconciled into a drainable pair before the
+    # ordinary drain looks. DRY-RUN until Alex rules on the apply — the census
+    # and its verdict are the point of scheduling it now, because an unmeasured
+    # cost cannot be called bounded.
+    "reconcile-unanchored-events": {
+        "task": "app.tasks.reconcile_unanchored_events",
+        "schedule": crontab(minute="18,48"),
+        "kwargs": {"apply": False, "limit": 1000},
+        "options": {"queue": "background"},
     },
     "merge-duplicate-events": {
         "task": "app.tasks.merge_duplicate_events",
