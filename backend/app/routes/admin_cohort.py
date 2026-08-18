@@ -78,6 +78,7 @@ async def cohort_market_type_light(
           AND COALESCE(fo.calibration_probability, fo.opening_probability) <1
           AND fo.opening_probability IS NOT NULL
           AND fo.is_winner IS NOT NULL
+        ORDER BY random()
         LIMIT 200000
     """))).all()
     # Compute ECE per cohort via the ONE canonical definition where possible
@@ -225,6 +226,7 @@ async def cohort_provenance_split(
           AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
           AND fo.opening_probability IS NOT NULL
           AND fo.is_winner IS NOT NULL
+        ORDER BY random()
         LIMIT 300000
     """))).all()
     # Group by (league, market_type) and compute ECE_all vs ECE_venue via ONE canonical definition
@@ -346,6 +348,7 @@ async def cohort_sums_histogram(
           AND fo.is_winner IS NOT NULL
         GROUP BY group_key
         HAVING COUNT(*) >= 2
+        ORDER BY random()
         LIMIT 100000
     """))).all()
     # Bucket histogram
