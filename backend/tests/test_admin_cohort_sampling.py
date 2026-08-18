@@ -6,6 +6,25 @@ WHERE random() < p — unbiased row-level Bernoulli, no Sort, provably under H12
 This test ensures no Sort node can return above the sampling.
 
 Covers #1974 blocker on interpretation-matrix step 3 (sums histogram).
+
+**AMENDED BY CAL-P071 (2026-08-18), and the amendment is the interesting part.**
+Two endpoints stopped sampling altogether: `cohort_provenance_split` and
+`cohort_sums_histogram` now aggregate in SQL and return a bounded number of bin
+rows over the FULL population, so there is no sample to cap and no sampling
+fraction to calibrate. Two assertions here mandated the sampling
+*implementation* rather than the property it was chosen for —
+`test_light_and_provenance_use_bernoulli_random_threshold` required
+`random() < p` before `LIMIT 300000`, and `test_limits_still_cap_samples`
+required all three LIMIT constants — and would have failed the stronger fix.
+
+Read as sentences (gotcha #130): *"the provenance split must carry a 300k row
+cap"* is not signable as a product claim once the endpoint returns ~1,000 rows
+by construction. *"no Sort node can return above the sampling"* is, and it is
+kept verbatim below, because it is the property #1974 was actually about.
+
+The light endpoint still samples and its Bernoulli fix is untouched — the
+amendment narrows these assertions to the endpoint that still needs them, and
+adds their positive counterpart for the two that no longer do.
 """
 
 import pathlib
@@ -15,6 +34,25 @@ import re
 def _sql() -> str:
     p = pathlib.Path(__file__).resolve().parents[1] / "app/routes/admin_cohort.py"
     return p.read_text()
+
+
+def _executable_source(fn) -> str:
+    """A function's source with its docstring removed.
+
+    Both endpoints now explain in their docstrings which idiom they removed and
+    why, and a grep cannot tell an explanation from a call — written naively,
+    an `ORDER BY random()` tripwire fails on its own subject's prose.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(fn).lstrip())
+    node = tree.body[0]
+    if (node.body and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)):
+        node.body = node.body[1:]
+    return ast.unparse(tree)
 
 
 def test_no_order_by_random_remains():
@@ -34,7 +72,9 @@ def test_no_order_by_random_remains():
     assert code.count("random ( )") == 0  # tokenized form
 
 
-def test_light_and_provenance_use_bernoulli_random_threshold():
+def test_light_uses_bernoulli_random_threshold():
+    """The one endpoint that still samples. Narrowed from `_light_and_provenance_`
+    by CAL-P071 — the provenance split no longer samples at all (see below)."""
     sql = _sql()
     # Light: ... WHERE ... random() < 0.30 LIMIT 200000
     light = re.search(r"futures_outcomes fo.*?random\(\)\s*<\s*([0-9.]+).*?LIMIT 200000", sql, re.S)
@@ -42,11 +82,35 @@ def test_light_and_provenance_use_bernoulli_random_threshold():
     p_light = float(light.group(1))
     assert 0.10 <= p_light <= 0.80, f"light p={p_light} outside [0.1,0.8] — miscalibrated sample"
 
-    # Provenance-split: ... random() < 0.50 LIMIT 300000
-    prov = re.search(r"polymarket.*random\(\)\s*<\s*([0-9.]+).*?LIMIT 300000", sql, re.S)
-    assert prov is not None, "provenance-split must have WHERE random() < p before LIMIT 300000"
-    p_prov = float(prov.group(1))
-    assert 0.10 <= p_prov <= 0.80, f"provenance p={p_prov} outside [0.1,0.8]"
+
+def test_the_aggregating_endpoints_do_not_sample_at_all():
+    """The positive counterpart, so "stopped sampling" cannot silently become
+    "sampling came back under a different constant".
+
+    A row-shipping endpoint needs a cap and therefore needs a defensible
+    sampling fraction; an aggregating one returns O(cells x bins) rows whatever
+    the population does, and a cap on it would be a silent truncation of the
+    ANSWER rather than of the input. These two declare `sampled: False` on the
+    wire for the same reason — `n_all` used to be a 300k-sample count that said
+    nothing about being one.
+    """
+    from app.routes import admin_cohort
+
+    for fn in (admin_cohort.cohort_provenance_split,
+               admin_cohort.cohort_sums_histogram):
+        src = _executable_source(fn)
+        assert "GROUP BY" in src, f"{fn.__name__} must aggregate in SQL"
+        assert "random ( )" not in src, (
+            f"{fn.__name__} samples again — it aggregates over the full "
+            "population, so a sample would trade exactness for nothing."
+        )
+        big = [int(m) for m in re.findall(r"LIMIT\s+(\d+)", src, re.I) if int(m) >= 1000]
+        assert not big, (
+            f"{fn.__name__} carries a population-scale LIMIT again ({big}) — "
+            "on an aggregate that truncates the ANSWER, not the input. A small "
+            "declared top-N over an already-aggregated table is fine and must "
+            "report how many rows it dropped."
+        )
 
 
 def test_no_tablesample_system_remains():
@@ -64,11 +128,12 @@ def test_no_tablesample_system_remains():
     )
 
 
-def test_limits_still_cap_samples():
+def test_the_sampling_endpoint_still_caps_its_sample():
+    """Narrowed by CAL-P071 from a three-way LIMIT check. The two removed
+    constants belonged to endpoints that no longer ship rows; asserting their
+    presence would have required keeping a cap in order to keep a test."""
     sql = _sql()
     assert "LIMIT 200000" in sql, "light LIMIT 200000 cap missing"
-    assert "LIMIT 300000" in sql, "provenance LIMIT 300000 cap missing"
-    assert "LIMIT 100000" in sql, "histogram LIMIT 100000 cap missing"
 
 
 def test_no_sort_node_above_sample_in_explain_shape():
