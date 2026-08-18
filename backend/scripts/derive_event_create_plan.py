@@ -65,14 +65,13 @@ from app.utils.repair_apply_plan import (  # noqa: E402
 # accepts. Hence one builder, two readers.
 from app.utils.event_create_derivation import (  # noqa: E402
     MLB_SPORT_ID,
-    POPULATION_1,
     ROW_ONE,
-    TRUTH_SET_RELATIVE_PATH,
     anchors_from_rows,
     build_rows,
     load_games,
     required_club_names,
     select_population,
+    truth_set_path_for,
 )
 
 HANDOFF = pathlib.Path(__file__).resolve().parents[2] / ".claude/handoff"
@@ -80,7 +79,6 @@ HANDOFF = pathlib.Path(__file__).resolve().parents[2] / ".claude/handoff"
 #: The reviewed set now lives in the repo (`backend/app/data/…`) so the deployed rail
 #: can read it — handoff is gitignored and does not exist on the dyno. The handoff
 #: copy is kept as the fallback for a checkout that predates the move.
-TRUTH_SET = pathlib.Path(__file__).resolve().parents[1] / TRUTH_SET_RELATIVE_PATH
 TRUTH_SET_LEGACY = HANDOFF / "ARTIFACT-Q362-POPULATION-2-CREATE-SET.json"
 
 
@@ -136,11 +134,12 @@ def still_missing(truth_ids: list[str]) -> set[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--population", choices=["1", "2"], required=True)
+    ap.add_argument("--population", choices=["1", "2", "3"], required=True)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    source = TRUTH_SET if TRUTH_SET.exists() else TRUTH_SET_LEGACY
+    committed = pathlib.Path(__file__).resolve().parents[1] / truth_set_path_for(args.population)
+    source = committed if committed.exists() else TRUTH_SET_LEGACY
     truth = json.loads(source.read_text())
 
     # `load_games` asserts row #1 by name and `select_population` refuses any id the
@@ -161,7 +160,7 @@ def main() -> int:
             "truth_set_hash": truth["truth_id_hash"],
             "sport_id": MLB_SPORT_ID,
             "sport_key": "baseball_mlb",
-            "row_one": ROW_ONE,
+            "row_one": truth.get("row_one", ROW_ONE),
         },
     )
 

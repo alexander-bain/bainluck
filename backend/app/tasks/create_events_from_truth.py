@@ -115,13 +115,14 @@ from app.utils.repair_apply_plan import (  # noqa: E402
 # local dry run and this rail cannot mint different addresses from one approval.
 from app.utils.event_create_derivation import (  # noqa: E402
     MLB_SPORT_ID,
-    TRUTH_SET_RELATIVE_PATH,
+    TRUTH_SET_REGISTRY,
     DerivationRefused,
     anchors_from_rows,
     build_rows,
     load_games,
     required_club_names,
     select_population,
+    truth_set_path_for,
 )
 
 #: Durable identity of the reviewed plan artifact. ONE slot per population: an
@@ -208,19 +209,19 @@ def _lock_key(truth_id: str) -> int:
     return int(zlib.crc32(str(truth_id).encode("utf-8")) & 0x7FFFFFFF)
 
 
-def _truth_set_path() -> pathlib.Path:
-    """``backend/app/data/event_create_truth_set.json``, resolved from this file."""
-    return pathlib.Path(__file__).resolve().parents[2] / TRUTH_SET_RELATIVE_PATH
+def _truth_set_path(population: str = "2") -> pathlib.Path:
+    """The committed reviewed file this population is bound to, resolved absolutely."""
+    return pathlib.Path(__file__).resolve().parents[2] / truth_set_path_for(population)
 
 
-def _load_truth_set() -> tuple[Optional[dict], str]:
+def _load_truth_set(population: str = "2") -> tuple[Optional[dict], str]:
     """``(truth, reason)`` — three named readings, never one flattened one.
 
     The same distinction the plan loader draws, for the same reason: an operator
     told the reviewed set is MISSING will go and make one, and that is exactly the
     wrong move when the file is present and torn, or present and unreadable.
     """
-    path = _truth_set_path()
+    path = _truth_set_path(population)
     try:
         raw = path.read_text()
     except FileNotFoundError:
@@ -519,34 +520,40 @@ async def repair(
     Args:
         apply: False (default) derives and persists a plan. True consumes one.
         plan_hash: content address of the reviewed dry run. REQUIRED when ``apply``.
-        population: ``"1"`` (the single Aug 5 MIN@KC game) or ``"2"`` (the 328-game
-            season backfill, of which population 1 is a member).
+        population: which REVIEWED SET this call is bound to — ``"1"`` the single
+            Aug 5 MIN@KC game (#1902), ``"2"`` the 328-game season backfill of
+            which population 1 is a member, ``"3"`` the four Aug-19 games that
+            have no row at all (#1947). Three is its OWN committed file and not an
+            extension of two: two's declared scope ends 2026-08-17, so folding
+            them in would silently change a set Alex already reviewed.
 
     A dry run returns the census, the per-row ledger with both club anchors named,
     and the ``plan_hash`` of the persisted artifact. An apply writes only that
     artifact's rows and re-derives nothing.
     """
     population = str(population)
-    if population not in ("1", "2"):
+    if population not in TRUTH_SET_REGISTRY:
         return {
             "issue": "#1796",
             "refused": True,
             "reason_codes": ["UNKNOWN_POPULATION"],
-            "note": f"population must be '1' or '2', got {population!r}",
+            "note": (
+                f"population must be one of {sorted(TRUTH_SET_REGISTRY)}, got {population!r}"
+            ),
         }
 
     if apply:
         # The derivation below does not run. See ``_apply_reviewed_plan``.
         return await _apply_reviewed_plan(session, plan_hash, population)
 
-    truth, truth_reason = _load_truth_set()
+    truth, truth_reason = _load_truth_set(population)
     if truth is None:
         return {
             "issue": "#1796",
             "apply": False,
             "refused": True,
             "reason_codes": [truth_reason],
-            "truth_set_path": str(_truth_set_path()),
+            "truth_set_path": str(_truth_set_path(population)),
             "note": (
                 "No plan was derived. MISSING means the reviewed set is not deployed; "
                 "CORRUPT means it is there and cannot be trusted — do not regenerate it, "

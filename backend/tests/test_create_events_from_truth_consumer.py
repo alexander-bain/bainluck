@@ -509,7 +509,7 @@ async def test_the_dry_run_derives_persists_and_hands_back_an_apply_command(monk
     monkeypatch.setattr(rail, "_save_plan", _fake_save)
     monkeypatch.setattr(
         rail, "_load_truth_set",
-        lambda: (
+        lambda population="2": (
             {
                 "truth_id_hash": "deadbeef",
                 "gate": "every reviewed id must still be missing",
@@ -547,7 +547,7 @@ async def test_population_1_is_a_subset_of_the_reviewed_set_and_row_one_is_asser
     monkeypatch.setattr(rail, "_save_plan", lambda plan, population: _ok_save(plan))
     monkeypatch.setattr(
         rail, "_load_truth_set",
-        lambda: (
+        lambda population="2": (
             {
                 "truth_id_hash": "x",
                 "truth_ids": ["401816407"],
@@ -574,7 +574,7 @@ async def _ok_save(plan):  # pragma: no cover — helper for the monkeypatch abo
 )
 async def test_the_reviewed_set_gets_the_same_three_readings_as_the_plan(monkeypatch, reason):
     """MISSING/UNREADABLE/CORRUPT again, one level up. Same argument, same split."""
-    monkeypatch.setattr(rail, "_load_truth_set", lambda: (None, reason))
+    monkeypatch.setattr(rail, "_load_truth_set", lambda population="2": (None, reason))
     out = await repair(_Session(), apply=False, population="2")
     assert out["refused"] is True and out["reason_codes"] == [reason]
 
@@ -584,7 +584,7 @@ async def test_a_club_without_a_unique_anchor_refuses_rather_than_guessing(monke
     """The #1918 poisoned path is not consulted, and a 0-or-2 match is a refusal."""
     monkeypatch.setattr(
         rail, "_load_truth_set",
-        lambda: (
+        lambda population="2": (
             {
                 "truth_id_hash": "x",
                 "truth_ids": ["401816534"],
@@ -609,6 +609,39 @@ async def test_a_club_without_a_unique_anchor_refuses_rather_than_guessing(monke
 async def test_an_unknown_population_is_refused_by_name():
     out = await repair(_Session(), apply=False, population="9")
     assert out["reason_codes"] == ["UNKNOWN_POPULATION"]
+
+
+def test_the_aug19_games_are_their_own_reviewed_set_not_an_extension_of_the_season_one():
+    """Ruling 079's shape: a new population is a new object, not a widened constant.
+
+    The four Aug-19 games (#1947's population 2) have no row at all and play within
+    ~24h, so the temptation to append them to the 328-row set is real and is exactly
+    wrong. That set's declared scope ends 2026-08-17 and its latest reviewed game
+    starts 2026-08-16T01:38Z: folding them in would change an object Alex already
+    reviewed, and the plan_hash he approved would silently cover four games he never
+    saw. So they get their own file, their own address, and their own approval.
+    """
+    import json
+    from pathlib import Path
+
+    from app.utils.event_create_derivation import TRUTH_SET_REGISTRY
+
+    data = Path(__file__).resolve().parents[1] / "app" / "data"
+    season = json.loads((data / "event_create_truth_set.json").read_text())
+    aug19 = json.loads((data / "event_create_truth_set_aug19.json").read_text())
+
+    # Distinct files, and 3 is not a slice of 2.
+    assert TRUTH_SET_REGISTRY["3"][0] != TRUTH_SET_REGISTRY["2"][0]
+    assert set(aug19["truth_ids"]).isdisjoint(set(season["truth_ids"]))
+    assert set(aug19["truth_ids"]) == {"401816586", "401816587", "401816588", "401816590"}
+
+    # And the season set really does stop before them, so this is a measured
+    # boundary rather than a stylistic preference.
+    assert max(g["commence"] for g in season["games"]) < "2026-08-19"
+    assert min(g["commence"] for g in aug19["games"]).startswith("2026-08-19")
+
+    # Each reviewed set names its own sentinel row.
+    assert aug19["row_one"] in set(aug19["truth_ids"])
 
 
 # ── the two producers cannot drift ─────────────────────────────────────────

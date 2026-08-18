@@ -64,6 +64,25 @@ ROW_ONE = "401816534"
 #: re-derivation at apply time is the entire defect this pattern exists to close.
 TRUTH_SET_RELATIVE_PATH = "app/data/event_create_truth_set.json"
 
+#: The Aug-19 population (#1947's population 2), added queue 369. It gets its OWN
+#: file rather than being appended to the set above, and that is the whole point:
+#: the q362 set's declared scope is *MLB 2026-03-25..2026-08-17* and its latest
+#: reviewed game starts 2026-08-16T01:38Z, so these four are outside it. Adding
+#: them would silently change an object Alex already reviewed — ruling 079's exact
+#: shape (*not a widened constant, not "close enough"*). A new population is a new
+#: reviewed object, a new address, and a new approval.
+AUG19_TRUTH_SET_RELATIVE_PATH = "app/data/event_create_truth_set_aug19.json"
+
+#: population token -> (committed reviewed file, id subset or None for "all of it").
+#: The token selects WHICH APPROVAL an apply is bound to. It is deliberately not a
+#: filter expression: a population an operator can describe is a population an
+#: operator can widen, and the reviewed object must be a fixed list.
+TRUTH_SET_REGISTRY: dict[str, tuple[str, tuple[str, ...] | None]] = {
+    "1": (TRUTH_SET_RELATIVE_PATH, POPULATION_1),
+    "2": (TRUTH_SET_RELATIVE_PATH, None),
+    "3": (AUG19_TRUTH_SET_RELATIVE_PATH, None),
+}
+
 _LABEL_RE = re.compile(r"^(?P<away>.+?) @ (?P<home>.+?) (?P<date>\d{4}-\d{2}-\d{2})")
 
 
@@ -119,19 +138,42 @@ def load_games(truth: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
                 REASON_TRUTH_SET_SHAPE, "a reviewed game row has no `espn_id`"
             )
         games[str(game["espn_id"])] = game
-    if ROW_ONE not in games:
+    # Each reviewed set names its own sentinel row; the q362 file predates the key
+    # and keeps ROW_ONE as its default. The assertion is what makes a derivation
+    # that quietly lost a reviewed game fail HERE rather than ship n-1 rows that
+    # each look fine.
+    sentinel = str(truth.get("row_one") or ROW_ONE)
+    if sentinel not in games:
         raise DerivationRefused(
             REASON_ROW_ONE_ABSENT,
-            f"row #1 {ROW_ONE} is absent from the reviewed set — this derivation "
+            f"row #1 {sentinel} is absent from the reviewed set — this derivation "
             "is over a different population than the one that was reviewed",
         )
     return games
 
 
+def truth_set_path_for(population: str) -> str:
+    """The committed file a population is bound to. Refuses an unknown token."""
+    entry = TRUTH_SET_REGISTRY.get(str(population))
+    if entry is None:
+        raise DerivationRefused(
+            "UNKNOWN_POPULATION",
+            f"population must be one of {sorted(TRUTH_SET_REGISTRY)}, got {population!r}",
+        )
+    return entry[0]
+
+
 def select_population(truth: Mapping[str, Any], population: str) -> list[str]:
-    """The reviewed id list for population ``"1"`` or ``"2"``, in reviewed order."""
+    """The reviewed id list for a population token, in reviewed order."""
     games = load_games(truth)
-    wanted = list(POPULATION_1) if str(population) == "1" else [str(i) for i in truth["truth_ids"]]
+    entry = TRUTH_SET_REGISTRY.get(str(population))
+    if entry is None:
+        raise DerivationRefused(
+            "UNKNOWN_POPULATION",
+            f"population must be one of {sorted(TRUTH_SET_REGISTRY)}, got {population!r}",
+        )
+    subset = entry[1]
+    wanted = list(subset) if subset is not None else [str(i) for i in truth["truth_ids"]]
     unreviewed = [tid for tid in wanted if tid not in games]
     if unreviewed:
         raise DerivationRefused(
