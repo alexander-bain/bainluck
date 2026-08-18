@@ -370,8 +370,17 @@ class TestHeavyQueueRouting:
         assert not bad, f"HEAVY beat entries not pinned to heavy: {bad}"
 
     def test_latency_sensitive_tasks_stay_on_background(self):
-        """The pipeline drivers and alarms must NOT be on heavy — they must fire
-        promptly and never queue behind a 10-minute backfill."""
+        """The two routing sets must never disagree.
+
+        AMENDED #1609 / LAT-P065: the old rationale here was "pipeline drivers
+        must not be on heavy". That is no longer the rule and the docstring is
+        corrected rather than left to mislead — `match_prediction_markets` IS a
+        pipeline driver and it is now on heavy ON PURPOSE, because at 337.4s p50
+        on a queue with ~one effective slot it was the measured cause of the
+        `warm_typeahead` dispatch holes. What survives is the 600-960s BACKFILL
+        class (guarded explicitly below) and the structural invariant: a task in
+        both sets is a contradiction whichever way the argument goes.
+        """
         from app.tasks import HEAVY_TASKS, _HEAVY_KEEP_ON_BACKGROUND, celery_app as app
         overlap = HEAVY_TASKS & _HEAVY_KEEP_ON_BACKGROUND
         assert not overlap, f"tasks in BOTH heavy and keep-on-background: {overlap}"
@@ -380,7 +389,80 @@ class TestHeavyQueueRouting:
             t for t in _HEAVY_KEEP_ON_BACKGROUND
             if routes.get(t, {}).get("queue") == "heavy"
         ]
-        assert not leaked, f"latency-sensitive tasks leaked onto heavy: {leaked}"
+        assert not leaked, f"keep-on-background tasks leaked onto heavy: {leaked}"
+
+    def test_1609_multi_minute_residents_are_off_background(self):
+        """#1609: the three multi-minute residents route to `heavy`, both arms.
+
+        Background is a 2-slot Standard-1X on which `warm_typeahead` (36.3s p50
+        against a 30s floor) is approximately one permanently-occupied slot — so
+        the queue has ~ONE effective slot for ~40 beats. These three held it for
+        minutes at a time and were measured starving the warmer (five holes in
+        55.8 probe-free minutes; warmer not running 30.0% of wall-clock).
+
+        Guards BOTH arms because they can disagree silently: beat
+        `options["queue"]` overrides `task_routes` at dispatch time, so a task
+        can be correct in one and wrong in the other and still be misrouted.
+        """
+        from app.tasks import HEAVY_TASKS, celery_app as app
+
+        moved = {
+            "app.tasks.match_prediction_markets",
+            "app.tasks.poll_kalshi_markets",
+            "app.tasks.precompute_admin_link_rate",
+        }
+        assert moved <= HEAVY_TASKS, f"#1609 residents missing from HEAVY_TASKS: {moved - HEAVY_TASKS}"
+
+        routes = app.conf.task_routes
+        misrouted = {
+            t: routes.get(t, {}).get("queue") for t in moved
+            if routes.get(t, {}).get("queue") != "heavy"
+        }
+        assert not misrouted, f"#1609 residents not on heavy in task_routes: {misrouted}"
+
+        bad_beat = {
+            name: entry.get("options", {}).get("queue")
+            for name, entry in app.conf.beat_schedule.items()
+            if entry["task"] in moved
+            and entry.get("options", {}).get("queue") != "heavy"
+        }
+        assert not bad_beat, f"#1609 residents' beat entries not pinned to heavy: {bad_beat}"
+
+    def test_big_backfills_stay_off_heavy(self):
+        """The part of the #224 finding that SURVIVES #1609.
+
+        #1609 moved the 300s class to heavy. It did NOT move the 600-960s
+        backfill class, and that distinction is the whole reason the move is
+        safe: two ten-minute backfills would fill both heavy slots and delay the
+        hourly /calibration warmer, which is what #224 observed live. Without
+        this guard, "#1609 moved grinders to heavy" reads as a licence to move
+        the rest.
+        """
+        from app.tasks import HEAVY_TASKS, celery_app as app
+
+        backfills = {
+            "app.tasks.backfill_winners",
+            "app.tasks.backfill_kalshi_candlestick",
+            "app.tasks.backfill_kalshi_history",
+            "app.tasks.backfill_kalshi_settled",
+            "app.tasks.backfill_kalshi_trades",
+            "app.tasks.backfill_kalshi_volume",
+            "app.tasks.backfill_polymarket_history",
+            "app.tasks.backfill_polymarket_winners",
+            "app.tasks.backfill_espn_win_prob",
+            "app.tasks.backfill_team_identities",
+            "app.tasks.kalshi_cliff_drain",
+        }
+        on_heavy = backfills & HEAVY_TASKS
+        assert not on_heavy, (
+            f"600-960s backfills must stay on background (#224, upheld by #1609): {on_heavy}"
+        )
+        routes = app.conf.task_routes
+        leaked = {
+            t: routes.get(t, {}).get("queue") for t in backfills
+            if routes.get(t, {}).get("queue") == "heavy"
+        }
+        assert not leaked, f"backfills leaked onto heavy: {leaked}"
 
     def test_all_heavy_tasks_registered(self):
         from app.tasks import HEAVY_TASKS, celery_app as app
