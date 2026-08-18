@@ -84,6 +84,7 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.backfill_team_logos",
         "app.tasks.backfill_winners",
         "app.tasks.board_sentinel",
+        "app.tasks.build_cohort_market_type",
         "app.tasks.calibration_sentinel",
         "app.tasks.canonicalize_entities",
         "app.tasks.categorize_futures",
