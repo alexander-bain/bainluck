@@ -30,7 +30,17 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic. (<=32 chars — gotcha #1.)
 revision = "add_disc_int_provenance"
-down_revision = "add_disc_int_market_type"
+# SLOT ASSIGNED by INT-086 at integration, as this file's own header requested.
+# Authored against `add_disc_int_market_type`, which was the head when the branch
+# was cut but is no longer: LAT-P067's `add_typeahead_index` landed on master at
+# `9e0f0f37` about an hour earlier. Left as authored this is TWO HEADS, and two
+# heads fail the Heroku release phase — the site does not deploy at all.
+#
+# Retargeted rather than resolved with a merge revision because the two are
+# independent and a linear chain is cheaper to reason about forever: this adds a
+# column to `discover_interactions`, `add_typeahead_index` creates a new table.
+# Neither touches the other's object, so ordering between them is free.
+down_revision = "add_typeahead_index"
 branch_labels = None
 depends_on = None
 
