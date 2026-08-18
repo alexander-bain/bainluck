@@ -647,6 +647,21 @@ HEAVY_TASKS = {
                                              # cache warmer no user waits on, and
                                              # it was directly observed holding a
                                              # slot through a measured hole.
+    # --- Option D (#1866, LAT-P067): the typeahead index builder + its sentinel.
+    # These go on `heavy` and NOT on `background`, and the arithmetic is the
+    # reason rather than the habit. `background` is the queue #1609 just proved
+    # has ~ONE effective slot; putting a new multi-minute latency-TOLERANT
+    # resident there would re-create the exact starvation that commit cures, on
+    # the very queue whose depth read 3,014 at this window's Phase 0.
+    #
+    # The cost to `heavy` is bounded and small, stated so it can be checked: the
+    # builder is capped at 90s and fires twice an hour (:23/:53) = ~2.5% of ONE
+    # of heavy's two slots; the sentinel is a daily ~5s detect-only read at 07:50
+    # UTC, deliberately AFTER the 07:45 settled sentinel so it never contends
+    # inside #233's protected morning window. That is the whole added load, on a
+    # lane that #1609 just added 45.9% of a slot to.
+    "app.tasks.rebuild_typeahead_index",
+    "app.tasks.typeahead_index_sentinel",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -2561,6 +2576,84 @@ def warm_typeahead(self, head_size: int = None):
     return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
 
 
+@celery_app.task(
+    bind=True, soft_time_limit=150, time_limit=180, name="app.tasks.rebuild_typeahead_index"
+)
+def rebuild_typeahead_index(
+    self, budget_seconds: int = None, page_size: int = None, entity_types=None
+):
+    """Option D (#1866): project the searchable entities into `typeahead_index`.
+
+    Bounded and resumable. The default 90s budget sits well under the 150s soft
+    limit, which sits under the 180s hard limit — and a single page is separately
+    bounded at 25s inside the task, so the LONGEST UNINTERRUPTED OP is bounded and
+    not just the loop boundary. All three are under the 300s global hard
+    `task_time_limit`, which is a SIGKILL that would be recorded as `no_data`
+    rather than as a failure.
+
+    Enrolled in `task_verdict.ENFORCED_TASKS`, with a real `terminal`: a
+    budget-truncated pass returns `partial` and must never read GREEN, because
+    "the sweep is behind" and "the sweep is caught up" are the two states this
+    task exists to distinguish and they look identical from outside.
+
+    ALSO the one-off-dyno entry point for the initial ~380k-row fill, which is
+    condition 3 of the assigned migration slot (the backfill is a TASK, never a
+    migration step):
+
+        heroku run:detached --size=standard-2x -a bainluck -- \\
+          python3 -c "from app.tasks import rebuild_typeahead_index as t; \\
+                      print(t.apply(kwargs={'budget_seconds': 1500}).get())"
+
+    Note `run:detached` — a non-detached `heroku run` silently fails to execute
+    in this sandbox (gotcha #48), so verify by census, never by stdout.
+    """
+    from app.tasks.typeahead_index import (
+        DEFAULT_BUDGET_SECONDS,
+        PAGE_SIZE,
+        _rebuild_typeahead_index,
+    )
+
+    return _tracked_run(
+        "rebuild_typeahead_index",
+        _rebuild_typeahead_index(
+            budget_seconds=DEFAULT_BUDGET_SECONDS if budget_seconds is None else int(budget_seconds),
+            page_size=PAGE_SIZE if page_size is None else int(page_size),
+            entity_types=entity_types,
+        ),
+    )
+
+
+@celery_app.task(
+    bind=True, soft_time_limit=240, time_limit=280, name="app.tasks.typeahead_index_sentinel"
+)
+def typeahead_index_sentinel(self, sample_size: int = None):
+    """Option D's D4 gate: prove `typeahead_index` still agrees with its sources.
+
+    NOT a follow-up and not a nice-to-have — the table ships with this or the
+    table does not ship. `typeahead_index` is a SECOND COPY OF TRUTH, and #1866's
+    history is instruments that reported success while doing nothing (gotcha #53).
+    A denormalised index that silently goes stale is a worse defect than the slow
+    query it replaces, because the slow query was at least correct.
+
+    Enrolled in `ENFORCED_TASKS`. Drift above the threshold returns
+    `terminal: failed` — loudly not-GREEN — rather than reporting its own finding
+    as a healthy run. An empty index returns `no_work`, because "the backfill has
+    not run yet" is not drift and an alarm that screams through the whole initial
+    build is an alarm nobody reads.
+    """
+    from app.tasks.typeahead_index import (
+        SENTINEL_SAMPLE_SIZE,
+        _run_typeahead_index_sentinel,
+    )
+
+    return _tracked_run(
+        "typeahead_index_sentinel",
+        _run_typeahead_index_sentinel(
+            sample_size=SENTINEL_SAMPLE_SIZE if sample_size is None else int(sample_size)
+        ),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_event_concept")
 def refresh_event_concept(self, key: str, token: str | None = None):
     """Revalidate one concept key after the route served its 24h mirror.
@@ -3109,6 +3202,40 @@ celery_app.conf.beat_schedule = {
         # Registered prediction and grading rows: `lat-p062-warmer-graded.md` §3.
         "schedule": 10.0,
         "options": {"queue": "background"},
+    },
+    "rebuild-typeahead-index": {
+        "task": "app.tasks.rebuild_typeahead_index",
+        # Option D (#1866). :23 and :53 — deliberately in the quiet half of the
+        # hour, clear of `prediction_market_match` (:05/:20/:35/:50) and of
+        # `precompute_calibration_main` (:15), the two things that can hold both
+        # `heavy` slots. A 90s-capped pass twice an hour is ~2.5% of ONE of
+        # heavy's two slots.
+        #
+        # WHY IT IS ON `heavy` AT ALL, since #1609 just loaded that lane: the
+        # alternative is `background`, which is the queue #1609 proved has ~one
+        # effective slot and whose depth read 3,014 at LAT-P067's Phase 0. A new
+        # latency-tolerant multi-minute resident belongs there least of all.
+        #
+        # Incremental by design: the upsert only writes rows whose content_hash
+        # actually changed, so a steady-state pass is nearly free and `written`
+        # is a real measure of change rather than of activity. The FIRST fill is
+        # ~380k rows and is NOT meant to happen here — it is a one-off dyno run
+        # with a 1500s budget (see the task docstring), which is condition 3 of
+        # the assigned migration slot.
+        "schedule": crontab(minute="23,53"),
+        "options": {"queue": "heavy"},
+    },
+    "typeahead-index-sentinel": {
+        "task": "app.tasks.typeahead_index_sentinel",
+        # Option D's D4 gate. 07:50 UTC — daily, and deliberately AFTER the
+        # 07:45 settled-concept sentinel so it never contends inside #233's
+        # protected morning window. ~5s, detect-only, files nothing.
+        #
+        # It ships in the SAME commit as the table on purpose. A second copy of
+        # truth with no sentinel is the next gotcha #53 entry, and #1866 has
+        # supplied three of them already.
+        "schedule": crontab(hour=7, minute=50),
+        "options": {"queue": "heavy"},
     },
     "precompute-discover-candidate-base": {
         "task": "app.tasks.precompute_discover_candidate_base",

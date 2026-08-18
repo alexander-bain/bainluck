@@ -267,6 +267,11 @@ class TestBeatScheduleCompleteness:
         "precompute-category-pages",
         "warm-event-concepts",
         "warm-typeahead",
+        # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
+        # sentinel. Gotcha #12: this allowlist is the reason a new beat entry
+        # cannot land silently.
+        "rebuild-typeahead-index",
+        "typeahead-index-sentinel",
         "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
