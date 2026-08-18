@@ -7696,6 +7696,24 @@ def _concept_reason(c: dict) -> str:
     return f"{n} market{'' if n == 1 else 's'}" if n else ""
 
 
+#: How old a MIRROR-served concept envelope may be before the feed refuses to
+#: lead a card with its probability (#1948, UX-P095).
+#:
+#: The mirror lives for 24h because its job is to outlive an outage for the
+#: DETAIL page, which discloses `availability: "stale_ok"` beside it. A feed card
+#: has nowhere to publish that disclosure, so the feed sets its own, tighter
+#: tolerance — and sets it HERE, next to the read that consumes it, rather than
+#: inheriting the producer's TTL (ruling 084).
+#:
+#: One hour is chosen against the producer's MEASURED cadence: `warm_event_concepts`
+#: recorded 112 successes in 24h on 2026-08-18 (~13 min apart), so an hour is four
+#: consecutive missed rebuilds — a real outage, not jitter. Past it the card falls
+#: back to its market count, which is the degradation both resolvers below already
+#: promise for "any failure". Read as a module attribute inside the function so an
+#: override resolves at CALL time, never as a default argument (ruling 084).
+CONCEPT_MIRROR_MAX_AGE_SECONDS = 3600
+
+
 async def _read_cached_concept_envelope(key: str) -> Optional[dict]:
     """Read one concept detail envelope from Redis, or ``None``. NEVER builds.
 
@@ -7713,23 +7731,82 @@ async def _read_cached_concept_envelope(key: str) -> Optional[dict]:
 
     Total by construction (gotcha #39: shared async client, bounded op, no sync
     Redis on the event loop). Any failure is a miss.
+
+    READS BOTH SLOTS, AND THAT IS #1948's WHOLE DEFECT (UX-P095).
+
+    This read used to be ``client.get(f"{CACHE_PREFIX}{key}")`` — the PRIMARY slot
+    and nothing else. The key NAME was never wrong: `cache_keys(key).primary` is
+    exactly that string, and three cycles spent looking for a mismatch found none,
+    because there isn't one. What is wrong is the slot's LIFETIME. One producer
+    writes two slots (`write_payload`): the primary at ``ENVELOPE_TTL`` = **60s**,
+    and the 24h mirror. This reader only ever looked at the 60-second one.
+
+    Measured on production 2026-08-18, twenty-one seconds apart, same content,
+    same `created_at`:
+
+        19:18:13  detail `availability: live`      GET /api/feed -> 4/4 leaders
+        19:18:34  detail `availability: stale_ok`  GET /api/feed -> 0/4 leaders
+
+    Nothing changed but which slot still held the bytes. Everything downstream —
+    the competitor->leader step, `bounded_redis_call`, the servability contract —
+    was proven working by the 4/4 read and is not implicated. The duty cycle is
+    the whole story: `warm_event_concepts` recorded **112 successes in 24h**, each
+    leaving a 60s primary, so the slot this function read was alive for roughly
+    **8% of the day** and every probe in cycles 89, 90 and 91 landed in the other
+    92%.
+
+    Why the beat's own comment did not catch it: it justifies the 5-minute cadence
+    with "the route serves the 24h mirror on a miss in ~0.44s", which is TRUE of
+    `routes/event.py` and FALSE here — UX-P089 (#1934) made the leader resolver
+    cache-only with no mirror read, and the cadence's safety argument silently
+    stopped covering its second consumer. Ruling 084: the authority on what is warm
+    lived where the ROUTE reads, and this reader was looking somewhere else.
+
+    Both slots come back in ONE bounded round trip, so the common path pays no
+    extra latency and the mirror costs nothing to consult.
     """
     try:
         from app.utils.event_concept_cache import (
-            CACHE_PREFIX,
+            cache_keys,
             decode_payload,
             is_servable_envelope,
+            payload_age_seconds,
         )
         from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
+        keys = cache_keys(key)
         client = await get_shared_async_redis()
-        result = await bounded_redis_call(lambda: client.get(f"{CACHE_PREFIX}{key}"))
+        result = await bounded_redis_call(
+            lambda: client.mget([keys.primary, keys.stale])
+        )
         if not result.is_ok:
             return None
-        payload = decode_payload(result.value)
-        if payload is None or not is_servable_envelope(payload):
+        values = list(result.value) if isinstance(result.value, (list, tuple)) else []
+        values += [None] * (2 - len(values))
+
+        # Prefer the primary: inside its 60s TTL it is by construction the freshest
+        # thing we have, and needs no age check.
+        primary = decode_payload(values[0])
+        if primary is not None and is_servable_envelope(primary):
+            return primary
+
+        mirror = decode_payload(values[1])
+        if mirror is None or not is_servable_envelope(mirror):
             return None
-        return payload
+
+        # The mirror is the same bytes the detail page is serving right now, but
+        # a card cannot disclose staleness, so the feed bounds it itself.
+        max_age = CONCEPT_MIRROR_MAX_AGE_SECONDS
+        age = payload_age_seconds(mirror)
+        if age is None or age > max_age:
+            logger.info(
+                "Feed: refusing mirror envelope for %s (age %ss > %ss)",
+                key,
+                None if age is None else round(age),
+                max_age,
+            )
+            return None
+        return mirror
     except Exception:
         return None
 

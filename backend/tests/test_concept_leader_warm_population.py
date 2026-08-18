@@ -525,13 +525,24 @@ async def test_zero_concept_cards_are_suppressed_when_the_leaders_are_warm():
     async def empty(db, statuses=None, limit=None):
         return []
 
-    # Serve the envelopes the way production serves them — out of Redis.
+    # Serve the envelopes the way production serves them — out of Redis, and out
+    # of BOTH slots the producer writes. UX-P095 (#1948): the reader fetches the
+    # 60s primary and the 24h mirror in one `mget`, because the primary is alive
+    # for roughly 8% of the day and reading it alone is the defect this file's
+    # acceptance is named for.
     class _Client:
-        async def get(self, k):
+        def _lookup(self, k):
+            base = k[: -len(":stale")] if k.endswith(":stale") else k
             for key, raw in warm.items():
-                if k.endswith(key):
+                if base.endswith(key):
                     return raw
             return None
+
+        async def get(self, k):
+            return self._lookup(k)
+
+        async def mget(self, keys):
+            return [self._lookup(k) for k in keys]
 
     async def _shared():
         return _Client()

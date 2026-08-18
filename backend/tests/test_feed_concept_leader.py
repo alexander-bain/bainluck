@@ -12,7 +12,7 @@ resolver reads it, picks the right end of it, and refuses the shapes it must.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -31,7 +31,7 @@ class _FakeAdapter:
         return self._envelope
 
 
-def _servable(payload: dict) -> str:
+def _servable(payload: dict, created_at=None) -> str:
     """Stamp a payload with a real, current-generation envelope and encode it.
 
     UX-P089: the resolver now refuses a payload the DETAIL page would refuse
@@ -46,7 +46,10 @@ def _servable(payload: dict) -> str:
     return json.dumps(
         stamp_envelope(
             payload,
-            created_at=datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc),
+            # An OFFSET from now, never a pinned wall-clock hour (gotcha #44).
+            # The mirror tier is age-bounded, so a fixture that pinned a date
+            # would decide its own verdict differently every day it is run.
+            created_at=created_at or (datetime.now(timezone.utc) - timedelta(seconds=30)),
             lifecycle_watermark=None,
         ),
         default=str,
@@ -66,9 +69,21 @@ def envelope_source(monkeypatch):
 
     Now the envelope is served the way production serves it — out of Redis — and
     the adapter is installed only so a test can assert it is NEVER CALLED.
+
+    UX-P095 (#1948) changed its SHAPE, not its purpose: the reader now fetches the
+    primary and the 24h mirror in one `mget`, so the canned value is a two-element
+    list and `slot` says which slot holds it. `slot="stale"` is the production
+    state that cost three cycles — the primary expired, the mirror holding the
+    exact same bytes.
+
+    This fixture is still deliberately KEY-AGNOSTIC: it answers any key, because
+    these tests are about picking the right end of a competitor list. That is
+    precisely why it could not see #1948, and it is not asked to —
+    `test_feed_concept_leader_warm_seam.py` carries the key-addressed specimen
+    that drives feed -> resolver -> the real slot names the producer writes.
     """
 
-    def _install(envelope, *, cached=True):
+    def _install(envelope, *, cached=True, slot="primary", created_at=None):
         import app.utils.event_concept as ec
         import app.utils.request_cache as rc
 
@@ -76,11 +91,16 @@ def envelope_source(monkeypatch):
         monkeypatch.setattr(ec, "get_adapter", lambda domain: adapter)
         monkeypatch.setattr(ec, "parse_event_key", lambda key: ("ufc", "slug"))
 
-        raw = _servable(envelope) if cached else None
+        raw = _servable(envelope, created_at=created_at) if cached else None
+        slots = {
+            "primary": [raw, None],
+            "stale": [None, raw],
+            "both": [raw, raw],
+        }[slot]
 
         class _Result:
             is_ok = cached
-            value = raw
+            value = slots
 
         async def _bounded(_fn):
             return _Result()
