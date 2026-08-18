@@ -78,6 +78,56 @@ def pair_verdict(
     return Pairing.DIFFERENT
 
 
+class IdCurrency(str, Enum):
+    """Three-valued verdict on whether a provider id still names the row it is on.
+
+    A provider id is a *claim* that a row and a provider record are the same game.
+    That claim can go stale — a row keeps the previous night's Odds API event id and
+    the scores endpoint happily answers for it — and once it is stale, every read
+    that trusts it is reading about a different game (#1981).
+    """
+
+    CURRENT = "current"        # the bound row IS the game the provider record describes
+    STALE = "stale"            # the bound row is a DIFFERENT game — the id no longer names it
+    UNVERIFIABLE = "unverifiable"  # a time is missing — we could not check, so we did not
+    UNBOUND = "unbound"        # no row of ours holds this provider id
+
+
+def external_id_currency(
+    our_commence: datetime | None,
+    their_start: datetime | None,
+    row_found: bool = True,
+    max_separation: timedelta = SAME_GAME_MAX_SEPARATION,
+) -> IdCurrency:
+    """Is the provider id on this row still current, i.e. does it still name this game?
+
+    This is ``pair_verdict`` asked in the direction a *writer* needs it. A writer that
+    has looked a row up BY a provider id cannot then use that id as evidence the row is
+    the right one — that is circular, and it is the whole of #1981: the Odds API scores
+    block compared the SCORE RECORD's commence to ``now`` and never to the row's own, so
+    a row carrying the previous night's event id was stamped with the previous night's
+    final every 300 seconds.
+
+    Ruling (b)(2), queue 371: **stale-``external_id`` ownership goes with the writer.**
+    The writer re-verifies, re-binds, or nulls a stale id; **it never compares against
+    one.** This function is the re-verification arm — call it before any write that was
+    addressed by a provider id, and treat anything but ``CURRENT`` as a refusal.
+
+    ``UNVERIFIABLE`` is deliberately NOT ``CURRENT``, for the same reason
+    ``Pairing.UNKNOWN`` is not ``Pairing.SAME``: a check that could not run must never
+    read as a check that passed (doctrine: *could-not-check never renders as
+    nothing-to-report*).
+    """
+    if not row_found:
+        return IdCurrency.UNBOUND
+    verdict = pair_verdict(our_commence, their_start, max_separation)
+    if verdict is Pairing.SAME:
+        return IdCurrency.CURRENT
+    if verdict is Pairing.DIFFERENT:
+        return IdCurrency.STALE
+    return IdCurrency.UNVERIFIABLE
+
+
 def live_write_is_premature(
     event_commence: datetime | None,
     now: datetime | None,
