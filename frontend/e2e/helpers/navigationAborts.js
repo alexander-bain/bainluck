@@ -74,6 +74,50 @@ const RSC_PREFETCH_ABORT = Object.freeze({
 });
 
 /**
+ * THE INSTRUMENT-INDUCED CARVE-OUT (ruling 021 clause 3, amended 2026-08-18,
+ * resolving #1908 M2 — owners #1662, #1668, #1783, #1667).
+ *
+ * The deadlock, which is why this is a ruling and not a patch: the consent
+ * pack's METHOD is to navigate mid-load — grant, revoke, reload, open a second
+ * tab — so cancelled in-flight requests are its exhaust. The rail's RULE is that
+ * a cancelled `/api/feed` stays graded (#1525 Shape A), because it is invisible
+ * to the backend's own metrics. Apply either alone and the other breaks: #1667
+ * is a first-party aborted `/api/feed` in a journey whose own navigation aborted
+ * it, which is a permanent red no product change can clear.
+ *
+ * The amendment resolves it by moving the guard off the PROXY and onto the
+ * OUTCOME. Clause 3 was never about the request record; it is about #1909 — a
+ * blank main region a user actually sees, produced by a feed fetch that failed
+ * where the backend cannot see it. When the harness caused the navigation the
+ * abort carries no information about the product; the blank region, one step
+ * later, still carries all of it.
+ *
+ * So: **the abort is excusable; the aftermath is graded.** Four conditions, all
+ * required, and all enforced below rather than trusted:
+ *
+ *   1. ATTRIBUTABLE — the failed request carries `abort.instrument_action`,
+ *      stamped by the collector with the harness action in flight when it fired.
+ *   2. DECLARED — the journey declares this allowance, so it stays visible and
+ *      retirable like every other.
+ *   3. AFTERMATH GRADED — the caller passes `{ aftermathGraded: true }`, which
+ *      `journey.finish` sets only when `content.main_region_nonblank` was
+ *      computed from MEASUREMENTS. Absent context is falsy, so a grader that
+ *      forgets to pass it excuses nothing: this fails CLOSED, and Shape A
+ *      survives a caller's oversight.
+ *   4. SETTLED — the measurement branch polls until the region stops loading
+ *      (UX-P094), so the aftermath is not a photograph of a skeleton.
+ *
+ * An abort NOBODY instrumented is untouched: never excusable, asserted in both
+ * graders, exactly as ruled on 2026-08-10.
+ */
+const INSTRUMENT_NAVIGATION_ABORT = Object.freeze({
+  match: "",
+  issue: 1908,
+  instrumentInduced: true,
+  intermittent: true,
+});
+
+/**
  * Failures caused by tearing down a navigation are not product defects: the
  * browser cancels in-flight requests when the page navigates away, and Next
  * prefetches links on hover and in viewport then abandons what it no longer
@@ -114,6 +158,19 @@ function isFeedRequest(failure) {
 }
 
 /**
+ * Is this failure THIRD-PARTY — an origin that is not ours?
+ *
+ * UX-P095. The collector stamps it, because origin membership is its knowledge
+ * (`firstPartyOrigins`), and the decision to grade or not grade lives here,
+ * because two graders read it. The flag is the ledger's, not a URL heuristic
+ * re-derived per grader — that re-derivation is exactly the drift this module
+ * exists to end.
+ */
+function isThirdParty(failure) {
+  return !!(failure && failure.third_party === true);
+}
+
+/**
  * An allowance is either a bare substring (STRICT — it must fire somewhere in
  * the run) or `{ match, intermittent: true, issue }` for a phenomenon MEASURED
  * to be racy (INT-034). These two readers live here so the graders and the
@@ -128,16 +185,66 @@ function allowanceIsIntermittent(a) {
   return typeof a === "object" && a !== null && a.intermittent === true;
 }
 
+function allowanceIsInstrumentInduced(a) {
+  return typeof a === "object" && a !== null && a.instrumentInduced === true;
+}
+
+/**
+ * Condition 1 — is this abort ATTRIBUTABLE to an action the harness issued?
+ *
+ * The collector stamps `abort.instrument_action` at the moment of the abort with
+ * whatever harness action was in flight. An abort that fired while the harness
+ * was doing nothing has no stamp and is therefore organic, whatever journey it
+ * happened in. That distinction is the whole safety of the carve-out: without
+ * it, "the consent pack navigates a lot" would excuse every abort in the pack.
+ */
+function isInstrumentInduced(failure) {
+  if (!failure) return false;
+  const action = failure.abort && failure.abort.instrument_action;
+  if (typeof action === "string" && action.trim()) return true;
+  return typeof failure.instrumentAction === "string" && !!failure.instrumentAction.trim();
+}
+
+/**
+ * Condition 3 — has the caller PROVEN the aftermath is graded?
+ *
+ * Fails closed by construction: `undefined` context, a context without the flag,
+ * or anything other than a literal `true` all mean "not proven", which means no
+ * excuse. A carve-out whose safety condition defaults to satisfied is a
+ * deletion with extra words.
+ */
+function aftermathIsGraded(context) {
+  return !!(context && context.aftermathGraded === true);
+}
+
 /**
  * Does one DECLARED allowance excuse one failed request?
  *
- * Three conditions, all required: it really is a navigation cancellation, it is
- * not a feed request, and its URL contains the declared token. Anything that is
- * not an abort — a 4xx, a 5xx, a DNS failure — is untouched by a declaration
- * and still fails on a declared URL.
+ * ORDINARY allowances — three conditions, all required: it really is a
+ * navigation cancellation, it is not a feed request, and its URL contains the
+ * declared token. Anything that is not an abort — a 4xx, a 5xx, a DNS failure —
+ * is untouched by a declaration and still fails on a declared URL.
+ *
+ * INSTRUMENT-INDUCED allowances — the ruling 021 amendment, and the ONLY route
+ * by which a feed abort can be excused. It swaps the Shape A refusal for two
+ * stricter conditions (attribution + a graded aftermath) rather than dropping
+ * it, and every one of them is checked here, in the shared decision, so the two
+ * graders cannot hold different views of what the carve-out means. `context` is
+ * optional and its absence is a REFUSAL, not a default-allow.
  */
-function abortAllowanceMatches(failure, allowance) {
+function abortAllowanceMatches(failure, allowance, context) {
   if (!isNavigationCancellation(failure)) return false;
+
+  if (allowanceIsInstrumentInduced(allowance)) {
+    if (!isInstrumentInduced(failure)) return false;
+    if (!aftermathIsGraded(context)) return false;
+    const scope = allowanceMatch(allowance);
+    // An empty `match` means "any URL this harness action aborted". A non-empty
+    // one narrows it, so a pack can carve out one endpoint without carving out
+    // the rest.
+    return scope ? String((failure && failure.url) || "").includes(scope) : true;
+  }
+
   if (isFeedRequest(failure)) return false;
   const needle = allowanceMatch(allowance);
   if (!needle) return false;
@@ -145,12 +252,26 @@ function abortAllowanceMatches(failure, allowance) {
 }
 
 /** The declared allowances that actually matched something in this journey. */
-function firedAllowances(failedRequests, allowances) {
+function firedAllowances(failedRequests, allowances, context) {
   const failures = Array.isArray(failedRequests) ? failedRequests : [];
   const declared = Array.isArray(allowances) ? allowances : [];
   return declared.filter((allowance) =>
-    failures.some((f) => abortAllowanceMatches(f, allowance))
+    failures.some((f) => abortAllowanceMatches(f, allowance, context))
   );
+}
+
+/**
+ * The non-vacuity guard, stated as a question the journey grader must answer.
+ *
+ * An instrument-induced allowance declared by a journey that produces no graded
+ * aftermath is exactly the deletion condition 3 forbids: it would excuse the
+ * abort and grade nothing in its place. Returns the offending declarations so
+ * the grader can name them, rather than a bare boolean.
+ */
+function instrumentAllowancesMissingAftermath(allowances, context) {
+  if (aftermathIsGraded(context)) return [];
+  const declared = Array.isArray(allowances) ? allowances : [];
+  return declared.filter(allowanceIsInstrumentInduced);
 }
 
 /**
@@ -181,11 +302,17 @@ function unfiredAllowances(journeys) {
 module.exports = {
   RSC_PREFETCH,
   RSC_PREFETCH_ABORT,
+  INSTRUMENT_NAVIGATION_ABORT,
   allowanceMatch,
   allowanceIsIntermittent,
+  allowanceIsInstrumentInduced,
+  isInstrumentInduced,
+  aftermathIsGraded,
+  instrumentAllowancesMissingAftermath,
   NAVIGATION_CANCEL_FAILURES,
   isNavigationCancellation,
   isFeedRequest,
+  isThirdParty,
   abortAllowanceMatches,
   firedAllowances,
   unfiredAllowances,

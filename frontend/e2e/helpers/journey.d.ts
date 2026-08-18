@@ -29,6 +29,8 @@ export interface JourneyArtifact {
 export interface TelemetryObservation {
   host: string;
   path: string;
+  /** #1658 — the allowlisted GA4 event name, `"other"`, or null when absent. */
+  event?: string | null;
   count: number;
 }
 
@@ -39,6 +41,12 @@ export interface TelemetryLedgerRule {
   hostSuffix?: string;
   /** Literal path prefix. */
   pathPrefix?: string;
+  /**
+   * #1658 — narrows to one allowlisted GA4 event name. Without it a host rule
+   * counts every beacon that host receives, which is how `page_view_exactly_once`
+   * came to count four events and call them page views.
+   */
+  eventName?: string;
   expect: "absent" | "exact" | "at_least";
   /** Required for `exact` / `at_least`. */
   count?: number;

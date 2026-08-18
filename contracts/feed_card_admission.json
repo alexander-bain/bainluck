@@ -1,0 +1,515 @@
+{
+  "$comment": [
+    "#1951 — THE ONE DISCOVER CARD-ADMISSION DECISION.",
+    "",
+    "Ruling 021: when two consumers must agree about the same input, the unit to",
+    "share is the DECISION, not the ingredient. A shared predicate under two",
+    "policies is still two policies — and three implementations that merely AGREE",
+    "are still three policies that can drift apart on any given Tuesday.",
+    "",
+    "This rule has three implementations because it has to: it runs in TypeScript",
+    "on web, in Swift on native, and in Python inside the Flow Sentinel's",
+    "dark-class detector. No import can span those. So the shared unit is this",
+    "table — the decision, expressed as data — and every implementation's test",
+    "drives ITS predicate through EVERY row here. A row is a claim about the RULE,",
+    "never about one surface.",
+    "",
+    "WHAT WENT WRONG WITHOUT IT. `feed_item_is_renderable` shipped in UX-P092 as a",
+    "third copy nobody had enumerated, carrying the PRE-#1935 reading on two arms.",
+    "It feeds the dark-class limb — the #1935-family detector — so a predicate more",
+    "permissive than the clients made the family it hunts invisible: seven",
+    "golferless-whathit tournaments, 100% dark on both surfaces, scored",
+    "`7 built, 7 renderable`. A PASS over a dark tier. Cycle 90 corrected the",
+    "reading; this file removes the ability to drift again unnoticed.",
+    "",
+    "TO ADD AN ARM: add rows here FIRST, watch all three suites go red, then fix",
+    "the implementations. To add a card TYPE: add it to `emitted_types` and give it",
+    "rows, or `registry` fails the build — an emitted type with no arm is dark by",
+    "construction, which is #1935 restated as a build error."
+  ],
+
+  "version": 1,
+  "now": "2026-08-18T04:45:00Z",
+
+  "emitted_types": ["event", "futures", "tournament", "concept", "bundle"],
+
+  "unconditional_types": ["event"],
+  "$unconditional_comment": [
+    "A type with no well-formed suppression row. Declared rather than tolerated,",
+    "because the coverage guard's job is to refuse a type that is pinned in only",
+    "one direction — a type with only admitted rows is satisfied by `return true`,",
+    "and a type with only suppressed rows is satisfied by `return false`, which",
+    "would 'detect' perfectly and starve the feed. `event` is genuinely",
+    "unconditional on all three surfaces (a real matchup plus a status/score is",
+    "never a bare tile), so the exception is real; naming it here keeps it",
+    "checkable. A declared unconditional type must STILL carry a",
+    "malformed-envelope suppression row, so `return true` remains insufficient."
+  ],
+
+  "producers": [
+    {
+      "path": "backend/app/routes/feed.py",
+      "emits": ["event", "futures", "tournament", "concept"]
+    },
+    {
+      "path": "backend/app/utils/discover_bundles.py",
+      "emits": ["bundle"]
+    }
+  ],
+
+  "implementations": [
+    {
+      "id": "web",
+      "language": "typescript",
+      "path": "frontend/components/discover/utils.ts",
+      "symbol": "feedItemSuppressionReason",
+      "role": "authority",
+      "returns": "reason",
+      "executes_table": true,
+      "driven_by": "frontend/__tests__/ios/conceptAdmissionParity.test.ts"
+    },
+    {
+      "id": "native",
+      "language": "swift",
+      "path": "ios/Bain Luck/Bain Luck/ViewModels/DiscoverViewModel.swift",
+      "symbol": "suppressionReason",
+      "role": "authority",
+      "returns": "reason",
+      "executes_table": false,
+      "driven_by": "frontend/__tests__/ios/conceptAdmissionParity.test.ts",
+      "why_not_executed": [
+        "jest is a deploy gate here and the Swift test target is not reachable from",
+        "CI, so native is asserted against SOURCE in the same file that executes the",
+        "other two. That buys less than execution and it is what is available — a",
+        "source assertion that runs on every push beats an execution assertion that",
+        "runs on an iOS lane's laptop."
+      ]
+    },
+    {
+      "id": "sentinel",
+      "language": "python",
+      "path": "backend/app/tasks/flow_sentinel.py",
+      "symbol": "feed_item_is_renderable",
+      "role": "mirror",
+      "returns": "boolean",
+      "executes_table": true,
+      "driven_by": "backend/tests/test_flow_sentinel_admission_parity.py",
+      "note": [
+        "Returns a bool, not a reason code, and that asymmetry is deliberate: the",
+        "reason codes are web's suppression TELEMETRY, while the sentinel only needs",
+        "the verdict. The shared unit is the decision (admit / drop), so a row's",
+        "`expected_reason: null` reads as True here and any string reads as False."
+      ]
+    }
+  ],
+
+  "consumers": [
+    {
+      "path": "frontend/app/discover/page.tsx",
+      "why": "Filters the page through `feedItemHasRenderableContent` and ships the suppressed `{type, reason}` counts as telemetry. Calls the rule; does not restate it."
+    },
+    {
+      "path": "frontend/app/sports/page.tsx",
+      "why": "The same two calls for the Sports tab."
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Views/DiscoverView.swift",
+      "why": "Consumes `DiscoverViewModel.renderable`. Its own `suppresses(category:)` is the personalization category cooldown — a different suppression that happens to share the verb."
+    },
+    {
+      "path": "frontend/app/my-stuff/page.tsx",
+      "why": "`requiredRenderableCount` is a section item count feeding outcome classification. Trips the fingerprint on the word alone; decides no card's admission."
+    }
+  ],
+
+  "not_this_rule": [
+    {
+      "path": "backend/app/routes/feed.py",
+      "symbol": "_suppress_zero_probability_cards",
+      "why": [
+        "A PRODUCER-side gate on the futures arm only (#240 item 4 / Queue 282), not",
+        "the multi-type admission rule. It also still branches on a `comparison` card",
+        "type that no producer emits — measured 2026-08-18, zero emission sites. Left",
+        "in place and recorded rather than deleted in a UX queue; note that if a",
+        "`comparison` card were ever emitted it would be `unknown_type` on web and",
+        "False in the sentinel, i.e. dark on arrival."
+      ]
+    },
+    {
+      "path": "frontend/lib/play/kidSafe.ts",
+      "why": [
+        "Branches on `marquee_whathit` to decide PLAYABILITY (a settled card cannot be",
+        "guessed), which is a different question about the same field."
+      ]
+    },
+    {
+      "path": "backend/scripts/evals/nonfutures_envelope_renderability_contract.py",
+      "symbol": "evaluate",
+      "why": [
+        "A corpus oracle over a synthetic case shape (`rows` / `children` /",
+        "`authoritative_result`), not over a feed item. It never branches on card",
+        "type, so it is a sibling rule about probability rows rather than a copy of",
+        "this one."
+      ]
+    },
+    {
+      "path": "backend/app/tasks/enrich_markets.py",
+      "why": [
+        "Trips the producer fingerprint on OpenAI `response_format={\"type\": ...}`",
+        "and on prompt text. Not a feed producer."
+      ]
+    }
+  ],
+
+  "$cases_comment": [
+    "WELL-FORMED items only carry an `expected_reason`. Malformed-ENVELOPE rows",
+    "(`data` absent, `data` a list, the item not an object at all) are marked",
+    "`malformed_envelope: true`: every implementation must still fall closed on",
+    "them, and the reason STRING is not part of the shared decision because native",
+    "never sees such a payload — its decoder rejects it before the predicate runs.",
+    "Malformed LEADER rows are ordinary rows, because a leader object is decoded",
+    "content that both erased-type surfaces genuinely face (gotcha #23)."
+  ],
+
+  "cases": [
+    {
+      "id": "event.bare",
+      "why": "Unconditional on all three surfaces, and correctly so: an event card is a real matchup plus a status/score, never a bare tile.",
+      "item": { "type": "event", "data": {} },
+      "expected_reason": null
+    },
+
+    {
+      "id": "futures.with_outcomes",
+      "why": "The ordinary live case.",
+      "item": {
+        "type": "futures",
+        "data": { "name": "Who wins the 2026 election?", "top_outcomes": [{ "name": "Yes", "probability": 0.62 }] }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.resolved_flag",
+      "why": "Settled means settled — a result-carrying card is renderable.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "resolved": true } },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.named_winner",
+      "why": "Settled means settled.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "winner": "Yes" } },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.terminal_status",
+      "why": "Settled-but-open is the normal Kalshi shape (gotcha #33).",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "status": "settled" } },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.terminal_status_uppercase",
+      "why": "Status comparison is case-folded on every surface.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "status": "FINALIZED" } },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.past_resolution_date",
+      "why": "Web's fourth settlement authority — the one the sentinel was missing, and it drifted in the STRICT direction, so the mirror under-counted a healthy page.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "resolution_date": "2026-08-16T04:45:00Z" } },
+      "expected_reason": null
+    },
+    {
+      "id": "futures.future_resolution_date",
+      "why": "A scheduled date is not a transition timestamp; a future one says nothing has happened yet.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "resolution_date": "2026-08-20T04:45:00Z" } },
+      "expected_reason": "empty_futures"
+    },
+    {
+      "id": "futures.unparseable_resolution_date",
+      "why": "Falls closed rather than guessing.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [], "resolution_date": "soon" } },
+      "expected_reason": "empty_futures"
+    },
+    {
+      "id": "futures.zero_outcome_unsettled",
+      "why": "Predicts nothing and has no result — the bare tile this gate exists for.",
+      "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [] } },
+      "expected_reason": "empty_futures"
+    },
+
+    {
+      "id": "tournament.with_golfers",
+      "why": "The golfer arm admits every tournament that CAN render — the card's whole champion hero lives inside golfers[0].",
+      "item": {
+        "type": "tournament",
+        "data": { "name": "The Open Championship", "status": "upcoming", "golfers": [{ "name": "Scottie Scheffler", "probability": 0.21 }] }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "tournament.golferless_whathit",
+      "why": "#1951's HEADLINE SPECIMEN. #1935 deleted the bare `marquee_whathit` arm from both clients; the sentinel kept it for three cycles and therefore scored a fully dark tier as a PASS. Since the golfer arm already admits everything renderable, this arm only ever fired for the card that cannot render.",
+      "item": {
+        "type": "tournament",
+        "data": { "name": "The Open Championship", "status": "closed", "golfers": [], "marquee_whathit": true }
+      },
+      "expected_reason": "empty_tournament"
+    },
+    {
+      "id": "tournament.bare",
+      "why": "A gradient, a chip and a title.",
+      "item": { "type": "tournament", "data": { "name": "The Open Championship", "status": "upcoming" } },
+      "expected_reason": "empty_tournament"
+    },
+
+    {
+      "id": "concept.unsettled_with_leader",
+      "why": "The #1939 class — an answer the surface already had and declined to print.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:ufc:26aug20", "name": "UFC Fight Night", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "Joshua Van", "probability": 0.5217, "field_size": 2 } }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "concept.vuelta_specimen",
+      "why": "The live #1948 specimen: Pogacar 0.751 of a 30-rider field, one Redis key away while the whole tier shipped dark.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:cycling:vuelta-2026", "name": "Vuelta a Espana", "domain": "cycling", "status": "live", "is_major": true, "marquee_whathit": false, "leader": { "name": "Tadej Pogacar", "probability": 0.751, "field_size": 30 } }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "concept.unsettled_no_leader",
+      "why": "The #1486 class — a hub card with nothing to predict. Hub cards carry no inline outcomes by design.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:ufc:26aug20", "name": "UFC Fight Night", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.whathit_named_winner",
+      "why": "Settled means settled.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:cycling:tdf-2026", "name": "Tour de France", "domain": "cycling", "status": "closed", "is_major": true, "marquee_whathit": true, "winner": "Tadej Pogacar" }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "concept.whathit_result_summary_only",
+      "why": "#1935 — a result the card can NAME, even without a winner field.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:cycling:tdf-2026", "name": "Tour de France", "domain": "cycling", "status": "closed", "is_major": true, "marquee_whathit": true, "result_summary": "Won by 1:12" }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "concept.whathit_names_nothing",
+      "why": "#1935 — the 'FINAL / see the recap' framing is not itself a result. `_resolve_concept_champion` returns nil for an ungradeable crown by design, so this is reachable rather than theoretical.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:cycling:tdf-2026", "name": "Tour de France", "domain": "cycling", "status": "closed", "is_major": true, "marquee_whathit": true }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.whathit_whitespace_is_not_a_result",
+      "why": "#1935 — a blank string is not a name.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:cycling:tdf-2026", "name": "Tour de France", "domain": "cycling", "status": "closed", "is_major": true, "marquee_whathit": true, "winner": "   ", "result_summary": "  " }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.settled_does_not_fall_back_to_leader",
+      "why": "THE ORDER PIN. 'Settled means settled' — a card with a result leads with the result and must never fall back to a probability that is now history. The server never sends both, so this row pins the ORDER of the two arms rather than a live case, which is precisely the kind of invariant that rots silently.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "event:ufc:26aug20", "name": "UFC Fight Night", "domain": "mma", "status": "closed", "is_major": true, "marquee_whathit": true, "leader": { "name": "Joshua Van", "probability": 0.5217, "field_size": 2 } }
+      },
+      "expected_reason": "empty_concept"
+    },
+
+    {
+      "id": "concept.leader_empty_object",
+      "why": "The erased-type failure mode. Native writes `leader != nil` and that is COMPLETE there, because its decoder rejects a malformed leader first. TypeScript and Python have no such gate and `{}` is truthy, so a presence test written 'to match native' matches the source and not the behaviour.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": {} }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_blank_name",
+      "why": "A nameless leader cannot be printed.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "   ", "probability": 0.6 } }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_missing_probability",
+      "why": "The card prints `probability * 100`; without one there is no percentage.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "Joshua Van" } }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_string_probability",
+      "why": "A numeric-looking string is not a number on either erased-type surface.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "Joshua Van", "probability": "0.6" } }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_probability_over_one",
+      "why": "Gotcha #23 — an independent-binary field can sum past 100%, so a leader reading over 1.0 is corrupt rather than confident.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "Joshua Van", "probability": 1.4 } }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_negative_probability",
+      "why": "The lower half of the same range check.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "Joshua Van", "probability": -0.1 } }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_is_a_string",
+      "why": "A leader that is not an object at all.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": "Joshua Van" }
+      },
+      "expected_reason": "empty_concept"
+    },
+    {
+      "id": "concept.leader_explicit_null",
+      "why": "The ordinary absent case, spelled out.",
+      "item": {
+        "type": "concept",
+        "data": { "key": "k", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": null }
+      },
+      "expected_reason": "empty_concept"
+    },
+
+    {
+      "id": "bundle.one_renderable_member",
+      "why": "A bundle earns its slot on any member that can render.",
+      "item": {
+        "type": "bundle",
+        "data": {
+          "items": [
+            { "type": "concept", "data": { "key": "a", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false } },
+            { "type": "concept", "data": { "key": "b", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "X", "probability": 0.5 } } }
+          ]
+        }
+      },
+      "expected_reason": null
+    },
+    {
+      "id": "bundle.all_members_empty",
+      "why": "A bundle of bare tiles is a bare tile with a header.",
+      "item": {
+        "type": "bundle",
+        "data": {
+          "items": [
+            { "type": "concept", "data": { "key": "a", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false } },
+            { "type": "concept", "data": { "key": "b", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false } }
+          ]
+        }
+      },
+      "expected_reason": "empty_bundle"
+    },
+    {
+      "id": "bundle.no_members",
+      "why": "An empty list has no renderable member.",
+      "item": { "type": "bundle", "data": { "items": [] } },
+      "expected_reason": "empty_bundle"
+    },
+    {
+      "id": "bundle.recursion_is_bounded_identically",
+      "why": "Bundles are not expected to nest, but a malformed deep chain must never blow the stack — and BOTH surfaces cut at depth > 3, so WHERE they cut is part of the shared decision rather than an implementation detail. Note precisely where: the guard lives inside the BUNDLE arm, so it counts nested bundles and never gates a leaf. The first draft of this row nested four bundles and expected a cut; both implementations admitted it, agreeing with each other and disagreeing with the row — which is the table doing its job on its own author. Five bundles put a BUNDLE at depth 4, and that is the one that is cut; the renderable concept beneath it is unreachable on every surface.",
+      "item": {
+        "type": "bundle",
+        "data": { "items": [
+          { "type": "bundle", "data": { "items": [
+            { "type": "bundle", "data": { "items": [
+              { "type": "bundle", "data": { "items": [
+                { "type": "bundle", "data": { "items": [
+                  { "type": "concept", "data": { "key": "deep", "name": "n", "domain": "mma", "status": "upcoming", "is_major": true, "marquee_whathit": false, "leader": { "name": "X", "probability": 0.5 } } }
+                ] } }
+              ] } }
+            ] } }
+          ] } }
+        ] }
+      },
+      "expected_reason": "empty_bundle"
+    },
+
+    {
+      "id": "unknown.wormhole",
+      "why": "Fail closed — an unrecognised type is dropped, never shown bare. This is also how a NEW card type behaves on the day it ships without arms, which is why `registry` fails the build for an emitted type with no rows.",
+      "item": { "type": "wormhole", "data": {} },
+      "expected_reason": "unknown_type"
+    },
+
+    {
+      "id": "malformed.no_data",
+      "why": "A card whose `data` never arrived. Web read `item.data` unguarded until #1951 and THREW here — inside a render-path `.filter()`, which blanks the whole Discover page (#1909's class). Falling closed is the stated property of this predicate, and throwing is not falling closed.",
+      "malformed_envelope": true,
+      "item": { "type": "concept" },
+      "expected_suppressed": true
+    },
+    {
+      "id": "malformed.event_no_data",
+      "why": "The `event` arm is the one unconditional admit on all three surfaces, so it is the arm most likely to be reached with nothing behind it. Python's envelope guard sits BEFORE its type dispatch and suppressed this; web's `case \"event\": return null` sat before any envelope check and admitted it. Both now guard the envelope first — an event card with no matchup, status or score behind it is not 'always renderable', it is not a card.",
+      "malformed_envelope": true,
+      "item": { "type": "event" },
+      "expected_suppressed": true
+    },
+    {
+      "id": "malformed.data_is_a_list",
+      "why": "Same shape, arriving as the wrong JSON container.",
+      "malformed_envelope": true,
+      "item": { "type": "concept", "data": [] },
+      "expected_suppressed": true
+    },
+    {
+      "id": "malformed.data_is_null",
+      "why": "Explicitly null rather than absent.",
+      "malformed_envelope": true,
+      "item": { "type": "futures", "data": null },
+      "expected_suppressed": true
+    },
+    {
+      "id": "malformed.item_is_a_string",
+      "why": "Not a card at all.",
+      "malformed_envelope": true,
+      "item": "not a card",
+      "expected_suppressed": true
+    },
+    {
+      "id": "malformed.item_is_null",
+      "why": "A hole in the items array.",
+      "malformed_envelope": true,
+      "item": null,
+      "expected_suppressed": true
+    }
+  ]
+}

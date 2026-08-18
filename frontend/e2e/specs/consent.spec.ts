@@ -1,6 +1,10 @@
-import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { test, expect, measureMainRegion } from "../fixtures/audit";
 import type { TelemetryExpectation } from "../helpers/journey";
-import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
+import { classifyMainRegion, type MainRegionObservation } from "../helpers/contentState";
+import {
+  INSTRUMENT_NAVIGATION_ABORT,
+  RSC_PREFETCH_ABORT,
+} from "../helpers/navigationAborts";
 
 /**
  * L2-222 Item 3 (#1453) — the desktop/mobile web consent pack.
@@ -36,8 +40,29 @@ import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
  * defect; this pacing stops it happening, so the pack keeps grading the thing
  * it exists to grade instead of reporting `infra_error` all night. Costs a few
  * seconds on a ~107s run.
+ *
+ * UX-P095 — `mode: "serial"` IS REMOVED, AND THE MEASUREMENT IS WHY.
+ *
+ * Run `32177161167` (consent pack, deployed master): `consent.grant` failed, and
+ * the EIGHT journeys after it, on both projects, ended `"skipped"` and were
+ * graded `infra_error / evidence.journey_recorded`. **Sixteen of twenty-two
+ * journeys never ran because one did not pass.** That is serial mode's defining
+ * behaviour, and it turned the pack into an all-or-nothing instrument: the M1
+ * evidence that would retire seven issues cannot be gathered while ANY journey
+ * is red, and the two journeys that generated the original 429 burst
+ * (`two_tabs`, `deferred_event`) are the ones furthest down the file.
+ *
+ * The pacing requirement was SEQUENCING, and serial mode was the wrong primitive
+ * for it — it buys sequencing AND fate-sharing, and only the first was wanted.
+ * Playwright already runs the tests of one file in order in one worker unless
+ * `fullyParallel` is set, and it is not set (`playwright.config.ts`). So the
+ * ordering and the `afterEach` cooldown below survive this deletion unchanged;
+ * only the skip-the-rest behaviour goes.
+ *
+ * (Serial mode never governed the desktop/mobile projects anyway — the census's
+ * own timeline shows them interleaved at 08:21:46 / 08:21:52 — so it was not
+ * buying the cross-project pacing it looked like it was buying either.)
  */
-test.describe.configure({ mode: "serial" });
 
 /**
  * Spend the rolling window down between journeys. Deliberately a fixed sleep
@@ -97,9 +122,84 @@ async function watch(page: import("@playwright/test").Page): Promise<void> {
   await page.waitForTimeout(WATCH_MS);
 }
 
-async function mainNonBlank(page: import("@playwright/test").Page): Promise<boolean> {
-  const text = await readContentRegionText(page);
-  return text.trim().length > 40;
+/** The Discover loading placeholder both `/` and `/discover` render. */
+const DISCOVER_SKELETON = '[data-testid="discover-skeleton"]';
+
+/** How long a settling main region is given before its state is the finding. */
+const SETTLE_TIMEOUT_MS = 10_000;
+const SETTLE_POLL_MS = 250;
+
+/**
+ * #1909's LAST CRITERION — do not photograph the skeleton.
+ *
+ * What this replaced, and why both halves of it were wrong:
+ *
+ *   const text = await readContentRegionText(page);
+ *   return text.trim().length > 40;
+ *
+ * ONE: it graded at an INSTANT. `consent.two_tabs` reloads tab A when it adopts
+ * the denial, so this fired while the feed was still in flight and read a
+ * loading placeholder as a blank page. That is the last open criterion of
+ * #1909/#1663 — the one real user-visible finding in all thirteen consent
+ * issues — and it is why that finding kept arriving with a screenshot of a
+ * skeleton attached.
+ *
+ * TWO: it was the SPEC deciding. A private `> 40` reimplemented
+ * `MIN_CONTENT_CHARS` where the shared evaluator already owns that judgement,
+ * and it could not tell `loading` from `blank` at all — the distinction the
+ * whole criterion turns on. Handing over raw measurements instead is the rail's
+ * own preferred form (`FinishInput.mainRegion`, L2-239), already used by
+ * `event-page.spec.ts`; the consent pack was the last holdout on the legacy
+ * boolean.
+ *
+ * All ELEVEN journeys convert together, deliberately. Leaving ten on the legacy
+ * path to keep the change small would have left two graders answering one
+ * question about one page — which is the ruling-021 disease, and is what
+ * #1951 spent a cycle removing one layer down. For an already-settled page the
+ * verdict is unchanged (the floor is the same 40 characters), so this moves the
+ * journeys that were wrong and not the ones that were right.
+ *
+ * A region that never settles is REPORTED, not waited out forever: the loop is
+ * bounded and returns whatever it last measured, so `loading` reaches the
+ * evaluator as `loading` and the report says the page never resolved. Silence
+ * about a stuck page is the one outcome this must not produce.
+ */
+async function settledMainRegion(
+  page: import("@playwright/test").Page,
+): Promise<MainRegionObservation> {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let observation = await measureMainRegion(page, DISCOVER_SKELETON);
+  while (
+    classifyMainRegion(observation).state === "loading" &&
+    Date.now() < deadline
+  ) {
+    await page.waitForTimeout(SETTLE_POLL_MS);
+    observation = await measureMainRegion(page, DISCOVER_SKELETON);
+  }
+  return observation;
+}
+
+/**
+ * Every navigation in this pack is a HARNESS ACTION, and is attributed as one.
+ *
+ * UX-P095, ruling 021's instrument-induced carve-out (#1908 M2). This pack's
+ * method is to navigate mid-load — grant, revoke, reload, open a second tab —
+ * so cancelled in-flight requests are its exhaust rather than its findings. The
+ * amendment lets those aborts be excused, but ONLY when the causing action can
+ * be named, so no navigation here may be issued unattributed.
+ *
+ * Routed through one helper rather than wrapped at seventeen call sites: a
+ * `page.goto` somebody adds later and forgets to wrap produces an UNATTRIBUTED
+ * abort, which is graded — the safe direction, and a visible one.
+ */
+async function go(
+  journey: { duringInstrumentAction<T>(name: string, fn: () => Promise<T>): Promise<T> },
+  page: import("@playwright/test").Page,
+  path: string,
+) {
+  return journey.duringInstrumentAction(`goto ${path}`, () =>
+    page.goto(path, { waitUntil: "domcontentloaded" }),
+  );
 }
 
 // ===========================================================================
@@ -107,7 +207,7 @@ async function mainNonBlank(page: import("@playwright/test").Page): Promise<bool
 // ===========================================================================
 
 test("consent.untouched — no choice, no telemetry", async ({ page, journey }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await watch(page);
 
   // `null` (undecided) is a DENIAL, not a soft default. This is the case the
@@ -117,12 +217,12 @@ test("consent.untouched — no choice, no telemetry", async ({ page, journey }) 
   await expect(page.getByText(BANNER_HEADING)).toBeVisible();
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.untouched",
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -132,7 +232,7 @@ test("consent.untouched — no choice, no telemetry", async ({ page, journey }) 
 // ===========================================================================
 
 test("consent.decline — zero analytics requests after Decline", async ({ page, journey }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: DECLINE }).click();
 
   // Only what happens AFTER the choice is evidence for this claim.
@@ -143,12 +243,12 @@ test("consent.decline — zero analytics requests after Decline", async ({ page,
   await expect(page.getByText(BANNER_HEADING)).toBeHidden();
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.decline",
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -161,7 +261,7 @@ test("consent.grant — exactly one page view for the page you are on", async ({
   page,
   journey,
 }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: ACCEPT }).click();
 
   journey.resetTelemetryWindow();
@@ -170,12 +270,12 @@ test("consent.grant — exactly one page view for the page you are on", async ({
   expect(await storedConsent(page)).toBe("all");
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.grant",
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: {
       minWindowMs: WATCH_MS - 500,
       rules: [
@@ -183,11 +283,34 @@ test("consent.grant — exactly one page view for the page you are on", async ({
         { id: "gtag_loaded", hostSuffix: "googletagmanager.com", expect: "at_least", count: 1 },
         // The withheld page view is released ONCE. Not a replay of the session,
         // and not the double-count the old `gtag('config', …)` re-send caused.
+        //
+        // #1658 — `eventName` is what makes that sentence true of the number.
+        // This rule matched on HOST alone and counted every GA4 beacon: a fresh
+        // grant sends `page_view` plus GA4's automatic `session_start` and
+        // `first_visit` plus the app's own `scroll_depth` / `time_on_page`, so
+        // it read 4 and reported "4 page views, expected exactly 1" against a
+        // page that had done nothing wrong. The guard is unchanged and still
+        // exact-1; only the population it counts is now the one its id names.
         {
           id: "page_view_exactly_once",
           hostSuffix: "google-analytics.com",
+          eventName: "page_view",
           expect: "exact",
           count: 1,
+        },
+        // The companion, and it is required rather than tidy: the ledger is
+        // EXHAUSTIVE by default, so narrowing the rule above would have left
+        // GA4's other beacons matched by nothing and failed the journey through
+        // `no_unlisted_destinations` instead — the same red with a different
+        // name. This keeps the destination allowlisted while the rule above does
+        // the counting. It deliberately asserts nothing about volume: how many
+        // engagement pings GA4 sends in a 5s window is Google's business, not a
+        // product claim we can sign.
+        {
+          id: "ga4_other_events_allowed",
+          hostSuffix: "google-analytics.com",
+          expect: "at_least",
+          count: 0,
         },
         { id: "vercel_insights", pathPrefix: "/_vercel/insights", expect: "at_least", count: 0 },
         { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "at_least", count: 0 },
@@ -205,11 +328,11 @@ test("consent.grant_then_revoke — nothing leaves after the revoke", async ({
   page,
   journey,
 }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: ACCEPT }).click();
   await page.waitForTimeout(2000); // let the providers actually load
 
-  await page.goto("/preferences#telemetry", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/preferences#telemetry");
   await page.locator(PREFS_SECTION).scrollIntoViewIfNeeded();
   await page.getByRole("button", { name: TURN_OFF }).click();
 
@@ -223,11 +346,11 @@ test("consent.grant_then_revoke — nothing leaves after the revoke", async ({
   expect(await storedConsent(page)).toBe("none");
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.grant_then_revoke",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -240,13 +363,13 @@ test("consent.navigation — declined stays declined across nav and history", as
   page,
   journey,
 }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: DECLINE }).click();
 
   journey.resetTelemetryWindow();
 
-  await page.goto("/calibration", { waitUntil: "domcontentloaded" });
-  await page.goto("/about", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/calibration");
+  await go(journey, page, "/about");
   await page.goBack({ waitUntil: "domcontentloaded" });
   await page.goForward({ waitUntil: "domcontentloaded" });
   await watch(page);
@@ -257,11 +380,11 @@ test("consent.navigation — declined stays declined across nav and history", as
   await expect(page.getByText(BANNER_HEADING)).toBeHidden();
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.navigation",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -271,22 +394,30 @@ test("consent.navigation — declined stays declined across nav and history", as
 // ===========================================================================
 
 test("consent.two_tabs — revoking in tab B silences tab A", async ({ page, journey, context }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: ACCEPT }).click();
   await page.waitForTimeout(2000);
 
-  const tabB = await context.newPage();
-  await tabB.goto("/preferences#telemetry", { waitUntil: "domcontentloaded" });
-  await tabB.getByRole("button", { name: TURN_OFF }).click();
-  await tabB.waitForLoadState("domcontentloaded");
+  // The whole cross-tab revoke is ONE harness action, and the span matters.
+  // Tab A's reload is issued by the APP, in response to a click the harness made
+  // in tab B — so the abort it causes in tab A is instrument-induced even though
+  // no `goto` was called on tab A. Attribution follows causation, not the API
+  // that happened to be used; the span therefore closes only once tab A has
+  // adopted and finished reloading. (Ruling 021's carve-out, condition 1.)
+  const tabB = await journey.duringInstrumentAction("two-tab revoke → tab A reloads", async () => {
+    const opened = await context.newPage();
+    await opened.goto("/preferences#telemetry", { waitUntil: "domcontentloaded" });
+    await opened.getByRole("button", { name: TURN_OFF }).click();
+    await opened.waitForLoadState("domcontentloaded");
 
-  // Tab A adopts the denial through the storage event and reloads itself.
-  await page.waitForFunction(
-    (k) => window.localStorage.getItem(k) === "none",
-    CONSENT_KEY,
-    { timeout: 15_000 },
-  );
-  await page.waitForLoadState("domcontentloaded");
+    await page.waitForFunction(
+      (k) => window.localStorage.getItem(k) === "none",
+      CONSENT_KEY,
+      { timeout: 15_000 },
+    );
+    await page.waitForLoadState("domcontentloaded");
+    return opened;
+  });
   journey.resetTelemetryWindow();
   await watch(page);
 
@@ -294,11 +425,11 @@ test("consent.two_tabs — revoking in tab B silences tab A", async ({ page, jou
   await tabB.close();
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.two_tabs",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -324,7 +455,7 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
     });
   });
 
-  await page.goto("/preferences#telemetry", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/preferences#telemetry");
   await page.getByRole("button", { name: TURN_OFF }).click();
 
   journey.resetTelemetryWindow();
@@ -338,11 +469,11 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
   expect(status).not.toMatch(/^Analytics is OFF\. None of those load\.$/m);
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.storage_failure",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -355,7 +486,7 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
   page,
   journey,
 }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: ACCEPT }).click();
   await page.waitForTimeout(2000);
 
@@ -364,7 +495,7 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
   await page.mouse.wheel(0, 2000);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
 
-  await page.goto("/preferences#telemetry", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/preferences#telemetry");
   await page.getByRole("button", { name: TURN_OFF }).click();
   await page.waitForLoadState("domcontentloaded");
 
@@ -372,11 +503,11 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
   await watch(page);
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.deferred_event",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -386,7 +517,7 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
 // ===========================================================================
 
 test("consent.identity_after_denial — no user_id reaches gtag", async ({ page, journey }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: DECLINE }).click();
 
   journey.resetTelemetryWindow();
@@ -407,11 +538,11 @@ test("consent.identity_after_denial — no user_id reaches gtag", async ({ page,
   expect(idsInDataLayer, "no user_id may be configured after a denial").toBe(false);
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.identity_after_denial",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -424,7 +555,7 @@ test("consent.reachable — footer link reaches a keyboard-operable control", as
   page,
   journey,
 }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: DECLINE }).click();
   journey.resetTelemetryWindow();
 
@@ -444,12 +575,12 @@ test("consent.reachable — footer link reaches a keyboard-operable control", as
   await watch(page);
 
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.reachable",
     expectedPath: "/preferences",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -459,10 +590,10 @@ test("consent.reachable — footer link reaches a keyboard-operable control", as
 // ===========================================================================
 
 test("consent.my_stuff_denied — the latency packet is gated too", async ({ page, journey }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/");
   await page.getByRole("button", { name: DECLINE }).click();
 
-  await page.goto("/my-stuff", { waitUntil: "domcontentloaded" });
+  await go(journey, page, "/my-stuff");
   journey.resetTelemetryWindow();
   await watch(page);
 
@@ -471,12 +602,12 @@ test("consent.my_stuff_denied — the latency packet is gated too", async ({ pag
   // (dropped unregistered at the sanitizer, L2-220) — an event nobody could see
   // is exactly the kind that escapes a consent gate unnoticed.
   await journey.finish({
-    allowedNavigationAborts: [RSC_PREFETCH_ABORT],
+    allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],
     journeyId: "consent.my_stuff_denied",
     expectedPath: "/my-stuff",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });

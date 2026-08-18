@@ -24,6 +24,9 @@ const {
   firedAllowances,
   allowanceMatch,
   allowanceIsIntermittent,
+  allowanceIsInstrumentInduced,
+  instrumentAllowancesMissingAftermath,
+  isThirdParty,
 } = require("./navigationAborts");
 const {
   consoleErrorsAreRateLimitEcho,
@@ -102,6 +105,15 @@ function volumeAssertion(assertions, checkedClean, id, channel, detail) {
   checkedClean.push(`${id} (${detail}, threshold ${channel.threshold})`);
 }
 
+/** Just the origin of a URL, for a bounded, non-revealing exclusion note. */
+function originOf(url) {
+  try {
+    return new URL(String(url)).origin;
+  } catch {
+    return "(unparseable)";
+  }
+}
+
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -111,6 +123,20 @@ function isNonEmptyString(value) {
  * `hostSuffix` matches the host or any subdomain of it; `pathPrefix` is a
  * literal prefix. A rule with neither matches nothing (a typo must not become
  * a wildcard).
+ *
+ * #1658 adds `eventName`, and it is the axis the ledger was missing rather than
+ * a convenience. `page_view_exactly_once` matched on HOST and counted every GA4
+ * `/g/collect` beacon — `page_view` plus `session_start`, `first_visit`,
+ * `scroll_depth` and `time_on_page` — then reported the total as page views.
+ * Four requests, one page view, and an assertion whose id made a claim its
+ * matcher could not make.
+ *
+ * Note what is NOT the fix: dropping the assertion, or relaxing it to
+ * `at_least 1`. The property it protects is real and specific — "the withheld
+ * page view is released ONCE, not a replay of the session, and not the
+ * double-count the old `gtag('config', …)` re-send caused". Every one-liner
+ * shaped like "stop failing on GA noise" deletes that guard, which is the same
+ * trap #1908's M1 walked around. Counting the RIGHT population keeps it.
  */
 function telemetryRuleMatches(rule, observed) {
   const host = String((observed && observed.host) || "");
@@ -122,6 +148,13 @@ function telemetryRuleMatches(rule, observed) {
   }
   if (rule.pathPrefix) {
     if (!path.startsWith(rule.pathPrefix)) return false;
+    matched = true;
+  }
+  if (rule.eventName) {
+    // Strict equality against the recorder's allowlisted value. An observation
+    // with no event (a gtag.js script load, a Vercel beacon) never satisfies an
+    // event-scoped rule — otherwise narrowing a rule would silently widen it.
+    if (observed?.event !== rule.eventName) return false;
     matched = true;
   }
   return matched;
@@ -332,8 +365,15 @@ function evaluateJourney(observation) {
   //     check and `content.real_card_or_named_empty` above must be able to
   //     catch each other's false positive, which they cannot do if they read
   //     the same signal.
+  //     UX-P095 (ruling 021's instrument-induced carve-out): this branch — and
+  //     ONLY this branch — is the "aftermath" the carve-out trades an excused
+  //     abort against. The boolean branch below cannot serve: it is a threshold
+  //     the spec chose and did not disclose, so it cannot tell a loading region
+  //     from a blank one, which is the exact distinction the aftermath turns on.
+  let aftermathGraded = false;
   if (o.mainRegion) {
     const region = classifyMainRegion(o.mainRegion);
+    aftermathGraded = true;
     assertions.push(
       assertion(
         "content.main_region_nonblank",
@@ -610,10 +650,32 @@ function evaluateJourney(observation) {
    * DECISION built from it. Sharing an ingredient is not sharing a policy.
    */
 
+  // UX-P095 — the carve-out's condition 3, carried explicitly rather than
+  // implied. An instrument-induced excuse applies only where this says the
+  // aftermath was graded from measurements, and `abortAllowanceMatches` refuses
+  // when it is absent, so a future grader that forgets to pass it excuses
+  // nothing instead of excusing everything.
+  const abortContext = { aftermathGraded };
+
+  // UX-P095 — third-party failures are not graded HERE, and the asymmetry this
+  // closes was live: the collector's `response` channel has always recorded a
+  // 4xx/5xx only when it is first-party, while its `requestfailed` channel
+  // recorded everything. So one ledger held two policies, and run 32177161167
+  // failed `consent.grant` on two `google-analytics.com` beacons cancelled at
+  // teardown. They stay in the manifest, flagged; they are simply not OUR defect.
+  //
+  // The VOLUME grader is deliberately left counting them (#1600 was a
+  // ~2,000-request Wikipedia fan-out). These two graders answer different
+  // questions — "is this one failure a defect" and "is this page fanning out" —
+  // and only the first one is about attribution.
+  const thirdParty = failedRequests.filter(isThirdParty);
   const unexpected = failedRequests.filter(
     (f) =>
+      !isThirdParty(f) &&
       !allowed.has(f && f.url ? f.url : "") &&
-      !allowedAborts.some((allowance) => abortAllowanceMatches(f, allowance))
+      !allowedAborts.some((allowance) =>
+        abortAllowanceMatches(f, allowance, abortContext)
+      )
   );
   const networkAssertion = assertion(
     "network.no_unexpected_failures",
@@ -641,6 +703,49 @@ function evaluateJourney(observation) {
   }
   assertions.push(networkAssertion);
 
+  // NO SILENT EXCLUSIONS. An exclusion nobody can see is indistinguishable from
+  // an absence (gotcha #53), so the count and the origins are recorded even
+  // though they are not graded.
+  if (thirdParty.length > 0) {
+    checkedClean.push(
+      `network.third_party_failures_not_graded (${thirdParty.length} excluded: ` +
+        `${[...new Set(thirdParty.map((f) => originOf(f && f.url)))].slice(0, 5).join(", ")})`
+    );
+  }
+
+  // UX-P095 — THE CARVE-OUT MAY NOT BECOME A DELETION (ruling 021, amended).
+  //
+  // Clause 3 of the amendment says the aftermath is graded, always. A journey
+  // that declares an instrument-induced allowance and then hands over no
+  // measured main-region observation would get the excuse and grade nothing in
+  // its place — the abort excused, the blank region the excuse was traded for
+  // never looked at. That is strictly worse than the pre-amendment red.
+  //
+  // So it is an ASSERTION, not a convention. `abortAllowanceMatches` already
+  // refuses the excuse in that state (fail-closed), which keeps the grading
+  // correct; this makes the mistake VISIBLE instead of leaving a spec author
+  // wondering why their declaration does nothing.
+  const orphanInstrumentAllowances = instrumentAllowancesMissingAftermath(
+    allowedAborts,
+    abortContext
+  );
+  if (allowedAborts.some(allowanceIsInstrumentInduced)) {
+    assertions.push(
+      assertion(
+        "network.instrument_allowance_has_aftermath",
+        orphanInstrumentAllowances.length === 0,
+        orphanInstrumentAllowances.length === 0
+          ? null
+          : "this journey declares an instrument-induced abort allowance but hands " +
+              "over no measured main-region observation, so there is no aftermath to " +
+              "grade. Ruling 021's carve-out trades the abort FOR the aftermath; " +
+              "without one the excuse is a deletion. Pass `mainRegion` measurements " +
+              "to journey.finish (the pre-computed boolean does not qualify — it " +
+              "cannot tell loading from blank)."
+      )
+    );
+  }
+
   // UX-P047 (#1648 P1, Fable ruling) — STRICT EXPIRY MOVED TO THE RUN.
   //
   // An allowance nobody can see expire outlives its reason and quietly covers
@@ -657,7 +762,9 @@ function evaluateJourney(observation) {
   // not sufficient for a racy phenomenon — it is only sufficient for a
   // deterministic one that happens to land in a different journey.
   const strictAborts = allowedAborts.filter((a) => !allowanceIsIntermittent(a));
-  const fired = firedAllowances(failedRequests, strictAborts).map(allowanceMatch);
+  const fired = firedAllowances(failedRequests, strictAborts, abortContext).map(
+    allowanceMatch
+  );
   if (strictAborts.length > 0) {
     checkedClean.push(
       `network.declared_allowances_fired (run-level: ${fired.length}/${strictAborts.length} ` +
@@ -689,7 +796,7 @@ function evaluateJourney(observation) {
   //
   // Below the threshold nothing fails here and the counts still ride in the
   // manifest: a small number of errors is evidence, not a verdict.
-  const errorVolume = classifyErrorVolume(o);
+  const errorVolume = classifyErrorVolume(o, abortContext);
   volumeAssertion(
     assertions,
     checkedClean,

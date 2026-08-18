@@ -103,10 +103,48 @@ describe("describeAbort — only on an abort, and only bounded fields", () => {
     assert.equal(packet.elapsed_before_abort_ms, null);
     assert.equal(packet.is_feed_request, false);
     assert.equal(packet.frame_url, null);
+    assert.equal(packet.instrument_action, null, "no action in flight, no attribution");
     assert.deepEqual(
       Object.keys(packet).sort(),
-      ["aborted", "elapsed_before_abort_ms", "frame_url", "is_feed_request", "resource_type"],
+      [
+        "aborted",
+        "elapsed_before_abort_ms",
+        "frame_url",
+        // UX-P095: added deliberately, and bounded below. This allowlist caught
+        // the new field on its first run, which is the reason it exists — the
+        // correct response to that is to bound the field and widen the list in
+        // the same commit, never to widen the list alone.
+        "instrument_action",
+        "is_feed_request",
+        "resource_type",
+      ],
       "the packet must not grow unbounded fields"
     );
+  });
+
+  it("instrument_action is bounded and normalised, like every other field", () => {
+    // Ruling 021's carve-out turns on this string, so it is a redaction-safe
+    // harness LABEL, not a URL and not user content — and it is capped for the
+    // same reason `resource_type` is.
+    const long = describeAbort({
+      failureText: "net::ERR_ABORTED",
+      instrumentAction: "goto ".repeat(100),
+    });
+    assert.ok(long.instrument_action.length <= 60, "instrument_action must be capped");
+
+    const trimmed = describeAbort({
+      failureText: "net::ERR_ABORTED",
+      instrumentAction: "   goto /preferences   ",
+    });
+    assert.equal(trimmed.instrument_action, "goto /preferences");
+
+    for (const junk of ["", "   ", null, undefined, 42, {}, []]) {
+      const packet = describeAbort({ failureText: "net::ERR_ABORTED", instrumentAction: junk });
+      assert.equal(
+        packet.instrument_action,
+        null,
+        `a non-label (${JSON.stringify(junk)}) must not read as attribution`
+      );
+    }
   });
 });

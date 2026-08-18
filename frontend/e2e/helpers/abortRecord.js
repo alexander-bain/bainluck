@@ -52,8 +52,16 @@ function boundedMs(value) {
  * largest non-negative phase offset. A teardown shows a tiny (or null) elapsed
  * with mostly -1 phases; a timeout shows a large one.
  *
- * @param {{ failureText?: unknown, resourceType?: unknown, timing?: any, frameUrl?: unknown, isFeed?: unknown }} input
- * @returns {null | { aborted: true, resource_type: string|null, elapsed_before_abort_ms: number|null, is_feed_request: boolean, frame_url: string|null }}
+ * `instrumentAction` is the harness action IN FLIGHT when the abort fired — a
+ * `page.goto`, a reload, a second-tab open. It is ATTRIBUTION, and ruling 021's
+ * instrument-induced carve-out (2026-08-18) turns on it: an abort the test
+ * harness itself caused says nothing about the product, but only if we can name
+ * the action that caused it. "It happened in a journey that navigates" is not
+ * attribution, so this field is stamped by the collector at the moment of the
+ * abort and is null whenever no harness action was running.
+ *
+ * @param {{ failureText?: unknown, resourceType?: unknown, timing?: any, frameUrl?: unknown, isFeed?: unknown, instrumentAction?: unknown }} input
+ * @returns {null | { aborted: true, resource_type: string|null, elapsed_before_abort_ms: number|null, is_feed_request: boolean, frame_url: string|null, instrument_action: string|null }}
  */
 function describeAbort(input) {
   const o = input || {};
@@ -80,6 +88,12 @@ function describeAbort(input) {
     is_feed_request: Boolean(o.isFeed),
     // The frame URL loses its query values like every other URL in the packet.
     frame_url: o.frameUrl ? redactUrl(o.frameUrl) : null,
+    // Bounded and redaction-safe: a short harness-supplied label, never a URL
+    // and never user content.
+    instrument_action:
+      typeof o.instrumentAction === "string" && o.instrumentAction.trim()
+        ? o.instrumentAction.trim().slice(0, 60)
+        : null,
   };
 }
 

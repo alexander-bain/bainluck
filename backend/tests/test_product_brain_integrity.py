@@ -517,15 +517,22 @@ def test_ruling_numbers_are_unique() -> None:
 #: lanes each writing `71 -> 72` is one ruling each, NOT two on top of 72. Resolved the documented
 #: way — by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree, which is 73, and which
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
-#: INT-085 merge (lane1/q365 + lane1/q366 onto the INT-084 wave): HEAD said 74, q366 said 77,
-#: and neither is the merged truth — q365 banks 078 and q366 banks 079-082. Resolved the
-#: documented way again, by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree,
-#: which is 79, and which is nobody's side.
-#: Raised 79 -> **80** by CAL-P070 banking **083** (a guard that cannot tell two cases apart is
-#: given evidence, not a wider band; and a version bump carries its own rollover or accepts a dark
-#: page — Fable, #1955/#1680) on `program/calibration-66`, cut from `origin/master` `7686c97f`
-#: (79 files). Same resolution rule if another lane raises independently: COUNT the files.
-MINIMUM_BANKED_RULINGS = 81
+#: RESOLVED BY COUNTING, sixth consecutive cycle. HEAD said 81, program/ux-83 said 75, and
+#: neither is the merged truth — the documented rule is to COUNT
+#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree, never to add deltas and never
+#: ours/theirs. Measured here: **83** = master's 80 (001-083) + 084 and 087 from ux + 085 from
+#: the integrator. ux-83's own note reached the same 83 independently.
+#:
+#: Live gaps, all legitimate, so do not "fix" the count to close them:
+#:   057-059 — reserved for program/calibration-53's renumber (blocked, unmerged)
+#:   086     — latency's, claimed and banked on program/latency-61, not yet merged
+#:
+#: The 084/085 collision ux-83 warned about is ALREADY RESOLVED and needed nothing here.
+#: ux-83's note asked the Integrator to `git mv` master's 084 to 085 because
+#: RULING-CLAIMS.md records 084 as ux's. That reading was correct — and INT-086 had already
+#: hit it from the other side and renumbered its own file at 75c32aa2, the ledger's rule being
+#: that the lane which claimed SECOND moves. Master carries no 084. The handed mv was a no-op.
+MINIMUM_BANKED_RULINGS = 83
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

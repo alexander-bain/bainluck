@@ -1,150 +1,317 @@
 /**
- * #1939 — ONE concept-admission rule, asserted across BOTH surfaces.
+ * THE DISCOVER CARD-ADMISSION RULE, ASSERTED ACROSS ALL THREE SURFACES.
  *
- * The defect this ratchets against, stated exactly: the backend has served a
- * concept `leader` since #1882 and iOS has admitted concepts on it since; web's
- * `feedItemSuppressionReason` still required `marquee_whathit`. Measured on
- * production `5542f8c4` (identified, `limit=50`): 7 of 50 cards were concepts,
- * every one unsettled, every one carrying a real leader — Pogačar 0.751 of a
- * 30-rider field, Joshua Van 0.5217, Anthony Hernandez 0.635. Web dropped all
- * seven. 14% of the landing page, withheld by one surface and printed by the
- * other, for a week.
+ * `contracts/feed_card_admission.json` is the rule. This file drives web through
+ * every row of it, source-asserts native against the same arms, source-asserts
+ * the Python mirror, and — new in #1951 — enforces the REGISTRY, so a fourth
+ * implementation cannot appear without being declared.
  *
- * WHY A CONTRACT TEST AND NOT JUST A UNIT TEST. This is the SECOND
- * shared-predicate divergence in a week (#1933 is the other — native's label
- * pass behind web). Both were fixed by patching whichever surface happened to
- * carry the bug report. That is a fix per instance, and there is no reason to
- * think the third instance is not already written; the two rules live in
- * different languages, in different repos-within-the-repo, reviewed by
- * different gates. Nothing structural connects them. This file is the
- * connection.
+ * ── the history this file is made of ─────────────────────────────────────────
  *
- * It lives in jest for the reason `periodLabelSingleSource.test.ts` gives: jest
- * is a deploy gate here and the Swift test target is not reachable from CI. So
- * the assertion runs against the Swift SOURCE. That buys less than executing
- * both predicates would, and it is what is available — a source assertion that
- * runs on every push beats an execution assertion that runs on an iOS lane's
- * laptop.
+ * #1939: the backend served a concept `leader` and iOS admitted on it while web's
+ * predicate still required `marquee_whathit`. Measured on production `5542f8c4`:
+ * 7 of 50 cards were concepts, every one carrying a real leader — Pogačar 0.751
+ * of a 30-rider field, Joshua Van 0.5217, Anthony Hernandez 0.635. Web dropped
+ * all seven. 14% of the landing page, withheld by one surface and printed by the
+ * other, for a week. This file was created to connect the two.
+ *
+ * #1951: it turned out there was a THIRD copy the file did not know about —
+ * `feed_item_is_renderable` in the Flow Sentinel, shipped in UX-P092, carrying
+ * the pre-#1935 reading on two arms. It feeds the dark-class limb, which IS the
+ * #1935-family detector, so a predicate more permissive than the clients made the
+ * family it hunts invisible: seven golferless-whathit tournaments, 100% dark on
+ * both surfaces, scored `7 built, 7 renderable`. A PASS over a dark tier.
+ *
+ * ── why cycle 90's fix was not enough, which is the point of this revision ────
+ *
+ * Cycle 90 corrected the third copy's arms and pinned them with a second matrix,
+ * written here in TypeScript and again in Python. That fixed the instance and
+ * left the mechanism: two matrices a reader must diff by eye. Ruling 021 already
+ * settled this — *when two consumers must agree about the same input, the unit to
+ * share is the DECISION, not the ingredient; a shared predicate under two
+ * policies is still two policies.* Three implementations that merely AGREE are
+ * three policies. So the matrices are gone and the table is the decision.
+ *
+ * ── what this can and cannot guarantee, stated so nobody over-reads it ───────
+ *
+ * CAN: every non-test implementation of the rule is enumerated (`registry`); each
+ * one that can execute is driven through every row; every card type a producer
+ * emits is pinned in BOTH directions; every emitted type is declared, so a new
+ * card type cannot ship with no arms — that last one is #1935 restated as a build
+ * error.
+ *
+ * CANNOT: catch a new PERMISSIVE arm for which no row exists. A rule is only
+ * tested against stated cases, and that is inherent rather than an oversight —
+ * which is why the contract's header says to add rows FIRST and watch all three
+ * suites go red.
+ *
+ * Native and Python are asserted against SOURCE for the reason
+ * `periodLabelSingleSource.test.ts` gives: jest is a deploy gate here and neither
+ * the Swift target nor pytest is reachable from it. That buys less than executing
+ * all three, and it is what is available — a source assertion that runs on every
+ * push beats an execution assertion that runs on someone's laptop. The
+ * behavioural half for Python lives in
+ * `backend/tests/test_flow_sentinel_admission_parity.py`, which executes the same
+ * rows.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import type { FeedItem, FeedConceptData } from "@/lib/types";
+import type { FeedItem } from "@/lib/types";
 import { feedItemSuppressionReason } from "@/components/discover/utils";
 
-const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
-const NATIVE_PREDICATE = join(IOS_ROOT, "ViewModels/DiscoverViewModel.swift");
+const REPO_ROOT = join(__dirname, "../../..");
+const CONTRACT_PATH = join(REPO_ROOT, "contracts/feed_card_admission.json");
 
-const NOW = new Date("2026-08-17T00:00:00Z").getTime();
-
-function concept(data: Partial<FeedConceptData>): FeedItem {
-  return {
-    type: "concept",
-    score: 50,
-    reason: "",
-    headline: null,
-    data: {
-      key: "event:ufc:26aug20",
-      name: "UFC Fight Night",
-      domain: "mma",
-      status: "upcoming",
-      is_major: true,
-      fight_count: 11,
-      ...data,
-    } as FeedConceptData,
-  } as FeedItem;
+// A path typo must not read as a clean pass — an unrunnable check and a passing
+// check are indistinguishable from the outside (gotcha #54's cousin).
+if (!existsSync(CONTRACT_PATH)) {
+  throw new Error(`the shared decision is missing: ${CONTRACT_PATH}`);
 }
 
-/**
- * The shared matrix. Each row is a claim about the RULE, not about one surface —
- * which is what makes the file below able to check the other surface against it.
- */
-const MATRIX: Array<{ name: string; item: FeedItem; expected: string | null }> = [
-  {
-    name: "unsettled concept WITH a leader → admitted (the #1939 class)",
-    item: concept({
-      marquee_whathit: false,
-      leader: { name: "Joshua Van", probability: 0.5217, field_size: 2 },
-    }),
-    expected: null,
-  },
-  {
-    name: "unsettled concept with a 30-rider field leader → admitted",
-    item: concept({
-      key: "event:cycling:vuelta-2026",
-      domain: "cycling",
-      marquee_whathit: false,
-      leader: { name: "Tadej Pogacar", probability: 0.751, field_size: 30 },
-    }),
-    expected: null,
-  },
-  {
-    name: "unsettled concept with NO leader → suppressed (the #1486 class)",
-    item: concept({ marquee_whathit: false }),
-    expected: "empty_concept",
-  },
-  {
-    name: "settled WHAT-HIT with a named winner → admitted",
-    item: concept({ marquee_whathit: true, winner: "Tadej Pogacar" }),
-    expected: null,
-  },
-  {
-    name: "settled WHAT-HIT with only a result_summary → admitted (#1935)",
-    item: concept({ marquee_whathit: true, result_summary: "Won by 1:12" }),
-    expected: null,
-  },
-  {
-    name: "settled WHAT-HIT that can name NOTHING → suppressed (#1935)",
-    item: concept({ marquee_whathit: true }),
-    expected: "empty_concept",
-  },
-  {
-    // "Settled means settled." A settled card leads with its RESULT; it must not
-    // fall back to a probability that is now history. The server never sends
-    // both, so this row pins the ORDER of the two arms rather than a live case —
-    // which is precisely the kind of invariant that rots silently.
-    name: "settled-but-resultless does NOT fall back to a leader",
-    item: concept({
-      marquee_whathit: true,
-      leader: { name: "Joshua Van", probability: 0.5217, field_size: 2 },
-    }),
-    expected: "empty_concept",
-  },
-];
+type Row = {
+  id: string;
+  why: string;
+  item: unknown;
+  expected_reason?: string | null;
+  malformed_envelope?: boolean;
+  expected_suppressed?: boolean;
+};
 
-describe("#1939 — web's concept admission rule", () => {
-  it.each(MATRIX)("$name", ({ item, expected }) => {
-    expect(feedItemSuppressionReason(item, NOW)).toBe(expected);
+type Contract = {
+  now: string;
+  emitted_types: string[];
+  unconditional_types: string[];
+  producers: { path: string; emits: string[] }[];
+  implementations: {
+    id: string;
+    path: string;
+    symbol: string;
+    executes_table: boolean;
+    driven_by: string;
+  }[];
+  consumers: { path: string }[];
+  not_this_rule: { path: string }[];
+  cases: Row[];
+};
+
+const CONTRACT: Contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf8"));
+const NOW = new Date(CONTRACT.now).getTime();
+
+const wellFormed = CONTRACT.cases.filter((c) => !c.malformed_envelope);
+const malformed = CONTRACT.cases.filter((c) => c.malformed_envelope);
+
+describe("web is driven by the shared decision", () => {
+  it.each(wellFormed.map((c) => [c.id, c] as const))("%s", (_id, c) => {
+    expect(feedItemSuppressionReason(c.item as FeedItem, NOW)).toBe(c.expected_reason);
   });
 
-  // TypeScript is erased at runtime, so the web predicate faces malformed
-  // payloads that native's decoder rejects before its predicate ever runs. These
-  // are NOT native-parity rows — they are the extra code web needs in order to
-  // reach the same BEHAVIOUR, and they would be the failure mode of writing
-  // web's test as a bare `leader != null` presence check "to match native".
-  it.each([
-    ["an empty object", {}],
-    ["a blank name", { name: "   ", probability: 0.6 }],
-    ["a missing probability", { name: "Joshua Van" }],
-    ["a non-numeric probability", { name: "Joshua Van", probability: "0.6" }],
-    ["a probability over 1.0 (gotcha #23)", { name: "Joshua Van", probability: 1.4 }],
-    ["a NaN probability", { name: "Joshua Van", probability: Number.NaN }],
-  ])("a leader that is %s does not admit the card", (_label, leader) => {
-    const item = concept({
-      marquee_whathit: false,
-      leader: leader as never,
-    });
-    expect(feedItemSuppressionReason(item, NOW)).toBe("empty_concept");
+  // Malformed ENVELOPES carry a verdict but not a shared reason string: native
+  // never sees one, because its decoder rejects the payload before the predicate
+  // runs. What all three owe is falling closed.
+  it.each(malformed.map((c) => [c.id, c] as const))("%s — falls closed", (_id, c) => {
+    const reason = feedItemSuppressionReason(c.item as FeedItem, NOW);
+    expect(reason).not.toBeNull();
+    expect(Boolean(c.expected_suppressed)).toBe(true);
+  });
+
+  // Web-specific, and the reason it is here rather than in the table: until
+  // #1951 web THREW on two of those shapes instead of returning anything, inside
+  // a render-path `.filter()` — which blanks the main region rather than dropping
+  // a card (#1909's failure mode). This pins that the guard exists AND that it
+  // reports the malformed envelope honestly instead of borrowing an `empty_*`
+  // code from a card whose envelope never arrived.
+  it("names a malformed envelope rather than mislabelling it as empty", () => {
+    expect(feedItemSuppressionReason({ type: "concept" } as unknown as FeedItem, NOW)).toBe(
+      "malformed_envelope",
+    );
+    expect(
+      feedItemSuppressionReason({ type: "futures", data: null } as unknown as FeedItem, NOW),
+    ).toBe("malformed_envelope");
+    // Even the unconditional arm. `case "event": return null` sat in front of any
+    // envelope check and admitted a card with nothing behind it.
+    expect(feedItemSuppressionReason({ type: "event" } as unknown as FeedItem, NOW)).toBe(
+      "malformed_envelope",
+    );
   });
 });
 
-// The whole suite is meaningless if it is pointed at nothing — a path typo would
-// otherwise read as a clean pass (the unrunnable-check failure mode, gotcha #54's
-// cousin).
+describe("the table is worth answering to", () => {
+  // A table can only ratchet what it covers, so its coverage is asserted too.
+  // Without this the fold degrades quietly into what it replaced.
+  it.each(CONTRACT.emitted_types)("%s is pinned in both directions", (cardType) => {
+    const rows = CONTRACT.cases.filter(
+      (c) =>
+        typeof c.item === "object" &&
+        c.item !== null &&
+        (c.item as { type?: string }).type === cardType,
+    );
+    const verdicts = new Set(
+      rows.filter((c) => !c.malformed_envelope).map((c) => c.expected_reason === null),
+    );
+    if (CONTRACT.unconditional_types.includes(cardType)) {
+      expect([...verdicts]).toEqual([true]);
+      expect(rows.some((c) => c.malformed_envelope)).toBe(true);
+      return;
+    }
+    expect([...verdicts].sort()).toEqual([false, true]);
+  });
+
+  it("every executable implementation is actually wired to the table", () => {
+    // The wiring assertion. An implementation declared `executes_table` whose
+    // suite does not read the contract is a declaration, not a link.
+    for (const impl of CONTRACT.implementations) {
+      if (!impl.executes_table) continue;
+      const suite = join(REPO_ROOT, impl.driven_by);
+      expect(existsSync(suite)).toBe(true);
+      expect(readFileSync(suite, "utf8")).toContain("feed_card_admission.json");
+    }
+  });
+
+  it("the producers emit exactly the declared types", () => {
+    // The guard that makes a NEW card type impossible to ship dark: a type the
+    // server can build and the table does not name is `unknown_type` on web and
+    // false in the sentinel — dark on arrival, and silent, because no limb can
+    // report a class nobody enumerated.
+    const found = new Set<string>();
+    for (const producer of CONTRACT.producers) {
+      const src = readFileSync(join(REPO_ROOT, producer.path), "utf8");
+      const emitted = new Set(
+        [...src.matchAll(/"type": *"([a-z_]+)"/g)].map((m) => m[1]),
+      );
+      expect([...emitted].sort()).toEqual([...producer.emits].sort());
+      emitted.forEach((t) => found.add(t));
+    }
+    expect([...found].sort()).toEqual([...CONTRACT.emitted_types].sort());
+  });
+});
+
+/**
+ * THE REGISTRY — #1951's structural half.
+ *
+ * `feed_item_is_renderable` existed for three cycles as an undeclared third copy.
+ * Nothing was capable of noticing, because "how many implementations does this
+ * rule have" was not a question anything asked. This asks it on every push.
+ *
+ * The fingerprint was MEASURED rather than guessed, and two earlier candidates
+ * were discarded on the measurement: a suppression-reason-code scan misses the
+ * Python copy entirely (it returns a bool and emits no codes), and a
+ * card-type-literal scan misses the Swift copy (it branches on `item.futures`,
+ * never on the string `"futures"`). The union below — a declaration whose NAME is
+ * about suppression/renderability, in a file carrying ≥3 terms of the admission
+ * vocabulary — catches all three, and catches five adjacent files besides, each
+ * of which is declared with a reason. Eight declarations is the price of the
+ * question being asked at all.
+ */
+describe("registry — a fourth copy cannot appear undeclared", () => {
+  const SKIP = ["node_modules", ".next", ".git", "DerivedData", "build", "artifacts"];
+  const EXT = [".py", ".ts", ".tsx", ".swift"];
+  const VOCAB = [
+    '"event"',
+    "'event'",
+    '"futures"',
+    "'futures'",
+    '"tournament"',
+    "'tournament'",
+    '"concept"',
+    "'concept'",
+    '"bundle"',
+    "'bundle'",
+    "empty_futures",
+    "empty_tournament",
+    "empty_concept",
+    "empty_bundle",
+    "unknown_type",
+  ];
+  const DECL = /(?:def|func|function|const|let|var|static func)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  const NAME = /suppress|renderable|admissib|admission/i;
+
+  function isTest(path: string): boolean {
+    const base = path.split("/").pop() ?? "";
+    return (
+      /test/i.test(base) ||
+      path.includes("__tests__") ||
+      path.includes("/tests/") ||
+      path.includes("Tests/")
+    );
+  }
+
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      if (SKIP.includes(entry)) continue;
+      const full = join(dir, entry);
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(full, out);
+      else if (EXT.some((e) => entry.endsWith(e))) out.push(full);
+    }
+    return out;
+  }
+
+  it("every file that decides card admission is declared in the contract", () => {
+    const declared = new Set(
+      [
+        ...CONTRACT.implementations,
+        ...CONTRACT.consumers,
+        ...CONTRACT.not_this_rule,
+        ...CONTRACT.producers,
+      ].map((d) => d.path),
+    );
+
+    const undeclared: string[] = [];
+    for (const full of walk(REPO_ROOT)) {
+      const rel = full.slice(REPO_ROOT.length + 1);
+      if (isTest(rel)) continue;
+      const src = readFileSync(full, "utf8");
+      if (VOCAB.filter((v) => src.includes(v)).length < 3) continue;
+      const names = [...src.matchAll(DECL)].map((m) => m[1]).filter((n) => NAME.test(n));
+      if (names.length && !declared.has(rel)) undeclared.push(`${rel} → ${names.join(", ")}`);
+    }
+
+    expect(undeclared).toEqual([]);
+  });
+
+  it("finds the three known implementations — the non-vacuity control", () => {
+    // Without this, a fingerprint that matches NOTHING passes the check above
+    // forever and the registry becomes a green light wired to no sensor. This is
+    // the same failure the dark-class limb had before #1948: perfectly healthy,
+    // measuring nothing.
+    const hits = walk(REPO_ROOT)
+      .map((f) => f.slice(REPO_ROOT.length + 1))
+      .filter((rel) => {
+        if (isTest(rel)) return false;
+        const src = readFileSync(join(REPO_ROOT, rel), "utf8");
+        if (VOCAB.filter((v) => src.includes(v)).length < 3) return false;
+        return [...src.matchAll(DECL)].map((m) => m[1]).some((n) => NAME.test(n));
+      });
+
+    for (const impl of CONTRACT.implementations) {
+      expect(hits).toContain(impl.path);
+    }
+  });
+
+  it("every declared path exists and still contains its symbol", () => {
+    for (const impl of CONTRACT.implementations) {
+      const full = join(REPO_ROOT, impl.path);
+      expect(existsSync(full)).toBe(true);
+      expect(readFileSync(full, "utf8")).toContain(impl.symbol);
+    }
+    for (const d of [...CONTRACT.consumers, ...CONTRACT.not_this_rule, ...CONTRACT.producers]) {
+      expect(existsSync(join(REPO_ROOT, d.path))).toBe(true);
+    }
+  });
+});
+
+const IOS_ROOT = join(REPO_ROOT, "ios/Bain Luck/Bain Luck");
+const NATIVE_PREDICATE = join(IOS_ROOT, "ViewModels/DiscoverViewModel.swift");
 const iosPresent = existsSync(NATIVE_PREDICATE);
 const d = iosPresent ? describe : describe.skip;
 
-d("#1939 — native encodes the SAME concept rule", () => {
+d("native encodes the SAME rule (source)", () => {
   const swift = readFileSync(NATIVE_PREDICATE, "utf8");
 
   // Narrow to the concept arm so a `leader` mention elsewhere in a 900-line file
@@ -172,9 +339,6 @@ d("#1939 — native encodes the SAME concept rule", () => {
   });
 
   it("checks settled BEFORE leader, so a result is never displaced", () => {
-    // Order is the invariant, not the presence of both checks. Reversed, a
-    // settled-but-resultless concept would print a stale probability under a
-    // FINAL badge.
     const settledAt = arm.indexOf("concept.marqueeWhathit == true");
     const leaderAt = arm.indexOf("concept.leader != nil");
     expect(settledAt).toBeGreaterThan(-1);
@@ -182,25 +346,39 @@ d("#1939 — native encodes the SAME concept rule", () => {
     expect(settledAt).toBeLessThan(leaderAt);
   });
 
+  it("the tournament arm admits on golfers ALONE (#1935)", () => {
+    const tArm = (() => {
+      const start = swift.indexOf("if let tournament = item.tournament {");
+      const end = swift.indexOf("if let concept = item.concept {", start);
+      expect(start).toBeGreaterThan(-1);
+      return swift.slice(start, end);
+    })();
+    const code = tArm
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(code).toMatch(/golfers, !golfers\.isEmpty \{ return nil \}/);
+    // `marqueeWhathit` must not appear as an ADMITTING term: both clients
+    // deleted it, and its survival in the Python copy is what blinded the
+    // detector for three cycles.
+    expect(code).not.toContain("marqueeWhathit");
+  });
+
   it("falls closed — the arm's LAST return is still empty_concept", () => {
-    // Fail-closed is the property, and the property is about the final
-    // statement, not the final character (the slice ends on the arm's closing
-    // brace). Take the last `return` in the arm and assert what it returns: an
-    // unrecognised concept must be dropped, never shown bare.
     const returns = arm.match(/return [^\n]+/g) ?? [];
     expect(returns.length).toBeGreaterThan(0);
     expect(returns[returns.length - 1]).toBe('return "empty_concept"');
   });
 });
 
-d("#1939 — both web renderers can print what the gate admits", () => {
+d("both web renderers can print what the gate admits", () => {
   // The half of this fix that is easiest to skip and most expensive to skip:
   // admitting a card the renderer has no branch for is how you rebuild #1935's
   // probability-free tile while closing #1939. Web has TWO concept renderers and
   // ONE gate, so both must be able to print a leader.
   const RENDERERS = [
-    join(__dirname, "../../components/discover/ConceptCard.tsx"),
-    join(__dirname, "../../components/FeedCard.tsx"),
+    join(REPO_ROOT, "frontend/components/discover/ConceptCard.tsx"),
+    join(REPO_ROOT, "frontend/components/FeedCard.tsx"),
   ];
 
   it.each(RENDERERS)("%s renders leader name + probability", (path) => {
@@ -212,39 +390,10 @@ d("#1939 — both web renderers can print what the gate admits", () => {
   });
 });
 
-/**
- * #1951 — THE THIRD SURFACE.
- *
- * `feed_item_is_renderable()` in `backend/app/tasks/flow_sentinel.py` is a third
- * implementation of this same admission rule, and until this block existed it was
- * in no parity test at all. It shipped in UX-P092 carrying the PRE-#1935 rule on
- * two arms: it admitted a golferless `marquee_whathit` tournament, and it admitted
- * a concept on a bare `leader` presence test with no usability check.
- *
- * Why that is worse in the sentinel than in a renderer, and the reason this block
- * is not merely tidiness: the dark-class limb that predicate feeds IS the
- * #1935-family detector — it exists to name card types the server builds and no
- * client can render. Grading that with a predicate MORE PERMISSIVE than the
- * clients' makes the exact family it hunts invisible to it. Measured: a real
- * production page whose seven tournaments are all golferless-but-whathit is 100%
- * dark on both surfaces, and the old predicate scored it `7 built, 7 renderable`
- * — a PASS over a fully dark tier, which is #1948's failure mode reproduced
- * inside the fix for #1948.
- *
- * Asserted against SOURCE for the same reason the Swift block above is: jest is a
- * deploy gate here and pytest is not reachable from it. The BEHAVIOURAL half of
- * this rule lives in `backend/tests/test_flow_sentinel_admission_parity.py`, which
- * executes the rows; this block is the structural link that makes the third copy
- * visible to the gate the other two already answer to.
- */
-const SENTINEL_PREDICATE = join(
-  __dirname,
-  "../../../backend/app/tasks/flow_sentinel.py",
-);
-const sentinelPresent = existsSync(SENTINEL_PREDICATE);
-const dp = sentinelPresent ? describe : describe.skip;
+const SENTINEL_PREDICATE = join(REPO_ROOT, "backend/app/tasks/flow_sentinel.py");
+const dp = existsSync(SENTINEL_PREDICATE) ? describe : describe.skip;
 
-dp("#1951 — the flow sentinel encodes the SAME admission rule", () => {
+dp("the flow sentinel encodes the SAME rule (source)", () => {
   const py = readFileSync(SENTINEL_PREDICATE, "utf8");
 
   // Narrow to the function, so a `marquee_whathit` mention anywhere else in a
@@ -257,55 +406,36 @@ dp("#1951 — the flow sentinel encodes the SAME admission rule", () => {
     return py.slice(start, end);
   })();
 
-  const tournamentArm = (() => {
-    const start = fn.indexOf('if kind == "tournament":');
-    const end = fn.indexOf('if kind == "concept":', start);
+  const armBetween = (from: string, to: string) => {
+    const start = fn.indexOf(from);
+    const end = fn.indexOf(to, start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     return fn.slice(start, end);
-  })();
-
-  const conceptArm = (() => {
-    const start = fn.indexOf('if kind == "concept":');
-    const end = fn.indexOf('if kind == "bundle":', start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    return fn.slice(start, end);
-  })();
+  };
 
   it("the tournament arm admits on golfers ALONE (#1935)", () => {
-    expect(tournamentArm).toMatch(/return bool\(data\.get\("golfers"\)\)/);
-    // The regression this pins. `marquee_whathit` must not appear as an
-    // ADMITTING term in this arm — both clients deleted it, and its presence
-    // here is what blinded the detector.
-    const code = tournamentArm
+    const arm = armBetween('if kind == "tournament":', 'if kind == "concept":');
+    expect(arm).toMatch(/return bool\(data\.get\("golfers"\)\)/);
+    const code = arm
       .split("\n")
       .filter((l) => !l.trim().startsWith("#"))
       .join("\n");
     expect(code).not.toContain("marquee_whathit");
   });
 
-  it("the concept settled arm requires a NAMEABLE result (#1935)", () => {
-    expect(conceptArm).toContain('data.get("marquee_whathit") is True');
-    expect(conceptArm).toContain('data.get("winner")');
-    expect(conceptArm).toContain('data.get("result_summary")');
-    expect(conceptArm).toMatch(/return bool\(named or summary\)/);
-  });
-
-  it("the concept leader arm tests USABILITY, not presence", () => {
+  it("the concept arm requires a nameable result, then a USABLE leader", () => {
+    const arm = armBetween('if kind == "concept":', 'if kind == "bundle":');
+    expect(arm).toContain('data.get("marquee_whathit") is True');
+    expect(arm).toMatch(/return bool\(named or summary\)/);
     // A bare `data.get("leader")` is the TypeScript-erasure failure mode in
     // Python: `{}` is truthy. Native can write a presence test because its
     // decoder rejects malformed leaders first; Python, like TS, cannot.
-    expect(conceptArm).toContain("_concept_leader_is_usable(data.get(\"leader\"))");
-    expect(conceptArm).not.toMatch(/return bool\(\s*data\.get\("leader"\)\s*\)/);
-  });
-
-  it("checks settled BEFORE leader, so a result is never displaced", () => {
-    const settledAt = conceptArm.indexOf("marquee_whathit");
-    const leaderAt = conceptArm.indexOf("_concept_leader_is_usable");
-    expect(settledAt).toBeGreaterThan(-1);
-    expect(leaderAt).toBeGreaterThan(-1);
-    expect(settledAt).toBeLessThan(leaderAt);
+    expect(arm).toContain('_concept_leader_is_usable(data.get("leader"))');
+    expect(arm).not.toMatch(/return bool\(\s*data\.get\("leader"\)\s*\)/);
+    expect(arm.indexOf("marquee_whathit")).toBeLessThan(
+      arm.indexOf("_concept_leader_is_usable"),
+    );
   });
 
   it("the futures arm carries the resolution_date authority web has", () => {
