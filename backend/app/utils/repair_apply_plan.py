@@ -56,6 +56,13 @@ APPLY_PLAN_SCHEMA = "calibration-repair-apply-plan/v1"
 #: collide with one from another fingerprinted structure in the codebase.
 _PLAN_NS = "calibration-repair-apply-plan"
 
+#: The SECOND rail to adopt this pattern (#1798, queue 362). Deliberately a
+#: distinct schema and a distinct digest namespace: a binding plan and a
+#: calibration plan must never be interchangeable at an apply, and two plans
+#: that happen to contain the same integers must never share an address.
+BINDING_APPLY_PLAN_SCHEMA = "event-team-binding-apply-plan/v1"
+_BINDING_PLAN_NS = "event-team-binding-apply-plan"
+
 #: Refusal codes. The first three are the canonical corpus's own spelling; the
 #: rest are this rail's additions and are named the same way — a verb about what
 #: the rail refused to do, never a bare "error".
@@ -125,6 +132,16 @@ class ApplyPlan:
     #: OUTSIDE the digest: re-describing a plan must not change its address,
     #: and nothing in here can license a write.
     context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        """The approved work list, under the name every plan shape shares.
+
+        :func:`bind_apply` is the gate for BOTH rails, so it must not know what a
+        row of this particular plan is called. Two gates would be two gates to
+        keep honest, and the second one is always the one nobody re-reads.
+        """
+        return self.legs
 
     @property
     def market_ids(self) -> tuple[int, ...]:
@@ -235,7 +252,7 @@ def bind_apply(
     if presented_hash != plan.plan_hash:
         reasons.append(REASON_PLAN_HASH_MISMATCH)
         return False, reasons
-    if not plan.legs:
+    if not plan.entries:
         reasons.append(REASON_PLAN_EMPTY)
         return False, reasons
     return True, reasons
@@ -252,6 +269,192 @@ def mutations_outside_approved(
     """Leg ids an apply tried to write that the reviewed plan never named."""
     approved = set(plan.leg_ids)
     return sorted({int(i) for i in attempted_leg_ids} - approved)
+
+
+def mutations_outside_approved_keys(
+    plan: Any, attempted_keys: Iterable[str]
+) -> list[str]:
+    """The same question for a plan whose rows are keyed by string, not by int.
+
+    A binding row is identified by ``event:side`` — an event id alone is not a
+    work item, because the two sides of one event are two independent writes and
+    approving one must never license the other.
+    """
+    approved = set(plan.row_keys)
+    return sorted({str(k) for k in attempted_keys} - approved)
+
+
+# ---------------------------------------------------------------------------
+# The binding plan (#1798, queue 362) — the second rail on this pattern
+#
+# Codex's C-APPLY-PRE BLOCK on the 180-side re-bind was not about the census,
+# which was correct, nor about the approval, which Alex had given. It was that
+# ``repair()`` had no ``plan_hash`` at all, so ``apply=true`` RE-DERIVED a fresh
+# census and wrote whatever that found. The specimen: reviewed set [(1001, away)],
+# a candidate 2002:away that appeared afterwards, and the rail wrote BOTH and then
+# reported ``miswired_after=0`` — because it re-measured the world it had just
+# changed, which is a true statement about the population and says nothing at all
+# about whether the writes were the approved ones.
+#
+# So the plan carries the BEFORE id per side, and the apply is a compare-and-set
+# against it. "Refuses stale by name" is that comparison: a row whose bound id has
+# moved since review is a row the reviewer did not see.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlannedBinding:
+    """One event side the dry-run decided to re-bind, with the state it read.
+
+    ``expected_before_id`` is the compare half of the compare-and-set. It is
+    carried from the dry-run and never re-read at apply time: re-reading it would
+    be asking the same question twice and believing the second answer, which is
+    exactly how an apply ends up bound to nothing.
+
+    The club NAMES are carried too, and they are load-bearing rather than
+    decorative — an id on its own is not reviewable, and Alex approves a list of
+    clubs, not a list of integers.
+    """
+
+    event_id: int
+    side: str
+    expected_before_id: int
+    before_name: str | None
+    after_id: int
+    after_name: str | None
+    defect: str
+    sport_id: int | None = None
+    matchup: str | None = None
+    commence_time: str | None = None
+
+    @property
+    def row_key(self) -> str:
+        return f"{int(self.event_id)}:{self.side}"
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "event_id": int(self.event_id),
+            "side": self.side,
+            "expected_before_id": int(self.expected_before_id),
+            "before_name": self.before_name,
+            "after_id": int(self.after_id),
+            "after_name": self.after_name,
+            "defect": self.defect,
+            "sport_id": self.sport_id,
+            "matchup": self.matchup,
+            "commence_time": self.commence_time,
+        }
+
+    def digest_line(self) -> str:
+        """Every field the apply ACTS on. Nothing it merely displays.
+
+        ``matchup``/``commence_time`` are outside the digest deliberately: they
+        are provenance for the reviewer, and a plan whose address moved because a
+        game's start time was corrected would train the operator to wave through
+        mismatches. ``before_name``/``after_name`` ARE inside it, because they are
+        what the approval was given over — a plan that silently swapped a club
+        name while keeping the ids must be a different plan.
+        """
+        return "|".join(
+            [
+                str(int(self.event_id)),
+                self.side,
+                str(int(self.expected_before_id)),
+                str(int(self.after_id)),
+                self.defect,
+                self.before_name or "",
+                self.after_name or "",
+            ]
+        )
+
+
+@dataclass(frozen=True)
+class BindingApplyPlan:
+    """The reviewed 180-side re-bind, as a content-addressed object."""
+
+    rows: tuple[PlannedBinding, ...] = ()
+    context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return self.rows
+
+    @property
+    def row_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(r.row_key for r in self.rows))
+
+    @property
+    def event_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({int(r.event_id) for r in self.rows}))
+
+    @property
+    def plan_hash(self) -> str:
+        lines = sorted(r.digest_line() for r in self.rows)
+        return input_fingerprint(_BINDING_PLAN_NS, str(len(lines)), *lines)
+
+    def defect_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for r in self.rows:
+            counts[r.defect] = counts.get(r.defect, 0) + 1
+        return counts
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "schema": BINDING_APPLY_PLAN_SCHEMA,
+            "plan_hash": self.plan_hash,
+            "row_count": len(self.rows),
+            "event_count": len(self.event_ids),
+            "defect_counts": self.defect_counts(),
+            "rows": [r.as_payload() for r in self.rows],
+            "context": dict(self.context),
+        }
+
+
+def build_binding_plan(
+    rows: Iterable[PlannedBinding], *, context: Mapping[str, Any] | None = None
+) -> BindingApplyPlan:
+    return BindingApplyPlan(rows=tuple(rows), context=dict(context or {}))
+
+
+def decode_binding_plan(raw: Any) -> tuple[BindingApplyPlan | None, str]:
+    """``(plan, reason)``. The stored address is RE-DERIVED, never believed."""
+    if not isinstance(raw, Mapping):
+        return None, REASON_PLAN_MISSING
+    if raw.get("schema") != BINDING_APPLY_PLAN_SCHEMA:
+        return None, REASON_PLAN_CORRUPT
+    raw_rows = raw.get("rows")
+    if not isinstance(raw_rows, list):
+        return None, REASON_PLAN_CORRUPT
+    rows: list[PlannedBinding] = []
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        if row.get("side") not in ("home", "away"):
+            return None, REASON_PLAN_CORRUPT
+        try:
+            rows.append(
+                PlannedBinding(
+                    event_id=int(row["event_id"]),
+                    side=str(row["side"]),
+                    expected_before_id=int(row["expected_before_id"]),
+                    before_name=row.get("before_name"),
+                    after_id=int(row["after_id"]),
+                    after_name=row.get("after_name"),
+                    defect=str(row["defect"]),
+                    sport_id=row.get("sport_id"),
+                    matchup=row.get("matchup"),
+                    commence_time=row.get("commence_time"),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, REASON_PLAN_CORRUPT
+    ctx = raw.get("context")
+    plan = BindingApplyPlan(
+        rows=tuple(rows), context=dict(ctx) if isinstance(ctx, Mapping) else {}
+    )
+    if plan.plan_hash != raw.get("plan_hash"):
+        return None, REASON_PLAN_CORRUPT
+    return plan, "ok"
 
 
 # ---------------------------------------------------------------------------

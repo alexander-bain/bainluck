@@ -51,6 +51,8 @@ import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 # Sources computed from events.home_score / events.away_score. A wrong score is a
 # wrong grade for these, full stop.
@@ -114,6 +116,87 @@ def db_query(sql: str, limit: int = 1000) -> list:
         # UNDERSTATES contamination, which is the direction that gets someone hurt.
         sys.exit(f"REFUSING TO REPORT: {len(rows)} rows at the {limit} cap -- narrow the query.")
     return rows
+
+
+_TICKER_DATE_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{2})")
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+)}
+
+
+def ticker_game_date(external_id: str | None) -> date | None:
+    """The date the MARKET says it is about, from its own ticker. ``None`` if absent.
+
+    Kalshi game tickers carry ``YYMONDD`` immediately after the series prefix
+    (``KXMLBTOTAL-26AUG051940MINKC`` -> 2026-08-05), in US Eastern, and gotcha #14
+    says to trust it over ``commence_time`` for game matching — the venue's
+    ``commence_time`` is frequently the close time.
+
+    Returning ``None`` for an unparseable ticker is deliberate and load-bearing: a
+    market whose identity we cannot read is NOT thereby in agreement with its event.
+    It is unknown, and :func:`market_identity_disputed` must not mark it certain.
+    """
+    if not external_id:
+        return None
+    m = _TICKER_DATE_RE.search(external_id)
+    if not m:
+        return None
+    yy, mon, dd = m.group(1), m.group(2), m.group(3)
+    month = _MONTHS.get(mon)
+    if month is None:
+        return None
+    try:
+        return date(2000 + int(yy), month, int(dd))
+    except ValueError:
+        return None
+
+
+def market_identity_disputed(external_id: str | None, commence_time) -> bool:
+    """True when the market's OWN id names a different game-date than its event.
+
+    QUEUE 362, and it is the ordering ruling arriving a FOURTH time — market
+    identity is identity too.
+
+    The specimen: outcome rows ``217508565``–``217508571`` sit on market
+    ``58609021``, whose ticker is ``KXMLBTOTAL-26AUG051940MINKC`` — the **Aug 5**
+    MIN@KC game. It is linked to event ``15187509``, which is soundly and correctly
+    the **Aug 6** game. Nothing about the EVENT is disputed, so the old
+    :func:`disputed` check waved it through as "identity certain" and the census
+    declared 3 of its rows adjudicable — computing a grade for the Aug 5 market from
+    the Aug 6 game's truth. Four further rows sat inside the "AGREES ANYWAY"
+    exclusion, agreeing with a score belonging to neither game.
+
+    A market bound to the wrong game is exactly as un-adjudicable as an event
+    wearing the wrong id, and for the same reason: the truth we would pair it with
+    is some other game's.
+    """
+    ticker_date = ticker_game_date(external_id)
+    if ticker_date is None or commence_time is None:
+        return False
+    event_date = _eastern_date(commence_time)
+    if event_date is None:
+        return False
+    return ticker_date != event_date
+
+
+def _eastern_date(commence_time) -> date | None:
+    """The event's game-date in US Eastern, which is the calendar the ticker uses.
+
+    Comparing against the UTC date would manufacture a disagreement for every night
+    game — a 19:40 ET first pitch is the NEXT UTC day — and a census that cries wolf
+    on most of its population teaches its reader to skip it.
+    """
+    if isinstance(commence_time, str):
+        try:
+            commence_time = datetime.fromisoformat(commence_time)
+        except ValueError:
+            return None
+    if not isinstance(commence_time, datetime):
+        return None
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    return commence_time.astimezone(ZoneInfo("America/New_York")).date()
 
 
 def _split_label(label: str) -> tuple[str, str]:
@@ -281,9 +364,15 @@ def main() -> int:
         inlist = ",".join(str(i) for i in event_ids)
         sql = (
             # NB: the outcome's label column is futures_outcomes.name, NOT outcome_name.
+            # fm.external_id (col 9) is the MARKET's own identity claim, added queue 362.
+            # Without it this census could only ask whether the EVENT was disputed, and
+            # an accurately-identified event carrying a NEIGHBOURING game's market read
+            # as "identity certain" -- see `market_identity_disputed`.
             "SELECT fm.event_id, fm.id, fm.name, fo.id, fo.name, fo.is_winner, "
-            "fo.resolution_source, fo.calibration_probability, fm.source "
+            "fo.resolution_source, fo.calibration_probability, fm.source, "
+            "fm.external_id, ev.commence_time "
             "FROM futures_markets fm JOIN futures_outcomes fo ON fo.market_id = fm.id "
+            "JOIN events ev ON ev.id = fm.event_id "
             f"WHERE fm.event_id IN ({inlist}) AND fo.resolution_source IN ({srcs}) "
             "ORDER BY fm.event_id, fm.id, fo.id"
         )
@@ -392,8 +481,26 @@ def main() -> int:
     def disputed(ev_id: int) -> bool:
         return bool({"REKEY_IMPOSTOR", "MISDATED"} & events[ev_id]["classes"])
 
-    tier_a = [c for c in confirmed if not disputed(c[0])]
-    tier_b = [c for c in confirmed if disputed(c[0])]
+    # QUEUE 362 — the second half of the same question. `disputed` asks whether the
+    # EVENT's identity is contested; this asks whether the MARKET's is. Both must be
+    # certain before a grade is adjudicable, because a grade is a claim about one
+    # specific game and either one of them being wrong points it at another.
+    # ``commence_time`` travels on the DETAIL ROW (col 10), not in the findings dict —
+    # the findings come from the reconcile output, which never carried it, so reading
+    # it from there would have made this whole check a silent no-op that reports zero
+    # disputes forever and looks exactly like good news.
+    def market_disputed(rec) -> bool:
+        return market_identity_disputed(rec[9], rec[10])
+
+    tier_a = [c for c in confirmed if not disputed(c[0]) and not market_disputed(c[1])]
+    tier_b = [c for c in confirmed if disputed(c[0]) and not market_disputed(c[1])]
+    tier_m = [c for c in confirmed if market_disputed(c[1])]
+
+    # The same test applied to the "AGREES ANYWAY" exclusion, which is where the
+    # specimen's four silently-wrong rows were hiding. A row agreeing with a grade
+    # recomputed from the WRONG GAME's truth is not agreement; it is a coincidence
+    # that the exclusion then reads as a reason to leave it alone.
+    agrees_market_disputed = [(e, r) for e, r in agrees if market_disputed(r)]
 
     out()
     out("#### ⚠️ The re-grade list splits on IDENTITY, and that changes what is actionable")
@@ -407,12 +514,25 @@ def main() -> int:
         "The event is also a re-key impostor or misdated, so the truth game paired with it "
         "here is the game whose id it *wears*. **Not adjudicable until the re-key lands** — "
         "a re-grade now would be confidently wrong about a different game.")
+    out(f"- **Tier M — MARKET identity disputed: {len(tier_m)} outcomes on "
+        f"{len({r[1] for _, r, _ in tier_m})} markets, {len({e for e, _, _ in tier_m})} events.** "
+        "The event may be perfectly sound; the MARKET's own ticker names a different "
+        "game-date than the event it is linked to, so the grade would be computed for "
+        "one game from another game's truth. **Not adjudicable until the market→event "
+        "link is repaired.**")
+    if agrees_market_disputed:
+        out(f"- ⚠️ **{len(agrees_market_disputed)} rows inside the AGREES ANYWAY exclusion "
+            f"({len({r[1] for _, r in agrees_market_disputed})} markets) sit on a "
+            "market-identity dispute.** Their 'agreement' was measured against the wrong "
+            "game's truth, so the exclusion is not evidence they are correct. They are "
+            "unknown, not fine.")
     out()
-    out("**This is the ordering ruling arriving a third time.** 339S's gate caught "
-        "CREATE-vs-REKEY before a backfill could duplicate rows; the same ordering now "
-        "governs settlement: **identity must be repaired before a grade can even be "
-        "computed**, let alone written. The re-grade is downstream of the repair, not "
-        "parallel to it.")
+    out("**This is the ordering ruling arriving a FOURTH time, and market identity is "
+        "identity too.** 339S's gate caught CREATE-vs-REKEY before a backfill could "
+        "duplicate rows; Tier B caught event identity before a grade; Tier M catches the "
+        "case where the event is right and the MARKET is on a different game. **Identity "
+        "must be repaired before a grade can even be computed**, let alone written. The "
+        "re-grade is downstream of the repair, not parallel to it.")
 
     out()
     out("#### Tier A — CONFIRMED WRONG, identity certain (adjudicable now)")
