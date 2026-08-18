@@ -243,6 +243,51 @@ reader can return a false zero is not armed.
 
 ---
 
+## §5.5 — Pre-registered input for the GATED SECOND item (`warm_typeahead`, 26.2 %)
+
+Not started — Fable gated it behind the FIRST read and forbade a blind W cut. But one cheap read
+this window changes what its registered prediction has to say, so it is banked here rather than
+rediscovered.
+
+`warm_typeahead` **is** instrumented, so unlike the turbo pair it has a real distribution.
+`GET /api/admin/task-metrics?task=warm_typeahead`, 2026-08-18 ~21:2xZ:
+
+| | |
+|---|---|
+| `starts_24h` | **4,245** (successes 4,242, `hard_kills_24h` 0) |
+| cadence | 50 samples over 726 s → **one run per ~14.5 s** |
+| **p50** | **0.01 s** |
+| p90 / p95 / max | **39.77 s** / **42.24 s** / 45.09 s |
+| mean | 11.68 s |
+
+⚠️ **Scope caveat, stated because the code itself warns about exactly this** (LAT-P040/#835):
+`recent_durations_saturated: true` and `recent_durations_window_s: 726`. The 50-entry list is
+bounded by COUNT, so this p95 describes **~12 minutes**, not 24 h. Do not read it as a standing
+property.
+
+**The distribution is BIMODAL, and that is the finding.** The median run costs **ten
+milliseconds** — it finds the head warm and no-ops. Roughly one run in ten does a full pass at
+**~40 s**, which matches LAT-P068's independently-measured warmer pass wall (median 38.5 s, 41 %
+of passes losing the head against a 45 s TTL at a 43.5 s period median).
+
+Duration × frequency cross-check: `mean 11.68 s × (1/14.5 s) ÷ 2 slots` = **40.2 %** of the pool,
+against S4's directly-observed **26.2 %**. Same order, S4 lower — consistent with the 726 s window
+catching a busier stretch. Two independent instruments agreeing on the rank is what matters here;
+the point estimate is not settled.
+
+### Why this makes a blind W cut worse than neutral
+
+**The cost is not in the runs; it is in the misses.** Cutting warmer count reduces the frequency of
+the *ten-millisecond* runs — the ones that cost nothing — while doing nothing about the ~40 s
+passes, and it can plausibly make them *more* frequent by letting the head go cold more often. The
+period median (43.5 s) already sits just under the 45 s TTL; that margin is what a W cut spends.
+
+So the SECOND item's registered prediction must state **where the load goes** in these terms:
+predicted change in the *fraction of passes that go cold*, and predicted DB hold %, not slot
+occupancy. Fable's halt on DB hold % is the right instrument and this is the mechanism behind why.
+
+---
+
 ## §6 — What this window did NOT establish
 
 - **Either task's true p95, p50, or dispersion.** n=1 each. That is the whole §0.
