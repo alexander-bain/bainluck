@@ -73,7 +73,17 @@ _BINDING_PLAN_NS = "event-team-binding-apply-plan"
 #: The THIRD rail (#1796/#1902, queue 363) — attended event CREATE from venue
 #: truth. Same reasoning for the separate schema and namespace: a create plan and
 #: a re-bind plan must never be interchangeable at an apply.
-CREATE_PLAN_SCHEMA = "event-create-from-truth-plan/v2"
+#:
+#: **v3 (queue 368, C-APPLY-PRE-CREATE-R2 finding 1).** ``sport_id`` is now inside
+#: the address. It is a field the create WRITES and it was outside the digest, so
+#: editing it in an artifact left the stored ``plan_hash`` still correct and the
+#: plan decoded clean — a reviewed game could be created under a sport nobody
+#: approved. That is not hypothetical here: MLB carries TWO team registries
+#: (33178 and 53232, all 30 clubs duplicated across them — #1798), so the wrong
+#: sport_id binds the new event to the wrong copy of the club. Bumping says *the
+#: scheme moved* rather than *somebody edited the file*. Every v2 create artifact
+#: must be re-derived and re-approved, including the two GREEN at queue 367.
+CREATE_PLAN_SCHEMA = "event-create-from-truth-plan/v3"
 _CREATE_PLAN_NS = "event-create-from-truth-plan"
 
 #: Refusal codes. The first three are the canonical corpus's own spelling; the
@@ -441,6 +451,13 @@ class PlannedBinding:
         mismatches. ``before_name``/``after_name`` ARE inside it, because they are
         what the approval was given over — a plan that silently swapped a club
         name while keeping the ids must be a different plan.
+
+        ``sport_id`` is correctly OUTSIDE here, and that is not an inconsistency
+        with the CREATE rail, which digests it (queue 368). This rail rewrites
+        team ids on an event that already exists and already has a sport; it
+        never writes ``sport_id``, so the field is provenance. The create rail
+        writes it. Same test applied to both, opposite answers — do not
+        "harmonise" these by copying either decision across.
         """
         return digest_fields(
             int(self.event_id),
@@ -618,6 +635,14 @@ class PlannedCreate:
         written into a new row. A create plan whose start times changed since
         review is a create plan the reviewer did not approve.
 
+        ``sport_id`` is INSIDE (queue 368). It was outside, and it is written by
+        the create, so the docstring above this line was false: a mutation to it
+        retained the approved ``plan_hash`` and decoded clean. MLB has two team
+        registries (33178 / 53232, all 30 clubs duplicated — #1798), so that is
+        the difference between creating the game against the reviewed club rows
+        and against their twins. The test for whether a field belongs here is not
+        "is it interesting" but "does the apply WRITE it".
+
         ``label`` stays out — it is prose assembled for the reviewer from the
         fields above, and re-wording it must not mint a new address.
         """
@@ -629,6 +654,7 @@ class PlannedCreate:
             self.home_name,
             self.away_name,
             self.commence_time,
+            int(self.sport_id) if self.sport_id is not None else "",
         )
 
 
@@ -728,7 +754,12 @@ def decode_create_plan(raw: Any) -> tuple[CreatePlan | None, str]:
                     home_name=str(row["home_name"]),
                     away_name=str(row["away_name"]),
                     commence_time=str(row["commence_time"]),
-                    sport_id=row.get("sport_id"),
+                    # REQUIRED and coerced (queue 368). It was `row.get(...)`,
+                    # which never raises: a missing sport_id decoded as None and
+                    # a garbage one decoded as itself, so the corrupt-artifact
+                    # path could not see either. Subscript + int() puts both in
+                    # the `except` below, where they become PLAN_ARTIFACT_CORRUPT.
+                    sport_id=int(row["sport_id"]),
                     label=row.get("label"),
                 )
             )

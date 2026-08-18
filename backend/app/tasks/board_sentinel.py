@@ -199,11 +199,18 @@ def check_stale_inbox(
     issues: list[dict],
     now,
     inbox_first_seen: dict[int, Any] | None = None,
-    max_hours: float = INBOX_TRIAGE_HOURS,
+    max_hours: float | None = None,
 ) -> list[dict]:
     """Any open issue that has *resided* in Inbox longer than the triage bar (Queue
     #265: board-wide, not just alert-intake — Inbox is temporary intake for
     everything).
+
+    ``max_hours`` RESOLVES AT CALL TIME. It was ``max_hours: float =
+    INBOX_TRIAGE_HOURS`` — a default argument, which Python binds once at import.
+    ``_load_overrides()`` reassigns that global from Redis at the start of every
+    run, so an operator's override never reached this verdict, while the exported
+    ``thresholds`` block (which reads the global at call time) echoed the NEW
+    number back at them. Graded on 48h, reported as whatever they set.
 
     Measures RESIDENCE, not issue age (C37 P2, Queue #266 Item 3): an old issue just
     moved into Inbox is not instantly stale. ``inbox_first_seen`` maps issue number →
@@ -212,6 +219,7 @@ def check_stale_inbox(
     first-seen (this run is the first trustworthy observation) is given a grace pass.
     The >``max_hours`` bar is itself the exemption for genuinely fresh intake. ``now``
     is injected for testability."""
+    max_hours = INBOX_TRIAGE_HOURS if max_hours is None else max_hours
     inbox_first_seen = inbox_first_seen or {}
     out = []
     for i in issues:
@@ -258,12 +266,22 @@ def check_missing_status(issues: list[dict], status_missing: set[int] | None) ->
 
 def check_template_p1_share(
     issues: list[dict],
-    cap: float = TEMPLATE_P1_SHARE_CAP,
-    min_population: int = TEMPLATE_P1_MIN_POPULATION,
+    cap: float | None = None,
+    min_population: int | None = None,
 ) -> list[dict]:
     """Share of open alert-intake issues at priority:p1 above the documented cap.
     Only judged past a small floor so a tiny board can't trip it. This flags for a
-    human REVIEW pass — it never downgrades anything (Queue #258)."""
+    human REVIEW pass — it never downgrades anything (Queue #258).
+
+    Both thresholds RESOLVE AT CALL TIME — see ``check_stale_inbox``. ``cap`` is
+    Redis-overridable and was frozen at import; ``min_population`` is not
+    overridable TODAY, and is converted anyway, because the difference between
+    the two is one line in ``_load_overrides`` and the trap is invisible from the
+    call site. That asymmetry is what makes this family recur."""
+    cap = TEMPLATE_P1_SHARE_CAP if cap is None else cap
+    min_population = (
+        TEMPLATE_P1_MIN_POPULATION if min_population is None else min_population
+    )
     intake = [i for i in issues if _is_intake(i)]
     if len(intake) < min_population:
         return []
