@@ -1029,6 +1029,220 @@ def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
     return filtered
 
 
+async def enrich_event_team_data(db, feed_items: list[dict]) -> None:
+    """Attach `home_team_data` / `away_team_data` to every event item, in place.
+
+    Extracted alongside the display chain (#1923) because it is not cosmetic to
+    that chain: `_filter_discover_event_noise` reads `home_team_data` /
+    `away_team_data` as `has_team_media` and DROPS live games that have neither.
+    A caller that assembles an events pool without this step does not get the
+    same page with plainer cards — it gets a different, smaller population.
+
+    `_build_team_lookup` is cached in-memory (5-min TTL, ~500 teams) — essentially free.
+    """
+    if not feed_items:
+        return
+    all_team_names = []
+    for item in feed_items:
+        if item["type"] == "event":
+            d = item["data"]
+            all_team_names.append(d["home_team"])
+            all_team_names.append(d["away_team"])
+    if not all_team_names:
+        return
+    team_lookup = await _build_team_lookup(db, all_team_names)
+    for item in feed_items:
+        if item["type"] == "event":
+            d = item["data"]
+            home_team = team_lookup.get(d["home_team"])
+            away_team = team_lookup.get(d["away_team"])
+            if home_team:
+                d["home_team_data"] = _format_team_data(home_team)
+            if away_team:
+                d["away_team_data"] = _format_team_data(away_team)
+
+
+def apply_discover_display_chain(
+    items: list[dict],
+    *,
+    limit: int,
+    ctx: "PersonalizationContext",
+    event_pct: float | None,
+    include_events: bool = True,
+    my_teams_only: bool = False,
+    cold_start: bool | None = None,
+    reviewed_keys: set | None = None,
+    timing_cb=None,
+) -> tuple[list[dict], dict]:
+    """Everything ``get_feed`` does to an already-scored pool BEFORE paginating.
+
+    Extracted from ``get_feed``'s inline block for #1923. This is the *display
+    chain*: the sort, the Discover event demotion and its re-sort, the noise
+    filter, the category-mix balance, the literal interleave
+    (``_ensure_feed_diversity``), the first-page quota re-pick, the editorial
+    tail, the bundle assemblers and lead composition. It changes ORDER and
+    MEMBERSHIP; it does not score.
+
+    **Why this exists as a function.** The ratification instrument for the
+    interestingness blend (``/api/admin/interestingness-side-by-side``) ranked
+    with ``_score_futures`` and then stopped at the sort — i.e. it reported
+    deltas over a list no user is served in that order. The fix is not for the
+    admin route to reproduce these eleven steps; it is for both callers to run
+    the same one. A ratification artifact that has drifted from the page is
+    worse than no artifact, because it carries Alex's authority while describing
+    a build Discover does not do (#257's shared-payload lesson, one layer up).
+
+    There is already a third, drifted copy in this module:
+    ``_discover_rank_phase_trace`` re-implements a SUBSET (no noise filter, no
+    category-mix balance, no bundles, no lead composition) because it needs a
+    rank reading *between* phases, which a single call cannot give. It is left
+    alone deliberately — it is a per-phase probe, not a build — but it is the
+    standing evidence that this chain grows copies when it is not a function.
+
+    **This mutates the item dicts it is given, and callers that reuse a pool
+    must copy.** ``_demote_non_exceptional_discover_events`` writes ``score`` and
+    ``_rank_score`` on event items in place. Within one request that is
+    invisible. Across two weights sharing one scored events pool it is not: the
+    second weight would inherit the first's demotions. The demotion happens to
+    be idempotent (``min(score, 35)``), which makes this the worst kind of
+    hazard — currently harmless, silently wrong the first time any stage in the
+    chain stops being. The events pool is deep-copied per pass by the admin
+    caller for exactly this reason; the input LIST is copied here so at least
+    the caller's ordering survives.
+
+    Args:
+        items: scored feed items (events + tournaments + deduped futures).
+        limit: the page size the caller will slice to. Several stages size their
+            windows from it, so it is part of the build, not just the slice.
+        ctx: personalization context — read for ``is_authenticated`` and, when
+            ``cold_start`` is not given, ``discover_category_affinities``.
+        event_pct: the caller's event ratio. ``< 0.3`` is Discover mode, ``< 0.2``
+            additionally suppresses artificial event promotion. ``None`` means
+            neither gate fires.
+        include_events: whether an events pool was built at all.
+        my_teams_only: My Stuff mode shows everything matching and skips the
+            diversity work entirely.
+        cold_start: override the derived cold-start flag. ``None`` derives it.
+        reviewed_keys: when not ``None``, drop items whose ranking key is in this
+            set at the same point ``get_feed`` does. The set must be loaded by
+            the caller — this function does no I/O.
+        timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
+            ``reviewed_filter``, ``bundles`` and ``lead_composition`` so
+            ``get_feed`` keeps its per-stage timings.
+
+    Returns:
+        ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when
+        no reviewed filtering was requested — not ``0``, which would be
+        indistinguishable from "requested and matched nothing" (gotcha #53).
+    """
+
+    def _tick(stage: str) -> None:
+        if timing_cb is not None:
+            timing_cb(stage)
+
+    # Copy the list, not the dicts. See the mutation note above: this protects
+    # the caller's ordering, and nothing else.
+    items = list(items)
+
+    # === RANK ===
+    # Sort by score descending, then by recency as tiebreaker
+    items.sort(key=_rank_key, reverse=True)
+
+    # === DIVERSITY GUARANTEE ===
+    # Ensure the feed has a mix of events and futures.
+    # Without this, futures can dominate (they get "resolving soon" + "multi source"
+    # bonuses that events don't have).
+    # For anonymous users, enforce a stronger event bias (events are the core product).
+    # Skip diversity enforcement for my_teams_only — show everything matching.
+    # When event_pct is low (Discover mode), demote ordinary events so
+    # interesting futures can compete. A routine playoff game scores 100
+    # from live+close+tier but isn't more interesting than "Will China
+    # invade Taiwan?" for a Discover audience. Only truly exceptional
+    # events (strong EI or top-tier exception keywords) keep their score.
+    if event_pct is not None and event_pct < 0.3:
+        _demote_non_exceptional_discover_events(items)
+        items = _filter_discover_event_noise(items)
+        # Re-sort after demotion so demoted events fall below high-scoring futures
+        items.sort(key=_rank_key, reverse=True)
+        items = balance_discover_event_category_mix(items)
+
+    if not my_teams_only:
+        if event_pct is not None and event_pct < 0.2:
+            pass  # Discover mode: let scores decide, no artificial event promotion
+        else:
+            _epct = 0.6 if not ctx.is_authenticated else 0.4
+            items = _ensure_feed_diversity(items, limit, event_pct=_epct)
+
+    # The Discover-mode gate is spelled once here. In `get_feed` the identical
+    # three-clause expression appeared three times (first-page, bundles, lead)
+    # and had to stay in sync by hand.
+    discover_mode = not my_teams_only and (
+        (event_pct is not None and event_pct < 0.3) or not include_events
+    )
+
+    if discover_mode:
+        _is_cold_start = (
+            (not ctx.discover_category_affinities) if cold_start is None else cold_start
+        )
+        items = diversify_discover_first_page(
+            items,
+            first_page_size=min(20, limit),
+            cold_start=_is_cold_start,
+        )
+        items = backfill_discover_editorial_tail(
+            items,
+            window_size=min(50, len(items)),
+            preserve_top=min(20, len(items)),
+        )
+    _tick("ranking")
+
+    reviewed_filtered_count = None
+    if reviewed_keys is not None:
+        items, reviewed_filtered_count = _filter_reviewed_feed_items(
+            items, reviewed_keys
+        )
+    _tick("reviewed_filter")
+
+    if discover_mode:
+        items = assemble_discover_comparison_bundles(items)
+        items = assemble_geopolitics_theme_bundles(items)
+        items = assemble_awards_theme_bundles(items)
+        # #948 (slice 6): fold the biggest guarded 24h movers into one
+        # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
+        items = assemble_swings_theme_bundles(items)
+    _tick("bundles")
+
+    # === LEAD COMPOSITION: marquees, then tonight's games (C185) ===
+    # ONE pass, deliberately. This was two — `_pin_marquee_items` (Queue #223
+    # Item 2) followed by `lead_with_tonights_games` (Alex ruling
+    # 2026-08-08(d)(1)) — and because BOTH write a prefix they composed as
+    # last-writer-wins: the game pass hoisted a live/imminent game above the
+    # marquee the pin had just placed. The Open / World Cup final lost the
+    # top slot to a routine game, which is the precise failure class the
+    # marquee pin exists to prevent.
+    #
+    # The comment that used to sit here asserted the opposite — that running
+    # second let the marquee "keep the very top" — and that is why the defect
+    # survived review. Reordering the two passes would not have fixed it; it
+    # would only have swapped which one lost. Two prefix-writers cannot be
+    # sequenced into the intended result, so the composition is single and
+    # the ordering authority is C185's eight-case corpus
+    # (tests/evals/fixtures/discover_lead_order_contract.json).
+    #
+    # PROMOTE, DO NOT UN-DEMOTE. The demotion above stays exactly as it is:
+    # it is load-bearing for the rest of Discover, and #1091 is the standing
+    # lesson that changing a feed cap is how the Sports tab got emptied. This
+    # remains a pure stable reorder — no score touched, nothing dropped, the
+    # list returned unchanged on any error (gotcha #42/#43).
+    #
+    # The marquee prefix is UNGATED (as it always was); only the tonight's-
+    # games prefix is Discover-mode-only, so Sports mode never invokes it.
+    items = compose_lead(items, include_tonights_games=discover_mode)
+    _tick("lead_composition")
+
+    return items, {"reviewed_filtered_count": reviewed_filtered_count}
+
+
 def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict], int]:
     """Drop non-predictive futures/comparison cards — a guaranteed-interesting
     violation (#240 Item 4; extended by Queue 282 / C79).
@@ -1861,25 +2075,7 @@ async def get_feed(
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
 
         # === ENRICH EVENTS WITH TEAM DATA ===
-        # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
-        if feed_items:
-            all_team_names = []
-            for item in feed_items:
-                if item["type"] == "event":
-                    d = item["data"]
-                    all_team_names.append(d["home_team"])
-                    all_team_names.append(d["away_team"])
-            if all_team_names:
-                team_lookup = await _build_team_lookup(db, all_team_names)
-                for item in feed_items:
-                    if item["type"] == "event":
-                        d = item["data"]
-                        home_team = team_lookup.get(d["home_team"])
-                        away_team = team_lookup.get(d["away_team"])
-                        if home_team:
-                            d["home_team_data"] = _format_team_data(home_team)
-                        if away_team:
-                            d["away_team_data"] = _format_team_data(away_team)
+        await enrich_event_team_data(db, feed_items)
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "team_enrichment"
         )
@@ -2104,53 +2300,20 @@ async def get_feed(
         if _zero_dropped:
             logger.info("Feed: suppressed %d all-0%% probability card(s)", _zero_dropped)
 
-        # === RANK AND PAGINATE ===
-        # Sort by score descending, then by recency as tiebreaker
-        feed_items.sort(key=_rank_key, reverse=True)
-
-        # === DIVERSITY GUARANTEE ===
-        # Ensure the feed has a mix of events and futures.
-        # Without this, futures can dominate (they get "resolving soon" + "multi source"
-        # bonuses that events don't have).
-        # For anonymous users, enforce a stronger event bias (events are the core product).
-        # Skip diversity enforcement for my_teams_only — show everything matching.
-        # When event_pct is low (Discover mode), demote ordinary events so
-        # interesting futures can compete. A routine playoff game scores 100
-        # from live+close+tier but isn't more interesting than "Will China
-        # invade Taiwan?" for a Discover audience. Only truly exceptional
-        # events (strong EI or top-tier exception keywords) keep their score.
-        if event_pct is not None and event_pct < 0.3:
-            _demote_non_exceptional_discover_events(feed_items)
-            feed_items = _filter_discover_event_noise(feed_items)
-            # Re-sort after demotion so demoted events fall below high-scoring futures
-            feed_items.sort(
-                key=_rank_key, reverse=True
-            )
-            feed_items = balance_discover_event_category_mix(feed_items)
-
-        if not my_teams_only:
-            if event_pct is not None and event_pct < 0.2:
-                pass  # Discover mode: let scores decide, no artificial event promotion
-            else:
-                _epct = 0.6 if not ctx.is_authenticated else 0.4
-                feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
-
-        if not my_teams_only and (
-            (event_pct is not None and event_pct < 0.3) or not include_events
-        ):
-            _is_cold_start = not ctx.discover_category_affinities
-            feed_items = diversify_discover_first_page(
-                feed_items, first_page_size=min(20, limit),
-                cold_start=_is_cold_start,
-            )
-            feed_items = backfill_discover_editorial_tail(
-                feed_items,
-                window_size=min(50, len(feed_items)),
-                preserve_top=min(20, len(feed_items)),
-            )
-        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
-
+        # === RANK, DIVERSIFY, BUNDLE, LEAD ===
+        # The whole display chain now lives in `apply_discover_display_chain`
+        # (#1923) so the blend-ratification instrument runs the SAME build
+        # instead of a second copy that stops at the sort. Read that function
+        # for what happens here and why — this call site is deliberately thin.
+        #
+        # The reviewed-key load is hoisted ABOVE the chain because the chain
+        # does no I/O. That moves the two awaits out of the `reviewed_filter`
+        # timing bucket and into `ranking`'s span; the bucket still exists and
+        # still measures the filter itself. `exclude_reviewed` is admin/debug
+        # only, so no served request changes shape.
         reviewed_filter = None
+        reviewed_keys = None
+        effective_reviewer = None
         if exclude_reviewed:
             # Resolve reviewer: when "native" and authenticated via Bearer token,
             # use the admin's email for per-user reviewed state.
@@ -2165,67 +2328,32 @@ async def get_feed(
                 reviewer=effective_reviewer,
                 surface=reviewed_surface,
             )
-            feed_items, reviewed_filtered_count = _filter_reviewed_feed_items(
-                feed_items,
-                reviewed_keys,
+
+        def _chain_timing(stage: str) -> None:
+            nonlocal _previous_at
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, stage
             )
+
+        feed_items, _chain_meta = apply_discover_display_chain(
+            feed_items,
+            limit=limit,
+            ctx=ctx,
+            event_pct=event_pct,
+            include_events=include_events,
+            my_teams_only=my_teams_only,
+            reviewed_keys=reviewed_keys,
+            timing_cb=_chain_timing,
+        )
+
+        if exclude_reviewed:
             reviewed_filter = {
                 "enabled": True,
                 "reviewer": effective_reviewer,
                 "surface": reviewed_surface,
-                "reviewed_key_count": len(reviewed_keys),
-                "filtered_count": reviewed_filtered_count,
+                "reviewed_key_count": len(reviewed_keys or ()),
+                "filtered_count": _chain_meta["reviewed_filtered_count"],
             }
-        _previous_at = _record_feed_timing(
-            _timings, _started_at, _previous_at, "reviewed_filter"
-        )
-
-        if not my_teams_only and (
-            (event_pct is not None and event_pct < 0.3) or not include_events
-        ):
-            feed_items = assemble_discover_comparison_bundles(feed_items)
-            feed_items = assemble_geopolitics_theme_bundles(feed_items)
-            feed_items = assemble_awards_theme_bundles(feed_items)
-            # #948 (slice 6): fold the biggest guarded 24h movers into one
-            # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
-            feed_items = assemble_swings_theme_bundles(feed_items)
-        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
-
-        # === LEAD COMPOSITION: marquees, then tonight's games (C185) ===
-        # ONE pass, deliberately. This was two — `_pin_marquee_items` (Queue #223
-        # Item 2) followed by `lead_with_tonights_games` (Alex ruling
-        # 2026-08-08(d)(1)) — and because BOTH write a prefix they composed as
-        # last-writer-wins: the game pass hoisted a live/imminent game above the
-        # marquee the pin had just placed. The Open / World Cup final lost the
-        # top slot to a routine game, which is the precise failure class the
-        # marquee pin exists to prevent.
-        #
-        # The comment that used to sit here asserted the opposite — that running
-        # second let the marquee "keep the very top" — and that is why the defect
-        # survived review. Reordering the two passes would not have fixed it; it
-        # would only have swapped which one lost. Two prefix-writers cannot be
-        # sequenced into the intended result, so the composition is single and
-        # the ordering authority is C185's eight-case corpus
-        # (tests/evals/fixtures/discover_lead_order_contract.json).
-        #
-        # PROMOTE, DO NOT UN-DEMOTE. The demotion above stays exactly as it is:
-        # it is load-bearing for the rest of Discover, and #1091 is the standing
-        # lesson that changing a feed cap is how the Sports tab got emptied. This
-        # remains a pure stable reorder — no score touched, nothing dropped, the
-        # list returned unchanged on any error (gotcha #42/#43).
-        #
-        # The marquee prefix is UNGATED (as it always was); only the tonight's-
-        # games prefix is Discover-mode-only, so Sports mode never invokes it.
-        feed_items = compose_lead(
-            feed_items,
-            include_tonights_games=(
-                not my_teams_only
-                and ((event_pct is not None and event_pct < 0.3) or not include_events)
-            ),
-        )
-        _previous_at = _record_feed_timing(
-            _timings, _started_at, _previous_at, "lead_composition"
-        )
 
         total = len(feed_items)
         paginated = feed_items[offset : offset + limit]

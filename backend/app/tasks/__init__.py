@@ -461,14 +461,22 @@ except Exception:  # pragma: no cover - defensive
 #   Never blocked by batch jobs.
 #
 # background (Standard-1X, concurrency=2):
-#   Short (<300s) hourly/daily batch tasks and matching-pipeline drivers
-#   (match_prediction_markets, poll_kalshi_markets, merges). Latency-tolerant
-#   but must still fire promptly — so it must NOT share slots with 600s
-#   grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB
-#   dyno). NOTE (#233): the sentinels moved OFF background onto `heavy` — the
-#   ~40-beat, 2-slot queue was starving their morning fires (no_run_cached).
+#   Short (<300s) hourly/daily batch tasks and the merge drivers. Latency-
+#   tolerant but must still fire promptly — so it must NOT share slots with
+#   300s+ grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB, which
+#   fits a 512MB Standard-1X *exactly*: concurrency here is a MEMORY bound, not
+#   a preference, so "just raise it to 4" is a dyno upgrade, not a config edit.
+#   NOTE (#233): the sentinels moved OFF background onto `heavy` — the ~40-beat,
+#   2-slot queue was starving their morning fires (no_run_cached).
 #
-# heavy (Standard-1X, concurrency=2):
+#   ⚠️ THE STANDING FACT ABOUT THIS QUEUE (#1609, measured LAT-P064/P065):
+#   `warm_typeahead` runs 36.3s p50 against a 30s floor, i.e. it is
+#   APPROXIMATELY ONE PERMANENTLY-OCCUPIED SLOT OF TWO. Background therefore has
+#   ~ONE effective slot for ~40 beats. Anything multi-minute placed here does
+#   not "share" the queue; it closes it. Price a new background beat against one
+#   slot, never two.
+#
+# heavy (Standard-2X, concurrency=2):
 #   ISOLATION LANE for the calibration precompute family — the user-facing
 #   cache-warmers (precompute_calibration_main hourly, calibration_prices,
 #   time_horizon, fair_fight, source_intelligence, coverage,
@@ -490,18 +498,53 @@ except Exception:  # pragma: no cover - defensive
 #   cache-warmers. Sentinels must fire PROMPTLY (they are alarms); heavy is
 #   the only lane that guarantees a free slot at 07:10-07:45.
 #
-#   Deliberately NOT here: the big backfills (backfill_winners 840s, the
-#   kalshi/polymarket backfills 600-960s). They stay on `background` where
-#   they have always lived — moving them here would just relocate the
-#   starvation (they'd fill both heavy slots and delay the hourly calibration
-#   warmer, observed live during the #224 rollout). Backfill-vs-fast-task
-#   contention on background was never the reported problem; calibration
-#   starvation was. So heavy stays a small, guaranteed-free calibration lane.
+#   Also here since #1609 (LAT-P065): the three multi-minute BACKGROUND
+#   residents. This REVERSES the #224-era pin below for exactly three tasks, on
+#   today's numbers rather than on the shape of the old argument:
+#
+#     task                        p50      p95     cadence   duty (p50, 1 slot)
+#     prediction_market_match    337.4s   699.4s   15 min    37.5%
+#     poll_kalshi                320.2s   399.7s    2 h       4.4%
+#     precompute_admin_link_rate  71.8s   122.2s   30 min     4.0%
+#
+#   Against the ~ONE effective background slot noted above, those three were
+#   ~46% of everything background had — and `prediction_market_match` alone is
+#   77.7% of a slot at p95, which is what actually produced the measured
+#   `warm_typeahead` dispatch holes (five clean holes in 55.8 probe-free
+#   minutes, one per 11.2 min; the warmer NOT RUNNING 30.0% of wall-clock).
+#   They are latency-TOLERANT (a linkage pass and two cache warmers; no user
+#   waits on any of them) and they were starving a latency-CRITICAL warmer, so
+#   the #233 argument applies to them verbatim — it was simply never run on
+#   these three.
+#
+#   Why heavy absorbs them: heavy is a **Standard-2X** (1 GB), not the
+#   Standard-1X this comment claimed for months. 2 × 200MB children + overhead
+#   is ~40% of its RAM, and it measured depth **0** while background sat at
+#   **418**. Adding 45.9% of one slot to a 2-slot (200%) lane whose largest
+#   resident is the hourly precompute_calibration_main leaves real margin.
+#
+#   🔶 REGISTERED COST, not hidden (ruling 050): `prediction_market_match` fires
+#   :05/:20/:35/:50 and `precompute_calibration_main` at :15 can run to 19 min
+#   (p95 1159s), so the 07:10-07:45 UTC sentinel window can now find both heavy
+#   slots busy and DELAY a daily alarm by minutes. A delayed sentinel is not
+#   #233's failure (that was `no_run_cached` — never running at all), and heavy
+#   is the only lane where a delayed task still runs. If a sentinel is ever
+#   observed missing rather than late, the remedy is heavy's concurrency (it has
+#   the RAM headroom for 3), NOT sending these three back to background.
+#
+#   Deliberately STILL NOT here: the big backfills (backfill_winners 840s, the
+#   kalshi/polymarket backfills 600-960s). They stay on `background` where they
+#   have always lived — moving THEM here would fill both heavy slots for
+#   ten-minute stretches and delay the hourly calibration warmer (observed live
+#   during the #224 rollout). That observation was about the 600-960s class and
+#   it still holds for the 600-960s class; it was never measured against the
+#   300s class, and #1609 is what measured it.
 #
 # HEAVY membership rule: the calibration/precompute cache-warmer family + the
-# 5 sentinels (#233). Applied programmatically to both task_routes and the beat
-# schedule's per-entry `options["queue"]` (beat options override task_routes, so
-# both must agree — see the loop after the beat_schedule definition).
+# 5 sentinels (#233) + the three multi-minute ex-background residents (#1609).
+# Applied programmatically to both task_routes and the beat schedule's per-entry
+# `options["queue"]` (beat options override task_routes, so both must agree —
+# see the loop after the beat_schedule definition).
 # =============================================================================
 
 from kombu import Queue
@@ -536,8 +579,10 @@ celery_app.conf.task_routes = {
 # /calibration warmer (observed live during the #224 rollout). Backfill-vs-fast
 # contention on background was never the reported problem.
 _HEAVY_KEEP_ON_BACKGROUND = {
-    "app.tasks.match_prediction_markets",   # linkage pipeline, every 15 min
-    "app.tasks.poll_kalshi_markets",        # ingest cadence
+    # NOTE (#1609, LAT-P065): match_prediction_markets and poll_kalshi_markets
+    # were pinned here and MOVED TO HEAVY. They were 337.4s and 320.2s p50 on a
+    # queue with ~one effective slot, and they were the measured cause of the
+    # `warm_typeahead` dispatch holes. See the routing comment block above.
     "app.tasks.merge_duplicate_events",     # matching pipeline
     "app.tasks.merge_degenerate_combat_events",
     # NOTE: the 5 sentinels moved to HEAVY_TASKS (Queue #233) — see below.
@@ -590,6 +635,19 @@ HEAVY_TASKS = {
     # like the sentinels, and it must fire promptly at 07:05 so the standing
     # inverted rows are healed before the 07:10 flow sentinel reads resolved_state.
     "app.tasks.mlb_schedule_coverage",
+    # --- #1609 (LAT-P065): the three multi-minute ex-`background` residents. ---
+    # These are the TOPOLOGY FIX for the background-queue starvation, not new
+    # heavy work. Each is latency-TOLERANT and each was measured holding a slot
+    # on a queue that has ~one effective slot, starving the latency-CRITICAL
+    # `warm_typeahead`. Full arithmetic + the registered sentinel-delay cost are
+    # in the routing comment block above; do not move them back without
+    # re-measuring background's effective slot count first.
+    "app.tasks.match_prediction_markets",    # 337.4s p50 / 699.4s p95, every 15 min
+    "app.tasks.poll_kalshi_markets",         # 320.2s p50, every 2 h
+    "app.tasks.precompute_admin_link_rate",  # 71.8s p50 / 122.2s p95 — an ADMIN
+                                             # cache warmer no user waits on, and
+                                             # it was directly observed holding a
+                                             # slot through a measured hole.
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -3622,8 +3680,14 @@ celery_app.conf.beat_schedule = {
     "precompute-admin-link-rate": {
         "task": "app.tasks.precompute_admin_link_rate",
         # */10 -> */30 (LAT-P062). Was 6 recomputes per 3600s TTL; now 2.
+        # background -> heavy (#1609, LAT-P065): 71.8s p50 / 122.2s p95 on a
+        # queue with ~one effective slot, for an ADMIN panel no user waits on.
+        # It was directly observed holding a slot through a measured
+        # `warm_typeahead` hole. It is in HEAVY_TASKS, so the loop below the
+        # beat schedule would pin this to heavy regardless — stated literally
+        # here so the source reads true rather than relying on the override.
         "schedule": crontab(minute="*/30"),
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "precompute-admin-matured-linkage": {
         "task": "app.tasks.precompute_admin_matured_linkage",
@@ -3642,6 +3706,70 @@ celery_app.conf.beat_schedule = {
 for _beat_entry in celery_app.conf.beat_schedule.values():
     if _beat_entry.get("task") in HEAVY_TASKS:
         _beat_entry.setdefault("options", {})["queue"] = "heavy"
+
+
+# =============================================================================
+# #1609 HYGIENE — bound the lifetime of a cache-warmer beat message.
+#
+# ⚠️ THIS IS HYGIENE, NOT THE CURE, AND IT IS LABELLED SO ON PURPOSE.
+# The cure for #1609 is the topology change above (the three multi-minute
+# residents moved off `background`). This block ships BEHIND it and carries a
+# registered CONTROL that predicts NO user-visible improvement from it alone:
+#
+#   E1  background depth falls and holds < 100 within 2 h        (expected)
+#   E2  `starts_24h` falls toward real passes; the burst pattern
+#       (+11 starts in 6 s of 15 ms lock-skips) disappears        (expected)
+#   E3  `warm_typeahead` HOLE FREQUENCY AND DURATION UNCHANGED    (expected)
+#
+# E3 is the honest control. If someone later reports "expires fixed #1609",
+# E3 is the row that says it did not: this shortens the QUEUE, it does not
+# return a SLOT. A remedy that makes the depth number look better while the
+# starvation continues is worse than no remedy, because it retires the alarm.
+#
+# There was no `task_expires` anywhere in this config (LAT-P064 §1922-E):
+# nothing discarded a stale beat message, so `warm_typeahead`'s 10 s beat
+# published 8,640 messages/day against ~2,530 measured starts and the surplus
+# ripped through later in bursts. #1609's own queue sample showed the same
+# shape for `precompute_discover_candidate_base` (x6 enqueued) and
+# `refresh_open_commentary` (x5) — which is acceptance criterion 2 on that
+# issue, "no periodic task has more than one instance enqueued at a time".
+#
+# THE RULE IS ONE BEAT PERIOD, not a per-task magic number. For an idempotent
+# cache warmer, a message still queued when its successor is published is by
+# definition superseded — running it recomputes a value that is about to be
+# recomputed. `expires` is therefore set to exactly one period, and a guard
+# test asserts both that every name here exists and that the value never
+# exceeds the beat's own period.
+#
+# Deliberately NOT expired: anything that writes durable rows. Dropping a
+# superseded WARM is free; dropping a superseded WRITE loses data.
+# =============================================================================
+_EXPIRING_WARMER_BEATS = {
+    # beat name -> expires seconds (== one beat period)
+    # ⚠️ 10, NOT the 30 LAT-P064 registered — and the deviation is deliberate.
+    # That 30 was reasoned from MIN_PASS_PERIOD_SECONDS (the task's own floor on
+    # REAL passes). But `expires` bounds the MESSAGE, not the pass, and the beat
+    # publishes every 10 s: at 30 s, three messages are alive at once and the
+    # lapping this is meant to stop is re-admitted at 1/3 scale. The guard test
+    # `test_1609_expires_never_exceeds_the_beat_period` is what caught it.
+    # Cost of 10, stated: when a slot frees, the warmer waits up to 10 s for the
+    # next beat instead of picking up a queued backlog instantly. LAT-P064
+    # measured that resumption at 13 s with a backlog present, so this is inside
+    # the noise — and it is one more reason E3 predicts no visible improvement.
+    "warm-typeahead": 10,
+
+    "precompute-discover-candidate-base": 120,   # */2 min — #1609 saw 6 enqueued
+    "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only
+                                             # OpenAI caller, so dropping stale work saves spend
+    "warm-event-concepts": 300,              # */5 min
+}
+
+for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():
+    # No silent skip: a renamed beat must fail loudly here rather than quietly
+    # lose its bound. The guard test asserts the same thing at collection time.
+    celery_app.conf.beat_schedule[_warmer_beat].setdefault("options", {})[
+        "expires"
+    ] = _expires_s
 
 
 # Queue 300R Item 1 — targeted result suppression. Must run AFTER the beat
