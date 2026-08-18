@@ -48,3 +48,65 @@ Once tiers 1–2 (and 3’s precedence table) land, the matching lane **re-basel
 
 *Time-window (§5) and team-merge (§4) notes ride the re-baseline above — fix before re-measuring so the new baseline is not clock-poisoned or index-poisoned.*
 
+---
+
+## Routed in from PROGRAM UX cycle 94 (UX-P097) — series mis-linkage is a SIXTH class, not §5's tail
+
+*Filed, not fixed. Recorded here because the UX lane measured it while diagnosing #1976 and it does
+not belong to any lane that owns these files. Disposition agreed with Fable (cycle 95 ruling): this
+is a census handed to the matching queue, not work UX takes.*
+
+**The census — 60/60, and the sign is what matters.** On the 3-day MLB slate, **every one of the 60
+linked Kalshi game markets disagrees with its own event's date**, by **-85 to -20 days**. Not a
+handful; the whole population. Three separate JUNE ticker dates sit on one **August 18** game. Team
+codes on those tickers are **CORRECT** — the matchup is right, the date is not.
+
+**Why this is NOT §2's clock class or §5's window class.** Both of those are calibrated on the
+"~28h" tolerance the code documents (`prediction_market_matching.py:171/320`, settlement-vs-start).
+A **-85-day** disagreement is not a timezone, not a settlement date, and not a doubleheader: it is
+the *wrong series instance* linked to the event. §5's two-tier proposal (6h clocked / 28h date-only
+ligature) does not reach it — a 28h ligature window is 70× too narrow to have admitted these rows,
+so they were **not admitted by the window at all**. They were admitted by whatever set `event_id`,
+and the window never saw them (gotcha #15: *do not time-window already-linked prediction markets* —
+if `event_id` is set, the read path trusts it). **A sixth row is owed, or §3's precedence table must
+grow an explicit series-instance discriminator.**
+
+**`filter_foreign_game_markets` is blind to this BY CONSTRUCTION — twice over, independently.**
+(`backend/app/utils/prediction_market_matching.py:1213-1250`, verified against current master
+`43f33396`.) This matters because that function is the *defense-in-depth* layer the settled-page
+"foreign props" bug left behind, so a reader naturally assumes it is a backstop here. It is not:
+
+1. **The discriminator is the TEAM-CODE, never the date** (`:1247`, `:1250`). The ticker date is used
+   only to *elect* which team-codes are "true" (`true_codes = {tc for _, tc, dm in info if tc and dm}`);
+   the filter then keeps every market whose team-code is in that set. Since this census's team codes
+   are **correct**, every wrong-dated market is in the kept set. The date cannot reject a row on its
+   own — it has no rejection arm. A 60/60 date-wrong, team-code-right population is precisely the
+   input shape this filter is designed to pass.
+2. **It fail-opens on exactly the census's condition** (`:1248-1249`). `true_codes` is empty unless at
+   least one linked market's ticker date **equals the event date**. Here *no* market's date matches —
+   that is the finding — so `true_codes` is empty and the function returns `markets` unchanged with
+   the comment *"fail-open — can't establish the true game"*. The worse the corruption, the more
+   completely the filter stands down: partial corruption leaves a matching row that elects true codes
+   and prunes the rest, while **total** corruption disables the filter entirely.
+
+   *That inversion is the general clause worth lifting: a fail-open guard keyed on agreement with the
+   suspect field is strongest against small errors and absent against total ones. Doctrine candidate —
+   it is not about tickers.*
+
+3. Third, cheaper arm: `len(team_codes) <= 1` returns unchanged (`:1244`), so a single-matchup slate
+   is never filtered regardless.
+
+**Consequence for the re-baseline protocol above.** The `before.json` gate SQLs measure ticker-vs-event
+drift with `ABS(epoch(ticker_date - commence_time)) > 86400` (§3's census). That predicate **does**
+count these rows — but it buckets them with the 24-28h settlement tail, which is the population §2/§3
+are designed to explain away as legitimate. **Bucket the drift by SIGN and MAGNITUDE, not absolute
+value**: a `24-28h` bucket and a `>7d` bucket are different diseases, and the current histogram sums
+them. If the `>7d` mass is not separated before Tier 2 lands, Tier 2 will appear to "fix" a bias it
+never touched, because correcting a +4h StatPal offset moves the mean of a distribution whose tail is
+-85 days.
+
+**Owed, not claimed here:** the mechanism that SETS `event_id` on a June ticker for an August game is
+not diagnosed — this census establishes the population, its sign, its magnitude, and that the two
+layers most likely to be credited with catching it (the window, the foreign-market filter) both
+structurally cannot. Naming the writer is the matching lane's call. Filed to **#1970**.
+
