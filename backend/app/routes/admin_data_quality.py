@@ -572,6 +572,13 @@ async def merge_duplicate_events(
             assert_mergeable(pm_event, best_match, context="cleanup/merge-duplicate-events")
             eid = pm_event.id
             target = best_match.id
+            # #1947: both arms, on the rows as the DB holds them, locked, in this
+            # transaction. The line above is arm A on ORM objects loaded earlier.
+            from app.utils.event_absorption_guard import assert_absorbable_now
+            await assert_absorbable_now(
+                db, keep_id=target, orphan_id=eid,
+                context="cleanup/merge-duplicate-events",
+            )
             # Migrate all event_id references to real event
             for tbl in ["odds_snapshots", "win_prob_snapshots", "score_snapshots",
                         "espn_snapshots", "scoring_plays", "odds_aggregated",

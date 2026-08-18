@@ -284,6 +284,12 @@ async def reconcile(
             try:
                 await _absorb(session, keep=twin["id"], drop=row.id)
                 drained.append({**pair, "applied": True})
+            except UnanchoredMergeRefused as exc:
+                # #1947: the in-transaction guard refused on the FRESH rows. That
+                # is a refusal, not an error — it belongs in the same bucket as
+                # the caller-side one above, or the census reads a working guard
+                # as a broken drain.
+                refused.append({**pair, "reason": str(exc)[:300]})
             except Exception as exc:  # noqa: BLE001 — one bad pair never wipes the pass
                 errors.append(f"merge {row.id}->{twin['id']}: {type(exc).__name__}")
 
@@ -340,8 +346,20 @@ async def _absorb(session, *, keep: int, drop: int) -> None:
     ``merge_event_pair`` both rails call. It is not extracted in this window
     because that rail is mid-certification and a refactor of a DELETE path is not
     a free change. Caller has already run ``assert_mergeable``.
+
+    #1947: that caller-side check is arm A on a stale read, so it is no longer
+    the last word. ``assert_absorbable_now`` re-reads both rows ``FOR UPDATE``
+    in this transaction and applies BOTH arms before the first destructive
+    statement below. It raises a subclass of ``UnanchoredMergeRefused``, which
+    ``reconcile`` already catches per pair.
     """
     from app.tasks.sports import _EVENT_FK_TABLES  # noqa: PLC0415
+    from app.utils.event_absorption_guard import assert_absorbable_now  # noqa: PLC0415
+
+    await assert_absorbable_now(
+        session, keep_id=keep, orphan_id=drop,
+        context="reconcile_unanchored_events",
+    )
 
     for table in _EVENT_FK_TABLES:
         await session.execute(
