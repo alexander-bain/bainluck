@@ -16,6 +16,9 @@ const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: f
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false, loading: ChartSkeleton });
+// UX-P098: the rail LEADS the props body, so it is a static import — a dynamic
+// one would paint a skeleton in the one slot the page is supposed to answer first.
+import PropDivergenceRail from "@/components/PropDivergenceRail";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
@@ -1076,17 +1079,42 @@ export default function EventPage({ params }: EventPageProps) {
               route down on 2026-08-10, and 7 of 8 sampled settled MLB events
               carry 55-73 rows of that shape. */}
           {gameMarkets.player_props.length > 0 && (
-            <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
-            <PlayerPropsDashboard
-              data={gameMarkets}
-              eventStatus={event.status}
-              homeTeam={event.home_team}
-              awayTeam={event.away_team}
-              homeColor={event.home_team_data?.primary_color || undefined}
-              awayColor={event.away_team_data?.primary_color || undefined}
-              boxScore={event.box_score_data}
+            <>
+            {/* UX-P098 (UX-AMBITION-1 slice 1) — THE DIVERGENCE leads.
+                Alex's V1: the pregame page opens with the five questions that
+                are actually live, not the whole prop set. On a real MLB payload
+                that set is FORTY props; leading with it is the wall this
+                replaces. The full set is one click away, below. */}
+            <SectionErrorBoundary label="What's moving" resetKey={gameMarkets}>
+            <PropDivergenceRail
+              playerProps={gameMarkets.player_props}
+              status={event.status}
             />
             </SectionErrorBoundary>
+
+            <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
+            <details className="group bg-surface-card rounded-card shadow-card overflow-hidden">
+              <summary className="cursor-pointer select-none px-4 sm:px-5 py-3 text-[13px] font-semibold text-text-primary marker:content-none">
+                All {gameMarkets.player_props.length} props
+                <span className="ml-1.5 text-[11px] font-normal text-text-muted group-open:hidden">
+                  show
+                </span>
+                <span className="ml-1.5 text-[11px] font-normal text-text-muted hidden group-open:inline">
+                  hide
+                </span>
+              </summary>
+              <PlayerPropsDashboard
+                data={gameMarkets}
+                eventStatus={event.status}
+                homeTeam={event.home_team}
+                awayTeam={event.away_team}
+                homeColor={event.home_team_data?.primary_color || undefined}
+                awayColor={event.away_team_data?.primary_color || undefined}
+                boxScore={event.box_score_data}
+              />
+            </details>
+            </SectionErrorBoundary>
+            </>
           )}
 
           {/* Matchups — H2H and 3-ball markets (golf) */}

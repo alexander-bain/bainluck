@@ -168,6 +168,8 @@ describe("the event page actually wraps its sections", () => {
       "The win probability chart",
       "The score differential chart",
       "The market maps",
+      // UX-P098: THE DIVERGENCE rail leads the props body, above the full set.
+      "What's moving",
       "Player props",
       "Matchups",
       "Special markets",
