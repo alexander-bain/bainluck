@@ -1652,8 +1652,30 @@ async def get_horizon_sentinel_last(
 # Ops snapshot (#237 Item 1) — one compact digest for ops rounds / Item-0 reads
 # ---------------------------------------------------------------------------
 
-_OPS_SNAPSHOT_CACHE: dict = {"at": 0.0, "data": None}
+_OPS_SNAPSHOT_CACHE: dict = {"at": 0.0, "data": None, "cycle": None}
 _OPS_SNAPSHOT_TTL = 300  # 5 min
+
+
+def _ops_derivation_cycle() -> str | None:
+    """Identity of the Sentry billing cycle the snapshot's numbers were derived
+    under, or ``None`` when it cannot be established.
+
+    A time-boxed cache is a claim that nothing in the payload can change faster
+    than the box. That is false for every cycle-derived field the snapshot
+    carries — ``sentry_filter.ceiling_per_day`` above all, which is one cycle of
+    declared need and therefore steps at the boundary
+    (``BILLING_CYCLE_RESET_DAY``). The cache must know which cycle it computed
+    under, so this travels WITH the payload rather than being re-derived beside
+    it. Same shape as ``C-CERT-SENTRY-R4``'s finding, one level up: there the
+    display and the enforcement each derived the ceiling honestly and drifted
+    apart; here the cache freezes the display while the enforcement steps.
+    """
+    try:
+        from app.utils import sentry_budget
+
+        return sentry_budget.cycle_key()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _ops_compact(payload) -> dict:
@@ -1702,9 +1724,22 @@ async def get_ops_snapshot(
     import time as _time
 
     now = _time.time()
+    cycle = _ops_derivation_cycle()
     if not fresh and _OPS_SNAPSHOT_CACHE["data"] is not None:
         age = now - _OPS_SNAPSHOT_CACHE["at"]
-        if age < _OPS_SNAPSHOT_TTL:
+        cached_cycle = _OPS_SNAPSHOT_CACHE["cycle"]
+        # The TTL is NOT the only thing that expires this payload. A billing-cycle
+        # boundary re-derives the discard ceiling live (``discard_ceiling_reading``
+        # memoises on the cycle, not on a clock), so a cache keyed only on age
+        # exports the PRE-boundary ceiling for up to five minutes after the
+        # enforcement has already stepped — the reader sees a breach the filter
+        # does not, or the reverse. The cycle is therefore part of the cache key.
+        #
+        # Fails CLOSED: an underivable cycle on either side (``None``) recomputes
+        # rather than serving. The recompute reads only warm sources, so the cost
+        # of being wrong in this direction is latency; the cost in the other
+        # direction is a wrong number wearing a fresh timestamp.
+        if age < _OPS_SNAPSHOT_TTL and cycle is not None and cached_cycle == cycle:
             cached = dict(_OPS_SNAPSHOT_CACHE["data"])
             cached["cache"] = "hit"
             # Explicit cache provenance: `generated_at` is preserved (it is the
@@ -1713,6 +1748,7 @@ async def get_ops_snapshot(
             cached["cache_age_s"] = round(age, 1)
             cached["cache_source"] = "in_process"
             cached["cache_ttl_s"] = _OPS_SNAPSHOT_TTL
+            cached["derivation_cycle"] = cached_cycle
             return cached
 
     from app.tasks.redis_state import (
@@ -1841,6 +1877,13 @@ async def get_ops_snapshot(
     # discard are different facts and neither implies the other, so they are
     # reported side by side. Alex, 2026-08-17: "a discard counter nobody can
     # read is the same defect one level up."
+    #
+    # The cycle is sampled HERE, immediately before the census, not at store
+    # time: if the boundary crosses during the rest of the build, the stored key
+    # is the OLD one and the next read mismatches and recomputes. Sampling it
+    # later would stamp the NEW cycle onto a pre-boundary ceiling, which is the
+    # defect wearing the fix's label.
+    derivation_cycle = _ops_derivation_cycle()
     try:
         from app.utils.sentry_filter import filter_discard_census
 
@@ -1878,9 +1921,14 @@ async def get_ops_snapshot(
         }
 
     snapshot["completeness"] = health_reads.completeness(reads)
+    # Travels with the payload so a reader can tell WHICH cycle produced
+    # `sentry_filter.ceiling_per_day` — the number is otherwise indistinguishable
+    # from the same number derived under a different cycle length or quota.
+    snapshot["derivation_cycle"] = derivation_cycle
 
     _OPS_SNAPSHOT_CACHE["at"] = now
     _OPS_SNAPSHOT_CACHE["data"] = snapshot
+    _OPS_SNAPSHOT_CACHE["cycle"] = derivation_cycle
     return snapshot
 
 
