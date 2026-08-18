@@ -1,5 +1,6 @@
-import { test, expect, readContentRegionText } from "../fixtures/audit";
+import { test, expect, measureMainRegion } from "../fixtures/audit";
 import type { TelemetryExpectation } from "../helpers/journey";
+import { classifyMainRegion, type MainRegionObservation } from "../helpers/contentState";
 import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 
 /**
@@ -97,9 +98,61 @@ async function watch(page: import("@playwright/test").Page): Promise<void> {
   await page.waitForTimeout(WATCH_MS);
 }
 
-async function mainNonBlank(page: import("@playwright/test").Page): Promise<boolean> {
-  const text = await readContentRegionText(page);
-  return text.trim().length > 40;
+/** The Discover loading placeholder both `/` and `/discover` render. */
+const DISCOVER_SKELETON = '[data-testid="discover-skeleton"]';
+
+/** How long a settling main region is given before its state is the finding. */
+const SETTLE_TIMEOUT_MS = 10_000;
+const SETTLE_POLL_MS = 250;
+
+/**
+ * #1909's LAST CRITERION — do not photograph the skeleton.
+ *
+ * What this replaced, and why both halves of it were wrong:
+ *
+ *   const text = await readContentRegionText(page);
+ *   return text.trim().length > 40;
+ *
+ * ONE: it graded at an INSTANT. `consent.two_tabs` reloads tab A when it adopts
+ * the denial, so this fired while the feed was still in flight and read a
+ * loading placeholder as a blank page. That is the last open criterion of
+ * #1909/#1663 — the one real user-visible finding in all thirteen consent
+ * issues — and it is why that finding kept arriving with a screenshot of a
+ * skeleton attached.
+ *
+ * TWO: it was the SPEC deciding. A private `> 40` reimplemented
+ * `MIN_CONTENT_CHARS` where the shared evaluator already owns that judgement,
+ * and it could not tell `loading` from `blank` at all — the distinction the
+ * whole criterion turns on. Handing over raw measurements instead is the rail's
+ * own preferred form (`FinishInput.mainRegion`, L2-239), already used by
+ * `event-page.spec.ts`; the consent pack was the last holdout on the legacy
+ * boolean.
+ *
+ * All ELEVEN journeys convert together, deliberately. Leaving ten on the legacy
+ * path to keep the change small would have left two graders answering one
+ * question about one page — which is the ruling-021 disease, and is what
+ * #1951 spent a cycle removing one layer down. For an already-settled page the
+ * verdict is unchanged (the floor is the same 40 characters), so this moves the
+ * journeys that were wrong and not the ones that were right.
+ *
+ * A region that never settles is REPORTED, not waited out forever: the loop is
+ * bounded and returns whatever it last measured, so `loading` reaches the
+ * evaluator as `loading` and the report says the page never resolved. Silence
+ * about a stuck page is the one outcome this must not produce.
+ */
+async function settledMainRegion(
+  page: import("@playwright/test").Page,
+): Promise<MainRegionObservation> {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let observation = await measureMainRegion(page, DISCOVER_SKELETON);
+  while (
+    classifyMainRegion(observation).state === "loading" &&
+    Date.now() < deadline
+  ) {
+    await page.waitForTimeout(SETTLE_POLL_MS);
+    observation = await measureMainRegion(page, DISCOVER_SKELETON);
+  }
+  return observation;
 }
 
 // ===========================================================================
@@ -122,7 +175,7 @@ test("consent.untouched — no choice, no telemetry", async ({ page, journey }) 
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -148,7 +201,7 @@ test("consent.decline — zero analytics requests after Decline", async ({ page,
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -175,7 +228,7 @@ test("consent.grant — exactly one page view for the page you are on", async ({
     expectedPath: "/",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: {
       minWindowMs: WATCH_MS - 500,
       rules: [
@@ -183,11 +236,34 @@ test("consent.grant — exactly one page view for the page you are on", async ({
         { id: "gtag_loaded", hostSuffix: "googletagmanager.com", expect: "at_least", count: 1 },
         // The withheld page view is released ONCE. Not a replay of the session,
         // and not the double-count the old `gtag('config', …)` re-send caused.
+        //
+        // #1658 — `eventName` is what makes that sentence true of the number.
+        // This rule matched on HOST alone and counted every GA4 beacon: a fresh
+        // grant sends `page_view` plus GA4's automatic `session_start` and
+        // `first_visit` plus the app's own `scroll_depth` / `time_on_page`, so
+        // it read 4 and reported "4 page views, expected exactly 1" against a
+        // page that had done nothing wrong. The guard is unchanged and still
+        // exact-1; only the population it counts is now the one its id names.
         {
           id: "page_view_exactly_once",
           hostSuffix: "google-analytics.com",
+          eventName: "page_view",
           expect: "exact",
           count: 1,
+        },
+        // The companion, and it is required rather than tidy: the ledger is
+        // EXHAUSTIVE by default, so narrowing the rule above would have left
+        // GA4's other beacons matched by nothing and failed the journey through
+        // `no_unlisted_destinations` instead — the same red with a different
+        // name. This keeps the destination allowlisted while the rule above does
+        // the counting. It deliberately asserts nothing about volume: how many
+        // engagement pings GA4 sends in a 5s window is Google's business, not a
+        // product claim we can sign.
+        {
+          id: "ga4_other_events_allowed",
+          hostSuffix: "google-analytics.com",
+          expect: "at_least",
+          count: 0,
         },
         { id: "vercel_insights", pathPrefix: "/_vercel/insights", expect: "at_least", count: 0 },
         { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "at_least", count: 0 },
@@ -227,7 +303,7 @@ test("consent.grant_then_revoke — nothing leaves after the revoke", async ({
     journeyId: "consent.grant_then_revoke",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -261,7 +337,7 @@ test("consent.navigation — declined stays declined across nav and history", as
     journeyId: "consent.navigation",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -298,7 +374,7 @@ test("consent.two_tabs — revoking in tab B silences tab A", async ({ page, jou
     journeyId: "consent.two_tabs",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -342,7 +418,7 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
     journeyId: "consent.storage_failure",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -376,7 +452,7 @@ test("consent.deferred_event — a queued event does not land after a revoke", a
     journeyId: "consent.deferred_event",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -411,7 +487,7 @@ test("consent.identity_after_denial — no user_id reaches gtag", async ({ page,
     journeyId: "consent.identity_after_denial",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -449,7 +525,7 @@ test("consent.reachable — footer link reaches a keyboard-operable control", as
     expectedPath: "/preferences",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });
@@ -476,7 +552,7 @@ test("consent.my_stuff_denied — the latency packet is gated too", async ({ pag
     expectedPath: "/my-stuff",
     realCardFound: false,
     contentMode: "none",
-    mainRegionNonBlank: await mainNonBlank(page),
+    mainRegion: await settledMainRegion(page),
     telemetryExpectation: NOTHING_ALLOWED,
   });
 });

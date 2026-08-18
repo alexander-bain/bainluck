@@ -111,6 +111,20 @@ function isNonEmptyString(value) {
  * `hostSuffix` matches the host or any subdomain of it; `pathPrefix` is a
  * literal prefix. A rule with neither matches nothing (a typo must not become
  * a wildcard).
+ *
+ * #1658 adds `eventName`, and it is the axis the ledger was missing rather than
+ * a convenience. `page_view_exactly_once` matched on HOST and counted every GA4
+ * `/g/collect` beacon — `page_view` plus `session_start`, `first_visit`,
+ * `scroll_depth` and `time_on_page` — then reported the total as page views.
+ * Four requests, one page view, and an assertion whose id made a claim its
+ * matcher could not make.
+ *
+ * Note what is NOT the fix: dropping the assertion, or relaxing it to
+ * `at_least 1`. The property it protects is real and specific — "the withheld
+ * page view is released ONCE, not a replay of the session, and not the
+ * double-count the old `gtag('config', …)` re-send caused". Every one-liner
+ * shaped like "stop failing on GA noise" deletes that guard, which is the same
+ * trap #1908's M1 walked around. Counting the RIGHT population keeps it.
  */
 function telemetryRuleMatches(rule, observed) {
   const host = String((observed && observed.host) || "");
@@ -122,6 +136,13 @@ function telemetryRuleMatches(rule, observed) {
   }
   if (rule.pathPrefix) {
     if (!path.startsWith(rule.pathPrefix)) return false;
+    matched = true;
+  }
+  if (rule.eventName) {
+    // Strict equality against the recorder's allowlisted value. An observation
+    // with no event (a gtag.js script load, a Vercel beacon) never satisfies an
+    // event-scoped rule — otherwise narrowing a rule would silently widen it.
+    if (observed?.event !== rule.eventName) return false;
     matched = true;
   }
   return matched;

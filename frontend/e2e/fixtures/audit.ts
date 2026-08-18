@@ -48,6 +48,42 @@ const TELEMETRY_HOSTS = [
 const TELEMETRY_PATHS = ["/_vercel/insights", "/_vercel/speed-insights"];
 
 /**
+ * #1658 — the GA4 event names a ledger rule is allowed to count.
+ *
+ * WHY THIS EXISTS. `recordTelemetry` stores host + path and deliberately
+ * discards query values ("never revealing"), which is right. The consequence
+ * nobody had traced: the `page_view_exactly_once` rule matches on HOST, so it
+ * counted every GA4 `/g/collect` beacon and called the total "page views". A
+ * fresh grant sends four — `page_view`, GA4's automatic `session_start` and
+ * `first_visit`, and the app's own `scroll_depth` / `time_on_page` (mandated on
+ * every page by CLAUDE.md's three-hook rule). Four requests, one page view, and
+ * an assertion whose NAME made a claim its MATCHER could not make. That is
+ * #1658, and it is the #1860 oracle class rather than a product defect: the
+ * fourth mechanism under #1908's thirteen, which the census recorded as "none of
+ * the three" and left there.
+ *
+ * WHY AN ALLOWLIST AND NOT JUST READING `en`. The privacy property is
+ * load-bearing and must survive: this file may never store an arbitrary query
+ * value. GA4's `en` is a fixed vocabulary, not user data, so a KNOWN name is
+ * recorded and anything else collapses to `other` — countable, never revealing.
+ * A new event therefore shows up as `other` and trips the exhaustiveness check
+ * instead of silently inflating a count, which is the direction the failure
+ * should point.
+ */
+const GA4_EVENT_NAMES = new Set([
+  "page_view",
+  "session_start",
+  "first_visit",
+  "user_engagement",
+  "scroll",
+  "scroll_depth",
+  "time_on_page",
+  "click",
+  "form_start",
+  "form_submit",
+]);
+
+/**
  * A navigation-abort allowance for a phenomenon MEASURED to be racy.
  *
  * A bare string stays STRICT: it must fire, or the run fails (L2-235). Use this
@@ -152,7 +188,10 @@ export class JourneyRecorder {
   readonly pageErrors: string[] = [];
   readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket }> = [];
   readonly redirectChain: string[] = [];
-  readonly telemetry = new Map<string, { host: string; path: string; count: number }>();
+  readonly telemetry = new Map<
+    string,
+    { host: string; path: string; event: string | null; count: number }
+  >();
 
   private readonly startedAt = new Date();
   private crashed: { crashed: boolean; reason: string } | null = null;
@@ -270,9 +309,14 @@ export class JourneyRecorder {
   }
 
   /**
-   * Record only allowlisted telemetry metadata (host + path + count) — never
-   * the payload, never the query values. The consent pack asserts on the
-   * ABSENCE of these, so presence must be countable but never revealing.
+   * Record only allowlisted telemetry metadata (host + path + event + count) —
+   * never the payload, never an arbitrary query value. The consent pack asserts
+   * on the ABSENCE of these, so presence must be countable but never revealing.
+   *
+   * #1658 adds `event`, and ONLY through `GA4_EVENT_NAMES`: an unrecognised
+   * `en` collapses to `"other"` and an absent one to `null`, so nothing
+   * user-shaped can reach the manifest. See that constant for why the rule that
+   * reads it could not previously count what its own id claimed.
    */
   private recordTelemetry(rawUrl: string): void {
     let parsed: URL;
@@ -284,10 +328,15 @@ export class JourneyRecorder {
     const hostMatch = TELEMETRY_HOSTS.some((h) => parsed.hostname === h || parsed.hostname.endsWith(`.${h}`));
     const pathMatch = TELEMETRY_PATHS.some((p) => parsed.pathname.startsWith(p));
     if (!hostMatch && !pathMatch) return;
-    const key = `${parsed.hostname}${parsed.pathname}`;
+    const rawEvent = parsed.searchParams.get("en");
+    const event = rawEvent === null ? null : GA4_EVENT_NAMES.has(rawEvent) ? rawEvent : "other";
+    // Keyed by event too, so two different GA4 events on one path stay two rows
+    // rather than one row with a count of two — the collapse that made the old
+    // reading unrecoverable after the fact.
+    const key = `${parsed.hostname}${parsed.pathname}#${event ?? ""}`;
     const existing = this.telemetry.get(key);
     if (existing) existing.count += 1;
-    else this.telemetry.set(key, { host: parsed.hostname, path: parsed.pathname, count: 1 });
+    else this.telemetry.set(key, { host: parsed.hostname, path: parsed.pathname, event, count: 1 });
   }
 
   /** Force an infra_error verdict (browser/runner broke, not the product). */
@@ -354,7 +403,7 @@ export class JourneyRecorder {
   }
 
   /** Telemetry destinations seen in the current window. */
-  telemetrySeen(): Array<{ host: string; path: string; count: number }> {
+  telemetrySeen(): Array<{ host: string; path: string; event: string | null; count: number }> {
     return [...this.telemetry.values()];
   }
 
