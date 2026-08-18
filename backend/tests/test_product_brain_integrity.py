@@ -525,7 +525,13 @@ def test_ruling_numbers_are_unique() -> None:
 #: given evidence, not a wider band; and a version bump carries its own rollover or accepts a dark
 #: page — Fable, #1955/#1680) on `program/calibration-66`, cut from `origin/master` `7686c97f`
 #: (79 files). Same resolution rule if another lane raises independently: COUNT the files.
-MINIMUM_BANKED_RULINGS = 81
+#: LAT-P068 rebase onto `origin/master` `75c32aa2`: HEAD said 81, this branch said 75, and once
+#: again neither is the merged truth. The branch was cut when the max ruling was 077 and banked
+#: its own as 078; master had meanwhile banked 078-083 and 085, so the NUMBER collided too. Both
+#: halves resolved the documented way (`docs/rulings/README.md`): the later lane renumbers ITS OWN
+#: file upward — 078 -> **086** (the working gauge nobody reads is the same as no gauge; Fable,
+#: #1501/#1609) — and the floor comes from COUNTING the merged tree, which is 82.
+MINIMUM_BANKED_RULINGS = 82
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
