@@ -36,6 +36,46 @@ private struct PeriodMarker: Identifiable {
     let isGameStart: Bool
 }
 
+/// UX-P090 — the minimum separation between two period chips, as a fraction of the
+/// chart's duration (equivalently, of its width — the x-axis is linear).
+///
+/// Named and non-private so the geometry that justifies it can be asserted in a
+/// test rather than only argued in a comment: a chip is ~28pt wide on a ~345pt
+/// plot area, so anything below ~8.3% draws chips that overlap. See the derivation
+/// at the call site in `extractPeriodMarkers`.
+enum PeriodChipGeometry {
+    /// Widest realistic chip: 2 characters at size 10 bold (~20pt) + 4pt padding
+    /// each side. Two-digit innings ("10") are reachable since #1831's 1…N ladder.
+    static let chipWidthPoints: Double = 28
+    /// Plot area on a common phone layout: 393pt screen − 32pt card padding −
+    /// 24pt rotated team-label gutter = 337pt. Asserted against those three
+    /// numbers in `EventScreenLayoutTests`, so it cannot drift into a fiction that
+    /// the spacing fraction below is then derived from.
+    static let plotWidthPoints: Double = 337
+    /// The fraction actually applied — DERIVED, not a hand-picked literal.
+    ///
+    /// It was briefly written as `0.09`, "the derived 8.3% rounded up for safety",
+    /// and the round-up was not safe: it is an absolute threshold in disguise, and
+    /// on a LONG chart it grows past the real gap between periods. A 12-inning game
+    /// over four hours has innings 1,200s apart against a 9% threshold of 1,296s,
+    /// so the padding would have deleted a real inning chip — trading an overlap
+    /// defect for a missing-data defect. `EventScreenLayoutTests` caught it.
+    ///
+    /// Keeping it exactly `chipWidth / plotWidth` is what makes it a pure
+    /// no-overlap rule: it drops a chip if and only if there is genuinely no room
+    /// for one, which is the most information the strip can carry without
+    /// collisions. Beyond about 12 periods there IS no room, and dropping is then
+    /// the correct behaviour rather than a compromise.
+    static var minSpacingFraction: Double { chipWidthPoints / plotWidthPoints }
+}
+
+/// UX-P090 — the width of the rotated home/away team gutter to the left of the
+/// plot area. Named because THREE things must agree on it: the inline chart row,
+/// the fullscreen chart row, and the legend's leading indent. When it was a bare
+/// `24` in two places and absent from the third, the legend sat 24pt to the left
+/// of the data it labels.
+let chartTeamGutterWidth: CGFloat = 24
+
 // MARK: - Time Range
 
 enum OddsTimeRange: String, CaseIterable, Identifiable {
@@ -172,41 +212,44 @@ struct OddsChartView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Chart title + status + time range picker
-            HStack {
-                Text("Win Probability")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.primary)
-                if status == "live" {
-                    HStack(spacing: 4) {
-                        Circle().fill(.green).frame(width: 6, height: 6)
-                        Text("Live").font(.caption2).fontWeight(.medium).foregroundStyle(.green)
+            // Chart title + status + time range picker.
+            //
+            // UX-P090 — THIS ROW WAS EXACTLY AT ITS LIMIT AND HAD NOWHERE TO GO.
+            // Measured on a LIVE game (the state with the most in the row): title
+            // ~105 + "Live" chip ~46 + the two-segment picker ~125 + countdown ring
+            // 20 + fullscreen button 24 + ~40 of HStack gaps = ~360pt, against
+            // 361pt of usable width on an iPhone 16 and 343pt on an SE. One point
+            // of headroom on the common phone and 17pt of overflow on the small
+            // one — so SwiftUI resolved it the only way it can in a fixed HStack,
+            // by compressing and truncating the title.
+            //
+            // #1772 is what makes this urgent rather than cosmetic: Dynamic Type
+            // now actually scales this text, so every step above the default size
+            // pushes a row that had one point of slack further into truncation.
+            //
+            // `ViewThatFits` picks the single row when it genuinely fits and drops
+            // the picker to its own line when it does not. Nothing is hidden and
+            // nothing is truncated at any type size — the row reflows, which is
+            // what the fixed HStack could not do.
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    chartTitleAndStatus
+                    Spacer()
+                    if showPicker { timeRangePicker }
+                    chartHeaderTrailingControls
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        chartTitleAndStatus
+                        Spacer()
+                        chartHeaderTrailingControls
                     }
-                } else if status == "completed" || status == "closed" {
-                    HStack(spacing: 4) {
-                        Circle().fill(.secondary).frame(width: 6, height: 6)
-                        Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
+                    if showPicker {
+                        HStack {
+                            timeRangePicker
+                            Spacer()
+                        }
                     }
-                }
-                Spacer()
-                if showPicker {
-                    timeRangePicker
-                }
-                // Refresh countdown ring — only when an actual auto-refresh request
-                // is scheduled, which the event VM installs for LIVE events only.
-                // Scheduled/completed pages perform no periodic reload, so a cycling
-                // countdown there would imply freshness work that never happens (C43 P2).
-                if status == "live" {
-                    refreshCountdownRing
-                }
-                Button {
-                    isFullscreen = true
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .padding(6)
                 }
             }
 
@@ -265,7 +308,7 @@ struct OddsChartView: View {
                             .fixedSize()
                             .rotationEffect(.degrees(-90))
                         }
-                        .frame(width: 24)
+                        .frame(width: chartTeamGutterWidth)
                         .padding(.vertical, 8)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
@@ -275,7 +318,17 @@ struct OddsChartView: View {
                     }
                     .frame(height: chartHeight)
 
+                    // UX-P090 — the legend hung off the card's left edge while the
+                    // thing it describes started 24pt further in, behind the
+                    // rotated team gutter. Two rows that belong to one chart, on
+                    // two different left margins. Indenting by the SAME gutter
+                    // width the chart row uses puts the legend under the plot area
+                    // it labels; the 2pt lifts it off the x-axis tick labels, which
+                    // sit flush against the bottom of the chart's own frame.
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                        .padding(.leading, chartTeamGutterWidth)
+                        .padding(.top, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -338,7 +391,7 @@ struct OddsChartView: View {
                                     .fixedSize()
                                     .rotationEffect(.degrees(-90))
                                 }
-                                .frame(width: 24)
+                                .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
@@ -371,6 +424,53 @@ struct OddsChartView: View {
     }
 
     // MARK: - Time Range Picker
+
+    // UX-P090 — extracted so the one-row and two-row header arms of `ViewThatFits`
+    // are the SAME views in a different arrangement. Inlining them twice is how the
+    // two arms drift, and a drift here is invisible: only one arm renders at a time,
+    // on a screen size the author may not be testing.
+    @ViewBuilder
+    private var chartTitleAndStatus: some View {
+        Text("Win Probability")
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundStyle(.primary)
+            // The title is the one thing in this row that must never be clipped;
+            // the picker and controls are all fixed-size, so without this SwiftUI
+            // takes the space out of the only flexible child.
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
+        if status == "live" {
+            HStack(spacing: 4) {
+                Circle().fill(.green).frame(width: 6, height: 6)
+                Text("Live").font(.caption2).fontWeight(.medium).foregroundStyle(.green)
+            }
+        } else if status == "completed" || status == "closed" {
+            HStack(spacing: 4) {
+                Circle().fill(.secondary).frame(width: 6, height: 6)
+                Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chartHeaderTrailingControls: some View {
+        // Refresh countdown ring — only when an actual auto-refresh request
+        // is scheduled, which the event VM installs for LIVE events only.
+        // Scheduled/completed pages perform no periodic reload, so a cycling
+        // countdown there would imply freshness work that never happens (C43 P2).
+        if status == "live" {
+            refreshCountdownRing
+        }
+        Button {
+            isFullscreen = true
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(6)
+        }
+    }
 
     private var timeRangePicker: some View {
         HStack(spacing: 0) {
@@ -564,16 +664,40 @@ struct OddsChartView: View {
 
         let sorted = firstSeen.sorted { $0.date < $1.date }
 
-        // Dedup markers that are too close together (same logic as web fix):
-        // When two markers are within 3% of chart duration (min 2 minutes),
-        // keep the later one (more informative label).
+        // Dedup markers that are too close together, so the floating period chips
+        // in `.chartOverlay` do not overlap each other.
+        //
+        // UX-P090 — THE OLD 3% WAS ARITHMETICALLY TOO SMALL TO DO ITS OWN JOB, and
+        // that is measurable rather than aesthetic. The threshold is a fraction of
+        // the chart's DURATION, and the x-axis is linear, so it is equally a
+        // fraction of the chart's WIDTH. The plot area is about 345pt on an
+        // iPhone 16 (393pt screen − 32pt card padding − 24pt rotated team gutter),
+        // so 3% bought ~10pt of separation between two chips that are each ~28pt
+        // wide (a 2-character label at size 10, plus 4pt horizontal padding each
+        // side, centred by `.position`). Two chips 10pt apart on centre overlap by
+        // roughly two thirds of their width. The comment claimed it "prevents
+        // Q3/Q4 overlap"; it prevented the two markers from being drawn at
+        // literally the same x, which is a different thing.
+        //
+        // The chip needs its own width in separation, so the floor is
+        // chipWidth / plotWidth ≈ 28/337 ≈ 8.3%. Rounded UP to 9% to cover the
+        // wider labels that actually exist — "OT2", and the two-digit innings that
+        // #1831's 1…N ladder made reachable ("10", "11").
+        //
+        // WHAT THIS DOES NOT DROP, checked before changing it: real period
+        // boundaries are far coarser than 9% of a game. Nine innings across a 3h
+        // chart are ~20 min apart against a 16.2 min threshold; four NBA quarters
+        // across 2.5h are ~35 min apart against 13.5 min. So every genuine period
+        // still draws its chip — this removes collisions, not information. The
+        // absolute floor stays at 3 minutes for very short domains, where the
+        // percentage alone would go to zero.
         let chartDuration: TimeInterval
         if let first = filteredPoints.first?.date, let last = filteredPoints.last?.date {
             chartDuration = last.timeIntervalSince(first)
         } else {
             chartDuration = 3600
         }
-        let minSpacing = max(chartDuration * 0.03, 180) // At least 3 minutes (prevents Q3/Q4 overlap)
+        let minSpacing = max(chartDuration * Self.periodChipMinSpacingFraction, 180)
 
         var deduped: [(label: String, date: Date)] = []
         for item in sorted {
@@ -853,6 +977,10 @@ struct OddsChartView: View {
 
     /// Fixed 0–100 axis tick positions (probability basis, 0.0–1.0).
     static let yAxisTicks: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
+
+    /// UX-P090 — see `PeriodChipGeometry`. Held here so the dedup call site reads
+    /// as one named thing rather than a bare literal.
+    static let periodChipMinSpacingFraction: Double = PeriodChipGeometry.minSpacingFraction
 
     /// Axis / read-out label for a probability value on the single 0–100 axis.
     /// No mirroring: 0.8 → "80%" everywhere (unlike the old ±50 delta axis).
