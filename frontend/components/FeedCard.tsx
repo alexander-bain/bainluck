@@ -13,7 +13,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedItemHasRenderableContent, resolvesLabel } from "@/components/discover/utils";
+import { feedItemHasRenderableContent, resolvesLabel, formatConceptMovement } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import TeamNameLink from "./TeamNameLink";
 
@@ -736,6 +736,13 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
   const isLive = !whatHit && data.status === "live";
   const winner = data.winner?.trim() || null;
   const resultSummary = data.result_summary?.trim() || null;
+  // #1939 — guarded exactly as the admitting classifier guards it, never laxer.
+  const leader =
+    !whatHit && data.leader && (data.leader.name ?? "").trim() &&
+    typeof data.leader.probability === "number"
+      ? data.leader
+      : null;
+  const movementLabel = formatConceptMovement(leader?.movement_24h);
   return (
     <Link
       href={eventPath(data.key)}
@@ -807,6 +814,31 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
               {resultSummary || "Final result — see the recap"}
             </p>
           )
+        ) : leader ? (
+          // #1939: the favourite. The Discover concept card gained this in the
+          // same commit — this surface is admitted by the SAME predicate
+          // (`feedItemSuppressionReason`), so if only one of the two renderers
+          // learned to print a leader, the other would start showing the bare
+          // tile that #1935 just removed. Two renderers, one gate: they change
+          // together or the gate is wrong for one of them.
+          <div className="flex items-center flex-wrap gap-1.5 mt-1">
+            <span className="text-sm font-bold text-text-primary truncate">
+              {leader.name}
+            </span>
+            <span className="bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0">
+              {Math.round(leader.probability * 100)}%
+            </span>
+            {movementLabel && (
+              <span className="text-[11px] font-bold text-text-secondary flex-shrink-0">
+                {movementLabel}
+              </span>
+            )}
+            {typeof leader.field_size === "number" && leader.field_size > 2 && (
+              <span className="text-[11px] text-text-muted flex-shrink-0">
+                of {leader.field_size}
+              </span>
+            )}
+          </div>
         ) : (
           item.reason && (
             <p className="text-xs text-text-secondary mt-0.5">{item.reason}</p>
