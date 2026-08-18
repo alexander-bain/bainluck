@@ -7,6 +7,12 @@ export interface AbortPacket {
   is_feed_request: boolean;
   /** Redacted (query values stripped). */
   frame_url: string | null;
+  /**
+   * The harness action in flight when the abort fired (ruling 021's
+   * instrument-induced carve-out). Null when no harness action was running,
+   * which is what keeps the carve-out from covering an organic abort.
+   */
+  instrument_action: string | null;
 }
 
 export interface DescribeAbortInput {
@@ -16,6 +22,7 @@ export interface DescribeAbortInput {
   timing?: Record<string, number> | null;
   frameUrl?: unknown;
   isFeed?: unknown;
+  instrumentAction?: unknown;
 }
 
 export declare function isAbort(failureText: unknown): boolean;

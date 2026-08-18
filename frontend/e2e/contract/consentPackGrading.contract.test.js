@@ -92,3 +92,51 @@ test("the skeleton selector is the one both / and /discover render", () => {
   // use that selector rather than inventing a narrower one.
   assert.ok(src.includes('[data-testid="discover-skeleton"]'));
 });
+
+
+// ---------------------------------------------------------------------------
+// UX-P095 — the pack must not be all-or-nothing, and every navigation must be
+// attributed. Source assertions, for the same reason the file's header gives:
+// the spec needs a browser, the property does not.
+// ---------------------------------------------------------------------------
+
+test("the consent pack does not run in SERIAL mode", () => {
+  // Measured on run 32177161167: `consent.grant` failed and the eight journeys
+  // after it, on BOTH projects, ended "skipped" -> `infra_error`. Sixteen of
+  // twenty-two journeys never ran because one did not pass. Sequencing was the
+  // requirement; serial mode also buys fate-sharing, and Playwright already runs
+  // one file's tests in order in one worker unless `fullyParallel` is set.
+  const src = fs.readFileSync(SPEC, "utf8");
+  assert.ok(
+    !/describe\.configure\(\s*\{[^}]*mode:\s*["']serial["']/.test(src),
+    "serial mode makes one red journey skip the rest of the pack — the M1 " +
+      "evidence that retires seven issues can then never be gathered"
+  );
+  assert.ok(
+    /RATE_LIMIT_COOLDOWN_MS/.test(src) && /afterEach/.test(src),
+    "the pacing that serial mode was standing in for must still be here"
+  );
+});
+
+test("every navigation in the pack is an ATTRIBUTED harness action", () => {
+  // Ruling 021's carve-out, condition 1: an abort is only excusable when the
+  // action that caused it can be named. A bare `page.goto` produces an
+  // unattributed abort, which is graded — the safe direction, but a silent
+  // one, so it is asserted rather than left to review.
+  const src = fs.readFileSync(SPEC, "utf8");
+  const bare = [...src.matchAll(/await\s+(?:page|tabB|opened)\.goto\(/g)];
+  const attributed = [...src.matchAll(/duringInstrumentAction\(/g)];
+  assert.ok(attributed.length > 0, "the pack must attribute its navigations");
+  // The one legitimate bare `goto` is inside a `duringInstrumentAction` span
+  // (tab B, in the two-tab journey), so at most one may appear.
+  assert.ok(
+    bare.length <= 1,
+    `${bare.length} unattributed navigation(s) — route them through go() or ` +
+      "duringInstrumentAction, or their aborts stay graded"
+  );
+  assert.ok(
+    /INSTRUMENT_NAVIGATION_ABORT/.test(src),
+    "a pack that attributes its aborts must also declare the allowance, or the " +
+      "attribution buys nothing"
+  );
+});

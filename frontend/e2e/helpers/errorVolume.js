@@ -73,6 +73,8 @@ const {
   NAVIGATION_CANCEL_FAILURES,
   isNavigationCancellation,
   isFeedRequest,
+  isInstrumentInduced,
+  aftermathIsGraded,
 } = require("./navigationAborts");
 
 /** Origin of a redacted URL, or "unknown" when it cannot be parsed. */
@@ -102,7 +104,7 @@ function summarizeOrigins(items, toUrl) {
  * Returns a plain object recorded in the manifest whether or not anything
  * breached — below the threshold the counts ARE the evidence.
  */
-function classifyErrorVolume(observation) {
+function classifyErrorVolume(observation, context) {
   const o = observation || {};
   const consoleErrors = Array.isArray(o.consoleErrors) ? o.consoleErrors : [];
   const rawFailures = Array.isArray(o.failedRequests) ? o.failedRequests : [];
@@ -116,7 +118,19 @@ function classifyErrorVolume(observation) {
   // defect — was silently dropped from the volume count. The per-error grader
   // guarded it and this one did not, which is the same drift in its other
   // direction. One rule, both graders.
-  const excusable = (f) => isNavigationCancellation(f) && !isFeedRequest(f);
+  // UX-P095 — ruling 021's instrument-induced carve-out, applied HERE TOO.
+  //
+  // Applying it in only one grader would recreate the 0-vs-1 disagreement this
+  // module was split out to end: the per-error grader would excuse a
+  // harness-caused feed abort while the volume grader still counted it, one
+  // input, two verdicts. So the carve-out is part of the shared decision, with
+  // the SAME two load-bearing conditions — attributable to a named harness
+  // action, and an aftermath that was actually graded. Absent context is a
+  // refusal, so an un-updated caller keeps the old, stricter behaviour.
+  const carveOut = (f) =>
+    isFeedRequest(f) && isInstrumentInduced(f) && aftermathIsGraded(context);
+  const excusable = (f) =>
+    isNavigationCancellation(f) && (!isFeedRequest(f) || carveOut(f));
   const cancelled = rawFailures.filter(excusable);
   const failures = rawFailures.filter((f) => !excusable(f));
 

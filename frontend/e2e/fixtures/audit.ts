@@ -186,12 +186,27 @@ export class JourneyRecorder {
    */
   readonly consoleResourceErrors: string[] = [];
   readonly pageErrors: string[] = [];
-  readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket }> = [];
+  readonly failedRequests: Array<{ url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket; third_party?: boolean }> = [];
   readonly redirectChain: string[] = [];
   readonly telemetry = new Map<
     string,
     { host: string; path: string; event: string | null; count: number }
   >();
+
+  /**
+   * The harness action currently in flight, or null.
+   *
+   * UX-P095, ruling 021's instrument-induced carve-out (#1908 M2). An abort the
+   * TEST caused by navigating says nothing about the product — but only if the
+   * causing action can be NAMED. "It happened in a journey that navigates" is
+   * not attribution, so this marker is set for the duration of one harness
+   * action and stamped onto any abort that fires while it is set.
+   *
+   * Under-attribution is the safe direction and is deliberate: an abort that
+   * fires while no action is in flight gets no stamp and stays graded. The
+   * carve-out can therefore only ever excuse less than the truth, never more.
+   */
+  private activeInstrumentAction: string | null = null;
 
   private readonly startedAt = new Date();
   private crashed: { crashed: boolean; reason: string } | null = null;
@@ -230,7 +245,7 @@ export class JourneyRecorder {
     this.page.on("requestfailed", (req) => {
       const failureText = req.failure()?.errorText ?? "request failed";
       const url = req.url();
-      const record: { url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket } = {
+      const record: { url: string; method: string; status: number | null; failure: string | null; abort?: AbortPacket; third_party?: boolean } = {
         url: redactUrl(url),
         method: req.method(),
         status: null,
@@ -251,8 +266,26 @@ export class JourneyRecorder {
         timing: req.timing(),
         frameUrl,
         isFeed: url.includes("/api/feed"),
+        instrumentAction: this.activeInstrumentAction,
       });
       if (abort) record.abort = abort;
+      // UX-P095 — SCOPE THE FAILED-REQUEST LEDGER THE WAY THE RESPONSE CHANNEL
+      // ALREADY SCOPES IT.
+      //
+      // Twenty lines below, a 4xx/5xx is recorded only `if (this.isFirstParty(url))`,
+      // because the rail's stated policy is that third-party noise is not our
+      // defect. This channel never got that decision, so the two halves of one
+      // ledger disagreed: a third-party 500 was ignored and a third-party ABORT
+      // failed the journey. Measured on run 32177161167 — `consent.grant` red on
+      // two `google-analytics.com/g/collect` beacons cancelled at teardown, which
+      // no reading makes a Bain Luck defect.
+      //
+      // Stamped, never dropped: the record stays in the manifest with everything
+      // it had, and only the per-error GRADER declines to call it a defect. The
+      // volume grader deliberately keeps counting it — #1600 was a ~2,000-request
+      // WIKIPEDIA fan-out, so a third-party blind spot there would delete a real
+      // find. Different questions, different answers, both written down.
+      if (!this.isFirstParty(url)) record.third_party = true;
       this.failedRequests.push(record);
     });
     this.page.on("response", (res) => {
@@ -397,6 +430,33 @@ export class JourneyRecorder {
    * express that would be to subtract counts by hand in the spec — arithmetic
    * that lives outside the evaluator and can therefore be got wrong silently.
    */
+  /**
+   * Run one harness action with attribution, so aborts it causes can be told
+   * from aborts that merely happened nearby (ruling 021's carve-out, cond. 1).
+   *
+   * `try/finally` rather than a plain reset: an action that throws must not
+   * leave the marker set, or every later abort in the journey would inherit an
+   * attribution nobody earned — a stuck marker is exactly the shape that turns
+   * a narrow carve-out into a blanket excuse.
+   *
+   * Nesting takes the OUTERMOST name and restores it, so a helper that
+   * navigates inside a named step does not silently rename the step.
+   */
+  async duringInstrumentAction<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.activeInstrumentAction;
+    this.activeInstrumentAction = previous || String(name || "").trim() || null;
+    try {
+      return await fn();
+    } finally {
+      this.activeInstrumentAction = previous;
+    }
+  }
+
+  /** What the collector would stamp right now (contract-visible, read-only). */
+  instrumentActionInFlight(): string | null {
+    return this.activeInstrumentAction;
+  }
+
   resetTelemetryWindow(): void {
     this.telemetry.clear();
     this.telemetryWatchStart = Date.now();
