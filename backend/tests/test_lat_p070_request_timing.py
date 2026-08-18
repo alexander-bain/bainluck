@@ -545,3 +545,82 @@ def test_no_non_finite_can_reach_the_header():
     build_slow_event(
         timestamp=NOW, path="/api/feed", duration_ms=1.0, cache_bucket="miss", split=split
     )
+
+
+class TestLayerRollup:
+    """`by_layer` — the read surface, without which the split is written and never read."""
+
+    @staticmethod
+    def _event(**over):
+        base = {"t": NOW, "path": "/api/golf/tournaments/{slug}", "ms": 15260.0, "cache": "miss"}
+        base.update(over)
+        return base
+
+    def test_totals_shares_and_dominant(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        s = summarize_slow_events([
+            self._event(db_ms=12000.0, app_ms=3260.0, router_queue_ms=120.0),
+            self._event(db_ms=8000.0, app_ms=1000.0, router_queue_ms=80.0),
+        ])["by_layer"]
+        assert s["n_attributed"] == 2
+        assert s["totals_ms"] == {"db_ms": 20000.0, "app_ms": 4260.0, "router_queue_ms": 200.0}
+        assert s["dominant"] == "db_ms"
+        # The prediction is stated in shares: DB > 70%, app 10-25%, router < 10%.
+        assert s["shares"]["db_ms"] > 0.7
+        assert s["shares"]["router_queue_ms"] < 0.1
+
+    def test_an_unusable_router_is_not_averaged_in_as_zero(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        s = summarize_slow_events([
+            self._event(db_ms=100.0, app_ms=10.0, router_queue_ms=None),
+            self._event(db_ms=100.0, app_ms=10.0, router_queue_ms=50.0),
+        ])["by_layer"]
+        # Two events, ONE usable router reading. Folding the null in as 0 would
+        # halve the router mean and manufacture the "router is cheap" conclusion
+        # the HALT condition exists to be able to refute.
+        assert s["router_n_usable"] == 1
+        assert s["means_ms"]["router_queue_ms"] == 50.0
+
+    def test_no_usable_router_anywhere_credits_it_with_nothing(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        s = summarize_slow_events([self._event(db_ms=100.0, app_ms=10.0, router_queue_ms=None)])["by_layer"]
+        assert s["router_n_usable"] == 0
+        assert "router_queue_ms" not in s["shares"]
+        assert s["means_ms"]["router_queue_ms"] is None
+
+    def test_pre_instrument_events_are_counted_apart_not_as_zeros(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        s = summarize_slow_events([
+            self._event(),                                   # recorded before the split shipped
+            self._event(db_ms=100.0, app_ms=10.0, router_queue_ms=1.0),
+        ])["by_layer"]
+        assert s["n_attributed"] == 1 and s["n_unattributed"] == 1
+        assert s["totals_ms"]["db_ms"] == 100.0
+
+    def test_nothing_attributed_names_no_dominant_layer(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        s = summarize_slow_events([self._event(), self._event()])["by_layer"]
+        # "We don't know" must not render as "it was the app".
+        assert s["dominant"] is None
+        assert s["shares"] == {}
+
+    def test_an_empty_ring_still_reports_the_key(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        assert summarize_slow_events([])["n"] == 0
+
+    def test_a_router_dominated_ring_would_trip_the_halt(self):
+        from app.utils.latency_stats import summarize_slow_events
+
+        # The rollup has to be ABLE to show the HALT condition, or it is a rail
+        # that can only confirm the prediction it was built alongside.
+        s = summarize_slow_events([
+            self._event(db_ms=100.0, app_ms=50.0, router_queue_ms=900.0),
+        ])["by_layer"]
+        assert s["dominant"] == "router_queue_ms"
+        assert s["shares"]["router_queue_ms"] > 0.30
