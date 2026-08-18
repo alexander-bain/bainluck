@@ -1877,6 +1877,54 @@ async def get_ops_snapshot(
             "queue_depths": depths,
         }
 
+    # 8b. The SOUND hard-kill instrument, finally given a reader (LAT-P067).
+    #
+    # There are two hard-kill counters in this tree and only one of them works:
+    #
+    #   * `task-metrics.hard_kills_24h` is `starts - terminals` derived from
+    #     `_tracked_run`'s counters — a helper the TASK BODY elects to call. A
+    #     child killed before it reaches that helper records no start and is
+    #     invisible, and **30 of 117 beat-scheduled tasks never call it at all**.
+    #     `redis_state` says so in its own comment: "a compensating instrument
+    #     that starts below the failure boundary is not a compensating
+    #     instrument."
+    #   * `get_hard_kill_census()` is written from celery's `task_prerun` /
+    #     `task_postrun` signals, which fire for every execution of every task
+    #     with no cooperation from any task body. It is correct, and it is
+    #     covered by `tests/test_task_lifecycle_hard_kills_1501.py`.
+    #
+    # The second had **ZERO production consumers** — built by #1501 item 2 for
+    # exactly this reason, tested, and then unreadable from outside. Eight
+    # latency windows have now been owed a `hard_kills_24h` read that the
+    # working instrument could have answered all along. That is Alex's own rule
+    # from the `sentry_filter` block twelve lines up, applied to its neighbour:
+    # **"a discard counter nobody can read is the same defect one level up."**
+    #
+    # `window_s` rides along deliberately (LAT-P024): a count handed over
+    # without the window that makes it a rate is not a measurement.
+    try:
+        from app.tasks.redis_state import get_hard_kill_census
+
+        census = get_hard_kill_census()
+        deaths = {name: row for name, row in census.items() if row.get("hard_kills")}
+        snapshot["hard_kills"] = {
+            "tasks_observed": len(census),
+            "tasks_with_kills": len(deaths),
+            "total_hard_kills": sum(row["hard_kills"] for row in deaths.values()),
+            # Only the offenders, biggest first. The full census is ~117 rows and
+            # a snapshot nobody scrolls to the bottom of is a snapshot nobody
+            # reads; the zero rows are the uninteresting ones by construction.
+            "by_task": dict(
+                sorted(deaths.items(), key=lambda kv: kv[1]["hard_kills"], reverse=True)[:20]
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        snapshot["hard_kills"] = {
+            "status": "error",
+            "error_class": exc.__class__.__name__,
+            "error": health_reads.redact(exc),
+        }
+
     snapshot["completeness"] = health_reads.completeness(reads)
 
     _OPS_SNAPSHOT_CACHE["at"] = now
