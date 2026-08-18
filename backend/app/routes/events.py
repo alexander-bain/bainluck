@@ -21,6 +21,7 @@ from app.dependencies.auth import get_optional_user
 from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
+from app.utils.lifecycle import served_event_status
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -4269,7 +4270,9 @@ async def typeahead_search(
             "type": "event",
             "text": f"{event.away_team_name} at {event.home_team_name}",
             "event_id": event.id,
-            "status": event.status,
+            "status": served_event_status(
+                event.status, event.commence_time, datetime.now(timezone.utc)
+            ),
             "sport_key": event.sport.key if event.sport else None,
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
             "home_logo": home.logo_url_small if home else None,
@@ -7368,7 +7371,9 @@ async def get_game_markets(
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
-        "status": event.status,
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "totals": game_totals,
         "player_props": player_props,
         "team_totals": team_total_items,
@@ -9397,7 +9402,9 @@ async def get_event_odds_history(
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
-        "status": event.status,
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "time_domain": time_domain,
         "history": history,
         "bookmaker_history": bookmaker_history,
@@ -10086,7 +10093,12 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         # authoritative game-date fallback instead of showing a stale/future
         # commence_time on a FINAL card (Queue #189 §B; gotcha #22 family).
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
-        "status": event.status,
+        # #1779 family: a public surface may not call an event live before its
+        # own start time (app/utils/lifecycle). Four MLB rows were serving
+        # live 40-51h early on 2026-08-17.
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
