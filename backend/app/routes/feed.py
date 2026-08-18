@@ -8022,41 +8022,27 @@ async def _score_event_concepts(
     everything else. Best-effort — a per-domain failure never drops the others."""
     concepts: list[dict] = []
 
-    # UFC cards (co_equal_list).
-    if not sport_filter or sport_filter in ("mma", "all", "ufc"):
-        from app.utils.event_ufc import list_ufc_card_concepts
+    # UFC cards (co_equal_list), F1 Grands Prix (winner-field, L2-86 B5) and
+    # cycling grand tours (Queue #223 Item 3) — enumerated by the SHARED concept
+    # population (#1948), not inline here.
+    #
+    # This used to be three copies of the same lister-with-try/except, and the
+    # warmer kept a fourth, hand-written list of four golf majors. That was
+    # survivable only while `_resolve_concept_leader` could build on a cold
+    # cache. UX-P089 made it cache-only, which promoted the warm list to the
+    # leader's ONLY source — and the two lists had already drifted, so every
+    # non-golf concept shipped with no leader and was suppressed on both
+    # surfaces. One enumeration, two consumers; they cannot drift again because
+    # there is no second list. See `app/utils/event_concept_population.py`.
+    #
+    # "settled" is admitted so a just-finished marquee card can hold its WHAT-HIT
+    # pin (Queue #235 Item 4); non-marquee settled concepts are dropped again in
+    # the build loop below.
+    from app.utils.event_concept_population import LISTED_STATUSES, list_all_concepts
 
-        try:
-            # "settled" is admitted so a just-finished marquee card can hold its
-            # WHAT-HIT pin (Queue #235 Item 4); non-marquee settled concepts are
-            # dropped again in the build loop below.
-            concepts += await list_ufc_card_concepts(
-                db, statuses=("upcoming", "live", "settled"), limit=12
-            )
-        except Exception as e:
-            logger.warning("Feed: failed to list UFC card concepts: %s", e)
-
-    # F1 Grands Prix (winner-field). Motorsports GPs surface as concepts too (B5).
-    if not sport_filter or sport_filter in ("motorsports", "f1", "all"):
-        from app.utils.event_f1 import list_f1_gp_concepts
-
-        try:
-            concepts += await list_f1_gp_concepts(
-                db, statuses=("upcoming", "live", "settled"), limit=8
-            )
-        except Exception as e:
-            logger.warning("Feed: failed to list F1 GP concepts: %s", e)
-
-    # Cycling grand tours (winner-field) — The Tour (Queue #223 Item 3).
-    if not sport_filter or sport_filter in ("cycling", "all"):
-        from app.utils.event_cycling import list_cycling_concepts
-
-        try:
-            concepts += await list_cycling_concepts(
-                db, statuses=("upcoming", "live", "settled"), limit=6
-            )
-        except Exception as e:
-            logger.warning("Feed: failed to list cycling concepts: %s", e)
+    concepts += await list_all_concepts(
+        db, sport_filter=sport_filter, statuses=LISTED_STATUSES
+    )
 
     # Queue #223 Item 2 / #235 Item 4: calendar-flagged marquee entries. Loaded once
     # per feed build; best-effort (empty map on any failure — no pin, no crash).

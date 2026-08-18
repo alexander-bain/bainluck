@@ -25,6 +25,11 @@ const {
   allowanceMatch,
   allowanceIsIntermittent,
 } = require("./navigationAborts");
+const {
+  consoleErrorsAreRateLimitEcho,
+  describeRateLimit,
+  networkFailuresAreSelfInflicted,
+} = require("./rateLimit");
 
 /** Terminal results. Anything else is a bug in the caller. */
 const RESULTS = Object.freeze({
@@ -51,6 +56,27 @@ function assertion(id, ok, detail, reasonCode) {
   // it deliberately carries NO counts — a fingerprint containing "2036" would
   // file a fresh issue every run as the number drifted.
   if (reasonCode) record.reason_code = String(reasonCode);
+  return record;
+}
+
+/**
+ * Mark one assertion as describing the RUNNER rather than the product (#1908).
+ *
+ * The flag rides on the assertion, NOT on the journey, and that is the whole
+ * point. `sweepFiling` already had two ways to reach "infra": a whole journey
+ * whose result is `infra_error`, and a fixed set of assertion ids. Neither fits
+ * a condition that hits SOME assertions of an otherwise product-graded journey —
+ * and using the journey-level lever here would have muted
+ * `content.main_region_nonblank` on `consent.two_tabs`, which is #1909, the one
+ * real defect the whole consent census existed to surface.
+ *
+ * Still `ok: false`. This does not turn a non-pass into a pass; it says which
+ * kind of non-pass it is, so the filer can decline to mint a product issue while
+ * the manifest keeps the whole reading.
+ */
+function markInfra(record, detail) {
+  record.infra = true;
+  if (detail) record.detail = String(detail);
   return record;
 }
 
@@ -449,18 +475,37 @@ function evaluateJourney(observation) {
   const unexpectedConsole = consoleErrors.filter(
     (text) => !allowedConsole.some((allowance) => matchesAllowance(text, allowance))
   );
-  assertions.push(
-    assertion(
-      "console.no_errors",
-      unexpectedConsole.length === 0,
-      unexpectedConsole.length === 0
-        ? null
-        : `${unexpectedConsole.length} console error(s): ${unexpectedConsole
-            .slice(0, 3)
-            .map((text) => redactText(text, { maxLength: 200 }))
-            .join("; ")}`
-    )
+  const consoleAssertion = assertion(
+    "console.no_errors",
+    unexpectedConsole.length === 0,
+    unexpectedConsole.length === 0
+      ? null
+      : `${unexpectedConsole.length} console error(s): ${unexpectedConsole
+          .slice(0, 3)
+          .map((text) => redactText(text, { maxLength: 200 }))
+          .join("; ")}`
   );
+  // #1908 M1's ECHO. One rate-limit burst surfaces on both channels, and the
+  // census mistook the console copies for a fourth mechanism until it read the
+  // text. Gated on a 429 having actually been observed on the network channel in
+  // THIS journey — "Failed to fetch" is also what a genuinely broken endpoint
+  // logs, and without that gate this would reclassify a real outage as
+  // infrastructure, which is cry-wolf inverted into a mute button.
+  // Reads `o.failedRequests` rather than the `failedRequests` const, which is
+  // declared further down for the network channel — the console channel is
+  // graded first, and closing over it here is a temporal-dead-zone crash the
+  // contract test caught on its first run.
+  if (consoleErrorsAreRateLimitEcho(unexpectedConsole, o.failedRequests)) {
+    markInfra(
+      consoleAssertion,
+      `${unexpectedConsole.length} console error(s), all the fetch-failure echo of ` +
+        `a self-inflicted 429 in this same journey (#1908 M1): ${unexpectedConsole
+          .slice(0, 3)
+          .map((text) => redactText(text, { maxLength: 200 }))
+          .join("; ")}`
+    );
+  }
+  assertions.push(consoleAssertion);
   if (allowedConsole.length > 0) {
     const stale = allowedConsole.filter(
       (allowance) => !consoleErrors.some((text) => matchesAllowance(text, allowance))
@@ -570,18 +615,31 @@ function evaluateJourney(observation) {
       !allowed.has(f && f.url ? f.url : "") &&
       !allowedAborts.some((allowance) => abortAllowanceMatches(f, allowance))
   );
-  assertions.push(
-    assertion(
-      "network.no_unexpected_failures",
-      unexpected.length === 0,
-      unexpected.length === 0
-        ? null
-        : `${unexpected.length} failed request(s): ${unexpected
-            .slice(0, 5)
-            .map((f) => `${redactUrl(f.url)} ${f.status ?? f.failure ?? ""}`.trim())
-            .join("; ")}`
-    )
+  const networkAssertion = assertion(
+    "network.no_unexpected_failures",
+    unexpected.length === 0,
+    unexpected.length === 0
+      ? null
+      : `${unexpected.length} failed request(s): ${unexpected
+          .slice(0, 5)
+          .map((f) => `${redactUrl(f.url)} ${f.status ?? f.failure ?? ""}`.trim())
+          .join("; ")}`
   );
+  // #1908 M1 — the rail throttling itself is not a product finding. Classified,
+  // never suppressed: the assertion stays `ok: false` and keeps its URLs, so the
+  // manifest still shows exactly what happened; only the FILER declines to mint
+  // an issue from it. Requires EVERY unexpected failure to be a first-party 429,
+  // so one genuine failure alongside the burst keeps the whole thing graded.
+  if (networkFailuresAreSelfInflicted(unexpected)) {
+    markInfra(
+      networkAssertion,
+      `${describeRateLimit(unexpected)} Observed: ${unexpected
+        .slice(0, 5)
+        .map((f) => `${redactUrl(f.url)} ${f.status}`)
+        .join("; ")}`
+    );
+  }
+  assertions.push(networkAssertion);
 
   // UX-P047 (#1648 P1, Fable ruling) — STRICT EXPIRY MOVED TO THE RUN.
   //
@@ -663,7 +721,19 @@ function evaluateJourney(observation) {
     )
   );
 
-  const result = assertions.every((a) => a.ok) ? RESULTS.PASS : RESULTS.FAIL;
+  // #1908 M1 — three-way, not two-way. A journey whose ONLY failing assertions
+  // describe the runner did not fail; it could not be checked, and this rail's
+  // own `checked: 0 → unknown` rule says those are different facts (gotcha #53).
+  // The moment ONE product assertion fails, the journey is a product FAIL again
+  // and every finding on it files normally — which is how `consent.two_tabs`
+  // keeps reporting #1909's blank main region through a 12 × 429 burst.
+  const failing = assertions.filter((a) => !a.ok);
+  const result =
+    failing.length === 0
+      ? RESULTS.PASS
+      : failing.every((a) => a.infra === true)
+        ? RESULTS.INFRA_ERROR
+        : RESULTS.FAIL;
   return {
     result,
     assertions,

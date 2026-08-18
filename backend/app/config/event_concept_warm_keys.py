@@ -1,10 +1,25 @@
-"""Which event-concept keys are kept warm (#1107, LAT-P021).
+"""Which event-concept keys are kept warm BY NAME (#1107, LAT-P021).
 
-A named list, deliberately. The warmer is NOT "warm every concept": the concept
-tier spans golf, tennis, cycling and the awards adapters, and a warmer that
-walks all of them turns a targeted 4-key job into an unbounded sweep that will
-find the global 300s hard SIGKILL. Adding a key here is a deliberate act with a
-cost attached — four majors at 11-35s each is already most of a warm cycle.
+A named list, deliberately, and it is now only HALF of what the warmer warms.
+
+**Read this before adding a key here.** #1948: this file being the warmer's only
+population is what deleted the concept tier from Discover. UX-P089 made
+`_resolve_concept_leader` cache-only, so the warm set became the leader's only
+source — and the warm set was these four golf slugs, so every non-golf concept
+shipped with no probability and was suppressed on both surfaces. The fix was NOT
+to paste more slugs in here; it was to make the warmer consume the feed's own
+enumeration of unsettled concepts
+(`app/utils/event_concept_population.py`). If you are here because a concept is
+not warm, that is where it belongs — a slug added by hand is a slug that will
+drift from the feed again.
+
+What is still legitimately named here: keys that are expensive, permanent, and
+NOT covered by the unsettled-concept population — the majors, which are warmed
+for LATENCY (#1107's p0), not for content. The warmer is not "warm every
+concept": the tier also spans tennis and the awards adapters, and an unbounded
+sweep of all of them finds the global 300s hard SIGKILL. Adding a key here is a
+deliberate act with a cost attached — four majors at 11-35s each is already most
+of that tier's budget.
 
 These four are here because #1107 is a p0 about them: they are the year's
 biggest golf pages, and LAT-P021 measured every one of them missing the 2s bar

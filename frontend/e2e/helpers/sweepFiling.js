@@ -108,7 +108,13 @@ function findingsFromManifest(manifest) {
     const assertions = Array.isArray(journey.assertions) ? journey.assertions : [];
     for (const a of assertions) {
       if (!a || a.ok !== false) continue;
-      const isInfra = result === "infra_error" || INFRA_ASSERTIONS.has(a.assertion_id);
+      // `a.infra` is the third route, added for #1908 M1: a condition that hits
+      // SOME assertions of a journey the rest of which is product-graded. The
+      // journey-level lever was the wrong instrument for it — using that would
+      // have muted `content.main_region_nonblank` on `consent.two_tabs`, i.e.
+      // #1909, the one real defect inside thirteen issues of rail noise.
+      const isInfra =
+        result === "infra_error" || INFRA_ASSERTIONS.has(a.assertion_id) || a.infra === true;
       const finding = {
         journey_id: journey.journey_id,
         project: journey.project,

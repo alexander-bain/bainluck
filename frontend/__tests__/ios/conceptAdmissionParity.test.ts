@@ -211,3 +211,112 @@ d("#1939 — both web renderers can print what the gate admits", () => {
     expect(src).toContain("formatConceptMovement");
   });
 });
+
+/**
+ * #1951 — THE THIRD SURFACE.
+ *
+ * `feed_item_is_renderable()` in `backend/app/tasks/flow_sentinel.py` is a third
+ * implementation of this same admission rule, and until this block existed it was
+ * in no parity test at all. It shipped in UX-P092 carrying the PRE-#1935 rule on
+ * two arms: it admitted a golferless `marquee_whathit` tournament, and it admitted
+ * a concept on a bare `leader` presence test with no usability check.
+ *
+ * Why that is worse in the sentinel than in a renderer, and the reason this block
+ * is not merely tidiness: the dark-class limb that predicate feeds IS the
+ * #1935-family detector — it exists to name card types the server builds and no
+ * client can render. Grading that with a predicate MORE PERMISSIVE than the
+ * clients' makes the exact family it hunts invisible to it. Measured: a real
+ * production page whose seven tournaments are all golferless-but-whathit is 100%
+ * dark on both surfaces, and the old predicate scored it `7 built, 7 renderable`
+ * — a PASS over a fully dark tier, which is #1948's failure mode reproduced
+ * inside the fix for #1948.
+ *
+ * Asserted against SOURCE for the same reason the Swift block above is: jest is a
+ * deploy gate here and pytest is not reachable from it. The BEHAVIOURAL half of
+ * this rule lives in `backend/tests/test_flow_sentinel_admission_parity.py`, which
+ * executes the rows; this block is the structural link that makes the third copy
+ * visible to the gate the other two already answer to.
+ */
+const SENTINEL_PREDICATE = join(
+  __dirname,
+  "../../../backend/app/tasks/flow_sentinel.py",
+);
+const sentinelPresent = existsSync(SENTINEL_PREDICATE);
+const dp = sentinelPresent ? describe : describe.skip;
+
+dp("#1951 — the flow sentinel encodes the SAME admission rule", () => {
+  const py = readFileSync(SENTINEL_PREDICATE, "utf8");
+
+  // Narrow to the function, so a `marquee_whathit` mention anywhere else in a
+  // 2,000-line module cannot satisfy these assertions.
+  const fn = (() => {
+    const start = py.indexOf("def feed_item_is_renderable(");
+    expect(start).toBeGreaterThan(-1);
+    const end = py.indexOf("\ndef feed_dark_card_classes(", start);
+    expect(end).toBeGreaterThan(start);
+    return py.slice(start, end);
+  })();
+
+  const tournamentArm = (() => {
+    const start = fn.indexOf('if kind == "tournament":');
+    const end = fn.indexOf('if kind == "concept":', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return fn.slice(start, end);
+  })();
+
+  const conceptArm = (() => {
+    const start = fn.indexOf('if kind == "concept":');
+    const end = fn.indexOf('if kind == "bundle":', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return fn.slice(start, end);
+  })();
+
+  it("the tournament arm admits on golfers ALONE (#1935)", () => {
+    expect(tournamentArm).toMatch(/return bool\(data\.get\("golfers"\)\)/);
+    // The regression this pins. `marquee_whathit` must not appear as an
+    // ADMITTING term in this arm — both clients deleted it, and its presence
+    // here is what blinded the detector.
+    const code = tournamentArm
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toContain("marquee_whathit");
+  });
+
+  it("the concept settled arm requires a NAMEABLE result (#1935)", () => {
+    expect(conceptArm).toContain('data.get("marquee_whathit") is True');
+    expect(conceptArm).toContain('data.get("winner")');
+    expect(conceptArm).toContain('data.get("result_summary")');
+    expect(conceptArm).toMatch(/return bool\(named or summary\)/);
+  });
+
+  it("the concept leader arm tests USABILITY, not presence", () => {
+    // A bare `data.get("leader")` is the TypeScript-erasure failure mode in
+    // Python: `{}` is truthy. Native can write a presence test because its
+    // decoder rejects malformed leaders first; Python, like TS, cannot.
+    expect(conceptArm).toContain("_concept_leader_is_usable(data.get(\"leader\"))");
+    expect(conceptArm).not.toMatch(/return bool\(\s*data\.get\("leader"\)\s*\)/);
+  });
+
+  it("checks settled BEFORE leader, so a result is never displaced", () => {
+    const settledAt = conceptArm.indexOf("marquee_whathit");
+    const leaderAt = conceptArm.indexOf("_concept_leader_is_usable");
+    expect(settledAt).toBeGreaterThan(-1);
+    expect(leaderAt).toBeGreaterThan(-1);
+    expect(settledAt).toBeLessThan(leaderAt);
+  });
+
+  it("the futures arm carries the resolution_date authority web has", () => {
+    // The one drift in the STRICT direction: without this the sentinel calls a
+    // settled-by-date card unrenderable while both clients print it, so the
+    // mirror under-counts a healthy page and the floor limb drifts toward noise.
+    expect(fn).toContain("_futures_is_settled(data, now)");
+    expect(py).toContain('raw = data.get("resolution_date")');
+  });
+
+  it("falls closed — the function's last statement is `return False`", () => {
+    expect(fn.trimEnd().endsWith("return False")).toBe(true);
+  });
+});

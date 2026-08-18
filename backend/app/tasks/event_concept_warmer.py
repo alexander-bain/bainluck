@@ -1,11 +1,25 @@
-"""Keep the golf-major concept payloads warm (#1107, LAT-P021).
+"""Keep the concept payloads warm (#1107, LAT-P021; #1948).
 
 Two entry points, one build path:
 
 ``_warm_event_concepts``
-    Scheduled. Rebuilds every key in ``WARM_CONCEPT_KEYS`` so the 24h mirror
-    stays content-fresh and the very first build of the day is never paid by a
-    reader.
+    Scheduled. Warms TWO tiers so the 24h mirror stays content-fresh and the
+    very first build of the day is never paid by a reader:
+
+      * **leaders** — every UNSETTLED concept, enumerated by the feed's own
+        population function (`app/utils/event_concept_population.py`). Added by
+        #1948. This tier is load-bearing: since UX-P089 made
+        `_resolve_concept_leader` cache-only, a concept whose envelope is not
+        warm has no probability, and both surfaces suppress that card entirely.
+        A cold key here is a DELETED CARD, not a slow page.
+      * **majors** — the four golf majors in ``WARM_CONCEPT_KEYS`` (#1107's p0).
+        NOT load-bearing: a cold major still builds inline in the route, so
+        missing one costs latency, never content.
+
+    Leaders run FIRST and the tiers have SEPARATE budgets, both for the same
+    reason (gotcha #34): majors cost 11-35s against leaders' 0.24-1.37s, so a
+    shared budget would let the majors starve the load-bearing tier on every
+    single run — silently, which is the shape of #1948 itself.
 
 ``_refresh_event_concept``
     Dispatched by the route when it serves the mirror on a miss. This is the
@@ -38,9 +52,49 @@ logger = logging.getLogger(__name__)
 #: consume the whole budget and take the other three keys down with it.
 PER_KEY_TIMEOUT_SECONDS = 55
 
+# --- The leader tier (#1948) -------------------------------------------------
+# The unsettled concepts `_resolve_concept_leader` runs on. Cheap: measured
+# 0.24-1.37s per key on production, against golf's 11-35s.
+#
+# It gets its OWN budget rather than sharing one deadline with the majors, and
+# that is gotcha #34 — "never share a single counter between two kinds of work
+# across a loop; the early work exhausts the limit before the later work is
+# reached". Majors are 40x more expensive per key and would starve this tier
+# every single run, silently, which is precisely the failure mode #1948 IS.
+LEADER_PER_KEY_TIMEOUT_SECONDS = 10
+LEADER_TIER_BUDGET_SECONDS = 70
+#: Wall-clock for the majors tier. Their measured total is ~82s (11+16+20+35);
+#: 150 carries that with headroom while still capping a pathological run so it
+#: cannot reach the task's soft limit.
+MAJORS_TIER_BUDGET_SECONDS = 150
 
-async def _build_one(key: str, *, token: str | None) -> dict:
+
+async def _leader_population() -> tuple[str, ...]:
+    """The unsettled concepts the feed will ask for a leader on (#1948).
+
+    Best-effort and total: a failure here returns an empty tier, so the majors
+    still warm and the run still reports honestly. The empty tier is visible in
+    the summary (`leader_population: 0`) rather than being indistinguishable
+    from "there are no unsettled concepts today" — gotcha #53, an empty result
+    and an absent measurement are different facts.
+    """
+    from app.tasks.base import get_task_session
+    from app.utils.event_concept_population import list_unsettled_concept_keys
+
+    try:
+        async with get_task_session() as db:
+            return await list_unsettled_concept_keys(db)
+    except Exception as exc:
+        logger.warning("warm_event_concepts: leader population unavailable: %s", exc)
+        return ()
+
+
+async def _build_one(key: str, *, token: str | None, timeout: float | None = None) -> dict:
     """Rebuild and re-cache one concept key. Never raises.
+
+    `timeout` bounds THIS build; ``None`` means the majors bound
+    (``PER_KEY_TIMEOUT_SECONDS``). It is read at call time, not bound as a
+    default, so a test patching the module constant still governs.
 
     `token` is the refresh-lock owner token THIS producer holds, and it is
     keyword-only and mandatory so that no caller acquires one by accident. Only
@@ -66,7 +120,10 @@ async def _build_one(key: str, *, token: str | None) -> dict:
             async with get_task_session() as db:
                 return await build_and_cache(key, db, rc)
 
-        payload = await asyncio.wait_for(_run(), timeout=PER_KEY_TIMEOUT_SECONDS)
+        payload = await asyncio.wait_for(
+            _run(),
+            timeout=PER_KEY_TIMEOUT_SECONDS if timeout is None else timeout,
+        )
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - started
         logger.warning("warm_event_concepts: %s timed out after %.1fs", key, elapsed)
@@ -112,27 +169,74 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
     from app.config.event_concept_warm_keys import WARM_CONCEPT_KEYS
     from app.utils.event_concept_cache import acquire_refresh_lock, cache_keys, get_client
 
-    targets = tuple(keys) if keys is not None else WARM_CONCEPT_KEYS
+    # An explicit key list means "warm exactly these" — the route's refresh path
+    # and the tier-focused tests. Only the SCHEDULED run (keys is None) resolves
+    # the leader population.
+    if keys is not None:
+        tiers = (("majors", tuple(keys), PER_KEY_TIMEOUT_SECONDS, MAJORS_TIER_BUDGET_SECONDS),)
+        leader_population = None
+    else:
+        # LEADERS FIRST, and the order is the fix (#1948). After UX-P089 made
+        # `_resolve_concept_leader` cache-only, this cache is the ONLY source of
+        # a concept card's probability — whereas the majors' mirror is NOT
+        # load-bearing (a cold major still builds inline in the route, so a
+        # missed major is a slow page; a missed leader is a DELETED CARD). The
+        # load-bearing tier must not be the one that runs on leftovers.
+        leader_keys = await _leader_population()
+        leader_population = len(leader_keys)
+        tiers = (
+            ("leaders", leader_keys, LEADER_PER_KEY_TIMEOUT_SECONDS, LEADER_TIER_BUDGET_SECONDS),
+            ("majors", WARM_CONCEPT_KEYS, PER_KEY_TIMEOUT_SECONDS, MAJORS_TIER_BUDGET_SECONDS),
+        )
 
+    targets = tuple(k for _, tier_keys, _, _ in tiers for k in tier_keys)
     rc = get_client()
 
     results = []
-    for key in targets:
-        # ACQUIRE FIRST, and skip the key if we cannot. This loop is the producer
-        # that used to barge in: it never took the lock and then deleted whatever
-        # was there on the way out (#1678 finding 1). A key already being rebuilt
-        # by a route-dispatched refresh is a key that is being handled — the right
-        # move is to leave it alone, not to build it a second time in parallel.
-        token = acquire_refresh_lock(rc, cache_keys(key))
-        if token is None:
-            logger.info("warm_event_concepts: %s already being rebuilt, skipping", key)
-            results.append({"key": key, "ok": False, "reason": "locked", "seconds": 0.0})
-            continue
-        results.append(await _build_one(key, token=token))
+    for tier_name, tier_keys, per_key_timeout, tier_budget in tiers:
+        tier_started = time.monotonic()
+        for key in tier_keys:
+            remaining = tier_budget - (time.monotonic() - tier_started)
+            if remaining <= 0:
+                # NO SILENT CAPS. A key the budget never reached is reported as
+                # its own reason, not folded into "absent" (which asserts the key
+                # resolves to nothing) and not dropped from the summary. A tier
+                # that is chronically skipped is a budget that needs raising, and
+                # that is only visible if the skip is written down.
+                logger.warning(
+                    "warm_event_concepts: %s tier budget (%ss) exhausted before %s",
+                    tier_name,
+                    tier_budget,
+                    key,
+                )
+                results.append(
+                    {"key": key, "ok": False, "reason": "budget", "seconds": 0.0,
+                     "tier": tier_name}
+                )
+                continue
+            # ACQUIRE FIRST, and skip the key if we cannot. This loop is the producer
+            # that used to barge in: it never took the lock and then deleted whatever
+            # was there on the way out (#1678 finding 1). A key already being rebuilt
+            # by a route-dispatched refresh is a key that is being handled — the right
+            # move is to leave it alone, not to build it a second time in parallel.
+            token = acquire_refresh_lock(rc, cache_keys(key))
+            if token is None:
+                logger.info("warm_event_concepts: %s already being rebuilt, skipping", key)
+                results.append(
+                    {"key": key, "ok": False, "reason": "locked", "seconds": 0.0,
+                     "tier": tier_name}
+                )
+                continue
+            result = await _build_one(
+                key, token=token, timeout=min(per_key_timeout, remaining)
+            )
+            result["tier"] = tier_name
+            results.append(result)
 
     built = [r for r in results if r["ok"]]
     absent = [r for r in results if r["reason"] == "absent"]
     locked = [r for r in results if r["reason"] == "locked"]
+    budget = [r for r in results if r["reason"] == "budget"]
     errors = [r for r in results if r["reason"] in ("timeout", "error")]
 
     # `absent` and `locked` are accounted-for, not failures: the run did everything
@@ -140,26 +244,39 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
     # in another producer. Only real damage lands in `errors`. `locked` is reported
     # as its own list rather than folded into a count, because a key that is locked
     # on run after run is a wedged lock, and that must stay visible.
+    #
+    # `budget` is NOT accounted-for. The run ran out of time before reaching that
+    # key, so its envelope may be stale or missing and a card may be dark because
+    # of it. Counting it as completed would let a warmer that skipped half the
+    # leader tier report GREEN — the exact false-GREEN shape #1515 was filed for.
     completed = len(built) + len(absent) + len(locked)
 
     summary = {
-        "terminal": "complete" if not errors else "partial",
+        "terminal": "complete" if not errors and not budget else "partial",
         "completed": completed,
         "total": len(targets),
         "built": len(built),
         "absent": [r["key"] for r in absent],
         "locked": [r["key"] for r in locked],
+        "budget_skipped": [r["key"] for r in budget],
         "errors": [{"key": r["key"], "reason": r["reason"]} for r in errors],
         "seconds": {r["key"]: r["seconds"] for r in results},
+        # How many unsettled concepts the leader tier found. `None` on an
+        # explicit-keys run (the tier was not resolved); `0` means the
+        # enumeration ran and found nothing, which is a different fact.
+        "leader_population": leader_population,
     }
     logger.info(
-        "warm_event_concepts: %d/%d accounted (%d built, %d absent, %d locked, %d errors)",
+        "warm_event_concepts: %d/%d accounted (%d built, %d absent, %d locked, "
+        "%d budget-skipped, %d errors; leader population %s)",
         completed,
         len(targets),
         len(built),
         len(absent),
         len(locked),
+        len(budget),
         len(errors),
+        leader_population,
     )
     return summary
 

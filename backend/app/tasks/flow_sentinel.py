@@ -75,6 +75,25 @@ FEED_QUALITY_TOP_N = 20
 # client's real budget. A flow that measured only what the server produced would
 # have watched this whole incident go by.
 DISCOVER_FIRST_PAGE_FLOOR = 12  # flow:sentinel_discover_first_page_floor
+# Limb 3 — DARK CLASS (#1948). The floor and the budget together still could not
+# see a whole CARD TYPE go dark, and that is not hypothetical: on the #1948 run
+# this alarm reported `renderable_cards: 41` against `items_returned: 50` with
+# `type_concept: 9`. 41 = 50 - 9. Every concept card on the page was
+# unrenderable, the entire tier was invisible to both surfaces, and the alarm
+# PASSED — because 41 clears a floor of 12. It photographed the incident and
+# called it healthy.
+#
+# A class is dark when the server built cards of that type and a client can
+# render NONE of them. That is categorically different from "we have no
+# concepts today", which produces no items of the type at all and is not
+# flagged.
+#
+# The minimum class size keeps this a floor alarm rather than a per-card judge
+# (the `feed_renderable_card_count` docstring's own rule: a noisy floor alarm
+# gets muted, and then you have no alarm). One unrenderable card of a type is a
+# card bug and belongs to the empty-envelope work; two or more with not a single
+# survivor is a mechanism.
+DISCOVER_DARK_CLASS_MIN = 2  # flow:sentinel_discover_dark_class_min
 # `DiscoverViewModel.retryBudget` — the client's TOTAL initial-load budget, not a
 # per-attempt timeout. Kept as its own constant so the day someone changes it in
 # Swift, the mismatch is one grep away.
@@ -200,7 +219,7 @@ _FLOW_TITLES = {
 # ---------------------------------------------------------------------------
 def _load_overrides() -> None:
     global CHART_DENSITY_MAX_BELOW_BAR_PCT, EVENT_SAMPLE_SIZE, STALE_LIVE_HOURS
-    global DISCOVER_FIRST_PAGE_FLOOR, DISCOVER_CLIENT_LOAD_BUDGET_S
+    global DISCOVER_FIRST_PAGE_FLOOR, DISCOVER_CLIENT_LOAD_BUDGET_S, DISCOVER_DARK_CLASS_MIN
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -211,6 +230,7 @@ def _load_overrides() -> None:
             ("flow:sentinel_stale_live_hours", "STALE_LIVE_HOURS", float),
             ("flow:sentinel_discover_first_page_floor", "DISCOVER_FIRST_PAGE_FLOOR", int),
             ("flow:sentinel_discover_client_budget_s", "DISCOVER_CLIENT_LOAD_BUDGET_S", float),
+            ("flow:sentinel_discover_dark_class_min", "DISCOVER_DARK_CLASS_MIN", int),
         ):
             v = r.get(key)
             if v is not None:
@@ -569,38 +589,172 @@ def feed_renderable_card_count(feed_items: Any) -> int:
     """
     if not isinstance(feed_items, list):
         return 0
+    return sum(1 for i in feed_items if feed_item_is_renderable(i))
 
-    def _renderable(item: Any, depth: int = 0) -> bool:
-        if not isinstance(item, dict):
-            return False
-        kind = item.get("type")
-        data = item.get("data")
-        if not isinstance(data, dict):
-            return False
-        if kind == "event":
-            return True
-        if kind == "futures":
-            if data.get("top_outcomes"):
-                return True
-            # Settled-but-open is the normal Kalshi shape (gotcha #33), and a
-            # result-carrying card is renderable — "settled means settled".
-            return bool(
-                data.get("resolved")
-                or (data.get("winner") or "").strip()
-                or (data.get("status") or "").lower()
-                in ("resolved", "closed", "settled", "finalized", "final")
-            )
-        if kind == "tournament":
-            return bool(data.get("golfers") or data.get("marquee_whathit"))
-        if kind == "concept":
-            return bool(data.get("marquee_whathit") or data.get("leader"))
-        if kind == "bundle":
-            if depth > 3:
-                return False
-            return any(_renderable(c, depth + 1) for c in (data.get("items") or []))
+
+_FUTURES_SETTLED_STATUSES = frozenset(
+    {"resolved", "settled", "closed", "complete", "completed", "finalized", "final"}
+)
+
+
+def _futures_is_settled(data: dict, now: Any = None) -> bool:
+    """Web's `_futuresIsSettled`, arm for arm (`discover/utils.ts`).
+
+    The `resolution_date` arm is the one this copy was missing. It matters in the
+    STRICT direction — without it the sentinel calls a settled-by-date card
+    unrenderable while both clients print it, i.e. the mirror under-counts a
+    healthy page. Kept last because it is the weakest authority of the four:
+    `resolution_date` is SCHEDULED, never a transition timestamp, so a past date
+    means "should have resolved by now", not "did".
+    """
+    if data.get("resolved") is True:
+        return True
+    if (data.get("winner") or "").strip():
+        return True
+    if (data.get("status") or "").strip().lower() in _FUTURES_SETTLED_STATUSES:
+        return True
+    raw = data.get("resolution_date")
+    if not raw:
         return False
+    from datetime import datetime, timezone
 
-    return sum(1 for i in feed_items if _renderable(i))
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed < (now or datetime.now(timezone.utc))
+
+
+def _concept_leader_is_usable(leader: Any) -> bool:
+    """Web's `_conceptLeaderIsUsable`, arm for arm.
+
+    Native writes this as `leader != nil` and that is COMPLETE there, because
+    `FeedConceptLeader` decodes `name`/`probability` as non-optional and a
+    malformed leader throws during decode. Python, like TypeScript, has no such
+    gate — a bare presence test admits `{}`. The range check is not padding: an
+    independent-binary field can sum past 100% (gotcha #23), so a leader reading
+    over 1.0 is corrupt rather than confident.
+    """
+    if not isinstance(leader, dict):
+        return False
+    name = leader.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return False
+    p = leader.get("probability")
+    if isinstance(p, bool) or not isinstance(p, (int, float)):
+        return False
+    return 0.0 <= float(p) <= 1.0
+
+
+def feed_item_is_renderable(item: Any, depth: int = 0, now: Any = None) -> bool:
+    """One card's renderability, by the surfaces' shared suppression rule.
+
+    Module-level rather than a closure inside `feed_renderable_card_count`
+    because the dark-class limb needs the SAME predicate per card type. A second
+    copy of this rule is exactly the drift #1948 is about — the whole incident
+    was two enumerations of one population disagreeing.
+
+    #1951 — AND THIS FUNCTION WAS THE THIRD COPY. It shipped in UX-P092 carrying
+    the pre-#1935 rule on two arms, and the consequence is worse here than in a
+    renderer, because the dark-class limb IS the #1935-family detector: it names
+    card types the server builds and no client renders. Grading that with a
+    predicate MORE PERMISSIVE than the clients' makes the exact family it hunts
+    invisible to it. A first page whose seven tournaments are all
+    golferless-but-`marquee_whathit` is 100% dark on both surfaces, and the old
+    reading reported `tournament: 7 built, 7 renderable` — PASS. That is #1948's
+    own failure mode (a fully green alarm over a dark tier) reproduced inside the
+    fix for #1948.
+
+    ON THE DOCSTRING ABOVE THIS ONE, which says the reading is "deliberately the
+    PERMISSIVE" one: that argument was made for the FLOOR limb, where
+    under-counting means a noisy alarm and a noisy alarm gets muted. It does not
+    license being permissive against the CLIENTS — matching them exactly is not
+    "strict", it is accurate, and a card the clients drop is genuinely not on the
+    reader's page. Measured on the 327-card production sample this was written
+    against, the corrected predicate changes the renderable count by ZERO (58/75
+    both ways), because today's population has no specimen of any of the three
+    drifts. The floor limb is unaffected; the dark-class limb gains its sight.
+
+    The parity that matters is asserted in `conceptAdmissionParity.test.ts`,
+    which now covers THREE surfaces rather than two.
+    """
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("type")
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    if kind == "event":
+        # Unconditional on all three surfaces: an event card is a real matchup
+        # plus a status/score, never a bare tile.
+        return True
+    if kind == "futures":
+        if data.get("top_outcomes"):
+            return True
+        # Settled-but-open is the normal Kalshi shape (gotcha #33), and a
+        # result-carrying card is renderable — "settled means settled".
+        return _futures_is_settled(data, now)
+    if kind == "tournament":
+        # #1935 deleted the bare `marquee_whathit` arm from BOTH clients:
+        # `TournamentCard`/`DiscoverTournamentCard` render their entire champion
+        # hero inside `golfers.first`, so a golferless WHAT-HIT tournament is a
+        # gradient, a chip and a title. Since the golfer arm already admits every
+        # tournament that CAN render, the whathit arm only ever fired for the one
+        # that cannot. This copy kept it for three cycles after both clients
+        # dropped it.
+        return bool(data.get("golfers"))
+    if kind == "concept":
+        # Settled arm FIRST, and the order is load-bearing on all three surfaces:
+        # "settled means settled" — a card with a result leads with the result and
+        # must not fall back to a probability that is now history.
+        if data.get("marquee_whathit") is True:
+            named = (data.get("winner") or "").strip()
+            summary = (data.get("result_summary") or "").strip()
+            return bool(named or summary)
+        return _concept_leader_is_usable(data.get("leader"))
+    if kind == "bundle":
+        if depth > 3:
+            return False
+        return any(
+            feed_item_is_renderable(c, depth + 1, now) for c in (data.get("items") or [])
+        )
+    return False
+
+
+def feed_dark_card_classes(feed_items: Any, min_class_size: int | None = None) -> list[dict]:
+    """Card types the server BUILT but no client can render any of (#1948).
+
+    Returns one row per dark class: ``{"type", "built", "renderable": 0}``.
+    A type absent from the page is not dark — it is absent, and those are
+    different facts (gotcha #53). A type with even one renderable member is not
+    dark either; this limb is about a whole tier going out at once.
+
+    `min_class_size` resolves at call time (see `discover_first_page_failures`
+    for why a default argument would silently ignore the Redis override).
+    """
+    if not isinstance(feed_items, list):
+        return []
+    min_class_size = DISCOVER_DARK_CLASS_MIN if min_class_size is None else min_class_size
+
+    built: dict[str, int] = {}
+    renderable: dict[str, int] = {}
+    for item in feed_items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if not isinstance(kind, str) or not kind:
+            continue
+        built[kind] = built.get(kind, 0) + 1
+        if feed_item_is_renderable(item):
+            renderable[kind] = renderable.get(kind, 0) + 1
+
+    return [
+        {"type": kind, "built": n, "renderable": 0}
+        for kind, n in sorted(built.items())
+        if n >= min_class_size and renderable.get(kind, 0) == 0
+    ]
 
 
 def discover_first_page_failures(
@@ -608,10 +762,12 @@ def discover_first_page_failures(
     renderable: int,
     elapsed_s: float,
     cache_status: str | None,
-    floor: int = DISCOVER_FIRST_PAGE_FLOOR,
-    budget_s: float = DISCOVER_CLIENT_LOAD_BUDGET_S,
+    items: Any = None,
+    floor: int | None = None,
+    budget_s: float | None = None,
+    dark_class_min: int | None = None,
 ) -> list[dict]:
-    """The two-limb verdict for the Discover first page (UX-P089 / #1936).
+    """The three-limb verdict for the Discover first page (UX-P089 / #1936; #1948).
 
     Limb 1 — STARVED: fewer renderable cards than the floor.
 
@@ -623,7 +779,27 @@ def discover_first_page_failures(
     sample that carries the number, and it is also the exact request a returning
     reader makes: identified principals get their own cache key with a 5s fresh
     TTL and a 300s stale tier, so anyone away for five minutes is cold.
+
+    Limb 3 — DARK CLASS (#1948): a whole card TYPE built and none of it
+    renderable. Limbs 1 and 2 are both page-level aggregates, and #1948 walked
+    straight between them — 41 renderable of 50 items with all 9 concepts dark
+    clears a floor of 12 and says nothing about the build time. The alarm
+    photographed the incident and passed. `items` is optional so an older caller
+    still gets limbs 1 and 2, but the runner passes it.
+
+    THE THRESHOLDS RESOLVE AT CALL TIME, and that is a fix, not a style choice.
+    They were `floor: int = DISCOVER_FIRST_PAGE_FLOOR` — a default argument,
+    which Python binds ONCE when the module is imported. `_load_overrides()`
+    reassigns those globals from Redis at the start of every run, so the
+    override never reached the verdict, while the evidence block (which reads
+    the global at call time) reported the NEW number. An operator raising the
+    floor would have seen their value echoed back and graded against the old
+    one. Same trap would have swallowed `dark_class_min` on arrival.
     """
+    floor = DISCOVER_FIRST_PAGE_FLOOR if floor is None else floor
+    budget_s = DISCOVER_CLIENT_LOAD_BUDGET_S if budget_s is None else budget_s
+    dark_class_min = DISCOVER_DARK_CLASS_MIN if dark_class_min is None else dark_class_min
+
     failures: list[dict] = []
     if renderable < floor:
         failures.append(
@@ -649,6 +825,21 @@ def discover_first_page_failures(
                 ),
                 "elapsed_s": round(elapsed_s, 3),
                 "budget_s": budget_s,
+            }
+        )
+    for dark in feed_dark_card_classes(items, min_class_size=dark_class_min):
+        failures.append(
+            {
+                "limb": "dark_class",
+                "detail": (
+                    f"every `{dark['type']}` card on the Discover first page is "
+                    f"unrenderable ({dark['built']} built, 0 renderable) — the "
+                    f"whole class is invisible on both surfaces while the page "
+                    f"total still clears the floor"
+                ),
+                "card_type": dark["type"],
+                "built": dark["built"],
+                "renderable": 0,
             }
         )
     return failures
@@ -1180,8 +1371,28 @@ async def _run_discover_first_page(client: httpx.AsyncClient) -> dict:
         elapsed_s = wall_s
 
     failures = discover_first_page_failures(
-        renderable=renderable, elapsed_s=elapsed_s, cache_status=cache_status
+        renderable=renderable,
+        elapsed_s=elapsed_s,
+        cache_status=cache_status,
+        items=items,
     )
+    # Per-class census in the evidence, always — not only when a class is dark.
+    # The #1948 run's evidence carried `renderable_cards: 41` and
+    # `items_returned: 50` and a reader had to do the subtraction and then guess
+    # WHICH nine were missing. The breakdown is the reading that makes limb 3's
+    # verdict checkable by hand.
+    by_class: dict[str, dict] = {}
+    if isinstance(items, list):
+        for _item in items:
+            if not isinstance(_item, dict):
+                continue
+            _kind = _item.get("type")
+            if not isinstance(_kind, str) or not _kind:
+                continue
+            row = by_class.setdefault(_kind, {"built": 0, "renderable": 0})
+            row["built"] += 1
+            if feed_item_is_renderable(_item):
+                row["renderable"] += 1
     return {
         "flow": "discover_first_page",
         "checked": 1,
@@ -1190,6 +1401,7 @@ async def _run_discover_first_page(client: httpx.AsyncClient) -> dict:
         "evidence": {
             "items_returned": len(items) if isinstance(items, list) else 0,
             "renderable_cards": renderable,
+            "cards_by_class": by_class,
             "floor": DISCOVER_FIRST_PAGE_FLOOR,
             "server_elapsed_s": round(elapsed_s, 3),
             "wall_s": round(wall_s, 3),
@@ -1914,7 +2126,18 @@ def build_flow_redetect_comment(flow_result: dict) -> str:
     return "\n".join(parts)
 
 
-def build_flow_issue_body(flow_result: dict) -> str:
+def build_flow_issue_body(flow_result: dict, *, refreshed: bool = False) -> str:
+    """The issue body. Used BOTH to file a new issue and, since UX-P092, to
+    refresh an already-open one on re-detection.
+
+    `refreshed=True` labels the body as a live re-observation rather than a
+    first-file record. UX-P091 made the re-detect COMMENT carry the current
+    failures, which fixed the channel but not the artefact: the body is what a
+    reader sees first, and #1483's said "2 failures" for nineteen days while the
+    flow was failing eight, one of them a new p1 class. A body that is rewritten
+    must say so — a reader who cannot tell a refreshed body from the original
+    cannot tell how old the finding is either.
+    """
     flow = flow_result["flow"]
     fp = flow_fingerprint(flow)
     parts = [
@@ -1922,6 +2145,18 @@ def build_flow_issue_body(flow_result: dict) -> str:
         "",
         f"`flow-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
         "",
+    ]
+    if refreshed:
+        from datetime import datetime as _now_dt, timezone as _now_tz
+
+        parts += [
+            f"> 🔄 **This body was refreshed by a later run** "
+            f"({_now_dt.now(_now_tz.utc).isoformat(timespec='seconds')}). "
+            f"It shows the CURRENT failures, not the ones this issue was filed "
+            f"for. The comment thread below is the history.",
+            "",
+        ]
+    parts += [
         f"**Flow:** `{flow}` — {_FLOW_TITLES.get(flow, flow)}  ",
         f"**Checks run:** {flow_result['checked']}  ",
         f"**Failing:** {len(flow_result['failures'])}  ",
@@ -2012,6 +2247,10 @@ def file_flow_issue(flow_result: dict, open_issues: list[dict] | None = None) ->
         body=build_flow_issue_body(flow_result),
         title_prefix=_flow_title_prefix(flow),
         red_comment=build_flow_redetect_comment(flow_result),
+        # UX-P092: on a dedupe, rewrite the BODY too, not just the comment.
+        # UX-P091 fixed the channel; this fixes the artefact. #1483 read "2
+        # failures" for nineteen days while the flow was failing eight.
+        red_body=build_flow_issue_body(flow_result, refreshed=True),
         open_issues=open_issues,
     )
     res["flow"] = flow

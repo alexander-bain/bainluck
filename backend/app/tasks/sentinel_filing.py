@@ -261,6 +261,7 @@ def reconcile_issue(
     body: str | None = None,
     title_prefix: str | None = None,
     red_comment: str | None = None,
+    red_body: str | None = None,
     green_comment: str | None = None,
     open_issues: "list[dict] | OpenIssuesResult | None" = None,
     add_to_board: bool = True,
@@ -268,8 +269,9 @@ def reconcile_issue(
     """The one fingerprint lifecycle for RED and GREEN.
 
     * ``red=True``  — file OR comment. Match the fingerprint against OPEN
-      ``alert-intake`` issues; if one exists, comment (no duplicate, no label
-      edit); else create a new issue (default P2 labels) and add it to the board.
+      ``alert-intake`` issues; if one exists, comment AND (when ``red_body`` is
+      supplied) refresh the body (no duplicate, no label edit, no state change);
+      else create a new issue (default P2 labels) and add it to the board.
       Create is serialized per fingerprint (Redis claim + final re-read) so a
       beat+manual overlap cannot both file.
     * ``red=False`` — resolve. If the fingerprint's canonical open issue exists,
@@ -290,6 +292,42 @@ def reconcile_issue(
     from app.tasks import bug_report_github as gh
 
     result: dict[str, Any] = {"fingerprint": fingerprint, "marker": marker_key}
+
+    def _refresh_body(issue: int) -> str:
+        """Re-point an already-open issue's body at the CURRENT observation.
+
+        Returns the outcome, recorded in the result as ``body_refresh`` so a
+        silently-skipped refresh is visible rather than assumed.
+
+        REFUSES a body that has lost the fingerprint declaration. The GREEN path
+        matches the canonical issue by that declaration and nothing else, so a
+        body without it can never be auto-closed again — the issue would go
+        permanently stale in exactly the way this refresh exists to prevent.
+        Better to leave a frozen body than to orphan the issue from its
+        lifecycle.
+        """
+        if not red_body:
+            return "not_requested"
+        if fingerprint not in red_body:
+            logger.warning(
+                "sentinel_filing: refusing body refresh on #%d — the new body has "
+                "lost fingerprint %s and would orphan the issue from its GREEN "
+                "close path",
+                issue,
+                fingerprint,
+            )
+            return "refused_no_fingerprint"
+        try:
+            gh.update_issue_body(issue, red_body)
+        except Exception as exc:
+            # Non-fatal by design: the comment already carried the current
+            # failures, so a failed refresh degrades to UX-P091's behaviour
+            # rather than losing the re-detection.
+            logger.warning(
+                "sentinel_filing: body refresh failed on #%d: %s", issue, exc
+            )
+            return "failed"
+        return "refreshed"
 
     if not gh.GITHUB_TOKEN:
         result["action"] = "skipped_no_token"
@@ -329,7 +367,9 @@ def reconcile_issue(
                 logger.warning("sentinel_filing: comment failed on #%d: %s", existing, exc)
                 result.update(action="comment_failed", issue=existing, error=str(exc)[:200])
                 return result
-            result.update(action="commented", issue=existing)
+            result.update(
+                action="commented", issue=existing, body_refresh=_refresh_body(existing)
+            )
             return result
 
         if not (title and body):
@@ -363,7 +403,9 @@ def reconcile_issue(
                         logger.warning("sentinel_filing: comment failed on #%d: %s", raced, exc)
                         result.update(action="comment_failed", issue=raced, error=str(exc)[:200])
                         return result
-                    result.update(action="commented", issue=raced)
+                    result.update(
+                        action="commented", issue=raced, body_refresh=_refresh_body(raced)
+                    )
                     return result
         try:
             number, node_id = gh.create_github_issue(title, body, labels or DEFAULT_LABELS)
