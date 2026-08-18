@@ -241,6 +241,7 @@ class TestBeatScheduleCompleteness:
         "enrich-market-images",
         "enrich-tmdb-images",
         "merge-duplicate-events",
+        "reconcile-unanchored-events",
         "merge-degenerate-combat-events",
         "canonicalize-entities-daily",
         "precompute-interestingness",

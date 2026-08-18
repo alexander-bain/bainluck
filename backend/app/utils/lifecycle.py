@@ -53,3 +53,45 @@ def enforce_live_requires_start(
     if state == "live" and not live_start_satisfied(start, now):
         return fallback
     return state
+
+
+#: The ``events`` table's own vocabulary, which is NOT the card vocabulary above.
+#: A row is ``scheduled``/``live``/``completed``/``closed``; a card is
+#: ``upcoming``/``live``/``settled``. Downgrading an event row to ``"upcoming"``
+#: would emit a status no client parses, so the two need different fallbacks and
+#: this is the one place that difference is written down.
+EVENT_NOT_STARTED = "scheduled"
+
+
+def served_event_status(status: str | None, commence_time, now: datetime) -> str | None:
+    """The status a PUBLIC surface may show for an event row. Pure.
+
+    Same invariant as :func:`enforce_live_requires_start`, in the ``events``
+    vocabulary. Every public serializer that emits ``event.status`` goes through
+    this; admin surfaces deliberately do NOT, because an operator debugging a
+    contradictory row must see the contradiction rather than a repaired reading.
+
+    MEASURED 2026-08-17 (queue 364, #1779 family) — the reason this exists as a
+    consumed function and not only as a declared rule. Four MLB events were
+    serving ``status: "live"`` with live scores while their own
+    ``commence_time`` sat **40–51 hours in the future**:
+
+        15199901  Detroit @ Pittsburgh   commence 2026-08-19 16:35Z  live 0–5
+        15199882  San Diego @ NY Mets    commence 2026-08-19 17:10Z  live 2–1
+        15200229  Arizona @ Boston       commence 2026-08-19 20:10Z  live 4–0
+        15199886  Miami @ Philadelphia   commence 2026-08-19 22:05Z  live 4–1
+
+    Each is a second row for a game that also exists at its correct Aug-17 time,
+    with the same ``espn_id`` and the same score. The invariant they violate was
+    already written, already correct, and had **zero callers**:
+    ``enforce_live_requires_start`` shipped as "one canonical rule for every
+    surface" and no surface imported it. A rule with no consumer is a document.
+
+    This is the staleness cardinal sin inverted — not stale-when-live but
+    live-when-not-started — and it is the same class as gotcha #46's
+    ``completed_at >= commence_time``, which IS guarded. The forward-facing twin
+    was not.
+    """
+    return enforce_live_requires_start(
+        status, commence_time, now, fallback=EVENT_NOT_STARTED
+    )

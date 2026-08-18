@@ -5,6 +5,8 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.utils.lifecycle import served_event_status
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, or_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -224,7 +226,10 @@ def _format_event_brief(event: Event, team: Team) -> dict:
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
-        "status": event.status,
+        # #1779 family: never render live before the row's own start time.
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         "sport_key": sport.key if sport else None,
         "is_home": is_home,
