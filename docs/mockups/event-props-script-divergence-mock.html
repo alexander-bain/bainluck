@@ -1,0 +1,194 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UX-AMBITION-1 — Event page, props as the story</title><style>
+:root{
+  --surface-deep:#F5F5F7; --surface-card:#FFFFFF; --surface-elevated:#F0F0F2;
+  --surface-border:#E5E7EB; --text-primary:#111827; --text-secondary:#6B7280;
+  --text-muted:#9CA3AF; --accent-live:#22C55E; --accent-brand:#10B981;
+  --accent-futures:#8B5CF6; --accent-warning:#F59E0B; --accent-danger:#EF4444;
+  --font-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,Inter,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);background:var(--surface-deep);color:var(--text-primary);
+     -webkit-font-smoothing:antialiased;padding:28px 18px 60px}
+.page-hd{max-width:1320px;margin:0 auto 26px}
+.page-hd h1{font-size:21px;letter-spacing:-.02em}
+.page-hd p{color:var(--text-secondary);font-size:13.5px;margin-top:7px;max-width:78ch;line-height:1.55}
+.rail{display:flex;gap:22px;align-items:flex-start;max-width:1320px;margin:0 auto;
+      flex-wrap:wrap;justify-content:center}
+.col{width:392px;flex:0 0 392px}
+.ask{background:#111827;color:#F8FAFC;border-radius:12px;padding:13px 15px;margin-bottom:12px}
+.ask__k{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:#9CA3AF}
+.ask__q{font-size:14px;line-height:1.45;margin-top:5px;font-weight:600}
+.ask__n{font-size:11.5px;line-height:1.5;margin-top:8px;color:#D1D5DB;font-weight:400}
+
+/* ---- the phone ---- */
+.phone{background:var(--surface-card);border:1px solid var(--surface-border);
+       border-radius:26px;overflow:hidden;box-shadow:0 8px 28px rgba(17,24,39,.10)}
+.status{height:26px;background:var(--surface-card);display:flex;align-items:center;
+        justify-content:space-between;padding:0 17px;font-size:10.5px;color:var(--text-muted)}
+.scroll{max-height:1180px;overflow-y:auto}
+
+/* ---- hero (unchanged component — do not redesign) ---- */
+.hero{padding:14px 16px 16px;border-bottom:1px solid var(--surface-border)}
+.hero__meta{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary)}
+.pill{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px;
+      border-radius:999px;font-weight:700}
+.pill--pre{background:#EEF2FF;color:#4338CA}
+.pill--live{background:#DCFCE7;color:#166534}
+.pill--final{background:var(--surface-elevated);color:var(--text-secondary)}
+.hero__teams{display:flex;justify-content:space-between;align-items:flex-end;margin-top:11px}
+.tm{display:flex;flex-direction:column;gap:2px}
+.tm__n{font-size:15px;font-weight:650;letter-spacing:-.01em}
+.tm__p{font-size:31px;font-weight:730;letter-spacing:-.035em;line-height:1}
+.tm--away{text-align:right}
+.tm__s{font-size:26px;font-weight:730;letter-spacing:-.03em}
+.split{height:6px;border-radius:3px;background:var(--surface-elevated);margin-top:11px;
+       overflow:hidden;display:flex}
+.split__h{background:var(--text-primary)}
+.split__a{background:var(--surface-border)}
+.hero__src{font-size:10.5px;color:var(--text-muted);margin-top:7px}
+
+/* ---- section chrome ---- */
+.sec{padding:15px 16px 6px}
+.sec__hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px}
+.sec__t{font-size:12px;letter-spacing:.13em;text-transform:uppercase;font-weight:730}
+.sec__c{font-size:11px;color:var(--text-muted)}
+.sec__lede{font-size:13px;color:var(--text-secondary);line-height:1.5;margin:5px 0 13px}
+.sec__lede b{color:var(--text-primary);font-weight:650}
+
+/* ---- the one-question ladder unit ---- */
+.unit{border:1px solid var(--surface-border);border-radius:11px;padding:10px 11px;margin-bottom:9px}
+.unit__hd{display:flex;align-items:baseline;gap:7px;margin-bottom:8px}
+.unit__who{font-size:13.5px;font-weight:650;letter-spacing:-.01em}
+.unit__stat{font-size:11.5px;color:var(--text-secondary)}
+.srcs{margin-left:auto;font-size:10px;color:var(--text-muted)}
+.rungs{display:flex;gap:5px}
+.rung{flex:1;position:relative;border-radius:7px;background:var(--surface-elevated);
+      padding:7px 4px 6px;text-align:center;overflow:hidden}
+.rung__bar{position:absolute;inset:auto 0 0 0;height:calc(var(--fill)*100%);
+           background:rgba(17,24,39,.10)}
+.rung__n{position:relative;font-size:10.5px;color:var(--text-secondary);font-weight:600}
+.rung__p{position:relative;font-size:14px;font-weight:700;letter-spacing:-.02em;margin-top:1px}
+.rung--hit{outline:2px solid var(--accent-brand);outline-offset:-2px;background:#ECFDF5}
+.rung--miss{opacity:.42}
+.rung--ungraded{background:repeating-linear-gradient(135deg,#F0F0F2 0 5px,#E9E9ED 5px 10px)}
+.tick{position:relative;display:block;font-size:9.5px;font-weight:700;margin-top:2px}
+.tick--up{color:var(--accent-brand)} .tick--dn{color:var(--accent-danger)}
+.conflict{margin-top:7px;font-size:10.5px;color:var(--accent-warning);
+          background:#FFFBEB;border-radius:6px;padding:5px 7px;line-height:1.4}
+
+/* ---- divergence ---- */
+.dv{border:1px solid var(--surface-border);border-radius:11px;padding:10px 11px;margin-bottom:9px}
+.dv__hd{display:flex;align-items:baseline;gap:7px}
+.dv__who{font-size:13.5px;font-weight:650;letter-spacing:-.01em}
+.dv__q{font-size:11.5px;color:var(--text-secondary)}
+.dv__d{margin-left:auto;font-size:15px;font-weight:750;letter-spacing:-.02em}
+.dv__d--up{color:var(--accent-brand)} .dv__d--dn{color:var(--accent-danger)}
+.dv__track{position:relative;height:9px;border-radius:5px;background:var(--surface-elevated);
+           margin:10px 0 6px}
+.dv__span{position:absolute;top:0;height:9px;border-radius:5px;opacity:.24}
+.dv__span--up{background:var(--accent-brand)} .dv__span--dn{background:var(--accent-danger)}
+.dv__mark{position:absolute;top:-3px;width:2px;height:15px;background:var(--text-muted);
+          transform:translateX(-1px)}
+.dv__now{position:absolute;top:-3.5px;width:11px;height:16px;border-radius:4px;
+         transform:translateX(-5.5px);border:2px solid var(--surface-card)}
+.dv__now--up{background:var(--accent-brand)} .dv__now--dn{background:var(--accent-danger)}
+.dv__ft{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-muted)}
+.dv__ftnow{color:var(--text-primary);font-weight:650}
+
+/* ---- honest-empty ---- */
+.empty{border:1px dashed var(--surface-border);border-radius:11px;padding:11px;
+       margin-bottom:9px;background:#FCFCFD}
+.empty__t{font-size:12.5px;font-weight:650}
+.empty__w{font-size:11px;color:var(--text-secondary);margin-top:3px;line-height:1.45}
+.rowline{display:flex;justify-content:space-between;align-items:center;padding:9px 0;
+         border-bottom:1px solid var(--surface-border);font-size:13px}
+.rowline:last-child{border-bottom:0}
+.rowline__p{font-weight:700;letter-spacing:-.02em}
+.note{margin:4px 16px 16px;font-size:11px;color:var(--text-muted);line-height:1.5}
+.gap{height:9px}
+.flag{max-width:1320px;margin:0 auto 26px;background:#FFFBEB;border:1px solid #FDE68A;
+      border-left:4px solid var(--accent-warning);border-radius:10px;padding:13px 16px}
+.flag__t{font-size:13px;font-weight:730;color:#92400E}
+.flag__b{font-size:12.5px;color:#78350F;line-height:1.6;margin-top:5px;max-width:96ch}
+.flag__b code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+              background:#FEF3C7;padding:1px 4px;border-radius:3px}
+</style></head>
+<body>
+<div class="page-hd">
+<h1>Event page — props as the story</h1>
+<p>Three states of one idea: pregame the prop set is <b>the script</b>, in-game the movement
+against those marks is <b>the divergence</b>, settled it is <b>what hit</b>. Every number below
+is read from production payloads captured 2026-08-18 against api.bainluck.com @ 9e0f0f37 —
+no invented data. Rendered at iPhone width, because that is where this has to work.
+The win-probability hero is shown unchanged; it is not what this is proposing to alter.</p>
+</div>
+<div class="flag">
+<div class="flag__t">Read the numbers, but do not trust the roster — a linkage check failed
+while these were being built</div>
+<div class="flag__b">Every kalshi row on both games carries a ticker whose own date is not the
+game's date: <b>57 of 57</b> rows on the Mets game and <b>97 of 97</b> on the
+Reds game, dated 2026-05-24, 2026-06-05, 2026-06-06 against games played 2026-08-17 and 2026-08-18. The ticker is the
+provider's statement of which game a market belongs to, so the prop set drawn above may be
+<i>a different game's</i> prop set — which is also the likeliest reason unexpected names appear
+in these line-ups. The layout is what is being ruled on here; the linkage is a separate defect
+that has to be fixed before any of this can ship, because a page that narrates the wrong game
+confidently is worse than a page with no props at all.</div>
+</div>
+<div class="rail"><div class="col"><div class="ask"><div class="ask__k">Mock 1 · THE SCRIPT</div><div class="ask__q">Does the pregame page lead with the five questions that are actually live, or with the whole prop set?</div><div class="ask__n">Real data: San Diego Padres @ New York Mets, tonight. 26 player questions linked. This mock ranks by how close a rung sits to 50% — a 99% rung tells you nothing, so it collapses. The alternative is a full A-to-Z list and no editorial call at all.</div></div><div class="phone"><div class="status"><span>9:41</span><span>Bain&nbsp;Luck</span></div>
+<div class="scroll"><div class="hero">
+<div class="hero__meta"><span class="pill pill--pre">Pregame</span><span>MLB</span></div>
+<div class="hero__teams"><div class="tm"><div class="tm__n">New York Mets</div><div class="tm__p">70%</div></div><div class="tm tm--away"><div class="tm__n">San Diego Padres</div><div class="tm__p">30%</div></div></div>
+<div class="split"><div class="split__h" style="width:69.8%"></div>
+<div class="split__a" style="width:30.2%"></div></div>
+<div class="hero__src">Blended across every source we read</div></div>
+<div class="sec"><div class="sec__hd"><div class="sec__t">The script</div>
+<div class="sec__c">26 questions</div></div>
+<div class="sec__lede">Tonight the market expects <b>Ty France</b> to be the
+game's live question — 50% for 1+
+Hits + Runs + RBIs. Everything below is what the world thinks happens before a pitch
+is thrown.</div>
+<div class="unit"><div class="unit__hd"><span class="unit__who">Ty France</span><span class="unit__stat">Hits + Runs + RBIs</span></div><div class="rungs"><div class="rung"><div class="rung__bar" style="--fill:0.500"></div><div class="rung__n">1+</div><div class="rung__p">50%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Gavin Sheets</span><span class="unit__stat">Hits + Runs + RBIs</span></div><div class="rungs"><div class="rung"><div class="rung__bar" style="--fill:0.470"></div><div class="rung__n">2+</div><div class="rung__p">47%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.290"></div><div class="rung__n">3+</div><div class="rung__p">29%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.190"></div><div class="rung__n">4+</div><div class="rung__p">19%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.110"></div><div class="rung__n">5+</div><div class="rung__p">11%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Sung-Mun Song</span><span class="unit__stat">Hits</span><span class="srcs">2 sources</span></div><div class="rungs"><div class="rung"><div class="rung__bar" style="--fill:0.465"></div><div class="rung__n">3+</div><div class="rung__p">46%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Bo Bichette</span><span class="unit__stat">Hits + Runs + RBIs</span></div><div class="rungs"><div class="rung"><div class="rung__bar" style="--fill:0.550"></div><div class="rung__n">2+</div><div class="rung__p">55%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.465"></div><div class="rung__n">3+</div><div class="rung__p">46%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.200"></div><div class="rung__n">4+</div><div class="rung__p">20%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Xander Bogaerts</span><span class="unit__stat">Hits + Runs + RBIs</span><span class="srcs">2 sources</span></div><div class="rungs"><div class="rung"><div class="rung__bar" style="--fill:0.435"></div><div class="rung__n">2+</div><div class="rung__p">44%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.210"></div><div class="rung__n">3+</div><div class="rung__p">21%</div></div><div class="rung"><div class="rung__bar" style="--fill:0.120"></div><div class="rung__n">4+</div><div class="rung__p">12%</div></div></div></div>
+<div class="note">+21 more questions — near-certainties collapsed by default.</div>
+<div class="sec__hd"><div class="sec__t">Game lines</div>
+<div class="sec__c">0 shown · 3 withheld</div></div>
+<div class="sec__lede">A line we cannot stand behind is worse than no line.</div>
+<div class="empty"><div class="empty__t">Game total — not shown</div><div class="empty__w">all 5 rows are player lines, not game totals</div></div><div class="empty"><div class="empty__t">Spread — not shown</div><div class="empty__w">1.5 and 2.5 both priced 99%; the ladder is flat</div></div><div class="empty"><div class="empty__t">First 5 innings — not shown</div><div class="empty__w">rungs span 1%–99%; not a distribution</div></div>
+</div></div></div></div><div class="col"><div class="ask"><div class="ask__k">Mock 2 · THE DIVERGENCE</div><div class="ask__q">Should a prop that left its pregame mark be shown as a travelled bar, or as a sentence?</div><div class="ask__n">Real data: St. Louis Cardinals @ Cincinnati Reds, replayed at its recorded state. 34 of 97 rungs moved 10+ points from their own pregame mark. The bar shows the journey; a sentence would read "Mautz's strikeout number collapsed" and fit more per screen.</div></div><div class="phone"><div class="status"><span>9:41</span><span>Bain&nbsp;Luck</span></div>
+<div class="scroll"><div class="hero">
+<div class="hero__meta"><span class="pill pill--live">Live · replay</span><span>MLB</span></div>
+<div class="hero__teams"><div class="tm"><div class="tm__n">Cincinnati Reds</div><div class="tm__p">74%</div></div><div class="tm tm--away"><div class="tm__n">St. Louis Cardinals</div><div class="tm__p">26%</div></div></div>
+<div class="split"><div class="split__h" style="width:74.3%"></div>
+<div class="split__a" style="width:25.7%"></div></div>
+<div class="hero__src">Blended across every source we read</div></div>
+<div class="sec"><div class="sec__hd"><div class="sec__t">The divergence</div>
+<div class="sec__c">34 off script</div></div>
+<div class="sec__lede">Tonight is <b>not</b> going to script for the pitchers.
+Brycen Mautz's strikeout number has fallen 40 points
+since first pitch.</div>
+<div class="dv"><div class="dv__hd"><span class="dv__who">Brycen Mautz</span><span class="dv__q">5+ Strikeouts</span><span class="dv__d dv__d--dn">−40</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:49.0%;width:40.0%"></div><div class="dv__mark" style="left:89.0%"></div><div class="dv__now dv__now--dn" style="left:49.0%"></div></div><div class="dv__ft"><span>script said 89%</span><span class="dv__ftnow">now 49%</span></div></div><div class="dv"><div class="dv__hd"><span class="dv__who">Brady Singer</span><span class="dv__q">5+ Strikeouts</span><span class="dv__d dv__d--dn">−34</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:5.0%;width:34.0%"></div><div class="dv__mark" style="left:39.0%"></div><div class="dv__now dv__now--dn" style="left:5.0%"></div></div><div class="dv__ft"><span>script said 39%</span><span class="dv__ftnow">now 5%</span></div></div><div class="dv"><div class="dv__hd"><span class="dv__who">Brycen Mautz</span><span class="dv__q">3+ Strikeouts</span><span class="dv__d dv__d--dn">−30</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:49.0%;width:30.0%"></div><div class="dv__mark" style="left:79.0%"></div><div class="dv__now dv__now--dn" style="left:49.0%"></div></div><div class="dv__ft"><span>script said 79%</span><span class="dv__ftnow">now 49%</span></div></div><div class="dv"><div class="dv__hd"><span class="dv__who">Ivan Herrera</span><span class="dv__q">1+ Hits + Runs + RBIs</span><span class="dv__d dv__d--dn">−29</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:50.3%;width:28.7%"></div><div class="dv__mark" style="left:79.0%"></div><div class="dv__now dv__now--dn" style="left:50.3%"></div></div><div class="dv__ft"><span>script said 79%</span><span class="dv__ftnow">now 50%</span></div></div><div class="dv"><div class="dv__hd"><span class="dv__who">Victor Scott</span><span class="dv__q">1+ Hits + Runs + RBIs</span><span class="dv__d dv__d--dn">−29</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:36.5%;width:28.5%"></div><div class="dv__mark" style="left:65.0%"></div><div class="dv__now dv__now--dn" style="left:36.5%"></div></div><div class="dv__ft"><span>script said 65%</span><span class="dv__ftnow">now 36%</span></div></div><div class="dv"><div class="dv__hd"><span class="dv__who">Bryan Torres</span><span class="dv__q">1+ Hits + Runs + RBIs</span><span class="dv__d dv__d--dn">−28</span></div><div class="dv__track"><div class="dv__span dv__span--dn" style="left:44.0%;width:28.0%"></div><div class="dv__mark" style="left:72.0%"></div><div class="dv__now dv__now--dn" style="left:44.0%"></div></div><div class="dv__ft"><span>script said 72%</span><span class="dv__ftnow">now 44%</span></div></div>
+<div class="note">Ordered by distance from the pregame mark — the grey tick is what the
+script said, the dot is where it is now. Props still on script are below the fold.</div>
+</div></div></div></div><div class="col"><div class="ask"><div class="ask__k">Mock 3 · WHAT HIT</div><div class="ask__q">When the source returns no result, does the row disappear — or does it say so?</div><div class="ask__n">Real data, and the reason this mock matters: all 97 of 97 settled rungs on this game came back with no result, while 1 carries a winner flag — the two fields disagree. Drawing the rest as misses would be a lie; hiding them makes the page look thinner than the game was. This mock says so out loud.</div></div><div class="phone"><div class="status"><span>9:41</span><span>Bain&nbsp;Luck</span></div>
+<div class="scroll"><div class="hero">
+<div class="hero__meta"><span class="pill pill--final">Final</span><span>MLB</span></div>
+<div class="hero__teams"><div class="tm"><div class="tm__n">Cincinnati Reds</div><div class="tm__s">6</div></div><div class="tm tm--away"><div class="tm__n">St. Louis Cardinals</div><div class="tm__s">5</div></div></div>
+<div class="split"><div class="split__h" style="width:74.3%"></div>
+<div class="split__a" style="width:25.7%"></div></div>
+<div class="hero__src">Final · blended win probability closed at 74% Cincinnati Reds</div></div>
+<div class="sec"><div class="sec__hd"><div class="sec__t">What hit</div>
+<div class="sec__c">1 of 97 settled</div></div>
+<div class="sec__lede">The script, graded — except it cannot be. The two fields that say
+what happened <b>disagree</b>: 1 of 97 rungs carry a winner flag, while
+<b>all 97</b> carry no actual result at all.</div>
+<div class="unit"><div class="unit__hd"><span class="unit__who">Matthew Liberatore</span><span class="unit__stat">Strikeouts</span></div><div class="rungs"><div class="rung rung--hit"><div class="rung__bar" style="--fill:0.535"></div><div class="rung__n">3+</div><div class="rung__p">54%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.460"></div><div class="rung__n">4+</div><div class="rung__p">46%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.460"></div><div class="rung__n">5+</div><div class="rung__p">46%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.180"></div><div class="rung__n">8+</div><div class="rung__p">18%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.180"></div><div class="rung__n">9+</div><div class="rung__p">18%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.060"></div><div class="rung__n">10+</div><div class="rung__p">5%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Alec Burleson</span><span class="unit__stat">Hits</span><span class="srcs">2 sources</span></div><div class="rungs"><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.275"></div><div class="rung__n">4+</div><div class="rung__p">28%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">Bryan Torres</span><span class="unit__stat">Hits + Runs + RBIs</span><span class="srcs">3 sources</span></div><div class="rungs"><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.440"></div><div class="rung__n">1+</div><div class="rung__p">44%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.440"></div><div class="rung__n">2+</div><div class="rung__p">44%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.320"></div><div class="rung__n">3+</div><div class="rung__p">32%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.230"></div><div class="rung__n">4+</div><div class="rung__p">23%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.230"></div><div class="rung__n">5+</div><div class="rung__p">23%</div></div></div></div><div class="unit"><div class="unit__hd"><span class="unit__who">JJ Bleday</span><span class="unit__stat">Hits + Runs + RBIs</span><span class="srcs">3 sources</span></div><div class="rungs"><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.357"></div><div class="rung__n">2+</div><div class="rung__p">36%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.260"></div><div class="rung__n">3+</div><div class="rung__p">26%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.225"></div><div class="rung__n">4+</div><div class="rung__p">22%</div></div><div class="rung rung--ungraded"><div class="rung__bar" style="--fill:0.225"></div><div class="rung__n">5+</div><div class="rung__p">22%</div></div></div></div>
+<div class="empty"><div class="empty__t">97 rungs have no result</div>
+<div class="empty__w">The settlement feed returned <code>actual: null</code> for every rung
+on this game, so <code>is_winner: false</code> cannot be read as "missed" — it is doing double
+duty for "missed" and "never graded". Drawing the other 96 rungs as red
+misses would be inventing results we were never given.</div></div>
+<div class="note">Hatched = no result returned. Solid green = winner flag set. This state is
+blocked on the backend telling the two fields apart.</div>
+</div></div></div></div></div>
+</body></html>
