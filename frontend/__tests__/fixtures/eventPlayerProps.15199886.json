@@ -1,0 +1,338 @@
+[
+  {
+    "market_name": "Alec Bohm: Home Runs O/U 0.5",
+    "outcome_name": "Under",
+    "threshold": 0.5,
+    "over_probability": 0.0649,
+    "pregame_mark": 0.0545,
+    "source": "polymarket"
+  },
+  {
+    "market_name": "Alec Bohm: Home Runs O/U 0.5",
+    "outcome_name": "Over",
+    "threshold": 0.5,
+    "over_probability": 0.0649,
+    "pregame_mark": 0.0545,
+    "source": "polymarket"
+  },
+  {
+    "market_name": "Janson Junk: Strikeouts O/U 3.5",
+    "outcome_name": "Under",
+    "threshold": 3.5,
+    "over_probability": 0.205,
+    "pregame_mark": 0.205,
+    "source": "polymarket"
+  },
+  {
+    "market_name": "Janson Junk: Strikeouts O/U 3.5",
+    "outcome_name": "Over",
+    "threshold": 3.5,
+    "over_probability": 0.4,
+    "pregame_mark": 0.4,
+    "source": "polymarket"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Home Runs",
+    "outcome_name": "Kyle Schwarber: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.5467,
+    "pregame_mark": 0.27,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Home Runs",
+    "outcome_name": "Kyle Stowers: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.11,
+    "pregame_mark": 0.11,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Edmundo Sosa: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.36,
+    "pregame_mark": 0.36,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Esteury Ruiz: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.29,
+    "pregame_mark": 0.29,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Bryson Stott: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.24,
+    "pregame_mark": 0.24,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Bryce Harper: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.23,
+    "pregame_mark": 0.23,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Kyle Schwarber: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.385,
+    "pregame_mark": 0.22,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Bryan De La Cruz: 1+",
+    "threshold": 1.0,
+    "over_probability": 0.14,
+    "pregame_mark": 0.14,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Bryan De La Cruz: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.14,
+    "pregame_mark": 0.12,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Justin Crawford: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.13,
+    "pregame_mark": 0.13,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Kyle Stowers: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.12,
+    "pregame_mark": 0.12,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Alec Bohm: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.11,
+    "pregame_mark": 0.11,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Alec Bohm: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.11,
+    "pregame_mark": 0.07,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Brandon Marsh: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.225,
+    "pregame_mark": 0.08,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Brandon Marsh: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.155,
+    "pregame_mark": 0.09,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Trea Turner: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.08,
+    "pregame_mark": 0.08,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits",
+    "outcome_name": "Trea Turner: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.07,
+    "pregame_mark": 0.07,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "J.T. Realmuto: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.49,
+    "pregame_mark": 0.49,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Trea Turner: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.47,
+    "pregame_mark": 0.47,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Bryce Harper: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.4,
+    "pregame_mark": 0.4,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Bryce Harper: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.25,
+    "pregame_mark": 0.25,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Bryan De La Cruz: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.29,
+    "pregame_mark": 0.29,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Bryan De La Cruz: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.23,
+    "pregame_mark": 0.23,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Brandon Marsh: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.21,
+    "pregame_mark": 0.21,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Brandon Marsh: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.11,
+    "pregame_mark": 0.11,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Stowers: 3+",
+    "threshold": 3.0,
+    "over_probability": 0.19,
+    "pregame_mark": 0.19,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Stowers: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.1,
+    "pregame_mark": 0.1,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Kyle Stowers: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.05,
+    "pregame_mark": 0.05,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Alec Bohm: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.18,
+    "pregame_mark": 0.18,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Alec Bohm: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.12,
+    "pregame_mark": 0.12,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Liam Hicks: 2+",
+    "threshold": 2.0,
+    "over_probability": 0.15,
+    "pregame_mark": 0.15,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Liam Hicks: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.12,
+    "pregame_mark": 0.12,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Justin Crawford: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.15,
+    "pregame_mark": 0.15,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Justin Crawford: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.07,
+    "pregame_mark": 0.07,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Edmundo Sosa: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.12,
+    "pregame_mark": 0.12,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Edmundo Sosa: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.06,
+    "pregame_mark": 0.06,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Javier Sanoja: 4+",
+    "threshold": 4.0,
+    "over_probability": 0.11,
+    "pregame_mark": 0.11,
+    "source": "kalshi"
+  },
+  {
+    "market_name": "Philadelphia vs Miami: Hits + Runs + RBIs",
+    "outcome_name": "Javier Sanoja: 5+",
+    "threshold": 5.0,
+    "over_probability": 0.06,
+    "pregame_mark": 0.06,
+    "source": "kalshi"
+  }
+]
