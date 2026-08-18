@@ -250,3 +250,37 @@ were what starved `warm_typeahead`.
 **#1922** (`warm_typeahead` stalls for minutes at a time) is `blocked` on #1609. That block is now
 **invalid**: #1609 shipped, deployed, and #1922's symptom is unchanged at 6 holes in 62 minutes.
 #1922 should be unblocked and re-scoped onto the long-backfill occupancy identified in §4.2.
+
+---
+
+## §7 — T3 / E1 final reading for this window, and what is owed
+
+Two independent depth watchers, **164 samples total**, 17:00:20Z → 18:11:00Z:
+
+| watcher | window | background |
+|---|---|---|
+| deploy watch (30 s) | 17:00:20 → 17:39 | 3,072 (pre) → 3,052 → 3,142 |
+| long watch (30 s) | 17:22:10 → 18:11:00 | min **3,075**, max **3,212**, last **3,194** |
+
+**`heavy` > 0 in 0 of 164 samples** — see §1 for why that is not the no-op.
+
+**T3 FAILS** (bar: three reads ≥ 10 min apart, all < 50; observed ~3,100 throughout, **62× the
+threshold**). At +69 min the queue is flat-to-slightly-rising, not falling.
+
+**E1's registered horizon is 2 h — 19:02Z — and this window ends before it.** The read is
+**OWED TO THE NEXT WINDOW** rather than called early, and on the trend above it is heading for a
+fail. Per LAT-P066's accepted correction, both are the **hygiene commit's rows, not the cure's.**
+
+The mechanism recorded in §3 is what makes E1 hard: `expires` is stamped by the publisher and
+enforced by the consumer, so the ~3,050 messages already queued at deploy carry **no `expires` at
+all** and cannot be discarded — only drained. E1 is a prediction about drain rate, and the drain is
+competing with a 13.6-minute backfill class for a 2-slot queue.
+
+**Precise reads owed next window:**
+
+1. `background` depth at/after **2026-08-19T19:02Z**+ → grade E1 properly. *(Note: E1's 2 h clock
+   started at the 17:01:53Z deploy, so 19:02Z on **2026-08-18**.)*
+2. **T5** — all 5 sentinels + `board_sentinel` + `mlb_schedule_coverage` record a run, no
+   `no_run_cached`, by **2026-08-19T17:01Z**.
+3. **Re-run this exact S1** once the pre-deploy backlog drains — §4.2 caveat 2. T1 is refuted *for
+   this window*; the steady state has not been measured.
