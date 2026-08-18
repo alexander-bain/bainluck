@@ -14,39 +14,50 @@ LAT-P063's own probing and its rows 1 and 2 must be WITHDRAWN in writing.**
 **PREDICTION CONFIRMED. LAT-P063's rows 1 and 2 are UPHELD; nothing is withdrawn.** And the full run
 says something considerably worse than "≥1 hole recurs".
 
-**FIVE clean holes in 55.8 probe-free minutes — one every 11.2 minutes — and the warmer is NOT
-RUNNING for 30.0 % of wall-clock.**
+**FOUR clean holes in 39.5 probe-free, deploy-free minutes — one every 9.9 minutes — and the warmer
+is NOT RUNNING for 32.6 % of wall-clock.**
 
-| # | from | to | duration | segment |
+| # | from | to | duration | disposition |
 |---|---|---|---|---|
-| 1 | 23:21:06 | 23:24:56 | **229.6 s** | A (pre-deploy) |
-| — | 23:33:45 | 23:35:51 | 126.4 s | **EXCLUDED — inside the v3832 warm-up shadow** |
-| 2 | 23:44:49 | 23:48:43 | **234.3 s** | B (settled) |
-| 3 | 23:54:33 | 23:57:43 | **190.0 s** | B (settled) |
-| 4 | 00:10:14 | 00:13:04 | **170.2 s** | B (settled) |
-| 5 | 00:15:48 | 00:18:51 | **182.4 s** | B (settled) |
+| 1 | 23:21:06 | 23:24:56 | **229.6 s** | CLEAN |
+| — | 23:33:45 | 23:35:51 | 126.4 s | **EXCLUDED — v3834 shadow** |
+| — | 23:44:49 | 23:48:43 | 234.3 s | **EXCLUDED — v3836 shadow** |
+| 2 | 23:54:33 | 23:57:43 | **190.0 s** | CLEAN |
+| 3 | 00:10:14 | 00:13:04 | **170.2 s** | CLEAN |
+| 4 | 00:15:48 | 00:18:51 | **182.4 s** | CLEAN |
 
-**1,006.4 s of 3,350 s observed = 30.0 %.** Against a **45 s** response TTL, a 170–234 s hole means
-the head is dead for ~75–80 % of each one. This is not an occasional stall; it is a duty cycle.
+**772.1 s of 2,367 s = 32.6 %.** Against a **45 s** response TTL, a 170–230 s hole means the head is
+dead for ~75–80 % of each one. This is not an occasional stall; it is a duty cycle.
+
+🔴 **CORRECTION, made before this document was read rather than after.** An earlier draft of this
+section reported *five* holes in *55.8* minutes and described the post-deploy stretch as "settled".
+That was wrong: **FIVE deploys landed during this 66-minute window** — v3832 23:27:47, v3833
+23:30:26, v3834 23:34:21, v3835 23:38:34, **v3836 23:44:10** — and two of them sit inside the stretch
+the draft called settled. The corrected exclusion removes every 10-minute post-release shadow, which
+drops two holes and 16.3 minutes of observation. **The finding got stronger, not weaker** (32.6 %
+against 30.0 %, one per 9.9 min against one per 11.2 min), which is exactly why it had to be checked:
+a segmentation error that moves a number in your favour is the one you will not notice.
 
 The window issued **zero `/typeahead` requests** — the only traffic from this lane was
 `GET /api/admin/task-metrics`, a Redis hash read on the *web* dyno that touches neither the warmer,
 its lock, nor its cache. The holes are the same size class as LAT-P063's (286.6 s, 169.2 s), so the
 phenomenon is not a probing artifact.
 
-**The HALT arm cannot fire.** It required *zero* holes in 60 probe-free minutes; there are five.
+**The HALT arm cannot fire.** It required *zero* holes in 60 probe-free minutes; there are four
+clean ones, spanning both sides of five restarts.
 
 **Instrument integrity, checked rather than assumed:** 1,294 samples OK, **6 bad** (5 `TimeoutError`,
-1 `URLError`), and **two sampling gaps** (16.9 s at 23:27:59 and 21.1 s at 23:30:40 — both at the
-deploy restart). **Zero holes overlap a sampling gap** (`holes_over_120s_tainted_by_sampling_gap: 0`).
-That check exists because a throttled request parses as silence, and silence is what a stall looks
-like (gotcha #53); it is reported as a measured zero, not an assumed one.
+1 `URLError`), and **two sampling gaps** (16.9 s at 23:27:59 and 21.1 s at 23:30:40 — both at a deploy
+restart, both already inside an excluded shadow). **Zero holes overlap a sampling gap**
+(`holes_over_120s_tainted_by_sampling_gap: 0`). That check exists because a throttled request parses
+as silence, and silence is what a stall looks like (gotcha #53); it is reported as a measured zero,
+not an assumed one.
 
-⚠️ **The observation is 55.8 clean minutes against the 60 the prediction named** — 93 %, and the
-shortfall is stated rather than rounded up. A deploy (**v3832**, `010ba47e`, 23:27:47 UTC) restarted
-every dyno mid-run, so the run is segmented: **A = 23:13:39 → 23:27:47 (14.1 min)**, ten minutes
-excluded as warm-up shadow, **B = 23:37:47 → 00:19:30 (41.7 min)**. Holes appear in **both** segments
-at a consistent rate, so the finding does not rest on either side of the restart.
+⚠️ **39.5 deploy-free minutes against the 60 the prediction named — 66 %, and that IS a real
+shortfall.** It is not a scheduling failure on my part: a program window cannot stop other lanes
+deploying, and five landed. The honest reading is that the CONFIRM is secure (four holes, both
+segments, consistent rate) while the *rate* carries a wider error bar than a single uninterrupted
+hour would have given.
 
 ## §S1.2 — S2 answered in the same stream: the task does not START
 
@@ -64,10 +75,13 @@ fail?" needs no second run.
 stale: **the task genuinely is not being started.** S2's "advancing ⇒ a *recording* defect" arm is
 refuted; this is a **scheduling/dispatch** defect, which is where #1922's remedy has to go.
 
-Every sample in that stretch returned HTTP 200 with parsed JSON (`samples_bad: 0` for the whole run),
-so the frozen counter is a reading, not a gap in the readings. The instrument records `ok` per sample
-and flags any hole overlapping a sampling gap as `sampling_gap_overlap` precisely so a throttled
-request could never be promoted into a stall (gotcha #53). No hole in this run is flagged.
+Every sample in that stretch returned HTTP 200 with parsed JSON, so the frozen counter is a reading,
+not a gap in the readings. (Across the whole 66-minute run there were **6 bad samples of 1,300** —
+5 `TimeoutError`, 1 `URLError` — and **none of them falls inside any hole**; see §S1.1. An earlier
+draft of this section said `samples_bad: 0`, which was true of the first hole and not of the run.)
+The instrument records `ok` per sample and flags any hole overlapping a sampling gap as
+`sampling_gap_overlap` precisely so a throttled request could never be promoted into a stall
+(gotcha #53). **No hole in this run is flagged.**
 
 ## §S1.3 — S3: the background worker is the unit that stalls, not the warmer
 
@@ -282,16 +296,25 @@ have now owed it.
 
 ## Appendix — segment ledger and raw artifacts
 
-| segment | wall | probe-free | deploy shadow | clean holes |
-|---|---|---|---|---|
-| A: 23:13:39 → 23:27:47 | **14.1 min** | ✅ | none | 1 (229.6 s) |
-| v3832 released 23:27:47 → shadow to 23:37:47 | 10.0 min | ✅ | **excluded** | (1 observed, not counted) |
-| B: 23:37:47 → 00:19:30 | **41.7 min** | ✅ | settled | 4 (234.3 / 190.0 / 170.2 / 182.4 s) |
-| **TOTAL CLEAN** | **55.8 min** | | | **5 — one per 11.2 min, 30.0 % of wall-clock** |
+**Five deploys landed inside the 66-minute run.** Each contributes a 10-minute exclusion.
 
-Total probe-free observation **55.8 min** against the 60 the prediction named. Reported as a
-shortfall, not rounded up. Holes occur at a consistent rate on **both** sides of the restart, so no
-part of the finding rests on the segmentation.
+| deploy | UTC | commit |
+|---|---|---|
+| v3832 | 23:27:47 | `010ba47e` |
+| v3833 | 23:30:26 | `1b5c4fab` |
+| v3834 | 23:34:21 | `46df03ce` |
+| v3835 | 23:38:34 | `82c985a5` |
+| v3836 | 23:44:10 | `5542f8c4` |
+
+| clean segment | wall | clean holes |
+|---|---|---|
+| 23:13:39 → 23:27:47 | **14.1 min** | 1 (229.6 s) |
+| 23:54:10 → 00:19:30 | **25.3 min** | 3 (190.0 / 170.2 / 182.4 s) |
+| **TOTAL** | **39.5 min** | **4 — one per 9.9 min, 32.6 % of wall-clock cold** |
+
+Observation ran 66.0 min; 26.5 min excluded as post-release shadow. Holes occur at a consistent rate
+in **both** clean segments, ~50 minutes apart and either side of five restarts, so no part of the
+finding rests on the segmentation.
 
 ### Raw artifacts, shipped with this document
 
