@@ -11,6 +11,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update as _sql_update
 
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.game_pairing import (
+    PREGAME_LIVE_GRACE as _PREGAME_LIVE_GRACE,
+    Pairing,
+    live_write_is_premature as espn_live_write_is_premature,
+    pair_verdict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,25 +85,18 @@ def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) ->
     return event_commence > now + slack
 
 
-_PREGAME_LIVE_GRACE = timedelta(minutes=15)  # tolerate commence jitter near start
-
-
-def espn_live_write_is_premature(event_commence, now, grace=_PREGAME_LIVE_GRACE) -> bool:
-    """True when ESPN reports a game live/in-progress (or supplies a win-prob) but the
-    event's own ``commence_time`` is still meaningfully in the future (beyond
-    ``grace``) — i.e. the game has NOT started yet (#1207).
-
-    ESPN occasionally publishes a pregame ``in`` status and a pregame win-probability
-    hours before first pitch (the observed case: an event flipped ``live`` + ESPN
-    win-prob ~4h early). Flipping ``status='live'`` or storing that win-prob then is
-    premature and makes the event page dishonest, so the caller skips the write until
-    the game actually starts. Distinct from ``espn_terminal_write_is_fold`` (a 2h
-    fold-detection tolerance for a wrong-sibling resolve): this is a small "not
-    started yet" grace on the event's OWN commence_time. Missing either side is not
-    premature (fail open)."""
-    if event_commence is None or now is None:
-        return False
-    return event_commence > now + grace
+# ``_PREGAME_LIVE_GRACE`` and ``espn_live_write_is_premature`` now live in
+# ``app/utils/game_pairing.py`` and are imported at the top of this module. They
+# are re-exported under their historical names so existing importers and
+# ``tests/test_espn_fold_guard.py`` keep working — but there is exactly ONE
+# implementation, because StatPal needed the identical guard (#1945) and a second
+# copy is how the two providers drifted apart in the first place.
+#
+# ESPN occasionally publishes a pregame ``in`` status and a pregame win-probability
+# hours before first pitch (#1207: an event flipped ``live`` + ESPN win-prob ~4h
+# early). Distinct from ``espn_terminal_write_is_fold`` (a 2h fold-detection
+# tolerance for a wrong-sibling resolve): the premature guard is a small "not
+# started yet" grace on the event's OWN commence_time.
 
 
 # ---------------------------------------------------------------------------
@@ -843,12 +842,25 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             matched_espn = espn_by_id_sched[event.espn_id]
 
         # 2. Fall back to name matching (using all ESPN name variants)
+        #
+        # #1947: the name match alone is a MATCHUP, not a game. This pass loads
+        # every `scheduled` row for the sport with no time window, and
+        # `espn_events` is today's scoreboard — so in a 3-4 game MLB series the
+        # first name hit is tonight's game and the row being matched can be two
+        # days out. That stamped tonight's `espn_id` onto five genuinely-scheduled
+        # Aug-19/20 rows on 2026-08-17, and the id is what every downstream rail
+        # then dereferences. The pairing verdict below is the date half of the
+        # identity; UNKNOWN (ESPN gave no date) REFUSES, because an id is an
+        # identity claim and this row already has none worth defending.
         if not matched_espn:
             home_names, away_names = get_event_name_variations(event)
             for ee in espn_events:
                 if not ee.home_team or not ee.away_team:
                     continue
                 if espn_team_matches(home_names, ee.home_team) and espn_team_matches(away_names, ee.away_team):
+                    if pair_verdict(event.commence_time, ee.date) is not Pairing.SAME:
+                        stats["scheduled_pair_refused"] = stats.get("scheduled_pair_refused", 0) + 1
+                        continue
                     matched_espn = ee
                     break
 
@@ -873,9 +885,32 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
 
         # Correct commence_time from ESPN if significantly different
         # Skip if StatPal set the commence_time (more reliable source)
+        #
+        # #1947, measured 2026-08-18: this correction is reachable via match arm 1
+        # (the row's OWN espn_id), which is id-anchored and therefore NOT gated by
+        # the pairing verdict above — correctly, per ruling 048 arm A. But when the
+        # id on the row is itself wrong, "refine the time from the id" drags the row
+        # onto the wrong day: five real Aug-19 games were moved to Aug-18 that way,
+        # after which no row existed for the Aug-19 games at all. A correction of
+        # MINUTES is a refinement; a correction of DAYS is evidence the ID is wrong,
+        # and the answer to a wrong id is never to move the game to meet it. Refuse
+        # and count, so the wrongly-keyed row stays findable instead of being tidied
+        # into plausibility.
         if ee.date and event.commence_time:
             time_diff = abs((ee.date - event.commence_time).total_seconds())
-            if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":
+            if time_diff > 300 and pair_verdict(event.commence_time, ee.date) is not Pairing.SAME:
+                stats["scheduled_commence_move_refused"] = (
+                    stats.get("scheduled_commence_move_refused", 0) + 1
+                )
+                logger.warning(
+                    "ESPN: REFUSED commence_time move for event %d (%s vs %s): "
+                    "%s -> %s is %.1fh, beyond the same-game window — the espn_id "
+                    "on this row (%s) points at a different game (#1947)",
+                    event.id, event.home_team_name, event.away_team_name,
+                    event.commence_time.isoformat(), ee.date.isoformat(),
+                    time_diff / 3600, event.espn_id,
+                )
+            elif time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":
                 logger.info(
                     f"ESPN: Correcting commence_time for scheduled event {event.id} "
                     f"({event.home_team_name} vs {event.away_team_name}): "

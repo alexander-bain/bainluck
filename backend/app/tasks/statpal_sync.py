@@ -23,6 +23,7 @@ from sqlalchemy import select, update, and_, or_, func
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,13 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # Surfaced in the task result so a spike is a finding rather than a log line
     # nobody reads (the same treatment `refused_anchored` got on the merge rail).
     binding_stats: dict = {}
+
+    # #1945/#1947. Both counters are surfaced in the task result for the same
+    # reason `binding_stats` is: a refusal that only logs is a refusal nobody
+    # measures, and these two are the ones that stand between a live score and a
+    # game that has not been played yet.
+    live_pair_refused = 0
+    premature_live_skipped = 0
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -129,6 +137,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     # Find matching event in our DB by team names + time proximity
                     match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
                     live_data = live_by_teams.get(match_key)
+                    # #1945: `live_by_teams` is keyed on the team pair ALONE. In a
+                    # 3-4 game MLB series every fixture in this -1d/+7d window
+                    # shares that key with tonight's live game, so an unchecked
+                    # `live_data` writes tonight's score onto a row dated two days
+                    # out. The team pair is a matchup; only matchup + instant is a
+                    # game. UNKNOWN (a live row with no start time) is NOT trusted
+                    # here — the premature guard at the write site below is the
+                    # unconditional backstop, so refusing costs a score update we
+                    # could not justify, never one we could.
+                    if live_data is not None and pair_verdict(
+                        fixture.start_time, getattr(live_data, "start_time", None),
+                    ) is not Pairing.SAME:
+                        live_pair_refused += 1
+                        live_data = None
 
                     # ── Unified event matching via Event Registry ──
                     # Only create events for future games
@@ -252,13 +274,29 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.completed_at = fixture.end_time
                             updated = True
 
-                    # Update scores from live data if available
+                    # Update scores from live data if available.
+                    # #1945/#1947: a row whose own commence_time is still in the
+                    # future cannot hold a live score, whatever the provider says —
+                    # it is describing a different game. This is the guard ESPN has
+                    # carried since #1207 and StatPal did not; same predicate, one
+                    # implementation (`app/utils/game_pairing.py`).
                     if live_data and live_data.status == "live":
-                        if live_data.home_score is not None:
-                            event.home_score = live_data.home_score
-                        if live_data.away_score is not None:
-                            event.away_score = live_data.away_score
-                        updated = True
+                        if live_write_is_premature(event.commence_time, now):
+                            premature_live_skipped += 1
+                            logger.warning(
+                                "StatPal premature-live guard: refused live score on "
+                                "event %d (%s vs %s) — commence_time %s is still in "
+                                "the future (now %s) (#1945)",
+                                event.id, event.home_team_name, event.away_team_name,
+                                event.commence_time.isoformat() if event.commence_time else None,
+                                now.isoformat(),
+                            )
+                        else:
+                            if live_data.home_score is not None:
+                                event.home_score = live_data.home_score
+                            if live_data.away_score is not None:
+                                event.away_score = live_data.away_score
+                            updated = True
 
                     if updated:
                         sport_updated += 1
@@ -349,6 +387,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "team_binding_refused_detail": {
             k: v for k, v in binding_stats.items() if k != "team_binding_refused"
         },
+        # #1945/#1947 — same rule: always present, 0 is a reading.
+        "live_pair_refused": live_pair_refused,
+        "premature_live_skipped": premature_live_skipped,
     }
 
 
@@ -703,6 +744,9 @@ async def _sync_statpal_livescores() -> dict:
     total_updated = 0
     total_score_snaps = 0
     details = []
+    # #1945: a refusal that only logs is a refusal nobody measures.
+    premature_live_skipped = 0
+    _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
     # We check which sports have live events in our DB first, then
@@ -777,6 +821,24 @@ async def _sync_statpal_livescores() -> dict:
                     if not fixture:
                         continue
 
+                    # #1945: this is the third site keyed on the team pair alone,
+                    # and it is the PROPAGATOR — the `status='live'` query above has
+                    # no time bound, so once a future-dated row has been flipped
+                    # live it keeps being fed tonight's score every 60s. A row that
+                    # has not started cannot be live; refuse and let the row's own
+                    # status transition fix it, rather than keep it plausible.
+                    if live_write_is_premature(event.commence_time, _now):
+                        premature_live_skipped += 1
+                        logger.warning(
+                            "StatPal premature-live guard: refused live score on "
+                            "event %d (%s vs %s) — commence_time %s is still in the "
+                            "future (now %s) (#1945)",
+                            event.id, event.home_team_name, event.away_team_name,
+                            event.commence_time.isoformat() if event.commence_time else None,
+                            _now.isoformat(),
+                        )
+                        continue
+
                     updated = False
 
                     # Update period/clock from StatPal raw_status (e.g., "Q3", "1H", "HT")
@@ -840,6 +902,7 @@ async def _sync_statpal_livescores() -> dict:
         "score_snapshots_created": total_score_snaps,
         "sports_polled": len(details),
         "sports": details,
+        "premature_live_skipped": premature_live_skipped,
     }
 
 
