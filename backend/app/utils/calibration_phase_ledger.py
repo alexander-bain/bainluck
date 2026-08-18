@@ -404,50 +404,19 @@ class PhasePlan:
         ``beats_remaining = -1`` keeps the convention ``_record_staged_rate``
         already uses: it is not "unknown", it is "a whole beat cannot hold one
         unit", which is a different and much worse fact than a large count.
-
-        **The divisor is the phase's OWN allotment, not the whole-beat ceiling
-        (CAL-P071).** This used to divide by :attr:`max_phase_ms`, which is the
-        statement timeout a phase gets *when it is handed the entire window* —
-        the right ceiling for the feasibility question ("could this phase ever
-        fit?") and the wrong one for the throughput question ("how many units
-        will a beat actually finish?"). The two questions are not the same
-        question, and the plan itself says so: on 2026-08-18 the first q268 build
-        allotted ``futures`` a ``budget_ms`` of 177,374 against a
-        ``max_phase_ms`` of 1,350,000, so the projection assumed the phase got
-        **7.6x the beat it was given** and reported ``units_per_beat: 10``,
-        ``beats_remaining: 13``. The truth was 1 and 125 — five days, against a
-        hard artifact-expiry deadline 52 hours out.
-
-        It failed in the dangerous direction twice over. Optimistic, and
-        **immovable**: three consecutive beats banked 2, 1 and 0 units while the
-        estimate sat at 13 throughout, because observed throughput is not an
-        input to it. An ETA that cannot fall as the build slows is not an
-        estimate, it is a constant wearing one.
-
-        ``per_beat_basis`` names which divisor produced the number, so a phase
-        with no declared budget (which legitimately falls back to the ceiling)
-        can never be mistaken for one that has been measured against its own.
         """
         budget = self.by_name(name)
         if budget is None or budget.unit_ms is None or not budget.units_done:
             return None
         total = budget.units_total or 0
         remaining = max(0, total - (budget.units_done or 0))
-        if budget.budget_ms:
-            per_beat_ms = budget.budget_ms
-            basis = "phase_budget"
-        else:
-            per_beat_ms = self.max_phase_ms
-            basis = "whole_beat_ceiling"
-        per_beat = per_beat_ms // budget.unit_ms
+        per_beat = self.max_phase_ms // budget.unit_ms
         return {
             "unit_ms": budget.unit_ms,
             "units_total": total,
             "units_done": budget.units_done or 0,
             "units_remaining": remaining,
             "units_per_beat": per_beat,
-            "per_beat_ms": per_beat_ms,
-            "per_beat_basis": basis,
             "beats_remaining": (
                 math.ceil(remaining / per_beat) if per_beat >= 1 else -1
             ),

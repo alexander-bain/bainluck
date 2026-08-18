@@ -94,32 +94,7 @@ not been played (#1945). The guard is now one function
 (`app/utils/game_pairing.live_write_is_premature`), re-exported under its historical
 ESPN name so there is no second copy to drift.
 
-### 6. An instrument that re-reads its subject at coordinates captured earlier is reading two versions of it.
-
-Line numbers, offsets, ids and cursors are captured at one instant and dereferenced at
-another. If the subject can change between the two, the instrument reports a mismatch
-between the *versions*, and names the subject it was pointed at rather than the one it
-actually read — so the failure appears somewhere nobody touched.
-
-*Named failure:* gotcha **#138** — nine source-text tests failed in CAL-P070's suite
-because a module was edited mid-run; `inspect.getsource` re-read the file at line numbers
-collected before the edit and handed each test a neighbouring function's body. All nine
-were green on a clean re-run of the identical tree, and none of them was about the change.
-
-### 7. A stale artifact reads as a current one — clause 1's sibling, and the harder half.
-
-Clause 1 says a check that could not run must not look like a check that found nothing.
-The sharper case is that it must not look like the check *before* it, either: any output
-written to a reused path outlives the run that produced it, so a non-run inherits its
-predecessor's verdict — complete, plausible, and corroborated by the reader's own recent
-memory. Truncate or uniquify the target, and read the exit code's **value**: `1` is a
-result, every other non-zero is a story about the harness.
-
-*Named failures:* gotcha **#139** — three instances, exit **254** (lost cwd), **4**
-(pytest usage error on a relative path) and **1** (a `cd`'s exit code, over a stale log of
-a failure that had already been fixed); gotcha **#54**, whose prescribed
-`cmd > /tmp/gate.txt` fix is what creates the reused path.
-### 8. Duration is not occupancy.
+### 6. Duration is not occupancy.
 
 **The occupant is whoever holds the slot when you look.** A task's p50 duration answers
 "how long does one run take"; a pool's share answers "who is in the way". They are
