@@ -20,7 +20,35 @@ import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
  * the fixtures allow.
  *
  * Phase-1 scope: anonymous only. No auth, no admin, no pixel baseline.
+ *
+ * #1908 M1 — SERIAL, AND PACED. Measured on run `32009921496`: this pack issued
+ * 52 × HTTP 429 against `api.bainluck.com` in 107 seconds from one runner IP,
+ * against a 60/min anonymous budget, and minted THIRTEEN issues from that one
+ * condition. It is not cumulative exhaustion — the later journeys are clean —
+ * it is a rolling-window burst that lands where a journey multiplies page
+ * loads (`two_tabs` opens two tabs: 11 and 8 × 429; `deferred_event`
+ * navigates: 6 and 6). Every consent journey cold-loads Discover, dragging in
+ * `/api/feed`, `/api/events/search/trending`, `/api/predictions/resolutions`
+ * and `/api/feed/interactions`.
+ *
+ * Both halves are needed and they are not substitutes. The classifier in
+ * `helpers/rateLimit.js` stops a self-inflicted 429 being FILED as a product
+ * defect; this pacing stops it happening, so the pack keeps grading the thing
+ * it exists to grade instead of reporting `infra_error` all night. Costs a few
+ * seconds on a ~107s run.
  */
+test.describe.configure({ mode: "serial" });
+
+/**
+ * Spend the rolling window down between journeys. Deliberately a fixed sleep
+ * rather than a retry-on-429: a retry would still SEND the burst and would hide
+ * the condition from the very evidence that measured it.
+ */
+const RATE_LIMIT_COOLDOWN_MS = 2500;
+
+test.afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_COOLDOWN_MS));
+});
 
 const CONSENT_KEY = "bainluck_consent";
 

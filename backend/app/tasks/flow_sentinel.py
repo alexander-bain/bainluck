@@ -592,13 +592,93 @@ def feed_renderable_card_count(feed_items: Any) -> int:
     return sum(1 for i in feed_items if feed_item_is_renderable(i))
 
 
-def feed_item_is_renderable(item: Any, depth: int = 0) -> bool:
+_FUTURES_SETTLED_STATUSES = frozenset(
+    {"resolved", "settled", "closed", "complete", "completed", "finalized", "final"}
+)
+
+
+def _futures_is_settled(data: dict, now: Any = None) -> bool:
+    """Web's `_futuresIsSettled`, arm for arm (`discover/utils.ts`).
+
+    The `resolution_date` arm is the one this copy was missing. It matters in the
+    STRICT direction — without it the sentinel calls a settled-by-date card
+    unrenderable while both clients print it, i.e. the mirror under-counts a
+    healthy page. Kept last because it is the weakest authority of the four:
+    `resolution_date` is SCHEDULED, never a transition timestamp, so a past date
+    means "should have resolved by now", not "did".
+    """
+    if data.get("resolved") is True:
+        return True
+    if (data.get("winner") or "").strip():
+        return True
+    if (data.get("status") or "").strip().lower() in _FUTURES_SETTLED_STATUSES:
+        return True
+    raw = data.get("resolution_date")
+    if not raw:
+        return False
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed < (now or datetime.now(timezone.utc))
+
+
+def _concept_leader_is_usable(leader: Any) -> bool:
+    """Web's `_conceptLeaderIsUsable`, arm for arm.
+
+    Native writes this as `leader != nil` and that is COMPLETE there, because
+    `FeedConceptLeader` decodes `name`/`probability` as non-optional and a
+    malformed leader throws during decode. Python, like TypeScript, has no such
+    gate — a bare presence test admits `{}`. The range check is not padding: an
+    independent-binary field can sum past 100% (gotcha #23), so a leader reading
+    over 1.0 is corrupt rather than confident.
+    """
+    if not isinstance(leader, dict):
+        return False
+    name = leader.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return False
+    p = leader.get("probability")
+    if isinstance(p, bool) or not isinstance(p, (int, float)):
+        return False
+    return 0.0 <= float(p) <= 1.0
+
+
+def feed_item_is_renderable(item: Any, depth: int = 0, now: Any = None) -> bool:
     """One card's renderability, by the surfaces' shared suppression rule.
 
     Module-level rather than a closure inside `feed_renderable_card_count`
     because the dark-class limb needs the SAME predicate per card type. A second
     copy of this rule is exactly the drift #1948 is about — the whole incident
     was two enumerations of one population disagreeing.
+
+    #1951 — AND THIS FUNCTION WAS THE THIRD COPY. It shipped in UX-P092 carrying
+    the pre-#1935 rule on two arms, and the consequence is worse here than in a
+    renderer, because the dark-class limb IS the #1935-family detector: it names
+    card types the server builds and no client renders. Grading that with a
+    predicate MORE PERMISSIVE than the clients' makes the exact family it hunts
+    invisible to it. A first page whose seven tournaments are all
+    golferless-but-`marquee_whathit` is 100% dark on both surfaces, and the old
+    reading reported `tournament: 7 built, 7 renderable` — PASS. That is #1948's
+    own failure mode (a fully green alarm over a dark tier) reproduced inside the
+    fix for #1948.
+
+    ON THE DOCSTRING ABOVE THIS ONE, which says the reading is "deliberately the
+    PERMISSIVE" one: that argument was made for the FLOOR limb, where
+    under-counting means a noisy alarm and a noisy alarm gets muted. It does not
+    license being permissive against the CLIENTS — matching them exactly is not
+    "strict", it is accurate, and a card the clients drop is genuinely not on the
+    reader's page. Measured on the 327-card production sample this was written
+    against, the corrected predicate changes the renderable count by ZERO (58/75
+    both ways), because today's population has no specimen of any of the three
+    drifts. The floor limb is unaffected; the dark-class limb gains its sight.
+
+    The parity that matters is asserted in `conceptAdmissionParity.test.ts`,
+    which now covers THREE surfaces rather than two.
     """
     if not isinstance(item, dict):
         return False
@@ -607,26 +687,39 @@ def feed_item_is_renderable(item: Any, depth: int = 0) -> bool:
     if not isinstance(data, dict):
         return False
     if kind == "event":
+        # Unconditional on all three surfaces: an event card is a real matchup
+        # plus a status/score, never a bare tile.
         return True
     if kind == "futures":
         if data.get("top_outcomes"):
             return True
         # Settled-but-open is the normal Kalshi shape (gotcha #33), and a
         # result-carrying card is renderable — "settled means settled".
-        return bool(
-            data.get("resolved")
-            or (data.get("winner") or "").strip()
-            or (data.get("status") or "").lower()
-            in ("resolved", "closed", "settled", "finalized", "final")
-        )
+        return _futures_is_settled(data, now)
     if kind == "tournament":
-        return bool(data.get("golfers") or data.get("marquee_whathit"))
+        # #1935 deleted the bare `marquee_whathit` arm from BOTH clients:
+        # `TournamentCard`/`DiscoverTournamentCard` render their entire champion
+        # hero inside `golfers.first`, so a golferless WHAT-HIT tournament is a
+        # gradient, a chip and a title. Since the golfer arm already admits every
+        # tournament that CAN render, the whathit arm only ever fired for the one
+        # that cannot. This copy kept it for three cycles after both clients
+        # dropped it.
+        return bool(data.get("golfers"))
     if kind == "concept":
-        return bool(data.get("marquee_whathit") or data.get("leader"))
+        # Settled arm FIRST, and the order is load-bearing on all three surfaces:
+        # "settled means settled" — a card with a result leads with the result and
+        # must not fall back to a probability that is now history.
+        if data.get("marquee_whathit") is True:
+            named = (data.get("winner") or "").strip()
+            summary = (data.get("result_summary") or "").strip()
+            return bool(named or summary)
+        return _concept_leader_is_usable(data.get("leader"))
     if kind == "bundle":
         if depth > 3:
             return False
-        return any(feed_item_is_renderable(c, depth + 1) for c in (data.get("items") or []))
+        return any(
+            feed_item_is_renderable(c, depth + 1, now) for c in (data.get("items") or [])
+        )
     return False
 
 

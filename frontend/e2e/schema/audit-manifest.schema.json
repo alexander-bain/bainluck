@@ -289,6 +289,14 @@
                     "string",
                     "null"
                   ]
+                },
+                "reason_code": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "infra": {
+                  "type": "boolean",
+                  "description": "#1908 — this assertion describes the RUNNER, not the product. Still ok:false; the filer declines to mint a product issue from it. Per-assertion rather than per-journey so a rate-limit burst cannot mute a real defect graded on the same journey."
                 }
               }
             }

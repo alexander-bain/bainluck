@@ -296,6 +296,51 @@ export class JourneyRecorder {
   }
 
   /**
+   * #1908 M3 — has this recorder produced a journey record yet?
+   *
+   * `consent.storage_failure` asserts five things BEFORE it calls `finish()`. If
+   * any of them throws, `finish()` never runs, no record is attached, and the
+   * manifest simply has one fewer journey than the pack declares. The rail then
+   * reports `evidence.journey_recorded` against a journey that is not there —
+   * which reads as a run that did not happen (gotcha 136, the same shape as
+   * #1860's `infra_error`), rather than as a test that failed.
+   *
+   * A failing assertion is a RESULT. A journey that vanished is a story about
+   * the harness, and the two must not look alike.
+   */
+  hasFinished(): boolean {
+    return this.finished;
+  }
+
+  private finished = false;
+
+  /**
+   * Record a journey for a spec that threw before reaching `finish()`.
+   *
+   * Deliberately NOT a pass and deliberately NOT silent: it records the throw as
+   * the infra reason, so the manifest carries a journey whose absence would
+   * otherwise be indistinguishable from a pack that never ran it. The product
+   * assertions are unknown here — nobody measured them — and `infra_error` is
+   * exactly the verdict for "I could not check".
+   */
+  async finishAbandoned(journeyId: string, reason: string): Promise<JourneyRecord | null> {
+    if (this.finished) return null;
+    this.markInfraError(`journey abandoned before finish(): ${reason}`);
+    try {
+      return await this.finish({
+        journeyId,
+        realCardFound: false,
+        contentMode: "none",
+      } as FinishInput);
+    } catch {
+      // The rescue path must never be the thing that fails the run. If even the
+      // abandoned record cannot be written, the run-level `journeys.length`
+      // reconciliation is the remaining backstop.
+      return null;
+    }
+  }
+
+  /**
    * Discard everything seen so far and restart the telemetry window.
    *
    * A grant→revoke journey has to prove "zero requests AFTER the revoke", and
@@ -431,6 +476,7 @@ export class JourneyRecorder {
       result: verdict.result,
     };
 
+    this.finished = true;
     await this.testInfo.attach(ATTACHMENT_NAME, {
       body: JSON.stringify(record, null, 2),
       contentType: "application/json",
@@ -535,7 +581,30 @@ export const test = base.extend<{ journey: JourneyRecorder }>({
     );
     recorder.install();
     await use(recorder);
+
+    // #1908 M3 — the rescue. A spec that throws mid-body (an `expect` before
+    // `finish()`, a timeout, a selector miss) would otherwise contribute NO
+    // journey at all, and a missing journey is not a failing journey. Applied in
+    // the fixture rather than in `consent.spec.ts` because `storage_failure` is
+    // simply where it was noticed: every spec in the pack asserts before it
+    // finishes, so patching the one that was caught leaves the other twenty-five
+    // able to vanish the same way.
+    if (!recorder.hasFinished()) {
+      const failure = testInfo.error?.message ?? testInfo.status ?? "unknown";
+      await recorder.finishAbandoned(journeyIdFromTitle(testInfo.title), String(failure));
+    }
   },
 });
+
+/**
+ * Best-effort journey id for a spec that never reached `finish()` and so never
+ * declared one. The pack's convention is `"<journey.id> — <prose>"`, so the
+ * leading token is the id; anything unparseable falls back to the full title,
+ * which is still enough for a human to find the spec.
+ */
+function journeyIdFromTitle(title: string): string {
+  const head = String(title || "").split("—")[0].trim();
+  return /^[a-z0-9_.]+$/i.test(head) && head ? head : String(title || "unknown.journey");
+}
 
 export { expect } from "@playwright/test";
