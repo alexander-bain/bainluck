@@ -218,16 +218,41 @@ export function feedItemSuppressionReason(
     case "tournament": {
       const d = item.data as FeedTournamentData;
       if ((d.golfers?.length ?? 0) > 0) return null;
-      if (d.marquee_whathit === true) return null;
+      // #1935: the bare `marquee_whathit` arm is GONE. `TournamentCard.tsx`
+      // renders its entire hero inside `{leader && (...)}` where
+      // `leader = data.golfers?.[0]`, so a golferless WHAT-HIT tournament is a
+      // green gradient, a "Golf" chip, a "Final" chip and a title — no champion,
+      // no probability, nothing that happened. Since the arm above already
+      // admits every tournament WITH golfers, this one only ever fired for the
+      // case the card cannot render.
+      //
+      // Worth recording, because it is why this survived: native added its
+      // matching arm in L2-224 as a deliberate PARITY fix ("web keeps a
+      // golfer-less settled marquee; native dropped it"). It was accurate — web
+      // did keep it — and parity was reached with a card that is equally empty
+      // here. Agreement between two surfaces is not evidence either is right.
       return "empty_tournament";
     }
     case "concept": {
-      // A concept is a probability-free hub card, renderable ONLY when it leads with
-      // an authoritative result — the post-settlement WHAT-HIT window, which shows a
-      // "FINAL / see the recap" framing (and a graded winner when the payload has one,
-      // #1219). A live/upcoming concept has nothing to predict → the #1486 empty tile.
       const d = item.data as FeedConceptData;
-      return d.marquee_whathit === true ? null : "empty_concept";
+      // #1935: WHAT-HIT admits the card only when it can NAME the result. The
+      // "FINAL / see the recap" framing is not itself a result — a settled card
+      // that cannot say what happened is the #1486 empty tile wearing a badge,
+      // and `_resolve_concept_champion` returns nil for an ungradeable crown by
+      // design, so this is reachable rather than theoretical.
+      if (d.marquee_whathit === true) {
+        const named = (d.winner ?? "").trim();
+        const summary = (d.result_summary ?? "").trim();
+        return named || summary ? null : "empty_concept";
+      }
+      // NOT extended to #1882's `leader` here, deliberately (#1939 files it).
+      // The backend has served a concept favourite since #1882 and native
+      // renders it, but `FeedConceptData` on this surface has no `leader` field
+      // and `ConceptCard.tsx` has no branch for one — so admitting the card here
+      // would produce exactly the probability-free tile the clause above just
+      // closed. Web keeps dropping live concepts until it can render them; that
+      // is a missing feature, and shipping half of it would be a new defect.
+      return "empty_concept";
     }
     case "bundle": {
       // Recursion backstop — bundles are not expected to nest, but a malformed

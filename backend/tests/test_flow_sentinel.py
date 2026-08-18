@@ -512,3 +512,141 @@ class TestFlowFilingLifecycle:
         )
         assert res["action"] == "commented"
         assert commented["n"] == 1147
+
+
+class TestDiscoverFirstPageFloor:
+    """UX-P089 / #1936 — the alarm Alex's "the live feed shows TWO cards" proved missing.
+
+    The design constraint that shaped it: when that report arrived, `/api/feed`
+    was returning FIFTY renderable cards for Alex's own session id. A card-
+    counting alarm would have been green for the entire incident. What failed was
+    DELIVERY — a cold identified build measured 4.3s / 4.3s / 11.7s against a
+    native client whose whole initial-load budget is 6s. Hence two limbs, and
+    hence the vacuity test below.
+    """
+
+    def test_a_full_fast_page_passes(self):
+        from app.tasks.flow_sentinel import discover_first_page_failures
+
+        assert discover_first_page_failures(
+            renderable=50, elapsed_s=2.1, cache_status="miss"
+        ) == []
+
+    def test_a_starved_page_fails(self):
+        from app.tasks.flow_sentinel import discover_first_page_failures
+
+        fails = discover_first_page_failures(
+            renderable=2, elapsed_s=1.0, cache_status="miss"
+        )
+        assert [f["limb"] for f in fails] == ["starved"]
+        assert "2 renderable cards" in fails[0]["detail"]
+
+    def test_a_full_page_the_client_cannot_receive_fails(self):
+        """The measured incident: fifty good cards, built too slowly to arrive."""
+        from app.tasks.flow_sentinel import discover_first_page_failures
+
+        fails = discover_first_page_failures(
+            renderable=50, elapsed_s=11.708, cache_status="miss"
+        )
+        assert [f["limb"] for f in fails] == ["undeliverable"]
+        assert fails[0]["elapsed_s"] == 11.708
+
+    def test_a_cache_hit_is_never_timed(self):
+        """A hit is an 8ms read and carries NO information about build cost.
+
+        Timing one and passing is a vacuous green — the alarm would report
+        healthy precisely because it measured nothing. This is the trap the flow
+        exists to avoid, so it is pinned rather than left to the runner's docstring.
+        """
+        from app.tasks.flow_sentinel import discover_first_page_failures
+
+        assert discover_first_page_failures(
+            renderable=50, elapsed_s=99.0, cache_status="stale_hit"
+        ) == []
+
+    def test_both_limbs_can_fail_at_once(self):
+        from app.tasks.flow_sentinel import discover_first_page_failures
+
+        fails = discover_first_page_failures(
+            renderable=1, elapsed_s=12.0, cache_status="miss"
+        )
+        assert {f["limb"] for f in fails} == {"starved", "undeliverable"}
+
+    def test_a_failing_page_files_p1_automatically(self):
+        """The directive's requirement, asserted end-to-end through the real
+        severity router rather than by reading the threshold."""
+        from app.tasks.flow_sentinel import discover_first_page_failures, severity_for_flow
+
+        fails = discover_first_page_failures(
+            renderable=2, elapsed_s=1.0, cache_status="miss"
+        )
+        assert severity_for_flow("discover_first_page", len(fails), 1) == "P1"
+
+    def test_the_flow_is_registered_and_routed(self):
+        import inspect
+
+        from app.tasks import flow_sentinel as fs
+
+        source = inspect.getsource(fs._run_flow_sentinel)
+        assert '("discover_first_page", _run_discover_first_page)' in source
+        assert fs._FLOW_AREA_LABELS["discover_first_page"] == "area:discover-ranking"
+        assert "discover_first_page" in fs._FLOW_TITLES
+
+
+class TestFeedRenderableCardCount:
+    """The mirror of the client's admit rule. Pinned against real wire shapes —
+    a floor alarm that counted raw `items` would call fifty bare tiles healthy."""
+
+    def test_the_recorded_production_page_shape(self):
+        """Verbatim shapes from GET /api/feed?limit=50 on 2026-08-17."""
+        from app.tasks.flow_sentinel import feed_renderable_card_count
+
+        page = [
+            {"type": "futures", "data": {"id": 109435, "top_outcomes": [
+                {"name": "Before Jan 20, 2029", "probability": 0.225}]}},
+            {"type": "concept", "data": {
+                "key": "event:cycling:vuelta-2026", "marquee_whathit": False,
+                "leader": {"name": "Tadej Pogacar", "probability": 0.751}}},
+            {"type": "tournament", "data": {"key": "bmw_championship",
+                                            "golfers": [{"name": "X", "probability": 12.0}]}},
+            {"type": "bundle", "data": {"id": "theme:story:us_2028_election", "items": [
+                {"type": "futures", "data": {"id": 108326, "top_outcomes": [
+                    {"name": "J.D. Vance", "probability": 0.175}]}}]}},
+        ]
+        assert feed_renderable_card_count(page) == 4
+
+    def test_empty_envelopes_do_not_count(self):
+        from app.tasks.flow_sentinel import feed_renderable_card_count
+
+        assert feed_renderable_card_count([
+            {"type": "futures", "data": {"id": 1, "top_outcomes": []}},
+            {"type": "concept", "data": {"key": "k", "marquee_whathit": False}},
+            {"type": "tournament", "data": {"key": "t", "golfers": []}},
+            {"type": "bundle", "data": {"id": "b", "items": []}},
+            {"type": "wat", "data": {}},
+        ]) == 0
+
+    def test_a_settled_futures_card_still_counts(self):
+        """Settled means settled — a result-carrying card is renderable, and the
+        normal Kalshi shape keeps status='open' forever (gotcha #33)."""
+        from app.tasks.flow_sentinel import feed_renderable_card_count
+
+        assert feed_renderable_card_count([
+            {"type": "futures", "data": {"id": 1, "status": "open", "winner": "Team A"}},
+            {"type": "futures", "data": {"id": 2, "status": "resolved"}},
+            {"type": "futures", "data": {"id": 3, "resolved": True}},
+        ]) == 3
+
+    def test_a_bundle_counts_once_not_per_child(self):
+        from app.tasks.flow_sentinel import feed_renderable_card_count
+
+        kids = [{"type": "futures", "data": {"id": i, "top_outcomes": [{"probability": 0.5}]}}
+                for i in range(9)]
+        assert feed_renderable_card_count(
+            [{"type": "bundle", "data": {"id": "b", "items": kids}}]) == 1
+
+    def test_garbage_is_zero_never_a_crash(self):
+        from app.tasks.flow_sentinel import feed_renderable_card_count
+
+        for bad in (None, {}, "items", [None, 3, "x"], [{"type": "futures"}]):
+            assert feed_renderable_card_count(bad) == 0

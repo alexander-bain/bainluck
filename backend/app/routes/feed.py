@@ -7696,6 +7696,44 @@ def _concept_reason(c: dict) -> str:
     return f"{n} market{'' if n == 1 else 's'}" if n else ""
 
 
+async def _read_cached_concept_envelope(key: str) -> Optional[dict]:
+    """Read one concept detail envelope from Redis, or ``None``. NEVER builds.
+
+    UX-P089 (#1934). Both concept resolvers below had their own copy of this
+    read, and both copies did a bare ``redis.get`` + ``json.loads`` — bypassing
+    the envelope contract that `app/utils/event_concept_cache.py` exists to
+    enforce. That contract is not decoration: `envelope_defect` refuses a payload
+    built by a generation this deploy no longer serves, and refuses a partial
+    envelope carrying only some of its five fields. #1678 finding 2 is exactly
+    that class — `{"cache": {"generation": 2}}` passing as complete — and a feed
+    card leading with a probability lifted out of a payload nobody would serve on
+    the detail page is the same defect wearing the reader's clothes.
+
+    One function, two callers, so the servability rule cannot drift between them.
+
+    Total by construction (gotcha #39: shared async client, bounded op, no sync
+    Redis on the event loop). Any failure is a miss.
+    """
+    try:
+        from app.utils.event_concept_cache import (
+            CACHE_PREFIX,
+            decode_payload,
+            is_servable_envelope,
+        )
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+        client = await get_shared_async_redis()
+        result = await bounded_redis_call(lambda: client.get(f"{CACHE_PREFIX}{key}"))
+        if not result.is_ok:
+            return None
+        payload = decode_payload(result.value)
+        if payload is None or not is_servable_envelope(payload):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
 async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict]:
     """Resolve the graded champion of a settled concept for its WHAT-HIT card (#1219).
 
@@ -7716,28 +7754,8 @@ async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict
     try:
         from app.utils.event_concept import get_adapter, parse_event_key
 
-        envelope = None
-        try:
-            # Queue 271 (gotcha #39): async path must not make a SYNC Redis call on
-            # the event loop. Shared client + bounded async op; failure => rebuild.
-            from app.utils.request_cache import (
-                bounded_redis_call,
-                get_shared_async_redis,
-            )
-
-            _concept_redis = await get_shared_async_redis()
-            _cached_res = await bounded_redis_call(
-                lambda: _concept_redis.get(f"bainluck:event_concept:{key}")
-            )
-            if _cached_res.is_ok:
-                import json as _json
-
-                cached = _cached_res.value
-                envelope = _json.loads(
-                    cached.decode() if isinstance(cached, bytes) else cached
-                )
-        except Exception:
-            envelope = None
+        # Shared, servability-checked read (see `_read_cached_concept_envelope`).
+        envelope = await _read_cached_concept_envelope(key)
 
         if envelope is None:
             domain, slug = parse_event_key(key)
@@ -7789,40 +7807,36 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
     a competitor with no usable probability returns ``None`` and the card falls
     back to today's count. It never fabricates a probability (the L2-159 frontend
     contract).
+
+    CACHE-ONLY, and that is the whole point of this function's cost profile
+    (UX-P089, #1934). This started as a copy of ``_resolve_concept_champion``,
+    including its cold-cache ``adapter.build_event()`` fallback — and that
+    fallback's justification did NOT survive the copy. The champion resolver
+    prices it explicitly ("whathit concepts are few — at most a handful in any 36h
+    post-settlement window"): it runs for SETTLED marquee concepts only, so a cold
+    build is rare and bounded. The leader runs for every UNSETTLED concept, and
+    the build loop awaits it SERIALLY — 10 to 14 of them on a normal slate.
+
+    Measured on production 2026-08-17, three cold identified-key builds of
+    ``GET /api/feed?limit=50``: total 4.32s / 4.30s / **11.71s**, of which the
+    ``concepts`` stage was 2.71s / 2.80s / **10.08s**. The native client's whole
+    initial-load budget is **6s** (``DiscoverViewModel.retryBudget``), so the tail
+    of that distribution cannot be served at all — the fetch is cancelled, the
+    deadline error is non-retryable, and Discover settles to last-good or the
+    honest-empty state. Every identified principal gets its own cache key with a
+    5s fresh TTL and a 300s stale tier, so a returning reader is cold-building on
+    essentially every visit that is more than five minutes after their last one.
+
+    So the fallback is DELETED rather than bounded. A cold envelope returns
+    ``None`` and the card falls back to today's count — which is exactly the
+    degradation the paragraph above already promises for "any failure". Trading a
+    probability flourish on a handful of cards for the whole feed's ability to
+    load is not a close call, and a timeout here would still spend the budget.
     """
     try:
-        from app.utils.event_concept import get_adapter, parse_event_key
-
-        envelope = None
-        try:
-            # Same warm-envelope read as the champion resolver: gotcha #39 — no
-            # SYNC Redis call on the event loop, shared client, bounded op.
-            from app.utils.request_cache import (
-                bounded_redis_call,
-                get_shared_async_redis,
-            )
-
-            _concept_redis = await get_shared_async_redis()
-            _cached_res = await bounded_redis_call(
-                lambda: _concept_redis.get(f"bainluck:event_concept:{key}")
-            )
-            if _cached_res.is_ok:
-                import json as _json
-
-                cached = _cached_res.value
-                envelope = _json.loads(
-                    cached.decode() if isinstance(cached, bytes) else cached
-                )
-        except Exception:
-            envelope = None
-
-        if envelope is None:
-            domain, slug = parse_event_key(key)
-            adapter = get_adapter(domain)
-            if adapter is None:
-                return None
-            envelope = await adapter.build_event(slug, db)
-
+        # Shared, servability-checked read — and NO build fallback. See the
+        # CACHE-ONLY paragraph above for the measurement that removed it.
+        envelope = await _read_cached_concept_envelope(key)
         if not envelope:
             return None
 

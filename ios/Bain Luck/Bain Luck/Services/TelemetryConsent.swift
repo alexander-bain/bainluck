@@ -160,9 +160,46 @@ public final class TelemetryConsent: @unchecked Sendable {
         return persistenceState
     }
 
+    /// The recorded choice as it exists IN STORAGE, independent of whether this
+    /// authority has been initialized yet (#1937).
+    ///
+    /// Deliberately touches nothing but `UserDefaults`. `initialize()` cannot be
+    /// used for this question because it also APPLIES the choice to the Firebase
+    /// SDKs, and must therefore run after `FirebaseApp.configure()` — while the
+    /// question "do we still need to ask?" is asked earlier than that, from a
+    /// SwiftUI `@State` initializer. Splitting the read from the apply is what
+    /// lets both happen at the only time each of them can.
+    public var storedLevel: ConsentLevel? {
+        defaults.string(forKey: Self.storageKey).flatMap(ConsentLevel.init(rawValue:))
+    }
+
     /// Whether a choice still needs to be asked for.
+    ///
+    /// Reads through to STORAGE when this authority has not been initialized
+    /// yet, and that fallthrough is the whole fix for #1937 (Alex: "iOS asks
+    /// every launch").
+    ///
+    /// The bug was ordering, not persistence — `set()` wrote and verified the
+    /// value correctly the entire time. Swift runs a type's stored-property
+    /// initializers BEFORE its `init()` body, so
+    /// `@State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice`
+    /// in `Bain_LuckApp` was evaluated before that same `init()` called
+    /// `initialize()`. `current` was still nil, so `needsChoice` answered `true`
+    /// unconditionally, and `@State` captured that `true` for the launch. The
+    /// comment above that property — "`true` only when no choice has ever been
+    /// recorded" — described the intent exactly and the code never implemented it.
+    ///
+    /// Fixed HERE rather than by reordering the call site, because the call site
+    /// could not be reordered: the `@State` seed cannot be moved after `init()`,
+    /// and `initialize()` cannot be moved before `FirebaseApp.configure()`. A
+    /// question that is safe to ask at any time should not depend on when it is
+    /// asked.
     public var needsChoice: Bool {
-        level == nil
+        lock.lock()
+        let hydrated = initialized
+        let inMemory = current
+        lock.unlock()
+        return (hydrated ? inMemory : storedLevel) == nil
     }
 
     /// Record an explicit choice. The ONLY supported way to change consent.

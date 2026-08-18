@@ -136,7 +136,10 @@ struct PredictionStatsView: View {
                 HStack {
                     Text(categoryEmoji(cat))
                         .font(.system(size: 14))
-                    Text(cat.capitalized)
+                    // #1938: same class as bug report 145's "Mma" — these keys are
+                    // raw `llm_sport_category` tokens, so `.capitalized` garbles
+                    // every acronym league in the breakdown.
+                    Text(sportCategoryDisplayName(cat))
                         .font(.subheadline)
                     Spacer()
                     Text("\(data.correct)/\(data.total)")

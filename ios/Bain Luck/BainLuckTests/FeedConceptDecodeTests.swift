@@ -336,14 +336,26 @@ final class FeedConceptDecodeTests: XCTestCase {
         """)
         XCTAssertNil(DiscoverViewModel.suppressionReason(withGolfers))
 
-        // The parity fix: web keeps a golfer-less settled marquee; native dropped it.
+        // #1935 REVERSES this case, and the reversal is the finding.
+        //
+        // It was added in L2-224 as a parity fix — "web keeps a golfer-less
+        // settled marquee; native dropped it" — which was an accurate reading of
+        // web and the wrong conclusion. `TournamentCard.tsx` renders its whole
+        // hero inside `{leader && (...)}`, `leader = data.golfers?.[0]`, so web
+        // "keeps" a card that draws a gradient, a Golf chip, a Final chip and a
+        // title: no champion, no probability, nothing that happened. Native's
+        // card has the identical `if let leader` guard.
+        //
+        // Both surfaces admitted a card neither could render, and agreeing with
+        // each other is what made it look settled. Both classifiers now refuse it.
         let whatHitNoField = try decodeItem("""
         { "type": "tournament", "score": 60,
           "data": { "key": "golf:the-open-2026", "name": "The Open 2026",
                     "golfers": [], "marquee_whathit": true } }
         """)
-        XCTAssertNil(DiscoverViewModel.suppressionReason(whatHitNoField),
-                     "a settled marquee leads with its result even with an empty field")
+        XCTAssertEqual(
+            DiscoverViewModel.suppressionReason(whatHitNoField), "empty_tournament",
+            "a settled marquee with no field cannot name its champion — the card renders a bare tile")
 
         let empty = try decodeItem("""
         { "type": "tournament", "score": 60,
@@ -409,5 +421,72 @@ final class FeedConceptDecodeTests: XCTestCase {
         let renderable = feed.items.filter { DiscoverViewModel.isRenderable($0) }
         XCTAssertEqual(renderable.map(\.id),
                        ["event-11", "futures-22", "concept-cycling:tdf-2026"])
+    }
+
+    // MARK: - #1935 — WHAT-HIT was an unchecked way through the empty-envelope gate
+
+    /// A settled concept whose champion could not be graded.
+    ///
+    /// `_resolve_concept_champion` returns nil for an absent or ambiguous crown
+    /// BY DESIGN (it refuses to fabricate a winner), so this payload is a normal
+    /// production shape, not a malformed one. The card then renders
+    /// "Final result — see the recap" under a FINAL badge: a settled card that
+    /// cannot say what happened.
+    func testSettledConceptWithNoNameableResultIsSuppressed() throws {
+        let resultless = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:cycling:vuelta-2026", "name": "Vuelta a España 2026",
+                    "domain": "cycling", "status": "settled", "marquee_whathit": true } }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(resultless), "empty_concept")
+    }
+
+    /// A result_summary alone is enough — the card has something true to say.
+    func testSettledConceptWithOnlyASummaryIsRenderable() throws {
+        let summarised = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:ufc:26aug20", "name": "A vs B", "domain": "ufc",
+                    "status": "settled", "marquee_whathit": true,
+                    "result_summary": "Won by submission in round 2" } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(summarised))
+    }
+
+    /// Whitespace is not a result. The renderer trims before deciding whether it
+    /// has a winner, so the classifier must trim too or the two disagree about
+    /// the same card — which is how a card gets admitted and then renders blank.
+    func testAWhitespaceOnlyWinnerIsNotAResult() throws {
+        let blank = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:ufc:x", "name": "A vs B", "domain": "ufc",
+                    "status": "settled", "marquee_whathit": true, "winner": "   " } }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(blank), "empty_concept")
+    }
+
+    /// Settled means settled: a settled-but-resultless concept must be SUPPRESSED
+    /// rather than fall through to its stale probability.
+    func testASettledResultlessConceptDoesNotFallBackToItsProbability() throws {
+        let stale = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:ufc:x", "name": "A vs B", "domain": "ufc",
+                    "status": "settled", "marquee_whathit": true,
+                    "leader": { "name": "B", "probability": 0.9, "field_size": 2 } } }
+        """)
+        XCTAssertEqual(
+            DiscoverViewModel.suppressionReason(stale), "empty_concept",
+            "a finished card must never lead with what we THOUGHT would happen")
+    }
+
+    /// The unsettled path is untouched — this fix must not re-starve #1882.
+    func testAnUnsettledConceptWithALeaderStaysRenderable() throws {
+        let live = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "event:cycling:vuelta-2026", "name": "Vuelta a España 2026",
+                    "domain": "cycling", "status": "upcoming", "marquee_whathit": false,
+                    "leader": { "name": "Tadej Pogacar", "probability": 0.751,
+                                "field_size": 30 } } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(live))
     }
 }

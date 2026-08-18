@@ -12,7 +12,12 @@ struct FuturesCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Text(futures.llmSportCategory?.capitalized ?? "Futures")
+                // #1938 (Alex, bug report 145): `.capitalized` rendered the raw
+                // key "mma" as "Mma". `sportCategoryDisplayName` is the shared
+                // resolver the Discover cards already use — it knows the league
+                // acronyms AND the non-sport Discover categories, and falls back
+                // to acronym-aware title casing rather than to `.capitalized`.
+                Text(futures.llmSportCategory.map(sportCategoryDisplayName) ?? "Futures")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 // #490: confidence signal (1-3 bars) — renders nothing when absent.
