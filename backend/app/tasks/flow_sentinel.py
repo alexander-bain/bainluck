@@ -312,6 +312,28 @@ def event_dup_key(event: dict) -> str | None:
     # shares the exact commence_time (same ingestion), while a legitimate
     # doubleheader / best-of series has DIFFERENT start times — day granularity
     # would false-positive those, minute granularity does not.
+    #
+    # ⚠️ KNOWN BLIND SPOT, and the premise above is the reason (UX-P091,
+    # 2026-08-17). "A true unmerged duplicate shares the exact commence_time"
+    # was written BEFORE ruling 048. Post-048 an id-less claim never absorbs, it
+    # CREATES — so the duplicates 048 generates come from a DIFFERENT provider
+    # carrying that provider's OWN start time, and two providers disagreeing
+    # about the clock is now the normal way a duplicate is born.
+    #
+    # Measured specimen: a new 10-digit StatPal fixture namespace (`1329…`,
+    # first seen 2026-08-17T08:14:56Z) created MLB rows whose commence_time is
+    # Eastern local stamped as UTC — **exactly −4h** on all four (15200759-62).
+    # Four hours is not a minute, so this key cannot pair them with anything,
+    # and `duplicate_events` reported ZERO team-pair duplicates that night while
+    # at least four unmerged pairs sat inside its own 222-row sample.
+    #
+    # NOT widened here, deliberately: −4h is INSIDE a legitimate doubleheader
+    # gap, so no time tolerance separates this class from a real second game.
+    # The honest fix is id-anchored (ruling 048's own grammar), not time-keyed.
+    # `test_flow_sentinel_dup_key_blind_spot.py` PINS this limitation with the
+    # production specimen so it stays a known, asserted gap rather than folklore
+    # — the class is currently caught by `resolved_state`'s live-before-commence
+    # and inverted-completed_at limbs, which DID fire on the same rows.
     commence = (event.get("commence_time") or "")[:16]
     if not (sport and home and away and len(commence) >= 16):
         return None
@@ -1823,6 +1845,75 @@ def build_flow_issue_title(flow_result: dict) -> str:
     return title[:256]
 
 
+def render_failure_lines(failures: list[dict], cap: int = 40) -> list[str]:
+    """Render failure dicts as markdown bullets, KEEPING every structured key.
+
+    UX-P091. ``build_flow_issue_body`` used to render ``f.get('detail')`` alone,
+    which silently discarded every other key on the dict. ``event_completeness``
+    is the specimen: it puts the id in ``{"event_id": eid, "detail": ...}`` and
+    writes no id into the prose, so **#1942 was filed naming two teams and
+    nothing else**. Reproducing it meant reading a SIBLING issue's evidence JSON
+    (#1941) to recover the id — for a finding this rail had already measured.
+
+    A limb should not have to remember to repeat its ids inside a sentence for
+    them to survive filing. Rendering the whole dict makes losing one
+    unrepresentable rather than merely discouraged, which is why this is a shared
+    helper and not a fix to the one limb that happened to get caught.
+    """
+    lines: list[str] = []
+    for f in failures[:cap]:
+        if not isinstance(f, dict):
+            lines.append(f"- {f}")
+            continue
+        detail = f.get("detail")
+        extras = " ".join(
+            f"`{k}={v}`" for k, v in f.items() if k != "detail" and v is not None
+        )
+        if detail and extras:
+            lines.append(f"- {detail}  ({extras})")
+        elif detail:
+            lines.append(f"- {detail}")
+        else:
+            lines.append(f"- {extras or f}")
+    if len(failures) > cap:
+        lines.append(f"- …and {len(failures) - cap} more")
+    return lines
+
+
+def build_flow_redetect_comment(flow_result: dict) -> str:
+    """The comment posted when a flow fails again on an ALREADY-OPEN issue.
+
+    UX-P091. ``reconcile_issue``'s dedupe path is comment-only by design — "no
+    duplicate, no label edit" — so the issue BODY is frozen at whatever the first
+    run saw, forever. This comment was therefore the only channel carrying
+    current state, and it carried **two integers**.
+
+    The cost, measured: **#1483** was filed 2026-07-29 with 2 failures and has
+    been re-observed for nineteen days. On 2026-08-17 the same flow was carrying
+    a NEW class — four MLB games rendering LIVE 40–46h before their own
+    commence_time, plus a `completed_at` inverted by 68.2h (gotcha #32's
+    cross-merge invariant) — and a reader of #1483 could see none of it. The body
+    said 2 failures about other games; the newest comment said "8 failing of 49
+    checked. Still open."
+
+    **A count that moves is not a finding.** A flow getting qualitatively worse
+    rendered identically to one standing still, which is the same shape as gotcha
+    #53: the emptier reading and the real one produced the same text. So the
+    re-detect comment now carries the failures themselves.
+    """
+    fp = flow_fingerprint(flow_result["flow"])
+    n = len(flow_result["failures"])
+    parts = [
+        f"Flow Sentinel re-observed this failure: **{n} failing** of "
+        f"{flow_result['checked']} checked (fingerprint `{fp}`). Still open.",
+        "",
+        "**Current failures** (this run — the issue body above is frozen at "
+        "first-file and does NOT reflect them):",
+    ]
+    parts += render_failure_lines(flow_result["failures"], cap=20)
+    return "\n".join(parts)
+
+
 def build_flow_issue_body(flow_result: dict) -> str:
     flow = flow_result["flow"]
     fp = flow_fingerprint(flow)
@@ -1838,10 +1929,7 @@ def build_flow_issue_body(flow_result: dict) -> str:
         "",
         "### Failures",
     ]
-    for f in flow_result["failures"][:40]:
-        parts.append(f"- {f.get('detail') or f}")
-    if len(flow_result["failures"]) > 40:
-        parts.append(f"- …and {len(flow_result['failures']) - 40} more")
+    parts += render_failure_lines(flow_result["failures"])
 
     ev = flow_result.get("evidence") or {}
     if ev:
@@ -1923,10 +2011,7 @@ def file_flow_issue(flow_result: dict, open_issues: list[dict] | None = None) ->
         title=build_flow_issue_title(flow_result),
         body=build_flow_issue_body(flow_result),
         title_prefix=_flow_title_prefix(flow),
-        red_comment=(
-            f"Flow Sentinel re-observed this failure: {len(flow_result['failures'])} "
-            f"failing of {flow_result['checked']} checked (fingerprint `{fp}`). Still open."
-        ),
+        red_comment=build_flow_redetect_comment(flow_result),
         open_issues=open_issues,
     )
     res["flow"] = flow
