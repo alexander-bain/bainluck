@@ -3,6 +3,7 @@
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -866,7 +867,6 @@ async def public_calibration(
         out["producer"] = stall
         if stall["stalled"]:
             availability = _never_stronger(availability, AVAILABILITY_STALE)
-        _apply_provability(out)
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(
@@ -1557,52 +1557,58 @@ PROVABILITY_CENSUS_ABSENT_REASON = (
 )
 
 
-def _apply_provability(out: dict) -> None:
-    """Annotate published category cells with the selection-bias verdict.
+def provability_payload_fields(
+    cells: list[dict], *, census: Optional[dict[str, int]] = None
+) -> dict[str, Any]:
+    """The selection-bias annotation, ready for **the BUILDER** to merge.
 
-    Fable ruling, CAL-P067: a cell graded under 50% is measured on a sample
-    selected on the property being measured, so it renders NOT-PROVABLE with the
-    graded share shown.
+    Deliberately NOT called from ``_serve``, and that is the whole design note.
 
-    Two modes, and the split is the point:
+    CAL-P067 first wired this into the route and
+    ``test_route_serves_the_shared_compute_payload_unaltered`` refused it —
+    correctly. That test enumerates its envelope keys rather than prefix-matching
+    them precisely so a third cannot "join them by accident and quietly widen
+    what unaltered excuses", and the criterion for joining is that the key is a
+    **serve-time** fact the builder could not know: ``availability`` (which tier
+    answered) and ``producer`` (how many beats since build) qualify.
 
-    * **Census present** — every cell is annotated. Biased cells flip to
-      ``not_provable_selection_biased``; a cell the census does not cover reads
-      ``unknown``, never ``provable``.
-    * **Census absent** — cells are left alone and the payload carries a single
-      ``provability_census: {measured: false, reason}``. Stating "we cannot check
-      this" once, machine-readably, is honest; stamping it on fifteen public rows
-      is noise that would train readers to ignore the badge that matters.
+    Provability does not. Whether a cell's graded share clears 50% is a fact
+    about the DATA, not about which tier served it, and a builder writing it
+    would be stating a measurement rather than a tautology. So its home is
+    ``compute_calibration_payload`` and the route stays what Queue 300B made it:
+    not a second builder.
 
-    Never raises: an annotation bug must not be able to take /api/calibration
-    down. A failure degrades to the unannotated payload plus a stated reason,
-    which is the same fail-safe direction as the rule itself.
+    It cannot move there this window — that function is inside
+    ``_main_input_fingerprint``'s digest and editing it resets the in-flight
+    staged cursor (ruling 009). So the logic lives here, tested and callable,
+    and the one-line call site is owed to the queue that lands after the
+    producer publishes.
+
+    Returns ``{"by_category": [...], "provability_census": {...}}``. With no
+    census the cells come back untouched and the census block says ``measured:
+    false`` with a reason — stating "we cannot check this" once, machine-
+    readably, rather than stamping it on fifteen public rows.
     """
-    try:
-        cells = out.get("by_category")
-        if not isinstance(cells, list):
-            return
-        if not PROVABILITY_CENSUS:
-            out["provability_census"] = {
+    if not isinstance(cells, list):
+        return {}
+    census = census if census is not None else PROVABILITY_CENSUS
+    if not census:
+        return {
+            "by_category": cells,
+            "provability_census": {
                 "measured": False,
                 "reason": PROVABILITY_CENSUS_ABSENT_REASON,
                 "min_graded_share": MIN_GRADED_SHARE,
-            }
-            return
-        out["by_category"] = annotate_cells(
-            cells, resolved_by_category=PROVABILITY_CENSUS
-        )
-        out["provability_census"] = {
+            },
+        }
+    return {
+        "by_category": annotate_cells(cells, resolved_by_category=census),
+        "provability_census": {
             "measured": True,
-            "categories": len(PROVABILITY_CENSUS),
+            "categories": len(census),
             "min_graded_share": MIN_GRADED_SHARE,
-        }
-    except Exception as exc:  # noqa: BLE001 — never the reason the page is down
-        logger.warning("calibration provability annotation failed: %s", exc)
-        out["provability_census"] = {
-            "measured": False,
-            "reason": f"annotation_failed: {str(exc)[:160]}",
-        }
+        },
+    }
 
 
 def _compute_horizon_mce(buckets: list[dict]) -> float | None:

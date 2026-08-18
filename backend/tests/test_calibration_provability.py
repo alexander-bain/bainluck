@@ -215,42 +215,59 @@ def test_a_well_graded_cell_still_gets_its_ordinary_disposition():
 
 
 # =============================================================================
-# Route wiring — the rule must be inert-but-armed, never silently wrong
+# Payload fields — built for the BUILDER, deliberately not called from the route
 # =============================================================================
+#
+# The first cut of this wired the annotation into the route's ``_serve`` and
+# ``test_route_serves_the_shared_compute_payload_unaltered`` refused it. That
+# test was right and the design was wrong, so it is recorded here rather than
+# quietly worked around.
+#
+# That test enumerates its envelope keys instead of prefix-matching them
+# precisely so a third cannot "join them by accident and quietly widen what
+# unaltered excuses". The criterion for joining is that the key is a SERVE-TIME
+# fact the builder could not know: ``availability`` (which tier answered) and
+# ``producer`` (beats since build) qualify. Provability does not — whether a
+# cell's graded share clears 50% is a fact about the DATA, and a builder writing
+# it would be stating a measurement, not a tautology. The route is not a second
+# builder (Queue 300B), so widening the allowlist would have been the wrong fix
+# to a correct complaint.
+#
+# It cannot move into ``compute_calibration_payload`` this window: that function
+# is inside ``_main_input_fingerprint``'s digest and editing it resets the
+# in-flight staged cursor (ruling 009). So the logic is finished and tested
+# here, and the one-line call site is owed.
 
 
-def test_route_states_the_absent_census_once_instead_of_badging_every_row():
-    """With no denominators measured, the payload says so ONCE and the cells are
+def test_the_absent_census_is_stated_once_instead_of_badging_every_row():
+    """With no denominators measured, the block says so ONCE and the cells are
     left alone. Stamping "unmeasured" on fifteen public rows would train a reader
     to ignore the badge that matters — but saying nothing at all is the defect
-    this queue is otherwise removing, so it is said in the payload."""
-    from app.routes.calibration import _apply_provability
+    this queue is otherwise removing."""
+    from app.routes.calibration import provability_payload_fields
 
-    out = {"by_category": [{"category": "soccer", "mce": 3.54, "n": 98_381}]}
-    _apply_provability(out)
+    out = provability_payload_fields(
+        [{"category": "soccer", "mce": 3.54, "n": 98_381}], census={}
+    )
     assert out["provability_census"]["measured"] is False
     assert "bisection" in out["provability_census"]["reason"]
     assert out["provability_census"]["min_graded_share"] == MIN_GRADED_SHARE
-    # cells untouched
     assert "provability" not in out["by_category"][0]
 
 
-def test_route_annotates_every_cell_once_a_census_exists(monkeypatch):
-    """The rule ships complete and inert: populating the census is the only
-    remaining step, and it needs no further code."""
-    from app.routes import calibration as route
+def test_every_cell_annotates_once_a_census_exists():
+    """The rule ships complete and inert: populating the census and adding the
+    call site are the only remaining steps."""
+    from app.routes.calibration import provability_payload_fields
 
-    monkeypatch.setattr(
-        route, "PROVABILITY_CENSUS", {"soccer": SOCCER_RESOLVED, "baseball": 200_000}
-    )
-    out = {
-        "by_category": [
+    out = provability_payload_fields(
+        [
             {"category": "soccer", "mce": 3.54, "n": SOCCER_GRADED},
             {"category": "baseball", "mce": 1.94, "n": 192_090},
             {"category": "darts", "mce": 2.0, "n": 5_000},
-        ]
-    }
-    route._apply_provability(out)
+        ],
+        census={"soccer": SOCCER_RESOLVED, "baseball": 200_000},
+    )
     by_cat = {c["category"]: c for c in out["by_category"]}
     assert by_cat["soccer"]["provability"] == PROVABILITY_NOT_PROVABLE
     assert by_cat["baseball"]["provability"] == PROVABILITY_PROVABLE
@@ -259,29 +276,36 @@ def test_route_annotates_every_cell_once_a_census_exists(monkeypatch):
     assert out["provability_census"]["measured"] is True
 
 
-def test_annotation_failure_can_never_take_the_endpoint_down(monkeypatch):
-    """/api/calibration going dark is the failure ruling CAL-P017 exists to
-    prevent. A rendering rule must degrade to unannotated, never to a 500."""
+def test_the_default_census_is_empty_so_nothing_flips_in_production():
+    """The denominator timed out this window. Until it is measured the rule must
+    change no published number — an inert honest rule beats an active wrong one."""
+    from app.routes.calibration import PROVABILITY_CENSUS, provability_payload_fields
+
+    assert PROVABILITY_CENSUS == {}
+    out = provability_payload_fields([{"category": "soccer", "n": 98_381}])
+    assert out["provability_census"]["measured"] is False
+    assert "provability" not in out["by_category"][0]
+
+
+def test_the_route_does_not_call_this_and_adds_no_payload_key():
+    """The invariant that caught the first design, asserted from this side too:
+    /api/calibration's own module must not inject provability into the served
+    payload. If someone wires it back into `_serve`, this fails here as well as
+    in the #257 contract."""
+    import inspect
+
     from app.routes import calibration as route
 
-    monkeypatch.setattr(route, "PROVABILITY_CENSUS", {"soccer": 10})
-
-    def boom(*a, **k):
-        raise RuntimeError("annotate exploded")
-
-    monkeypatch.setattr(route, "annotate_cells", boom)
-    out = {"by_category": [{"category": "soccer", "n": 5}]}
-    route._apply_provability(out)  # must not raise
-    assert out["provability_census"]["measured"] is False
-    assert "annotation_failed" in out["provability_census"]["reason"]
+    serve_src = inspect.getsource(route.public_calibration)
+    assert "provability_payload_fields" not in serve_src
+    assert "provability_census" not in serve_src
 
 
-def test_a_payload_without_categories_is_left_completely_alone():
-    from app.routes.calibration import _apply_provability
+def test_a_payload_without_categories_yields_nothing():
+    from app.routes.calibration import provability_payload_fields
 
-    out = {"buckets": []}
-    _apply_provability(out)
-    assert out == {"buckets": []}
+    assert provability_payload_fields(None) == {}
+    assert provability_payload_fields("nope") == {}
 
 
 def test_an_unmeasured_graded_share_preserves_the_existing_behaviour():
