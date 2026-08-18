@@ -473,7 +473,19 @@ final class CalibrationViewModel: ObservableObject {
     // INT-065 2026-08-13: CAL-P045 (#1530) bumped the backend q267 -> q1530. Both are listed
     // so this build accepts either for the whole rollout window — and a shipped iOS build
     // cannot be rolled back, which is why native must never be the narrower of the two.
-    static let compatiblePopulationVersions: Set<String> = ["q267", "q1530"]
+    //
+    // CAL-P070 2026-08-18: "q268" added (#1955/#1680). q268 is a LABEL-ONLY bump —
+    // same CTEs, same exclusions, same metrics as q267 — so this build's labels
+    // describe it by construction. "q267" stays because the backend deliberately
+    // keeps serving the last q267 artifact, dated and degraded, until the first
+    // q268 build publishes; a narrower set here would refuse precisely the
+    // payload that keeps the surface lit.
+    //
+    // WHAT THIS COMMIT CANNOT FIX: builds ALREADY on devices ship the old set and
+    // will read q268 as `.incompatible` until their owners update. That is a cost
+    // of the bump itself, not of this list, and it is the reason the rollout order
+    // is clients-first whenever there is a choice.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 

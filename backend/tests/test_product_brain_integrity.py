@@ -521,7 +521,11 @@ def test_ruling_numbers_are_unique() -> None:
 #: and neither is the merged truth — q365 banks 078 and q366 banks 079-082. Resolved the
 #: documented way again, by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree,
 #: which is 79, and which is nobody's side.
-MINIMUM_BANKED_RULINGS = 79
+#: Raised 79 -> **80** by CAL-P070 banking **083** (a guard that cannot tell two cases apart is
+#: given evidence, not a wider band; and a version bump carries its own rollover or accepts a dark
+#: page — Fable, #1955/#1680) on `program/calibration-66`, cut from `origin/master` `7686c97f`
+#: (79 files). Same resolution rule if another lane raises independently: COUNT the files.
+MINIMUM_BANKED_RULINGS = 80
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

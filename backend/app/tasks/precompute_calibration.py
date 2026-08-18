@@ -121,27 +121,72 @@ def _main_payload_is_publishable(response: Any) -> bool:
 #   4. exclusivity EVIDENCE gating normalization — the default-true
 #      ``mutually_exclusive`` flag is no longer accepted as proof of a partition.
 #
-# THE VERSION IS DELIBERATELY *NOT* BUMPED YET, and that ordering is the point.
+# The sequence Queue 299 chose — land the population change under the CURRENT
+# version, let the publish gate MEASURE the drift against the published q267
+# baseline, then bump as a deliberate follow-up once the numbers were reviewed —
+# ran to completion. The gate's rejection report was the exact-SHA census it was
+# supposed to be (#1954/#1956/#1959-#1968, one per hourly beat), the numbers were
+# reviewed, and this is that follow-up.
 #
-# Bumping it first (tried 2026-08-02, reverted the same hour) took /calibration
-# DARK: ``snapshot_verdict`` refuses a cached artifact whose population_version
-# is not the one the deployed build expects, so the moment the web dyno booted
-# expecting "q299" BOTH the live key and the 7-day last-good became
-# ``wrong_version`` — and the replacement could not exist until the next hourly
-# precompute completed. Q297's gate protects against a BAD build replacing a
-# good one; it has no protection against a version bump that invalidates the
-# only good copy before its successor is built. On a task already known to
-# overrun its window (#1479, #1513) that is an unbounded outage of the exact
-# page #1517 exists to keep lit.
+# q268 (CAL-P070, Fable directive 2026-08-18; #1680 / #1955). Ruling 009's freeze
+# on this file lifts for exactly this commit.
 #
-# So the sequence is: land the population change under the CURRENT version, let
-# the publish gate compare the new candidate against the published q267 baseline
-# and MEASURE the drift it produces (rejecting and preserving last-good if that
-# drift exceeds its bars — the page stays up on good data either way), then bump
-# the version as a deliberate one-line follow-up once the numbers have been
-# reviewed. The gate's rejection report IS the exact-SHA census, obtained
-# without risking the page.
-CALIBRATION_POPULATION_VERSION = "q267"
+# READ THIS BEFORE BUMPING AGAIN — q268 IS THE LAST BUMP THAT MAY MEAN "TIME
+# PASSED", AND IT ONLY MEANS THAT BECAUSE THE ALTERNATIVE DID NOT EXIST YET.
+#
+# What actually changed on 2026-08-18: nothing about the methodology. The
+# population CTEs, the truth allowlist, the liquidity filter, the normalization
+# and the metrics are byte-identical to q267. The build simply took sixteen days,
+# during which the season backfill and the never-graded drains graded whole
+# cohorts underneath it, so the completed candidate came in +17.9% (706,290 ->
+# 832,650) and the gate's symmetric ±5% band refused it — every hour, more
+# certainly the longer the build ran, because the guard could not tell "we
+# changed which rows qualify" from "sixteen days happened" (#1955).
+#
+# Answering ordinary time with a version bump is how a guard is drained of
+# meaning, so the bump does not ship alone: the same commit gives the gate the
+# discriminator it was missing. ``population_predicate_fingerprint`` states, on
+# the artifact itself, WHICH RULE produced it; growth on a provably identical
+# predicate is now admitted and recorded rather than refused. The next long build
+# publishes with no bump at all, which is the only reason this one is defensible.
+#
+# And it does NOT repeat 2026-08-02. That attempt was reverted within the hour
+# because ``snapshot_verdict`` refuses an artifact whose version is not the one
+# the deployed build expects, so the instant the dyno booted expecting the new
+# version BOTH the live key and the 7-day last-good became ``wrong_version`` and
+# /calibration went dark until the next successful build — unbounded, on a task
+# known to overrun its window (#1479/#1513), on the exact page #1517 exists to
+# keep lit. That hole is closed below by
+# ``COMPATIBLE_PREVIOUS_POPULATION_VERSIONS``.
+#
+# COSTS, stated plainly rather than discovered later: this bump moves
+# ``_main_input_fingerprint`` (the version is one of its inputs), so the 128-unit
+# staged-futures bank is discarded and the first q268 build climbs ~14 hourly
+# beats from zero. Fable ruled that spend acceptable and the bank was worth
+# little: 119 of its 125 checkable units were censuses of an older population, so
+# publishing it would have published a sixteen-day smear.
+CALIBRATION_POPULATION_VERSION = "q268"
+
+#: The predecessor versions whose PUBLISHED artifacts this build declares
+#: comparable with its own — the explicit, bounded rollover window that the
+#: ratified version-rollover contract
+#: (``tests/evals/fixtures/calibration_version_rollover_contract.json``, cases
+#: ``deploy-before-candidate`` / ``previous-complete-bounded``) has always
+#: required and that no code has ever supplied. The route serves an artifact on
+#: this list DATED, DEGRADED, PROVENANCED and READ-ONLY — never as the current
+#: curve, never seeding the new version — for as long as it stays inside the
+#: ordinary serve age bound, and refuses it after (``previous-expired-refused``).
+#:
+#: THE ENTRY BAR IS A PROOF, NOT A PREFERENCE. ``q267`` is listed because q268
+#: changes no methodology whatsoever: same CTEs, same truth allowlist, same
+#: filters, same metrics, same population *unit* (so the contract's
+#: ``POPULATION_UNIT_NEEDS_RULING`` does not arise). Its numbers therefore mean
+#: exactly what the page says they mean, which is the whole of CAL-P017's
+#: objection to serving a cross-version artifact — that ruling is honoured here,
+#: not overridden. **A bump that DOES move the methodology must ship this list
+#: EMPTY and accept the dark window**, because then the banner really would be
+#: papering over numbers that mean something else.
+COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ("q267",)
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
@@ -4299,6 +4344,11 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # change expressible: the publish gate waives a drift/collapse rejection
         # only when this value is explicitly bumped.
         "population_version": CALIBRATION_POPULATION_VERSION,
+        # #1955: the version says what an operator DECLARED; this says what the
+        # code DID. The publish gate compares these two strings to tell a
+        # methodology change from sixteen days of resolutions, which a count
+        # cannot do and a recount cannot afford.
+        "population_predicate_fingerprint": population_predicate_fingerprint(),
         "mce_ci_lower": round(mce_ci_lo * 100, 2),
         "mce_ci_upper": round(mce_ci_hi * 100, 2),
         "mce_closing_line": mce_closing_line,
@@ -4629,6 +4679,59 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
     return stages
 
 
+def population_predicate_fingerprint() -> str:
+    """WHICH ROWS QUALIFY, in one digest — stamped on every published artifact.
+
+    #1955. The publish gate could not tell "we changed the methodology" (the
+    hazard it exists for) from "the build took sixteen days" (unavoidable),
+    because both present as a population delta and a count cannot say which one
+    it is. The count is also the aggregate that times out, so recounting the
+    baseline's own predicate at compare time — the obvious answer — is the one
+    that cannot be afforded on the request path.
+
+    So the artifact states its predicate instead, and the comparison becomes an
+    equality of two strings the gate already has in hand. Same digest ⇒ the rule
+    did not move ⇒ every row of difference is data movement (new resolutions,
+    backfills, drains) and growth is admitted. Different or absent ⇒ the strict
+    symmetric band, exactly as before.
+
+    DELIBERATELY NARROWER THAN :func:`_main_input_fingerprint`, and the two must
+    not be merged:
+
+    * that one answers "may a carried phase output be resumed", so it hashes
+      everything the OUTPUT depends on — including
+      ``compute_calibration_payload`` (metrics, rendering, bucket shaping) and
+      :data:`CALIBRATION_POPULATION_VERSION` itself. Using it here would make
+      every ordinary edit to the payload builder, and every version bump, read
+      as "the predicate changed" — re-arming the strict band on the builds that
+      most need the relaxation, which is the defect this function exists to end;
+    * this one answers "did the set of qualifying rows change", so it hashes only
+      the two functions that DEFINE that set. It excludes the version string on
+      purpose: the version is what an operator DECLARES, this is what the code
+      DOES, and #1955 is precisely the gap between them.
+
+    Hashing a function's source covers that function and never its callees (the
+    lesson :func:`_main_input_fingerprint` keeps re-teaching). A new SQL-shaping
+    input to the POPULATION belongs on this list explicitly — and a change here
+    is a methodology change: it will refuse the next candidate until an operator
+    bumps the version, which is the correct and intended consequence.
+    """
+    from app.utils.calibration_phase_ledger import input_fingerprint
+
+    try:
+        import inspect
+
+        source = inspect.getsource(_calibration_population_ctes) + inspect.getsource(
+            _virtual_market_ctes
+        )
+    except Exception:  # noqa: BLE001 — no source => never claim a match
+        # A digest nothing can equal (``_same_predicate`` requires equality), so
+        # an unreadable predicate falls back to the strict band instead of
+        # silently excusing a drift it could not check.
+        return f"unavailable:{time.time()}"
+    return input_fingerprint("population-predicate/v1", source)
+
+
 def _main_input_fingerprint() -> str:
     """Everything a carried phase output depends on, in one 32-char digest.
 
@@ -4840,9 +4943,17 @@ async def _run_calibration_main_build(runner=None):
         # path is exercised silently.
         "baseline_source": verdict.baseline_source,
         "baseline_probe": verdict.baseline_probe,
+        # CAL-P070 / #1955. A PASS that admitted a +17.9% population move and a
+        # pass on a 0.1% beat were about to be byte-identical here, which is the
+        # same hole the line above closes for ``baseline_source`` and the fourth
+        # instance of it this program has found. The gate records what it
+        # excused; the run evidence has to carry it or nobody can read it.
+        "observations": verdict.observation_codes,
+        "observation_details": [o["detail"] for o in verdict.observations],
     }
 
     runner.outcome["gate"] = "pass" if verdict.ok else "refuse"
+    runner.outcome["gate_observations"] = verdict.observation_codes
     # Also on the run OUTCOME, not just the summary: `outcome` is what
     # `save_phase_ledger` persists, so this survives into the durable run
     # evidence a later reader actually queries. Written before the rejection
@@ -4862,6 +4973,18 @@ async def _run_calibration_main_build(runner=None):
             f"({', '.join(verdict.codes)}): {verdict.summary()} — "
             f"nothing published, prior snapshot preserved "
             f"(fingerprint {verdict.fingerprint}, filing {filing.get('action')})"
+        )
+
+    for observation in verdict.observations:
+        # WARNING, not INFO: this is a fact that decided a publish, and a
+        # publish that moved the population by more than the standing band is
+        # exactly what an operator should be able to find without knowing to
+        # look. It is not a failure, and the message says so by describing what
+        # was admitted and on what evidence.
+        logger.warning(
+            "calibration publish gate ADMITTED a candidate on an explicit "
+            "observation (%s): %s",
+            observation["code"], observation["detail"],
         )
 
     t2 = time.monotonic()

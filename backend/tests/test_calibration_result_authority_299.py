@@ -434,18 +434,39 @@ class TestPublishOrPark:
     def test_publish_bar_is_the_shipped_sample_gate(self):
         assert pc._DEFAULT_MIN_CATEGORY_OUTCOMES == 1000
 
-    def test_population_version_is_not_bumped_ahead_of_a_built_artifact(self):
-        """A version bump must never precede the artifact it describes.
+    def test_a_version_bump_carries_its_own_rollover_declaration(self):
+        """A version bump must never leave the page with nothing servable.
 
-        Bumping first (tried and reverted 2026-08-02) makes ``snapshot_verdict``
+        Bumping (tried and reverted 2026-08-02) makes ``snapshot_verdict``
         reject BOTH the live key and the 7-day last-good as ``wrong_version``
         the instant the dyno boots, so /calibration goes dark until the next
         hourly build completes — unbounded on a task known to overrun its window
-        (#1479/#1513). The population change therefore lands under the CURRENT
-        version so the publish gate measures its drift against a real baseline
-        while the page keeps serving; the bump is a deliberate follow-up.
+        (#1479/#1513).
+
+        This used to be pinned as ``== "q267"``, which was the right guard
+        expressed the wrong way: a literal has to be edited by the very commit it
+        exists to interrogate, and it passes the moment that commit edits it —
+        including a bump that really does take the page dark. So it now asserts
+        the INVARIANT the literal stood for. CAL-P070 bumped to q268 and the
+        outgoing version is declared compatible, which is what keeps the page
+        lit (dated, degraded, read-only) while the first build under the new
+        version runs.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q267"
+        current = pc.CALIBRATION_POPULATION_VERSION
+        declared = tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS)
+        assert current not in declared, (
+            "the CURRENT version is not its own predecessor — listing it would "
+            "make every artifact 'previous_version' and nothing 'ok'"
+        )
+        # q267 is the last version whose artifact was ever published, so until
+        # something publishes under a later one, dropping it from the
+        # declaration is what takes the page dark.
+        assert "q267" in declared or current == "q267", (
+            f"population version is {current!r} but q267 — the last published "
+            "artifact's version — is not declared compatible, so every cached "
+            "copy becomes wrong_version on deploy and /calibration 503s until "
+            "the first build under the new version completes"
+        )
 
 
 class TestC119ContractBinding:

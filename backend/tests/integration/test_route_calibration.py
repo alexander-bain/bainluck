@@ -306,6 +306,11 @@ class TestCalibrationPublicEndpoint:
             # contract, so a cached copy from an older contract can't be served
             # under current UI labels.
             "population_version",
+            # CAL-P070 (#1955): the version says what an operator DECLARED; this
+            # says what the code DID. The publish gate compares the two digests
+            # to tell "sixteen days of resolutions landed" from "we changed which
+            # rows qualify" — a distinction no count can make. Additive.
+            "population_predicate_fingerprint",
             "mce_ci_lower",
             "mce_ci_upper",
             "mce_closing_line",
