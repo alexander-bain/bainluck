@@ -70,10 +70,27 @@ export default function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
           </div>
         </div>
         <div>
-          <div className="text-text-muted">Returned rank</div>
+          <div className="text-text-muted">Served rank</div>
           <div className="text-text-primary font-medium">
             {rankText(phases?.returned_rank ?? null)}
           </div>
+          {/*
+            The score path on the left is the independent `_score_market_trace`
+            recompute; this is the score the served payload carries. They diverge
+            (23 vs 18 on the #1982 specimen), so both are shown rather than one
+            being quietly presented as the answer.
+          */}
+          {trace.final_ranking.final_score !== null &&
+            trace.final_ranking.final_score !== undefined && (
+              <div className="text-[11px] text-text-muted">
+                served score {Math.round(trace.final_ranking.final_score)}
+                {trace.final_ranking.score_trace_final != null &&
+                Math.round(trace.final_ranking.score_trace_final) !==
+                  Math.round(trace.final_ranking.final_score)
+                  ? ` / traced ${Math.round(trace.final_ranking.score_trace_final)}`
+                  : ""}
+              </div>
+            )}
         </div>
         <div>
           <div className="text-text-muted">Candidate position</div>
@@ -100,7 +117,12 @@ export default function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
           <div className="font-medium text-text-primary mb-1">Rank Phases</div>
           <div className="grid md:grid-cols-3 gap-2">
             <div className="flex justify-between gap-2">
-              <span className="text-text-secondary">Raw futures</span>
+              {/*
+                Not a rank — the position in the unsorted candidate pool. Labelled
+                as "Raw futures" it read as a ranking, which is how "81 of 81" was
+                believed about a card on the first screen (#1982).
+              */}
+              <span className="text-text-secondary">Raw pool position</span>
               <span className="text-text-primary">{rankText(phases.raw_futures_rank)}</span>
             </div>
             <div className="flex justify-between gap-2">
@@ -129,6 +151,31 @@ export default function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
               Deduped behind #{phases.canonical_replacement.id}: {phases.canonical_replacement.name}
             </div>
           )}
+          {/*
+            The phases above are a PARTIAL build (no noise filter, no category-mix
+            balance, no bundles, no lead composition). Show where that partial
+            build disagrees with the served one rather than letting the reader
+            assume the last phase is the page.
+          */}
+          {phases.probe_returned_rank != null &&
+            phases.probe_returned_rank !== phases.returned_rank && (
+              <div className="mt-2 text-text-muted">
+                Partial-build probe says {rankText(phases.probe_returned_rank)}; the
+                shared display chain serves {rankText(phases.returned_rank)}. The
+                probe omits bundles and lead composition.
+              </div>
+            )}
+        </div>
+      )}
+
+      {trace.unmodeled_serve_time_terms && trace.unmodeled_serve_time_terms.length > 0 && (
+        <div className="text-xs">
+          <div className="font-medium text-text-primary mb-1">Not modelled by this trace</div>
+          <ul className="list-disc pl-4 space-y-0.5 text-text-muted">
+            {trace.unmodeled_serve_time_terms.map((term) => (
+              <li key={term}>{term}</li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -91,6 +91,7 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    enforce_first_page_quality_floor,
     has_no_real_price,
     is_locked_near_certain,
 )
@@ -1266,7 +1267,42 @@ def apply_discover_display_chain(
     items = compose_lead(items, include_tonights_games=discover_mode)
     _tick("lead_composition")
 
-    return items, {"reviewed_filtered_count": reviewed_filtered_count}
+    # === FIRST-PAGE QUALITY FLOOR (#1958, Fable ruling (d)) ===
+    #
+    # LAST, deliberately. `boring-rate@20` / `ladder-rate@20` are counted over the
+    # first twenty cards of the SERVED payload, so the only place a control can
+    # match that target is the final order. Running it earlier would have been
+    # wrong by a knowable amount: the bundle assemblers FOLD several cards into
+    # one, which pulls later cards forward — a ladder sitting safely at 21 before
+    # `assemble_swings_theme_bundles` is at 20 after it.
+    #
+    # It is a swap, not a filter: offenders trade places with the best clean card
+    # beyond the window. Length is preserved, so this cannot empty a surface
+    # (#1091/#43), and `compose_lead`'s prefix above is untouched unless the lead
+    # card is itself the offender.
+    first_page_floor_meta = None
+    if discover_mode:
+        items, first_page_floor_meta = enforce_first_page_quality_floor(
+            items, first_page_size=min(20, limit)
+        )
+        if first_page_floor_meta["unreplaced"]:
+            # Not a silent cap: the page kept a boring card because the pool had
+            # nothing clean left to swap in. That is a thin-slate fact about the
+            # data, and it must not read the same as a clean pass.
+            logger.warning(
+                "Discover first-page quality floor: %d offender(s) kept on the "
+                "first page — no clean replacement available (%d demoted, %d "
+                "clean cards beyond the window)",
+                first_page_floor_meta["unreplaced"],
+                first_page_floor_meta["demoted"],
+                first_page_floor_meta["clean_replacements_available"],
+            )
+    _tick("first_page_quality_floor")
+
+    return items, {
+        "reviewed_filtered_count": reviewed_filtered_count,
+        "first_page_quality_floor": first_page_floor_meta,
+    }
 
 
 def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict], int]:
@@ -2519,16 +2555,18 @@ async def get_feed(
             if story_key and isinstance(data, dict) and "story_key" not in data:
                 data["story_key"] = story_key
 
-            item.pop("_sort_time", None)
-            item.pop("_rank_score", None)
-            item.pop("_quality_class", None)
-            item.pop("_quality_family_key", None)
-            item.pop("_quality_story_key", None)
-            item.pop("_review_decision", None)
-            item.pop("_review_decision_scope", None)
-            item.pop("_review_decision_scope_key", None)
-            item.pop("_review_decision_penalty", None)
-            item.pop("_grouped_members", None)
+            # Strip internal keys BY PREFIX, not by an enumerated list.
+            #
+            # This was ten `pop` calls naming ten keys, and the contract it
+            # serves is "no item key starts with an underscore"
+            # (`test_response_shape_exposes_public_item_contract`). A list can
+            # only ever be a hand-maintained approximation of a prefix rule, so
+            # every new internal key was one forgotten line away from shipping
+            # to clients — which is exactly how `_quality_ladder_or_bucket`
+            # (#1958) leaked the moment it was added. The prefix rule cannot
+            # fall behind, because it has nothing to keep up with.
+            for private_key in [k for k in item if k.startswith("_")]:
+                item.pop(private_key, None)
 
         payload = {
             "items": paginated,
@@ -3899,8 +3937,39 @@ async def _discover_rank_phase_trace(
         )
         post_diversity_rank = _rank_futures_market(feed_items, market_id)
 
-    returned = feed_items[:limit]
-    returned_rank = _rank_futures_market(returned, market_id)
+    probe_returned_rank = _rank_futures_market(feed_items[:limit], market_id)
+
+    # === SERVED DISPOSITION — the shared chain, not a fourth copy (#1982) ===
+    #
+    # Everything above is a per-phase PROBE: a partial build re-implemented here
+    # because a single call cannot give a rank reading *between* phases. It is
+    # deliberately a subset — no noise filter, no category-mix balance, no
+    # bundles, no lead composition — which is fine for "where in the pipeline did
+    # this card move" and NOT fine for "is this card on the page".
+    #
+    # It was answering both. `returned` came off the probe, so the trace shipped a
+    # confident verdict about the served page derived from a build the server does
+    # not do. The measured cost (#1982): the probe put the Meta card at 17 while
+    # production served it at 16 — the exact offset of the bundle/lead prefix the
+    # probe omits — and `final_ranking.final_futures_rank` reported 81 of 81, dead
+    # last, for a card on the first screen.
+    #
+    # So the DISPOSITION now runs `apply_discover_display_chain`, the same
+    # function `get_feed` calls, over the same pre-chain preparation `get_feed`
+    # does. The probes stay, under names that say they are probes.
+    served_items = _suppress_zero_probability_cards(
+        event_items + tournament_items + deduped_futures
+    )[0]
+    served_items, _served_chain_meta = apply_discover_display_chain(
+        served_items,
+        limit=limit,
+        ctx=ctx,
+        event_pct=event_pct,
+        include_events=include_events,
+        my_teams_only=False,
+    )
+    assembled_rank = _rank_futures_market(served_items, market_id)
+    returned_rank = _rank_futures_market(served_items[:limit], market_id)
 
     return {
         "mode": {
@@ -3914,13 +3983,28 @@ async def _discover_rank_phase_trace(
         "post_event_demote_rank": post_event_demote_rank,
         "post_event_mix_rank": post_event_mix_rank,
         "post_diversity_rank": post_diversity_rank,
+        # The disposition fields — from the SHARED chain (`apply_discover_display_chain`).
         "returned_rank": returned_rank,
         "returned": returned_rank is not None,
+        "assembled_rank": assembled_rank,
+        "assembled_count": len(served_items),
+        # The probe's own answer, kept and LABELLED so the divergence between the
+        # partial build and the served build stays visible instead of being the
+        # silent thing that made this endpoint wrong.
+        "probe_returned_rank": probe_returned_rank,
+        "probe_assembled_count": len(feed_items),
         "raw_futures_count": len(raw_futures),
         "post_dedupe_futures_count": len(deduped_futures),
-        "assembled_count": len(feed_items),
         "dropped_by_canonical_dedupe": dropped_by_canonical_dedupe,
         "canonical_replacement": canonical_replacement,
+        "served_item_score": next(
+            (
+                item.get("score")
+                for item in served_items
+                if _futures_market_id(item) == market_id
+            ),
+            None,
+        ),
     }
 
 
@@ -4016,16 +4100,59 @@ async def build_discover_market_trace(
         "candidate_pools": candidate_pools,
         "score_trace": score_trace,
         "rank_phases": rank_phases,
+        # === FINAL RANKING — what the page actually did with this card (#1982) ===
+        #
+        # `final_futures_rank` used to be `rank_phases["raw_futures_rank"]`: the
+        # card's INDEX IN THE UNSORTED RAW POOL. `_score_futures` returns
+        # candidate-pool order and never sorts, so that number was not a rank at
+        # all — it was a position in an arbitrary list, exported under the name
+        # `final`. On the #1982 specimen it read 81 of 81 for a card production
+        # served at 16, and `_suggest_trace_fix` branches on it at `> 50`, so the
+        # instrument's own recommendation was computed from the wrong number.
+        #
+        # The raw-pool position is still useful (it says which pool found the
+        # card), so it is kept — under a name that describes it.
         "final_ranking": {
             "survived_final_caps": rank_phases["returned"],
-            "final_futures_rank": rank_phases["raw_futures_rank"],
-            "final_score": (
+            "final_futures_rank": rank_phases["returned_rank"],
+            "assembled_rank": rank_phases["assembled_rank"],
+            "raw_pool_position": rank_phases["raw_futures_rank"],
+            # The score the SERVED payload carries for this card. The
+            # `score_trace` recompute below is a second, independent path
+            # (anonymous context, its own highlight/quality pass) and the two
+            # disagree — 23 served vs 18 traced on the #1982 specimen. Both are
+            # reported; only one of them is what a user's page shows.
+            "final_score": rank_phases["served_item_score"],
+            "score_trace_final": (
                 score_trace["scores"]["final"]
                 if rank_phases["raw_futures_rank"]
                 else None
             ),
             "scored_futures_count": rank_phases["raw_futures_count"],
         },
+        # === WHAT THIS TRACE DOES NOT MODEL (#1982 acceptance) ===
+        #
+        # The acceptance criterion is explicit: if the trace cannot model a
+        # serve-time term, it says so IN THE RESPONSE rather than emitting a
+        # confident wrong verdict. These are the terms a served page has and this
+        # reconstruction does not.
+        "unmodeled_serve_time_terms": [
+            "personalization — this trace always uses an anonymous "
+            "PersonalizationContext; a signed-in or session-carrying request "
+            "applies category/feature/entity affinities and dismiss suppression, "
+            "so its order will differ.",
+            "manual review decisions — `_apply_manual_review_decisions` is a "
+            "database pass `get_feed` runs before the display chain; it is skipped "
+            "here.",
+            "reviewed-key filtering — admin/debug only (`exclude_reviewed`), never "
+            "applied to a served anonymous page, and not applied here.",
+            "response cache — a served page may be a build from an earlier `now` "
+            "(`x-feed-cache: hit`/`stale_hit`). This trace always builds fresh, so "
+            "compare it against a response whose `x-feed-cache` is `miss`.",
+            "pool drift — candidate pools, Redis interestingness and 24h volume "
+            "move continuously; a trace and a page taken minutes apart can differ "
+            "for that reason alone.",
+        ],
     }
     trace["suggested_fix"] = _suggest_trace_fix(trace)
     return trace
@@ -5798,6 +5925,11 @@ async def _score_sports_mode_futures(
             "_quality_class": quality.quality_class,
             "_quality_family_key": quality.family_key,
             "_quality_story_key": quality.story_key,
+            # #1958: the first-page quality floor needs the ladder verdict, and
+            # the classifier is the only thing that has it. Re-deriving it later
+            # from the SERVED card would lose `external_id` and the full outcome
+            # list, so it would be a weaker oracle than the one the server used.
+            "_quality_ladder_or_bucket": quality.is_ladder_or_bucket,
         }
         if p_result.is_personalized:
             item["personalized"] = True
@@ -7186,6 +7318,11 @@ async def _score_futures(
                 "_quality_class": quality.quality_class,
                 "_quality_family_key": quality.family_key,
                 "_quality_story_key": quality.story_key,
+                # #1958: the first-page quality floor needs the ladder verdict, and
+                # the classifier is the only thing that has it. Re-deriving it later
+                # from the SERVED card would lose `external_id` and the full outcome
+                # list, so it would be a weaker oracle than the one the server used.
+                "_quality_ladder_or_bucket": quality.is_ladder_or_bucket,
             }
             personalization_trace = _build_personalization_trace(
                 ctx=ctx,
