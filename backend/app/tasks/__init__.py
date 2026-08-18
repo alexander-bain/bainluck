@@ -2430,18 +2430,46 @@ def cleanup_crypto(self, batch_size: int = 5000):
     return run_async(_cleanup_crypto_impl(batch_size))
 
 
+# ⚠️ LAT-P068 (#1609): these two are the LARGEST STRUCTURAL EXPOSURE on the
+# 2-slot `background` pool, and until this commit they were the only residents
+# of it with NO GAUGE AT ALL.
+#
+# `soft_time_limit=3600` means either one may hold **half the background pool
+# for a full hour**, four times a day; they fire :30 and :45 of the same hours,
+# so a long pair can hold BOTH slots simultaneously — a scheduled, total
+# background outage window with nothing else able to run.
+#
+# Neither called `_tracked_run`, so neither wrote a start or a terminal, so
+# `/api/admin/task-metrics?task=turbo_collapse_futures` returned NO DATA and
+# `hard_kills` could not see them. They were invisible to every latency read
+# taken in this program. S4 caught `turbo_collapse_futures` only by watching
+# celery's `active` set directly: **13.6 minutes observed, 31.8 % of all
+# background slot-time in a 22-minute window — the single largest occupant,
+# ahead of `warm_typeahead`.**
+#
+# This change is instrumentation ONLY: no limit, no schedule, no behaviour is
+# touched. Neither name is in `task_verdict.ENFORCED_TASKS`, so both classify to
+# a non-authoritative `unknown` and record exactly as an untracked task did
+# before — they simply become countable. Ruling 078: measure before you tune,
+# and a task with no gauge is a stronger case of it than a gauge with no reader.
 @celery_app.task(bind=True, soft_time_limit=3600, time_limit=3660, name="app.tasks.turbo_collapse_futures")
 def turbo_collapse_futures(self, limit: int = 5000):
     """Aggressive collapse pass for futures snapshots — high partition limit."""
     from app.tasks.retention import _collapse_snapshots_impl
-    return run_async(_collapse_snapshots_impl(min_age_hours=24, table="futures", limit=limit))
+    return _tracked_run(
+        "turbo_collapse_futures",
+        _collapse_snapshots_impl(min_age_hours=24, table="futures", limit=limit),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=3600, time_limit=3660, name="app.tasks.turbo_collapse_odds")
 def turbo_collapse_odds(self, limit: int = 5000):
     """Aggressive collapse pass for odds snapshots — high partition limit."""
     from app.tasks.retention import _collapse_snapshots_impl
-    return run_async(_collapse_snapshots_impl(min_age_hours=24, table="odds", limit=limit))
+    return _tracked_run(
+        "turbo_collapse_odds",
+        _collapse_snapshots_impl(min_age_hours=24, table="odds", limit=limit),
+    )
 
 
 # --- StatPal Usage Tracking ---
