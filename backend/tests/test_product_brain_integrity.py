@@ -517,7 +517,34 @@ def test_ruling_numbers_are_unique() -> None:
 #: lanes each writing `71 -> 72` is one ruling each, NOT two on top of 72. Resolved the documented
 #: way — by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree, which is 73, and which
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
-MINIMUM_BANKED_RULINGS = 74
+#: Raised 74 -> **75** by UX-P096 banking **087** (an exclusion is only safe where a mutation
+#: can red it) on `program/ux-83`, stacked on `-82`/`-81`.
+#:
+#: ⚠️ INTEGRATOR — THE FLOOR, AND A DUPLICATE 084 THAT IS **MASTER'S** TO FIX:
+#:
+#: (1) The floor. This stack's base carries 73 files; `-82` banked one and `-83` banks one, so
+#: this branch is 75. `origin/master` @ `9e0f0f37` carries **81**. Neither is the answer.
+#: Resolve the documented way — COUNT `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree,
+#: which is **83**. Not 81: READY-ux-82 said 81, measured before master gained a ruling of its
+#: own, and it is now stale by one commit.
+#:
+#: (2) `test_ruling_numbers_are_unique` WILL fail on the merged tree, and the fix is not ours.
+#: Master carries `084-a-ready-whose-branch-head-moved-is-withdrawn-not-re-gated.md`; ux-82
+#: carries `084-authority-lives-where-it-is-read.md`. Two rulings, one number. The tempting
+#: move is for this lane to renumber upward per docs/rulings/README.md — **that would be
+#: wrong, and it was tried and reverted here.** `.claude/handoff/RULING-CLAIMS.md` records
+#: `084 claimed-by ux` and `085 claimed-by integrator` for *"a READY whose branch head moved is
+#: withdrawn"* — so 084 is ux's by claim and master's file is the one filed off its own claim.
+#: The README rule allocates a renumber between two lanes racing for a free number; it does not
+#: override a recorded claim. **Fix on master: `git mv docs/rulings/084-a-ready-whose-branch-
+#: head-moved-is-withdrawn-not-re-gated.md docs/rulings/085-a-ready-whose-branch-head-moved-is-
+#: withdrawn-not-re-gated.md`, change its `# RULING 084` heading to `085`, and move its index
+#: line below ux's 084.** 085 is the number that lane claimed. 086 is latency's, which is why
+#: this branch banks 087 and not 086.
+#:
+#: (3) Therefore **merge `-81`, `-82`, `-83` as ONE wave, apply (2), and gate the final tree.**
+#: Pushing after `-82` alone lands the duplicate 084 and reds master.
+MINIMUM_BANKED_RULINGS = 75
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
