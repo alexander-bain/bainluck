@@ -1,31 +1,40 @@
-"""#1951 — the sentinel's admission predicate must BEHAVE like the two clients.
+"""#1951 — the sentinel's admission predicate is DRIVEN BY the shared decision.
 
-`frontend/__tests__/ios/conceptAdmissionParity.test.ts` is the structural link:
-it asserts, against source, that all three copies of the Discover card-admission
-rule carry the same arms in the same order. This file is the behavioural half —
-it drives the Python copy through the rows and proves the outcomes, which a
-source assertion cannot do.
+`contracts/feed_card_admission.json` is the Discover card-admission rule. This
+file is the Python implementation's half of answering to it: it loads the table
+and drives `feed_item_is_renderable` through EVERY row. The web implementation is
+driven through the same rows by `frontend/__tests__/ios/conceptAdmissionParity.
+test.ts`, which also source-asserts native and enforces the registry.
 
-THE DEFECT THIS RATCHETS AGAINST, stated exactly. `feed_item_is_renderable`
+WHAT CHANGED IN CYCLE 91, AND WHY IT IS NOT COSMETIC. Cycle 90 corrected this
+predicate's three drifted arms and pinned the corrections with a hand-written
+matrix that DUPLICATED the TypeScript one. That fixed the instance and left the
+mechanism: two matrices, in two languages, that a reader must diff by eye to know
+they still say the same thing. Ruling 021 is exactly about this — *when two
+consumers must agree about the same input, the unit to share is the DECISION, not
+the ingredient; a shared predicate under two policies is still two policies.*
+Three implementations that merely AGREE are three policies. The table is the
+decision; these tests are the only thing each implementation is allowed to answer
+to.
+
+THE DEFECT THE TABLE RATCHETS AGAINST, stated exactly. `feed_item_is_renderable`
 shipped in UX-P092 (#1948) as a third implementation of a rule that already had
-two, and it carried the PRE-#1935 reading on two arms:
+two, and it carried the PRE-#1935 reading:
 
     tournament:  golfers OR marquee_whathit      (both clients: golfers ALONE)
     concept:     marquee_whathit OR leader       (both clients: whathit needs a
                                                   nameable result; leader must be
                                                   usable, not merely present)
-
-and was missing web's fourth futures authority (`resolution_date` in the past).
+    futures:     no resolution_date authority    (both clients have one)
 
 That matters more here than in a renderer. The predicate feeds the DARK-CLASS
 limb, whose entire job is naming card types the server builds and no client can
-render — the #1935 family. A detector that is MORE PERMISSIVE than the surfaces
-it speaks for cannot see the family it hunts. Measured against a real 75-card
-production page (`522caea4`) with its seven tournaments mutated to the
-golferless-whathit shape: both clients suppress all seven, and the old predicate
-scored the class `7 built, 7 renderable` — a PASS over a fully dark tier. That is
-#1948's own failure mode (an alarm fully green while a tier is dark) reproduced
-inside the fix for #1948.
+render — the #1935 family. A detector MORE PERMISSIVE than the surfaces it speaks
+for cannot see the family it hunts. Measured against a real 75-card production
+page (`522caea4`) with its seven tournaments mutated to the golferless-whathit
+shape: both clients suppress all seven, and the old predicate scored the class
+`7 built, 7 renderable` — a PASS over a fully dark tier. That is #1948's own
+failure mode reproduced inside the fix for #1948.
 
 WHY THIS IS NOT THE "PERMISSIVE READING" THE FLOOR LIMB ASKED FOR. The
 `feed_renderable_card_count` docstring argues for permissiveness, and it is right
@@ -42,7 +51,9 @@ contains no specimen of any of the three drifts. See
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -53,9 +64,126 @@ from app.tasks.flow_sentinel import (
     feed_renderable_card_count,
 )
 
-NOW = datetime(2026, 8, 18, 4, 45, tzinfo=timezone.utc)
+CONTRACT_PATH = (
+    Path(__file__).resolve().parents[2] / "contracts" / "feed_card_admission.json"
+)
 
 
+def _load_contract() -> dict:
+    # A path typo must not read as a clean pass — an unrunnable check and a
+    # passing check are indistinguishable from the exit code (gotcha #54's
+    # cousin), and this file's whole value is that it runs.
+    assert CONTRACT_PATH.is_file(), f"the shared decision is missing: {CONTRACT_PATH}"
+    return json.loads(CONTRACT_PATH.read_text())
+
+
+CONTRACT = _load_contract()
+NOW = datetime.fromisoformat(CONTRACT["now"].replace("Z", "+00:00"))
+
+# `feed_item_is_renderable` returns a bool, not a reason code, and that asymmetry
+# is deliberate — the reason codes are web's suppression TELEMETRY, while the
+# sentinel only needs the verdict. The shared unit is the DECISION, so a row's
+# `expected_reason: null` reads as True here and any string reads as False.
+_CASES = [
+    pytest.param(
+        case["item"],
+        (
+            not case["expected_suppressed"]
+            if case.get("malformed_envelope")
+            else case["expected_reason"] is None
+        ),
+        id=case["id"],
+    )
+    for case in CONTRACT["cases"]
+]
+
+
+@pytest.mark.parametrize("item,renderable", _CASES)
+def test_every_row_of_the_shared_decision(item, renderable):
+    assert feed_item_is_renderable(item, now=NOW) is renderable
+
+
+class TestTheTableIsWorthAnsweringTo:
+    """A table can only ratchet what it covers, so its coverage is asserted too.
+
+    Without these, the fold degrades quietly into the thing it replaced: someone
+    adds a card type, gives it no rows, and every implementation's suite stays
+    green while the type ships dark on all three surfaces — #1935 restated.
+    """
+
+    def test_the_declared_python_implementation_is_this_one(self):
+        impls = {i["id"]: i for i in CONTRACT["implementations"]}
+        sentinel = impls["sentinel"]
+        assert sentinel["symbol"] == "feed_item_is_renderable"
+        path = CONTRACT_PATH.parents[1] / sentinel["path"]
+        assert path.is_file(), path
+        assert f"def {sentinel['symbol']}(" in path.read_text()
+
+    @pytest.mark.parametrize("card_type", CONTRACT["emitted_types"])
+    def test_every_emitted_type_is_decided_in_both_directions(self, card_type):
+        # One-directional coverage is the failure mode that matters: a type with
+        # only admitted rows is satisfied by `return True`, and a type with only
+        # suppressed rows is satisfied by `return False` — which would "detect"
+        # perfectly and starve the feed.
+        #
+        # This guard found its own exception on its first run: `event` is
+        # genuinely unconditional on all three surfaces, so it has no well-formed
+        # suppression row and never can. That is now DECLARED in
+        # `unconditional_types` rather than tolerated here — a declaration is
+        # checkable and a tolerance is not — and a declared unconditional type
+        # still owes a malformed-envelope row, so `return True` stays insufficient
+        # even for it.
+        rows = [
+            case
+            for case in CONTRACT["cases"]
+            if isinstance(case["item"], dict) and case["item"].get("type") == card_type
+        ]
+        verdicts = {
+            case["expected_reason"] is None
+            for case in rows
+            if not case.get("malformed_envelope")
+        }
+        if card_type in CONTRACT.get("unconditional_types", []):
+            assert verdicts == {True}, card_type
+            assert any(case.get("malformed_envelope") for case in rows), (
+                f"`{card_type}` is declared unconditional, so its only proof that "
+                f"the arm is not a bare `return True` is a malformed-envelope row"
+            )
+            return
+        assert verdicts == {True, False}, (
+            f"`{card_type}` is emitted by a producer but the shared decision does "
+            f"not pin both verdicts for it (got {verdicts or 'no rows at all'})"
+        )
+
+    def test_the_producers_emit_exactly_the_declared_types(self):
+        # The guard that makes a NEW card type impossible to ship dark. A type the
+        # server can build and the table does not name would be `unknown_type` on
+        # web and False here — dark on arrival, and silent, because no limb can
+        # report a class nobody enumerated.
+        import re
+
+        root = CONTRACT_PATH.parents[1]
+        found: set[str] = set()
+        for producer in CONTRACT["producers"]:
+            src = (root / producer["path"]).read_text()
+            emitted = set(re.findall(r'"type": *"([a-z_]+)"', src))
+            assert emitted == set(producer["emits"]), (
+                f"{producer['path']} emits {sorted(emitted)}, declared "
+                f"{sorted(producer['emits'])}"
+            )
+            found |= emitted
+        assert found == set(CONTRACT["emitted_types"])
+
+
+# ---------------------------------------------------------------------------
+# The specimen. A recorded production page SHAPE (`522caea4`, 2026-08-18) with
+# the class counts it actually served, so the limb is graded on the thing it
+# failed on rather than on a hand-built two-card page.
+#
+# These are NOT rows of the shared decision and must not move into the table:
+# the table is about ONE CARD's admission, and these are about what the LIMB
+# reports over a page. Same predicate, different unit.
+# ---------------------------------------------------------------------------
 def concept(**data) -> dict:
     base = {
         "key": "event:ufc:26aug20",
@@ -81,191 +209,6 @@ def futures(**data) -> dict:
     return {"type": "futures", "data": base}
 
 
-# ---------------------------------------------------------------------------
-# The shared matrix — the same claims the TS contract test makes about web, and
-# the Swift block makes about native. A row here is a claim about the RULE.
-# ---------------------------------------------------------------------------
-CONCEPT_MATRIX = [
-    pytest.param(
-        concept(leader={"name": "Joshua Van", "probability": 0.5217, "field_size": 2}),
-        True,
-        id="unsettled concept WITH a leader is admitted (the #1939 class)",
-    ),
-    pytest.param(
-        concept(
-            key="event:cycling:vuelta-2026",
-            domain="cycling",
-            leader={"name": "Tadej Pogacar", "probability": 0.751, "field_size": 30},
-        ),
-        True,
-        id="the Vuelta specimen — 0.751 of a 30-rider field is admitted",
-    ),
-    pytest.param(
-        concept(),
-        False,
-        id="unsettled concept with NO leader is suppressed (the #1486 class)",
-    ),
-    pytest.param(
-        concept(marquee_whathit=True, winner="Tadej Pogacar"),
-        True,
-        id="settled WHAT-HIT with a named winner is admitted",
-    ),
-    pytest.param(
-        concept(marquee_whathit=True, result_summary="Won by 1:12"),
-        True,
-        id="settled WHAT-HIT with only a result_summary is admitted (#1935)",
-    ),
-    pytest.param(
-        concept(marquee_whathit=True),
-        False,
-        id="settled WHAT-HIT that can name NOTHING is suppressed (#1935)",
-    ),
-    pytest.param(
-        concept(marquee_whathit=True, winner="   ", result_summary="  "),
-        False,
-        id="whitespace is not a result (#1935)",
-    ),
-    pytest.param(
-        # "Settled means settled." The server never sends both, so this row pins
-        # the ORDER of the two arms rather than a live case — precisely the kind
-        # of invariant that rots silently.
-        concept(
-            marquee_whathit=True,
-            leader={"name": "Joshua Van", "probability": 0.5217},
-        ),
-        False,
-        id="settled-but-resultless does NOT fall back to a leader",
-    ),
-]
-
-
-@pytest.mark.parametrize("item,renderable", CONCEPT_MATRIX)
-def test_concept_admission_matches_both_clients(item, renderable):
-    assert feed_item_is_renderable(item, now=NOW) is renderable
-
-
-# The Python copy faces malformed payloads for the SAME reason web does: native
-# can write `leader != nil` because its decoder throws on a malformed leader
-# first. Python has no such gate, and `{}` is truthy — so a presence test written
-# "to match native" would match the source and not the behaviour.
-@pytest.mark.parametrize(
-    "leader",
-    [
-        pytest.param({}, id="an empty object"),
-        pytest.param({"name": "   ", "probability": 0.6}, id="a blank name"),
-        pytest.param({"name": "Joshua Van"}, id="a missing probability"),
-        pytest.param({"name": "Joshua Van", "probability": "0.6"}, id="a string probability"),
-        pytest.param({"name": "Joshua Van", "probability": True}, id="a bool probability"),
-        pytest.param({"name": "Joshua Van", "probability": 1.4}, id="probability over 1.0 (gotcha #23)"),
-        pytest.param({"name": "Joshua Van", "probability": -0.1}, id="a negative probability"),
-        pytest.param("Joshua Van", id="a bare string instead of an object"),
-        pytest.param(None, id="an explicit null"),
-    ],
-)
-def test_an_unusable_leader_does_not_admit_the_card(leader):
-    assert feed_item_is_renderable(concept(leader=leader), now=NOW) is False
-
-
-class TestTournamentArm:
-    """#1935 deleted the bare `marquee_whathit` arm from BOTH clients. This copy
-    kept it, which is the headline half of #1951."""
-
-    def test_golfers_admit(self):
-        assert feed_item_is_renderable(
-            tournament(golfers=[{"name": "Scottie Scheffler", "probability": 0.21}]),
-            now=NOW,
-        ) is True
-
-    def test_golferless_whathit_is_suppressed(self):
-        # The exact shape both clients drop and this predicate used to admit.
-        # `TournamentCard`/`DiscoverTournamentCard` render the champion hero
-        # inside `golfers.first`, so this card is a gradient, a chip and a title.
-        assert feed_item_is_renderable(
-            tournament(golfers=[], marquee_whathit=True), now=NOW
-        ) is False
-
-    def test_bare_tournament_is_suppressed(self):
-        assert feed_item_is_renderable(tournament(), now=NOW) is False
-
-
-class TestFuturesArm:
-    """The one drift in the STRICT direction — this copy lacked web's fourth
-    settlement authority, so it under-counted a healthy page."""
-
-    def test_outcomes_admit(self):
-        assert feed_item_is_renderable(
-            futures(top_outcomes=[{"name": "Yes", "probability": 0.62}]), now=NOW
-        ) is True
-
-    @pytest.mark.parametrize(
-        "data",
-        [
-            pytest.param({"resolved": True}, id="resolved"),
-            pytest.param({"winner": "Yes"}, id="a named winner"),
-            pytest.param({"status": "settled"}, id="a terminal status"),
-            pytest.param({"status": "FINALIZED"}, id="a terminal status, upper case"),
-        ],
-    )
-    def test_authoritative_settlement_admits(self, data):
-        assert feed_item_is_renderable(futures(**data), now=NOW) is True
-
-    def test_a_past_resolution_date_admits(self):
-        past = (NOW - timedelta(days=2)).isoformat()
-        assert feed_item_is_renderable(futures(resolution_date=past), now=NOW) is True
-
-    def test_a_future_resolution_date_does_not(self):
-        future = (NOW + timedelta(days=2)).isoformat()
-        assert feed_item_is_renderable(futures(resolution_date=future), now=NOW) is False
-
-    def test_an_unparseable_resolution_date_falls_closed(self):
-        assert feed_item_is_renderable(futures(resolution_date="soon"), now=NOW) is False
-
-    def test_a_zero_outcome_unsettled_future_is_suppressed(self):
-        assert feed_item_is_renderable(futures(), now=NOW) is False
-
-
-class TestStructuralArms:
-    def test_an_event_is_always_renderable(self):
-        # Unconditional on all three surfaces, and correctly so: an event card is
-        # a real matchup plus a status/score, never a bare tile.
-        assert feed_item_is_renderable({"type": "event", "data": {}}, now=NOW) is True
-
-    def test_a_bundle_is_renderable_when_any_member_is(self):
-        item = {
-            "type": "bundle",
-            "data": {"items": [concept(), concept(leader={"name": "X", "probability": 0.5})]},
-        }
-        assert feed_item_is_renderable(item, now=NOW) is True
-
-    def test_an_all_empty_bundle_is_not(self):
-        item = {"type": "bundle", "data": {"items": [concept(), concept()]}}
-        assert feed_item_is_renderable(item, now=NOW) is False
-
-    def test_recursion_is_bounded(self):
-        item = {"type": "bundle", "data": {"items": []}}
-        for _ in range(6):
-            item = {"type": "bundle", "data": {"items": [item]}}
-        assert feed_item_is_renderable(item, now=NOW) is False
-
-    @pytest.mark.parametrize(
-        "item",
-        [
-            pytest.param({"type": "wormhole", "data": {}}, id="an unknown type"),
-            pytest.param({"type": "concept"}, id="a card with no data"),
-            pytest.param({"type": "concept", "data": []}, id="a card whose data is a list"),
-            pytest.param("not a card", id="a bare string"),
-            pytest.param(None, id="a null"),
-        ],
-    )
-    def test_it_falls_closed(self, item):
-        assert feed_item_is_renderable(item, now=NOW) is False
-
-
-# ---------------------------------------------------------------------------
-# The specimen. A recorded production page SHAPE (`522caea4`, 2026-08-18) with
-# the class counts it actually served, so the limb is graded on the thing it
-# failed on rather than on a hand-built two-card page.
-# ---------------------------------------------------------------------------
 def _production_shaped_page() -> list[dict]:
     page: list[dict] = []
     page += [{"type": "event", "data": {"id": i}} for i in range(12)]
@@ -366,3 +309,19 @@ def test_a_tier_that_can_name_its_result_is_not_dark():
 
     assert feed_dark_card_classes(page) == []
     assert feed_renderable_card_count(page) == 75
+
+
+def test_a_malformed_page_does_not_take_the_limb_down():
+    """The page-level half of the malformed-envelope rows.
+
+    Web's copy THREW on two of those shapes, inside a render-path `.filter()`
+    (#1951). The sentinel's exposure is the mirror image: a single malformed card
+    must not abort the census and blank an evidence block, because a limb that
+    raises reports nothing and a limb reporting nothing reads as healthy.
+    """
+    page = _production_shaped_page()
+    page += [None, "not a card", {"type": "concept"}, {"type": "event", "data": None}]
+
+    assert feed_renderable_card_count(page) == 58
+    dark = {d["type"]: d for d in feed_dark_card_classes(page)}
+    assert dark["concept"]["renderable"] == 0

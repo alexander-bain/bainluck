@@ -251,13 +251,46 @@ function _conceptLeaderIsUsable(
  *  - `bundle`: kept when ≥1 member is itself renderable; an all-empty bundle →
  *    `"empty_bundle"`.
  *  - unknown type → `"unknown_type"`.
+ *  - a card whose `data` never arrived, or arrived as a non-object →
+ *    `"malformed_envelope"`.
+ *
+ * THE DECISION THIS ENCODES IS SHARED, NOT LOCAL. Every row it must satisfy lives
+ * in `contracts/feed_card_admission.json`, and the other two implementations of
+ * this same rule are driven through the same rows. See that file's header before
+ * changing any arm here — an arm changed on one surface only is #1939, #1935 and
+ * #1951 in turn, three times in five weeks.
  */
 export function feedItemSuppressionReason(
   item: FeedItem,
   now: number = Date.now(),
   depth = 0,
 ): string | null {
-  switch (item?.type) {
+  // THE ENVELOPE, BEFORE ITS CONTENTS (#1951). Each arm below reads `item.data`
+  // through an `as` cast, which is erased at runtime — so a card that arrived
+  // with no `data` at all made `d.marquee_whathit` throw a TypeError. This
+  // function is called inside a `.filter()` in a render memo
+  // (`app/discover/page.tsx`) and inside `DiscoverCard`/`FeedCard` bodies, so
+  // that throw does not drop one card, it blanks the main region — #1909's exact
+  // failure mode, arriving through the predicate whose stated property is that it
+  // "fails closed". A throw is not falling closed.
+  //
+  // Measured 2026-08-18 while folding the three copies onto one table: of the
+  // five malformed-envelope shapes, web THREW on two (`data` absent, `data`
+  // null), while the Python mirror suppressed all five and native — whose
+  // decoder rejects the payload long before its predicate runs — suppressed all
+  // five too. Web was the only surface that could take the page down, and it was
+  // the only one on the page.
+  //
+  // Named distinctly rather than folded into `empty_*`: a card with no envelope
+  // is not a card with an empty envelope, and reporting the second for the first
+  // would put a lie in the suppression telemetry. If this code ever appears in
+  // those counts, a payload contract broke upstream.
+  if (!item || typeof item !== "object") return "unknown_type";
+  const data: unknown = (item as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return "malformed_envelope";
+  }
+  switch (item.type) {
     case "event":
       return null;
     case "futures": {
