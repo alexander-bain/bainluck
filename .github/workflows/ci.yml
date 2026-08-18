@@ -1,8 +1,40 @@
 name: CI
 
 on:
+  # NO `branches:` FILTER ON pull_request — deliberate, and load-bearing.
+  #
+  # It used to read `pull_request: branches: [master]`, which does NOT mean
+  # "PRs into master get CI". It means "ONLY PRs into master get CI" — a PR
+  # based on any other branch matches no trigger and gets NO RUN AT ALL. Not a
+  # pending check, not a red one: an empty checks list, which reads as "nothing
+  # to wait for" in exactly the place a reviewer looks for permission to merge.
+  #
+  # Two named failures, both in one week, both on stacked lane branches:
+  #
+  #   1. PR #1943 (`lane1/q363` -> `lane1/q362`) reported `mergeStateStatus:
+  #      DIRTY` and no checks. The base was retargeted to master; GitHub emits
+  #      `edited` on a retarget and this workflow listens to opened/synchronize/
+  #      reopened, so retargeting SCHEDULED NOTHING. A close+reopen is what
+  #      finally produced a run.
+  #   2. PR #1950 (`lane1/q365`, cut from `lane1/q364`) hit the same wall. Only
+  #      gitleaks reported, because `gitleaks.yml` has a BARE `pull_request:`
+  #      with no branch filter — the accidental control that proves the cause
+  #      is the filter here and not anything about the branches themselves.
+  #
+  # The workaround (retarget, then close+reopen) was rediscovered from scratch
+  # both times, because the symptom — a green-looking PR with no checks — does
+  # not point at a trigger. Removing the filter deletes the class: every PR gets
+  # a run regardless of base, and a stacked branch can never again be merged on
+  # the strength of checks that were never scheduled.
+  #
+  # Deploy is unaffected. The `deploy` job is separately gated on
+  # `github.ref == 'refs/heads/master' && github.event_name == 'push'`, so a PR
+  # into any base still cannot release — see the job's own comment. The `push:`
+  # filter below stays master-only so branch pushes do not double-run CI
+  # alongside their own PR.
+  #
+  # Guarded by `frontend/e2e/contract/ciTriggerCoverage.contract.test.js`.
   pull_request:
-    branches: [master]
   push:
     branches: [master]
 
