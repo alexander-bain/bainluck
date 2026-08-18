@@ -212,12 +212,21 @@ def build_slow_event(
     cache_bucket: str,
     stages: Optional[str] = None,
     rss_mb: Optional[float] = None,
+    split: Optional[dict] = None,
 ) -> str:
     """Serialise one tail observation for the slow-event ring.
 
     JSON rather than the colon-delimited member form used above: this record has
     optional fields and a free-text stage string, and ``parse_sample_member``
     already shows what positional parsing costs once a field becomes optional.
+
+    ``split`` (#1917, LAT-P070) carries the router-queue / app / DB attribution
+    from :mod:`app.utils.request_timing`. It rides the tail ring rather than a
+    new key family for the same reason the cache bucket does — Redis here is
+    Premium-0 / 50 MB / allkeys-lru — and it is what turns the tail from a
+    stakeout into a read: a rare 15 s golf request records WHY it was 15 s at the
+    moment it happens, instead of needing a loaded window to be re-created by
+    hand. Only the attribution fields are kept; the display-only ones are not.
     """
     record = {
         "t": round(float(timestamp), 3),
@@ -232,6 +241,17 @@ def build_slow_event(
             record["top_stage"], record["top_stage_ms"] = top[0], round(top[1], 1)
     if rss_mb is not None and math.isfinite(rss_mb):
         record["rss_mb"] = round(float(rss_mb), 1)
+    if isinstance(split, dict):
+        for key in ("db_ms", "app_ms", "router_queue_ms", "queries", "max_query_ms"):
+            value = split.get(key)
+            # `None` means UNUSABLE and is written as such — dropping the key
+            # would let a reader default it to 0 and conclude the router took no
+            # time, which is gotcha #53's exact shape.
+            if value is None:
+                record[key] = None
+                continue
+            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                record[key] = value
     return json.dumps(record, separators=(",", ":"), allow_nan=False)
 
 

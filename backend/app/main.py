@@ -63,6 +63,19 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events."""
     # Startup
     await init_db()
+    # #1917 (LAT-P070): attach the per-statement DB timer to the request path's
+    # engine. Installed HERE and not in app.services.database, deliberately: the
+    # listener is what makes `db_ms` real, and installing it at engine-creation
+    # time would attach it inside every Celery worker too, where there is no
+    # request and therefore nothing to attribute. Idempotent — a double call
+    # returns False rather than double-counting every query in the fleet.
+    try:
+        from app.services.database import engine as _request_engine
+        from app.utils.request_timing import install_request_db_timer
+
+        install_request_db_timer(_request_engine)
+    except Exception:  # pragma: no cover - never block startup on instrumentation
+        logger.debug("request DB timer install skipped", exc_info=True)
     # Queue 271 / #1197: warm the process-shared async Redis client so the feed +
     # calibration request paths reuse ONE pool instead of constructing/closing a
     # pool per request (the churn that amplifies the Heroku Redis TLS flakiness).
