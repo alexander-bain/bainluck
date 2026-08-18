@@ -180,7 +180,201 @@ async def cohort_market_type_weekly(
     return JSONResponse(status_code=202, content={"status": "no cached weekly yet, POST /build first"})
 
 
+@router.get("/admin/cohort-provenance-split")
+async def cohort_provenance_split(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Provenance split: venue-graded vs all rows per worst shape cell.
+
+    Header-only auth (no ?secret). Returns per (league, market_type) for
+    polymarket quantity/container_member: n_all, n_venue, null_default_share,
+    plus ECE_all and ECE_venue (10-bin, n-weighted) so the decider is one call.
+    """
+    _check_admin_secret(secret, request=request)
+    from sqlalchemy import text
+    from collections import defaultdict
+    rows = (await db.execute(text("""
+        SELECT COALESCE(fm.llm_sport_category,'uncategorized') AS league,
+               COALESCE(fm.market_type,'unknown') AS market_type,
+               COALESCE(fo.calibration_probability, fo.opening_probability) AS prob,
+               fo.is_winner,
+               fo.resolution_source
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status='resolved'
+          AND fm.source='polymarket'
+          AND fm.market_type IN ('quantity','container_member')
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
+          AND fo.opening_probability IS NOT NULL
+          AND fo.is_winner IS NOT NULL
+        LIMIT 300000
+    """))).all()
+    # Group by (league, market_type) and compute ECE_all vs ECE_venue
+    def ece_of(pairs):
+        n = len(pairs)
+        if n < 30:
+            return None
+        bins = [[] for _ in range(10)]
+        for prob, actual in pairs:
+            bins[min(int(prob*10),9)].append((prob, actual))
+        total = 0.0
+        for b in bins:
+            if not b:
+                continue
+            avg_p = sum(p for p,_ in b)/len(b)
+            avg_a = sum(a for _,a in b)/len(b)
+            total += len(b)/n * abs(avg_p-avg_a)
+        return round(total*100,2)
+    from collections import defaultdict
+    grouped_all = defaultdict(list)
+    grouped_venue = defaultdict(list)
+    counts = defaultdict(lambda: {"n_all":0,"n_venue":0})
+    for r in rows:
+        key = (r.league, r.market_type)
+        prob = float(r.prob); actual = int(bool(r.is_winner))
+        grouped_all[key].append((prob, actual))
+        counts[key]["n_all"] += 1
+        if r.resolution_source is not None:
+            grouped_venue[key].append((prob, actual))
+            counts[key]["n_venue"] += 1
+    out = []
+    for key in sorted(grouped_all.keys()):
+        league, mtype = key
+        n_all = counts[key]["n_all"]
+        n_venue = counts[key]["n_venue"]
+        n_default = n_all - n_venue
+        null_share = round(n_default/n_all,3) if n_all else None
+        graded_share = round(n_venue/n_all,3) if n_all else None
+        ece_all = ece_of(grouped_all[key])
+        ece_venue = ece_of(grouped_venue[key]) if n_venue >= 30 else None
+        # Also compute gap for context
+        def gap_of(pairs):
+            if not pairs:
+                return None
+            avg_p = sum(p for p,_ in pairs)/len(pairs)
+            avg_a = sum(a for _,a in pairs)/len(pairs)
+            return round((avg_p-avg_a)*100,2)
+        gap_all = gap_of(grouped_all[key])
+        gap_venue = gap_of(grouped_venue[key]) if n_venue >=30 else None
+        out.append({
+            "league": league, "market_type": mtype,
+            "n_all": n_all, "n_venue": n_venue, "n_default": n_default,
+            "null_default_share": null_share, "graded_share": graded_share,
+            "ece_all": ece_all, "ece_venue": ece_venue,
+            "gap_all": gap_all, "gap_venue": gap_venue,
+            "verdict_all": "RED" if ece_all and ece_all>5 else "GREEN" if ece_all is not None else "NA",
+            "verdict_venue": "RED" if ece_venue and ece_venue>5 else "GREEN" if ece_venue is not None else "INSUFFICIENT",
+        })
+    out = sorted(out, key=lambda x: (x["ece_all"] or 0), reverse=True)
+    return {"rows_scanned": len(rows), "cells": out, "note": "venue = resolution_source IS NOT NULL; default = IS NULL (226k PM defaults)"}
+
+
+@router.get("/admin/cohort-sums-histogram")
+async def cohort_sums_histogram(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Sums-to-1 histogram for Polymarket container_member/quantity ladders.
+
+    Header-only auth. Groups by COALESCE(group_id, event_id) and computes
+    sum_prob per group using curve price. Returns bucket histogram + per-size stats.
+    Only meaningful if provenance survives venue-graded-only.
+    """
+    _check_admin_secret(secret, request=request)
+    from sqlalchemy import text
+    from collections import defaultdict
+    import math
+    # Per-group sums, venue-graded only if has_venue_grade else all
+    rows = (await db.execute(text("""
+        SELECT COALESCE(fm.group_id::text, 'event:'||fm.event_id::text) AS group_key,
+               COUNT(*) AS members,
+               SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS sum_prob,
+               BOOL_OR(fo.resolution_source IS NOT NULL) AS has_venue
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status='resolved'
+          AND fm.source='polymarket'
+          AND fm.market_type IN ('container_member','quantity')
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
+          AND fo.opening_probability IS NOT NULL
+          AND fo.is_winner IS NOT NULL
+        GROUP BY group_key
+        HAVING COUNT(*) >= 2
+        LIMIT 100000
+    """))).all()
+    # Bucket histogram
+    buckets = {"0–1.0 (under)":0, "1.0–1.5 (slightly over)":0, "1.5–2.0 (over)":0, "2.0–3.0 (ladder)":0, "3.0–5.0 (strong ladder)":0, "5.0+ (extreme ladder)":0}
+    bucket_sum = defaultdict(float)
+    bucket_members = defaultdict(float)
+    per_size = defaultdict(list)
+    for r in rows:
+        s = float(r.sum_prob or 0)
+        m = int(r.members)
+        if s < 1.0:
+            b = "0–1.0 (under)"
+        elif s < 1.5:
+            b = "1.0–1.5 (slightly over)"
+        elif s < 2.0:
+            b = "1.5–2.0 (over)"
+        elif s < 3.0:
+            b = "2.0–3.0 (ladder)"
+        elif s < 5.0:
+            b = "3.0–5.0 (strong ladder)"
+        else:
+            b = "5.0+ (extreme ladder)"
+        buckets[b] += 1
+        bucket_sum[b] += s
+        bucket_members[b] += m
+        per_size[m].append(s)
+    hist = []
+    for b in ["0–1.0 (under)","1.0–1.5 (slightly over)","1.5–2.0 (over)","2.0–3.0 (ladder)","3.0–5.0 (strong ladder)","5.0+ (extreme ladder)"]:
+        cnt = buckets[b]
+        avg_sum = round(bucket_sum[b]/cnt,2) if cnt else None
+        avg_m = round(bucket_members[b]/cnt,1) if cnt else None
+        hist.append({"bucket": b, "groups": cnt, "avg_sum": avg_sum, "avg_members": avg_m})
+    # Per-size median/avg
+    size_stats = []
+    for sz in sorted(per_size.keys()):
+        lst = sorted(per_size[sz])
+        avg = round(sum(lst)/len(lst),2) if lst else None
+        med = lst[len(lst)//2] if lst else None
+        med = round(med,2) if med is not None else None
+        size_stats.append({"members": sz, "groups": len(lst), "avg_sum": avg, "median_sum": med})
+    # Also venue-graded-only histogram
+    venue_rows = [r for r in rows if r.has_venue]
+    vbuckets = {"0–1.0 (under)":0, "1.0–1.5 (slightly over)":0, "1.5–2.0 (over)":0, "2.0–3.0 (ladder)":0, "3.0–5.0 (strong ladder)":0, "5.0+ (extreme ladder)":0}
+    for r in venue_rows:
+        s = float(r.sum_prob or 0)
+        if s < 1.0:
+            b = "0–1.0 (under)"
+        elif s < 1.5:
+            b = "1.0–1.5 (slightly over)"
+        elif s < 2.0:
+            b = "1.5–2.0 (over)"
+        elif s < 3.0:
+            b = "2.0–3.0 (ladder)"
+        elif s < 5.0:
+            b = "3.0–5.0 (strong ladder)"
+        else:
+            b = "5.0+ (extreme ladder)"
+        vbuckets[b] += 1
+    vhist = [{"bucket": b, "groups": vbuckets[b]} for b in vbuckets]
+    return {
+        "groups_scanned": len(rows),
+        "histogram_all": hist,
+        "histogram_venue_only": vhist,
+        "per_size": size_stats[:20],
+        "note": "sum_prob = SUM(curve_price) per COALESCE(group_id, event_id); venue_only = has_venue=true; 5.0+ is extreme ladder defect"
+    }
+
+
 @router.get("/admin/cohort-views", response_class=HTMLResponse)
+
 async def cohort_views_html(request: Request, secret: str = Query("")):
     _check_admin_secret(secret, request=request)
     html = """<!doctype html>
