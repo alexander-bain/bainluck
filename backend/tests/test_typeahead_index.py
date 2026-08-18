@@ -393,6 +393,66 @@ class TestDriftDetection:
         assert report.is_clean
 
 
+# --- the moving event window, and the reap it forces -------------------------
+class TestEventWindow:
+    """The event arm is the only source predicate here that MOVES, and getting
+    it wrong was worth 163x in rows.
+
+    Measured on production 2026-08-18, which is how the defect was found before
+    the table ever shipped:
+
+        `commence_time >= now - 120 days`              -> 104,907 rows
+        the LIVE /typeahead window (below)             ->     644 rows
+
+    The first draft used the 120-day form, reasoning that the typeahead "has
+    never offered a game from three years ago". True, and irrelevant: the bound
+    it replaced was not unbounded, and the draft was a recall EXPANSION over
+    rows the live surface can never return. D2 (equivalence) and D3 (sizing)
+    were both wrong from that one line.
+    """
+
+    def test_the_window_matches_the_live_typeahead_arm(self):
+        """`routes/events.py`'s event pool query is
+        `status IN ('live','scheduled')` AND `commence_time` in
+        [now - 1h, now + 7d]. These constants are a COPY of that, so they are
+        pinned — if the live arm moves, this must move with it or the index
+        silently stops being equivalent."""
+        from app.tasks.typeahead_index import (
+            EVENT_STATUSES,
+            EVENT_WINDOW_FUTURE_DAYS,
+            EVENT_WINDOW_PAST_HOURS,
+        )
+
+        assert EVENT_WINDOW_PAST_HOURS == 1
+        assert EVENT_WINDOW_FUTURE_DAYS == 7
+        assert set(EVENT_STATUSES) == {"live", "scheduled"}
+
+    def test_the_window_is_relative_to_now_and_ordered(self):
+        from app.tasks.typeahead_index import _event_window
+
+        floor, ceil = _event_window()
+        assert floor < ceil
+        assert (ceil - floor).days == 7
+
+    def test_every_family_has_a_source_id_definition(self):
+        """The reap and the sentinel's orphan check share ONE definition of
+        "belongs in the index". Two definitions is one that drifts, and then one
+        of them is wrong and neither is obviously so."""
+        from app.tasks.typeahead_index import _source_id_select
+
+        for family in ENTITY_TYPES:
+            assert _source_id_select(family) is not None
+
+    def test_an_unknown_family_raises_rather_than_reaping_everything(self):
+        """A typo'd family name must NOT fall through to a select that matches
+        nothing — `entity_id NOT IN (<empty>)` would tombstone the entire
+        family. Loud is the only safe failure here."""
+        from app.tasks.typeahead_index import _source_id_select
+
+        with pytest.raises(ValueError):
+            _source_id_select("concpet")
+
+
 # --- wiring ------------------------------------------------------------------
 class TestWiring:
     def test_both_tasks_are_enrolled_with_a_terminal(self):
@@ -456,6 +516,34 @@ class TestWiring:
         )
         assert verdict.verdict == "unknown"
         assert verdict.authoritative
+        assert not verdict.is_green
+
+    def test_orphans_fail_the_run_even_with_zero_drift(self):
+        """The direction the sampled comparison cannot see.
+
+        `compare_projections` walks live sources and asks "is each one indexed
+        correctly?" — never "does the index hold rows the sources no longer
+        have?". Those are different failures, and the second is what a MOVING
+        source predicate produces: an event ages out of the 7-day window, its
+        row is never revisited, and it stays `is_active` forever.
+
+        A run can therefore have PERFECT drift and still be serving stale rows,
+        so `orphans_total` fails the terminal on its own terms. It is a COUNT
+        over the whole table, not a contribution to a rate over a sample —
+        adding a total to a rate would produce a number meaning nothing.
+        """
+        from app.utils.task_verdict import verdict_for
+
+        verdict = verdict_for(
+            "typeahead_index_sentinel",
+            {
+                "terminal": "failed",
+                "overall": {"drift_rate": 0.0},
+                "orphans_total": 412,
+                "errors": ["typeahead_index holds 412 ACTIVE rows whose source no longer qualifies"],
+            },
+        )
+        assert verdict.verdict == "failed"
         assert not verdict.is_green
 
     def test_a_clean_sentinel_run_is_green(self):

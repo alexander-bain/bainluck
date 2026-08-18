@@ -455,24 +455,55 @@ async def _page_teams(session, after_id: int, limit: int) -> list[Projection]:
     return [project_team(team, sport_key) for team, sport_key in rows]
 
 
-async def _page_events(session, after_id: int, limit: int) -> list[Projection]:
-    """Recent + upcoming games only.
+#: The live `/typeahead` event arm's own window (`routes/events.py`, the event
+#: pool query): status live|scheduled, `commence_time` in [now-1h, now+7d].
+#: COPIED DELIBERATELY, and re-measured against production rather than guessed.
+#:
+#: The first draft of this module used a 120-day backward horizon "because the
+#: typeahead has never offered a game from three years ago". Measured on
+#: production 2026-08-18: that predicate matches **104,907** events. The live
+#: window matches **644**. So the draft was not a tighter bound on an unbounded
+#: arm — it was a 163x RECALL EXPANSION over rows `/typeahead` can never return,
+#: and it would have added ~105k rows to a table whose entire argument is that
+#: it is small. Both halves of D2 and D3 were wrong at once, from one line.
+EVENT_WINDOW_PAST_HOURS = 1
+EVENT_WINDOW_FUTURE_DAYS = 7
+EVENT_STATUSES = ("live", "scheduled")
 
-    The horizon is the same shape the live typeahead uses — it has never offered
-    a game from three years ago — and it is the difference between ~22 k rows
-    and every event ever recorded. An unbounded events arm would blow the D3
-    sizing model on its own.
-    """
+
+def _event_window() -> tuple[datetime, datetime]:
     from datetime import timedelta
 
+    now = datetime.now(timezone.utc)
+    return (
+        now - timedelta(hours=EVENT_WINDOW_PAST_HOURS),
+        now + timedelta(days=EVENT_WINDOW_FUTURE_DAYS),
+    )
+
+
+async def _page_events(session, after_id: int, limit: int) -> list[Projection]:
+    """Exactly the games the live `/typeahead` event arm can return.
+
+    ⚠️ THIS WINDOW MOVES, and it is the only source predicate here that does.
+    A game projected today is outside the window in eight days, so `event` rows
+    must be TOMBSTONED as they age out — see :func:`_reap_departed`. Without
+    that, the table only ever grows and the read path serves games from months
+    ago: a denormalised index that silently goes stale, which is worse than the
+    slow query it replaces.
+    """
     from app.models.models import Event, Sport
 
-    floor = datetime.now(timezone.utc) - timedelta(days=120)
+    floor, ceil = _event_window()
     rows = (
         await session.execute(
             select(Event, Sport.key)
             .join(Sport, Event.sport_id == Sport.id, isouter=True)
-            .where(Event.id > after_id, Event.commence_time >= floor)
+            .where(
+                Event.id > after_id,
+                Event.status.in_(EVENT_STATUSES),
+                Event.commence_time >= floor,
+                Event.commence_time <= ceil,
+            )
             .order_by(Event.id)
             .limit(limit)
         )
@@ -517,6 +548,83 @@ _PAGERS = {
 }
 
 
+def _source_id_select(family: str):
+    """A SELECT of the source ids, AS TEXT, that legitimately belong in the index.
+
+    One definition of "belongs", used by BOTH the reap and the sentinel's orphan
+    check, so the two cannot drift into disagreeing about what the table should
+    contain — which would make one of them wrong and neither of them obviously so.
+    """
+    from sqlalchemy import cast as sa_cast
+    from sqlalchemy import String as SAString
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Team
+
+    if family == TEAM:
+        return select(sa_cast(Team.id, SAString))
+    if family == EVENT:
+        floor, ceil = _event_window()
+        return select(sa_cast(Event.id, SAString)).where(
+            Event.status.in_(EVENT_STATUSES),
+            Event.commence_time >= floor,
+            Event.commence_time <= ceil,
+        )
+    if family == FUTURES_MARKET:
+        return select(sa_cast(FuturesMarket.id, SAString)).where(
+            FuturesMarket.status == "open"
+        )
+    if family == FUTURES_OUTCOME:
+        return (
+            select(sa_cast(FuturesOutcome.id, SAString))
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .where(FuturesMarket.status == "open")
+        )
+    raise ValueError(f"unknown entity family: {family}")
+
+
+async def _reap_departed(session, family: str) -> int:
+    """Tombstone index rows whose source no longer belongs. Returns rows reaped.
+
+    WHY THIS EXISTS, and why it is not an optimisation. Without it this table
+    only ever GROWS: a market closes, a game ages out of the 7-day window, a team
+    is deleted — and its row sits in the index, `is_active = true`, forever. The
+    read path would then serve a game from three weeks ago as a live suggestion.
+
+    That failure would ALSO have been invisible to the sentinel as first written.
+    `compare_projections` walks live sources and asks "is each one indexed
+    correctly" — it never asks the reverse, "does the index contain rows the
+    sources no longer have". A detector blind in exactly the direction its
+    subject fails in is the shape this module's own docstring warns about, and I
+    wrote it before catching it. The sentinel now checks both directions.
+
+    Run only when a family's pass reaches its END, so the anti-join happens once
+    per completed sweep rather than once per page.
+
+    `NOT IN` over a hashed subquery rather than a correlated `NOT EXISTS`: the
+    subquery is evaluated ONCE into a hash (179k text ids at the largest), which
+    is a single anti-join pass. A correlated EXISTS with a cast on the source
+    side would defeat the source PK index and re-scan per row.
+    """
+    from app.models.models import TypeaheadIndex
+    from sqlalchemy import update
+
+    source_ids = _source_id_select(family)
+    stmt = (
+        update(TypeaheadIndex)
+        .where(
+            TypeaheadIndex.entity_type == family,
+            TypeaheadIndex.is_active.is_(True),
+            TypeaheadIndex.entity_id.notin_(source_ids),
+        )
+        .values(is_active=False, refreshed_at=datetime.now(timezone.utc))
+    )
+    result = await session.execute(stmt)
+    reaped = int(result.rowcount or 0)
+    if reaped:
+        logger.info("typeahead_index: reaped %s departed %s rows", reaped, family)
+    return reaped
+
+
 async def _rebuild_typeahead_index(
     budget_seconds: int = DEFAULT_BUDGET_SECONDS,
     page_size: int = PAGE_SIZE,
@@ -546,6 +654,7 @@ async def _rebuild_typeahead_index(
     cursor = _load_cursor()
     written = 0
     scanned = 0
+    reaped = 0
     exhausted: list[str] = []
     stopped_at: str | None = None
 
@@ -570,9 +679,15 @@ async def _rebuild_typeahead_index(
                     stopped_at = family
                     break
                 if not projections:
-                    # End of this family. Reset so the next pass re-verifies it
-                    # from the top: this is a RECONCILE, and a cursor parked at
-                    # the end would mean rows 1..N are never looked at again.
+                    # End of this family. Reap BEFORE resetting the cursor: a
+                    # completed sweep is exactly the moment we know the source
+                    # set entirely, so it is the only point at which "the index
+                    # holds rows the source no longer has" is answerable.
+                    reaped += await _reap_departed(session, family)
+                    await session.commit()
+                    # Reset so the next pass re-verifies from the top: this is a
+                    # RECONCILE, and a cursor parked at the end would mean rows
+                    # 1..N are never looked at again.
                     exhausted.append(family)
                     cursor[family] = 0
                     break
@@ -600,6 +715,7 @@ async def _rebuild_typeahead_index(
         "scanned": scanned,
         "written": written,
         "elapsed_seconds": elapsed,
+        "reaped": reaped,
         "families_exhausted": exhausted,
         "cursor_persisted": persisted,
         "budget_seconds": budget_seconds,
@@ -660,6 +776,7 @@ async def _run_typeahead_index_sentinel(
 
     per_family: dict[str, Any] = {}
     totals = {"sampled": 0, "missing": 0, "stale": 0, "inactive": 0, "clean": 0}
+    orphans_total = 0
 
     async with async_session_maker() as session:
         # An EMPTY index is not drift — it is "the backfill has not run yet".
@@ -699,24 +816,76 @@ async def _run_typeahead_index_sentinel(
                 for entity_id, content_hash, is_active in rows
             }
             report = compare_projections(expected, indexed)
-            per_family[family] = report.as_dict()
+            family_report = report.as_dict()
+
+            # THE OTHER DIRECTION, which the sampled comparison above cannot
+            # see. `compare_projections` walks live sources and asks "is each
+            # one indexed correctly?" — it never asks "does the index hold rows
+            # the sources no longer have?". Those are different failures, and
+            # the second is the one a MOVING source predicate produces: an
+            # `event` ages out of the 7-day window, its row is never revisited,
+            # and it sits `is_active = true` forever until the reap runs.
+            #
+            # A detector blind in exactly the direction its subject fails in is
+            # the shape this module's own docstring warns about, so it is
+            # checked here as counts rather than left to the reap being correct.
+            # Counts, not a sample: an orphan population is a total, and
+            # sampling for it would report 0 for a small real leak.
+            active_indexed = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(TypeaheadIndex)
+                    .where(
+                        TypeaheadIndex.entity_type == family,
+                        TypeaheadIndex.is_active.is_(True),
+                    )
+                )
+            ).scalar() or 0
+            source_total = (
+                await session.execute(
+                    select(func.count()).select_from(_source_id_select(family).subquery())
+                )
+            ).scalar() or 0
+            family_report["active_indexed"] = active_indexed
+            family_report["source_rows"] = source_total
+            # Positive => rows the index holds and the source does not. Negative
+            # simply means the builder has not caught up yet, which is `partial`
+            # territory and NOT an integrity problem — reported, not alarmed on.
+            family_report["orphans"] = max(0, active_indexed - source_total)
+
+            per_family[family] = family_report
             for key in totals:
                 totals[key] += getattr(report, key)
+            orphans_total += family_report["orphans"]
 
     overall = DriftReport(**totals)
+    # Orphans are an INTEGRITY failure, not a drift-rate contribution: they are a
+    # count over the whole table while drift is a rate over a sample, and adding
+    # a total to a rate would produce a number that means nothing. They fail the
+    # run on their own terms.
+    clean = overall.is_clean and orphans_total == 0
     summary = {
-        "terminal": "complete" if overall.is_clean else "failed",
+        "terminal": "complete" if clean else "failed",
         "indexed_rows": indexed_total,
         "threshold": SENTINEL_DRIFT_THRESHOLD,
         "overall": overall.as_dict(),
+        "orphans_total": orphans_total,
         "families": per_family,
     }
+    errors = []
     if not overall.is_clean:
-        summary["errors"] = [
+        errors.append(
             f"typeahead_index drift {overall.drift_rate:.4f} exceeds "
             f"{SENTINEL_DRIFT_THRESHOLD} ({overall.drifted}/{overall.sampled} rows)"
-        ]
-        logger.error("typeahead_index sentinel DRIFT: %s", summary)
+        )
+    if orphans_total:
+        errors.append(
+            f"typeahead_index holds {orphans_total} ACTIVE rows whose source no "
+            f"longer qualifies — the reap is not keeping up"
+        )
+    if errors:
+        summary["errors"] = errors
+        logger.error("typeahead_index sentinel NOT CLEAN: %s", summary)
     else:
         logger.info("typeahead_index sentinel clean: %s", overall.as_dict())
     return summary
