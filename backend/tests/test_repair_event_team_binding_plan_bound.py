@@ -319,20 +319,89 @@ class TestRefusesByName:
         assert session.updates == []
 
     @pytest.mark.asyncio
-    async def test_a_corrupt_artifact_is_refused_as_corrupt_not_as_missing(
-        self, monkeypatch
-    ):
+    async def test_a_corrupt_artifact_is_refused_as_corrupt_not_as_missing(self, monkeypatch):
         """Distinct readings. 'Absent' invites a fresh dry-run; 'edited in the
-        store' is a security-shaped event and must not be papered over."""
-        async def _corrupt():
-            return None, REASON_PLAN_CORRUPT
+        store' is a security-shaped event and must not be papered over.
 
-        monkeypatch.setattr(rail, "_load_plan", _corrupt)
+        CONVERTED, queue 365 — this test used to be the sharpest dead-oracle
+        specimen in the repo, and it was on the apply-safety rail itself.
+
+        It read::
+
+            async def _corrupt():
+                return None, REASON_PLAN_CORRUPT
+            monkeypatch.setattr(rail, "_load_plan", _corrupt)
+
+        which asserts the binder behaves correctly GIVEN the right reason. The
+        actual defect was that nothing ever produced the right reason:
+        ``_load_plan`` flattened ``decode_envelope``'s correct
+        ``ChecksumMismatch`` classification into prose, ``bind_apply`` matched on
+        the corrupt CONSTANT, and the whole path fell through to
+        ``PLAN_ARTIFACT_MISSING`` — telling an attended operator the plan never
+        existed and sending them to regenerate it, which is the one action that
+        destroys the evidence of an edited store. **A test that patches past the
+        boundary containing the bug is green by construction**, and this one was,
+        inside a 60-test suite, for as long as the bug existed.
+
+        Now only the TRANSPORT is faked. The envelope is real, the tamper is
+        real, and the classification comes from production ``decode_envelope``;
+        the reason code is produced by the shipping ``_load_plan`` rather than
+        handed to the binder. Revert the corrupt-vs-missing fix and this goes red.
+        """
+        import app.services.durable_snapshots as snaps
+        from app.utils import durable_state as ds
+        from app.utils.durable_state import DurableEnvelope, decode_envelope
+
+        # A REAL checksum failure: build a valid envelope, then alter the payload
+        # without re-checksumming. Nothing here asserts the status into being.
+        envelope = DurableEnvelope.build(
+            identity="repair:event-team-binding:plan",
+            schema_version="event-team-binding-apply-plan/v2",
+            payload={
+                "schema": "event-team-binding-apply-plan/v2",
+                "rows": [],
+                "plan_hash": "x",
+            },
+            complete=True,
+            source="test",
+        )
+        read = decode_envelope(
+            {
+                "identity": envelope.identity,
+                "schema_version": envelope.schema_version,
+                "generation": envelope.generation,
+                "generated_at": envelope.generated_at.isoformat(),
+                "payload": {
+                    "schema": "event-team-binding-apply-plan/v2",
+                    "rows": [{"edited": True}],
+                },
+                "checksum": envelope.checksum,  # stale: belongs to the ORIGINAL payload
+                "complete": True,
+                "source": "test",
+            },
+            tier="durable",
+            expected_version="event-team-binding-apply-plan/v2",
+            max_age_s=14 * 86400,
+        )
+        # Premise check. If production stops calling this a checksum mismatch,
+        # the specimen below proves nothing and must fail loudly rather than pass.
+        assert read.status == ds.MALFORMED
+        assert read.error_class == "ChecksumMismatch"
+
+        async def _read(*_a, **_k):
+            return read
+
+        monkeypatch.setattr(snaps, "read_snapshot_standalone", _read)
         session = _ApplySession([], TEAMS)
 
         out = await repair(session, apply=True, plan_hash="anything")
 
-        assert out["reason_codes"] == [REASON_PLAN_CORRUPT]
+        assert out["reason_codes"] == [REASON_PLAN_CORRUPT], (
+            "the shipping loader did not classify a torn artifact as CORRUPT — "
+            "if this says PLAN_ARTIFACT_MISSING, an attended operator is being "
+            "told to regenerate the plan over an edited store"
+        )
+        assert session.updates == [], "a refused apply wrote to the database"
 
     @pytest.mark.asyncio
     async def test_an_empty_plan_cannot_be_applied(self, monkeypatch):
