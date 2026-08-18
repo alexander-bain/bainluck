@@ -324,6 +324,16 @@ def test_the_schema_is_pinned():
     must be RE-DERIVED and RE-APPROVED. That is the intended cost of the fix, and
     the refusal it produces (``PLAN_ARTIFACT_CORRUPT``, never ``MISSING``) is the
     other half of the same certification.
+
+    **v2 -> v3, queue 368, and again the bump is recorded here rather than
+    noticed.** C-APPLY-PRE-CREATE-R2 finding 1: ``sport_id`` is written by the
+    create and was OUTSIDE the digest, so editing it in an artifact left the
+    stored ``plan_hash`` correct and the plan decoded clean. MLB has two team
+    registries with all 30 clubs duplicated across them (#1798), so that one
+    integer decides which copy of the club the new event binds to. The field is
+    now in the address, the decoder requires an int, and every v2 create artifact
+    — including the two that were GREEN at queue 367
+    (``2dbc48c5…``, ``a1237271…``) — must be RE-DERIVED and RE-APPROVED.
     """
-    assert CREATE_PLAN_SCHEMA == "event-create-from-truth-plan/v2"
+    assert CREATE_PLAN_SCHEMA == "event-create-from-truth-plan/v3"
     assert CreatePlan().as_payload()["schema"] == CREATE_PLAN_SCHEMA
