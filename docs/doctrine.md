@@ -120,6 +120,25 @@ result, every other non-zero is a story about the harness.
 a failure that had already been fixed); gotcha **#54**, whose prescribed
 `cmd > /tmp/gate.txt` fix is what creates the reused path.
 
+### 8. A bound derived only from successes cannot be corrected by the failures it causes.
+
+When a limit is computed from completed runs, and exceeding the limit produces something
+that is *not* a completed run, the failures are invisible to the rule that set the limit.
+Every violation then makes the evidence for widening it stronger and the input to the
+calculation no larger — a one-way ratchet whose fixed point is the outage. Refusing to
+learn from a truncated run is usually **correct** (it is a lower bound, not a cost), so the
+defect is not in that refusal; it is in having no other path by which the bound can move.
+**Ask of any derived limit: what would raise it, and can the thing it constrains produce
+that?** If the answer is "a success it is preventing", the loop is closed and only an
+outside decision opens it.
+
+*Named failures:* ruling **089** — the calibration futures phase, budgeted at
+`max(completions) × 1.5` from ten pre-bump 47–118 s runs, cancelled its own unit reads at
+the derived 159,637 ms cap for **111 consecutive beats** while every one of them recorded
+a floor the budget was forbidden to read. Sibling of clause 2 (*a guard derived from the
+thing it guards inherits the lie*): clause 2 is a rule corrupted by its subject, this is a
+rule **starved** by it.
+
 ---
 
 ## Related

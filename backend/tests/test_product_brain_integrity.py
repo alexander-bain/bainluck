@@ -519,7 +519,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
 #: RESOLVED BY COUNTING, seventh consecutive cycle. HEAD said 83, program/latency-61 said 82,
 #: and neither is the merged truth. Documented rule: COUNT
-#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree. Measured here: **84**.
+#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree. Measured here: **85**.
 #:
 #: 84 = the 83 that stood after the ux wave, plus latency's **086** (the working gauge nobody
 #: reads is the same as no gauge), which FILLS the last open gap above 060. The only remaining
@@ -531,7 +531,14 @@ def test_ruling_numbers_are_unique() -> None:
 #: integrator's (a READY whose branch head moved is withdrawn), 086 is latency's, 087 is ux's
 #: second. The allocation came from RULING-CLAIMS.md, not from counting files — counting files
 #: is how you get the FLOOR, reading the ledger is how you get the NUMBER.
-MINIMUM_BANKED_RULINGS = 84
+#:
+#: 85 = that 84 plus calibration's **089** (a budget derived only from SUCCESSES cannot be
+#: corrected by the failures it causes — the futures phase cancelled at its own derived
+#: 159,637 ms cap for 111 consecutive beats). Eighth consecutive cycle resolved by counting:
+#: HEAD said 84, program/calibration-68 said 82, the merged tree says 85. 088 is latency's
+#: (a lane may rebase when arriving un-rebased is guaranteed-red), claimed and unmerged at
+#: the time of writing, so a merge that lands it moves this to 86 — COUNT, do not add.
+MINIMUM_BANKED_RULINGS = 85
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
