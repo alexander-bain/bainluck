@@ -218,6 +218,34 @@ export function parsePlayerName(
   let player = "";
   let stat = "";
 
+  // UX-P097 (#1976 §5): Polymarket names the market "<Player>: <Stat> O/U <line>"
+  // — the person is BEFORE the colon and the stat is followed by the LINE. Both
+  // branches below assume Kalshi's opposite shape (matchup before the colon, a
+  // bare stat after it), so this one parsed the stat-and-line as the person and
+  // produced players literally called "Home Runs O/U 0.5".
+  //
+  // It only surfaced now because these rows never reached the client: the
+  // endpoint was classifying every one of them as a game total and dropping
+  // them for want of a threshold, so a Polymarket-only game served six empty
+  // sections. Fixing the payload exposed the second half of the same wrong
+  // assumption, one layer up.
+  //
+  // Strictly additive (gotcha #43): requires a colon, a trailing "O/U <line>",
+  // and a KNOWN stat in between, so no shape that parses today changes.
+  if (colonIdx > 0) {
+    const ou = afterColon.match(/^(.*?)\s*O\/U\s*\d+(?:\.\d+)?$/i);
+    const known = ou
+      ? STAT_TYPES.find((st) => st.toLowerCase() === ou[1].trim().toLowerCase())
+      : undefined;
+    if (known) {
+      // `team` is left blank deliberately: for this shape the text before the
+      // colon is the PLAYER, not the matchup, and handing it to detectTeam()
+      // would be a confident wrong answer. The row's own `player_team` (which
+      // the caller prefers anyway) is the honest source.
+      return { player: beforeColon.trim(), stat: known, team: "", identified: true };
+    }
+  }
+
   const exactStatMatch = STAT_TYPES.find(
     (st) => afterColon.toLowerCase() === st.toLowerCase(),
   );
@@ -678,6 +706,11 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
      */
     readonly probability: number | null;
     readonly source: string;
+    /**
+     * The row's real line, when its label carries one. `null` keeps the old
+     * 0.5 default — see `commitOtherRow`.
+     */
+    readonly threshold: number | null;
   }
 
   /**
@@ -693,12 +726,19 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     if (!parsed || !parsed.player || !parsed.stat) return null;
     const statLower = parsed.stat.toLowerCase();
     if (!STAT_TYPES.some((st) => st.toLowerCase() === statLower)) return null;
+    // UX-P097: the label's own line, which `parsePropLabel` has always parsed
+    // and this pass has always discarded — so every `other`-derived rung
+    // rendered at 0.5 whatever its real line was ("Bubba Chandler: Strikeouts
+    // O/U 4.5" showed as Strikeouts 0.5). Wrong numbers, not missing ones.
+    const label = parsePropLabel(o.outcome_name);
+    const parsedThreshold = label ? Number(label.threshold) : NaN;
     return Object.freeze({
       playerName: parsed.player,
       team: detectTeam(parsed.team || o.market_name || ""),
       statKey: statLower,
       probability: o.probability ?? null,
       source: o.source as string,
+      threshold: Number.isFinite(parsedThreshold) ? parsedThreshold : null,
     });
   }
 
@@ -738,7 +778,9 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
       playerEntry.stats.set(c.statKey, { rungs: [], sources: new Set(), movement: null, movementAbs: null, gradeRows: [], identified: true });
     }
     const statEntry = playerEntry.stats.get(c.statKey)!;
-    statEntry.rungs.push({ threshold: 0.5, overProb: c.probability, sources: 1, movement: null });
+    // 0.5 stays the fallback for labels that carry no line (the Yes/No/NRFI
+    // rows), so nothing that renders today changes shape.
+    statEntry.rungs.push({ threshold: c.threshold ?? 0.5, overProb: c.probability, sources: 1, movement: null });
     statEntry.sources.add(c.source);
   }
 

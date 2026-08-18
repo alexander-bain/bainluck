@@ -803,3 +803,154 @@ class TestSportTotalRangeGuard:
 
         assert len(response["totals"]) == 1
         assert response["totals"][0]["threshold"] == 8.5
+
+
+class TestPolymarketLinePlacement:
+    """#1976 §5 — the prop set was never missing, it was mis-shaped.
+
+    The assembly path assumed KALSHI's line placement: the number lives in the
+    OUTCOME name ("Juan Soto: 2+") and the market name carries only the stat.
+    Polymarket does the opposite — the number is in the MARKET name
+    ("Juan Soto: Home Runs O/U 1.5") and the outcomes are a bare "Over"/"Under".
+
+    Both halves of that assumption failed together, which is why the symptom was
+    total rather than partial:
+      1. "o/u" is tested before any player check, so every Polymarket player prop
+         classified as a game_total;
+      2. the totals path reads the threshold from the OUTCOME, gets None from
+         "Over", and `continue`s.
+
+    Net effect on a POLYMARKET-ONLY game (the 8/14 Sox-Pirates specimen,
+    event 15191702): six empty sections served over 35 linked markets and a
+    complete, correctly-priced prop set. Games that also carry Kalshi markets
+    populated normally, which is what kept this invisible.
+
+    The fixtures below are the real production shapes, verbatim.
+    """
+
+    def _poly_market(self, *, id, name):
+        return _make_market(
+            id=id, name=name, external_id=f"0x{id:040x}",
+            source="polymarket", sport_id=1, sport_category="baseball",
+            category="game_prop", status="resolved",
+        )
+
+    @pytest.mark.asyncio
+    async def test_polymarket_player_props_reach_the_player_props_section(self):
+        """The whole point: a Polymarket-only game serves its props."""
+        event = _make_event(
+            sport_key="baseball_mlb",
+            home_team_name="Pittsburgh Pirates",
+            away_team_name="Boston Red Sox",
+            status="closed",
+        )
+        markets = [
+            self._poly_market(id=901, name="Adley Rutschman: Home Runs O/U 0.5"),
+            self._poly_market(id=902, name="Bubba Chandler: Strikeouts O/U 4.5"),
+            # A near-certain rung, kept in the fixture deliberately — see the
+            # last assertion. Real Polymarket prop sets are full of these.
+            self._poly_market(id=903, name="Jarren Duran: Home Runs O/U 1.5"),
+        ]
+        outcomes = [
+            _make_outcome(id=9011, market_id=901, name="Over", probability=0.065),
+            _make_outcome(id=9012, market_id=901, name="Under", probability=0.935),
+            _make_outcome(id=9021, market_id=902, name="Over", probability=0.41),
+            _make_outcome(id=9022, market_id=902, name="Under", probability=0.59),
+            _make_outcome(id=9031, market_id=903, name="Over", probability=0.0055),
+            _make_outcome(id=9032, market_id=903, name="Under", probability=0.9945),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=markets),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        props = response["player_props"]
+        assert props, "Polymarket player props must not vanish (#1976 §5)"
+
+        # The LINE has to survive, read off the market name.
+        by_market = {p["market_name"]: p for p in props if p["outcome_name"] == "Over"}
+        assert by_market["Adley Rutschman: Home Runs O/U 0.5"]["threshold"] == 0.5
+        assert by_market["Bubba Chandler: Strikeouts O/U 4.5"]["threshold"] == 4.5
+
+        # And the DIRECTION has to survive: "Over" is the over probability,
+        # "Under" is its complement — not a second, contradictory over.
+        rutschman = [p for p in props if p["market_name"].startswith("Adley")]
+        assert {p["outcome_name"] for p in rutschman} == {"Over", "Under"}
+        for p in rutschman:
+            assert p["over_probability"] == pytest.approx(0.065, abs=1e-6)
+
+        # BOUNDS THE CLAIM, so nobody reads this fix as "the whole prop set
+        # renders now". The pre-existing "boring prop" band (step 9,
+        # 0.05 <= over <= 0.95) still drops near-certain rungs, and Polymarket
+        # prop sets are mostly near-certain: on the 8/14 Sox-Pirates specimen
+        # only 12 of 29 O/U sub-markets sit inside the band, and 7 of 25 on
+        # Red Sox @ Diamondbacks (production, 2026-08-18). 12 rendered props
+        # instead of an empty page is the actual win — not 29.
+        assert not [p for p in props if p["market_name"].startswith("Jarren")], (
+            "the 0.55% rung is filtered by the boring-prop band, not by the "
+            "line-placement fix — if this starts passing, step 9 changed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_polymarket_game_total_keeps_its_line(self):
+        """The same placement bug emptied genuine totals, not just props."""
+        event = _make_event(
+            sport_key="baseball_mlb",
+            home_team_name="Cincinnati Reds",
+            away_team_name="St. Louis Cardinals",
+            status="live",
+        )
+        market = self._poly_market(
+            id=903, name="St. Louis Cardinals vs. Cincinnati Reds: O/U 10.5",
+        )
+        outcomes = [
+            _make_outcome(id=9031, market_id=903, name="Over", probability=0.42),
+            _make_outcome(id=9032, market_id=903, name="Under", probability=0.58),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert response["totals"], "a Polymarket total must keep its line (#1976 §5)"
+        assert {t["threshold"] for t in response["totals"]} == {10.5}
+        # A matchup subject means the line belongs to the GAME — it must NOT be
+        # rerouted to player_props by the new O/U player test.
+        assert response["player_props"] == []
+
+    # ---- the other direction: what must NOT move -------------------------
+    #
+    # A cap's guard tests assert BOTH directions (gotcha #43). The Kalshi games
+    # populate today; a classifier widened to rescue Polymarket must not empty
+    # them, so these pin the three shapes that sit closest to the new test.
+
+    @pytest.mark.parametrize("name,expected", [
+        # Genuine game totals — no person in the subject.
+        ("Boston at Atlanta: Total Points", "game_total"),
+        ("Yankees vs Red Sox: Total Runs O/U 8.5", "game_total"),
+        ("St. Louis Cardinals vs. Cincinnati Reds: O/U 10.5", "game_total"),
+        # Team stat totals — the stat is the whole predicate.
+        ("Team Total Points", "team_total"),
+        ("Yankees at Red Sox: Total Runs", "game_total"),
+        # The Polymarket player shape itself.
+        ("Adley Rutschman: Home Runs O/U 0.5", "player_prop"),
+        ("Jarren Duran: Home Runs O/U 1.5", "player_prop"),
+        ("Bubba Chandler: Strikeouts O/U 4.5", "player_prop"),
+        # A Polymarket EVENT parent is not a prop market — its outcomes are the
+        # settled 0/1 snapshot of lines the sub-markets already carry.
+        ("Boston Red Sox vs. Pittsburgh Pirates - Player Props", "other"),
+    ])
+    def test_neighbouring_shapes_are_unmoved(self, name, expected):
+        assert _classify_game_market(name) == expected
