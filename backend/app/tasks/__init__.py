@@ -2860,6 +2860,10 @@ celery_app.conf.beat_schedule = {
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
         "schedule": crontab(minute=45, hour="*/2"),  # Every 2 hours — markets created days ahead, pricing appears day-of
+        # #1609 moved this to `heavy` (320.2s p50). Stated LITERALLY rather than
+        # left to the post-schedule loop — see the literal-vs-effective note on
+        # that loop.
+        "options": {"queue": "heavy"},
     },
     "check-kalshi-freshness-daily": {
         "task": "app.tasks.check_kalshi_freshness",
@@ -2903,6 +2907,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.match_prediction_markets",
         "schedule": crontab(minute="5,20,35,50"),  # Every 15 min — link new markets ASAP
         "kwargs": {"limit": 500},
+        # #1609 moved this to `heavy` (337.4s p50 / 699.4s p95 — 77.7% of one
+        # background slot at p95, the single biggest starver). Stated LITERALLY.
+        "options": {"queue": "heavy"},
     },
     # DISABLED: replaced by worker-ws WebSocket consumer (#836/#837).
     "poll-live-prediction-markets": {
@@ -3250,7 +3257,7 @@ celery_app.conf.beat_schedule = {
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",
         "schedule": crontab(minute=35),  # Every hour at :35 — cache expensive backfill status queries
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "precompute-backfill-progress": {
         "task": "app.tasks.precompute_backfill_progress",
@@ -3571,7 +3578,7 @@ celery_app.conf.beat_schedule = {
         # the integrity beats; ordering vs the resolution beats is preserved.
         "task": "app.tasks.compute_calibration_prices",
         "schedule": crontab(minute=10, hour="2,8,14,20"),
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "precompute-bookmaker-calibration": {
         # #1835 (CAL-P051): the starvation sibling the #180 fix left behind.
@@ -3705,7 +3712,7 @@ celery_app.conf.beat_schedule = {
     "snapshot-coverage-metrics-daily": {
         "task": "app.tasks.snapshot_coverage_metrics",
         "schedule": crontab(hour=3, minute=0),  # 3:00 AM UTC daily
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "daily-challenge-push": {
         "task": "app.tasks.send_daily_challenge_push",
@@ -3729,22 +3736,22 @@ celery_app.conf.beat_schedule = {
     "precompute-calibration-main": {
         "task": "app.tasks.precompute_calibration_main",
         "schedule": crontab(minute=15),  # Every 1 hour at :15
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "compute-time-horizon-calibration": {
         "task": "app.tasks.compute_time_horizon_calibration",
         "schedule": crontab(minute=0, hour="1,7,13,19"),  # Every 6 hours
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "compute-fair-fight-comparison": {
         "task": "app.tasks.compute_fair_fight_comparison",
         "schedule": crontab(minute=15, hour="1,7,13,19"),  # Every 6 hours, offset 15min
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "precompute-source-intelligence": {
         "task": "app.tasks.precompute_source_intelligence",
         "schedule": crontab(minute=30, hour="1,7,13,19"),  # Every 6 hours, offset 30min
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     # ── CADENCE ↔ TTL HYGIENE, LAT-P062 (Item 3). All three below cache at
     # `ex=3600` and were recomputing FOUR to SIX times per cache lifetime.
@@ -3794,9 +3801,29 @@ celery_app.conf.beat_schedule = {
 
 # Route the heavy grinder class onto the dedicated `heavy` worker. Beat entries
 # pin `options["queue"]` explicitly, which OVERRIDES task_routes at dispatch
-# time — so both must agree. This loop is the single source of truth: it flips
-# every HEAVY_TASKS beat entry to the heavy queue regardless of what it was
-# authored with. (See the queue-routing comment block above for the rationale.)
+# time — so both must agree. This loop is the BACKSTOP: it flips every
+# HEAVY_TASKS beat entry to the heavy queue regardless of what it was authored
+# with. (See the queue-routing comment block above for the rationale.)
+#
+# ⚠️ IT IS A BACKSTOP AND NOT A LICENCE, and LAT-P067 fixed the debt that
+# distinction had already accumulated. Because this loop always wins, NINE beat
+# entries could sit in this file literally reading `"queue": "background"` (or
+# carrying no `options` at all) while dispatching to `heavy` — and they did:
+# the seven calibration/precompute warmers plus `poll-kalshi` and
+# `match-prediction-markets`. Every one now states its real queue literally.
+#
+# WHY THAT MATTERED WHEN THE EFFECTIVE ROUTING WAS ALWAYS CORRECT: the source is
+# what a human reads. Nine entries whose text said `background` were nine
+# entries that read as evidence for "the calibration family is starving
+# background" — an explanation that was FALSE, sitting in the file, in exactly
+# the investigation #1609 spent windows on. A backstop that silently corrects
+# the text it corrects is a backstop that makes the text lie.
+#
+# `test_heavy_beat_entries_pin_heavy_queue` cannot catch this: it runs after
+# this loop and therefore reads the corrected value. Only a SOURCE-TEXT read
+# can, which is what `test_heavy_beat_literals_match_their_effective_queue`
+# does — the guard and the fix ship in one commit, deliberately, because a fix
+# without the guard is a fix that decays back.
 for _beat_entry in celery_app.conf.beat_schedule.values():
     if _beat_entry.get("task") in HEAVY_TASKS:
         _beat_entry.setdefault("options", {})["queue"] = "heavy"
