@@ -517,7 +517,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: lanes each writing `71 -> 72` is one ruling each, NOT two on top of 72. Resolved the documented
 #: way — by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the merged tree, which is 73, and which
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
-MINIMUM_BANKED_RULINGS = 73
+MINIMUM_BANKED_RULINGS = 74
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
