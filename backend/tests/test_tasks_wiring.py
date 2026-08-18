@@ -268,6 +268,11 @@ class TestBeatScheduleCompleteness:
         "precompute-category-pages",
         "warm-event-concepts",
         "warm-typeahead",
+        # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
+        # sentinel. Gotcha #12: this allowlist is the reason a new beat entry
+        # cannot land silently.
+        "rebuild-typeahead-index",
+        "typeahead-index-sentinel",
         "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
@@ -513,6 +518,80 @@ class TestHeavyQueueRouting:
                 too_long[name] = (expires_s, period_s)
         assert not too_long, (
             f"expires exceeds beat period (cannot discard a superseded message): {too_long}"
+        )
+
+    def test_heavy_beat_literals_match_their_effective_queue(self):
+        """Every HEAVY beat entry must SAY heavy in the source, not just dispatch there.
+
+        THE GUARD `test_heavy_beat_entries_pin_heavy_queue` CANNOT CATCH THIS,
+        and that is the entire reason this one exists. That test imports the
+        module and reads `options["queue"]` — by which time the post-schedule
+        loop at the bottom of `app/tasks/__init__.py` has already flipped every
+        HEAVY_TASKS entry to `heavy`. It therefore passes unconditionally, for
+        any literal whatsoever. It has been passing over NINE wrong literals.
+
+        What that cost, measured rather than asserted (LAT-P066/P067): seven
+        calibration/precompute warmers sat in the file literally reading
+        `"queue": "background"`, plus `poll-kalshi` and
+        `match-prediction-markets` carrying no `options` at all after #1609
+        moved them. The effective routing was correct the whole time — and the
+        SOURCE read as evidence for "the calibration family is starving the
+        background queue", which is false, and which is exactly the question
+        #1609 spent multiple windows investigating.
+
+        A backstop that silently corrects text makes the text lie. So this reads
+        the source, with the loop's own body excluded (it necessarily contains
+        the string `heavy`).
+        """
+        import ast
+        import inspect
+
+        from app.tasks import HEAVY_TASKS
+        import app.tasks as tasks_module
+
+        source = inspect.getsource(tasks_module)
+        tree = ast.parse(source)
+
+        # Locate the `celery_app.conf.beat_schedule = {...}` assignment and read
+        # its literal dict, so this reflects what is WRITTEN, never what ran.
+        schedule_node = None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "beat_schedule"
+                    and isinstance(node.value, ast.Dict)
+                ):
+                    schedule_node = node.value
+        assert schedule_node is not None, "could not locate the beat_schedule literal"
+
+        mismatched = {}
+        for key_node, value_node in zip(schedule_node.keys, schedule_node.values):
+            if not isinstance(key_node, ast.Constant) or not isinstance(value_node, ast.Dict):
+                continue
+            entry = {}
+            for k, v in zip(value_node.keys, value_node.values):
+                if isinstance(k, ast.Constant):
+                    entry[k.value] = v
+            task_node = entry.get("task")
+            if not isinstance(task_node, ast.Constant) or task_node.value not in HEAVY_TASKS:
+                continue
+            options = entry.get("options")
+            literal_queue = None
+            if isinstance(options, ast.Dict):
+                for ok, ov in zip(options.keys, options.values):
+                    if isinstance(ok, ast.Constant) and ok.value == "queue":
+                        literal_queue = ov.value if isinstance(ov, ast.Constant) else "<computed>"
+            if literal_queue != "heavy":
+                mismatched[key_node.value] = literal_queue or "<no options key>"
+
+        assert not mismatched, (
+            "HEAVY beat entries whose SOURCE LITERAL disagrees with where they "
+            f"actually dispatch: {mismatched}. The post-schedule loop will route "
+            "them to heavy anyway — which is precisely the problem: the file then "
+            "documents a routing that is not real."
         )
 
     def test_all_heavy_tasks_registered(self):

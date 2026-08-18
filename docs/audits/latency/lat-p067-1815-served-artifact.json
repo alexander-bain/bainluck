@@ -1,0 +1,2087 @@
+{
+  "record": "lat-p065-1815-served-artifact",
+  "generated_at": "2026-08-18T18:07:37.626131+00:00",
+  "base": "https://api.bainluck.com",
+  "limit": 20,
+  "pairs": [
+    "0,0.1",
+    "0,0.2",
+    "0,0.3"
+  ],
+  "note": "Three paired calls, not one four-weight call: `served` is bounded to 2 weights and limit<=20 by design. 0 is the shared control in each pair. The bound was NOT widened.",
+  "registered_expectation_grade": "CONFIRMED \u2014 absorbed=24, amplified=25. `ranked` deltas do NOT reach the page unchanged, which is exactly why a `ranked`-based weight ruling would have been made against a list no user is served.",
+  "absorbed_total": 24,
+  "amplified_total": 25,
+  "weight_not_set": "The live blend weight is untouched and stays 0 until Alex rules (#1815 acceptance 4).",
+  "results": {
+    "0,0.1": {
+      "ok": true,
+      "wall_s": 8.6,
+      "stage": "served",
+      "cache_hits": {
+        "sampled_market_ids": 20,
+        "cached": 20
+      },
+      "interleave_effect": {
+        "0.1": {
+          "absorbed": 3,
+          "amplified": 2,
+          "moved_in_both": 0,
+          "moved_in_neither": 29,
+          "cards_considered": 34,
+          "absorbed_cards": [
+            {
+              "card_key": "futures:55686617",
+              "ranked_rank_base": 12,
+              "ranked_rank_weight": 11,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113200",
+              "ranked_rank_base": 11,
+              "ranked_rank_weight": 13,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:52755659",
+              "ranked_rank_base": 13,
+              "ranked_rank_weight": 12,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            }
+          ],
+          "amplified_cards": [
+            {
+              "card_key": "futures:59137838",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": null,
+              "served_rank_weight": 15
+            },
+            {
+              "card_key": "concept:Sutherland vs Montanha Da Silva",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 15,
+              "served_rank_weight": null
+            }
+          ],
+          "registered_expectation_absorbed_gt_0": true
+        }
+      },
+      "registered_expectation_absorbed_gt_0": null,
+      "comparison": {
+        "0.1": {
+          "identical": false,
+          "positions_changed": 3,
+          "entered_top_n": [],
+          "left_top_n": [],
+          "biggest_movers": [
+            {
+              "rank": 13,
+              "card_key": "futures:113200",
+              "type": "futures",
+              "market_id": 113200,
+              "name": "Will the Iranian regime fall before 2027?",
+              "category": "geopolitics",
+              "rank_score": 88.75,
+              "display_score": 88.0,
+              "headline": "the Iranian regime fall down 29.0 points from opening",
+              "rank_at_base": 11,
+              "delta": -2
+            },
+            {
+              "rank": 11,
+              "card_key": "futures:55686617",
+              "type": "futures",
+              "market_id": 55686617,
+              "name": "South Carolina Republican Senate special primary winner?",
+              "category": "politics",
+              "rank_score": 91.73,
+              "display_score": 90.0,
+              "headline": "New favorite: Darline Graham (65%)",
+              "rank_at_base": 12,
+              "delta": 1
+            },
+            {
+              "rank": 12,
+              "card_key": "futures:52755659",
+              "type": "futures",
+              "market_id": 52755659,
+              "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+              "category": "hockey",
+              "rank_score": 88.88,
+              "display_score": 88.0,
+              "headline": "Tracked by 2 sources",
+              "rank_at_base": 13,
+              "delta": 1
+            }
+          ]
+        }
+      },
+      "slates": {
+        "0.0": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 212.0,
+            "display_score": 95.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 181.5,
+            "display_score": 95.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 176.5,
+            "display_score": 95.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 174.0,
+            "display_score": 98.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 133.0,
+            "display_score": 98.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 130.0,
+            "display_score": 93.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 111.0,
+            "display_score": 98.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 106.0,
+            "display_score": 98.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 104.0,
+            "display_score": 98.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 100.0,
+            "display_score": 97.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 94.0,
+            "display_score": 94.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 94.0,
+            "display_score": 93.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 93.5,
+            "display_score": 93.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 90.0,
+            "display_score": 90.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 87.0,
+            "display_score": 87.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 86.0,
+            "display_score": 86.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 85.5,
+            "display_score": 85.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 77.0,
+            "display_score": 77.0,
+            "headline": "Rick Devens up 10.0 points today"
+          }
+        ],
+        "0.1": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 196.51,
+            "display_score": 91.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 168.29,
+            "display_score": 90.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 162.67,
+            "display_score": 89.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 161.89,
+            "display_score": 93.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 124.34,
+            "display_score": 92.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 121.94,
+            "display_score": 88.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 103.64,
+            "display_score": 91.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 100.42,
+            "display_score": 93.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 98.29,
+            "display_score": 92.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 95.21,
+            "display_score": 92.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 91.73,
+            "display_score": 90.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 88.88,
+            "display_score": 88.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 88.75,
+            "display_score": 88.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 84.41,
+            "display_score": 84.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 83.58,
+            "display_score": 83.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 82.11,
+            "display_score": 82.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 81.99,
+            "display_score": 81.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 80.78,
+            "display_score": 80.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 80.27,
+            "display_score": 80.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 75.92,
+            "display_score": 75.0,
+            "headline": "Rick Devens up 10.0 points today"
+          }
+        ]
+      }
+    },
+    "0,0.2": {
+      "ok": true,
+      "wall_s": 6.1,
+      "stage": "served",
+      "cache_hits": {
+        "sampled_market_ids": 20,
+        "cached": 20
+      },
+      "interleave_effect": {
+        "0.2": {
+          "absorbed": 8,
+          "amplified": 9,
+          "moved_in_both": 1,
+          "moved_in_neither": 16,
+          "cards_considered": 34,
+          "absorbed_cards": [
+            {
+              "card_key": "futures:55686617",
+              "ranked_rank_base": 12,
+              "ranked_rank_weight": 11,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:59133742",
+              "ranked_rank_base": 14,
+              "ranked_rank_weight": 15,
+              "served_rank_base": 8,
+              "served_rank_weight": 8
+            },
+            {
+              "card_key": "futures:34277822",
+              "ranked_rank_base": 17,
+              "ranked_rank_weight": 16,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113200",
+              "ranked_rank_base": 11,
+              "ranked_rank_weight": 13,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:108326",
+              "ranked_rank_base": 4,
+              "ranked_rank_weight": 3,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113354",
+              "ranked_rank_base": 16,
+              "ranked_rank_weight": 17,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:108621",
+              "ranked_rank_base": 15,
+              "ranked_rank_weight": 14,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:52755659",
+              "ranked_rank_base": 13,
+              "ranked_rank_weight": 12,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            }
+          ],
+          "amplified_cards": [
+            {
+              "card_key": "futures:59145430",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 11,
+              "served_rank_weight": 12
+            },
+            {
+              "card_key": "concept:Alexandre Pantoja vs Joshua Van",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": null,
+              "served_rank_weight": 15
+            },
+            {
+              "card_key": "futures:59129329",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 9,
+              "served_rank_weight": 10
+            },
+            {
+              "card_key": "futures:59139556",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 12,
+              "served_rank_weight": 11
+            },
+            {
+              "card_key": "futures:59139553",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 14,
+              "served_rank_weight": 13
+            },
+            {
+              "card_key": "futures:113032",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 10,
+              "served_rank_weight": 9
+            },
+            {
+              "card_key": "bundle:theme:story:us_2028_election:108326-108445",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 4,
+              "served_rank_weight": 3
+            },
+            {
+              "card_key": "futures:59129330",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 13,
+              "served_rank_weight": 14
+            },
+            {
+              "card_key": "concept:Sutherland vs Montanha Da Silva",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 15,
+              "served_rank_weight": null
+            }
+          ],
+          "registered_expectation_absorbed_gt_0": true
+        }
+      },
+      "registered_expectation_absorbed_gt_0": null,
+      "comparison": {
+        "0.2": {
+          "identical": false,
+          "positions_changed": 9,
+          "entered_top_n": [],
+          "left_top_n": [],
+          "biggest_movers": [
+            {
+              "rank": 13,
+              "card_key": "futures:113200",
+              "type": "futures",
+              "market_id": 113200,
+              "name": "Will the Iranian regime fall before 2027?",
+              "category": "geopolitics",
+              "rank_score": 83.5,
+              "display_score": 83.0,
+              "headline": "the Iranian regime fall down 29.0 points from opening",
+              "rank_at_base": 11,
+              "delta": -2
+            },
+            {
+              "rank": 3,
+              "card_key": "futures:108326",
+              "type": "futures",
+              "market_id": 108326,
+              "name": "2028 U.S. Presidential Election winner?",
+              "category": "politics",
+              "rank_score": 149.77,
+              "display_score": 88.0,
+              "headline": "Tracked by 2 sources",
+              "rank_at_base": 4,
+              "delta": 1
+            },
+            {
+              "rank": 4,
+              "card_key": "futures:86832",
+              "type": "futures",
+              "market_id": 86832,
+              "name": "NFL Super Bowl Winner",
+              "category": "football",
+              "rank_score": 148.85,
+              "display_score": 83.0,
+              "headline": "Los Angeles Rams leads at 14%",
+              "rank_at_base": 3,
+              "delta": -1
+            },
+            {
+              "rank": 11,
+              "card_key": "futures:55686617",
+              "type": "futures",
+              "market_id": 55686617,
+              "name": "South Carolina Republican Senate special primary winner?",
+              "category": "politics",
+              "rank_score": 89.46,
+              "display_score": 88.0,
+              "headline": "New favorite: Darline Graham (65%)",
+              "rank_at_base": 12,
+              "delta": 1
+            },
+            {
+              "rank": 12,
+              "card_key": "futures:52755659",
+              "type": "futures",
+              "market_id": 52755659,
+              "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+              "category": "hockey",
+              "rank_score": 84.26,
+              "display_score": 84.0,
+              "headline": "Tracked by 2 sources",
+              "rank_at_base": 13,
+              "delta": 1
+            },
+            {
+              "rank": 14,
+              "card_key": "futures:108621",
+              "type": "futures",
+              "market_id": 108621,
+              "name": "Which party will win the U.S. House?",
+              "category": "politics",
+              "rank_score": 80.15,
+              "display_score": 80.0,
+              "headline": "Tracked by 2 sources",
+              "rank_at_base": 15,
+              "delta": 1
+            },
+            {
+              "rank": 15,
+              "card_key": "futures:59133742",
+              "type": "futures",
+              "market_id": 59133742,
+              "name": "Ukraine strikes another vessel in Black Sea by...?",
+              "category": "geopolitics",
+              "rank_score": 78.81,
+              "display_score": 78.0,
+              "headline": "Ukraine strikes another vessel in Black Sea by...",
+              "rank_at_base": 14,
+              "delta": -1
+            },
+            {
+              "rank": 16,
+              "card_key": "futures:34277822",
+              "type": "futures",
+              "market_id": 34277822,
+              "name": "US Open Men's Singles Winner",
+              "category": "tennis",
+              "rank_score": 78.49,
+              "display_score": 78.0,
+              "headline": "Jannik Sinner down 5.0 points today",
+              "rank_at_base": 17,
+              "delta": 1
+            },
+            {
+              "rank": 17,
+              "card_key": "futures:113354",
+              "type": "futures",
+              "market_id": 113354,
+              "name": "China x Philippines military clash before 2027?",
+              "category": "geopolitics",
+              "rank_score": 78.23,
+              "display_score": 78.0,
+              "headline": "China x Philippines military clash up 37.5 points from opening",
+              "rank_at_base": 16,
+              "delta": -1
+            }
+          ]
+        }
+      },
+      "slates": {
+        "0.0": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 212.0,
+            "display_score": 95.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 181.5,
+            "display_score": 95.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 176.5,
+            "display_score": 95.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 174.0,
+            "display_score": 98.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 133.0,
+            "display_score": 98.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 130.0,
+            "display_score": 93.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 111.0,
+            "display_score": 98.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 106.0,
+            "display_score": 98.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 104.0,
+            "display_score": 98.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 100.0,
+            "display_score": 97.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 94.0,
+            "display_score": 94.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 94.0,
+            "display_score": 93.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 93.5,
+            "display_score": 93.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 90.0,
+            "display_score": 90.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 87.0,
+            "display_score": 87.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 86.0,
+            "display_score": 86.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 85.5,
+            "display_score": 85.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 77.0,
+            "display_score": 77.0,
+            "headline": "Rick Devens up 10.0 points today"
+          }
+        ],
+        "0.2": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 181.02,
+            "display_score": 87.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 155.08,
+            "display_score": 85.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 149.77,
+            "display_score": 88.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 148.85,
+            "display_score": 83.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 115.69,
+            "display_score": 87.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 113.88,
+            "display_score": 84.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 96.27,
+            "display_score": 85.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 94.84,
+            "display_score": 88.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 92.58,
+            "display_score": 87.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 90.41,
+            "display_score": 88.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 89.46,
+            "display_score": 88.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 84.26,
+            "display_score": 84.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 83.5,
+            "display_score": 83.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 80.15,
+            "display_score": 80.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 78.81,
+            "display_score": 78.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 78.49,
+            "display_score": 78.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 78.23,
+            "display_score": 78.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 77.55,
+            "display_score": 77.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 76.54,
+            "display_score": 76.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 74.85,
+            "display_score": 74.0,
+            "headline": "Rick Devens up 10.0 points today"
+          }
+        ]
+      }
+    },
+    "0,0.3": {
+      "ok": true,
+      "wall_s": 5.7,
+      "stage": "served",
+      "cache_hits": {
+        "sampled_market_ids": 20,
+        "cached": 20
+      },
+      "interleave_effect": {
+        "0.3": {
+          "absorbed": 13,
+          "amplified": 14,
+          "moved_in_both": 2,
+          "moved_in_neither": 5,
+          "cards_considered": 34,
+          "absorbed_cards": [
+            {
+              "card_key": "futures:113232",
+              "ranked_rank_base": 8,
+              "ranked_rank_weight": 7,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:55686617",
+              "ranked_rank_base": 12,
+              "ranked_rank_weight": 9,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:109244",
+              "ranked_rank_base": 18,
+              "ranked_rank_weight": 17,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113223",
+              "ranked_rank_base": 19,
+              "ranked_rank_weight": 20,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:20569379",
+              "ranked_rank_base": 9,
+              "ranked_rank_weight": 10,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:52756010",
+              "ranked_rank_base": 20,
+              "ranked_rank_weight": 18,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:112921",
+              "ranked_rank_base": 7,
+              "ranked_rank_weight": 8,
+              "served_rank_base": 20,
+              "served_rank_weight": 20
+            },
+            {
+              "card_key": "futures:34277822",
+              "ranked_rank_base": 17,
+              "ranked_rank_weight": 15,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113200",
+              "ranked_rank_base": 11,
+              "ranked_rank_weight": 13,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:12194657",
+              "ranked_rank_base": 10,
+              "ranked_rank_weight": 11,
+              "served_rank_base": 6,
+              "served_rank_weight": 6
+            },
+            {
+              "card_key": "futures:108326",
+              "ranked_rank_base": 4,
+              "ranked_rank_weight": 3,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:108621",
+              "ranked_rank_base": 15,
+              "ranked_rank_weight": 14,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:52755659",
+              "ranked_rank_base": 13,
+              "ranked_rank_weight": 12,
+              "served_rank_base": null,
+              "served_rank_weight": null
+            }
+          ],
+          "amplified_cards": [
+            {
+              "card_key": "futures:59145430",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 11,
+              "served_rank_weight": 12
+            },
+            {
+              "card_key": "futures:59093181",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": null,
+              "served_rank_weight": 15
+            },
+            {
+              "card_key": "futures:59133867",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 18,
+              "served_rank_weight": 19
+            },
+            {
+              "card_key": "futures:109798",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 19,
+              "served_rank_weight": 18
+            },
+            {
+              "card_key": "futures:59129329",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 9,
+              "served_rank_weight": 10
+            },
+            {
+              "card_key": "futures:59139556",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 12,
+              "served_rank_weight": 11
+            },
+            {
+              "card_key": "futures:59139553",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 14,
+              "served_rank_weight": 13
+            },
+            {
+              "card_key": "futures:109099",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 17,
+              "served_rank_weight": 16
+            },
+            {
+              "card_key": "futures:59139552",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 16,
+              "served_rank_weight": 17
+            },
+            {
+              "card_key": "futures:113032",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 10,
+              "served_rank_weight": 9
+            },
+            {
+              "card_key": "bundle:theme:story:us_2028_election:108326-108445",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 4,
+              "served_rank_weight": 3
+            },
+            {
+              "card_key": "futures:59129330",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 13,
+              "served_rank_weight": 14
+            },
+            {
+              "card_key": "concept:Sutherland vs Montanha Da Silva",
+              "ranked_rank_base": null,
+              "ranked_rank_weight": null,
+              "served_rank_base": 15,
+              "served_rank_weight": null
+            },
+            {
+              "card_key": "futures:113354",
+              "ranked_rank_base": 16,
+              "ranked_rank_weight": 16,
+              "served_rank_base": null,
+              "served_rank_weight": 8
+            }
+          ],
+          "registered_expectation_absorbed_gt_0": true
+        }
+      },
+      "registered_expectation_absorbed_gt_0": null,
+      "comparison": {
+        "0.3": {
+          "identical": false,
+          "positions_changed": 15,
+          "entered_top_n": [],
+          "left_top_n": [],
+          "biggest_movers": [
+            {
+              "rank": 19,
+              "card_key": "futures:59133742",
+              "type": "futures",
+              "market_id": 59133742,
+              "name": "Ukraine strikes another vessel in Black Sea by...?",
+              "category": "geopolitics",
+              "rank_score": 73.22,
+              "display_score": 73.0,
+              "headline": "Ukraine strikes another vessel in Black Sea by...",
+              "rank_at_base": 14,
+              "delta": -5
+            },
+            {
+              "rank": 9,
+              "card_key": "futures:55686617",
+              "type": "futures",
+              "market_id": 55686617,
+              "name": "South Carolina Republican Senate special primary winner?",
+              "category": "politics",
+              "rank_score": 87.19,
+              "display_score": 86.0,
+              "headline": "New favorite: Darline Graham (65%)",
+              "rank_at_base": 12,
+              "delta": 3
+            },
+            {
+              "rank": 13,
+              "card_key": "futures:113200",
+              "type": "futures",
+              "market_id": 113200,
+              "name": "Will the Iranian regime fall before 2027?",
+              "category": "geopolitics",
+              "rank_score": 78.25,
+              "display_score": 78.0,
+              "headline": "the Iranian regime fall down 29.0 points from opening",
+              "rank_at_base": 11,
+              "delta": -2
+            },
+            {
+              "rank": 15,
+              "card_key": "futures:34277822",
+              "type": "futures",
+              "market_id": 34277822,
+              "name": "US Open Men's Singles Winner",
+              "category": "tennis",
+              "rank_score": 74.98,
+              "display_score": 74.0,
+              "headline": "Jannik Sinner down 5.0 points today",
+              "rank_at_base": 17,
+              "delta": 2
+            },
+            {
+              "rank": 18,
+              "card_key": "futures:52756010",
+              "type": "futures",
+              "market_id": 52756010,
+              "name": "Big Brother Season 28 \u00b7 Winner",
+              "category": "entertainment",
+              "rank_score": 73.77,
+              "display_score": 73.0,
+              "headline": "Rick Devens up 10.0 points today",
+              "rank_at_base": 20,
+              "delta": 2
+            },
+            {
+              "rank": 3,
+              "card_key": "futures:108326",
+              "type": "futures",
+              "market_id": 108326,
+              "name": "2028 U.S. Presidential Election winner?",
+              "category": "politics",
+              "rank_score": 137.66,
+              "display_score": 84.0,
+              "headline": "Tracked by 2 sources",
+              "rank_at_base": 4,
+              "delta": 1
+            },
+            {
+              "rank": 4,
+              "card_key": "futures:86832",
+              "type": "futures",
+              "market_id": 86832,
+              "name": "NFL Super Bowl Winner",
+              "category": "football",
+              "rank_score": 135.02,
+              "display_score": 77.0,
+              "headline": "Los Angeles Rams leads at 14%",
+              "rank_at_base": 3,
+              "delta": -1
+            },
+            {
+              "rank": 7,
+              "card_key": "futures:113232",
+              "type": "futures",
+              "market_id": 113232,
+              "name": "Will the U.S. invade Iran before 2027?",
+              "category": "politics",
+              "rank_score": 89.26,
+              "display_score": 83.0,
+              "headline": "the U.S. invade Iran up 13.0 points from opening",
+              "rank_at_base": 8,
+              "delta": 1
+            },
+            {
+              "rank": 8,
+              "card_key": "futures:112921",
+              "type": "futures",
+              "market_id": 112921,
+              "name": "Will China invade Taiwan by end of 2026?",
+              "category": "politics",
+              "rank_score": 88.91,
+              "display_score": 79.0,
+              "headline": "China invade Taiwan by end of 2026 leads at 4%",
+              "rank_at_base": 7,
+              "delta": -1
+            },
+            {
+              "rank": 10,
+              "card_key": "futures:20569379",
+              "type": "futures",
+              "market_id": 20569379,
+              "name": "Russia x Ukraine ceasefire agreement by...?",
+              "category": "politics",
+              "rank_score": 86.88,
+              "display_score": 82.0,
+              "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening",
+              "rank_at_base": 9,
+              "delta": -1
+            }
+          ]
+        }
+      },
+      "slates": {
+        "0.0": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 212.0,
+            "display_score": 95.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 181.5,
+            "display_score": 95.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 176.5,
+            "display_score": 95.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 174.0,
+            "display_score": 98.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 133.0,
+            "display_score": 98.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 130.0,
+            "display_score": 93.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 111.0,
+            "display_score": 98.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 106.0,
+            "display_score": 98.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 104.0,
+            "display_score": 98.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 100.0,
+            "display_score": 97.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 94.0,
+            "display_score": 94.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 94.0,
+            "display_score": 93.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 93.5,
+            "display_score": 93.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 90.0,
+            "display_score": 90.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 87.0,
+            "display_score": 87.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 86.0,
+            "display_score": 86.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 85.5,
+            "display_score": 85.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 84.0,
+            "display_score": 84.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 77.0,
+            "display_score": 77.0,
+            "headline": "Rick Devens up 10.0 points today"
+          }
+        ],
+        "0.3": [
+          {
+            "rank": 1,
+            "card_key": "futures:109435",
+            "type": "futures",
+            "market_id": 109435,
+            "name": "Will the U.S. confirm that aliens exist?",
+            "category": "tech",
+            "rank_score": 165.53,
+            "display_score": 83.0,
+            "headline": "Multiple ranking changes"
+          },
+          {
+            "rank": 2,
+            "card_key": "futures:1",
+            "type": "futures",
+            "market_id": 1,
+            "name": "MLB World Series Winner",
+            "category": "baseball",
+            "rank_score": 141.87,
+            "display_score": 81.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 3,
+            "card_key": "futures:108326",
+            "type": "futures",
+            "market_id": 108326,
+            "name": "2028 U.S. Presidential Election winner?",
+            "category": "politics",
+            "rank_score": 137.66,
+            "display_score": 84.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 4,
+            "card_key": "futures:86832",
+            "type": "futures",
+            "market_id": 86832,
+            "name": "NFL Super Bowl Winner",
+            "category": "football",
+            "rank_score": 135.02,
+            "display_score": 77.0,
+            "headline": "Los Angeles Rams leads at 14%"
+          },
+          {
+            "rank": 5,
+            "card_key": "futures:108445",
+            "type": "futures",
+            "market_id": 108445,
+            "name": "2028 Democratic presidential nominee",
+            "category": "politics",
+            "rank_score": 107.03,
+            "display_score": 82.0,
+            "headline": "Gavin Newsom down 13.0 points from opening"
+          },
+          {
+            "rank": 6,
+            "card_key": "futures:6173044",
+            "type": "futures",
+            "market_id": 6173044,
+            "name": "Oscar winner: Best Picture",
+            "category": "entertainment",
+            "rank_score": 105.83,
+            "display_score": 79.0,
+            "headline": "The Odyssey up 31.5 points from opening"
+          },
+          {
+            "rank": 7,
+            "card_key": "futures:113232",
+            "type": "futures",
+            "market_id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "category": "politics",
+            "rank_score": 89.26,
+            "display_score": 83.0,
+            "headline": "the U.S. invade Iran up 13.0 points from opening"
+          },
+          {
+            "rank": 8,
+            "card_key": "futures:112921",
+            "type": "futures",
+            "market_id": 112921,
+            "name": "Will China invade Taiwan by end of 2026?",
+            "category": "politics",
+            "rank_score": 88.91,
+            "display_score": 79.0,
+            "headline": "China invade Taiwan by end of 2026 leads at 4%"
+          },
+          {
+            "rank": 9,
+            "card_key": "futures:55686617",
+            "type": "futures",
+            "market_id": 55686617,
+            "name": "South Carolina Republican Senate special primary winner?",
+            "category": "politics",
+            "rank_score": 87.19,
+            "display_score": 86.0,
+            "headline": "New favorite: Darline Graham (65%)"
+          },
+          {
+            "rank": 10,
+            "card_key": "futures:20569379",
+            "type": "futures",
+            "market_id": 20569379,
+            "name": "Russia x Ukraine ceasefire agreement by...?",
+            "category": "politics",
+            "rank_score": 86.88,
+            "display_score": 82.0,
+            "headline": "No: Russia x Ukraine ceasefire agreem... up 29.5 points from opening"
+          },
+          {
+            "rank": 11,
+            "card_key": "futures:12194657",
+            "type": "futures",
+            "market_id": 12194657,
+            "name": "Who will Taylor Swift's bridesmaids be?",
+            "category": "entertainment",
+            "rank_score": 85.62,
+            "display_score": 83.0,
+            "headline": "New favorite: No: Who will Taylor Swift's bridesmai... (64%)"
+          },
+          {
+            "rank": 12,
+            "card_key": "futures:52755659",
+            "type": "futures",
+            "market_id": 52755659,
+            "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+            "category": "hockey",
+            "rank_score": 79.65,
+            "display_score": 79.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 13,
+            "card_key": "futures:113200",
+            "type": "futures",
+            "market_id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "category": "geopolitics",
+            "rank_score": 78.25,
+            "display_score": 78.0,
+            "headline": "the Iranian regime fall down 29.0 points from opening"
+          },
+          {
+            "rank": 14,
+            "card_key": "futures:108621",
+            "type": "futures",
+            "market_id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "category": "politics",
+            "rank_score": 76.73,
+            "display_score": 76.0,
+            "headline": "Tracked by 2 sources"
+          },
+          {
+            "rank": 15,
+            "card_key": "futures:34277822",
+            "type": "futures",
+            "market_id": 34277822,
+            "name": "US Open Men's Singles Winner",
+            "category": "tennis",
+            "rank_score": 74.98,
+            "display_score": 74.0,
+            "headline": "Jannik Sinner down 5.0 points today"
+          },
+          {
+            "rank": 16,
+            "card_key": "futures:113354",
+            "type": "futures",
+            "market_id": 113354,
+            "name": "China x Philippines military clash before 2027?",
+            "category": "geopolitics",
+            "rank_score": 74.34,
+            "display_score": 74.0,
+            "headline": "China x Philippines military clash up 37.5 points from opening"
+          },
+          {
+            "rank": 17,
+            "card_key": "futures:109244",
+            "type": "futures",
+            "market_id": 109244,
+            "name": "US-Iran nuclear deal?",
+            "category": "geopolitics",
+            "rank_score": 74.33,
+            "display_score": 74.0,
+            "headline": "Before Jan 1, 2027 up 8.0 points today"
+          },
+          {
+            "rank": 18,
+            "card_key": "futures:52756010",
+            "type": "futures",
+            "market_id": 52756010,
+            "name": "Big Brother Season 28 \u00b7 Winner",
+            "category": "entertainment",
+            "rank_score": 73.77,
+            "display_score": 73.0,
+            "headline": "Rick Devens up 10.0 points today"
+          },
+          {
+            "rank": 19,
+            "card_key": "futures:59133742",
+            "type": "futures",
+            "market_id": 59133742,
+            "name": "Ukraine strikes another vessel in Black Sea by...?",
+            "category": "geopolitics",
+            "rank_score": 73.22,
+            "display_score": 73.0,
+            "headline": "Ukraine strikes another vessel in Black Sea by..."
+          },
+          {
+            "rank": 20,
+            "card_key": "futures:113223",
+            "type": "futures",
+            "market_id": 113223,
+            "name": "US-Iran nuclear deal before 2027?",
+            "category": "geopolitics",
+            "rank_score": 72.8,
+            "display_score": 72.0,
+            "headline": "US-Iran nuclear deal up 8.5 points today"
+          }
+        ]
+      }
+    }
+  }
+}

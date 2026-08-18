@@ -18,8 +18,10 @@ it cannot drift out of agreement with what the routes actually dispatch.
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
+import tokenize
 
 import pytest
 
@@ -503,6 +505,55 @@ async def test_census_age_is_omitted_for_classes_we_do_not_configure(monkeypatch
     assert "max_sampled_age_s" not in row
 
 
+def _lines_with_comments_and_strings_masked(path: str) -> list[str]:
+    """The file's lines with every comment and string literal blanked to spaces.
+
+    Character positions are PRESERVED (blanked, not deleted) so line numbers and
+    columns still line up with the real file and the caller's regex keeps its
+    exact semantics — this masks what the scanner may look at, it does not
+    rewrite what it sees.
+
+    WHY THIS EXISTS (LAT-P067). The scanner below already skipped lines starting
+    with `#`, but nothing skipped DOCSTRINGS — so a docstring that WARNS a future
+    author "use `.apply()` and not `.delay()` here, because a worker would kill
+    it at the soft limit" was itself reported as an intra-task dispatch. Prose
+    about dispatch cannot dispatch.
+
+    That is a guard-design trap, not a typo, and it is the third instance of the
+    same class found in one day: a substring match on "gin" firing inside
+    `sa.BigInteger()`, then a word-boundary match firing on the comment that
+    explained why a GIN was absent, then this. **A text-scanning guard that
+    cannot tell code from prose about code eventually fires on a correct file,
+    and a guard that cries wolf on its own subject gets deleted by the next
+    person** — which costs the real coverage.
+
+    Recall is unaffected: a real `.delay(` / `.apply_async(` / `send_task(` is a
+    code token and is still masked-in. Only text inside quotes and comments goes.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    lines = data.decode("utf-8", errors="ignore").splitlines()
+    try:
+        tokens = list(tokenize.tokenize(io.BytesIO(data).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        # An unparsable file is scanned RAW rather than skipped: a guard that
+        # silently exempts what it cannot read is worse than a false positive.
+        return lines
+    for token in tokens:
+        if token.type not in (tokenize.COMMENT, tokenize.STRING):
+            continue
+        (start_row, start_col), (end_row, end_col) = token.start, token.end
+        for row in range(start_row, end_row + 1):
+            index = row - 1
+            if not (0 <= index < len(lines)):
+                continue
+            line = lines[index]
+            begin = start_col if row == start_row else 0
+            finish = end_col if row == end_row else len(line)
+            lines[index] = line[:begin] + " " * max(0, finish - begin) + line[finish:]
+    return lines
+
+
 def test_no_task_dispatches_another_task():
     """Same reasoning as the canvas guard: an intra-task dispatch could grow a
     result consumer the route scan would never see."""
@@ -514,11 +565,7 @@ def test_no_task_dispatches_another_task():
             if not fname.endswith(".py"):
                 continue
             path = os.path.join(dirpath, fname)
-            with open(path, errors="ignore") as fh:
-                for lineno, line in enumerate(fh, 1):
-                    stripped = line.strip()
-                    if stripped.startswith("#"):
-                        continue
-                    if pattern.search(line):
-                        offenders.append(f"{path}:{lineno} {stripped[:80]}")
+            for lineno, line in enumerate(_lines_with_comments_and_strings_masked(path), 1):
+                if pattern.search(line):
+                    offenders.append(f"{path}:{lineno} {line.strip()[:80]}")
     assert not offenders, f"intra-task dispatch found: {offenders}"
