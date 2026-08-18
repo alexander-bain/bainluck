@@ -3613,6 +3613,110 @@ async def backfill_progress(
     return result
 
 
+@router.post("/calibration/graded-share-census")
+async def run_calibration_graded_share_census(
+    request: Request,
+    secret: str = Query(None),
+    max_pages: int = Query(40, ge=1, le=400, description="Market pages this call may run"),
+    reset: bool = Query(False, description="Discard the prior partial and restart at cursor 0"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Advance the graded-share census, the selection-bias rule's denominator.
+
+    CAL-P069. CAL-P068 shipped ``run_graded_share_census`` as a resumable
+    cursor rail and recorded that running it was "one bounded admin call away".
+    It was not: the function had **no caller** — not an endpoint, not a Celery
+    task, not a script. So the selection-bias rule it feeds could never render,
+    and the gap was invisible because a rule with no denominator reports
+    ``provability_census: {measured: false}``, which is exactly what it also
+    reports while working correctly on an unmeasured population. This endpoint
+    is the missing call.
+
+    Attended and bounded on purpose — ``max_pages`` caps the work, and the
+    returned ``cursor`` is the input to the next call, so a full pass is a
+    handful of curls rather than one request that must not time out. The census
+    is built as a cursor rail precisely because the whole-population aggregate
+    times out (CAL-P066's Seq Scan finding); nothing here re-attempts it.
+
+    **Composes rather than replaces.** Each call merges into the persisted
+    partial, so an interrupted pass resumes instead of restarting. ``reset=true``
+    is the explicit way to throw that away — needed when the population predicate
+    changes, and dangerous enough to require asking.
+
+    The artifact is written on EVERY call including an incomplete one, carrying
+    ``usable_as_denominator``. That flag is what
+    :func:`app.routes.calibration.load_provability_census` gates on: a partial
+    denominator is smaller than the truth, which inflates every graded share and
+    would flip cells from NOT-PROVABLE to *provable* — the one direction this
+    rule must never fail in. So a partial census is persisted (to resume from)
+    and still refused (as a divisor). Read-only against market data: it writes
+    one Redis key and mutates nothing (gotcha #21).
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+    from app.tasks.calibration_graded_share import run_graded_share_census
+    from app.tasks.redis_state import get_redis_client
+    from app.routes.calibration import GRADED_SHARE_CACHE_KEY
+
+    prior = None
+    start_cursor = 0
+    rc = None
+    try:
+        rc = get_redis_client()
+        raw = None if reset else rc.get(GRADED_SHARE_CACHE_KEY)
+        if raw:
+            prior = _json.loads(raw)
+            start_cursor = int(prior.get("cursor") or 0)
+    except Exception as exc:  # noqa: BLE001
+        # A prior we could not read is a prior we must not silently drop: say so
+        # in the response rather than restarting from 0 and reporting a smaller
+        # census as if it were a fresh full one.
+        return {
+            "status": "error",
+            "stage": "read_prior",
+            "detail": str(exc)[:200],
+            "hint": "pass reset=true to deliberately start a new census from cursor 0",
+        }
+
+    payload = await run_graded_share_census(
+        db, max_pages=max_pages, start_cursor=start_cursor, prior=prior
+    )
+
+    write = "ok"
+    try:
+        if rc is None:
+            rc = get_redis_client()
+        # 14 days: long enough that a multi-call pass cannot expire mid-flight,
+        # short enough that an abandoned partial does not become permanent.
+        rc.setex(GRADED_SHARE_CACHE_KEY, 14 * 24 * 3600, _json.dumps(payload))
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        write = f"failed: {str(exc)[:160]}"
+
+    return {
+        "status": "ok" if write == "ok" else "computed_not_persisted",
+        "artifact_write": write,
+        "resumed_from": start_cursor,
+        "cursor": payload.get("cursor"),
+        "complete": payload.get("complete"),
+        "usable_as_denominator": payload.get("usable_as_denominator"),
+        "reason": payload.get("reason"),
+        "pages_ok": payload.get("pages_ok"),
+        "pages_failed": payload.get("pages_failed"),
+        "failed_ranges": payload.get("failed_ranges"),
+        "elapsed_s": payload.get("elapsed_s"),
+        "categories": len(payload.get("by_category") or {}),
+        "by_category": payload.get("by_category"),
+        # The next call, spelled out — an attended rail whose operator has to
+        # reconstruct its own resume argument gets run once and abandoned.
+        "next_call": (
+            None
+            if payload.get("exhausted")
+            else f"POST /api/admin/calibration/graded-share-census?max_pages={max_pages}"
+        ),
+    }
+
+
 @router.get("/calibration/mce")
 async def calibration_mce_summary(
     request: Request,
