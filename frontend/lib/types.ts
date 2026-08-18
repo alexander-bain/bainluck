@@ -998,6 +998,27 @@ export interface FeedConceptData {
   // no winner is ever fabricated when the backend hasn't graded a champion yet).
   winner?: string | null;
   result_summary?: string | null;
+  // #1882 / #1939: the favourite of an UNSETTLED concept, in the same shape as
+  // `FeedTournamentData.golfers[0]`, so the concept card reuses the tournament
+  // probability treatment rather than inventing a second one. Absent (not null)
+  // when the backend found no usable field — presence IS the "has a leader" test.
+  leader?: FeedConceptLeader | null;
+}
+
+// #1939: web's half of #1882. The backend has served this since #1882 and iOS has
+// rendered it since; this surface had neither the field nor a branch, so its
+// classifier dropped every live concept as `empty_concept` rather than ship a
+// probability-free tile. Adding the type is the first of the three pieces that
+// must land together (type → render → classifier) — see `ConceptCard.tsx` and
+// `feedItemSuppressionReason`.
+export interface FeedConceptLeader {
+  name: string;
+  probability: number;
+  movement_24h?: number | null;
+  // How many competitors the probability was chosen from. A 52% favourite in a
+  // two-way fight and a 52% favourite in a 30-rider field are different facts,
+  // so the card prints "of N" only when N > 2.
+  field_size?: number | null;
 }
 
 // Theme/comparison bundle: one feed slot that folds several same-theme markets

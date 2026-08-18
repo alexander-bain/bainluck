@@ -106,6 +106,41 @@ function emptyConcept(): FeedItem {
   } as FeedItem;
 }
 
+/**
+ * #1939 — an UNSETTLED concept that carries a real favourite. Not an invention:
+ * this is the production row measured on `5542f8c4` (identified, `limit=50`),
+ * one of 7 concept cards on the page that ALL carried a leader and were ALL
+ * dropped by this surface while iOS rendered them.
+ */
+function leaderConcept(): FeedItem {
+  return {
+    type: "concept",
+    data: {
+      key: "event:cycling:vuelta-2026",
+      name: "La Vuelta 2026",
+      domain: "cycling",
+      status: "upcoming",
+      marquee_whathit: false,
+      leader: { name: "Tadej Pogacar", probability: 0.751, field_size: 30 },
+    } as FeedConceptData,
+  } as FeedItem;
+}
+
+/** #1939 — the head-to-head case, where "of 2" would be noise. */
+function headToHeadConcept(): FeedItem {
+  return {
+    type: "concept",
+    data: {
+      key: "event:ufc:26aug20",
+      name: "UFC Fight Night: Pantoja vs Van",
+      domain: "mma",
+      status: "upcoming",
+      marquee_whathit: false,
+      leader: { name: "Joshua Van", probability: 0.5217, field_size: 2 },
+    } as FeedConceptData,
+  } as FeedItem;
+}
+
 /** empty tournament (no golfers, no marquee result) vs a populated one. */
 function emptyTournament(): FeedItem {
   return {
@@ -294,5 +329,38 @@ describe("render routing — the leaf dispatcher fails closed", () => {
   test("FeedCard renders a settled WHAT-HIT concept", () => {
     const html = renderToStaticMarkup(<FeedCard item={settledConcept()} />);
     expect(html).toContain("Tour de France 2026");
+  });
+
+  // #1939 — the render half. The classifier now ADMITS a live concept carrying a
+  // leader; these assert the two renderers actually print the probability it was
+  // admitted for. Without them the fix reduces to the probability-free tile
+  // #1935 removed, which is the specific mistake the previous revision of the
+  // classifier comment refused to make.
+  //
+  // Fixture is the real production row, not an invention: measured on
+  // `5542f8c4`, `event:cycling:vuelta-2026`, Pogačar 0.751 of a 30-rider field.
+  test("DiscoverCard renders a LIVE concept's leader and probability (#1939)", () => {
+    const html = renderToStaticMarkup(
+      <DiscoverCard groupedItem={{ type: "single", item: leaderConcept() }} />,
+    );
+    expect(html).toContain("Tadej Pogacar");
+    expect(html).toContain("75%");
+    // The field-size qualifier: 75% of 30 is a different fact from 75% of 2.
+    expect(html).toContain("of 30");
+  });
+
+  test("FeedCard (Sports dispatcher) renders a LIVE concept's leader (#1939)", () => {
+    const html = renderToStaticMarkup(<FeedCard item={leaderConcept()} />);
+    expect(html).toContain("Tadej Pogacar");
+    expect(html).toContain("75%");
+  });
+
+  test("a two-way fight omits the 'of N' qualifier — it says nothing", () => {
+    const html = renderToStaticMarkup(
+      <DiscoverCard groupedItem={{ type: "single", item: headToHeadConcept() }} />,
+    );
+    expect(html).toContain("Joshua Van");
+    expect(html).toContain("52%");
+    expect(html).not.toContain("of 2");
   });
 });

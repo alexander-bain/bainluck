@@ -1074,21 +1074,42 @@ private struct GameSegmentsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 8) {
+                // UX-P090 — THE TOTAL COLUMN WAS OFF THE RIGHT EDGE OF EVERY IPHONE,
+                // and #1831 is what put it there. Before the 1…N inning ladder this
+                // row rendered only the innings the poller observed — often three —
+                // so it fit. Rendering all nine (correctly) widened it past the
+                // screen, and with `showsIndicators: false` there was no affordance
+                // saying so: the reader saw innings 1-7 and no total, on a card
+                // whose entire job is reconciling the splits with the score.
+                //
+                // Measured at the old geometry (54pt label + 9×28pt + 28pt total,
+                // 12pt gaps, 32pt card padding) the row is 486pt against a 393pt
+                // iPhone 16 and a 375pt SE — over by 93pt and 111pt.
+                //
+                // Retuned to 44 + 9×22 + 26 with 4pt gaps = 338pt, so a regulation
+                // nine-inning game fits the NARROWEST supported phone with room
+                // spare, and a 10th inning (364pt) still fits. Extras beyond that
+                // scroll — and the indicator is now ON, so the overflow announces
+                // itself instead of silently truncating the most important column.
+                // 22pt holds a two-digit monospaced caption ("12" ≈ 14pt).
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Grid(alignment: .trailing, horizontalSpacing: 4, verticalSpacing: 8) {
                         GridRow {
                             Text("")
-                                .frame(width: 54, alignment: .leading)
+                                .frame(width: 44, alignment: .leading)
                             ForEach(breakdown.segments) { segment in
                                 Text(segment.label)
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                    .frame(minWidth: 28)
+                                    .frame(minWidth: 22)
                             }
                             Text("T")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.primary)
-                                .frame(minWidth: 28)
+                                .frame(minWidth: 26)
+                                // A hairline gutter so the total reads as a separate
+                                // quantity from the last inning rather than a 10th.
+                                .padding(.leading, 6)
                         }
 
                         segmentRow(
@@ -1124,7 +1145,9 @@ private struct GameSegmentsView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
             }
-            .frame(width: 54, alignment: .leading)
+            // UX-P090: 54 -> 44, matching the header row above. See the geometry
+            // note there — the two must move together or the columns shear.
+            .frame(width: 44, alignment: .leading)
 
             ForEach(Array(scores.enumerated()), id: \.offset) { _, score in
                 // `·` for an inning we never observed. Printing `0` there would
@@ -1132,13 +1155,14 @@ private struct GameSegmentsView: View {
                 Text(score.map(String.init) ?? "·")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(score == nil ? .tertiary : .secondary)
-                    .frame(minWidth: 28)
+                    .frame(minWidth: 22)
             }
 
             Text("\(total)")
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(.primary)
-                .frame(minWidth: 28)
+                .frame(minWidth: 26)
+                .padding(.leading, 6)
         }
     }
 }

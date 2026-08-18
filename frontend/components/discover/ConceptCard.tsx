@@ -15,6 +15,7 @@ import { buildDiscoverShareUrl } from "@/lib/share";
 import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
 import { DismissBtn, ActionBar } from "./shared";
+import { formatConceptMovement } from "./utils";
 
 interface ConceptCardProps {
   data: FeedConceptData;
@@ -50,6 +51,16 @@ export function ConceptCard({
   const isLive = !whatHit && data.status === "live";
   const winner = data.winner?.trim() || null;
   const resultSummary = data.result_summary?.trim() || null;
+  // #1939: only read on the unsettled branch (see the render below). Guarded the
+  // same way `feedItemSuppressionReason` guards it — the classifier admitted this
+  // card on exactly this test, so the renderer must not be laxer than the gate
+  // that let it in, or an admitted card can still paint "undefined%".
+  const leader =
+    !whatHit && data.leader && (data.leader.name ?? "").trim() &&
+    typeof data.leader.probability === "number"
+      ? data.leader
+      : null;
+  const movementLabel = formatConceptMovement(leader?.movement_24h);
   const href = eventPath(data.key);
   const domainLabel = (data.domain || "event").toUpperCase();
   const gradient =
@@ -116,9 +127,40 @@ export function ConceptCard({
             )}
           </>
         ) : (
-          <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg">
-            {data.name}
-          </div>
+          <>
+            <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg">
+              {data.name}
+            </div>
+            {/* #1939: the favourite, rendered ONLY on the unsettled branch. The
+                WHAT-HIT arms above take precedence, so a result can never be
+                displaced by a stale probability even if a future payload carried
+                both — "settled means settled". Mirrors the native concept card's
+                grammar (name · probability chip · movement · "of N") so the two
+                surfaces print the same fact the same way. */}
+            {leader && (
+              <div className="mt-2 flex items-center justify-center flex-wrap gap-1.5">
+                <span className="text-white text-sm font-bold drop-shadow">
+                  {leader.name}
+                </span>
+                <span className="bg-white/20 text-white text-[11px] font-bold px-2 py-0.5 rounded-full">
+                  {Math.round(leader.probability * 100)}%
+                </span>
+                {movementLabel && (
+                  <span className="text-white/85 text-[11px] font-bold">
+                    {movementLabel}
+                  </span>
+                )}
+                {/* A 52% favourite in a two-way fight and a 52% favourite in a
+                    30-rider field are different facts. Only worth saying when
+                    the field is bigger than a head-to-head. */}
+                {typeof leader.field_size === "number" && leader.field_size > 2 && (
+                  <span className="text-white/70 text-[11px]">
+                    of {leader.field_size}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
       <div className="p-4">

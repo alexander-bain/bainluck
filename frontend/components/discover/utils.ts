@@ -3,6 +3,7 @@ import type {
   FeedEventData,
   FeedFuturesData,
   FeedConceptData,
+  FeedConceptLeader,
   FeedTournamentData,
   FeedBundleData,
 } from "@/lib/types";
@@ -183,6 +184,56 @@ function _futuresIsSettled(d: FeedFuturesData, now: number): boolean {
 }
 
 /**
+ * #1939 — the 24h movement chip on a concept leader, or `null` for "say nothing".
+ *
+ * ONE implementation, exported, because this surface has TWO concept renderers
+ * (`discover/ConceptCard` and `FeedCard`'s `ConceptFeedCard`) and the whole
+ * subject of this fix is a rule that drifted between surfaces. A second copy here
+ * would be the same mistake at smaller scale.
+ *
+ * Matches native's `movementLabel` exactly, including the sub-1-point deadband:
+ * a probability that moved a third of a point is noise, and "▲0" is worse than
+ * silence.
+ */
+export function formatConceptMovement(
+  movement: number | null | undefined,
+): string | null {
+  if (typeof movement !== "number" || !Number.isFinite(movement)) return null;
+  const points = movement * 100;
+  if (Math.abs(points) < 1) return null;
+  const rounded = Math.round(points);
+  return rounded > 0 ? `▲${rounded}` : `▼${Math.abs(rounded)}`;
+}
+
+/**
+ * #1939 — is a concept `leader` something the card can actually PRINT?
+ *
+ * Native writes this test as `concept.leader != nil` and that is complete THERE,
+ * because `FeedConceptLeader` decodes `name: String` / `probability: Double` as
+ * non-optional: a malformed leader throws during decode and the field is already
+ * nil by the time the predicate runs. TypeScript has no such gate — the interface
+ * is erased at runtime, so a `{}` or a `{name: ""}` on the wire would satisfy a
+ * bare `leader != null` and admit a card whose hero renders "undefined%".
+ *
+ * So the two surfaces reach the SAME rule by different amounts of code, and this
+ * function is the difference. Writing it as a presence test to "match native"
+ * would have matched the source and not the behaviour.
+ *
+ * Mirrors the backend's own guards (`_resolve_concept_leader`): a non-empty name
+ * and a finite probability in [0, 1]. The range check is not defensive padding —
+ * an independent-binary field can sum well past 100% (gotcha #23), so a single
+ * leader reading over 1.0 is corrupt rather than merely confident.
+ */
+function _conceptLeaderIsUsable(
+  leader: FeedConceptLeader | null | undefined,
+): boolean {
+  if (!leader || typeof leader !== "object") return false;
+  if (typeof leader.name !== "string" || !leader.name.trim()) return false;
+  const p = leader.probability;
+  return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
+}
+
+/**
  * Returns a short, identity-free machine reason when a feed card should be
  * SUPPRESSED as an empty predictive envelope, or `null` when it carries renderable
  * content. Rules (fail closed — an unknown/empty card is dropped, never shown bare):
@@ -245,13 +296,27 @@ export function feedItemSuppressionReason(
         const summary = (d.result_summary ?? "").trim();
         return named || summary ? null : "empty_concept";
       }
-      // NOT extended to #1882's `leader` here, deliberately (#1939 files it).
-      // The backend has served a concept favourite since #1882 and native
-      // renders it, but `FeedConceptData` on this surface has no `leader` field
-      // and `ConceptCard.tsx` has no branch for one — so admitting the card here
-      // would produce exactly the probability-free tile the clause above just
-      // closed. Web keeps dropping live concepts until it can render them; that
-      // is a missing feature, and shipping half of it would be a new defect.
+      // #1939: NOW extended to #1882's `leader`, and only because the other two
+      // pieces landed in the same commit. The previous revision of this comment
+      // refused the extension on the grounds that admitting the card without a
+      // render branch "would produce exactly the probability-free tile the clause
+      // above just closed" — that reasoning was right and is the reason the type
+      // (`FeedConceptLeader`), both renderers (`ConceptCard`, `ConceptFeedCard`)
+      // and this predicate move together. A classifier-only fix here would have
+      // re-opened #1935 while closing #1939.
+      //
+      // Measured on production `5542f8c4` (identified, `limit=50`): 7 of 50 cards
+      // were concepts, ALL unsettled, and ALL SEVEN carried a real leader —
+      // Pogačar 0.751 (field 30), Joshua Van 0.5217, Anthony Hernandez 0.635.
+      // Web was dropping 14% of the page while iOS rendered it. This is not a
+      // card with nothing to predict (the #1486 class this gate exists for); it
+      // is an answer the surface already had and declined to print.
+      //
+      // Order matches native exactly (`DiscoverViewModel.suppressionReason`):
+      // the settled arm is FIRST so that "settled means settled" holds — a card
+      // with a result leads with the result and never falls back to a
+      // probability that is now history.
+      if (_conceptLeaderIsUsable(d.leader)) return null;
       return "empty_concept";
     }
     case "bundle": {
