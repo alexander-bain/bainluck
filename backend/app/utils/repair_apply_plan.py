@@ -50,7 +50,14 @@ from app.utils.calibration_phase_ledger import input_fingerprint
 #: Schema of the persisted plan artifact. Bumping it invalidates every artifact
 #: in flight, which is correct: a plan written by different code is a plan whose
 #: fields mean something different.
-APPLY_PLAN_SCHEMA = "calibration-repair-apply-plan/v1"
+#:
+#: **v2 (queue 364, C-APPLY-PRE-R2 finding 2).** The address scheme changed — the
+#: digest is length-prefixed instead of ``"|"``-joined, so a v1 artifact's stored
+#: ``plan_hash`` is no longer the address of its own content. Bumping is what makes
+#: that refusal say *the scheme moved* rather than *somebody edited the file*: both
+#: fail closed, but only one of them tells the operator what to do next. Every v1
+#: artifact must be re-derived and re-approved. That is the intended cost.
+APPLY_PLAN_SCHEMA = "calibration-repair-apply-plan/v2"
 
 #: Namespace for the content address, so a digest from this rail can never
 #: collide with one from another fingerprinted structure in the codebase.
@@ -60,13 +67,13 @@ _PLAN_NS = "calibration-repair-apply-plan"
 #: distinct schema and a distinct digest namespace: a binding plan and a
 #: calibration plan must never be interchangeable at an apply, and two plans
 #: that happen to contain the same integers must never share an address.
-BINDING_APPLY_PLAN_SCHEMA = "event-team-binding-apply-plan/v1"
+BINDING_APPLY_PLAN_SCHEMA = "event-team-binding-apply-plan/v2"
 _BINDING_PLAN_NS = "event-team-binding-apply-plan"
 
 #: The THIRD rail (#1796/#1902, queue 363) — attended event CREATE from venue
 #: truth. Same reasoning for the separate schema and namespace: a create plan and
 #: a re-bind plan must never be interchangeable at an apply.
-CREATE_PLAN_SCHEMA = "event-create-from-truth-plan/v1"
+CREATE_PLAN_SCHEMA = "event-create-from-truth-plan/v2"
 _CREATE_PLAN_NS = "event-create-from-truth-plan"
 
 #: Refusal codes. The first three are the canonical corpus's own spelling; the
@@ -75,6 +82,12 @@ _CREATE_PLAN_NS = "event-create-from-truth-plan"
 REASON_PLAN_MISSING = "PLAN_ARTIFACT_MISSING"
 REASON_PLAN_CORRUPT = "PLAN_ARTIFACT_CORRUPT"
 REASON_PLAN_HASH_MISMATCH = "PLAN_HASH_MISMATCH"
+#: "I could not obtain a trustworthy read RIGHT NOW" — the store was unreachable,
+#: the read raised, or the artifact aged out. Distinct from MISSING on purpose
+#: (C-APPLY-PRE-R2 finding 1, gotcha #53): MISSING tells an operator the plan never
+#: existed and the correct next move is to generate one, which is exactly the wrong
+#: move during a store outage. Refuses the apply either way; only the sentence differs.
+REASON_PLAN_UNREADABLE = "PLAN_ARTIFACT_UNREADABLE"
 REASON_PLAN_EMPTY = "PLAN_HAS_NOTHING_TO_APPLY"
 REASON_OUTSIDE_APPROVED = "MUTATION_OUTSIDE_APPROVED_SET"
 REASON_IDENTITY_DRIFT = "DRY_RUN_APPLY_IDENTITY_DRIFT"
@@ -87,6 +100,67 @@ REASON_CONCURRENT_DRIFT = "CONCURRENT_ROW_DRIFT"
 #: working, not a fault. ``TRUTH_ID_SET_DRIFT`` is the artifact's own gate.
 REASON_TRUTH_ID_PRESENT = "TRUTH_ID_ALREADY_PRESENT"
 REASON_TRUTH_SET_DRIFT = "TRUTH_ID_SET_DRIFT"
+
+#: The three refusals that mean "there is no plan object to bind to". Every one of
+#: them stops the apply; they exist separately so the REASON an operator is handed
+#: is the one they can act on.
+_NO_PLAN_REASONS = frozenset({REASON_PLAN_MISSING, REASON_PLAN_CORRUPT, REASON_PLAN_UNREADABLE})
+
+
+def digest_fields(*fields: Any) -> str:
+    """Encode fields into ONE line that no field's content can forge. Pure.
+
+    ``"|".join([...])`` is not injective over free text, and every plan digest in
+    this module used it. C-APPLY-PRE-R2 finding 2 is the specimen::
+
+        before="Old|Club", after="New"    -> "Old|Club|New"
+        before="Old",      after="Club|New" -> "Old|Club|New"
+
+    Two materially different reviewed approvals — different club names, shown to
+    Alex — collapse onto one content address. The numeric ids were never at risk,
+    which is precisely why this survived: the fields it corrupts are the ones a
+    human reads, and the address is supposed to be the promise that what the human
+    read is what the apply writes.
+
+    Length-prefixing each field makes the encoding prefix-free, so the delimiter
+    carries no meaning a value can imitate: ``"Old|Club"`` encodes as ``8:Old|Club``
+    and ``"Old"`` as ``3:Old``, which differ in their first character.
+    """
+    parts: list[str] = []
+    for value in fields:
+        text = "" if value is None else str(value)
+        parts.append(f"{len(text)}:{text}")
+    return "|".join(parts)
+
+
+def plan_reason_for_read(status: str, *, error_class: str | None = None) -> str:
+    """Translate a durable :class:`EnvelopeRead` status into a refusal reason. Pure.
+
+    The whole point of the durable layer's careful classification — ``malformed``
+    with ``ChecksumMismatch`` is not ``missing`` — was being thrown away one frame
+    later, where every non-ok read became the prose string ``"plan artifact
+    unreadable: <status>"``. ``bind_apply`` matches on the corrupt CONSTANT, so
+    prose fell through to ``PLAN_ARTIFACT_MISSING`` and a torn artifact was
+    reported to the attended operator as one that never existed.
+
+    Kept as a pure function rather than inlined in each rail because there are two
+    rails (``repair_kalshi_fabricated_loss``, ``repair_event_team_binding``) and
+    both had the same defect. One shared eligibility predicate, one contract test.
+    """
+    from app.utils import durable_state as _ds
+
+    if status == _ds.MISSING:
+        return REASON_PLAN_MISSING
+    if status in (_ds.MALFORMED, _ds.WRONG_TYPE, _ds.WRONG_VERSION):
+        # The artifact IS there and cannot be trusted: torn write, wrong shape, or
+        # written under a superseded address scheme. All three are "do not apply
+        # this, and do not assume nothing was ever approved".
+        return REASON_PLAN_CORRUPT
+    if status in (_ds.UNAVAILABLE, _ds.STALE):
+        return REASON_PLAN_UNREADABLE
+    # An unrecognised status is not evidence of absence either. Fail into the
+    # reading that does not tell an operator to go make a new plan.
+    return REASON_PLAN_UNREADABLE
 
 
 # ---------------------------------------------------------------------------
@@ -125,14 +199,12 @@ class PlannedLeg:
     #: The digest line for this leg. Every field that the apply will act on
     #: appears here, so a plan that differs in ANY of them is a different plan.
     def digest_line(self) -> str:
-        return "|".join(
-            [
-                str(int(self.leg_id)),
-                str(int(self.market_id)),
-                self.verdict,
-                "1" if self.expected_is_winner else "0",
-                self.expected_source or "",
-            ]
+        return digest_fields(
+            int(self.leg_id),
+            int(self.market_id),
+            self.verdict,
+            "1" if self.expected_is_winner else "0",
+            self.expected_source or "",
         )
 
 
@@ -255,9 +327,11 @@ def bind_apply(
     """
     reasons: list[str] = []
     if plan is None:
-        reasons.append(
-            REASON_PLAN_CORRUPT if decode_reason == REASON_PLAN_CORRUPT else REASON_PLAN_MISSING
-        )
+        # Pass the loader's own classification through. It used to be narrowed to
+        # "corrupt, or else missing", which meant every reading the loader could
+        # not spell as the exact corrupt constant — including a checksum failure
+        # arriving as prose — was reported as an artifact that never existed.
+        reasons.append(decode_reason if decode_reason in _NO_PLAN_REASONS else REASON_PLAN_MISSING)
         return False, reasons
     if not presented_hash:
         reasons.append(REASON_PLAN_HASH_MISMATCH)
@@ -368,16 +442,14 @@ class PlannedBinding:
         what the approval was given over — a plan that silently swapped a club
         name while keeping the ids must be a different plan.
         """
-        return "|".join(
-            [
-                str(int(self.event_id)),
-                self.side,
-                str(int(self.expected_before_id)),
-                str(int(self.after_id)),
-                self.defect,
-                self.before_name or "",
-                self.after_name or "",
-            ]
+        return digest_fields(
+            int(self.event_id),
+            self.side,
+            int(self.expected_before_id),
+            int(self.after_id),
+            self.defect,
+            self.before_name or "",
+            self.after_name or "",
         )
 
 
@@ -549,16 +621,14 @@ class PlannedCreate:
         ``label`` stays out — it is prose assembled for the reviewer from the
         fields above, and re-wording it must not mint a new address.
         """
-        return "|".join(
-            [
-                self.provider,
-                self.truth_id,
-                str(int(self.home_team_id)),
-                str(int(self.away_team_id)),
-                self.home_name,
-                self.away_name,
-                self.commence_time,
-            ]
+        return digest_fields(
+            self.provider,
+            self.truth_id,
+            int(self.home_team_id),
+            int(self.away_team_id),
+            self.home_name,
+            self.away_name,
+            self.commence_time,
         )
 
 

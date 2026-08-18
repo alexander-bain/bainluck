@@ -131,6 +131,7 @@ from app.utils.repair_apply_plan import (
     APPLY_PLAN_SCHEMA,
     REASON_CONCURRENT_DRIFT,
     REASON_OUTSIDE_APPROVED,
+    REASON_PLAN_UNREADABLE,
     PlannedLeg,
     approved_leg_index,
     bind_apply,
@@ -139,6 +140,7 @@ from app.utils.repair_apply_plan import (
     evaluate_repair_contract,
     keyset_after,
     mutations_outside_approved,
+    plan_reason_for_read,
 )
 
 logger = logging.getLogger(__name__)
@@ -518,9 +520,17 @@ async def _load_plan():
             PLAN_IDENTITY, expected_version=APPLY_PLAN_SCHEMA, max_age_s=14 * 86400
         )
     except Exception as exc:  # noqa: BLE001
-        return None, f"plan read raised: {type(exc).__name__}"
+        # A raise is "I could not read", never "it is not there" (gotcha #53).
+        logger.warning("repair plan read raised: %s", type(exc).__name__)
+        return None, REASON_PLAN_UNREADABLE
     if not read.ok or read.envelope is None:
-        return None, f"plan artifact unreadable: {read.status}"
+        # Carry the durable layer's classification instead of flattening it into
+        # prose that the binder cannot match — C-APPLY-PRE-R2 finding 1.
+        logger.warning(
+            "repair plan artifact not readable: status=%s error_class=%s",
+            read.status, read.error_class,
+        )
+        return None, plan_reason_for_read(read.status, error_class=read.error_class)
     return decode_plan(read.envelope.payload)
 
 

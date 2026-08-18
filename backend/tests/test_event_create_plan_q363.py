@@ -312,6 +312,18 @@ class TestTheRealPopulations:
 
 def test_the_schema_is_pinned():
     """Bumping it invalidates every artifact in flight, which is correct — but
-    it must be a decision, not a drift."""
-    assert CREATE_PLAN_SCHEMA == "event-create-from-truth-plan/v1"
+    it must be a decision, not a drift.
+
+    **v1 -> v2, queue 364, and this test is why the bump is recorded rather than
+    noticed.** C-APPLY-PRE-R2 finding 2: the digest was ``"|".join``-ed and
+    therefore not injective over the club labels, so two differently-labelled
+    approvals could share one content address. The digest is now length-prefixed,
+    which means a v1 artifact's stored ``plan_hash`` is no longer the address of
+    its own content. Every plan staged before this change — the Aug 5 population-1
+    create, the 328-row create, the 133-row mapping repair, the 180-side re-bind —
+    must be RE-DERIVED and RE-APPROVED. That is the intended cost of the fix, and
+    the refusal it produces (``PLAN_ARTIFACT_CORRUPT``, never ``MISSING``) is the
+    other half of the same certification.
+    """
+    assert CREATE_PLAN_SCHEMA == "event-create-from-truth-plan/v2"
     assert CreatePlan().as_payload()["schema"] == CREATE_PLAN_SCHEMA
