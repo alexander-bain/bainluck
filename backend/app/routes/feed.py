@@ -265,6 +265,10 @@ class DiscoverInteractionIn(BaseModel):
 
 class DiscoverInteractionBatch(BaseModel):
     interactions: list[DiscoverInteractionIn] = Field(..., min_length=1, max_length=50)
+    # Provenance of this batch (who produced it) — header X-Discover-Provenance
+    # is preferred, but gold_session labeling surfaces may set it here.
+    # Untagged → unknown (never user).
+    provenance: Optional[str] = None
 
 
 def _normalize_discover_value(
@@ -560,10 +564,31 @@ async def record_discover_interactions(
     user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Record web/native Discover engagement events for ranking diagnostics."""
+    """Record web/native Discover engagement events for ranking diagnostics.
+
+    Provenance (pre-training gate): every row stamps *who* produced it —
+    user | warmer | sentinel | gold_session | admin | unknown. Callers that
+    explicitly set provenance (sentinel/warmer/gold_session/admin) are
+    trusted at source; untagged writes default to unknown, never user
+    (silent-default lesson: absence must not impersonate the valuable class).
+    User taste is therefore only `provenance = 'user'`, and training must
+    filter to that slice. Historical rows predating the column are NULL →
+    treated as unknown and re-estimated by a separate dry-run heuristic
+    (89% / 23.6% fingerprints), never by an unattended rewrite.
+    """
     user_id = user.id if user else None
     session_id = _session_id_from_request(request)
     discover_config = await _load_discover_runtime_config()
+    # Provenance at source — trust the writer, not the log.
+    # Header `X-Discover-Provenance` is the explicit stamp for warmer/sentinel/
+    # gold_session/admin; absence → unknown. Never default to user.
+    _PROVENANCE_VALUES = {"user", "warmer", "sentinel", "gold_session", "admin", "unknown"}
+    raw_prov = (request.headers.get("X-Discover-Provenance") or "").strip().lower()
+    # Also accept the batch-level provenance field when callers send it there
+    # (gold_session labeling surfaces use this).
+    if not raw_prov:
+        raw_prov = (getattr(body, "provenance", None) or "").strip().lower()  # type: ignore[attr-defined]
+    provenance = raw_prov if raw_prov in _PROVENANCE_VALUES else "unknown"
 
     rows = []
     for event in body.interactions:
@@ -602,6 +627,7 @@ async def record_discover_interactions(
                 rank=event.rank,
                 source=event.source[:50] if event.source else None,
                 market_type=market_type,
+                provenance=provenance,
             )
         )
 

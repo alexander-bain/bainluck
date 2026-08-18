@@ -1328,6 +1328,15 @@ class DiscoverInteraction(Base):
     # column existed predates the signal, and there is no backfill — a null
     # here means "not recorded", never "unshaped".
     market_type: Mapped[Optional[str]] = mapped_column(String(20))
+    # Pre-training gate — who/what produced this row, so Alex's 250 labels
+    # do not train on warmer/sentinel echo. Nullable pre-column: NULL is
+    # treated as unknown at read time (silent-default lesson: absence must
+    # not impersonate the valuable class). Historical NULLs are re-estimated
+    # by a separate dry-run heuristic (89% / 23.6% fingerprints) — never
+    # unattended rewrites. See add_disc_interactions_provenance migration.
+    provenance: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True, index=True, server_default="unknown"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
