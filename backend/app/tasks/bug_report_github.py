@@ -209,6 +209,34 @@ def comment_on_issue(issue_number: int, body: str) -> None:
     resp.raise_for_status()
 
 
+def update_issue_body(issue_number: int, body: str) -> None:
+    """Replace an existing issue's BODY (sentinel re-detect refresh, #1948/UX-P092).
+
+    The dedupe path used to be comment-only, so a sentinel issue's body was
+    frozen at whatever the first run happened to see — forever. #1483 sat for
+    nineteen days with a body describing two unrelated failures while the flow
+    had acquired a whole new p1 class. Comments carried the current set after
+    UX-P091, but the body is what a reader reads first and what the title is
+    judged against.
+
+    Only the body is touched: no state, no labels, no title. Callers are
+    responsible for keeping the fingerprint declaration inside the new body —
+    `sentinel_filing.reconcile_issue` refuses to call this otherwise, because
+    the GREEN close path matches on that declaration alone and a body without it
+    is an issue orphaned from its own lifecycle."""
+    resp = httpx.patch(
+        f"https://api.github.com/repos/{REPO}/issues/{issue_number}",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"body": body},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
 def close_issue(issue_number: int, comment: str | None = None) -> None:
     """Close an OPEN GitHub issue, optionally leaving a recovery comment first.
 

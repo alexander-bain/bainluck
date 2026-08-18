@@ -73,9 +73,23 @@ def _patched(build, rc=None):
 
 
 async def _run(build, keys=None, rc=None):
+    """Drive the warmer over the MAJORS tier only.
+
+    `keys` is passed EXPLICITLY (defaulting to the majors) and that is
+    deliberate after #1948. The scheduled path — `_warm_event_concepts(None)` —
+    now also resolves the leader tier from the database. Left implicit, every
+    test in this file would still pass, because the stubbed session makes the
+    leader enumeration fail and return an empty tier: the fixtures would be
+    quietly asserting the majors-only contract while the production code did
+    something else, which is the third time in this program a fixture has
+    agreed with a bug. The scheduled two-tier path has its own suite,
+    `test_concept_leader_warm_population.py`.
+    """
     a, b, c = _patched(build, rc)
     with a, b, c:
-        return await warmer._warm_event_concepts(keys)
+        return await warmer._warm_event_concepts(
+            WARM_CONCEPT_KEYS if keys is None else keys
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +204,10 @@ async def test_the_per_key_bound_leaves_headroom_under_the_task_budget():
         f"time_limit {hard}s is at or above the global 300s hard SIGKILL, which "
         "would be recorded as no_data rather than as a failure"
     )
+    # The MAJORS tier's own bound. Since #1948 the binding arithmetic is the sum
+    # of the two TIER budgets (asserted in
+    # `test_concept_leader_warm_population.py`), because a per-key timeout no
+    # longer bounds a tier on its own — the tier budget does. Both still hold.
     assert warmer.PER_KEY_TIMEOUT_SECONDS * len(WARM_CONCEPT_KEYS) <= soft, (
         f"{len(WARM_CONCEPT_KEYS)} keys x {warmer.PER_KEY_TIMEOUT_SECONDS}s exceeds "
         f"the {soft}s soft limit — the run can be killed mid-warm"
@@ -258,9 +276,19 @@ async def test_a_refresh_that_failed_reports_failed():
 # ---------------------------------------------------------------------------
 
 
-def test_the_warm_list_is_the_four_majors_and_nothing_else():
-    """Not "warm every concept". The concept tier spans golf, tennis, cycling and
-    the awards adapters; an unbounded sweep finds the 300s hard SIGKILL."""
+def test_the_named_warm_list_is_the_four_majors_and_nothing_else():
+    """The list NAMED in config is still exactly the four majors.
+
+    RETITLED, and the distinction is the whole of #1948. This asserts the
+    hand-written tuple, which is the LATENCY tier (#1107) — not "everything the
+    warmer warms". The warmer also warms every unsettled concept, enumerated
+    from the feed's own population function; that set is dynamic and must never
+    be pasted in here, because a hand-copied list is what drifted from the feed
+    and deleted the concept tier from Discover.
+
+    Still not "warm every concept": the tier also spans tennis and the awards
+    adapters, and an unbounded sweep finds the 300s hard SIGKILL.
+    """
     assert len(GOLF_MAJOR_CONCEPT_KEYS) == 4
     assert WARM_CONCEPT_KEYS == GOLF_MAJOR_CONCEPT_KEYS
     assert all(k.startswith("event:golf:") for k in WARM_CONCEPT_KEYS)
