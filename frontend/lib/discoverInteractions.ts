@@ -245,6 +245,7 @@ export function sendDiscoverInteraction(
     const sessionId = getDiscoverSessionId();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      "X-Discover-Provenance": "user",
     };
     if (sessionId) headers["x-session-id"] = sessionId;
 
@@ -264,6 +265,7 @@ export function sendDiscoverInteraction(
           source,
           market_type: analytics.market_type,
         }],
+        provenance: "user",
       }),
       keepalive: true,
     }).catch(() => {});

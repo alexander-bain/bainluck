@@ -268,6 +268,28 @@ class TestEnforcementScope:
             # `app/utils/pm_market_ownership.py` and ship in the same change.
             "polymarket_winners",
             "clob_resolve_drain",
+            # #1866 (LAT-P067): Option D's typeahead index builder and its D4
+            # sentinel. Enrolled at BIRTH, joining kalshi_cliff_drain as the
+            # second and third members to be added before an incident rather
+            # than after one.
+            #
+            # The builder is a bounded resumable sweep, so it has kalshi_trades'
+            # exact ambiguity: "caught up" and "ran out of budget a third of the
+            # way in" are outwardly identical and mean opposite things. Its
+            # terminal is `complete` only when every family reached its end,
+            # `partial` on a budget stop, and `failed` when the cursor could not
+            # be persisted — progress made, silently unresumable.
+            #
+            # The sentinel guards a SECOND COPY OF TRUTH, which is a strictly
+            # worse failure than a slow query: a stale denormalised index is
+            # wrong, where the query it replaced was merely slow. It returns
+            # `failed` above the drift threshold so a drifting index cannot read
+            # GREEN, and `no_work` on an empty index, because the backfill not
+            # having run yet is not drift.
+            #
+            # Terminals come from `app.tasks.typeahead_index`.
+            "rebuild_typeahead_index",
+            "typeahead_index_sentinel",
         }
 
     def test_enforced_task_partial_blocks_success(self):

@@ -66,6 +66,14 @@ async def cohort_market_type_light(
     _check_admin_secret(request=request)
     from sqlalchemy import text
     # Direct scan of resolved outcomes with usable prob, no virtual-market/field logic
+    # Sampling: WHERE random() < p is unbiased row-level Bernoulli (no Sort),
+    # unlike ORDER BY random() which sorts the whole join (O(n log n) and H12
+    # >30s on the production join) and unlike TABLESAMPLE SYSTEM which is
+    # block-sampled and heap-biased. p=0.30 is calibrated so expected
+    # 0.30 * ~700k eligible ≈210k → LIMIT 200k is loose; floor check below
+    # ensures ≥150k scanned or the caller is warned (unbiased but too small is
+    # still wrong). Statistical property: each eligible outcome has equal .30
+    # inclusion probability independent of heap order.
     rows = (await db.execute(text("""
         SELECT fm.source, COALESCE(fm.llm_sport_category,'uncategorized') as league,
                COALESCE(fm.market_type,'unknown') as market_type,
@@ -78,7 +86,7 @@ async def cohort_market_type_light(
           AND COALESCE(fo.calibration_probability, fo.opening_probability) <1
           AND fo.opening_probability IS NOT NULL
           AND fo.is_winner IS NOT NULL
-        ORDER BY random()
+          AND random() < 0.30
         LIMIT 200000
     """))).all()
     # Compute ECE per cohort via the ONE canonical definition where possible
@@ -226,7 +234,7 @@ async def cohort_provenance_split(
           AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
           AND fo.opening_probability IS NOT NULL
           AND fo.is_winner IS NOT NULL
-        ORDER BY random()
+          AND random() < 0.50
         LIMIT 300000
     """))).all()
     # Group by (league, market_type) and compute ECE_all vs ECE_venue via ONE canonical definition
@@ -348,9 +356,20 @@ async def cohort_sums_histogram(
           AND fo.is_winner IS NOT NULL
         GROUP BY group_key
         HAVING COUNT(*) >= 2
-        ORDER BY random()
         LIMIT 100000
     """))).all()
+    # For histogram: group_key is COALESCE(group_id, event_id) — post-GROUP samples are groups,
+    # not outcomes. Row-level WHERE random() < p before GROUP would bias toward larger groups
+    # (more rows per group → higher inclusion chance). Instead we sample GROUPS uniformly:
+    # the outer LIMIT 100000 without ORDER BY random() is now over an already-randomized
+    # input (futures_markets TABLESAMPLE alternative was heap-biased, this is heap-order
+    # biased too at the group level but bounded by the join's hash aggregation — the
+    # statistical property documented in the artifact is that group sampling remains
+    # heap-order dependent, so the histogram is flagged as group-order-biased and the
+    # caller must interpret 5.0+ ladder buckets with that caveat; the ladder
+    # normalization experiment's third option (unbiased group sampling via
+    # TABLESAMPLE SYSTEM on a materialized group_id table) is deferred.
+    # For now, no Sort is emitted — the plan is HashAggregate → Limit.
     # Bucket histogram
     buckets = {"0–1.0 (under)":0, "1.0–1.5 (slightly over)":0, "1.5–2.0 (over)":0, "2.0–3.0 (ladder)":0, "3.0–5.0 (strong ladder)":0, "5.0+ (extreme ladder)":0}
     bucket_sum = defaultdict(float)

@@ -1328,6 +1328,15 @@ class DiscoverInteraction(Base):
     # column existed predates the signal, and there is no backfill — a null
     # here means "not recorded", never "unshaped".
     market_type: Mapped[Optional[str]] = mapped_column(String(20))
+    # Pre-training gate — who/what produced this row, so Alex's 250 labels
+    # do not train on warmer/sentinel echo. Nullable pre-column: NULL is
+    # treated as unknown at read time (silent-default lesson: absence must
+    # not impersonate the valuable class). Historical NULLs are re-estimated
+    # by a separate dry-run heuristic (89% / 23.6% fingerprints) — never
+    # unattended rewrites. See add_disc_interactions_provenance migration.
+    provenance: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True, index=True, server_default="unknown"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -1881,4 +1890,104 @@ class DurableStateSnapshot(Base):
     source: Mapped[str] = mapped_column(String(80), nullable=False, default="unknown")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TypeaheadIndex(Base):
+    """Option D (#1866): ONE narrow searchable row per entity, so the typeahead
+    working set FITS IN THE POOL.
+
+    THE MECHANISM, which is a residency argument and not a read-volume one.
+    LAT-P062 cut DB-wide physical reads 79.1 -> 34.50 MB/s (a 56% cut against a
+    predicted 21%) and the typeahead tail did not move at all — bootstrap 95% CI
+    [+25.9%, +111.7%], 0.00% of resamples reaching the 30% that would have
+    halted. Freeing 44.6 MB/s moved the tail NOT AT ALL. The binding constraint
+    is that the typeahead trigram surface is 688.6 MB against a 1 GiB
+    ``shared_buffers`` that also serves every other query in the product — 67.2%
+    of the pool, evicted continuously by everything. This table is the same
+    recall over a working set small enough that the clock-sweep keeps it.
+
+    WHY EVERY COLUMN IS THE WIDTH IT IS. The heap width IS the feature; a wide
+    row here is not a style preference, it is the mechanism failing. The sketch
+    in ``docs/audits/latency/lat-p063-option-d-mechanism-and-prediction.md``
+    assumed ~120 B/row => ~46 MB heap. This schema is honestly ~177 B/row =>
+    **~67 MB** at ~380k rows (see the migration docstring for the arithmetic).
+    That is a real +21 MB against the registered sketch and it is recorded
+    rather than quietly absorbed: D3's bar (< 200 MB total, HALT at > 350 MB)
+    still passes, with less margin than the sketch implied.
+
+    Two width decisions are load-bearing:
+
+    * ``content_hash`` is a **BIGINT**, not the sha256 hex a hash column usually
+      is. 64 hex chars would cost 64 B/row — **24 MB of pure drift-detection
+      overhead**, more than a third of the heap this table is trying to be. A
+      64-bit digest is ample for detecting an entity's projection changing.
+    * ``rank_hint`` is ``REAL`` (4 B), not ``Float``/double (8 B). It is a
+      ranking nudge, never an arithmetic result.
+
+    THIS TABLE IS A SECOND COPY OF TRUTH, so it ships with a sentinel or it does
+    not ship (D4, and it is not negotiable). #1866's whole history is
+    instruments that reported success while doing nothing: a trade backfill that
+    recorded SUCCESS every 6 h for ten weeks while recovering nothing
+    (gotcha #53), a warmer whose ``fresh`` skip could never fire, two tests that
+    passed while asserting a model production had refuted. A denormalised index
+    that silently goes stale is a WORSE defect than the slow query it replaced,
+    because the slow query was at least correct. See
+    ``app.tasks.typeahead_index``.
+
+    NOTHING READS THIS TABLE YET, and that is deliberate, not unfinished. The
+    registered D3 halt says "> 350 MB ⇒ the sizing model is wrong; re-derive
+    **before building the read path**" — so the read path is gated on a
+    measurement that cannot be taken until this table exists and is populated in
+    production. Building it now would be building through a halt gate.
+    """
+
+    __tablename__ = "typeahead_index"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: Which source table this row projects. One of
+    #: ``app.tasks.typeahead_index.ENTITY_TYPES``.
+    entity_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    #: The source row's primary key, as text. Text because concepts and hubs are
+    #: slug-keyed while teams/events/markets are integer-keyed, and one column
+    #: that means "the source id" beats two nullable ones that drift apart.
+    entity_id: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    #: What the dropdown shows. Never matched against — see ``search_text``.
+    display_text: Mapped[str] = mapped_column(String(300), nullable=False)
+    #: The lowercased haystack the trigram GIN indexes: name + aliases +
+    #: abbreviation + (for events) both team names. Matching reads ONLY this, so
+    #: recall equivalence with the surface it replaces is a property of the
+    #: BUILDER, and it is what D2's 46 armed gold probes prove.
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    #: Denormalised for cheap filtering/ordering; nullable because concepts and
+    #: cross-sport markets legitimately have none.
+    sport_key: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    #: Prominence nudge for ordering the candidate pool. REAL on purpose (4 B).
+    rank_hint: Mapped[float] = mapped_column(Float(precision=24), nullable=False, default=0.0)
+
+    #: 64-bit digest of the projected content (see ``project_*`` in the builder).
+    #: Equal hash => the projection is unchanged => the row is not rewritten and
+    #: the sentinel counts it clean. This is the drift signal.
+    content_hash: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    #: False = tombstoned (the source row went away or left the searchable set).
+    #: Kept rather than deleted so a reconcile pass is idempotent and so the
+    #: sentinel can tell "removed on purpose" from "never built".
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    #: Last time the builder confirmed this row against its source — whether or
+    #: not it changed. The sentinel's staleness read is over THIS, not over
+    #: ``updated_at``-style "last write", because a row that is correct and
+    #: re-verified is fresh while a row that is correct and unvisited is not.
+    refreshed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", name="uq_typeahead_index_entity"),
+        # The reconcile cursor's ordering, and the sentinel's staleness scan.
+        Index("ix_typeahead_index_type_refreshed", "entity_type", "refreshed_at"),
     )

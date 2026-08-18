@@ -1,7 +1,7 @@
 """Tests for StatPal API client parsing and helpers."""
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # =============================================================================
@@ -1052,6 +1052,10 @@ class TestSyncHelpers:
             away_score = 85
             statpal_fixture_id = None
             win_probability_sources = None
+            # #1945: a live row has a commence_time IN THE PAST, and the premature
+            # guard now reads it. Offset first, no truncation and no branch
+            # (gotcha #44) — this is an age, not an hour.
+            commence_time = datetime.now(timezone.utc) - timedelta(hours=1)
 
         class FakeSportRow:
             key = "basketball_nba"

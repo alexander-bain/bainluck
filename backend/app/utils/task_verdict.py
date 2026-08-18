@@ -250,6 +250,23 @@ ENFORCED_TASKS = frozenset({
     # NOT-GREEN within 24h of deploy with no change to what they do.
     "polymarket_winners",              # terminal + handoff + errors
     "clob_resolve_drain",              # terminal + owned_backlog + errors
+    # #1866 (LAT-P067, Option D): the typeahead index builder and its D4
+    # sentinel. Both enrolled AT BIRTH, with real terminals, for the same reason
+    # kalshi_cliff_drain was: the failure mode is already known and it is this
+    # module's founding shape. The builder is a resumable sweep, so "caught up"
+    # and "ran out of budget a third of the way through" are indistinguishable
+    # from outside — its `terminal` is `complete` only when every family reached
+    # its end, `partial` on a budget stop, and `failed` when the cursor could not
+    # be persisted (progress made, silently unresumable). The sentinel guards a
+    # SECOND COPY OF TRUTH and returns `failed` when drift exceeds threshold, so
+    # a drifting index cannot read GREEN; an empty index returns `no_work`
+    # (authoritative unknown) rather than 100% drift, because the backfill not
+    # having run yet is not drift.
+    #
+    # Enrolling WITHOUT a terminal would be a no-op — the summary would classify
+    # as a non-authoritative unknown and still read GREEN. Both return one.
+    "rebuild_typeahead_index",         # terminal + stopped_at + cursor_persisted
+    "typeahead_index_sentinel",        # terminal + errors + overall.drift_rate
 })
 
 

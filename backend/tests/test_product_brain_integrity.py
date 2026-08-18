@@ -525,7 +525,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: given evidence, not a wider band; and a version bump carries its own rollover or accepts a dark
 #: page — Fable, #1955/#1680) on `program/calibration-66`, cut from `origin/master` `7686c97f`
 #: (79 files). Same resolution rule if another lane raises independently: COUNT the files.
-MINIMUM_BANKED_RULINGS = 80
+MINIMUM_BANKED_RULINGS = 81
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -7,7 +7,14 @@ on:
   push:
     branches: ["master"]
   pull_request:
-    branches: ["master"]
+    # NO `branches:` filter — deliberately, and it is the same named failure
+    # `ci.yml` carries (queue 366 item 0). `pull_request: branches: [X]` filters
+    # on the PR's BASE, so a stacked PR (base = another feature branch) matches
+    # nothing and the workflow never runs. GitHub then shows the PR with no
+    # CodeQL check at all — indistinguishable, at a glance, from CodeQL having
+    # run and found nothing. A check that could not run must never render as a
+    # check that passed. Queue 364's #1949 was retargeted to `master` purely to
+    # get CI at all; that workaround is what this line retires.
   schedule:
     - cron: "23 5 * * 1"  # Mondays 05:23 UTC
 

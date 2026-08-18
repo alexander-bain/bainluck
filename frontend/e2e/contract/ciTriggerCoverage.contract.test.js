@@ -66,13 +66,14 @@ const path = require("node:path");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const CI_YML = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
+const CODEQL_YML = path.join(REPO_ROOT, ".github", "workflows", "codeql.yml");
 
-function readWorkflow() {
+function readWorkflow(file = CI_YML) {
   assert.ok(
-    fs.existsSync(CI_YML),
-    ".github/workflows/ci.yml is missing. It is the deploy gate; if it genuinely moved, update this fixture in the same commit rather than leaving it to fail as a mystery."
+    fs.existsSync(file),
+    `${path.relative(REPO_ROOT, file)} is missing. If it genuinely moved, update this fixture in the same commit rather than leaving it to fail as a mystery.`
   );
-  return fs.readFileSync(CI_YML, "utf8");
+  return fs.readFileSync(file, "utf8");
 }
 
 /**
@@ -182,4 +183,48 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
       "the deploy job no longer requires `github.ref == 'refs/heads/master'`."
     );
   });
+});
+
+/**
+ * The SAME trap, in the other workflow that carried it (queue 367).
+ *
+ * `codeql.yml` opened with the identical `pull_request: branches: ["master"]`,
+ * so a stacked PR got no CodeQL run either. CodeQL does not gate deploy, which
+ * is exactly what makes its absence quieter and the reading worse: a security
+ * analysis that never ran and a security analysis that found nothing produce
+ * the same PR page.
+ *
+ * The assertion is deliberately the class, not the file: any workflow that is
+ * expected to speak on a pull request must not filter by base. If a third
+ * workflow acquires the filter, add it to `PR_WORKFLOWS` — the point of a
+ * shared list is that the next instance is one line, not one rediscovery.
+ */
+const PR_WORKFLOWS = [
+  { name: "ci.yml", file: CI_YML },
+  { name: "codeql.yml", file: CODEQL_YML },
+];
+
+describe("CI trap #2, generalized: no PR-reporting workflow filters by base branch", () => {
+  for (const { name, file } of PR_WORKFLOWS) {
+    it(`${name} triggers on pull_request with NO branch filter`, () => {
+      const on = topLevelBlock(readWorkflow(file), "on");
+      assert.ok(
+        on.some((l) => l.trim() === "pull_request:"),
+        `${name} no longer triggers on \`pull_request:\` at all.`
+      );
+
+      const pr = nestedBlock(on, "pull_request");
+      // A bare `pull_request:` with no body yields an empty block, which is the
+      // fixed shape. `null` means the key is absent entirely — caught above.
+      const filter = (pr || []).find((l) => /^\s+branches(-ignore)?:/.test(l));
+      assert.equal(
+        filter,
+        undefined,
+        `${name} restricts \`pull_request\` by base branch: "${filter && filter.trim()}".\n\n` +
+          "A PR based on anything else matches no trigger and gets NO RUN AT ALL — an empty " +
+          "checks list, not a pending or failing one. For a workflow that does not gate deploy " +
+          "this is worse, not better: nothing turns red, so the absence is never chased."
+      );
+    });
+  }
 });
