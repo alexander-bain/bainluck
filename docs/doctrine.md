@@ -120,6 +120,29 @@ merely easier to read.
 *Corollary:* an instrument that reports the wrong quantity confidently outranks a
 missing one in cost, because a missing instrument is owed and a wrong one is believed.
 
+### 7. An identifier in a directive is a proposal; the ledger allocates.
+
+A number, slot, or name handed down in an instruction is a *request for* an allocation,
+never the allocation itself. Authority to ask is not authority to reserve, because the
+asker is not looking at the ledger at the moment the work lands — and between the
+directive and the commit, a sibling lane can take the number in good faith. The executing
+lane resolves the identifier **against the ledger at write time** and reports the
+substitution; it does not use the handed-down value on the strength of who handed it down.
+
+*Named failures:* the LAT-P069 directive assigned ruling **087**, which `ux` had already
+banked and merged — the lane took the next free number (**088**) and said so
+(ruling **088**). The same shape sank Option D for two cycles: a `migration_slot` *ruled*
+assigned in a directive was treated, correctly, as not-yet-an-artifact, because a verbal
+ruling relayed through a directive is not the file the invariant reads. And
+`MINIMUM_BANKED_RULINGS` has now collided three times, resolved every time by **counting
+the files in the merged tree** rather than by trusting either side's number (#1910).
+
+*Consequence in practice:* it is what makes the ruling-per-file layout work at all
+(ruling **001**). Separate files cannot conflict, so two lanes banking the same day collide
+only on the *number* — which is recoverable by renumbering — instead of on a shared append
+region, where the only correct resolution is keep-both and the merged commit carries a new
+patch-id forever, so `git cherry` reports landed work as new on every later cycle.
+
 ---
 
 ## Related
