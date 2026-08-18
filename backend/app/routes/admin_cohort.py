@@ -200,25 +200,21 @@ tr:nth-child(even){{background:#111}}
 .muted{{color:#9ca3af}}
 </style></head><body>
 <h1>Cohort Views — league × source × market_type × band <span class="muted" style="font-weight:normal">sorted desc by ECE</span></h1>
-<p class="muted">Auto-refreshes every 60s. Heavy table built in worker (Celery heavy queue, ~90s). Graded share &lt;50% ⇒ <code>NOT-PROVABLE-selection-biased</code> per today's ruling. Band = 0-10%..90-100% (4th axis). Weekly trend for Monday scoreboard below.</p>
-<div id="meta" class="muted">Loading…</div>
-<div id="auth" class="muted" style="margin:8px 0;display:none">Enter admin secret: <input id="secretInput" type="password" placeholder="ADMIN_TOKEN" style="background:#1a1a1a;color:#e5e5e5;border:1px solid #333;padding:4px 8px"> <button id="saveSecret" style="padding:4px 8px">Save</button></div>
+<p class="muted">Auto-refreshes every 60s when authorized. Heavy table built in worker (Celery heavy queue, ~90s). Graded share &lt;50% ⇒ <code>NOT-PROVABLE-selection-biased</code> per today's ruling. Band = 0-10%..90-100% (4th axis). Weekly trend for Monday scoreboard below.</p>
+<p class="muted">Auth: paste <code>ADMIN_TOKEN</code> below — it is held in memory only, sent as <code>Authorization: Bearer</code>, never in the URL or browser storage. Prefer the Next.js page at <a href="/admin/cohort-views">/admin/cohort-views</a> for normal viewing.</p>
+<div id="auth" class="muted" style="margin:8px 0">Admin token (Bearer, in-memory only): <input id="secretInput" type="password" placeholder="paste ADMIN_TOKEN, not stored" style="background:#1a1a1a;color:#e5e5e5;border:1px solid #333;padding:4px 8px;width:360px"> <button id="saveSecret" style="padding:4px 8px">Load</button> <span id="authStatus" class="muted"></span></div>
+<div id="meta" class="muted">Not loaded — enter token and click Load.</div>
 <h2>Top by ECE (heavy, with band + graded_share)</h2>
 <table id="tbl"><thead><tr><th>rank</th><th>source</th><th>league</th><th>type</th><th>band</th><th>n</th><th>q</th><th>graded_share</th><th>ECE</th><th>gap pp</th><th>verdict</th></tr></thead><tbody></tbody></table>
 <h2>Weekly — last 6 weeks per cohort (is it improving?)</h2>
 <div id="weekly" class="muted">Loading weekly…</div>
 <script>
-function getSecret() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("secret") || localStorage.getItem("bainluck_admin_secret") || "";
-}
+let _inMemoryToken = "";
 async function fetchJSON(url) {
-  const secret = getSecret();
+  const secret = _inMemoryToken;
   const headers = {};
   if (secret) headers["Authorization"] = "Bearer " + secret;
-  const sep = url.includes("?") ? "&" : "?";
-  const q = secret ? sep + "secret=" + encodeURIComponent(secret) : "";
-  const r = await fetch(url + q, {headers});
+  const r = await fetch(url, {headers});
   if (!r.ok) throw new Error(r.status + " " + await r.text());
   return r.json();
 }}
@@ -226,6 +222,7 @@ async function load() {{
   const meta = document.getElementById("meta");
   const tbody = document.querySelector("#tbl tbody");
   const weeklyDiv = document.getElementById("weekly");
+  if (!_inMemoryToken) { meta.textContent = "Enter ADMIN_TOKEN above and click Load (token stays in memory only)."; return; }
   try {{
     const data = await fetchJSON("/api/admin/cohort-market-type");
     if (data.status) {{ meta.textContent = data.message + " (debug: " + JSON.stringify(data.debug||"") + ")"; return; }}
@@ -259,17 +256,11 @@ async function load() {{
     weeklyDiv.textContent = "";
   }}
 }}
-// Auth prompt handling
-const authDiv = document.getElementById("auth");
 const input = document.getElementById("secretInput");
 const saveBtn = document.getElementById("saveSecret");
-function checkAuth() {
-  if (!getSecret()) { authDiv.style.display = "block"; }
-  else { authDiv.style.display = "none"; }
-}
-if (saveBtn) saveBtn.onclick = () => { localStorage.setItem("bainluck_admin_secret", input.value); checkAuth(); load(); };
-checkAuth();
-load();
+const authStatus = document.getElementById("authStatus");
+if (saveBtn) saveBtn.onclick = () => { _inMemoryToken = (input.value || "").trim(); input.value = ""; authStatus.textContent = _inMemoryToken ? "Loaded (in-memory, will clear on reload)" : "Cleared"; load(); };
+// No auto-load: user must click Load. No URL param, no browser storage.
 setInterval(load, 60000);
 </script>
 </body></html>"""
