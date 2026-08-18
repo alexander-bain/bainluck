@@ -2,6 +2,11 @@
 
 import { useState, useCallback } from "react";
 import useSWR from "swr";
+import {
+  usePageTracking,
+  useScrollDepth,
+  useEngagementTime,
+} from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
@@ -46,6 +51,13 @@ function verdictClass(v: string) {
 const STALE_HOURS = 6;
 
 export default function CohortViewsPage() {
+  usePageTracking({
+    pageType: "admin_cohort_views",
+    pageTitle: "Cohort Views",
+  });
+  useScrollDepth({ pageType: "admin_cohort_views" });
+  useEngagementTime({ pageType: "admin_cohort_views" });
+
   const { secret } = useAdminAuth();
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
