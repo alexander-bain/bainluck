@@ -748,6 +748,14 @@ def record_task_terminal(full_task_name: str):
         pass
 
 
+class HardKillCensusUnavailable(RuntimeError):
+    """The hard-kill census could not be taken.
+
+    A distinct type so a caller can tell "I looked and there were no kills" from
+    "I could not look", which a bare ``{}`` cannot express. LAT-P069.
+    """
+
+
 def get_hard_kill_census() -> dict:
     """``{celery task name: {"attempts", "terminals", "hard_kills", "window_s"}}``.
 
@@ -760,6 +768,21 @@ def get_hard_kill_census() -> dict:
     outran attempts across a window boundary (the two counters expire
     independently), which is a measurement artifact and not a negative number
     of deaths.
+
+    ⚠️ **Raises rather than returning ``{}`` when the census cannot be taken**
+    (LAT-P069, gotcha #53, ruling 075 second clause). This function used to end
+    ``except Exception: return {}``, and its only consumer —
+    ``ops-snapshot``'s ``hard_kills`` block — renders an empty census as
+    ``tasks_observed: 0, total_hard_kills: 0``. That is indistinguishable from
+    perfect health, and it is not hypothetical: **the gauge's first production
+    read returned exactly that**, three minutes before the same Redis keys
+    returned 117 tasks and 13 kills. An unreachable Redis and a fleet with zero
+    hard kills produced the same JSON.
+
+    The caller already has a correct error branch (it renders
+    ``{"status": "error", "error_class": ..., "error": ...}``); swallowing here
+    is what prevented that branch from ever being reached. A reader cannot
+    recover a distinction the writer discarded.
     """
     try:
         r = get_redis_client()
@@ -786,8 +809,10 @@ def get_hard_kill_census() -> dict:
         for row in rows.values():
             row["hard_kills"] = max(0, row["attempts"] - row["terminals"])
         return rows
-    except Exception:
-        return {}
+    except Exception as exc:
+        # Deliberately re-raised, NOT swallowed. See the docstring: the empty
+        # dict this used to return renders as a clean bill of health.
+        raise HardKillCensusUnavailable(str(exc)) from exc
 
 
 #: `app.tasks.<name>` -> the short `_tracked_run` label. One hash, so a reader

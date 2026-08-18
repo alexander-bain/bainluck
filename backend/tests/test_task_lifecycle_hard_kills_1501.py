@@ -282,14 +282,35 @@ class TestLifecycleCounterMechanics:
         record_task_terminal(None)
         assert fake.strings == {}
 
-    def test_never_raises_when_redis_is_down(self, monkeypatch):
+    def test_the_writers_never_raise_when_redis_is_down(self, monkeypatch):
+        """The WRITE side is on the hot path of every task and must stay silent."""
         def boom():
             raise ConnectionError("redis is exactly the thing that is down")
 
         monkeypatch.setattr(redis_state, "get_redis_client", boom)
         record_task_attempt("app.tasks.poll_odds")   # must not raise
         record_task_terminal("app.tasks.poll_odds")  # must not raise
-        assert get_hard_kill_census() == {}
+
+    def test_the_reader_raises_rather_than_reporting_an_empty_census(self, monkeypatch):
+        """LAT-P069, gotcha #53, ruling 075 second clause.
+
+        This assertion used to read ``get_hard_kill_census() == {}`` — a fixture
+        that agreed with the bug (ruling 072). An empty census renders in
+        ``ops-snapshot`` as ``tasks_observed: 0, total_hard_kills: 0``, which is
+        indistinguishable from a perfectly healthy fleet, and that is not a
+        hypothetical: the gauge's first production read returned exactly that
+        three minutes before the same keys returned 117 tasks and 13 kills.
+
+        "I could not look" must not render as "I looked and there is nothing."
+        The caller has a correct error branch; swallowing here is what stopped it
+        being reachable.
+        """
+        def boom():
+            raise ConnectionError("redis is exactly the thing that is down")
+
+        monkeypatch.setattr(redis_state, "get_redis_client", boom)
+        with pytest.raises(redis_state.HardKillCensusUnavailable):
+            get_hard_kill_census()
 
     def test_the_window_is_stamped_once_and_never_slides(self, fake):
         record_task_attempt("app.tasks.poll_odds")
