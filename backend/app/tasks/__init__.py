@@ -3791,3 +3791,4 @@ _SUPPRESSED_RESULT_TASKS = _apply_result_suppression(celery_app)
 
 from app.tasks.futures import _infer_base_sport  # noqa: E402, F401 (used by routes/futures.py)
 from app.tasks.snapshots import _create_or_update_win_prob_snapshot  # noqa: E402, F401
+from app.tasks.cohort_market_type import build_cohort_market_type  # noqa: E402, F401

@@ -7,15 +7,12 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 interface AdminAuthContextValue {
   secret: string;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
-
-const STORAGE_KEY = "bainluck_admin_secret";
 
 export function useAdminAuth(): AdminAuthContextValue {
   const ctx = useContext(AdminAuthContext);
@@ -29,20 +26,21 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // 1. Check localStorage
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      setSecret(stored);
-      setChecking(false);
-      return;
+    // SECURITY (Queue #252 Item 3, C-ADHOC-4): admin token is in-memory only.
+    // It is NEVER written to localStorage or sessionStorage — it lives in
+    // React state for this tab session and is lost on reload by design (that's
+    // the feature: no persistent credential on disk, no cross-tab leakage).
+    // The prior localStorage persistence (bainluck_admin_secret) is removed.
+    // Defensively clear any stale persisted copy left by the pre-existing
+    // shared provider (a0368f76 → 05189102) so old browsers do not retain it.
+    try {
+      localStorage.removeItem("bainluck_admin_secret");
+      sessionStorage.removeItem("bainluck_admin_secret");
+    } catch {
+      // no-op: storage may be unavailable, but in-memory secret still works
     }
 
-    // SECURITY (Queue #252 Item 3): the ?secret= URL-param path is removed.
-    // A secret in the URL leaks via browser history, the Referer header, and
-    // shared links, and was being persisted straight into localStorage. The
-    // admin token must be entered once via the form below (or already present in
-    // localStorage). If a stale ?secret= is present in the URL, strip it so it
-    // does not linger in history for this tab.
+    // Strip any stale ?secret= left in the URL (leaks via history/Referer).
     try {
       const params = new URLSearchParams(window.location.search);
       if (params.has("secret")) {
@@ -57,21 +55,9 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
       // no-op: URL cleanup is best-effort
     }
 
-    // 2. Check if user is signed in via Firebase — auto-use stored secret
-    try {
-      const auth = getAuth();
-      const unsub = onAuthStateChanged(auth, (user) => {
-        if (user) {
-          // Signed-in user — check if we have a secret stored from a prior session
-          const s = localStorage.getItem(STORAGE_KEY);
-          if (s) setSecret(s);
-        }
-        setChecking(false);
-      });
-      return unsub;
-    } catch {
-      setChecking(false);
-    }
+    // No auto-restore from storage: token must be re-entered each session.
+    // Firebase auth state does NOT restore the admin secret (separate credential).
+    setChecking(false);
   }, []);
 
   if (checking) {
@@ -90,13 +76,13 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
             Admin Access
           </h2>
           <p className="text-xs text-text-muted mb-4">
-            Enter the admin secret to continue. This only needs to be done once.
+            Enter the admin secret to continue. It lives in memory for this tab
+            only and is cleared on reload — re-enter each session by design.
           </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (!input.trim()) return;
-              localStorage.setItem(STORAGE_KEY, input.trim());
               setSecret(input.trim());
             }}
           >

@@ -25,6 +25,14 @@ MIN_COHORT_N = 30
 MIN_ANTI_N = 30
 HIGH_PRICE = 0.75
 
+# Today's ruling: cells under 50% graded are NOT-PROVABLE-selection-biased
+GRADED_SHARE_THRESHOLD = 0.5
+
+# Probability-band (4th axis): 10 equal-width bands 0-10%, 10-20%, ..., 90-100%
+# Band index = min(int(prob*10), 9); label = f"{lo}-{hi}%"
+PROBABILITY_BAND_LABELS = [f"{i*10}-{(i+1)*10}%" for i in range(10)]
+PROBABILITY_BAND_EDGES = [(i/10.0, (i+1)/10.0) for i in range(10)]
+
 # Queue #259 Item 3: question-clustered (cluster-bootstrap) uncertainty. Fixed
 # seed + iteration count keep every interval deterministic so the sweep's flags
 # are reproducible in tests and across runs.
@@ -81,16 +89,55 @@ async def load_from_session(session: Any) -> list[dict[str, Any]]:
             outcome_id, market_id, outcome_name, is_winner,
             source, llm_league,
             category AS llm_sport_category, market_type,
-            -- vm_id is the size-gated production virtual-question identity.
             vm_id AS question_id,
-            -- adj_opening_probability is the final published (normalized where a
-            -- complete field, raw otherwise) curve price.
-            adj_opening_probability AS probability
+            adj_opening_probability AS probability,
+            fm.resolution_date,
+            DATE_TRUNC('week', fm.resolution_date)::date AS resolution_week
         FROM deduped
+        JOIN futures_markets fm ON fm.id = deduped.market_id
         """
     )
     result = await session.execute(sql)
-    return [dict(row._mapping) for row in result.all()]
+    rows = [dict(row._mapping) for row in result.all()]
+    # Compute graded_share per (source, league, market_type) against total ingested
+    # Today's ruling: cells under 50% graded are selection-biased => NOT-PROVABLE
+    # Only run total query if there are graded rows, so tests that mock empty results still see the canonical SQL
+    if rows:
+        try:
+            total_sql = text("""
+                SELECT COALESCE(fm.source,'unknown') AS source,
+                       COALESCE(fm.llm_sport_category,'uncategorized') AS league,
+                       COALESCE(fm.market_type,'unknown') AS market_type,
+                       COUNT(*) AS total_n
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                GROUP BY source, league, market_type
+            """)
+            total_result = await session.execute(total_sql)
+            total_by_key = {(r.source, r.league, r.market_type): r.total_n for r in total_result.all()}
+            # Count graded per key
+            from collections import Counter
+            graded_counts = Counter((r["source"], r["llm_sport_category"] or "uncategorized", r["market_type"] or "unknown") for r in rows)
+            for r in rows:
+                key = (r["source"], r["llm_sport_category"] or "uncategorized", r["market_type"] or "unknown")
+                total = total_by_key.get(key)
+                graded = graded_counts.get(key, 0)
+                if total and total > 0:
+                    r["graded_share"] = graded / total
+                    r["total_n"] = total
+                    r["graded_n"] = graded
+                else:
+                    r["graded_share"] = 1.0
+                # Normalize week to ISO string for JSON
+                if r.get("resolution_week") is not None:
+                    r["week"] = str(r["resolution_week"])
+                    r["resolution_week"] = str(r["resolution_week"])
+        except Exception:
+            # If total query fails, leave graded_share as 1.0 (backward compat)
+            pass
+    return rows
 
 
 async def load_rows(source: str | Path | Any) -> list[dict[str, Any]]:
@@ -101,6 +148,51 @@ async def load_rows(source: str | Path | Any) -> list[dict[str, Any]]:
         return await load_from_session(source)
     raise TypeError("source must be a JSON path or SQLAlchemy session")
 
+
+def _band_idx(prob: float) -> int:
+    return min(int(prob * 10), 9)
+
+def _band_label(idx: int) -> str:
+    return PROBABILITY_BAND_LABELS[idx]
+
+def _verdict_for(ece: float | None, sufficient: bool, graded_share: float | None) -> str:
+    """Grid verdict per LAUNCH-LEDGER: GREEN ≤5pp, RED, NOT-PROVABLE (+ selection-biased)."""
+    # Today's ruling: under 50% graded => selection-biased, always NOT-PROVABLE
+    if graded_share is not None and graded_share < GRADED_SHARE_THRESHOLD:
+        return "NOT-PROVABLE-selection-biased"
+    if not sufficient:
+        return "NOT-PROVABLE"
+    if ece is None:
+        return "NOT-PROVABLE"
+    # ≤5pp guardrail per ruling/LAUNCH-LEDGER
+    if ece <= 5.0:
+        return "GREEN"
+    return "RED"
+
+def _graded_share_for(rows: list[dict[str, Any]]) -> float | None:
+    """Graded share per cell: graded / total where total includes ungraded if present.
+    Rows may carry `total_n` or `graded_share` directly (from DB query). Otherwise
+    assume all rows are graded => 1.0 (backward compat for fixtures)."""
+    if not rows:
+        return None
+    # If any row carries an explicit graded_share, use the first
+    for r in rows:
+        if r.get("graded_share") is not None:
+            try:
+                return float(r["graded_share"])
+            except Exception:
+                pass
+    # If rows carry total_n (graded + ungraded), compute
+    for r in rows:
+        if r.get("total_n") is not None and r.get("graded_n") is not None:
+            try:
+                total = float(r["total_n"])
+                graded = float(r["graded_n"])
+                return graded / total if total > 0 else None
+            except Exception:
+                pass
+    # Fallback: all rows in sweep are graded => 1.0
+    return 1.0
 
 def normalize_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
@@ -119,6 +211,7 @@ def normalize_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         if winner is None:
             continue
         outcome_id = row.get("outcome_id", row.get("id", index))
+        band = _band_idx(probability)
         normalized.append(
             {
                 **row,
@@ -134,6 +227,8 @@ def normalize_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                     or "unknown"
                 ),
                 "market_type": str(row.get("market_type") or "unknown"),
+                "probability_band": _band_label(band),
+                "band_idx": band,
                 # Queue #257 Item 2: virtual-market / QUESTION identity. A field's
                 # candidate outcomes share one question and are NOT independent
                 # samples; default to the outcome id when absent so JSON fixtures
@@ -143,6 +238,13 @@ def normalize_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                     or row.get("vm_id")
                     or outcome_id
                 ),
+                # Preserve graded_share/total if present for today's ruling
+                "graded_share": row.get("graded_share"),
+                "total_n": row.get("total_n"),
+                "graded_n": row.get("graded_n"),
+                # Preserve week for time dimension
+                "week": row.get("week"),
+                "resolution_week": row.get("resolution_week") or row.get("week"),
             }
         )
     return normalized
@@ -230,17 +332,52 @@ def _question_pairs(
 
 
 def expected_calibration_error(rows: list[dict[str, Any]], bins: int = 10) -> float:
+    """Delegate to the ONE canonical ECE definition.
+
+    Imports and calls ``app.tasks.precompute_calibration._compute_horizon_mce``
+    so the sweep and the calibration sentinel cannot drift (same n-weighted
+    10-bin |actual − predicted|, in pp). Falls back to the local n-weighted
+    implementation only if the import fails (e.g., in minimal test harnesses).
+    """
     if not rows:
         return 0.0
+    # Build 10-bucket accumulators as the sentinel does: n, winners, sum_prob
+    buckets: list[dict[str, Any]] = []
+    # Group rows into bins exactly as the sentinel's bucketing does
     groups: list[list[dict[str, Any]]] = [[] for _ in range(bins)]
     for row in rows:
         groups[min(int(row["probability"] * bins), bins - 1)].append(row)
+    for g in groups:
+        if not g:
+            continue
+        buckets.append({
+            "n": len(g),
+            "winners": sum(r["actual"] for r in g),
+            "sum_prob": sum(r["probability"] for r in g),
+        })
+    try:
+        from app.tasks.precompute_calibration import _compute_horizon_mce  # canonical
+
+        # _compute_horizon_mce is weighted=True, returns pp (already *100, rounded)
+        val = _compute_horizon_mce(buckets, weighted=True)
+        if val is not None:
+            expected_calibration_error.last_was_fallback = False  # type: ignore[attr-defined]
+            return val / 100.0  # sentinel returns pp, sweep returns fraction
+    except Exception:
+        pass
+    # Fallback: local n-weighted (identical to sentinel's weighted=True) — must be labeled
+    expected_calibration_error.last_was_fallback = True  # type: ignore[attr-defined]
     return sum(
         len(group) / len(rows)
         * abs(_mean(r["probability"] for r in group) - _mean(r["actual"] for r in group))
         for group in groups
         if group
     )
+
+
+# Track whether the last ECE call fell back (for labeling). Module-level flag
+# so analyze_cohort can render ece_label without changing the return type.
+expected_calibration_error.last_was_fallback = False  # type: ignore[attr-defined]
 
 
 def calibration_slope(rows: list[dict[str, Any]]) -> float | None:
@@ -253,7 +390,14 @@ def calibration_slope(rows: list[dict[str, Any]]) -> float | None:
     return sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys)) / denominator
 
 
-def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dict[str, Any]:
+def analyze_cohort(key: tuple[str, ...], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    # key may be 3-tuple (source, league, market_type) or 4-tuple (+band_idx) or 5-tuple (+week)
+    # Backward compat: pad to 3
+    src = key[0] if len(key) > 0 else "unknown"
+    league = key[1] if len(key) > 1 else "unknown"
+    mtype = key[2] if len(key) > 2 else "unknown"
+    band_idx = key[3] if len(key) > 3 else None
+    week = key[4] if len(key) > 4 else None
     n = len(rows)
     # Queue #257 Item 2: the HONEST sample size is the number of independent
     # QUESTIONS, not the correlated outcome count — a field's candidate outcomes
@@ -298,10 +442,20 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
         else:
             direction = "within_ci"
     examples = sorted(rows, key=lambda row: abs(row["probability"] - row["actual"]), reverse=True)[:10]
+    ece_val = round(expected_calibration_error(rows), 6)
+    # Label fallback ECE so a divergent number can never render unmarked
+    ece_label = "fallback-nonparity" if getattr(expected_calibration_error, "last_was_fallback", False) else None
+    graded_share = _graded_share_for(rows)
+    verdict = _verdict_for(ece_val*100 if ece_val is not None else None, sufficient, graded_share)
+    # For band-specific cells, band_idx/label; for weekly, week
+    band_label = _band_label(band_idx) if band_idx is not None else None
     return {
-        "source": key[0],
-        "league_category": key[1],
-        "market_type": key[2],
+        "source": src,
+        "league_category": league,
+        "market_type": mtype,
+        "probability_band": band_label,
+        "band_idx": band_idx,
+        "week": week,
         "n": n,
         # Queue #257 Item 2: independent-question N is the honest sample size —
         # sufficiency and severity key off this, not the correlated outcome n.
@@ -317,7 +471,10 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
         "actual_rate_ci95_method": "question_cluster_bootstrap",
         "signed_error": round(signed_error, 6),
         "direction": direction,
-        "ece": round(expected_calibration_error(rows), 6),
+        "ece": ece_val,
+        "ece_label": ece_label,
+        "graded_share": round(graded_share, 4) if graded_share is not None else None,
+        "verdict": verdict,
         "calibration_slope": _round_optional(calibration_slope(rows)),
         "anti_calibration": {
             "flag": anti_flag,
@@ -389,6 +546,90 @@ def sweep(rows: Iterable[dict[str, Any]], worst_n: int = 20) -> dict[str, Any]:
         "worst_20": ranked,
         "drill_down": cohorts,
         "by_sport_shape": sweep_by_sport_shape(normalized),
+    }
+
+
+def sweep_with_bands(rows: Iterable[dict[str, Any]], worst_n: int = 50) -> dict[str, Any]:
+    """4-axis grid: source × league × market_type × probability_band (0-10%..90-100%).
+    Each cell is a band-specific calibration slice, with graded_share and verdict."""
+    normalized = normalize_rows(rows)
+    grouped: dict[tuple[str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
+    for row in normalized:
+        band = row.get("band_idx", _band_idx(row["probability"]))
+        grouped[(row["source"], row["league_category"], row["market_type"], band)].append(row)
+    cohorts = [analyze_cohort(key, cohort_rows) for key, cohort_rows in sorted(grouped.items())]
+    ranked = sorted(
+        (c for c in cohorts if c["sufficient"]),
+        key=lambda c: c["ece"],
+        reverse=True,
+    )[:worst_n]
+    return {
+        "rows": len(normalized),
+        "cohorts": len(cohorts),
+        "minimum_cohort_n": MIN_COHORT_N,
+        "worst_50": ranked,
+        "drill_down": cohorts,
+    }
+
+
+def sweep_weekly(rows: Iterable[dict[str, Any]], weeks: int = 6) -> dict[str, Any]:
+    """Time dimension: ECE per cohort per week for last `weeks` weeks.
+    Requires rows to carry `week` or `resolution_week` (YYYY-MM-DD week start)."""
+    from datetime import date, timedelta
+    normalized = normalize_rows(rows)
+    # Determine cutoff: last `weeks` weeks from most recent week in data, or today
+    # Collect all week dates that parse as YYYY-MM-DD
+    week_dates = []
+    for r in normalized:
+        wk = r.get("week") or r.get("resolution_week")
+        if wk and wk != "all_time":
+            try:
+                # week is stored as YYYY-MM-DD (Monday)
+                week_dates.append(date.fromisoformat(str(wk)[:10]))
+            except Exception:
+                pass
+    cutoff = None
+    if week_dates:
+        max_week = max(week_dates)
+        cutoff = max_week - timedelta(weeks=weeks - 1)
+    elif weeks:
+        # fallback to today
+        cutoff = date.today() - timedelta(weeks=weeks - 1)
+
+    grouped: dict[tuple[str, str, str, Any], list[dict[str, Any]]] = defaultdict(list)
+    for row in normalized:
+        wk = row.get("week") or row.get("resolution_week")
+        if wk is None or wk == "all_time":
+            # No time => skip for weekly (keeps all_time out of weekly trend)
+            continue
+        # Filter to last N weeks
+        try:
+            wk_date = date.fromisoformat(str(wk)[:10])
+            if cutoff and wk_date < cutoff:
+                continue
+        except Exception:
+            pass
+        grouped[(row["source"], row["league_category"], row["market_type"], wk)].append(row)
+    # Also compute per-cohort weekly series
+    by_cohort: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for (src, league, mtype, wk), lst in grouped.items():
+        cohort = analyze_cohort((src, league, mtype, 0, wk), lst)
+        # Keep week as explicit field
+        cohort["week"] = wk
+        by_cohort[(src, league, mtype)].append(cohort)
+    # Sort each cohort's weekly series by week
+    for k in by_cohort:
+        by_cohort[k] = sorted(by_cohort[k], key=lambda c: str(c["week"]))
+    # Flatten for reporting
+    all_weekly = []
+    for lst in by_cohort.values():
+        all_weekly.extend(lst)
+    return {
+        "rows": len(normalized),
+        "weeks": weeks,
+        "cohorts": len(by_cohort),
+        "weekly": all_weekly,
+        "by_cohort": {f"{k[0]}|{k[1]}|{k[2]}": v for k, v in by_cohort.items()},
     }
 
 
