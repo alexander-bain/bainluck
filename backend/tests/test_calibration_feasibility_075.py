@@ -497,3 +497,89 @@ def test_every_required_phase_appears_in_exactly_one_bucket():
     )
     assert sorted(buckets) == sorted(REQUIRED_PHASES)
     assert len(buckets) == len(set(buckets))
+
+
+# =============================================================================
+# CAL-P068: the PROJECTION must cost a unit with the completed-only mean too
+# =============================================================================
+
+
+def _rate_runner():
+    from app.tasks import calibration_main_build as build
+
+    return build.PhaseRunner(
+        plan=derive_plan({}),
+        checkpoint=build.new_main_checkpoint(
+            version="v1", fingerprint="fp", owner="o", generation=1
+        ),
+        checkpoint_action="fresh",
+        population_version="v1",
+        owner="o",
+        generation=1,
+        fingerprint="fp",
+    )
+
+
+def test_beats_to_publish_is_computed_from_completed_units_not_truncated_ones():
+    """CAL-P067 fixed the feasibility VERDICT and left the PROJECTION reading the
+    mixed mean — the same defect surviving in the number an operator reads.
+
+    The bias runs the dangerous way: the cancelled tail unit drags the mean DOWN,
+    a lower mean fits more units per beat, and fewer beats appear to remain. The
+    projection was optimistic by construction on every beat.
+    """
+    import math
+
+    from app.tasks import calibration_main_build as build
+
+    runner = _rate_runner()
+    for _ in range(9):
+        runner.ledger.record_stage_outcome(build.STAGED_UNIT_STAGE, 100_000, completed=True)
+    runner.ledger.record_stage_outcome(build.STAGED_UNIT_STAGE, 1_000, completed=False)
+
+    build._record_staged_rate(runner, banked=28)
+    stages = runner.ledger.stages
+
+    # The mixed mean (90.1s) would fit MORE units per beat than the true 100s.
+    assert stages["staged:unit_ms_mean"] == 90_100
+    assert stages["staged:unit_ms_mean_completed"] == 100_000
+    assert stages["staged:beats_basis:completed"] == 1
+    assert "staged:beats_basis:mixed" not in stages
+
+    window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
+    fixed_ms = max(0.0, runner.elapsed_ms() - stages[build.STAGED_UNIT_STAGE])
+    per_beat = max(0.0, window_ms - fixed_ms) / 100_000
+    expected = math.ceil((128 - 28) / per_beat) if per_beat >= 1 else -1
+    assert stages["staged:beats_to_publish"] == expected
+
+    # And it is never rosier than the mixed-mean projection would have been.
+    opt_per_beat = max(0.0, window_ms - fixed_ms) / 90_100
+    optimistic = math.ceil((128 - 28) / opt_per_beat) if opt_per_beat >= 1 else -1
+    assert stages["staged:beats_to_publish"] >= optimistic
+
+
+def test_a_beat_with_no_completed_unit_still_projects_but_declares_the_basis():
+    """A projection is worth having even off truncated observations — but a
+    number derived from a lower bound must not render identically to one derived
+    from a duration."""
+    from app.tasks import calibration_main_build as build
+
+    runner = _rate_runner()
+    runner.ledger.record_stage_outcome(build.STAGED_UNIT_STAGE, 200_000, completed=False)
+    build._record_staged_rate(runner, banked=10)
+    stages = runner.ledger.stages
+
+    assert stages["staged:unit_cost_reason:no_unit_completed"] == 1
+    assert "staged:unit_ms_mean_completed" not in stages
+    assert stages["staged:beats_basis:mixed"] == 1
+    assert "staged:beats_basis:completed" not in stages
+    assert "staged:beats_to_publish" in stages
+
+
+def test_a_finished_build_reports_zero_beats():
+    from app.tasks import calibration_main_build as build
+
+    runner = _rate_runner()
+    runner.ledger.record_stage_outcome(build.STAGED_UNIT_STAGE, 100_000, completed=True)
+    build._record_staged_rate(runner, banked=build.STAGED_FUTURES_BUCKETS)
+    assert runner.ledger.stages["staged:beats_to_publish"] == 0

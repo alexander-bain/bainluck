@@ -1153,7 +1153,28 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
     fixed_ms = max(0.0, runner.elapsed_ms() - runner.ledger.stages.get(STAGED_UNIT_STAGE, 0))
     usable_ms = max(0.0, window_ms - fixed_ms)
-    per_beat = usable_ms / mean_ms if mean_ms > 0 else 0.0
+
+    # CAL-P068: the PROJECTION costs a unit, so it must use the COMPLETED-only
+    # mean. CAL-P067 fixed the feasibility verdict and left this line reading the
+    # mixed mean, which is the same defect surviving in the number an operator
+    # actually looks at.
+    #
+    # The bias has a direction, and it is the bad one. A beat runs N units and
+    # the last is cancelled at the deadline, so the truncated observation drags
+    # the mean DOWN; a lower mean means more units appear to fit per beat, which
+    # means FEWER beats appear to remain. The projection was optimistic by
+    # construction, on every beat, and the more truncated the tail the more
+    # optimistic it got.
+    #
+    # Falls back to the mixed mean rather than refusing — a projection is worth
+    # having even when no unit completed — but says which one it used, because a
+    # number derived from a lower bound and a number derived from a duration must
+    # not render identically (ruling 075, second clause).
+    projection_mean = completed_mean if completed_mean else mean_ms
+    runner.ledger.record_gauge(
+        "staged:beats_basis:completed" if completed_mean else "staged:beats_basis:mixed", 1
+    )
+    per_beat = usable_ms / projection_mean if projection_mean > 0 else 0.0
     # -1 is NOT "unknown" — it is "a whole beat cannot hold one unit", which is
     # a different and much worse fact than a large count. Same convention as
     # the frozen module's projection, deliberately, so the two agree.
