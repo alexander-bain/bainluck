@@ -732,7 +732,18 @@ describe("Discover audit hooks are state-based", () => {
   it("the components actually render the hooks the specs look for", () => {
     const page = read("frontend", "app", "discover", "page.tsx");
     assert.ok(page.includes('data-testid="discover-card"'), "the feed item wrapper needs the card hook");
-    assert.ok(page.includes('data-testid="discover-feed-error"'), "the error state needs its own hook");
+
+    // UX-P087 (#1909): the failure state's markup moved out of the page and into
+    // the shared notice, which now tells the state by REASON — the page had an
+    // inline copy of that component with different words and a document reload,
+    // and two renderings of "the feed is not here" drifting apart is how one of
+    // them ends up saying something untrue. The hook is unchanged and is asserted
+    // where it lives; the page is asserted to route through the component rather
+    // than growing a third copy.
+    const notice = read("frontend", "components", "discover", "FeedUnavailableNotice.tsx");
+    assert.ok(notice.includes('discover-feed-error'), "the error state needs its own hook");
+    assert.ok(notice.includes('discover-feed-unavailable'), "the unavailable state keeps its hook");
+    assert.ok(page.includes("<FeedUnavailableNotice"), "the page must route failures through the shared notice");
 
     const empty = read("frontend", "components", "discover", "EndOfFeedCard.tsx");
     assert.ok(empty.includes('data-testid="discover-empty-state"'));

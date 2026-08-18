@@ -65,8 +65,28 @@ const ROW = '[data-testid="search-suggestion"]';
 const ANSWER = '[data-testid="search-answer"]';
 /** The phone entry point; absent above the `md` breakpoint. */
 const MOBILE_TRIGGER = 'button[aria-label="Open search"]';
-/** Present on both surfaces. */
-const INPUT = 'input[aria-label="Search teams, games, and futures"]';
+/**
+ * Present on both surfaces — and, on a phone, present TWICE.
+ *
+ * UX-P087, from this pack's first real run (32066929779, at the ux-73 merge SHA):
+ * both mobile journeys died before touching the page with
+ *
+ *     strict mode violation: locator('input[aria-label="Search…"]')
+ *     resolved to 2 elements
+ *
+ * `layout.tsx` keeps the desktop `SearchBar` mounted inside a `hidden md:block`
+ * container at every width, so on a phone its input is in the DOM alongside the
+ * overlay's — and `SearchBar.tsx:336` and `MobileSearchOverlay.tsx:180` give them
+ * the SAME accessible name. Playwright counts DOM matches, not painted ones.
+ *
+ * `.first()` is NOT the repair, and this is the part worth writing down: in DOM
+ * order the hidden desktop input comes first, so `.first()` on a phone would
+ * quietly drive the input the reader cannot see — a green run photographing the
+ * wrong surface, on the pack whose entire purpose is that #993 shipped to
+ * desktop and missed the phone. `:visible` picks the one a reader could actually
+ * type into, which is what every assertion here means by "the input".
+ */
+const INPUT = 'input[aria-label="Search teams, games, and futures"]:visible';
 
 /**
  * A term with durable inventory on both sides: a team (unpriced row, proves the
@@ -151,10 +171,14 @@ async function openDropdown(page: import("@playwright/test").Page): Promise<"mob
     await trigger.click();
     await page.locator(INPUT).waitFor({ state: "visible", timeout: 15_000 });
   } else {
-    await page.locator(INPUT).first().click();
+    await page.locator(INPUT).click();
   }
 
-  await page.locator(INPUT).first().fill(QUERY);
+  // No `.first()` anywhere: `INPUT` is `:visible`-scoped, so exactly one element
+  // matches on either surface, and an ambiguity would be a strict-mode RED
+  // rather than a silent pick. See the selector's comment — `.first()` on a
+  // phone selects the hidden desktop input.
+  await page.locator(INPUT).fill(QUERY);
   // The dropdown is debounced; wait for rows rather than a fixed sleep.
   await page
     .locator(ROW)

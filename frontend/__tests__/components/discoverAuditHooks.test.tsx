@@ -105,13 +105,25 @@ describe("the Discover page source renders the hooks the audit selects", () => {
   });
 
   test("the load-failure branch has its own hook and is not an empty state", () => {
-    expect(source).toContain('data-testid="discover-feed-error"');
-    expect(source).toContain('role="alert"');
-    // "Failed to load feed" must never be reachable through the empty-state
-    // hook — an error is not a legitimate empty feed, and conflating them is
-    // how a broken deploy reads as a quiet day.
-    const errorBlockIndex = source.indexOf('data-testid="discover-feed-error"');
-    const errorBlock = source.slice(errorBlockIndex, errorBlockIndex + 400);
-    expect(errorBlock).not.toContain("discover-empty-state");
+    // UX-P087 (#1909): the branch's MARKUP moved into
+    // `components/discover/FeedUnavailableNotice`, so the hook is asserted where
+    // it now lives. What this test protects is unchanged and is the reason it
+    // exists: the hook survives, and a load failure is never reachable through
+    // the empty-state hook — an error is not a legitimate empty feed, and
+    // conflating them is how a broken deploy reads as a quiet day.
+    const notice: string = jest.requireActual("fs").readFileSync(
+      require("path").join(
+        __dirname, "..", "..", "components", "discover", "FeedUnavailableNotice.tsx",
+      ),
+      "utf8",
+    );
+    expect(notice).toContain('discover-feed-error');
+    expect(notice).toContain('role="alert"');
+    expect(notice).not.toContain("discover-empty-state");
+
+    // And the page still routes its failure branch through that component
+    // rather than growing a second, drifting copy of the markup.
+    expect(source).toContain("<FeedUnavailableNotice");
+    expect(source).not.toContain('data-testid="discover-feed-error"');
   });
 });

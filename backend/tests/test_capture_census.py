@@ -23,6 +23,38 @@ IN_SEASON_NBA = datetime(2026, 1, 15, tzinfo=timezone.utc)   # NBA regular seaso
 OFFSEASON_NFL = datetime(2026, 8, 17, tzinfo=timezone.utc)   # NFL preseason (#1897)
 IN_SEASON_NFL = datetime(2026, 11, 15, tzinfo=timezone.utc)  # NFL regular season
 
+# CAL-P065 — gotcha #44's LATENT instance in this file, and why "it passes" was
+# not evidence that it was fixed.
+#
+# #1906 pinned the clock on the tests it had just written and left five earlier
+# `capture_findings(...)` calls reading the real wall clock. A 12-month sweep
+# (`scripts/clock_sweep.py`, the #1109 standard) reports all 18 green at every
+# month — so nothing was RED and nothing looked owed. That is precisely what
+# latent means here: those five assertions are green by ACCIDENT OF THE DATA,
+# not by any property they state.
+#
+#   * `tennis_atp` and `soccer_epl` are absent from `_SEASON_LEAGUE_SLUG`, so
+#     `league_phase()` answers "in_season" year-round. Add bands for either
+#     league — a plainly reasonable future change — and those tests start
+#     branching on the month.
+#   * `icehockey_nhl` IS banded. `test_sane_sport_produces_no_findings` asserts
+#     `== []` against a league the gate knows, and survives only because a
+#     1.5-moneyline-per-game ratio never reaches the gate at all.
+#
+# So the sweep proves invariance TODAY and nothing about tomorrow, and the
+# defect is one data change away in each case. Every assertion-bearing call
+# below is pinned. The single deliberate exception is
+# `test_capture_findings_defaults_to_real_clock_without_now`, which exists to
+# prove the parameter is optional and therefore asserts nothing clock-dependent.
+ANY_DATE = datetime(2026, 6, 15, tzinfo=timezone.utc)
+
+#: One instant per month, for the in-suite invariance assertion below. The
+#: sweep script is a thing somebody has to remember to run; this is the same
+#: property as a test that fails on its own.
+TWELVE_MONTHS = tuple(
+    datetime(2026, m, 15, tzinfo=timezone.utc) for m in range(1, 13)
+)
+
 
 def _mkt(sport, name, ext, outc, well, volp, voln, art):
     return (sport, name, ext, outc, well, volp, voln, art)
@@ -73,7 +105,7 @@ def test_noncore_sport_starved_is_watch_not_real():
         "moneyline": MassCounts(markets=100, outcomes=200),  # 0.04/game
         "other": MassCounts(markets=50, outcomes=50),
     }}
-    findings = capture_findings(games, by_sc)
+    findings = capture_findings(games, by_sc, now=ANY_DATE)
     starved = [f for f in findings if f.kind == "starved_class"]
     assert starved and all(f.severity == "WATCH" for f in starved)
 
@@ -84,7 +116,7 @@ def test_classifier_leak_flags_when_other_exceeds_ceiling():
         "moneyline": MassCounts(markets=60, outcomes=120),
         "other": MassCounts(markets=40, outcomes=40),  # 40% other
     }}
-    findings = capture_findings(games, by_sc)
+    findings = capture_findings(games, by_sc, now=ANY_DATE)
     assert any(f.kind == "classifier_leak" for f in findings)
 
 
@@ -96,7 +128,7 @@ def test_sane_sport_produces_no_findings():
         "total": MassCounts(markets=30, outcomes=60),
         "other": MassCounts(markets=2, outcomes=2),  # ~2%
     }}
-    assert capture_findings(games, by_sc) == []
+    assert capture_findings(games, by_sc, now=ANY_DATE) == []
 
 
 def test_passrate_outlier_detects_low_source_sport():
@@ -108,7 +140,7 @@ def test_passrate_outlier_detects_low_source_sport():
     for s in ["s1", "s2", "s3", "s4"]:
         src[(s, "kalshi")] = MassCounts(outcomes=1000, vol_pos=800, vol_null=0)
     src[("s5", "kalshi")] = MassCounts(outcomes=1000, vol_pos=50, vol_null=0)
-    findings = capture_findings(games, by_sc, src)
+    findings = capture_findings(games, by_sc, src, now=ANY_DATE)
     outliers = [f for f in findings if f.kind == "passrate_outlier"]
     assert len(outliers) == 1
     assert outliers[0].cohort == "kalshi/s5"
@@ -124,7 +156,7 @@ def test_passrate_outlier_skips_no_volume_sources_and_thin_signal():
         # kalshi golf below the min-outcomes floor -> skipped, not flagged
         ("golf", "kalshi"): MassCounts(outcomes=50, vol_pos=1, vol_null=0),
     }
-    findings = capture_findings(games, by_sc, src)
+    findings = capture_findings(games, by_sc, src, now=ANY_DATE)
     assert not any(f.kind == "passrate_outlier" for f in findings)
 
 
@@ -255,4 +287,86 @@ def test_season_gate_only_applies_to_leagues_with_known_bands():
 def test_capture_findings_defaults_to_real_clock_without_now():
     # `now` is optional; omitting it must not raise. (Value not asserted — that
     # would reintroduce the wall-clock dependency this whole block removes.)
+    #
+    # This is the ONE deliberately-unpinned call in the file. It is safe because
+    # it asserts only that a finding exists at all, which no season phase can
+    # change: the gate downgrades severity and never drops a finding.
     assert _starved(500, sport="soccer_epl") is not None
+
+
+# ---------------------------------------------------------------------------
+# CAL-P065 — the invariance itself, as a test rather than as a script run.
+# ---------------------------------------------------------------------------
+
+
+def test_banded_league_verdict_is_identical_at_every_month_of_the_year():
+    """A banded league's severity must be a function of its PHASE, not of when
+    the suite runs — and the phase must be the injected clock's, never today's.
+
+    NHL is the specimen because it is in ``_SEASON_LEAGUE_SLUG``: the gate
+    genuinely consults the calendar for it, so a cohort that is starved in
+    January and starved in July should be REAL in one and WATCH in the other,
+    and each answer must be stable no matter what day the test runs.
+
+    The pair is asserted TOGETHER (gotcha #43): proving only that some month
+    says WATCH would also pass if the gate had been silenced into always-WATCH.
+    """
+    by_month = {
+        m.month: _starved(500, sport="icehockey_nhl", now=m) for m in TWELVE_MONTHS
+    }
+    assert all(f is not None for f in by_month.values()), "a finding must never vanish"
+
+    severities = {m: f.severity for m, f in by_month.items()}
+    assert set(severities.values()) == {"REAL", "WATCH"}, (
+        "the season gate must actually discriminate for a banded league — "
+        f"got {sorted(set(severities.values()))} across 12 months"
+    )
+    # January is NHL regular season; July is not. Named explicitly so a bands
+    # change that inverts them fails here rather than drifting quietly.
+    assert severities[1] == "REAL"
+    assert severities[7] == "WATCH"
+    assert "offseason" in by_month[7].detail.lower() or "season" in by_month[7].detail.lower()
+
+
+def test_every_pinned_scenario_is_invariant_to_the_month_it_is_graded_in():
+    """The #1109 standard, in the suite. Each scenario is evaluated at all twelve
+    pinned instants and must return the SAME verdict every time.
+
+    ``scripts/clock_sweep.py`` proves this for the file as a whole, but only when
+    somebody remembers to run it — and #1906's five surviving wall-clock calls
+    are what that gap looks like. Pinning the clock at the call site is the fix;
+    this is the assertion that the pinning is real, i.e. that nothing downstream
+    reaches past the injected clock to `datetime.now()`.
+    """
+    scenarios = {
+        "noncore_tennis": (
+            {"tennis_atp": 2700},
+            {"tennis_atp": {"moneyline": MassCounts(markets=100, outcomes=200)}},
+        ),
+        "epl_classifier_leak": (
+            {"soccer_epl": 50},
+            {"soccer_epl": {
+                "moneyline": MassCounts(markets=60, outcomes=120),
+                "other": MassCounts(markets=40, outcomes=40),
+            }},
+        ),
+        "sane_nhl": (
+            {"icehockey_nhl": 30},
+            {"icehockey_nhl": {
+                "moneyline": MassCounts(markets=45, outcomes=90),
+                "spread": MassCounts(markets=30, outcomes=60),
+                "total": MassCounts(markets=30, outcomes=60),
+                "other": MassCounts(markets=2, outcomes=2),
+            }},
+        ),
+    }
+    for label, (games, by_sc) in scenarios.items():
+        verdicts = {
+            tuple(sorted((f.kind, f.cohort, f.severity)
+                         for f in capture_findings(games, by_sc, now=m)))
+            for m in TWELVE_MONTHS
+        }
+        assert len(verdicts) == 1, (
+            f"{label} returns {len(verdicts)} different verdicts across the year — "
+            "it is reading a clock the caller did not give it"
+        )

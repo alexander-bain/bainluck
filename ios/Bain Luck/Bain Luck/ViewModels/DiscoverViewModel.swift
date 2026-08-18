@@ -731,7 +731,19 @@ final class DiscoverViewModel: ObservableObject {
             // just dropped it. Now that it decodes, this matches web exactly
             // (`feedItemSuppressionReason`, discover/utils.ts): golfers OR whathit.
             if let golfers = tournament.golfers, !golfers.isEmpty { return nil }
-            if tournament.marqueeWhathit == true { return nil }
+            // #1935: the WHAT-HIT arm no longer admits a card that cannot render
+            // its own result. `DiscoverTournamentCard`'s champion hero is
+            // `if let leader = golfers.first` — with an empty field there is no
+            // champion branch and no probability branch, so the card is a
+            // gradient, a title and a FINAL badge. Since the arm above already
+            // admits every tournament WITH golfers, this arm only ever fired for
+            // the golferless case, which is precisely the one that renders
+            // nothing. It was pure leak.
+            //
+            // Left as an explicit clause rather than deleted: "settled means
+            // settled" says a result-carrying card must survive the gate, and the
+            // day a tournament payload can name a champion without a golfer row,
+            // this is where that reads.
             return "empty_tournament"
         }
         if let concept = item.concept {
@@ -752,7 +764,26 @@ final class DiscoverViewModel: ObservableObject {
             // first here (the server never sends both), but the leader check is
             // written second so that if that invariant ever breaks, a settled card
             // still renders its result. Settled means settled.
-            if concept.marqueeWhathit == true { return nil }
+            // #1935: WHAT-HIT admits the card only when it can NAME the result.
+            //
+            // This arm used to be `marqueeWhathit == true` alone, and a settled
+            // concept whose champion could not be graded reaches the renderer
+            // with no winner and no summary — `_resolve_concept_champion`
+            // returns nil for an absent or ambiguous crown, by design. The card
+            // then prints "Final result — see the recap" under a FINAL badge:
+            // a settled card that cannot say what happened, which is the same
+            // empty predictive envelope #1486 fails closed, arriving through the
+            // one arm that never checked.
+            //
+            // The probability arm below is NOT a substitute here and must stay
+            // second — "settled means settled": a card with a result leads with
+            // the result, and a card that is settled but resultless must not
+            // fall back to a probability that is now history. It gets suppressed.
+            if concept.marqueeWhathit == true {
+                let named = (concept.winner ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let summary = (concept.resultSummary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return (named.isEmpty && summary.isEmpty) ? "empty_concept" : nil
+            }
             if concept.leader != nil { return nil }
             return "empty_concept"
         }

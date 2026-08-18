@@ -48,6 +48,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timezone
@@ -69,17 +70,41 @@ VENUE_SETTLED = (
 )
 
 
+class QueryTooBig(Exception):
+    """The server could not answer this batch -- a SMALLER batch might.
+
+    Distinct from a malformed query on purpose. ``db-query`` answers a
+    statement timeout with **HTTP 400** and ``reason: statement_timeout`` in
+    the body, which reads at the transport layer exactly like "your SQL is
+    bad". It is not: it is "I could not check", and the caller's correct
+    response is to bisect, not to abort. Conflating them is ruling 075's
+    second clause in miniature, and it crashed this census on its first real
+    population (268 events, q360).
+    """
+
+
 def db_query(sql: str, limit: int = 1000) -> list:
     api, token = os.environ.get("BAINLUCK_API"), os.environ.get("ADMIN_TOKEN")
     if not api or not token:
         sys.exit("BAINLUCK_API and ADMIN_TOKEN must be set (source ~/.claude/.env)")
+    # NB: `timeout_ms` is EXPLAIN-only on this endpoint -- passing it on the row
+    # path is a hard 400. The server-side default bounds us instead, which is
+    # exactly why the bisect below has to exist.
     body = json.dumps({"sql": sql, "limit": limit}).encode()
     req = urllib.request.Request(
         f"{api}/api/admin/db-query", data=body,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        raw = resp.read().decode()
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode()
+        if "statement_timeout" in detail:
+            raise QueryTooBig(detail) from exc
+        # Anything else is a real error and must not be silently bisected into
+        # a smaller query that happens to succeed on a subset of the population.
+        sys.exit(f"db-query failed HTTP {exc.code}: {detail[:400]}")
     # gotcha #40: JSONB comes back as a Python repr, so json.loads alone reads {}.
     try:
         payload = json.loads(raw)
@@ -254,6 +279,13 @@ def main() -> int:
         the refuse-on-cap guard intact -- a batch that still hits the cap at one
         event is a real error and is allowed to raise, because at that point the
         truncation is not something a smaller batch can fix.
+
+        TWO failure modes bisect, not one (q360). The original only caught the
+        row cap, so the FIRST real run -- 268 events -- died on a
+        ``statement_timeout`` the endpoint reports as HTTP 400. Both mean "this
+        batch is too big for one answer" and both are fixed by halving it; a
+        genuinely malformed query exits inside ``db_query`` instead, so it can
+        never be bisected down to a subset that accidentally succeeds.
         """
         inlist = ",".join(str(i) for i in event_ids)
         sql = (
@@ -271,10 +303,18 @@ def main() -> int:
             "ORDER BY fm.event_id, fm.id, fo.id"
         )
         if len(event_ids) == 1:
-            return db_query(sql)
+            # Nothing left to halve: a timeout here is a real error, not a
+            # sizing problem, and must not be reported as an empty result.
+            try:
+                return db_query(sql)
+            except QueryTooBig as exc:
+                sys.exit(
+                    f"REFUSING TO REPORT: event {event_ids[0]} times out on its "
+                    f"own -- the census cannot see this row. {exc}"
+                )
         try:
             return db_query(sql)
-        except SystemExit:
+        except (SystemExit, QueryTooBig):
             mid = len(event_ids) // 2
             return fetch(event_ids[:mid]) + fetch(event_ids[mid:])
 

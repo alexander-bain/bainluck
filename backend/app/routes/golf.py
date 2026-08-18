@@ -7,7 +7,6 @@ Enriches with PGA tour schedule from DataGolf for accurate current-event detecti
 """
 
 import logging
-import os
 import re
 import sys
 import time
@@ -15,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select, union, func as sqlfunc
+from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -167,64 +166,51 @@ def _is_golf_market(market) -> bool:
 #   | `OR`    | one Seq Scan                             | 128,191.5 |
 #   | `UNION` | TWO Seq Scans + Sort + Unique            | 255,180.0 |
 #
-# So the `UNION` rewrite — which is the shape the supporting indexes need, and which
-# is set-identical to the `OR` (proven on production: 7,169 = 7,169 rows, symmetric
-# difference 0/0, identical md5 `0e7625c986754f8315b451c1003dd206` over the ordered
-# id list) — is a **1.99x REGRESSION until the indexes exist**. Two seq scans are
-# worse than one.
+# A `UNION` rewrite of this predicate was built, indexed, measured, and **REFUSED**.
+# It is not here, and it is not behind a flag. `docs/rulings/076-planner-cost-cannot-
+# rank-two-statements.md` and `docs/audits/latency/lat-p061-split-scan-refused.md`
+# carry the numbers; the short version, from 11 `EXPLAIN ANALYZE` runs whose last 8
+# alternated the two shapes so warm-cache drift could not favour either arm:
 #
-# The design premise it corrects: `lat-p057-tail-attack-design.md` §2 A1 assumed
-# "`llm_sport_category` has a btree". It does not. The only index over that column is
-# `ix_fm_feed_open_sports`, which is PARTIAL on `status='open' AND event_id IS NULL` —
-# and this query filters on neither, so it cannot be used.
+#   | shape                        | planner cost | warm median | shared buffers |
+#   |------------------------------|--------------|-------------|----------------|
+#   | `OR` (this code, post-index) |     12,243.9 |  ≈ 18.4 ms  |          1.00x |
+#   | `UNION`                      |      4,361.8 |  ≈ 88.2 ms  |      **2.45x** |
 #
-# Hence the flag. The two shapes are set-identical, so the flag is a pure
-# plan-selection switch with no behavioural surface:
+# The `UNION` is **4.79x SLOWER** while costing 2.8x LESS on paper — 94 of its 98 ms
+# is a `HashAggregate` the `OR` never pays and the planner priced at nearly nothing.
+# That inversion is ruling 076's first clause: planner cost cannot rank two different
+# statements, only two plans for the same one.
 #
-#   * OFF (default) — today's `OR`. One seq scan. Byte-for-byte the shipped behaviour.
-#   * ON            — the `UNION`. Two branches, each independently indexable, which
-#                     the covering partial indexes turn into Index Only Scans.
+# **THE DDL ALONE WAS THE WHOLE WIN, with the rewrite never once reachable.** The two
+# partial indexes below took planner cost 128,191.5 -> 12,243.92, per-call physical
+# reads 516.7 -> 2.395 MB (~216x, 427.6 -> 3.2 GB/day), warm runtime ~2,900 -> ~18 ms.
+# Do not reintroduce the split scan to "finish" that work; the work is finished, and
+# the split scan was never the part that did it.
 #
-# The flag is flipped ON only AFTER the indexes exist and an `EXPLAIN` confirms both
-# branches use them — see `docs/audits/latency/lat-p058-golf-index-spec.md`, which is
-# addressed to the Integrator. The DDL is a one-off dyno operation, never an Alembic
-# migration (gotcha #31: `CREATE INDEX CONCURRENTLY` on a 977 MB table hangs Heroku's
-# ~5-minute release phase into an outage).
-#
-# Rollback is therefore config, not code: unset the var and the process is back on the
-# `OR` at the next dyno restart, with no revert commit and no deploy.
+# Ruling 076's second clause is why no flag survives here: measured-worse code behind
+# a permanently-off switch is not a rollback path, it is a trap. A green-tested,
+# documented alternative one `heroku config:set` away reads as an unfinished migration
+# rather than a closed experiment, and someone eventually finishes it (#1917).
 
-_GOLF_SPLIT_SCAN_ENV = "GOLF_IDENTITY_SPLIT_SCAN"
-_GOLF_SPLIT_SCAN_TRUE = {"1", "true", "yes", "on"}
-
-#: The indexes `golf_identity_select(split=True)` is written for. Named here so the
-#: spec, the DDL and the code cannot drift apart silently.
+#: The two partial indexes this `OR` depends on for its `BitmapOr`. Live and
+#: load-bearing — named here so the spec, the DDL and the code cannot drift apart
+#: silently. NOT optional: without them this predicate is a full seq scan of a 977 MB
+#: heap, which is the 19%-of-all-physical-reads defect described above.
 GOLF_IDENTITY_INDEXES = ("ix_fm_golf_identity_category", "ix_fm_golf_identity_extid")
 
 
-def _golf_split_scan_enabled() -> bool:
-    """True when the covering partial indexes are known to exist (config-gated).
+def golf_identity_select():
+    """The golf identity prefilter: one statement, the indexed `OR`.
 
-    Read at call time, never at import, so a `heroku config:set` takes effect on the
-    dyno restart it already causes and a test can monkeypatch it without reimporting.
-    """
-    return os.getenv(_GOLF_SPLIT_SCAN_ENV, "0").strip().lower() in _GOLF_SPLIT_SCAN_TRUE
-
-
-def golf_identity_select(split: bool | None = None):
-    """The golf identity prefilter, in whichever of its two set-identical shapes.
-
-    `split=None` (the default) consults `GOLF_IDENTITY_SPLIT_SCAN`. Both shapes select
-    exactly the four columns the caller reads — `_is_golf_market` uses
+    Selects exactly the four columns the caller reads — `_is_golf_market` uses
     source/external_id/name and the slug test uses name — and no outcomes.
 
-    Set-equality is not asserted here, it is proven: see the module comment above for
-    the production capture, and `test_golf_identity_prefilter.py` for the compiled-SQL
-    and predicate-level proofs.
+    There is deliberately no alternative shape and no switch. See the module comment
+    above for the measurement that refused the `UNION`, and
+    `test_golf_identity_prefilter.py` for the compiled-SQL and predicate-level proofs
+    that this shape selects what it claims to.
     """
-    if split is None:
-        split = _golf_split_scan_enabled()
-
     cols = (
         FuturesMarket.id,
         FuturesMarket.source,
@@ -234,23 +220,7 @@ def golf_identity_select(split: bool | None = None):
     by_external_id = FuturesMarket.external_id.ilike("golf_%")
     by_category = FuturesMarket.llm_sport_category == "golf"
 
-    if not split:
-        return select(*cols).where(or_(by_external_id, by_category))
-
-    # `A UNION B` is `A OR B` de-duplicated, and `id` is the primary key, so the
-    # de-duplication is over whole rows keyed by a unique column: the two shapes
-    # cannot differ. The subquery wrapper is what keeps `.id` / `.name` attribute
-    # access on the result rows identical to the single-select shape.
-    combined = union(
-        select(*cols).where(by_external_id),
-        select(*cols).where(by_category),
-    ).subquery()
-    return select(
-        combined.c.id,
-        combined.c.source,
-        combined.c.external_id,
-        combined.c.name,
-    )
+    return select(*cols).where(or_(by_external_id, by_category))
 
 
 # ============================================================================
@@ -2392,11 +2362,12 @@ async def _build_completed_tournament(
     # same rows are chosen by the same Python predicate, and phase 2 is a subset
     # keyed by id.
     #
-    # LAT-P058/#1866: phase 1 is still the database's #1 physical-read consumer
-    # (533.7 GB/day, 19% of all reads) because the `OR` cannot use an index. The
-    # shape is now chosen by `golf_identity_select` — see its module comment for
-    # the plan measurement, the set-equality proof, and why the indexable `UNION`
-    # is config-gated rather than shipped bare.
+    # LAT-P058/#1866: phase 1 WAS the database's #1 physical-read consumer (533.7
+    # GB/day, 19% of all reads) because the `OR` had no index to use. Two partial
+    # indexes fixed that — 516.7 -> 2.395 MB per call, ~2,900 -> ~18 ms warm. The
+    # `UNION` rewrite that was going to fix it instead measured 4.79x SLOWER and was
+    # refused and deleted (ruling 076, #1917). See `golf_identity_select`'s module
+    # comment. Phase 2, not this line, is what remains of this route's cost.
     ident_rows = (await db.execute(golf_identity_select())).all()
 
     # Group by normalized tournament key using existing logic

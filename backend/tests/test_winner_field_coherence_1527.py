@@ -142,9 +142,23 @@ class TestEveryPriceCrownerCarriesTheGuard:
     def test_polymarket_pass_still_carries_the_167_guard(self):
         # Regression on the sibling that already had it — CAL-P006 must not have
         # traded one site's guard for another's.
+        #
+        # CAL-P065 (#1912) — RE-ANCHORED. `_block` takes the FIRST occurrence of
+        # its start anchor, and until this queue that was
+        # `_backfill_polymarket_winners` (`backfill_winners.py:577`), a function
+        # with zero callers that #1912 identified as a decoy and had deleted.
+        # So a test whose entire stated purpose is "regression on the LIVE
+        # sibling" was reading a dead duplicate: it would have gone green
+        # through any change to the pass it names, and red on a change to code
+        # that cannot execute. Exactly inverted.
+        #
+        # Now anchored on the live pass, which carries the guard through the
+        # shared fragment rather than a hand-written copy — that fragment being
+        # the whole point of #1527.
         src = inspect.getsource(backfill_winners)
         block = _block(src, "WITH cleanly_resolved AS (", "RETURNING fo.is_winner")
-        assert "NOT (fm.mutually_exclusive" in block
+        assert "INCOHERENT_FIELD_HAVING_SQL" in block
+        assert "NOT (fm.mutually_exclusive" in INCOHERENT_FIELD_HAVING_SQL
 
     def test_all_three_use_the_shared_fragment(self):
         # One rule, three call sites: the shared SQL fragment must appear at least

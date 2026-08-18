@@ -11,46 +11,86 @@ Alexandre Pantoja 0.4783). The feed just never asked. These tests pin that the
 resolver reads it, picks the right end of it, and refuses the shapes it must.
 """
 
+import json
+from datetime import datetime, timezone
+
 import pytest
 
 from app.routes.feed import _resolve_concept_leader
 
 
 class _FakeAdapter:
-    def __init__(self, envelope):
+    """Records whether the resolver reached for a BUILD. It must not."""
+
+    def __init__(self, envelope=None):
         self._envelope = envelope
+        self.build_calls = 0
 
     async def build_event(self, slug, db):
+        self.build_calls += 1
         return self._envelope
+
+
+def _servable(payload: dict) -> str:
+    """Stamp a payload with a real, current-generation envelope and encode it.
+
+    UX-P089: the resolver now refuses a payload the DETAIL page would refuse
+    (`is_servable_envelope`), so a test fixture must produce the genuine article.
+    Built through the production stamper rather than a hand-written dict, so a
+    generation bump or a sixth contract field updates these fixtures for free
+    instead of silently making every one of them a `generation_mismatch` miss
+    that still passes the `is None` assertions.
+    """
+    from app.utils.event_concept_cache import stamp_envelope
+
+    return json.dumps(
+        stamp_envelope(
+            payload,
+            created_at=datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc),
+            lifecycle_watermark=None,
+        ),
+        default=str,
+    )
 
 
 @pytest.fixture
 def envelope_source(monkeypatch):
-    """Drive `_resolve_concept_leader` off a supplied envelope.
+    """Drive `_resolve_concept_leader` off a supplied envelope, VIA THE CACHE.
 
-    Patches the concept-adapter module the resolver imports lazily, and forces the
-    warm-Redis read to miss so the adapter path is the one under test.
+    UX-P089 (#1934) rewrote this fixture, and the rewrite is the point. It used
+    to force the Redis read to MISS and serve the envelope from a fake adapter —
+    so every test in this file exercised the cold-cache `adapter.build_event()`
+    path, and the whole suite was green while that path cost the feed its load
+    budget. The fixtures agreed with the bug, which is the third time this
+    codebase has been bitten by exactly that (L2-179 concepts, #1886 bundles).
+
+    Now the envelope is served the way production serves it — out of Redis — and
+    the adapter is installed only so a test can assert it is NEVER CALLED.
     """
 
-    def _install(envelope):
+    def _install(envelope, *, cached=True):
         import app.utils.event_concept as ec
         import app.utils.request_cache as rc
 
-        monkeypatch.setattr(ec, "get_adapter", lambda domain: _FakeAdapter(envelope))
+        adapter = _FakeAdapter(envelope)
+        monkeypatch.setattr(ec, "get_adapter", lambda domain: adapter)
         monkeypatch.setattr(ec, "parse_event_key", lambda key: ("ufc", "slug"))
 
-        class _Miss:
-            is_ok = False
-            value = None
+        raw = _servable(envelope) if cached else None
+
+        class _Result:
+            is_ok = cached
+            value = raw
 
         async def _bounded(_fn):
-            return _Miss()
+            return _Result()
 
         async def _shared():
             return object()
 
         monkeypatch.setattr(rc, "bounded_redis_call", _bounded)
         monkeypatch.setattr(rc, "get_shared_async_redis", _shared)
+        return adapter
 
     return _install
 
@@ -168,6 +208,123 @@ class TestItRefusesRatherThanFabricates:
         monkeypatch.setattr(rc, "get_shared_async_redis", _shared)
         monkeypatch.setattr(ec, "get_adapter", lambda d: _Boom())
         monkeypatch.setattr(ec, "parse_event_key", lambda k: ("ufc", "s"))
+
+        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+
+
+class TestTheLeaderNeverBuilds:
+    """UX-P089 (#1934) — the cost half, which is why Discover showed two cards.
+
+    MEASURED on production 2026-08-17, three cold identified-key builds of
+    `GET /api/feed?limit=50&offset=0&event_pct=0.15`:
+
+        total 4318ms / 4295ms / 11708ms
+        concepts stage  2710ms / 2804ms / 10075ms
+
+    The native client's entire initial-load budget is 6s
+    (`DiscoverViewModel.retryBudget`), the deadline error is non-retryable, and
+    every identified principal has its own cache key with a 5s fresh TTL and a
+    300s stale tier. So a signed-in reader returning more than five minutes after
+    their last visit cold-builds, and the tail of that distribution cannot be
+    delivered at all — Discover settles to last-good or honest-empty.
+
+    The cause was a copied fallback. `_resolve_concept_champion` prices its cold
+    build explicitly and correctly: it runs only for SETTLED marquee concepts, a
+    handful per 36h. `_resolve_concept_leader` inherited the fallback but not the
+    pricing — it runs for EVERY unsettled concept and is awaited serially, 10-14
+    per slate. These tests pin the deletion.
+    """
+
+    async def test_a_cold_envelope_yields_no_leader_and_never_builds(
+        self, envelope_source
+    ):
+        adapter = envelope_source(
+            _envelope([{"name": "Joshua Van", "probability": 0.52}]), cached=False
+        )
+        assert await _resolve_concept_leader(None, "event:ufc:26aug20") is None
+        assert adapter.build_calls == 0, (
+            "a cold concept envelope must cost the feed NOTHING — one build here "
+            "is 10-14 builds per request, serially, inside a 6s client budget"
+        )
+
+    async def test_a_warm_envelope_is_served_without_building(self, envelope_source):
+        adapter = envelope_source(
+            _envelope([{"name": "Joshua Van", "probability": 0.5217}])
+        )
+        leader = await _resolve_concept_leader(None, "event:ufc:26aug20")
+        assert leader is not None and leader["name"] == "Joshua Van"
+        assert adapter.build_calls == 0
+
+    def test_the_build_fallback_is_deleted_not_merely_unreached(self):
+        """A reachable-but-unused path is a path that comes back.
+
+        Source-level, deliberately: the behavioural tests above prove the adapter
+        is not called for the shapes they exercise, and prove nothing about a
+        shape nobody thought to write. `build_event` must not appear in this
+        function's CODE at all.
+
+        The docstring is stripped before matching, and that is not a convenience
+        — the docstring is *supposed* to name the deleted path and say why it went
+        (gotcha #32's lesson: a deletion that is not explained is re-added by the
+        next reader citing the original rationale). Matching raw source would
+        force the fix and its explanation to be mutually exclusive.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from app.routes import feed
+
+        def _code_only(fn) -> str:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            node = tree.body[0]
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+            return "\n".join(ast.unparse(stmt) for stmt in body)
+
+        code = _code_only(feed._resolve_concept_leader)
+        assert "build_event" not in code
+        assert "get_adapter" not in code
+        # ...while the champion, whose cold build IS priced, keeps its fallback.
+        assert "build_event" in _code_only(feed._resolve_concept_champion)
+
+    async def test_an_unservable_envelope_is_a_miss_not_a_probability(
+        self, monkeypatch
+    ):
+        """A payload the DETAIL page would refuse must not become a feed number.
+
+        #1678 finding 2's shape: a single-field `cache` block passed the old
+        generation-only check and was read as a complete envelope. A Discover
+        card leading with a probability lifted out of a payload nobody would
+        serve is that defect wearing the reader's clothes.
+        """
+        import app.utils.request_cache as rc
+
+        raw = json.dumps(
+            {
+                "primary": {"competitors": [{"name": "A", "probability": 0.9}]},
+                "cache": {"generation": 3},  # four of five contract fields absent
+            }
+        )
+
+        class _Hit:
+            is_ok = True
+            value = raw
+
+        async def _bounded(_fn):
+            return _Hit()
+
+        async def _shared():
+            return object()
+
+        monkeypatch.setattr(rc, "bounded_redis_call", _bounded)
+        monkeypatch.setattr(rc, "get_shared_async_redis", _shared)
 
         assert await _resolve_concept_leader(None, "event:ufc:x") is None
 

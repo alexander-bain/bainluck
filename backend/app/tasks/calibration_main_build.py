@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import socket
 import time
@@ -1042,12 +1043,75 @@ async def _record_staged_convergence(runner: PhaseRunner) -> None:
         drift = payload.get("roster_drift_units")
         if isinstance(drift, int) and not isinstance(drift, bool) and drift >= 0:
             runner.ledger.record_gauge("staged:units_drifted", drift)
+        _record_staged_rate(runner, banked=len(committed))
     except Exception as exc:  # noqa: BLE001 — an unreadable cursor is not a lost ledger
         logger.warning("calibration staged convergence read failed: %s", exc)
         try:
             runner.ledger.record_gauge("staged:convergence_reason:read_raised", 1)
         except Exception:  # noqa: BLE001 — the ledger write is what matters
             pass
+
+
+#: The stage ``_run_staged_futures`` times once per unit. Named here because
+#: this module has to divide by its count and the frozen module owns the string.
+STAGED_UNIT_STAGE = "read:futures_unit"
+
+
+def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
+    """How fast this beat went and how many beats are left, on EVERY terminal.
+
+    CAL-P066 (#1680), and it is the same defect CAL-P028 fixed one level up.
+    ``_record_convergence_projection`` in ``precompute_calibration`` records
+    exactly these numbers — ``units_this_beat``, ``unit_ms_mean``,
+    ``beats_to_publish`` — and records them WELL: they are the right numbers,
+    with the right caveats. It is simply positioned after the unit loop, and the
+    loop's normal exit for a build that has not finished is
+    ``StagedFuturesIncomplete``. So the projection is skipped on every beat that
+    does not publish, which since 2026-08-02 is every beat.
+
+    The consequence, measured 2026-08-17: production ledgers carry
+    ``read:futures_unit = 1,077,573`` with no divisor anywhere. That sum is one
+    pathological unit or ten healthy ones, and the two readings say opposite
+    things — "this phase cannot fit and never will" versus "this build is six
+    beats from publishing". Establishing which required polling the durable
+    cursor from OUTSIDE the application on a 60-second loop, because the
+    application would not say.
+
+    ``precompute_calibration`` is frozen (ruling 009), so this cannot be fixed
+    where it was written. It does not need to be: the ledger now counts its own
+    stage observations, so the divisor is already in hand here — on the path
+    that always runs, whatever the terminal.
+
+    Every branch below either records a number or records WHY it could not
+    (ruling 075, second clause). None of them records nothing.
+    """
+    mean_ms = runner.ledger.stage_mean_ms(STAGED_UNIT_STAGE)
+    ran = runner.ledger.stage_counts.get(STAGED_UNIT_STAGE, 0)
+    runner.ledger.record_gauge("staged:units_this_beat", ran)
+    if mean_ms is None:
+        # A beat that ran no unit at all. The most important beat to be able to
+        # see, and the one an absent stage would render as "fine" (gotcha #53).
+        runner.ledger.record_gauge("staged:rate_reason:no_unit_ran", 1)
+        return
+    runner.ledger.record_gauge("staged:unit_ms_mean", int(mean_ms))
+
+    remaining = max(0, STAGED_FUTURES_BUCKETS - banked)
+    if remaining == 0:
+        runner.ledger.record_gauge("staged:beats_to_publish", 0)
+        return
+    # The window a future beat gets for units, measured from THIS beat: the full
+    # phase window less the fixed cost this beat paid before its first unit
+    # (chiefly the ~21s generation freeze), which every beat pays again.
+    window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
+    fixed_ms = max(0.0, runner.elapsed_ms() - runner.ledger.stages.get(STAGED_UNIT_STAGE, 0))
+    usable_ms = max(0.0, window_ms - fixed_ms)
+    per_beat = usable_ms / mean_ms if mean_ms > 0 else 0.0
+    # -1 is NOT "unknown" — it is "a whole beat cannot hold one unit", which is
+    # a different and much worse fact than a large count. Same convention as
+    # the frozen module's projection, deliberately, so the two agree.
+    runner.ledger.record_gauge(
+        "staged:beats_to_publish", math.ceil(remaining / per_beat) if per_beat >= 1 else -1
+    )
 
 
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:

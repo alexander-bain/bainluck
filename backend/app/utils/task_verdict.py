@@ -235,6 +235,21 @@ ENFORCED_TASKS = frozenset({
     # `measured: false` + `terminal: failed` when the census itself could not run,
     # so "there is nothing to drain" and "I could not look" stay distinct.
     "reconcile_unanchored_events",     # terminal + measured + census + errors
+    # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
+    # enrolled TOGETHER because separately each looked fine. The Gamma rail
+    # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail
+    # whose scheduled cohort predicate could not select them; both reported
+    # `health: healthy`, `failures_24h: 0`, `last_verdict: unverified`.
+    #
+    # Enrolment alone would have changed NOTHING, and that is worth stating
+    # plainly because it is the trap in this file: neither rail emitted a
+    # `terminal`, so `_classify` returned the non-authoritative legacy unknown,
+    # whose `blocks_success` is False. They join the set in the same change
+    # that gives them terminals — `gamma_terminal` and `clob_terminal` in
+    # `app/utils/pm_market_ownership.py`. Registered prediction P-10: both go
+    # NOT-GREEN within 24h of deploy with no change to what they do.
+    "polymarket_winners",              # terminal + handoff + errors
+    "clob_resolve_drain",              # terminal + owned_backlog + errors
 })
 
 

@@ -34,6 +34,14 @@ struct BugReportView: View {
     @State private var recoveredCount = 0
     /// Whether the outbox is currently sending.
     @State private var flushing = false
+    /// Reports the server refused outright — kept visible with their reason
+    /// instead of retried forever or silently binned (#1847, UX-P088).
+    @State private var rejections: [BugReportRejection] = []
+    /// Queued reports the five-draft cap evicted before they could send.
+    @State private var droppedCount = 0
+    /// Whether the last failure was the server refusing the report outright,
+    /// rather than declining to answer right now. Drives which alert is shown.
+    @State private var permanentlyRefused = false
 
     #if os(iOS)
     @State private var canvasView = PKCanvasView()
@@ -170,6 +178,21 @@ struct BugReportView: View {
                         TextField("Optional — the screenshot may be enough!", text: $description, axis: .vertical)
                             .lineLimit(3...6)
                             .textFieldStyle(.roundedBorder)
+
+                        // UX-P088 (#1847): stop the only permanent refusal we
+                        // have actually measured from being minted at all.
+                        // The server rejects a description over 5,000 chars
+                        // with a deterministic 422, and until now nothing on
+                        // this screen said so — the failure copy literally read
+                        // "Try shortening your description" AFTER the send.
+                        // The counter stays out of the way until it matters.
+                        if description.count > Self.descriptionSoftWarningLength {
+                            Text(descriptionCountLabel)
+                                .font(.caption2)
+                                .foregroundStyle(isDescriptionTooLong ? Color.red : Color.secondary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .accessibilityIdentifier("bug-report-description-counter")
+                        }
                     }
                     .padding(.horizontal)
 
@@ -242,6 +265,78 @@ struct BugReportView: View {
                         .accessibilityIdentifier("bug-report-outbox")
                     }
 
+                    // REFUSED REPORTS (#1847, UX-P088). These used to be
+                    // indistinguishable from pending ones: counted in "N
+                    // reports are waiting to send", retried on every
+                    // foreground, and blocking everything queued behind them.
+                    // A report the server has permanently refused is a
+                    // different fact and gets a different sentence — including
+                    // what to do about it, since the text is still here.
+                    if !rejections.isEmpty && !submitted {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                Text(rejections.count == 1
+                                     ? "1 report couldn't be accepted"
+                                     : "\(rejections.count) reports couldn't be accepted")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            ForEach(rejections) { rejection in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(rejection.reason)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if let text = rejection.description, !text.isEmpty {
+                                        Text(text)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(3)
+                                    }
+                                    HStack(spacing: 12) {
+                                        // The rejection list is the ONLY
+                                        // surviving copy of this text, so it
+                                        // must be recoverable before it can be
+                                        // thrown away.
+                                        Button("Copy Text") { copyRejectionText(rejection) }
+                                        Button("Discard", role: .destructive) {
+                                            discardRejection(rejection)
+                                        }
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .buttonStyle(.borderless)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .accessibilityIdentifier("bug-report-rejections")
+                    }
+
+                    // The cap evicted a queued report. Bounded storage is a
+                    // real constraint, but an eviction nobody is told about is
+                    // the "no path loses a report" criterion failing quietly.
+                    if droppedCount > 0 && !submitted {
+                        HStack(spacing: 8) {
+                            Image(systemName: "tray.and.arrow.down")
+                                .foregroundStyle(.orange)
+                            Text(droppedCount == 1
+                                 ? "An older unsent report was dropped to make room."
+                                 : "\(droppedCount) older unsent reports were dropped to make room.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("OK") {
+                                BugReportDraftStore.clearDroppedCount()
+                                droppedCount = 0
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.horizontal)
+                        .accessibilityIdentifier("bug-report-dropped")
+                    }
+
                     // A report recovered by the outbox is announced, rather
                     // than silently disappearing from the queue.
                     if recoveredCount > 0 {
@@ -311,8 +406,13 @@ struct BugReportView: View {
                         // description and have no way to send the edit.
                         // Re-submitting an unchanged report is harmless — the
                         // draft store de-duplicates on `draftKey`.
+                        // UX-P088 (#1847): also disabled when the description
+                        // exceeds what the server accepts. Letting the send run
+                        // guarantees a 422 and used to mint a queue-blocking
+                        // poison report; refusing here costs the user one
+                        // sentence instead.
                         Button("Submit") { submitReport() }
-                            .disabled(submitted)
+                            .disabled(submitted || isDescriptionTooLong)
                             .fontWeight(.semibold)
                     }
                 }
@@ -322,12 +422,30 @@ struct BugReportView: View {
             // the one path a frustrated user is most likely to take. The report
             // is now already on disk before this alert can appear, so there is
             // no longer a losing button to press.
-            .alert("Couldn't Send Yet", isPresented: $showErrorAlert) {
-                Button("Try Again") { submitReport() }
-                Button("OK", role: .cancel) { savedLocally = true }
+            // UX-P088 (#1847): two different failures need two different
+            // alerts. Telling someone whose 5,001-character report was refused
+            // that it "will send automatically" is a promise the app cannot
+            // keep — the server will refuse it identically forever. Offering
+            // "Try Again" on that path is the #1909 mistake in another surface:
+            // the one control on offer being the one guaranteed not to work.
+            .alert(
+                permanentlyRefused ? "Report Not Accepted" : "Couldn't Send Yet",
+                isPresented: $showErrorAlert
+            ) {
+                if permanentlyRefused {
+                    Button("OK", role: .cancel) {}
+                } else {
+                    Button("Try Again") { submitReport() }
+                    Button("OK", role: .cancel) { savedLocally = true }
+                }
             } message: {
-                Text((submitError ?? "Check your connection and try again.")
-                     + "\n\nYour report is saved on this device and will send automatically.")
+                if permanentlyRefused {
+                    Text((submitError ?? "The server refused this report.")
+                         + "\n\nYour text is kept below so you can copy it and send a shorter report.")
+                } else {
+                    Text((submitError ?? "Check your connection and try again.")
+                         + "\n\nYour report is saved on this device and will send automatically.")
+                }
             }
             .task { await onOpen() }
         }
@@ -335,6 +453,26 @@ struct BugReportView: View {
 
     /// Maximum base64 screenshot size accepted by the backend (~1.5MB decoded).
     private static let maxScreenshotBase64Length = 2_000_000
+
+    /// Maximum description length the backend accepts.
+    ///
+    /// Mirrors `check_description_length` in `backend/app/routes/feedback.py`.
+    /// Verified against production on 2026-08-17: 5,001 characters returns
+    /// `422 value_error "Description too long (max 5000 chars)"`.
+    static let maxDescriptionLength = 5_000
+
+    /// Where the counter appears. Silent until the limit is actually in view.
+    static let descriptionSoftWarningLength = 4_500
+
+    private var isDescriptionTooLong: Bool {
+        description.count > Self.maxDescriptionLength
+    }
+
+    private var descriptionCountLabel: String {
+        isDescriptionTooLong
+            ? "\(description.count - Self.maxDescriptionLength) characters over the limit"
+            : "\(Self.maxDescriptionLength - description.count) characters left"
+    }
 
     /// Whether there is an image attached, on either platform.
     private var hasScreenshot: Bool {
@@ -378,8 +516,32 @@ struct BugReportView: View {
             } catch {
                 // Persist FIRST, then tell the user. No ordering in which the
                 // report can be lost.
-                BugReportDraftStore.saveDraft(submission)
+                //
+                // UX-P088 (#1847): WHERE it persists depends on whether the
+                // server said "not now" or "never". Queueing a permanently
+                // refused report was the bug — it blocked the queue behind it,
+                // and the alert then promised it would "send automatically".
+                if BugReportOutbox.isPermanentRefusal(error) {
+                    let statusCode: Int
+                    if case .httpError(let code, _)? = error as? APIError {
+                        statusCode = code
+                    } else {
+                        statusCode = 400
+                    }
+                    BugReportRejectionStore.record(
+                        draftKey: submission.draftKey,
+                        description: submission.description,
+                        page: submission.appState?["current_page"],
+                        statusCode: statusCode
+                    )
+                    rejections = BugReportRejectionStore.loadRejections()
+                    permanentlyRefused = true
+                } else {
+                    BugReportDraftStore.saveDraft(submission)
+                    permanentlyRefused = false
+                }
                 pendingCount = BugReportDraftStore.pendingCount
+                droppedCount = BugReportDraftStore.droppedCount
                 submitError = userFacingErrorMessage(for: error)
                 showErrorAlert = true
             }
@@ -391,7 +553,27 @@ struct BugReportView: View {
     private func onOpen() async {
         priorReceipt = BugReportReceiptStore.mostRecent
         pendingCount = BugReportDraftStore.pendingCount
+        rejections = BugReportRejectionStore.loadRejections()
+        droppedCount = BugReportDraftStore.droppedCount
         await flushOutbox()
+    }
+
+    /// Put a refused report's text back where the user can reach it. The
+    /// rejection list holds the only remaining copy.
+    private func copyRejectionText(_ rejection: BugReportRejection) {
+        let text = rejection.description ?? ""
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+    }
+
+    /// Discard a refused report. Only ever reached by an explicit tap.
+    private func discardRejection(_ rejection: BugReportRejection) {
+        BugReportRejectionStore.discard(id: rejection.id)
+        rejections = BugReportRejectionStore.loadRejections()
     }
 
     /// Drain the outbox and reflect the result in the sheet.
@@ -405,6 +587,12 @@ struct BugReportView: View {
         flushing = false
         recoveredCount += result.sent
         pendingCount = result.remaining
+        if result.rejected > 0 {
+            // A refusal discovered during a background drain has to surface
+            // here too, or the report simply vanishes from the queue with no
+            // explanation — which is the failure mode this issue is named for.
+            rejections = BugReportRejectionStore.loadRejections()
+        }
         if result.sent > 0 {
             // A recovered report supplies a newer receipt than the one shown
             // on open.

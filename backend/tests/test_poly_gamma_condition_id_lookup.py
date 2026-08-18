@@ -26,26 +26,131 @@ from importlib import import_module
 # `app.tasks.backfill_winners` as an ATTRIBUTE is the Celery task proxy, not the
 # module — import_module goes to sys.modules and gets the real one.
 backfill_winners = import_module("app.tasks.backfill_winners")
+pmo = import_module("app.utils.pm_market_ownership")
 
 
 def _src() -> str:
     return inspect.getsource(backfill_winners._backfill_polymarket_winners_from_api)
 
 
-def test_condition_ids_are_filtered_out_of_the_gamma_by_id_path():
-    """0x… ids are not addressable on /markets/{id}; don't spend a request."""
-    src = _src()
-    assert 'startswith("0x")' in src
-    assert "_addressable" in src
+class _Row:
+    """The two attributes the routing reads off a candidate market row."""
+
+    def __init__(self, external_id, poly_event_id=None):
+        self.external_id = external_id
+        self.poly_event_id = poly_event_id
 
 
-def test_unsupported_lookups_are_counted_separately_from_rate_limits():
-    """The bug was diagnostic as much as functional: a structural failure that
-    reports as throttling sends the next operator to the wrong problem."""
+class TestTheRoutingItself:
+    """CAL-P066 / INT-080 — these drive the real function instead of grepping it.
+
+    The four tests here used to be ``assert "<literal expression>" in src``. One
+    of them asserted on ``len(by_condition) - len(_addressable)``; CAL-P065
+    rewrote that count as ``len(_handed)`` over the complementary partition of
+    the same list — the identical number, by construction rather than by
+    subtraction — and the test failed a merge wave over a refactor that changed
+    no behaviour at all.
+
+    That is the self-concealing shape #1791 / C-SA-1 catalogues, and it fails in
+    BOTH directions: it can also pass through the exact change it exists to
+    catch, because a substring surviving says nothing about whether the code
+    around it still runs. Ask of any grep-test what it would do if the behaviour
+    moved and the strings did not. These assert on the split and the counts.
+    """
+
+    def test_condition_ids_are_not_spent_on_the_gamma_by_id_endpoint(self):
+        """0x… ids answer 422 there; they must never reach the batch loop."""
+        rows = [_Row("0xabc"), _Row("12345"), _Row("0xdef")]
+        routing = pmo.split_gamma_by_id_candidates(rows)
+
+        assert [r.external_id for r in routing.addressable] == ["12345"]
+        assert [r.external_id for r in routing.handed] == ["0xabc", "0xdef"]
+
+    def test_unsupported_lookups_are_counted_separately_from_rate_limits(self):
+        """The bug was diagnostic as much as functional: a structural failure
+        that reports as throttling sends the next operator to the wrong problem.
+
+        The separation is structural, not a second counter that happens to be
+        incremented elsewhere: ``rate_limited`` is only ever written from a
+        batch result, and a handed row is never in a batch. An all-0x candidate
+        list must therefore produce a full ``unsupported_lookup`` and an EMPTY
+        addressable set — nothing to batch, so nothing that can 429 and nothing
+        that can trip the >=80% throttle circuit-breaker.
+        """
+        rows = [_Row(f"0x{i:04x}") for i in range(25)]
+        routing = pmo.split_gamma_by_id_candidates(rows)
+
+        assert routing.unsupported_lookup == 25
+        assert routing.addressable == (), (
+            "a structural 422 cohort that still reaches the batch loop is "
+            "exactly how CAL-P003's burn reported itself as 'Gamma throttling'"
+        )
+
+    def test_the_partition_is_exhaustive_and_disjoint(self):
+        """The property that makes the two ways of counting the same number.
+
+        ``len(handed)`` (what the code reports) and ``len(rows) -
+        len(addressable)`` (what the old test asserted the source text said) can
+        only disagree if a row is dropped or double-counted.
+        """
+        rows = [_Row("0xabc"), _Row("12345"), _Row(""), _Row(None), _Row("0xdef")]
+        routing = pmo.split_gamma_by_id_candidates(rows)
+
+        assert len(routing.handed) == len(rows) - len(routing.addressable)
+        recovered = {id(r) for r in routing.addressable} | {
+            id(r) for r in routing.handed
+        }
+        assert recovered == {id(r) for r in rows}
+        assert not ({id(r) for r in routing.addressable} & {id(r) for r in routing.handed})
+
+    def test_an_unidentifiable_row_stays_addressable_rather_than_orphaned(self):
+        """A blank external_id is a miss, not a mis-address.
+
+        Routing it into the handoff would give it no owner, and an orphaned
+        handoff is a ``failed`` terminal — turning an ordinary ``api_miss`` into
+        a red rail. Pinned because the registry classifies blanks as
+        ``SHAPE_UNRECOGNISED``, so this is one deliberate step away from what
+        ``market_shape`` alone would do.
+        """
+        routing = pmo.split_gamma_by_id_candidates([_Row(""), _Row(None)])
+
+        assert len(routing.addressable) == 2
+        assert routing.handed == ()
+        assert routing.handoff.as_payload()["orphaned"] is False
+
+    def test_the_handoff_names_its_owner_from_the_registry(self):
+        """``counted here, owned there`` is only checkable if 'there' is named."""
+        routing = pmo.split_gamma_by_id_candidates([_Row("0xabc")])
+
+        assert routing.handoff.to == pmo.RAIL_CLOB
+        assert routing.handoff.to == pmo.owner_of_shape(pmo.SHAPE_CONDITION_ID)
+        assert routing.handoff.count == 1
+
+    def test_an_empty_handoff_is_not_an_orphan(self):
+        """Zero handed rows must not report an owner-less handoff — that would
+        make every clean run read ``failed``."""
+        routing = pmo.split_gamma_by_id_candidates([_Row("12345")])
+
+        assert routing.handoff.count == 0
+        assert routing.handoff.as_payload()["orphaned"] is False
+        terminal, _reason = pmo.gamma_terminal(
+            markets_checked=1,
+            handed_off=0,
+            orphaned=pmo.handoff_payload([routing.handoff])["orphaned"],
+        )
+        assert terminal == "complete"
+
+
+def test_the_rail_consumes_the_shared_routing():
+    """The half a pure-function test cannot see: that the task calls it.
+
+    Kept as a source assertion ON PURPOSE and scoped to the call, not to the
+    arithmetic — an import-and-call is a fact about wiring, which is what greps
+    are actually good for. The behaviour lives in the tests above.
+    """
     src = _src()
-    assert 'stats["unsupported_lookup"]' in src
-    # counted off the raw candidate list, before the dead-cid filter
-    assert "len(by_condition) - len(_addressable)" in src
+    assert "split_gamma_by_id_candidates(by_condition)" in src
+    assert "_routing.unsupported_lookup" in src
 
 
 def test_unsupported_lookup_is_initialised_in_stats():

@@ -679,8 +679,11 @@ final class CalibrationViewModel: ObservableObject {
         return categoryDisplayNames[base] == nil ? category : base
     }
 
+    /// #1938: the map first, then ACRONYM-AWARE casing — never `.capitalized`,
+    /// which renders the raw key "mma" as "Mma" (Alex, bug report 145). Any key
+    /// the map does not carry is exactly the case that needs the safe formatter.
     static func categoryDisplayName(_ category: String) -> String {
-        categoryDisplayNames[category] ?? category.replacingOccurrences(of: "_", with: " ").capitalized
+        categoryDisplayNames[category] ?? toTitleCaseAcronymSafe(category)
     }
 
     static func sourceDisplayName(_ source: String) -> String {
@@ -689,7 +692,7 @@ final class CalibrationViewModel: ObservableObject {
 
     /// Display label for a raw (un-normalized) small-sample category token.
     static func nicheDisplayName(_ raw: String) -> String {
-        categoryDisplayNames[normalizedCategory(raw)] ?? raw.replacingOccurrences(of: "_", with: " ").capitalized
+        categoryDisplayNames[normalizedCategory(raw)] ?? toTitleCaseAcronymSafe(raw)
     }
 
     private static func monthYear(_ iso: String) -> String {
