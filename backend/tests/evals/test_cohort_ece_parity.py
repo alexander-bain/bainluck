@@ -29,11 +29,44 @@ def _bucks(rows, bins=10):
 
 
 def test_sweep_delegates_to_canonical_ece():
-    """Sweep imports _compute_horizon_mce — drift is impossible."""
+    """Sweep must actually *call* _compute_horizon_mce — not just mention it.
+
+    This test is non-vacuous: it monkeypatches the canonical function to a
+    distinguishable sentinel value and asserts the sweep returns that value.
+    If delegation is dead (e.g., import fails and fallback is taken), the test
+    FAILS — so a silently-diverged local fallback can never stay green.
+    """
     import inspect
+
+    # Still assert the import is present (defense in depth)
     src = inspect.getsource(expected_calibration_error)
     assert "_compute_horizon_mce" in src, "sweep must import sentinel's _compute_horizon_mce"
     assert "from app.tasks.precompute_calibration import _compute_horizon_mce" in src or "import" in src
+
+    # Runtime delegation check: patch the canonical to return 42.0 pp (→ 0.42 fraction)
+    # and verify the sweep actually returns 0.42, proving the call is live.
+    import unittest.mock as mock
+
+    rows = [
+        {"probability": 0.2, "actual": 1 if i < 2 else 0, "outcome_id": i, "question_id": f"a{i}"}
+        for i in range(10)
+    ] + [
+        {"probability": 0.8, "actual": 0 if i < 2 else 1, "outcome_id": i + 10, "question_id": f"b{i}"}
+        for i in range(10)
+    ]
+
+    with mock.patch("app.tasks.precompute_calibration._compute_horizon_mce", return_value=42.0) as mocked:
+        val = expected_calibration_error(rows)
+        mocked.assert_called_once()
+        assert val == pytest.approx(0.42), (
+            f"Expected delegation to canonical _compute_horizon_mce (42.0 pp → 0.42), got {val}; "
+            f"delegation is dead and fallback ran"
+        )
+        # Also verify the fallback flag is NOT set when canonical succeeds
+        assert getattr(expected_calibration_error, "last_was_fallback", False) is False
+
+    # Reset fallback flag for next test.
+    expected_calibration_error.last_was_fallback = False  # type: ignore[attr-defined]
 
 
 def test_parity_on_full_population_cell():
@@ -86,7 +119,11 @@ def test_perfect_calibration_parity():
 def test_light_is_labeled_light_estimate():
     """Light endpoint must label its outputs light-estimate everywhere."""
     import pathlib
-    src = pathlib.Path("backend/app/routes/admin_cohort.py").read_text()
+
+    # Cwd-independent: resolve from this test file, not from cwd
+    here = pathlib.Path(__file__).resolve()
+    # This file is at backend/tests/evals/test_cohort_ece_parity.py → parents[2] is backend/
+    src = (here.parents[2] / "app/routes/admin_cohort.py").read_text()
     # Light route must set ece_label
     assert 'ece_label' in src
     assert 'light-estimate' in src

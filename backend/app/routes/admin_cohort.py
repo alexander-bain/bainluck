@@ -1,7 +1,7 @@
 """Admin cohort-market-type ECE table — league×source×market_type×band × week, sorted descending by ECE."""
 import json
 import time
-from fastapi import APIRouter, Query, Request, BackgroundTasks
+from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi import Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from app.routes.admin_utils import _check_admin_secret
@@ -39,9 +39,8 @@ def _load_debug():
 @router.get("/admin/cohort-market-type")
 async def cohort_market_type(
     request: Request,
-    secret: str = Query(""),
 ):
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     cached = _load_cached()
     if cached:
         return cached
@@ -60,12 +59,11 @@ async def cohort_market_type(
 async def cohort_market_type_light(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    secret: str = Query(""),
 ):
     """Lightweight approximation: source×market_type×league ECE without full dedup.
     Runs in <10s on web, so it can be served synchronously. Useful to test
     your hypothesis immediately while the canonical build completes."""
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     from sqlalchemy import text
     # Direct scan of resolved outcomes with usable prob, no virtual-market/field logic
     rows = (await db.execute(text("""
@@ -133,18 +131,16 @@ async def cohort_market_type_light(
 @router.get("/admin/cohort-market-type/debug")
 async def cohort_market_type_debug(
     request: Request,
-    secret: str = Query(""),
 ):
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     return {"cached": _load_cached() is not None, "debug": _load_debug()}
 
 @router.post("/admin/cohort-market-type/build")
 async def cohort_market_type_build(
     request: Request,
     background_tasks: BackgroundTasks,
-    secret: str = Query(""),
 ):
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     # Enqueue background build via Celery if available, else run in background task
     try:
         from app.tasks import celery_app
@@ -181,9 +177,8 @@ async def _build_and_cache():
 @router.get("/admin/cohort-market-type/full")
 async def cohort_market_type_full(
     request: Request,
-    secret: str = Query(""),
 ):
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     cached = _load_cached()
     if cached:
         return cached
@@ -193,9 +188,8 @@ async def cohort_market_type_full(
 @router.get("/admin/cohort-market-type/weekly")
 async def cohort_market_type_weekly(
     request: Request,
-    secret: str = Query(""),
 ):
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     cached = _load_cached()
     if cached and "weekly_by_cohort" in cached:
         return {"weekly_by_cohort": cached["weekly_by_cohort"], "weekly": cached.get("weekly", []), "generated_at": cached.get("generated_at")}
@@ -206,7 +200,6 @@ async def cohort_market_type_weekly(
 async def cohort_provenance_split(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    secret: str = Query(""),
 ):
     """Provenance split: venue-graded vs all rows per worst shape cell.
 
@@ -214,7 +207,7 @@ async def cohort_provenance_split(
     polymarket quantity/container_member: n_all, n_venue, null_default_share,
     plus ECE_all and ECE_venue (10-bin, n-weighted) so the decider is one call.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     from sqlalchemy import text
     from collections import defaultdict
     rows = (await db.execute(text("""
@@ -325,7 +318,6 @@ async def cohort_provenance_split(
 async def cohort_sums_histogram(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    secret: str = Query(""),
 ):
     """Sums-to-1 histogram for Polymarket container_member/quantity ladders.
 
@@ -333,7 +325,7 @@ async def cohort_sums_histogram(
     sum_prob per group using curve price. Returns bucket histogram + per-size stats.
     Only meaningful if provenance survives venue-graded-only.
     """
-    _check_admin_secret(secret, request=request)
+    _check_admin_secret(request=request)
     from sqlalchemy import text
     from collections import defaultdict
     import math
@@ -423,8 +415,8 @@ async def cohort_sums_histogram(
 
 
 @router.get("/admin/cohort-views", response_class=HTMLResponse)
-async def cohort_views_html(request: Request, secret: str = Query("")):
-    _check_admin_secret(secret, request=request)
+async def cohort_views_html(request: Request):
+    _check_admin_secret(request=request)
     html = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Cohort Views — ECE by source×league×type×band × week</title>
 <meta http-equiv="refresh" content="60">
