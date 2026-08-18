@@ -361,16 +361,23 @@ def expected_calibration_error(rows: list[dict[str, Any]], bins: int = 10) -> fl
         # _compute_horizon_mce is weighted=True, returns pp (already *100, rounded)
         val = _compute_horizon_mce(buckets, weighted=True)
         if val is not None:
+            expected_calibration_error.last_was_fallback = False  # type: ignore[attr-defined]
             return val / 100.0  # sentinel returns pp, sweep returns fraction
     except Exception:
         pass
-    # Fallback: local n-weighted (identical to sentinel's weighted=True)
+    # Fallback: local n-weighted (identical to sentinel's weighted=True) — must be labeled
+    expected_calibration_error.last_was_fallback = True  # type: ignore[attr-defined]
     return sum(
         len(group) / len(rows)
         * abs(_mean(r["probability"] for r in group) - _mean(r["actual"] for r in group))
         for group in groups
         if group
     )
+
+
+# Track whether the last ECE call fell back (for labeling). Module-level flag
+# so analyze_cohort can render ece_label without changing the return type.
+expected_calibration_error.last_was_fallback = False  # type: ignore[attr-defined]
 
 
 def calibration_slope(rows: list[dict[str, Any]]) -> float | None:
@@ -436,6 +443,8 @@ def analyze_cohort(key: tuple[str, ...], rows: list[dict[str, Any]]) -> dict[str
             direction = "within_ci"
     examples = sorted(rows, key=lambda row: abs(row["probability"] - row["actual"]), reverse=True)[:10]
     ece_val = round(expected_calibration_error(rows), 6)
+    # Label fallback ECE so a divergent number can never render unmarked
+    ece_label = "fallback-nonparity" if getattr(expected_calibration_error, "last_was_fallback", False) else None
     graded_share = _graded_share_for(rows)
     verdict = _verdict_for(ece_val*100 if ece_val is not None else None, sufficient, graded_share)
     # For band-specific cells, band_idx/label; for weekly, week
@@ -463,6 +472,7 @@ def analyze_cohort(key: tuple[str, ...], rows: list[dict[str, Any]]) -> dict[str
         "signed_error": round(signed_error, 6),
         "direction": direction,
         "ece": ece_val,
+        "ece_label": ece_label,
         "graded_share": round(graded_share, 4) if graded_share is not None else None,
         "verdict": verdict,
         "calibration_slope": _round_optional(calibration_slope(rows)),

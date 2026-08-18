@@ -97,6 +97,7 @@ async def cohort_market_type_light(
         for p,a in lst:
             bins[min(int(p*10),9)].append((p,a))
         ece_pp = None
+        is_fallback = False
         try:
             from app.tasks.precompute_calibration import _compute_horizon_mce
             buckets=[]
@@ -107,8 +108,10 @@ async def cohort_market_type_light(
             v = _compute_horizon_mce(buckets, weighted=True)
             if v is not None:
                 ece_pp = round(v,2)
+            else:
+                is_fallback = True
         except Exception:
-            pass
+            is_fallback = True
         if ece_pp is None:
             total_ece=0.0
             for b in bins:
@@ -117,11 +120,15 @@ async def cohort_market_type_light(
                 avg_a=sum(a for _,a in b)/len(b)
                 total_ece+= len(b)/n * abs(avg_p-avg_a)
             ece_pp= round(total_ece*100,2)
+            is_fallback = True
         avg_p=sum(p for p,_ in lst)/n
         avg_a=sum(a for _,a in lst)/n
-        out.append({"source":src,"league_category":league,"market_type":mt,"n":n,"ece":ece_pp,"ece_label":"light-estimate","pred":round(avg_p,3),"actual":round(avg_a,3),"gap_pp":round((avg_p-avg_a)*100,2)})
+        label = "fallback-nonparity" if is_fallback else "light-estimate"
+        out.append({"source":src,"league_category":league,"market_type":mt,"n":n,"ece":ece_pp,"ece_label":label,"pred":round(avg_p,3),"actual":round(avg_a,3),"gap_pp":round((avg_p-avg_a)*100,2)})
     out=sorted(out, key=lambda x: x["ece"], reverse=True)
-    return {"rows_scanned": len(rows), "cohorts": len(grouped), "sufficient": len(out), "by_ece": out[:100], "ece_label": "light-estimate", "note": "light-estimate: 200k sample without dedup/field-normalization; canonical heavy build is the source of truth"}
+    # Top-level label is fallback-nonparity if any row fell back, else light-estimate
+    top_label = "fallback-nonparity" if any(r.get("ece_label")=="fallback-nonparity" for r in out) else "light-estimate"
+    return {"rows_scanned": len(rows), "cohorts": len(grouped), "sufficient": len(out), "by_ece": out[:100], "ece_label": top_label, "note": "light-estimate: 200k sample without dedup/field-normalization; canonical heavy build is the source of truth" + (" — some rows used fallback-nonparity" if top_label=="fallback-nonparity" else "")}
 
 @router.get("/admin/cohort-market-type/debug")
 async def cohort_market_type_debug(
@@ -228,10 +235,11 @@ async def cohort_provenance_split(
         LIMIT 300000
     """))).all()
     # Group by (league, market_type) and compute ECE_all vs ECE_venue via ONE canonical definition
-    def ece_of(pairs):
+    # Returns (ece_pp, is_fallback) so callers can label fallback-nonparity
+    def ece_of_with_label(pairs):
         n = len(pairs)
         if n < 30:
-            return None
+            return None, False
         bins = [[] for _ in range(10)]
         for prob, actual in pairs:
             bins[min(int(prob*10),9)].append((prob, actual))
@@ -244,7 +252,7 @@ async def cohort_provenance_split(
                 buckets.append({"n": len(b), "winners": sum(a for _,a in b), "sum_prob": sum(p for p,_ in b)})
             v = _compute_horizon_mce(buckets, weighted=True)
             if v is not None:
-                return round(v,2)
+                return round(v,2), False
         except Exception:
             pass
         total = 0.0
@@ -254,7 +262,11 @@ async def cohort_provenance_split(
             avg_p = sum(p for p,_ in b)/len(b)
             avg_a = sum(a for _,a in b)/len(b)
             total += len(b)/n * abs(avg_p-avg_a)
-        return round(total*100,2)
+        return round(total*100,2), True
+
+    def ece_of(pairs):
+        v, _ = ece_of_with_label(pairs)
+        return v
     from collections import defaultdict
     grouped_all = defaultdict(list)
     grouped_venue = defaultdict(list)
@@ -275,8 +287,8 @@ async def cohort_provenance_split(
         n_default = n_all - n_venue
         null_share = round(n_default/n_all,3) if n_all else None
         graded_share = round(n_venue/n_all,3) if n_all else None
-        ece_all = ece_of(grouped_all[key])
-        ece_venue = ece_of(grouped_venue[key]) if n_venue >= 30 else None
+        ece_all, fellback_all = ece_of_with_label(grouped_all[key])
+        ece_venue, fellback_venue = ece_of_with_label(grouped_venue[key]) if n_venue >= 30 else (None, False)
         # Also compute gap for context
         def gap_of(pairs):
             if not pairs:
@@ -293,11 +305,14 @@ async def cohort_provenance_split(
         def _prov_verdict(ece, n, gshare):
             sufficient = n >= 30 if n is not None else False
             return _verdict_for(ece, sufficient, gshare)
+        # Label fallback so divergent number can never render unmarked
+        ece_label_all = "fallback-nonparity" if fellback_all else None
+        ece_label_venue = "fallback-nonparity" if fellback_venue else None
         out.append({
             "league": league, "market_type": mtype,
             "n_all": n_all, "n_venue": n_venue, "n_default": n_default,
             "null_default_share": null_share, "graded_share": graded_share,
-            "ece_all": ece_all, "ece_venue": ece_venue,
+            "ece_all": ece_all, "ece_label_all": ece_label_all, "ece_venue": ece_venue, "ece_label_venue": ece_label_venue,
             "gap_all": gap_all, "gap_venue": gap_venue,
             "verdict_all": _prov_verdict(ece_all, n_all, graded_share),
             "verdict_venue": _prov_verdict(ece_venue, n_venue, 1.0),
