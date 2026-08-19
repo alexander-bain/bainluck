@@ -550,7 +550,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: "a merge that lands it moves this to 86 — COUNT, do not add." 088 landed earlier in this same
 #: session (latency-62, `6e23d346`), so 86 is the counted union, not an increment.
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber.
-MINIMUM_BANKED_RULINGS = 86
+MINIMUM_BANKED_RULINGS = 87
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

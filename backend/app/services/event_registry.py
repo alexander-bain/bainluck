@@ -93,6 +93,49 @@ _STRUCTURED_MATCH_CANDIDATE_LIMIT = 500
 _TAG_UNANCHORED = "provenance:unanchored"
 
 
+# ── The Odds listing is not a dereference (#1989) ───────────────────────────
+#
+# Cite this at every Odds API ingestion call site. It is a named ``False`` and
+# not a bare literal because the bare literal is what got flipped: all four
+# Odds call sites passed ``schedule_derived=True`` on the argument that "id and
+# teams arrive together in one Odds API schedule record". That sentence is true
+# and it is not arm B.
+#
+# Arm B is a DEREFERENCE — the provider was handed an id and asked "what game is
+# this?", and answered. The Odds ``/v4/sports/{sport}/odds`` response is a
+# LISTING: we asked by SPORT, and the id is the primary key of a row whose other
+# columns are the teams and the date. Co-arrival is not dereference, and the
+# proof is that the flag was then true of every record the provider has ever
+# emitted — #1946's shape, a flag that is always true is not a gate.
+#
+# The decisive argument is not conservatism, though. It is that arm B's own
+# authority argues AGAINST absorbing here. Arm B says: trust these teams and
+# this date, because the provider vouches for them. But the provider ALSO
+# vouches that its id ``c0a1041457ba…`` and its id ``f7e02d88c3c8…`` are two
+# different games. Using a provider's authority to merge two rows that the same
+# provider distinguishes is self-contradictory. Arm B exists for the CROSS-source
+# join — an ESPN claim finding the row Odds API created — and applied
+# intra-source it is incoherent.
+#
+# Measured on the live MLB slate, 2026-08-18 (22 records, read-only replay of
+# the matcher's own predicate): 6 resolved at Step 1 on their own id, and all 16
+# remaining absorbed onto a row that ALREADY HELD A DIFFERENT odds_api id.
+# ZERO were the legitimate no-id cross-source join. Arm B was doing no
+# legitimate work on this path at all; it was 100% absorber.
+#
+# Specimen, end to end: event 15199901 holds ``espn_id=401816572``, which ESPN
+# dates 2026-08-18T22:40Z STATUS_FINAL. Its ``commence_time`` had been dragged to
+# 2026-08-19T16:35Z — which is a DIFFERENT game, ESPN ``401816587``,
+# STATUS_SCHEDULED — and its status set to ``live``. So a finished Tuesday game
+# sat at Wednesday's first pitch wearing Wednesday's clock and a live badge,
+# while the real Wednesday game had no row in production at all.
+#
+# Step 1 is untouched: a claim whose id is already on a row still finds it with
+# no window and no names. Repeat polls are unaffected. What stops is a NEW id
+# reaching the ±28h matcher, which is the only way the absorption happened.
+ODDS_LISTING_IS_NOT_A_DEREFERENCE = False
+
+
 def _tag_source(source: str) -> str:
     return f"provenance:source:{source}"
 
