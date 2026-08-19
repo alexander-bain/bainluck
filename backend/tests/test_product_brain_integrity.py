@@ -537,7 +537,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: claimed by `ux` (`program/ux-83`/`-84`), so it moved to 088 — a ruling number in a directive
 #: is a proposal, the ledger is the allocator (ruling 069). If `ux` merges first the merged tree
 #: holds both files and the count is higher again: COUNT, never take a side (#1910).
-MINIMUM_BANKED_RULINGS = 83
+MINIMUM_BANKED_RULINGS = 84
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
