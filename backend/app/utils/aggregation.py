@@ -37,6 +37,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.utils.source_divergence import (
+    SourceDivergence,
+    assess_divergence,
+)
+
 
 # Base weights per source — higher = more influence on the aggregate
 SOURCE_WEIGHTS: dict[str, float] = {
@@ -576,24 +581,21 @@ def compute_current_aggregate(
 _EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
 
 
-def compute_aggregate_probability(event, event_status: Optional[str] = None) -> Optional[float]:
-    """Compute aggregate home win probability from all available sources.
+def effective_source_weights(
+    event, event_status: Optional[str] = None
+) -> tuple[list[str], list[float], list[float]]:
+    """The readings and the weights the hero is ABOUT to use — decayed and capped.
 
-    Uses SOURCE_WEIGHTS to produce a weighted average of all available
-    probability readings on the event model.  Falls back through three
-    tiers of decreasing richness.
+    Extracted so the divergence gate and the flag that reports it read the same
+    numbers the value is computed from. A detector that recomputes its own
+    weights is a detector that can disagree with the thing it is watching.
 
-    When event_status is "completed" or "closed", prediction market sources
-    (Kalshi, Polymarket) are excluded — their prices go stale post-final
-    and drag the aggregate away from the resolved sportsbook/ESPN values.
-
-    Works on any object with win_probability_sources, espn_win_prob_home,
-    and opening_home_probability attributes (typically an Event model).
+    Returns ``(keys, values, weights)``, index-aligned; ``([], [], [])`` when
+    tier 1 has nothing.
     """
     status = event_status or getattr(event, "status", None)
     is_finished = status in ("completed", "closed")
 
-    # Tier 1: win_probability_sources JSONB (live games — multiple sources)
     wps = getattr(event, "win_probability_sources", None) or {}
     prob_readings: dict[str, float] = {}
     stamps: dict[str, datetime] = {}
@@ -609,7 +611,74 @@ def compute_aggregate_probability(event, event_status: Optional[str] = None) -> 
         if updated_at is not None:
             stamps[k] = updated_at
 
-    if prob_readings:
+    if not prob_readings:
+        return [], [], []
+
+    values = list(prob_readings.values())
+    keys = list(prob_readings.keys())
+    weights = [SOURCE_WEIGHTS.get(src, 0.5) for src in keys]
+
+    # Relative recency. The reference is the freshest stamp on the event,
+    # never the wall clock: uniform age is cadence, not staleness, and a
+    # clock-free rule cannot drift (gotcha #44).
+    decay_stamps = {k: t for k, t in stamps.items() if k not in _UNCAPPED_SOURCES}
+    if decay_stamps:
+        freshest = max(decay_stamps.values())
+        for i, src in enumerate(keys):
+            stamp = decay_stamps.get(src)
+            if stamp is None:
+                continue  # unstamped keeps full weight — the monotone default
+            relative_age = (freshest - stamp).total_seconds()
+            if relative_age <= 0:
+                continue
+            weights[i] *= _relative_staleness_multiplier(relative_age)
+
+    weights = cap_weight_shares(
+        weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
+    )
+    return keys, values, weights
+
+
+def assess_event_divergence(
+    event, event_status: Optional[str] = None
+) -> Optional[SourceDivergence]:
+    """The flag half of the divergence gate (ruling (b)) — read-only.
+
+    Returns a verdict when this event's hero rests on exactly two sources that
+    disagree past `DIVERGENCE_SPREAD_THRESHOLD`. This is the hook a sentinel or
+    an audit reads to route the pair to matching as a suspected mis-link; the
+    aggregator itself only needs the value.
+
+    On the live population read 2026-08-19 this fires on 4 of 76 two-source
+    events; three of the four are one class (Polymarket at 0.07 against a
+    sportsbook at 0.59-0.63).
+    """
+    keys, values, weights = effective_source_weights(event, event_status)
+    if not keys:
+        return None
+    return assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights)))
+
+
+def compute_aggregate_probability(event, event_status: Optional[str] = None) -> Optional[float]:
+    """Compute aggregate home win probability from all available sources.
+
+    Uses SOURCE_WEIGHTS to produce a weighted average of all available
+    probability readings on the event model.  Falls back through three
+    tiers of decreasing richness.
+
+    When event_status is "completed" or "closed", prediction market sources
+    (Kalshi, Polymarket) are excluded — their prices go stale post-final
+    and drag the aggregate away from the resolved sportsbook/ESPN values.
+
+    Works on any object with win_probability_sources, espn_win_prob_home,
+    and opening_home_probability attributes (typically an Event model).
+    """
+    # Tier 1: win_probability_sources JSONB (live games — multiple sources).
+    # Readings, decay and cap all live in `effective_source_weights` so the
+    # divergence gate below cannot drift from the value it is gating.
+    keys, values, weights = effective_source_weights(event, event_status)
+
+    if keys:
         # Weighted MEDIAN (not mean) — the same outlier-resistant method the
         # time-series blend (compute_aggregated_probability → the chart's
         # aggregate_line) uses. This is the module's stated design (see the
@@ -630,28 +699,21 @@ def compute_aggregate_probability(event, event_status: Optional[str] = None) -> 
         # Both are no-ops on the shapes that dominate today — an event with no
         # stamps decays nothing, an event with fewer than three sources caps
         # nothing — so this is additive to a hero, not a replacement for one.
-        values = list(prob_readings.values())
-        keys = list(prob_readings.keys())
-        weights = [SOURCE_WEIGHTS.get(src, 0.5) for src in keys]
-
-        # Relative recency. The reference is the freshest stamp on the event,
-        # never the wall clock: uniform age is cadence, not staleness, and a
-        # clock-free rule cannot drift (gotcha #44).
-        decay_stamps = {k: t for k, t in stamps.items() if k not in _UNCAPPED_SOURCES}
-        if decay_stamps:
-            freshest = max(decay_stamps.values())
-            for i, src in enumerate(keys):
-                stamp = decay_stamps.get(src)
-                if stamp is None:
-                    continue  # unstamped keeps full weight — the monotone default
-                relative_age = (freshest - stamp).total_seconds()
-                if relative_age <= 0:
-                    continue
-                weights[i] *= _relative_staleness_multiplier(relative_age)
-
-        weights = cap_weight_shares(
-            weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
+        #
+        # THE DIVERGENCE GATE (ruling (b), cycle 99). Two sources 40+ points
+        # apart cannot both be describing this game, so we render one source's
+        # own number rather than let a statistic arbitrate a broken pair. See
+        # `utils/source_divergence.py` for the measured threshold and for why
+        # "primary" is the highest EFFECTIVE weight — a base-weight primary
+        # would print the stale pregame line over a live blowout, which is #240
+        # rebuilt. On the 2026-08-19 population this changes 0 of 76 displayed
+        # heroes and flags 4; the value it protects is the invariant that a
+        # rendered probability is always a number some source actually stated.
+        divergence = assess_divergence(
+            dict(zip(keys, values)), dict(zip(keys, weights))
         )
+        if divergence is not None:
+            return round(divergence.primary_value, 6)
 
         if any(w > 0 for w in weights):
             return round(_weighted_median(values, weights), 6)

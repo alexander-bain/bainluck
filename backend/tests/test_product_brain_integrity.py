@@ -555,7 +555,13 @@ def test_ruling_numbers_are_unique() -> None:
 #: way, by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree: **93**, which is
 #: master's 92 plus latency's **096** (a read-only endpoint is not a safe endpoint; the
 #: measurement is load). COUNT, never add, never take a side (#1910, ruling 088).
-MINIMUM_BANKED_RULINGS = 93
+#:
+#: Raised 93 -> **94** in the SAME cycle by `program/ux-89` banking **097** (no statistic
+#: rescues a bad pair; a tie prints the midpoint) — renumbered from 096 by the ux lane on its
+#: own branch, per Fable's INT-090 ruling (b): 096 was already burned into filed issue #1994,
+#: and the cited number stays while the uncited one moves. Counted on the merged tree again
+#: rather than incremented: 94 files match `docs/rulings/[0-9][0-9][0-9]-*.md` here.
+MINIMUM_BANKED_RULINGS = 94
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

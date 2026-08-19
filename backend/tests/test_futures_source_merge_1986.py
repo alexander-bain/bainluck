@@ -88,14 +88,31 @@ def test_transition_census_is_exactly_one_class(payload):
         assert all(r in after for r in survivors)
 
 
-def test_the_blend_is_the_standing_one_not_a_local_mean(payload):
-    """Kalshi 0.077 and Polymarket 0.0405 both weigh 0.8, so the standing
-    weighted median returns the LOWER value. Pinned deliberately: if someone
-    swaps in a mean (~0.0588) this goes red, because a second aggregator on one
-    surface is exactly what the blend ruling forbids."""
+def test_an_equal_weight_pair_now_prints_the_midpoint(payload):
+    """SUPERSEDED BY FABLE RULING (b), cycle 99. Rewritten, not deleted.
+
+    This test used to pin the OPPOSITE assertion — that Kalshi 0.077 and
+    Polymarket 0.0405, both weighing 0.8, blend to the LOWER value 0.0405 — and
+    it defended that as "the standing algorithm's answer, not a local mean". The
+    reasoning was sound and the ruling overturned it on evidence the test could
+    not see: censused across the live merges, `median == min(values)` on 3 of 3
+    and the bias was `-spread/2` EXACTLY, always downward. A tiebreak that
+    always resolves down is a systematic discount, and which value sorts first
+    carries no meaning.
+
+    So the scope of the old objection survives — no second aggregator — but it
+    now applies where there IS a judgement to express. On a genuine two-way tie
+    there is none, and the midpoint is the only answer that does not silently
+    prefer one side. The events hero keeps the weighted median untouched.
+    """
     assert SOURCE_WEIGHTS["kalshi"] == SOURCE_WEIGHTS["polymarket"] == 0.8
     merged = merge_relabel_collisions(payload["home_team_futures"])
-    assert _champ(merged)[0]["probability"] == pytest.approx(0.0405)
+    row = _champ(merged)[0]
+    assert row["probability"] == pytest.approx((0.077 + 0.0405) / 2)
+    assert row["blend_rule"] == "equal_weight_midpoint"
+    # The pair is 3.65 points apart, nowhere near the sanity threshold, so the
+    # divergence gate must NOT claim it.
+    assert "divergence" not in row
 
 
 def test_a_merge_needs_all_three_conditions(payload):

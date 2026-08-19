@@ -39,8 +39,14 @@ import re
 from typing import Any, Optional
 
 from app.utils.aggregation import SOURCE_WEIGHTS, _weighted_median
+from app.utils.source_divergence import SourceDivergence, assess_divergence
 
-__all__ = ["merge_relabel_collisions", "blend_probabilities", "entities_compatible"]
+__all__ = [
+    "merge_relabel_collisions",
+    "blend_probabilities",
+    "blend_with_verdict",
+    "entities_compatible",
+]
 
 
 def _norm_entity(name: Optional[str]) -> str:
@@ -65,29 +71,74 @@ def entities_compatible(a: Optional[str], b: Optional[str]) -> bool:
     return ta <= tb or tb <= ta
 
 
-def blend_probabilities(rows: list[dict]) -> Optional[float]:
-    """One number for one question, via the STANDING blend.
+def blend_with_verdict(
+    rows: list[dict],
+) -> tuple[Optional[float], Optional[SourceDivergence], str]:
+    """One number for one question — and WHICH RULE produced it.
 
-    Uses `aggregation.SOURCE_WEIGHTS` and the same weighted median the hero and
-    chart use, so the event page cannot drift from them. Note the standing
-    blend's real behaviour on an even two-source split: with kalshi and
-    polymarket both weighted 0.8, cumulative weight reaches the midpoint inside
-    the FIRST sorted entry, so the blend returns the LOWER value rather than a
-    mean. That is the standing algorithm's answer, not a choice made here —
-    substituting a mean would fork a second aggregator, which is the thing the
-    blend ruling exists to prevent.
+    Ruling (b), cycle 99, replaced this function's original behaviour on the
+    only shape it actually meets in production. Both halves, in the order the
+    ruling set them:
+
+    **1. The divergence gate runs first.** A pair 40+ points apart is not two
+    opinions; one of the two rows is about a different question. `AL West
+    Winner — Houston` arrives as Kalshi 0.575 and Polymarket 0.060, and no
+    statistic rescues that: the median prints 6%, a mean prints 31.75%, and the
+    mean is not more correct, only differently wrong. Gated pairs render the
+    primary row's own stated number and carry the flag out to matching.
+
+    **2. Below the threshold, an equal-weight pair prints the MIDPOINT.** This
+    function's docstring used to defend returning the lower value as "the
+    standing algorithm's answer". It was the standing algorithm's answer, and
+    the census showed what that answer costs on exactly this surface: with
+    kalshi and polymarket both at 0.8 the cumulative weight crosses the midpoint
+    inside the FIRST sorted entry, so `median == min(values)` on 3 of 3 live
+    merges and the bias is not approximately half the spread, it IS half the
+    spread — `delta == -spread/2` exactly, always downward. A rule that always
+    resolves a tie downward is not a tiebreak, it is a systematic discount, and
+    the sort order it depends on carries no meaning.
+
+    This does NOT fork a second aggregator, which was the original objection and
+    a fair one. The scope is a genuine two-way TIE, where the weighted median is
+    not expressing a judgement about authority — there is none to express — it
+    is just reading whichever value sorted first. The events hero keeps the
+    weighted median untouched, including its heavier-source tiebreak, which the
+    ruling explicitly preserved as designed behaviour.
+
+    Returns ``(value, divergence_or_None, rule_name)``.
     """
     vals: list[float] = []
     wts: list[float] = []
+    srcs: list[str] = []
     for r in rows:
         p = r.get("probability")
         if p is None:
             continue
         vals.append(float(p))
+        srcs.append((r.get("source") or "").lower())
         wts.append(SOURCE_WEIGHTS.get((r.get("source") or "").lower(), 0.8))
     if not vals:
-        return None
-    return round(_weighted_median(vals, wts), 6)
+        return None, None, "empty"
+
+    # Two rows from DISTINCT sources is the shape both halves of the ruling
+    # govern. Same-source rows are sibling outcomes, not a disagreement, and
+    # `merge_relabel_collisions` already refuses to merge them — but this
+    # function is public, so it re-checks rather than trusting its caller.
+    if len(vals) == 2 and srcs[0] != srcs[1]:
+        divergence = assess_divergence(
+            dict(zip(srcs, vals)), dict(zip(srcs, wts)), order=srcs
+        )
+        if divergence is not None:
+            return round(divergence.primary_value, 6), divergence, "divergence_gate"
+        if wts[0] == wts[1]:
+            return round((vals[0] + vals[1]) / 2.0, 6), None, "equal_weight_midpoint"
+
+    return round(_weighted_median(vals, wts), 6), None, "weighted_median"
+
+
+def blend_probabilities(rows: list[dict]) -> Optional[float]:
+    """The value alone. See `blend_with_verdict` for which rule produced it."""
+    return blend_with_verdict(rows)[0]
 
 
 def merge_relabel_collisions(rows: list[dict]) -> list[dict]:
@@ -141,9 +192,16 @@ def merge_relabel_collisions(rows: list[dict]) -> list[dict]:
         if i in merged_into:
             contributors = [rows[i]] + [rows[j] for j in merged_into[i]]
             new = dict(r)
-            blended = blend_probabilities(contributors)
+            blended, divergence, rule = blend_with_verdict(contributors)
             if blended is not None:
                 new["probability"] = blended
+            new["blend_rule"] = rule
+            if divergence is not None:
+                # The flag rides ON THE ROW rather than going only to a log,
+                # because the row is what reaches every consumer — the read
+                # path, an audit, and matching — and a pair this broken should
+                # not be silently indistinguishable from a clean merge.
+                new["divergence"] = divergence.as_evidence()
             srcs = sorted({(c.get("source") or "unknown") for c in contributors})
             new["all_sources"] = srcs
             new["source_count"] = len(srcs)

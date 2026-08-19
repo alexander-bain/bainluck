@@ -79,7 +79,34 @@ def main() -> int:
     print("=" * 72)
     print(f"URL: {base_url}")
     print(f"Items: {len(classified)}")
+    degraded_reason = payload.get("degraded_reason")
+    if degraded_reason:
+        print(f"DEGRADED: {degraded_reason}")
     print()
+
+    # THE VACUITY REFUSAL (UX-P102). This script used to print
+    # `boring-rate@20: 0/20` over ZERO items and exit 0. That is what it did on
+    # 2026-08-19, when the feed answered 200 with `degraded_reason:
+    # futures_timeout` and served 25 concept/tournament cards and no futures —
+    # a total measurement failure rendered as a perfect score.
+    #
+    # A rate needs its denominator. `boring_count` over an empty window is not
+    # 0%, it is undefined, and the emptier reading must never be the better
+    # one (gotcha #53). Refuse it, loudly, and exit non-zero so a caller that
+    # only checks the status code cannot mistake it for a pass either.
+    if not classified:
+        print("boring-rate@20:          NOT MEASURABLE — zero items classified.")
+        print()
+        print("This is a FAILED audit, not a clean one. The feed returned no")
+        print("futures cards to grade" + (f" ({degraded_reason})." if degraded_reason else "."))
+        return 2
+
+    if len(classified) < 20:
+        print(
+            f"WARNING: only {len(classified)} items — the @20 metrics below are "
+            f"over a SHORT window and are not comparable to a full page."
+        )
+
     print(f"boring-rate@20:          {summary['boring_count']}/20")
     print(f"ladder/bucket-rate@20:   {summary['ladder_count']}/20")
     print(f"duplicate-family-rate@20:{summary['duplicate_family_count']}/20")
@@ -396,6 +423,8 @@ def _print_gold_set_report(
                 print(
                     f"  [{row.get('category', '?')}] {row.get('market_name', '')[:78]}"
                 )
+
+    return 0
 
 
 if __name__ == "__main__":
