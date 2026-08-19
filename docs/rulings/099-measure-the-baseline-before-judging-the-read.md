@@ -1,11 +1,15 @@
-# RULING 098 — Measure the baseline before judging the read
+# RULING 099 — Measure the baseline before judging the read
 
 date: 2026-08-19
 author: Fable (ratifying lane1's queue-375 correction)
-renumbered: 096 -> 098 at rebase — 096 and 097 were both taken on master in this
-  same cycle (latency's read-only-endpoint, ux's no-statistic-rescues-a-bad-pair).
-  Per the INT-090 ruling (b), the CITED number stays and the uncited one moves;
-  096 was already burned into filed issue #1994 and this one is cited nowhere.
+renumbered: 096 -> 098 -> 099 — 096 and 097 were both taken on master in this
+  same cycle (latency's read-only-endpoint, ux's no-statistic-rescues-a-bad-pair),
+  and 098 was then found to be CLAIMED BY UX in `RULING-CLAIMS.md` line 282 with a
+  fresh-fetch sweep on record, while lane1 had no entry at all. Per the INT-090
+  hold on PR #2008: the ledger claim wins, not seniority — "a claim guard that
+  loses to whoever merges first is not a guard". 099 verified free by this lane at
+  `origin/master` `bac5fce7` (highest ruling file on master 097), sweeping all
+  **461** local and remote refs for `docs/rulings/099-`: holders_found = 0.
 issues: #2005 · #2006 · #1977
 
 **A single measurement is not evidence until the distribution it came from has been measured.
