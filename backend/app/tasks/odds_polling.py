@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
+from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.tasks.base import get_task_session, run_async
@@ -773,9 +774,11 @@ async def _poll_mlb_pregame():
                 home_team_name=event_data["home_team"],
                 away_team_name=event_data["away_team"],
                 commence_time=commence_time,
-                # Ruling 048 arm B: id and teams arrive together in one Odds API
-                # schedule record — this id names the very row these teams came from.
-                claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
+                # Ruling 048: NOT arm B — the Odds listing is not a dereference.
+                claim=EventClaim(
+                    "odds_api", event_data["id"],
+                    schedule_derived=ODDS_LISTING_IS_NOT_A_DEREFERENCE,
+                ),
                 commence_time_source="odds_api",
                 status="scheduled",
             )
@@ -1072,9 +1075,12 @@ async def _poll_all_odds():
                             home_team_name=event_data["home_team"],
                             away_team_name=event_data["away_team"],
                             commence_time=commence_time,
-                            # Ruling 048 arm B: id and teams arrive together in one Odds API
-                            # schedule record — this id names the very row these teams came from.
-                            claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
+                            # Ruling 048: NOT arm B — the Odds listing is not a
+                            # dereference.
+                            claim=EventClaim(
+                                "odds_api", event_data["id"],
+                                schedule_derived=ODDS_LISTING_IS_NOT_A_DEREFERENCE,
+                            ),
                             commence_time_source="odds_api",
                             status=event_status,
                         )
@@ -1472,9 +1478,11 @@ async def _poll_sport_odds(sport_key: str):
                     home_team_name=event_data["home_team"],
                     away_team_name=event_data["away_team"],
                     commence_time=commence_time,
-                    # Ruling 048 arm B: id and teams arrive together in one Odds API
-                    # schedule record — this id names the very row these teams came from.
-                    claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
+                    # Ruling 048: NOT arm B — the Odds listing is not a dereference.
+                    claim=EventClaim(
+                        "odds_api", event_data["id"],
+                        schedule_derived=ODDS_LISTING_IS_NOT_A_DEREFERENCE,
+                    ),
                     commence_time_source="odds_api",
                     status=event_status,
                 )

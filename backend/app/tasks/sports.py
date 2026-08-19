@@ -10,6 +10,7 @@ from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport, Event, OddsSnapshot, Team
+from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.name_normalization import names_match as _canonical_names_match
@@ -409,10 +410,16 @@ async def _discover_events():
                             home_team_name=event_data["home_team"],
                             away_team_name=event_data["away_team"],
                             commence_time=espn_commence_time or commence_time,
-                            # Ruling 048 arm B: id and teams arrive together in one
-                            # Odds API schedule record (an ESPN commence correction
-                            # may refine the time, but the anchor is the odds_api id).
-                            claim=EventClaim("odds_api", event_data["id"], schedule_derived=True),
+                            # Ruling 048: NOT arm B — the Odds listing is not a
+                            # dereference. An ESPN commence correction may refine
+                            # the TIME, but it does not turn an odds_api listing id
+                            # into a dereferenced one, and the claim here is still
+                            # made in odds_api's name. If this path ever wants arm B
+                            # it must claim as "espn" with the espn id it resolved.
+                            claim=EventClaim(
+                                "odds_api", event_data["id"],
+                                schedule_derived=ODDS_LISTING_IS_NOT_A_DEREFERENCE,
+                            ),
                             commence_time_source="espn" if espn_commence_time else "odds_api",
                             status=event_status,
                         )
