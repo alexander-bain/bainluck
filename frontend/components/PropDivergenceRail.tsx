@@ -12,13 +12,14 @@
  * against a real production payload. This file is rendering only.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   selectDivergenceRows,
-  type DivergenceRow,
   type PropDropReason,
 } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
+import PropTravelBar from "./PropTravelBar";
+import PropDivergenceDetail from "./PropDivergenceDetail";
 
 interface Props {
   playerProps?: readonly PlayerPropRow[] | null;
@@ -34,71 +35,8 @@ const REASON_LABEL: Record<PropDropReason, string> = {
   unknown: "unknown",
 };
 
-function pct(p: number): string {
-  return `${Math.round(p * 100)}%`;
-}
-
-/**
- * One row's bar. Domain is fixed 0-100% so rows are comparable to each other
- * and to the native chart's single-axis convention.
- */
-function TravelBar({ row }: { row: DivergenceRow }) {
-  const from = Math.min(row.pregameMark, row.current);
-  const to = Math.max(row.pregameMark, row.current);
-  const left = `${from * 100}%`;
-  const width = `${Math.max(to - from, 0) * 100}%`;
-
-  // Direction by colour, design-system tokens only (the site is light-mode
-  // only; raw Tailwind dark classes are banned).
-  const spanTone =
-    row.direction === "over"
-      ? "bg-accent-live"
-      : row.direction === "under"
-        ? "bg-accent-danger"
-        : "bg-surface-border";
-  const headTone =
-    row.direction === "over"
-      ? "bg-accent-live"
-      : row.direction === "under"
-        ? "bg-accent-danger"
-        : "bg-text-muted";
-
-  return (
-    <div className="mt-1.5">
-      <div
-        className="relative h-2 rounded-full bg-surface-border/40"
-        role="img"
-        aria-label={`${row.label}: opened at ${pct(row.pregameMark)}, ${
-          row.settled ? "finished at" : "now"
-        } ${pct(row.current)}`}
-      >
-        {/* the travel */}
-        <div
-          className={`absolute top-0 h-2 rounded-full ${spanTone}`}
-          style={{ left, width }}
-        />
-        {/* where the market opened the question */}
-        <div
-          className="absolute -top-0.5 h-3 w-px bg-text-muted"
-          style={{ left: `${row.pregameMark * 100}%` }}
-        />
-        {/* where it is now */}
-        <div
-          className={`absolute -top-0.5 h-3 w-[3px] rounded-sm ${headTone}`}
-          style={{ left: `${row.current * 100}%` }}
-        />
-      </div>
-      <div className="mt-1 flex items-center justify-between text-[11px] text-text-muted tabular-nums">
-        <span>opened {pct(row.pregameMark)}</span>
-        <span className="text-text-secondary font-medium">
-          {row.settled ? "final" : "now"} {pct(row.current)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export default function PropDivergenceRail({ playerProps, status }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const result = useMemo(
     () => selectDivergenceRows({ playerProps, status }),
     [playerProps, status],
@@ -138,9 +76,30 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
             >
               {row.label}
             </p>
-            <TravelBar row={row} />
+            <PropTravelBar row={row} />
           </div>
         ))}
+
+        {/* V1: ONE expand, and only when it leads somewhere. `notSelected` is
+            the rail's own accounting of what it could not fit — never a
+            taxonomy loss, which is why it is safe to offer as a destination. */}
+        {result.notSelected > 0 && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              className="text-[12px] font-medium text-accent-brand hover:underline"
+            >
+              {expanded
+                ? "Show fewer"
+                : `See all ${result.eligible} questions`}
+            </button>
+            {expanded && (
+              <PropDivergenceDetail playerProps={playerProps} status={status} />
+            )}
+          </div>
+        )}
 
         {/* V3: a non-benign loss must reach the screen. We do not claim "no
             trading" for something we could not read — that is the invention

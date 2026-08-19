@@ -43,6 +43,30 @@ import type { PlayerPropRow } from "./playerPropsGrouping";
  */
 export const PROP_SURPRISE_TRAVEL = 0.2;
 
+/**
+ * The OFF-SCRIPT line — where the detail view puts the fold.
+ *
+ * Distinct from `PROP_SURPRISE_TRAVEL`, and for a different job: 0.20 decides
+ * who gets a SENTENCE, 0.10 decides who is above the fold at all. The detail
+ * view shows every eligible question, so it needs a second, lower cut to keep
+ * "moved" from meaning "exists".
+ *
+ * MEASURED, and the measurement reproduces the ratified mock's own count rather
+ * than quoting it. Mock 2 (`docs/mockups/event-props-script-divergence-mock.html`)
+ * is drawn from event **14788546**, Cardinals @ Reds, and states "34 of 97 rungs
+ * moved 10+ points from their own pregame mark". Running the shipped parser over
+ * that same production payload (now `__tests__/fixtures/eventPlayerProps.14788546.json`)
+ * yields 100 distinct questions of which **exactly 34** travel >= 0.10.
+ *
+ * Travel distribution on that payload: p50 0.023 · p75 0.137 · **p90 0.210** ·
+ * p95 0.280 · max 0.400 — which also re-derives `PROP_SURPRISE_TRAVEL = 0.20`
+ * at p90 on a payload independent of the one slice 1 measured it on.
+ *
+ * Same discipline as its neighbour: a future population that moves this is a new
+ * measurement to record, not a knob to turn.
+ */
+export const PROP_OFF_SCRIPT_TRAVEL = 0.1;
+
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
 
@@ -103,7 +127,7 @@ export interface DivergenceRow {
   travel: number;
   /** Which way it travelled. `flat` when travel rounds to nothing. */
   direction: "over" | "under" | "flat";
-  /** travel >= PROP_SURPRISE_TRAVEL. */
+  /** travel at or above PROP_SURPRISE_TRAVEL (inclusive; see travelAtOrAbove). */
   surprising: boolean;
   /** Present only when `surprising`. V2: the sentence is an escalation. */
   sentence: string | null;
@@ -163,6 +187,29 @@ function isFiniteNumber(v: unknown): v is number {
 }
 
 /**
+ * Both thresholds are written as inclusive lines in whole points — the mock
+ * says "moved 10+ points", the spec says "rows at or above 20 pts". Travel is
+ * a float subtraction of two provider prices, so the exact-boundary case does
+ * NOT survive a naive `>=`:
+ *
+ *     0.6 - 0.5 === 0.09999999999999998    (< 0.10)
+ *     0.7 - 0.5 === 0.19999999999999996    (< 0.20)
+ *
+ * A prop that moved exactly twenty points therefore read as NOT surprising,
+ * silently, on the shipped slice-1 rail. Found in UX-P101 by a `>=` -> `>`
+ * mutation that survived every payload-derived assertion, because the captured
+ * fixtures happen to contain no row sitting exactly on a line.
+ *
+ * The epsilon is a representation tolerance, not a widened threshold: it admits
+ * the boundary and nothing else. A genuine near-miss (0.195) still misses.
+ */
+const TRAVEL_EPSILON = 1e-9;
+
+export function travelAtOrAbove(travel: number, threshold: number): boolean {
+  return travel >= threshold - TRAVEL_EPSILON;
+}
+
+/**
  * Both providers' lines read as "N or more", so both render as `N+`.
  *
  *   Polymarket  "... O/U 3.5" -> Over means at least 4        -> "4+"
@@ -219,8 +266,8 @@ export function divergenceSentence(
  * endpoint served, per spec.
  */
 export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
-  const rows = input.playerProps ?? [];
-  const settled = isSettledStatus(input.status);
+  const built = buildCandidates(input);
+  const settled = built.settled;
 
   const empty = (emptyReason: DivergenceResult["emptyReason"]): DivergenceResult => ({
     rows: [],
@@ -231,7 +278,82 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     emptyReason,
   });
 
-  if (rows.length === 0) return empty("none");
+  if (built.noRows) return empty("none");
+
+  const { candidates, dropped, nonBenignCount } = built;
+
+  if (candidates.length === 0) {
+    // Rows existed and none survived. Which empty it is depends on whether a
+    // guard caught something — `unreadable` when it did, `clean` when the data
+    // was simply benign-empty.
+    return {
+      ...empty(nonBenignCount > 0 ? "unreadable" : "clean"),
+      dropped,
+      nonBenignCount,
+    };
+  }
+
+  const perPlayer = new Map<string, number>();
+  const selected: DivergenceRow[] = [];
+  for (const row of candidates) {
+    if (selected.length >= RAIL_MAX_ROWS) break;
+    const n = perPlayer.get(row.player) ?? 0;
+    if (n >= RAIL_MAX_PER_PLAYER) continue;
+    perPlayer.set(row.player, n + 1);
+    selected.push(withSentence(row, settled));
+  }
+
+  return {
+    rows: selected,
+    dropped,
+    nonBenignCount,
+    notSelected: candidates.length - selected.length,
+    eligible: candidates.length,
+    emptyReason: null,
+  };
+}
+
+/** V2's escalation, applied identically by both views. */
+function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
+  if (!row.surprising) return row;
+  return {
+    ...row,
+    sentence: divergenceSentence(
+      row.player,
+      row.label,
+      row.pregameMark,
+      row.current,
+      settled,
+    ),
+  };
+}
+
+interface BuiltCandidates {
+  candidates: DivergenceRow[];
+  dropped: DivergenceDrop[];
+  nonBenignCount: number;
+  settled: boolean;
+  /** No input rows at all — distinct from "rows existed, none survived". */
+  noRows: boolean;
+}
+
+/**
+ * THE ONE ADMISSION RULE, shared by the rail and the detail view.
+ *
+ * Extracted in UX-P101 rather than copied. A second implementation of "which
+ * props may be shown" is the #1951 defect exactly — that issue was a THIRD copy
+ * of the feed's admission rule, in no parity test, silently carrying a stale
+ * arm. The rail and the detail view must disagree about *how many* rows to show
+ * and about *nothing else*; the only way to guarantee that is for the predicate
+ * to exist once.
+ */
+function buildCandidates(input: DivergenceInput): BuiltCandidates {
+  const rows = input.playerProps ?? [];
+  const settled = isSettledStatus(input.status);
+
+  if (rows.length === 0) {
+    return { candidates: [], dropped: [], nonBenignCount: 0, settled, noRows: true };
+  }
 
   const dropCounts = new Map<PropDropReason, { count: number; examples: string[] }>();
   const noteDrop = (reason: PropDropReason, at: string) => {
@@ -313,7 +435,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
       current,
       travel,
       direction: travel < 0.005 ? "flat" : current > pregameMark ? "over" : "under",
-      surprising: travel >= PROP_SURPRISE_TRAVEL,
+      surprising: travelAtOrAbove(travel, PROP_SURPRISE_TRAVEL),
       sentence: null,
       settled,
     });
@@ -331,51 +453,98 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     .filter((d) => !d.benign)
     .reduce((n, d) => n + d.count, 0);
 
-  if (candidates.length === 0) {
-    // Rows existed and none survived. Which empty it is depends on whether a
-    // guard caught something — `unreadable` when it did, `clean` when the data
-    // was simply benign-empty.
-    return {
-      ...empty(nonBenignCount > 0 ? "unreadable" : "clean"),
-      dropped,
-      nonBenignCount,
-    };
-  }
-
   // Rank by travel, then by current price so the order is total and stable
   // across renders (a pure tie on travel is common — many props do not move).
   candidates.sort(
     (a, b) => b.travel - a.travel || b.current - a.current || a.key.localeCompare(b.key),
   );
 
-  const perPlayer = new Map<string, number>();
-  const selected: DivergenceRow[] = [];
+  return { candidates, dropped, nonBenignCount, settled, noRows: false };
+}
+
+export interface DivergenceDetailResult {
+  /** Questions that left their pregame mark, ranked by travel. Above the fold. */
+  offScript: DivergenceRow[];
+  /** Questions still on script. Below the fold, same bar, no sentence. */
+  onScript: DivergenceRow[];
+  /** `offScript.length` — the mock's "N off script" badge. */
+  offScriptCount: number;
+  /** Every eligible question. The rail's `eligible` and this agree by construction. */
+  eligible: number;
+  dropped: DivergenceDrop[];
+  nonBenignCount: number;
+  emptyReason: DivergenceResult["emptyReason"];
+  settled: boolean;
+}
+
+/**
+ * THE DIVERGENCE detail view — every eligible question, not the top five.
+ *
+ * This is V1's other half: "the full prop set sits behind a single expand".
+ * The rail answers *what should I look at*; this answers *what else is there*,
+ * and on the ratified mock's own game that is *95 questions the rail cannot
+ * reach* (100 eligible, 5 shown).
+ *
+ * Same grammar as the rail, deliberately: every row is a travelled bar, and a
+ * row clearing `PROP_SURPRISE_TRAVEL` additionally carries a sentence. Two
+ * differences, both of which are the point of a detail view:
+ *
+ *   1. NO `RAIL_MAX_ROWS`. Completeness is the contract.
+ *   2. NO `RAIL_MAX_PER_PLAYER`. The rail caps two-per-player because a
+ *      fixed-height element whose job is to describe the GAME can be
+ *      monopolised by one player having a big night. The detail view's job is
+ *      the opposite — capping it would silently withhold a player's other
+ *      questions, which is the "why are we losing markets" complaint V3 exists
+ *      to answer, re-introduced by the very screen meant to resolve it.
+ *
+ * The fold is `PROP_OFF_SCRIPT_TRAVEL`. Note a row below the fold can never be
+ * surprising (0.10 < 0.20), so sentences appear above the fold by construction
+ * rather than by a second rule — asserted, not assumed.
+ */
+export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetailResult {
+  const built = buildCandidates(input);
+  const { candidates, dropped, nonBenignCount, settled } = built;
+
+  const base = {
+    dropped,
+    nonBenignCount,
+    settled,
+  };
+
+  if (built.noRows) {
+    return {
+      ...base,
+      offScript: [],
+      onScript: [],
+      offScriptCount: 0,
+      eligible: 0,
+      emptyReason: "none",
+    };
+  }
+
+  if (candidates.length === 0) {
+    return {
+      ...base,
+      offScript: [],
+      onScript: [],
+      offScriptCount: 0,
+      eligible: 0,
+      emptyReason: nonBenignCount > 0 ? "unreadable" : "clean",
+    };
+  }
+
+  const offScript: DivergenceRow[] = [];
+  const onScript: DivergenceRow[] = [];
   for (const row of candidates) {
-    if (selected.length >= RAIL_MAX_ROWS) break;
-    const n = perPlayer.get(row.player) ?? 0;
-    if (n >= RAIL_MAX_PER_PLAYER) continue;
-    perPlayer.set(row.player, n + 1);
-    selected.push(
-      row.surprising
-        ? {
-            ...row,
-            sentence: divergenceSentence(
-              row.player,
-              row.label,
-              row.pregameMark,
-              row.current,
-              settled,
-            ),
-          }
-        : row,
-    );
+    if (travelAtOrAbove(row.travel, PROP_OFF_SCRIPT_TRAVEL)) offScript.push(withSentence(row, settled));
+    else onScript.push(row);
   }
 
   return {
-    rows: selected,
-    dropped,
-    nonBenignCount,
-    notSelected: candidates.length - selected.length,
+    ...base,
+    offScript,
+    onScript,
+    offScriptCount: offScript.length,
     eligible: candidates.length,
     emptyReason: null,
   };
