@@ -46,33 +46,40 @@ import argparse
 import json
 import os
 import pathlib
-import re
 import sys
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.utils.repair_apply_plan import (  # noqa: E402
-    PlannedCreate,
     build_create_plan,
     create_gate,
 )
 
+# The ROW DERIVATION is shared with the live rail (`app.tasks.create_events_from_truth`),
+# added queue 369 when that rail was finally built. The two shells read differently —
+# this one over `/api/admin/db-query`, the rail over a session — and that is fine. What
+# they must NOT do is BUILD differently: the plan is a content address, so a second
+# implementation that trims a label or picks the other MLB registry mints a different
+# address from the same approval, and the operator is left holding a hash nothing
+# accepts. Hence one builder, two readers.
+from app.utils.event_create_derivation import (  # noqa: E402
+    MLB_SPORT_ID,
+    ROW_ONE,
+    anchors_from_rows,
+    build_rows,
+    load_games,
+    required_club_names,
+    select_population,
+    truth_set_path_for,
+)
+
 HANDOFF = pathlib.Path(__file__).resolve().parents[2] / ".claude/handoff"
-TRUTH_SET = HANDOFF / "ARTIFACT-Q362-POPULATION-2-CREATE-SET.json"
 
-#: The regular-season MLB sport row. 33178 is ``baseball_mlb_preseason`` and is
-#: NOT interchangeable with it — see the module docstring.
-MLB_SPORT_ID = 53232
-
-#: Population 1: the Aug 5 MIN@KC game (#1902). A subset of population 2.
-POPULATION_1 = ["401816407"]
-
-#: Row #1 of population 2, asserted by name so a re-derivation that loses Alex's
-#: own missing game fails here instead of quietly shipping 327.
-ROW_ONE = "401816534"
-
-_LABEL_RE = re.compile(r"^(?P<away>.+?) @ (?P<home>.+?) (?P<date>\d{4}-\d{2}-\d{2})")
+#: The reviewed set now lives in the repo (`backend/app/data/…`) so the deployed rail
+#: can read it — handoff is gitignored and does not exist on the dyno. The handoff
+#: copy is kept as the fallback for a checkout that predates the move.
+TRUTH_SET_LEGACY = HANDOFF / "ARTIFACT-Q362-POPULATION-2-CREATE-SET.json"
 
 
 def _db_query(sql: str, limit: int = 1000) -> list[list]:
@@ -93,25 +100,19 @@ def _db_query(sql: str, limit: int = 1000) -> list[list]:
     return payload["rows"]
 
 
-def resolve_clubs(names: set[str]) -> dict[str, tuple[int, str]]:
-    """name -> (team_id, espn_id), refusing anything that is not 1:1."""
+def resolve_clubs(names: list[str]) -> dict[str, int]:
+    """name -> team_id, refusing anything that is not 1:1 (via the shared checker)."""
     inlist = ",".join("'%s'" % n.replace("'", "''") for n in sorted(names))
     rows = _db_query(
-        f"SELECT t.name, t.id, coalesce(t.espn_id,'') FROM teams t "
-        f"WHERE t.sport_id = {MLB_SPORT_ID} AND t.name IN ({inlist}) ORDER BY t.name"
+        f"SELECT t.name, t.id FROM teams t "
+        f"WHERE t.sport_id = {MLB_SPORT_ID} AND t.name IN ({inlist}) ORDER BY t.name, t.id"
     )
-    by_name: dict[str, list[tuple[int, str]]] = {}
-    for name, team_id, espn in rows:
-        by_name.setdefault(name, []).append((int(team_id), espn))
-
-    ambiguous = {n: v for n, v in by_name.items() if len(v) != 1}
-    missing = sorted(names - set(by_name))
-    if ambiguous or missing:
+    missing = sorted(set(names) - {str(r[0]) for r in rows})
+    if missing:
         raise SystemExit(
-            "REFUSED — club anchors are not 1:1 in sport "
-            f"{MLB_SPORT_ID}. missing={missing} ambiguous={ambiguous}"
+            f"REFUSED — {len(missing)} club(s) have no row in sport {MLB_SPORT_ID}: {missing}"
         )
-    return {n: v[0] for n, v in by_name.items()}
+    return anchors_from_rows(rows)
 
 
 def still_missing(truth_ids: list[str]) -> set[str]:
@@ -133,49 +134,22 @@ def still_missing(truth_ids: list[str]) -> set[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--population", choices=["1", "2"], required=True)
+    ap.add_argument("--population", choices=["1", "2", "3"], required=True)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    truth = json.loads(TRUTH_SET.read_text())
-    games = {g["espn_id"]: g for g in truth["games"]}
-    if ROW_ONE not in games:
-        raise SystemExit(f"REFUSED — row #1 {ROW_ONE} absent from the reviewed set")
+    committed = pathlib.Path(__file__).resolve().parents[1] / truth_set_path_for(args.population)
+    source = committed if committed.exists() else TRUTH_SET_LEGACY
+    truth = json.loads(source.read_text())
 
-    wanted = POPULATION_1 if args.population == "1" else truth["truth_ids"]
-    for tid in wanted:
-        if tid not in games:
-            raise SystemExit(f"REFUSED — {tid} is not in the reviewed truth set")
-
-    clubs: set[str] = set()
-    parsed: dict[str, tuple[str, str]] = {}
-    for tid in wanted:
-        m = _LABEL_RE.match(games[tid]["label"])
-        if not m:
-            raise SystemExit(f"REFUSED — unparseable label for {tid}")
-        away, home = m.group("away"), m.group("home")
-        parsed[tid] = (away, home)
-        clubs.update((away, home))
-
-    anchors = resolve_clubs(clubs)
+    # `load_games` asserts row #1 by name and `select_population` refuses any id the
+    # reviewed set does not contain — both in the shared module, so the rail applies
+    # the identical assertions to the identical file.
+    games = load_games(truth)
+    wanted = select_population(truth, args.population)
+    anchors = resolve_clubs(required_club_names(wanted, games))
     live_missing = still_missing(wanted)
-
-    rows = []
-    for tid in wanted:
-        away, home = parsed[tid]
-        rows.append(
-            PlannedCreate(
-                truth_id=tid,
-                provider="espn",
-                home_team_id=anchors[home][0],
-                away_team_id=anchors[away][0],
-                home_name=home,
-                away_name=away,
-                commence_time=games[tid]["commence"],
-                sport_id=MLB_SPORT_ID,
-                label=games[tid]["label"],
-            )
-        )
+    rows = build_rows(wanted, games, anchors, sport_id=MLB_SPORT_ID)
 
     plan = build_create_plan(
         rows,
@@ -186,7 +160,7 @@ def main() -> int:
             "truth_set_hash": truth["truth_id_hash"],
             "sport_id": MLB_SPORT_ID,
             "sport_key": "baseball_mlb",
-            "row_one": ROW_ONE,
+            "row_one": truth.get("row_one", ROW_ONE),
         },
     )
 

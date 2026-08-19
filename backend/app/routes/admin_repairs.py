@@ -19,19 +19,22 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-settlement-status | statpal-blank-ids
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
              | polymarket-evidence-census | polymarket-evidence
-             | pm-never-graded-census | pm-never-graded }
+             | pm-never-graded-census | pm-never-graded
+             | event-create-from-truth }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
      handoff file over the ref. Re-synced 2026-08-12 with the registry; if you
      add a repair, add it HERE in the same commit — a third drift would prove
      the comment above was decoration. Re-synced again 2026-08-17, CAL-P065,
-     adding the two pm-never-graded entries in the commit that registered them.)
+     adding the two pm-never-graded entries in the commit that registered them.
+     Re-synced again 2026-08-18, queue 369, adding event-create-from-truth in the
+     commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
-``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank``
-also accept those as query params; the dispatcher passes through only what a
-given repair's signature actually names.
+``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
+``population`` also accept those as query params; the dispatcher passes through
+only what a given repair's signature actually names.
 
 ``after_id`` + ``after_date`` are a KEYSET cursor, added in CAL-P058 because a
 repair that removes rows from its own population cannot be paged with an offset
@@ -251,6 +254,30 @@ _REPAIRS = {
         "app.tasks.repair_pm_never_graded",
         "repair",
     ),
+    # #1796/#1902 (queue 369): the attended event-CREATE consumer. Alex approved
+    # attended CREATE from venue truth as the PATTERN — provider anchors, plan
+    # artifact, pre-cert, always attended — and three windows built the plan object
+    # while the apply path did not exist on any branch. This is that path.
+    # `apply=false&population=1|2` derives from the COMMITTED reviewed truth set
+    # (`app/data/event_create_truth_set.json`; handoff is gitignored and therefore
+    # absent from the dyno), resolves club anchors 1:1 against `teams` inside the
+    # regular-season sport — never through the name->id index, which is the poisoned
+    # path (#1918) — runs the live still-missing gate, and persists a
+    # content-addressed CreatePlan. `apply=true&plan_hash=` consumes THAT artifact
+    # and re-derives nothing.
+    # The compare half of the compare-and-set is the EXISTENCE CHECK and it lives
+    # INSIDE the INSERT (`WHERE NOT EXISTS`), because a check in front of the write
+    # is a read of a world the write then changes. rowcount 0 is a named finding
+    # (TRUTH_ID_ALREADY_PRESENT) that retires ONE row and never its siblings — the
+    # ordinary pipeline creating a game between review and apply is the system
+    # working. Keyed on the provider id throughout, so a doubleheader is two rows.
+    # Capped at APPLY_CREATE_CAP=50 rows and a 20s wall clock per call; the gate
+    # makes it resumable with the SAME plan_hash, so no cursor is needed.
+    # Accepts ?population=&plan_hash=. ATTENDED ONLY: never wire this to a beat.
+    "event-create-from-truth": (
+        "app.tasks.create_events_from_truth",
+        "repair",
+    ),
 }
 
 
@@ -285,6 +312,13 @@ async def run_repair(
         description="Exact-match census gate, for repairs that require one "
                     "(statpal-blank-ids). Omit to use the repair's measured default.",
     ),
+    population: str = Query(
+        None,
+        description="Which reviewed population a plan-bound repair acts on "
+                    "(event-create-from-truth: '1' or '2'). The plan artifact is "
+                    "stored per population, so this selects WHICH approval an "
+                    "apply is bound to — it is not a filter.",
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run a committed data repair and return its before/after census.
@@ -317,6 +351,7 @@ async def run_repair(
             ("after_id", after_id), ("after_date", after_date),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
+            ("population", population),
         )
         if v is not None and k in accepted
     }

@@ -135,10 +135,31 @@ def digest_fields(*fields: Any) -> str:
     Length-prefixing each field makes the encoding prefix-free, so the delimiter
     carries no meaning a value can imitate: ``"Old|Club"`` encodes as ``8:Old|Club``
     and ``"Old"`` as ``3:Old``, which differ in their first character.
+
+    **ABSENT is not EMPTY (C-APPLY-PRE-CREATE finding 1, generalized).** The first
+    version of this encoder wrote ``"" if value is None else str(value)``, so a field
+    the plan does not carry and a field the plan carries as an empty string produced
+    the same ``0:`` — and the field that finding lands on is ``sport_id``, which
+    decides WHICH COPY of a club a created game hangs off (MLB has two registries,
+    33178 / 53232, all 30 clubs duplicated — #1798). Adding a field to a digest does
+    not make the digest injective over it if the encoder still collapses its absence
+    onto one of its values; that is the same defect as leaving it out, one layer down.
+    ``None`` therefore encodes as the sentinel length ``-1``, which no real length can
+    equal, so no value can imitate absence.
+
+    Changing an encoder changes every address it produces. Verified before shipping:
+    the three reviewed ``/v3`` CREATE addresses (pop1 ``5edaa440…``, pop2
+    ``f1a43a33…``, pop3 ``cdc2bae9…`` — the last carrying Alex's 2026-08-18 MC) are
+    BYTE-IDENTICAL under this change, because no digest field in any of their rows is
+    ``None``. An encoder change that silently re-addressed an approved plan would
+    invalidate the approval, which is the opposite of what an address is for.
     """
     parts: list[str] = []
     for value in fields:
-        text = "" if value is None else str(value)
+        if value is None:
+            parts.append("-1:")
+            continue
+        text = str(value)
         parts.append(f"{len(text)}:{text}")
     return "|".join(parts)
 
@@ -654,7 +675,11 @@ class PlannedCreate:
             self.home_name,
             self.away_name,
             self.commence_time,
-            int(self.sport_id) if self.sport_id is not None else "",
+            # NOT `... else ""`. That collapsed an absent sport_id onto an empty one
+            # and handed both the same address — a field inside the digest that the
+            # digest could not distinguish from its own absence. `digest_fields`
+            # encodes None as the `-1:` sentinel; let it.
+            int(self.sport_id) if self.sport_id is not None else None,
         )
 
 

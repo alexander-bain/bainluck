@@ -1,0 +1,37 @@
+{
+  "derived": "2026-08-18, queue 369, from site.api.espn.com MLB scoreboard dates=20260819",
+  "games": [
+    {
+      "commence": "2026-08-19T16:35:00+00:00",
+      "espn_id": "401816587",
+      "label": "Detroit Tigers @ Pittsburgh Pirates 2026-08-19 16:35Z"
+    },
+    {
+      "commence": "2026-08-19T17:10:00+00:00",
+      "espn_id": "401816590",
+      "label": "San Diego Padres @ New York Mets 2026-08-19 17:10Z"
+    },
+    {
+      "commence": "2026-08-19T20:10:00+00:00",
+      "espn_id": "401816586",
+      "label": "Arizona Diamondbacks @ Boston Red Sox 2026-08-19 20:10Z"
+    },
+    {
+      "commence": "2026-08-19T22:05:00+00:00",
+      "espn_id": "401816588",
+      "label": "Miami Marlins @ Philadelphia Phillies 2026-08-19 22:05Z"
+    }
+  ],
+  "gate": "apply may proceed only when a re-derivation at apply time produces a MISSING id set whose intersection with THIS set is THIS set",
+  "id_count": 4,
+  "row_one": "401816587",
+  "schema": "event-create-truth-set/v1",
+  "scope": "MLB 2026-08-19 \u2014 the four games with NO row at all (#1947 population 2)",
+  "truth_id_hash": "ab530682efa57bc273f8ec4fa542c3a7",
+  "truth_ids": [
+    "401816587",
+    "401816590",
+    "401816586",
+    "401816588"
+  ]
+}
