@@ -8183,6 +8183,11 @@ async def get_related_futures(
             "source": market.source,
             "outcome_id": outcome.id,
             "outcome_name": resolved_name,
+            # #2001 — the Kalshi ticker is the only field on a TRUNCATED row
+            # ("Los Angeles D") that still names the whole team, so the
+            # cross-source merge below resolves identity from it rather than
+            # from the display string. Carried on the row, not re-queried.
+            "external_id": outcome.external_id,
             "probability": float(outcome.current_probability) if outcome.current_probability else None,
             "american_odds": outcome.current_american_odds,
             "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
@@ -8230,9 +8235,52 @@ async def get_related_futures(
     # "World Series Champion 4%" as two rows. This second pass catches only
     # what the first leaves behind — a genuine cross-source duplicate of one
     # question — and blends it to a single number per the standing ruling.
+    #
+    # #2001 — and the pass above still could not fire on a TRUNCATED name.
+    # Kalshi ships "Los Angeles D" for the Dodgers, so `entities_compatible`
+    # correctly refuses it against Polymarket's "Los Angeles Dodgers" and
+    # `nl_west` rendered two rows reading 97% and 98.45%. The team roster below
+    # lets the merge resolve both rows to a team id first — which also VETOES
+    # the pairing the truncation invites, since "Los Angeles A" is the Angels
+    # and must never blend into the Dodgers. The resolver refuses every
+    # ambiguous alias rather than ranking it; see `team_identity_resolution`.
     from app.utils.futures_source_merge import merge_relabel_collisions
-    home_futures = merge_relabel_collisions(home_futures)
-    away_futures = merge_relabel_collisions(away_futures)
+    from app.utils.team_identity_resolution import build_team_alias_index
+
+    # ONE roster read, shared with the logo enrichment below (which used to run
+    # its own query) — so identity resolution costs this route zero extra
+    # round-trips.
+    team_rows: list = []
+    team_index = None
+    if event.sport_id:
+        team_rows = (
+            await db.execute(
+                select(
+                    Team.id,
+                    Team.name,
+                    Team.abbreviation,
+                    Team.location,
+                    Team.alternate_names,
+                    Team.logo_url_small,
+                    Team.logo_url,
+                ).where(Team.sport_id == event.sport_id)
+            )
+        ).all()
+        team_index = build_team_alias_index(
+            [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "abbreviation": t.abbreviation,
+                    "location": t.location,
+                    "alternate_names": t.alternate_names,
+                }
+                for t in team_rows
+            ]
+        )
+
+    home_futures = merge_relabel_collisions(home_futures, team_index)
+    away_futures = merge_relabel_collisions(away_futures, team_index)
 
     # ── Enrich matchup outcomes with team logos ───────────────────
     # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
@@ -8242,22 +8290,16 @@ async def get_related_futures(
         mg = f.get("merge_group") or ""
         if "_matchup" in mg:
             matchup_outcomes.add(f["outcome_name"])
-    if matchup_outcomes and event.sport_id:
+    if matchup_outcomes and team_rows:
         from app.utils.name_normalization import names_match
-        team_logo_result = await db.execute(
-            select(Team.name, Team.logo_url_small, Team.logo_url).where(
-                Team.sport_id == event.sport_id,
-            )
-        )
-        team_rows = team_logo_result.all()
         for f in home_futures + away_futures:
             mg = f.get("merge_group") or ""
             if "_matchup" not in mg:
                 continue
             oname = f["outcome_name"]
-            for tname, logo_sm, logo_lg in team_rows:
-                if names_match(oname, tname):
-                    f["team_logo"] = logo_sm or logo_lg
+            for t in team_rows:
+                if names_match(oname, t.name):
+                    f["team_logo"] = t.logo_url_small or t.logo_url
                     break
 
     # Sort each side by relevance score descending

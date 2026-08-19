@@ -1,0 +1,1271 @@
+{
+ "_provenance": {
+  "what": "#2001 \u2014 the event 15200831 (Astros @ Angels) related-futures rows, each joined to its futures_outcomes.external_id (the Kalshi ticker) and its STORED futures_outcomes.team_id, plus the production baseball_mlb team roster.",
+  "read_at": "2026-08-19T16:4xZ",
+  "source": "POST /api/admin/db-query against production; payload rows carried over from related_futures_15200831_20260819.json unchanged.",
+  "join": "102/103 payload rows matched an outcome on (market_id, name)",
+  "why_stored_team_id_is_banked": "It is banked so the test can PROVE it is wrong, not so anything reads it. On this very payload the stored team_id sends Kalshi \"Los Angeles D\" (Dodgers) to team 10712 = Los Angeles ANGELS, and Polymarket \"Los Angeles Angels\" to team 10707 = Los Angeles DODGERS. Matching on it would fuse the city siblings.",
+  "rows": 103,
+  "teams": 33
+ },
+ "rows": [
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Yordan \u00c1lvarez",
+   "probability": 0.88,
+   "external_id": "KXMLBALMVP-26-YALV",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Carlos Correa",
+   "probability": 0.24,
+   "external_id": "KXMLBALHAARON-26-CCOR",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Jose Altuve",
+   "probability": 0.24,
+   "external_id": "KXMLBALHAARON-26-JALT",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": "make_mlb_playoffs",
+   "source": "kalshi",
+   "market_id": 266,
+   "outcome_name": "Houston",
+   "probability": 0.69,
+   "external_id": "KXMLBPLAYOFFS-26-HOU",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Yordan \u00c1lvarez",
+   "probability": 0.865,
+   "external_id": "KXMLBALHAARON-26-YALV",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 220,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.86,
+   "external_id": "KXMLBALCPOTY-26-YALV",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Los Angeles D",
+   "probability": 0.0605,
+   "external_id": "KXTEAMSINWS-26-HOULAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 132768,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.6355,
+   "external_id": "0x81f0581f13aa4e7b7d913df45f66752c92be4067a0a852c5f9dad60cc92d30a2",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7448685,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.5,
+   "external_id": "0x03e5f358cd6e8dd7f96a4f5fa6ce461ef7734e65bfc3c5857f9f739014a4a057",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "al_west",
+   "source": "kalshi",
+   "market_id": 271,
+   "outcome_name": "Houston",
+   "probability": 0.575,
+   "external_id": "KXMLBALWEST-26-HOU",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 59156961,
+   "outcome_name": "Houston Astros",
+   "probability": 0.445,
+   "external_id": "0xe5290bd474171ddcccb7677851cfdfc04998b4d787ef1873e7671f8ade1541f5",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Philadelphia",
+   "probability": 0.034,
+   "external_id": "KXTEAMSINWS-26-HOUPHI",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7435308,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.68,
+   "external_id": "0x4e4a62addcdac231845ca46966d1871e811aa89eb7e1bae073a9ba646ca43584",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 59156961,
+   "outcome_name": "Draw",
+   "probability": 0.15,
+   "external_id": "0x90b9d34e825d7ee7abc606c2ebc06cdd3e251dd6eca3f8ae98e24ea715159e4a",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 206625,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.605,
+   "external_id": "0x396b535aa31e56ac8cef5b26f271eb5c132b3dbe6e10988d49f88d63fc3bfd58",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 58728333,
+   "outcome_name": "Yordan Alvarez",
+   "probability": 0.92,
+   "external_id": "KXMLBAWARDFIN-26ALMVP-YALVAREZ44",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Milwaukee",
+   "probability": 0.0195,
+   "external_id": "KXTEAMSINWS-26-HOUMIL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 8861163,
+   "outcome_name": "Houston Astros",
+   "probability": 0.195,
+   "external_id": "0x7831787b7a76057a1ee173071484b63294a19a8c654c6c1c0a12a807c9160982",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "al_champion",
+   "source": "kalshi",
+   "market_id": 274,
+   "outcome_name": "Houston",
+   "probability": 0.095,
+   "external_id": "KXMLBAL-26-HOU",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 59180864,
+   "outcome_name": "Los Angeles A Win",
+   "probability": 0.525,
+   "external_id": null,
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Atlanta",
+   "probability": 0.011,
+   "external_id": "KXTEAMSINWS-26-HOUATL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Chicago C",
+   "probability": 0.0105,
+   "external_id": "KXTEAMSINWS-26-HOUCHC",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Cincinnati",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUCIN",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Colorado",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUCOL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Miami",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUMIA",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs New York M",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUNYM",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Pittsburgh",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUPIT",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs San Francisco",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUSF",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs St. Louis",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUSTL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Washington",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-HOUWSH",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs Arizona",
+   "probability": 0.001,
+   "external_id": "KXTEAMSINWS-26-HOUAZ",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Houston vs San Diego",
+   "probability": 0.0055,
+   "external_id": "KXTEAMSINWS-26-HOUSD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "polymarket",
+   "market_id": 114584,
+   "outcome_name": "Houston Astros",
+   "probability": 0.0085,
+   "external_id": "0x6470402973d292487fba2f61fd46967707b8327b9eab38a759da5ca5dc9ccec4",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7448769,
+   "outcome_name": "Christian Walker",
+   "probability": 0.011,
+   "external_id": "0x1031e3a52b03da4c2a9476e35018ef0c64eaf601043e7bfef4f5fe17fb6e4c84",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 215,
+   "outcome_name": "Bryan Abreu",
+   "probability": 0.01,
+   "external_id": "KXMLBALRELOTY-26-BABR",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": "al_west",
+   "source": "polymarket",
+   "market_id": 199065,
+   "outcome_name": "Houston Astros",
+   "probability": 0.06,
+   "external_id": "0xbcc39cfed2794572748ddb79612f0c6f17cb27efa0ca0583eb43b9b001317aeb",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7448770,
+   "outcome_name": "Cam Smith",
+   "probability": 0.0015,
+   "external_id": "0x6e0649454691fb5e5255905a9474028805cf81e695544ada17b029d52f6d5c01",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "kalshi",
+   "market_id": 275,
+   "outcome_name": "Houston",
+   "probability": 0.03,
+   "external_id": "KXMLB-26-HOU",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": "al_champion",
+   "source": "polymarket",
+   "market_id": 199045,
+   "outcome_name": "Houston Astros",
+   "probability": 0.0265,
+   "external_id": "0xcaa47a1f2a6f221054d4ac42258c02b040c0e2064674e7cd0995f64ff9765617",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 214,
+   "outcome_name": "Brice Matthews",
+   "probability": 0.01,
+   "external_id": "KXMLBALROTY-26-BMAT",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Carlos Correa",
+   "probability": 0.01,
+   "external_id": "KXMLBALMVP-26-CCOR",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Jose Altuve",
+   "probability": 0.01,
+   "external_id": "KXMLBALMVP-26-JALT",
+   "stored_team_id": 10715
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7448386,
+   "outcome_name": "Brice Matthews",
+   "probability": 0.0025,
+   "external_id": "0x53350fc950866392950b2290b9f32d595b216ca82bc0a25d5d55c945fdce3a3b",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Tampa Bay vs Los Angeles D",
+   "probability": 0.122,
+   "external_id": "KXTEAMSINWS-26-TBLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Chicago WS vs Los Angeles D",
+   "probability": 0.078,
+   "external_id": "KXTEAMSINWS-26-CWSLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Jo Adell",
+   "probability": 0.24,
+   "external_id": "KXMLBALHAARON-26-JADE",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 220,
+   "outcome_name": "Mike Trout",
+   "probability": 0.09,
+   "external_id": "KXMLBALCPOTY-26-MTRO",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "polymarket",
+   "market_id": 114584,
+   "outcome_name": "Los Angeles Dodgers",
+   "probability": 0.32,
+   "external_id": "0x749d8eccbc0a99447e71fc5e40a0096842774bef4d5c8838b8adb39af068b3cb",
+   "stored_team_id": 10707
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Seattle vs Los Angeles D",
+   "probability": 0.0165,
+   "external_id": "KXTEAMSINWS-26-SEALAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "kalshi",
+   "market_id": 275,
+   "outcome_name": "Los Angeles D",
+   "probability": 0.336,
+   "external_id": "KXMLB-26-LAD",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 59156961,
+   "outcome_name": "Los Angeles Angels",
+   "probability": 0.38,
+   "external_id": "0x83e97264748e87ddf4e2ad6180ad1613bc9b121f88c249a1aec2714624bb283d",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "New York Y vs Los Angeles D",
+   "probability": 0.111,
+   "external_id": "KXTEAMSINWS-26-NYYLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Cleveland vs Los Angeles D",
+   "probability": 0.01,
+   "external_id": "KXTEAMSINWS-26-CLELAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 58728333,
+   "outcome_name": "Mike Trout",
+   "probability": 0.1,
+   "external_id": "KXMLBAWARDFIN-26ALMVP-MTROUT27",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 58728333,
+   "outcome_name": "Zach Neto",
+   "probability": 0.1,
+   "external_id": "KXMLBAWARDFIN-26ALMVP-ZNETO9",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 58728334,
+   "outcome_name": "Jos\u00e9 Soriano",
+   "probability": 0.1,
+   "external_id": "KXMLBAWARDFIN-26ALCY-JSORIANO59",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Texas vs Los Angeles D",
+   "probability": 0.0155,
+   "external_id": "KXTEAMSINWS-26-TEXLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Detroit vs Los Angeles D",
+   "probability": 0.027,
+   "external_id": "KXTEAMSINWS-26-DETLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "nl_champion",
+   "source": "kalshi",
+   "market_id": 270,
+   "outcome_name": "Los Angeles D",
+   "probability": 0.445,
+   "external_id": "KXMLBNL-26-LAD",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": "nl_champion",
+   "source": "polymarket",
+   "market_id": 199050,
+   "outcome_name": "Los Angeles Dodgers",
+   "probability": 0.445,
+   "external_id": "0x07d6d1ac69e705071cfaa10ab950f8231dc3de7cb03638cbabb7fbf481806797",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "A's vs Los Angeles D",
+   "probability": 0.002,
+   "external_id": "KXTEAMSINWS-26-ATHLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Kansas City vs Los Angeles D",
+   "probability": 0.002,
+   "external_id": "KXTEAMSINWS-26-KCLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Boston vs Los Angeles D",
+   "probability": 0.0525,
+   "external_id": "KXTEAMSINWS-26-BOSLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Toronto vs Los Angeles D",
+   "probability": 0.0115,
+   "external_id": "KXTEAMSINWS-26-TORLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Atlanta",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAAATL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Chicago C",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAACHC",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Cincinnati",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAACIN",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Colorado",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAACOL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Pittsburgh",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAAPIT",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs San Francisco",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAASF",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs St. Louis",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAASTL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Washington",
+   "probability": 0.008,
+   "external_id": "KXTEAMSINWS-26-LAAWSH",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Baltimore vs Los Angeles D",
+   "probability": 0.012,
+   "external_id": "KXTEAMSINWS-26-BALLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Los Angeles D",
+   "probability": 0.002,
+   "external_id": "KXTEAMSINWS-26-LAALAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs San Diego",
+   "probability": 0.001,
+   "external_id": "KXTEAMSINWS-26-LAASD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "nl_west",
+   "source": "kalshi",
+   "market_id": 267,
+   "outcome_name": "Los Angeles D",
+   "probability": 0.97,
+   "external_id": "KXMLBNLWEST-26-LAD",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Miami",
+   "probability": 0.018,
+   "external_id": "KXTEAMSINWS-26-LAAMIA",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs New York M",
+   "probability": 0.001,
+   "external_id": "KXTEAMSINWS-26-LAANYM",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Milwaukee",
+   "probability": 0.004,
+   "external_id": "KXTEAMSINWS-26-LAAMIL",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "polymarket",
+   "market_id": 114584,
+   "outcome_name": "Los Angeles Angels",
+   "probability": 0.0055,
+   "external_id": "0x36f3d99fb629ebbad8bc559f922da1b1e8333496fe6322308bff647926ac15f0",
+   "stored_team_id": 10707
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Minnesota vs Los Angeles D",
+   "probability": 0.006,
+   "external_id": "KXTEAMSINWS-26-MINLAD",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Philadelphia",
+   "probability": 0.005,
+   "external_id": "KXTEAMSINWS-26-LAAPHI",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_matchup",
+   "source": "kalshi",
+   "market_id": 2417016,
+   "outcome_name": "Los Angeles A vs Arizona",
+   "probability": 0.004,
+   "external_id": "KXTEAMSINWS-26-LAAAZ",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 8861163,
+   "outcome_name": "Los Angeles Dodgers",
+   "probability": 0.9725,
+   "external_id": "0x375979019b95c7f1d866c0cc692cd4fa5531d7e5cca7507617f784fa46e431e8",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "world_series_champion",
+   "source": "kalshi",
+   "market_id": 275,
+   "outcome_name": "Los Angeles A",
+   "probability": 0.001,
+   "external_id": "KXMLB-26-LAA",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 7435308,
+   "outcome_name": "Mike Trout",
+   "probability": 0.065,
+   "external_id": "0x1d4a7761482a91a7865325181b9f37d5eb70f9cde1dadd91362076423bf04348",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "al_champion",
+   "source": "polymarket",
+   "market_id": 199045,
+   "outcome_name": "Los Angeles Angels",
+   "probability": 0.002,
+   "external_id": "0xe12c58262924b14cd53d52eb09919e160a85dddad8f7f605076e065222d4caf0",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "nl_west",
+   "source": "polymarket",
+   "market_id": 199080,
+   "outcome_name": "Los Angeles Dodgers",
+   "probability": 0.9845,
+   "external_id": "0xda72e07f582f615b5a26617b1c5e30a72cae4b4531bd2d629a8fb3a5c5f647a4",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Zach Neto",
+   "probability": 0.04,
+   "external_id": "KXMLBALHAARON-26-ZNET",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 218,
+   "outcome_name": "Mike Trout",
+   "probability": 0.04,
+   "external_id": "KXMLBALHAARON-26-MTRO",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": "al_champion",
+   "source": "kalshi",
+   "market_id": 274,
+   "outcome_name": "Los Angeles A",
+   "probability": 0.01,
+   "external_id": "KXMLBAL-26-LAA",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": "make_mlb_playoffs",
+   "source": "kalshi",
+   "market_id": 266,
+   "outcome_name": "Los Angeles D",
+   "probability": 0.99,
+   "external_id": "KXMLBPLAYOFFS-26-LAD",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 132810,
+   "outcome_name": "Jose Soriano",
+   "probability": 0.0005,
+   "external_id": "0xe7daac449fc858f5e86d8021d74cdbff190c7d13f89b96accf7cdcae87a07451",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 132768,
+   "outcome_name": "Mike Trout",
+   "probability": 0.0055,
+   "external_id": "0x4dcca2fd8ff5ef94e2d994de35c8172e9a13bd274807f95eecb5b48281d7316a",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 214,
+   "outcome_name": "Walbert Ure\u00f1a",
+   "probability": 0.01,
+   "external_id": "KXMLBALROTY-26-WURE",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Zach Neto",
+   "probability": 0.01,
+   "external_id": "KXMLBALMVP-26-ZNET",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Jo Adell",
+   "probability": 0.01,
+   "external_id": "KXMLBALMVP-26-JADE",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 216,
+   "outcome_name": "Mike Trout",
+   "probability": 0.01,
+   "external_id": "KXMLBALMVP-26-MTRO",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 219,
+   "outcome_name": "Jose Soriano",
+   "probability": 0.01,
+   "external_id": "KXMLBALCY-26-JSOR",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "kalshi",
+   "market_id": 219,
+   "outcome_name": "Yusei Kikuchi",
+   "probability": 0.01,
+   "external_id": "KXMLBALCY-26-YKIK",
+   "stored_team_id": 10712
+  },
+  {
+   "merge_group": null,
+   "source": "polymarket",
+   "market_id": 8861163,
+   "outcome_name": "Los Angeles Angels",
+   "probability": 0.021,
+   "external_id": "0x87012d225198274f5628f368fee645668479b96c0524c6880165f8dfcf93b142",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "al_west",
+   "source": "polymarket",
+   "market_id": 199065,
+   "outcome_name": "Los Angeles Angels",
+   "probability": 0.0005,
+   "external_id": "0x6b39af407bdad586c0b86fa962fc163d4c2260ac256e4a4ac74ab365f36b136d",
+   "stored_team_id": null
+  },
+  {
+   "merge_group": "al_west",
+   "source": "kalshi",
+   "market_id": 271,
+   "outcome_name": "Los Angeles A",
+   "probability": 0.01,
+   "external_id": "KXMLBALWEST-26-LAA",
+   "stored_team_id": 10712
+  }
+ ],
+ "teams": [
+  {
+   "id": 16935,
+   "name": "American League",
+   "abbreviation": "AL",
+   "location": "American",
+   "alternate_names": [
+    "American",
+    "All-Stars"
+   ]
+  },
+  {
+   "id": 10710,
+   "name": "Arizona Diamondbacks",
+   "abbreviation": "ARI",
+   "location": "Arizona",
+   "alternate_names": [
+    "Arizona",
+    "Diamondbacks"
+   ]
+  },
+  {
+   "id": 11494,
+   "name": "Athletics",
+   "abbreviation": "ATH",
+   "location": "Athletics",
+   "alternate_names": [
+    "A's"
+   ]
+  },
+  {
+   "id": 11626,
+   "name": "Atlanta Braves",
+   "abbreviation": "ATL",
+   "location": "Atlanta",
+   "alternate_names": [
+    "Braves",
+    "Atlanta"
+   ]
+  },
+  {
+   "id": 10738,
+   "name": "Baltimore Orioles",
+   "abbreviation": "BAL",
+   "location": "Baltimore",
+   "alternate_names": [
+    "Orioles",
+    "Baltimore"
+   ]
+  },
+  {
+   "id": 10709,
+   "name": "Boston Red Sox",
+   "abbreviation": "BOS",
+   "location": "Boston",
+   "alternate_names": [
+    "Red Sox",
+    "Boston"
+   ]
+  },
+  {
+   "id": 10714,
+   "name": "Chicago Cubs",
+   "abbreviation": "CHC",
+   "location": "Chicago",
+   "alternate_names": [
+    "Cubs",
+    "Chicago"
+   ]
+  },
+  {
+   "id": 10734,
+   "name": "Chicago White Sox",
+   "abbreviation": "CHW",
+   "location": "Chicago",
+   "alternate_names": [
+    "Chicago",
+    "White Sox"
+   ]
+  },
+  {
+   "id": 10713,
+   "name": "Cincinnati Reds",
+   "abbreviation": "CIN",
+   "location": "Cincinnati",
+   "alternate_names": [
+    "Reds",
+    "Cincinnati"
+   ]
+  },
+  {
+   "id": 10744,
+   "name": "Cleveland Guardians",
+   "abbreviation": "CLE",
+   "location": "Cleveland",
+   "alternate_names": [
+    "Cleveland",
+    "Guardians"
+   ]
+  },
+  {
+   "id": 10708,
+   "name": "Colorado Rockies",
+   "abbreviation": "COL",
+   "location": "Colorado",
+   "alternate_names": [
+    "Colorado",
+    "Rockies"
+   ]
+  },
+  {
+   "id": 10747,
+   "name": "Detroit Tigers",
+   "abbreviation": "DET",
+   "location": "Detroit",
+   "alternate_names": [
+    "Tigers",
+    "Detroit"
+   ]
+  },
+  {
+   "id": 10715,
+   "name": "Houston Astros",
+   "abbreviation": "HOU",
+   "location": "Houston",
+   "alternate_names": [
+    "Houston",
+    "Astros"
+   ]
+  },
+  {
+   "id": 11625,
+   "name": "Kansas City Royals",
+   "abbreviation": "KC",
+   "location": "Kansas City",
+   "alternate_names": [
+    "Kansas City",
+    "Royals"
+   ]
+  },
+  {
+   "id": 10712,
+   "name": "Los Angeles Angels",
+   "abbreviation": "LAA",
+   "location": "Los Angeles",
+   "alternate_names": [
+    "Los Angeles",
+    "Angels"
+   ]
+  },
+  {
+   "id": 10707,
+   "name": "Los Angeles Dodgers",
+   "abbreviation": "LAD",
+   "location": "Los Angeles",
+   "alternate_names": [
+    "Dodgers",
+    "Los Angeles"
+   ]
+  },
+  {
+   "id": 10716,
+   "name": "Miami Marlins",
+   "abbreviation": "MIA",
+   "location": "Miami",
+   "alternate_names": [
+    "Marlins",
+    "Miami"
+   ]
+  },
+  {
+   "id": 10735,
+   "name": "Milwaukee Brewers",
+   "abbreviation": "MIL",
+   "location": "Milwaukee",
+   "alternate_names": [
+    "Milwaukee",
+    "Brewers"
+   ]
+  },
+  {
+   "id": 10739,
+   "name": "Minnesota Twins",
+   "abbreviation": "MIN",
+   "location": "Minnesota",
+   "alternate_names": [
+    "Twins",
+    "Minnesota"
+   ]
+  },
+  {
+   "id": 16934,
+   "name": "National League",
+   "abbreviation": "NL",
+   "location": "National",
+   "alternate_names": [
+    "National",
+    "All-Stars"
+   ]
+  },
+  {
+   "id": 10737,
+   "name": "New York Mets",
+   "abbreviation": "NYM",
+   "location": "New York",
+   "alternate_names": [
+    "Mets",
+    "New York"
+   ]
+  },
+  {
+   "id": 6610,
+   "name": "New York Yankees",
+   "abbreviation": "NYY",
+   "location": "New York",
+   "alternate_names": [
+    "Yankees",
+    "New York"
+   ]
+  },
+  {
+   "id": 10746,
+   "name": "Philadelphia Phillies",
+   "abbreviation": "PHI",
+   "location": "Philadelphia",
+   "alternate_names": [
+    "Philadelphia",
+    "Phillies"
+   ]
+  },
+  {
+   "id": 10736,
+   "name": "Pittsburgh Pirates",
+   "abbreviation": "PIT",
+   "location": "Pittsburgh",
+   "alternate_names": [
+    "Pirates",
+    "Pittsburgh"
+   ]
+  },
+  {
+   "id": 10745,
+   "name": "San Diego Padres",
+   "abbreviation": "SD",
+   "location": "San Diego",
+   "alternate_names": [
+    "Padres",
+    "San Diego"
+   ]
+  },
+  {
+   "id": 6609,
+   "name": "San Francisco Giants",
+   "abbreviation": "SF",
+   "location": "San Francisco",
+   "alternate_names": [
+    "Giants",
+    "San Francisco"
+   ]
+  },
+  {
+   "id": 10743,
+   "name": "Seattle Mariners",
+   "abbreviation": "SEA",
+   "location": "Seattle",
+   "alternate_names": [
+    "Seattle",
+    "Mariners"
+   ]
+  },
+  {
+   "id": 10740,
+   "name": "St. Louis Cardinals",
+   "abbreviation": "STL",
+   "location": "St. Louis",
+   "alternate_names": [
+    "St. Louis",
+    "Cardinals"
+   ]
+  },
+  {
+   "id": 13437,
+   "name": "St.Louis Cardinals",
+   "abbreviation": "STL",
+   "location": "St. Louis",
+   "alternate_names": [
+    "Cardinals",
+    "St. Louis Cardinals"
+   ]
+  },
+  {
+   "id": 10741,
+   "name": "Tampa Bay Rays",
+   "abbreviation": "TB",
+   "location": "Tampa Bay",
+   "alternate_names": [
+    "Rays",
+    "Tampa Bay"
+   ]
+  },
+  {
+   "id": 10742,
+   "name": "Texas Rangers",
+   "abbreviation": "TEX",
+   "location": "Texas",
+   "alternate_names": [
+    "Rangers",
+    "Texas"
+   ]
+  },
+  {
+   "id": 11493,
+   "name": "Toronto Blue Jays",
+   "abbreviation": "TOR",
+   "location": "Toronto",
+   "alternate_names": [
+    "Blue Jays",
+    "Toronto"
+   ]
+  },
+  {
+   "id": 10711,
+   "name": "Washington Nationals",
+   "abbreviation": "WSH",
+   "location": "Washington",
+   "alternate_names": [
+    "Washington",
+    "Nationals"
+   ]
+  }
+ ]
+}
