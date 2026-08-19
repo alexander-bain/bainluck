@@ -354,6 +354,85 @@ async def cohort_provenance_split(
     }
 
 
+@router.post("/admin/cohort-cell-census/run")
+async def cohort_cell_census_run(
+    request: Request,
+    page_size: int = 1000,
+    resume: bool = True,
+    inline: bool = False,
+):
+    """#1978: run (or resume) the all-cells provenance census on the worker.
+
+    This exists because ``GET /admin/cohort-provenance-split`` above — which is
+    the correct full-population reader, correctly rewritten to aggregate in SQL —
+    **cannot be served.** It returns HTTP 503 at 30.21 s, re-measured by CAL-P075
+    after the 40 h orphan backend was killed and the reclaim ran on both tables,
+    so bloat was never the cause: the planner drives from a Parallel Seq Scan on
+    ``futures_outcomes`` (87% of plan cost) that every cell pays in full, and
+    narrowing the filter does not narrow the scan. A 12-to-76-minute job cannot be
+    an HTTP request.
+
+    ``inline=true`` runs it in-request and WILL H12 on the full population — it
+    exists for a small ``page_size`` smoke test, not for a real census. The
+    default enqueues.
+
+    Re-invoke until the artifact reports ``complete: true``; each call resumes
+    from the banked cursor. ``resume=false`` starts a fresh walk, which is what
+    you want after the population predicate changes and nothing else.
+    """
+    _check_admin_secret(request=request)
+
+    if inline:
+        from app.tasks.cohort_cell_census_worker import run_cohort_cell_census
+
+        return await run_cohort_cell_census(
+            page_size=int(page_size), resume=bool(resume)
+        )
+
+    from app.routes.admin_utils import _safe_send_task
+
+    result = _safe_send_task(
+        "app.tasks.cohort_cell_census",
+        kwargs={"page_size": int(page_size), "resume": bool(resume)},
+    )
+    return {"status": "enqueued", "task_id": getattr(result, "id", None)}
+
+
+@router.get("/admin/cohort-cell-census/last")
+async def cohort_cell_census_last(request: Request):
+    """#1978: read the last census artifact (or the in-flight checkpoint).
+
+    Serves the same per-cell shape as ``/admin/cohort-provenance-split`` plus the
+    ``ece_complete`` / ``ece_incomplete`` twins and a per-cell ``measured`` flag.
+
+    **A partial read is a first-class answer here.** ``complete: false`` with a
+    ``resume_cursor`` means the walk is mid-flight, and the cells already banked
+    are still worth having — that is the whole reason ``measured`` is per cell
+    rather than per run. It is never rendered as a clean zero (gotcha #53).
+    """
+    _check_admin_secret(request=request)
+
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.cohort_cell_census import CENSUS_IDENTITY, CENSUS_SCHEMA
+
+    try:
+        read = await read_snapshot_standalone(
+            CENSUS_IDENTITY, expected_version=CENSUS_SCHEMA, max_age_s=30 * 86400
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "measured": False,
+            "reason": f"artifact_read_raised: {type(exc).__name__}",
+        }
+    if not read.ok or read.envelope is None:
+        return {"measured": False, "reason": f"artifact_unreadable: {read.status}"}
+    payload = dict(read.envelope.payload or {})
+    # The raw bin accumulator is the checkpoint's business, not a reader's: it is
+    # tens of thousands of keys and says nothing the per-cell rows do not.
+    payload.pop("bins", None)
+    return payload
+
+
 @router.get("/admin/cohort-sums-histogram")
 async def cohort_sums_histogram(
     request: Request,
