@@ -25,6 +25,7 @@ from app.utils.external_curator_ground_truth import (  # noqa: E402
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
+    served_window_quality,
 )
 from app.utils.polymarket_email_ground_truth import (  # noqa: E402
     load_polymarket_email_ground_truth_report_from_env,
@@ -107,6 +108,26 @@ def main() -> int:
             f"over a SHORT window and are not comparable to a full page."
         )
 
+    # TWO WINDOWS, BOTH NAMED (UX-P103). Everything below the next block is the
+    # legacy FUTURES-ONLY window: filter to `type == "futures"`, take the first
+    # twenty. That is what every prior cycle's number means, so it stays and it
+    # stays first. But it is not the window the visitor scrolls and it is not
+    # the window `enforce_first_page_quality_floor` protects — on production
+    # 2026-08-19 the served top-20 held 4-6 bundle cards, so cards flagged here
+    # at rank 17-20 were at served position 22-24. Both windows are printed;
+    # neither is allowed to stand in for the other.
+    served = served_window_quality(
+        payload.get("items", []), ground_truth_items=ground_truth_items, top_n=20
+    )
+    print(
+        f"boring-rate@20 [SERVED]: {served['boring_count']}/{served['slots']} slots"
+        f"  ({served['non_futures_in_window']} non-futures cards in the window:"
+        f" {served['types']})"
+    )
+    for row in served["boring"]:
+        print(f"    OFFENDER ON THE SERVED PAGE: {row['name']}  {row['reasons']}")
+    print()
+    print("--- the legacy futures-only window (comparable to prior cycles) ---")
     print(f"boring-rate@20:          {summary['boring_count']}/20")
     print(f"ladder/bucket-rate@20:   {summary['ladder_count']}/20")
     print(f"duplicate-family-rate@20:{summary['duplicate_family_count']}/20")

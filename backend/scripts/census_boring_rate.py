@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT))
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
+    served_window_quality,
 )
 
 TOP_N = 20
@@ -134,19 +135,12 @@ def _classify(payload: dict, ground_truth_items: list[dict]) -> dict:
     boring = _boring_rows(window)
 
     # The served window: same classifier, but the slots are counted the way the
-    # page counts them.
-    served_window = served[:TOP_N]
-    served_futures = [i for i in served_window if i.get("type") == "futures"]
-    served_debug = build_feed_quality_debug(
-        served_futures,
-        ground_truth_items=ground_truth_items,
-        top_n=max(len(served_futures), 1),
+    # page counts them. One implementation, shared with the audit script
+    # (doctrine clause 5) — two copies of a window definition is how the two
+    # windows drifted apart to begin with.
+    served_report = served_window_quality(
+        served, ground_truth_items=ground_truth_items, top_n=TOP_N
     )
-    served_boring = _boring_rows(served_debug["items"])
-    served_types: dict[str, int] = {}
-    for i in served_window:
-        key = i.get("type") or "?"
-        served_types[key] = served_types.get(key, 0) + 1
 
     # Independence by content. Two reads that produced the same ordered window
     # are one build, whatever `cache.status` said about them.
@@ -163,14 +157,14 @@ def _classify(payload: dict, ground_truth_items: list[dict]) -> dict:
         "short_window": len(window) < TOP_N,
         "boring": boring,
         # --- the served window, named so it can never be mistaken for the above
-        "served_window_size": len(served_window),
-        "served_futures_in_window": len(served_futures),
-        "served_boring_count": len(served_boring),
-        "served_boring": served_boring,
-        "served_window_types": served_types,
+        "served_window_size": served_report["slots"],
+        "served_futures_in_window": served_report["futures_in_window"],
+        "served_boring_count": served_report["boring_count"],
+        "served_boring": served_report["boring"],
+        "served_window_types": served_report["types"],
         # How far the two windows are apart on THIS read, so the offset is a
         # measured number in the artifact rather than a claim in a report.
-        "non_futures_in_served_window": len(served_window) - len(served_futures),
+        "non_futures_in_served_window": served_report["non_futures_in_window"],
     }
 
 
