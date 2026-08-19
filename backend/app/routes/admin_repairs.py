@@ -20,7 +20,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
-             | event-create-from-truth }
+             | event-create-from-truth | team-identity-mapping-repair }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
