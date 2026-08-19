@@ -90,6 +90,7 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.categorize_futures",
         "app.tasks.cleanup_crypto",
         "app.tasks.clob_resolve_drain",
+        "app.tasks.cohort_cell_census",
         "app.tasks.collapse_snapshots",
         "app.tasks.compute_calibration_prices",
         "app.tasks.compute_matching_metrics",

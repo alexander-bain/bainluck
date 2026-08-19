@@ -366,7 +366,7 @@ async def cohort_cell_census_run(
     This exists because ``GET /admin/cohort-provenance-split`` above — which is
     the correct full-population reader, correctly rewritten to aggregate in SQL —
     **cannot be served.** It returns HTTP 503 at 30.21 s, re-measured by CAL-P075
-    after the 40 h orphan backend was killed and the vacuum reclaimed both tables,
+    after the 40 h orphan backend was killed and the reclaim ran on both tables,
     so bloat was never the cause: the planner drives from a Parallel Seq Scan on
     ``futures_outcomes`` (87% of plan cost) that every cell pays in full, and
     narrowing the filter does not narrow the scan. A 12-to-76-minute job cannot be
