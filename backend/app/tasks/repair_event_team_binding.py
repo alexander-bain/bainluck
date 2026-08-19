@@ -145,6 +145,7 @@ _CANDIDATES_SQL = text(
       LEFT JOIN teams at ON at.id = e.away_team_id
      WHERE e.sport_id = ANY(:sport_ids)
        AND e.commence_time >= :since
+       AND e.commence_time < :until
        AND (
              (e.home_team_id IS NOT NULL AND ht.id IS NOT NULL)
           OR (e.away_team_id IS NOT NULL AND at.id IS NOT NULL)
@@ -422,6 +423,7 @@ async def repair(
     limit: Optional[int] = None,
     sport: Optional[str] = None,
     since: str = "2026-03-01",
+    until: Optional[str] = None,
     plan_hash: Optional[str] = None,
 ) -> dict[str, Any]:
     """Re-bind events whose ``team_id`` dereferences to the wrong club (#1798).
@@ -431,6 +433,8 @@ async def repair(
         limit: max events scanned this call (dry-run only — an apply scans nothing).
         sport: optional comma-separated ``sport_id`` list overriding the MLB default.
         since: only events at/after this commence_time are considered (dry-run only).
+        until: EXCLUSIVE upper bound on commence_time (dry-run only). Omit for no
+            upper bound.
         plan_hash: content address of the reviewed dry-run. REQUIRED when ``apply``.
 
     A dry-run returns a census, a per-side ledger, and the ``plan_hash`` of the
@@ -438,6 +442,34 @@ async def repair(
     and AFTER, because an id on its own is not reviewable — and those names are
     inside the content address, so a plan that swapped a club while keeping the ids
     would be a different plan.
+
+    WHY ``until`` EXISTS (queue 374 item 4)
+    ---------------------------------------
+    The reviewed 180-side population splits cleanly by month: **151 sides in
+    2026-04** and 29 in 2026-08. Those halves are not equivalent risk. The April
+    games are long completed — static damage, no ingestion touching them. The
+    August ones sit in the live band where the absorber (#1989) is still writing,
+    so a repair there races a writer, and Fable's queue-374 ruling (c) sequences
+    them AFTER the absorber closes.
+
+    Before this parameter there was no way to say that. ``since`` alone cannot
+    express an upper bound, and — worse — ``since`` was not even reachable over
+    HTTP: the dispatcher in ``admin_repairs`` passes through only the names it
+    declares, and ``since`` was not one of them. So the only expressible
+    population was "everything from the module default forward", and the only
+    way to apply the April half was to apply the August half with it.
+
+    That matters more than convenience, because ``apply`` is bound to a whole
+    plan by content address. An operator who wants 151 rows and can only mint an
+    address over 172 has exactly two options: write 21 rows nobody sanctioned, or
+    do nothing. This parameter is what makes the reviewed half addressable on its
+    own.
+
+    Note the ordering interaction (gotcha #41): the scan is
+    ``ORDER BY commence_time DESC LIMIT :lim``, i.e. newest-first. Filtering the
+    month out in Python AFTER the scan would let the newer half consume the limit
+    and starve the older half — the same shape as the combat-wps lesson. The
+    bound is therefore in SQL, inside the LIMIT, not applied to its results.
     """
     if apply:
         # The scan below does not run. See ``_apply_reviewed_plan``.
@@ -451,11 +483,41 @@ async def repair(
     # after-census one is the more dangerous of the two, because it runs after
     # the commit and would 500 a run whose writes had already landed.
     since_date = _as_date(since)
+    # No upper bound requested => a sentinel far past any real commence_time, so
+    # the predicate is always true and the unbounded population is byte-identical
+    # to what it was before this parameter existed. A sentinel rather than a
+    # conditional predicate keeps ONE query text, so the bounded and unbounded
+    # calls cannot drift into two different scans.
+    until_date = _as_date(until) if until else date(9999, 12, 31)
+    if until_date <= since_date:
+        return {
+            "issue": "#1798",
+            "apply": False,
+            "refused": True,
+            "reason_codes": ["EMPTY_WINDOW"],
+            "detail": (
+                f"until ({until_date.isoformat()}) must be after since "
+                f"({since_date.isoformat()}) — an empty window would mint an "
+                "empty plan, and an empty plan is indistinguishable from "
+                "'nothing to repair' at the moment an operator reads it."
+            ),
+            "scope": {
+                "sport_ids": sport_ids,
+                "since": since_date.isoformat(),
+                "until": until_date.isoformat(),
+                "limit": scan_limit,
+            },
+        }
 
     rows = (
         await session.execute(
             _CANDIDATES_SQL,
-            {"sport_ids": sport_ids, "since": since_date, "lim": scan_limit},
+            {
+                "sport_ids": sport_ids,
+                "since": since_date,
+                "until": until_date,
+                "lim": scan_limit,
+            },
         )
     ).mappings().all()
 
@@ -557,6 +619,11 @@ async def repair(
             "issue": "#1798",
             "sport_ids": sport_ids,
             "since": since_date.isoformat(),
+            # Recorded ONLY when a bound was actually asked for. An unbounded run
+            # must produce the same context dict it did before this parameter
+            # existed — a sentinel written into the artifact would make every
+            # historical plan look like it had been window-scoped.
+            **({"until": until_date.isoformat()} if until else {}),
             "limit": scan_limit,
             "scanned": len(rows),
             "review_sides": len(review),
@@ -571,6 +638,7 @@ async def repair(
         "scope": {
             "sport_ids": sport_ids,
             "since": since_date.isoformat(),
+            **({"until": until_date.isoformat()} if until else {}),
             "limit": scan_limit,
         },
         "census": census,
