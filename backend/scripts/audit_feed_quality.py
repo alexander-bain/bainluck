@@ -108,26 +108,39 @@ def main() -> int:
             f"over a SHORT window and are not comparable to a full page."
         )
 
-    # TWO WINDOWS, BOTH NAMED (UX-P103). Everything below the next block is the
-    # legacy FUTURES-ONLY window: filter to `type == "futures"`, take the first
-    # twenty. That is what every prior cycle's number means, so it stays and it
-    # stays first. But it is not the window the visitor scrolls and it is not
-    # the window `enforce_first_page_quality_floor` protects — on production
-    # 2026-08-19 the served top-20 held 4-6 bundle cards, so cards flagged here
-    # at rank 17-20 were at served position 22-24. Both windows are printed;
-    # neither is allowed to stand in for the other.
+    # TWO WINDOWS, BOTH NAMED, AND EACH WITH ITS ROLE (UX-P103 -> ruling 100).
+    #
+    # Cycle 100 established that the two windows measure different twenties and
+    # that neither may stand in for the other. Fable's cycle-101 ruling assigned
+    # them their JOBS, which is the part a reader needs:
+    #
+    #   SERVED  — THE TARGET. What users see is the product truth, so this is
+    #             the number `boring-rate@20` refers to and the one that has to
+    #             be zero. `enforce_first_page_quality_floor` is its control.
+    #   SUPPLY  — the futures-only window. NOT a demoted metric: it measures the
+    #             POOL THE FLOOR MUST SCREEN, which makes it the early warning
+    #             for pages the floor cannot save. A floor that is working hard
+    #             and a floor that has nothing to do read identically on the
+    #             served number and differently here.
+    #
+    # It is also what every prior cycle's number means, so it keeps its name and
+    # its place. Printing one without the other is the defect ruling 098 named.
     served = served_window_quality(
         payload.get("items", []), ground_truth_items=ground_truth_items, top_n=20
     )
     print(
-        f"boring-rate@20 [SERVED]: {served['boring_count']}/{served['slots']} slots"
+        f"boring-rate@20 [SERVED — the target]: "
+        f"{served['boring_count']}/{served['slots']} slots"
         f"  ({served['non_futures_in_window']} non-futures cards in the window:"
         f" {served['types']})"
     )
     for row in served["boring"]:
         print(f"    OFFENDER ON THE SERVED PAGE: {row['name']}  {row['reasons']}")
     print()
-    print("--- the legacy futures-only window (comparable to prior cycles) ---")
+    print(
+        "--- [SUPPLY — the pool the floor screens] the futures-only window, "
+        "comparable to prior cycles ---"
+    )
     print(f"boring-rate@20:          {summary['boring_count']}/20")
     print(f"ladder/bucket-rate@20:   {summary['ladder_count']}/20")
     print(f"duplicate-family-rate@20:{summary['duplicate_family_count']}/20")

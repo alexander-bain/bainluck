@@ -391,7 +391,12 @@ def test_the_served_window_pools_when_every_build_carries_it(tmp_path):
         "boring_cards": 1,
         "rate": 0.025,
     }
-    assert "SERVED window (what the visitor scrolls)" in render(result)
+    # Ruling 100: both windows are printed AND each carries its ROLE, because a
+    # reader who cannot tell the target from the early warning will treat one of
+    # them as noise. Asserted on the roles, not on the prose around them.
+    text = render(result)
+    assert "SERVED window [the target" in text
+    assert "SUPPLY — the pool the floor screens" in text
 
 
 def test_render_names_the_zone_it_grouped_by(tmp_path):

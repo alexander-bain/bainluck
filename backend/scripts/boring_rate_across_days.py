@@ -284,16 +284,19 @@ def pool(paths: list[Path]) -> dict[str, Any]:
 def render(result: dict[str, Any]) -> str:
     lines = ["=" * 72, "BORING-RATE@20 — POOLED ACROSS DAYS", "=" * 72]
     lines.append(f"grouped by calendar day in {result['grouped_by_timezone']}")
-    lines.append(f"window: {result['window']}  (the metric's legacy window)")
+    lines.append(
+        f"window: {result['window']}  "
+        f"([SUPPLY — the pool the floor screens]; ruling 100)"
+    )
     sw = result["served_window"]
     if sw.get("available"):
         pct = "n/a" if sw["rate"] is None else f"{100 * sw['rate']:.2f}%"
         lines.append(
-            f"SERVED window (what the visitor scrolls): "
+            f"SERVED window [the target — what the visitor scrolls]: "
             f"{sw['boring_cards']}/{sw['slots_graded']} = {pct}"
         )
     else:
-        lines.append(f"SERVED window: NOT POOLED — {sw['reason']}")
+        lines.append(f"SERVED window [the target]: NOT POOLED — {sw['reason']}")
     lines.append("")
     for day, b in result["per_day"].items():
         pct = "n/a" if b["rate"] is None else f"{100 * b['rate']:.2f}%"

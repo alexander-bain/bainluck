@@ -323,19 +323,23 @@ def main() -> int:
         print("BORING-RATE@20: NOT MEASURABLE — zero cards graded across all reads.")
         print("This is a FAILED census, not a passing one.")
     else:
-        print(
-            f"BORING-RATE@20 [futures-only window]: {boring_total}/{window_total} "
-            f"cards = {100 * boring_total / window_total:.2f}% "
-            f"over {len(counted)} independent reads"
-        )
+        # Ruling 100 assigns the two windows their roles. SERVED is printed
+        # FIRST here because it is the target; SUPPLY follows because it is the
+        # early warning, not a footnote and not a demotion.
         if served_window_total:
             print(
-                f"BORING-RATE@20 [SERVED window — what the visitor scrolls]: "
+                f"BORING-RATE@20 [SERVED — the target, what the visitor scrolls]: "
                 f"{served_boring_total}/{served_window_total} slots "
                 f"= {100 * served_boring_total / served_window_total:.2f}%  "
                 f"({served_offset_total} of those slots are non-futures cards, "
                 f"which is why the two windows differ)"
             )
+        print(
+            f"BORING-RATE@20 [SUPPLY — the pool the floor screens, futures-only]: "
+            f"{boring_total}/{window_total} "
+            f"cards = {100 * boring_total / window_total:.2f}% "
+            f"over {len(counted)} independent reads"
+        )
     print(f"excluded: {summary['excluded']}")
     print(f"default-feed degrade rate: {len(default_degraded)}/{len(default_ok)} "
           f"{summary['default_feed']['degrade_reasons']}")
