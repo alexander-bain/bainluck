@@ -8250,9 +8250,18 @@ async def get_related_futures(
     # ONE roster read, shared with the logo enrichment below (which used to run
     # its own query) — so identity resolution costs this route zero extra
     # round-trips.
+    #
+    # Gated on there being ANY merge_group, which is strictly cheaper than the
+    # old code rather than merely equal: the logo path below only ever fires on
+    # a `_matchup` group, so a payload with no merge groups now issues no team
+    # query at all, where before it still could. Both consumers need the same
+    # rows, so neither pays for the other.
+    needs_roster = any(
+        f.get("merge_group") for f in home_futures + away_futures
+    )
     team_rows: list = []
     team_index = None
-    if event.sport_id:
+    if event.sport_id and needs_roster:
         team_rows = (
             await db.execute(
                 select(
