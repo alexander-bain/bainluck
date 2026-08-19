@@ -27,7 +27,64 @@ hours BEFORE v3848**. Nothing instrumented has run yet. The reading is a correct
 reporting an empty window, not a broken one; the distinction is doctrine clause 1 and it is the
 difference between "wait" and "debug".
 
-First instrumented fire: **2026-08-19T00:30Z** (futures) / **00:45Z** (odds).
+First instrumented fire: **2026-08-19T00:30Z** (futures) / **00:45Z** (odds). This window stayed
+open for it. What happened next is §1.1, and it is not what was expected.
+
+### §1.1 — The read, taken: the beat fired and the task never started
+
+**Stopping rule registered BEFORE the observation continued**, so it could not drift to fit the
+data: poll until **02:15Z** — 105 min past the beat, **1.5× the worst previously-measured queue
+delay** (70.2 min, LAT-P068 S4).
+
+| time | `turbo_collapse_futures` | `turbo_collapse_odds` | `background` depth |
+|---|---|---|---|
+| 00:47Z | `no_data` | `no_data` | 4,079 |
+| 00:58Z | `no_data` | `no_data` | — |
+| 01:10Z | `no_data` | `no_data` | — |
+| 01:20Z | `no_data` | `no_data` | — |
+| 01:30Z | `no_data` | `no_data` | — |
+| 01:31Z | **not in celery's `active` set** | — | 4,175 |
+| 01:41Z | `no_data` | `no_data` | — |
+| 01:51Z | `no_data` | `no_data` | — |
+| 02:07Z | `no_data` | `no_data` | 4,022 |
+| **02:16Z** | **`no_data`** | **`no_data`** | — |
+
+**106 minutes after its beat, `turbo_collapse_futures` has not started.** Not "ran and wasn't
+recorded" — `_tracked_run` writes `last_started_at` at entry, so `no_data` means *no start*, and
+the 01:31Z `active`-set read confirms it directly: the two background slots were held by
+`enrich_market_images` (started 01:26:19Z) and `match_prediction_markets` (01:25:15Z).
+
+So the first real read is **not a duration**. It is: *the instrumented task, published on schedule,
+did not run within 1.5× its worst previously-measured delay.* **P3 stays `could_not_measure` at
+n=0**, not the n=1 this document predicted six hours ago. That prediction was wrong and is left
+above, uncorrected, so the miss is visible.
+
+#### Cause: one candidate eliminated by evidence, two left standing, and I cannot separate them
+
+🔴 **Do not report a cause. Three were possible; one is now ruled out and the remaining two are not
+distinguishable from this seat.**
+
+| # | candidate | status |
+|---|---|---|
+| A | **Queue delay simply exceeds 106 min.** Depth was 4,022–4,175 against ~3,050 in LAT-P068's window (**~35 % deeper**). | ⚠️ **Leading, but does not fully account for it**: 53.9 min × 1.35 ≈ 73 min, still well short of 106. |
+| B | **The 00:54Z deploy destroyed the message.** `v3851` (`e61ef179`) restarted every worker 24 min after the beat. There is **no `task_acks_late`** anywhere in the celery config, so it defaults to `False` — a *reserved* message is acked at reservation and a restart loses it. | ⚠️ **Mechanically live**, but `worker_prefetch_multiplier: 1` makes reservation-far-ahead unlikely, and at 24 min the message was ~4,000 deep. |
+| C | **The message expired.** | ✅ **ELIMINATED.** `turbo-collapse-futures` is not in `_EXPIRING_WARMER_BEATS` and not in `HEAVY_TASKS`, so neither post-schedule loop stamps it: it carries **no `expires` and no queue override**. It cannot have been discarded. |
+
+**The discriminating test, registered for the next window and cheap:** `match_prediction_markets`
+fires `:05/:20/:35/:50` and was observed *starting* at 01:25:15Z. If that was the 01:20Z fire, its
+publish→start lag was ~5 minutes — while a 00:30Z message sat unstarted for 106. **A FIFO backlog
+cannot produce both.** Watch two consecutive `match_prediction_markets` fires and record
+publish→start. A short lag confirms the queue is **not** draining FIFO, which makes this
+*starvation of a specific message*, a different bug from depth — and one that depth-reduction work
+would not fix.
+
+#### What this does to the schedule for P3
+
+The next natural fires are **06:30Z / 06:45Z**, then 12:30/12:45 (inside the T5 fence — read-only
+is fine), then 18:30/18:45. If runs now complete reliably, `MIN_SAMPLES = 5` is reached no earlier
+than **2026-08-21 ~00:45Z** — one full cadence later than §1's estimate, because tonight's fire
+produced no sample at all. **If candidate A is right, it may never be reached while the queue
+stays this deep**, and *that* — not the budget — becomes #224's actual finding.
 
 ### 🔴 n=1 is not "real n", and the gap is arithmetic
 
