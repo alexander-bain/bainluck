@@ -616,37 +616,309 @@ class ESPNAPIService:
             ))
         return headlines
 
-    # Stat name normalization: ESPN abbreviation → canonical name
+    # Stat name normalization: ESPN abbreviation → canonical name.
+    #
+    # ⚠️ THIS MAP IS THE LEGACY FALLBACK ONLY (#1990). It is ONE FLAT NAMESPACE
+    # shared by every sport AND, worse, by every stat GROUP within a sport — so
+    # an abbreviation that means two different quantities in two groups lands in
+    # one key. Measured instances, all of them silent wrong-quantity writes:
+    #   * baseball  `H`/`R`/`BB`/`HR` mean hits/runs/walks/HR *made* in the
+    #     batting group and *allowed* in the pitching group. Shane Baz's
+    #     6.1 IP / 4 H / 3 R line was stored as {"hits": 4, "runs": 3, ...} —
+    #     indistinguishable from a batter's line except by the absence of AB.
+    #   * football  `YDS` and `TD` appear in 7 and 6 groups respectively and
+    #     overwrite each other; `INT` is thrown in `passing` and caught in
+    #     `interceptions`; `REC` is a catch in `receiving` and a fumble
+    #     recovery in `fumbles`.
+    #   * hockey    `S` is shotsTotal for a skater — stored as "saves".
+    #                `SOG` is shootoutGoals, not shots-on-goal.
+    # The fix is `_GROUP_STAT_MAP` below, which resolves per (group, ESPN key).
+    # Anything still resolved through THIS map is a group we have not yet
+    # audited against a real payload. Do not add a sport here — add a group.
     _STAT_NORMALIZE: dict[str, str] = {
-        # Basketball
+        # Basketball — audited 2026-08-18 against NBA 401859966, WNBA 401857152
+        # and NCAAB 401856600: a single unnamed stat group per team, so the flat
+        # namespace is safe here and these stay put.
         "PTS": "points", "REB": "rebounds", "AST": "assists",
         "STL": "steals", "BLK": "blocks", "TO": "turnovers",
         "3PT": "three pointers", "OREB": "offensive rebounds",
         "DREB": "defensive rebounds", "FG": "field goals",
         "FT": "free throws", "MIN": "minutes",
-        # Football
-        "YDS": "yards", "TD": "touchdowns", "INT": "interceptions",
-        "CMP": "completions", "SACK": "sacks",
-        "C/ATT": "completions", "PASS YDS": "passing yards",
-        "RUSH YDS": "rushing yards", "REC YDS": "receiving yards",
-        "REC": "receptions", "CAR": "carries",
-        # Baseball
-        "H": "hits", "HR": "home runs", "RBI": "rbis",
-        "SO": "strikeouts", "R": "runs", "BB": "walks",
-        "AB": "at bats", "AVG": "batting average",
-        # Hockey (skaters)
-        "G": "goals", "A": "assists",
-        "BS": "blocked shots", "HT": "hits", "TK": "takeaways",
-        "PIM": "penalty minutes",
-        # Hockey (goalies)
-        "SV": "saves", "GA": "goals against",
-        "S": "saves", "SA": "shots against", "SV%": "save percentage",
-        # Soccer
-        "SH": "shots", "SOG": "shots on goal",
+        "PF": "personal fouls", "+/-": "plus minus",
+        # NOTE — deliberately REMOVED, each verified dead or wrong against a
+        # real payload on 2026-08-18 (#1990). Restoring one re-opens a defect:
+        #   "SO"                        baseball never emits it; ESPN says "K"
+        #   "SACK"                      football emits "SACKS"
+        #   "PASS/RUSH/REC YDS"         never emitted; the label is bare "YDS"
+        #   "SH"/"SOG" (soccer)         soccer summaries carry NO
+        #                               boxscore.players at all — they use
+        #                               `rosters` — so these could never fire
+        #   "S": "saves"                hockey `S` is a SKATER's shotsTotal
+        #   "SOG": "shots on goal"      hockey `SOG` is shootoutGoals
+        # Football/baseball/hockey now resolve through _GROUP_STAT_MAP.
+    }
+
+    # Group-scoped stat resolution (#1990). Keyed by the ESPN stat group, then
+    # by ESPN's OWN `keys` entry rather than its display abbreviation.
+    #
+    # Why `keys` and not `labels`: `keys` are already near-canonical
+    # ("strikeouts", "earnedRuns") instead of abbreviations, so they do not
+    # break when ESPN restyles a column header — which is the entire failure
+    # mode that made `SO` dead for the lifetime of the map. `labels` remains the
+    # fallback via _GROUP_LABEL_MAP when `keys` is absent or misaligned.
+    #
+    # A column absent from a group's table is DROPPED, deliberately: an
+    # unmapped stat is better than a stat under a name that means something
+    # else. Every table below was read off a live payload, cited per group.
+    _GROUP_STAT_MAP: dict[str, dict[str, str]] = {
+        # --- Baseball (MLB 401816574, 2026-08-18) --------------------------
+        # Batting keeps the bare names the seven existing stored keys already
+        # use — this half must not move or every stored batter row changes
+        # shape. `strikeouts` is NEW here and is the batter's K.
+        "batting": {
+            "atBats": "at bats",
+            "runs": "runs",
+            "hits": "hits",
+            "RBIs": "rbis",
+            "homeRuns": "home runs",
+            "walks": "walks",
+            "strikeouts": "strikeouts",
+            "avg": "batting average",
+            "onBasePct": "on base percentage",
+            "slugAvg": "slugging percentage",
+            "pitches": "pitches seen",
+        },
+        # Pitching is namespaced so it can never again be read as batting.
+        # "6.1" IP parses to 6.1 — innings, not a compound.
+        "pitching": {
+            "fullInnings.partInnings": "innings pitched",
+            "strikeouts": "pitching strikeouts",
+            "hits": "pitching hits allowed",
+            "runs": "pitching runs allowed",
+            "earnedRuns": "earned runs",
+            "walks": "pitching walks allowed",
+            "homeRuns": "pitching home runs allowed",
+            "ERA": "era",
+            "pitches": "pitch count",
+        },
+        # --- Hockey (NHL 401803652, 2026-04-15) ----------------------------
+        # `forwards`, `defenses` and `skaters` carry an identical column set;
+        # they are aliased onto "skaters" below.
+        "skaters": {
+            "goals": "goals",
+            "assists": "assists",
+            "blockedShots": "blocked shots",
+            "hits": "hits",
+            "takeaways": "takeaways",
+            "giveaways": "giveaways",
+            "penaltyMinutes": "penalty minutes",
+            "shotsTotal": "shots",
+            "shootoutGoals": "shootout goals",
+            "plusMinus": "plus minus",
+            "faceoffsWon": "faceoffs won",
+        },
+        "goalies": {
+            "saves": "saves",
+            "goalsAgainst": "goals against",
+            "shotsAgainst": "shots against",
+            "savePct": "save percentage",
+            "penaltyMinutes": "penalty minutes",
+        },
+        # --- Football (NFL 401873272, 2026-08-18) --------------------------
+        # Namespaced because YDS/TD/INT/REC each mean different quantities in
+        # different groups. No player-prop resolver reads football box scores
+        # today, so these names are new rather than moved.
+        "passing": {
+            "completions/passingAttempts": "completions",
+            "passingYards": "passing yards",
+            "passingTouchdowns": "passing touchdowns",
+            "interceptions": "interceptions thrown",
+            "sacks-sackYardsLost": "sacks taken",
+        },
+        "rushing": {
+            "rushingAttempts": "carries",
+            "rushingYards": "rushing yards",
+            "rushingTouchdowns": "rushing touchdowns",
+            "longRushing": "long rush",
+        },
+        "receiving": {
+            "receptions": "receptions",
+            "receivingYards": "receiving yards",
+            "receivingTouchdowns": "receiving touchdowns",
+            "receivingTargets": "targets",
+            "longReception": "long reception",
+        },
+        "fumbles": {
+            "fumbles": "fumbles",
+            "fumblesLost": "fumbles lost",
+            "fumblesRecovered": "fumbles recovered",
+        },
+        "defensive": {
+            "totalTackles": "tackles",
+            "soloTackles": "solo tackles",
+            "sacks": "sacks",
+            "tacklesForLoss": "tackles for loss",
+            "passesDefended": "passes defended",
+            "QBHits": "qb hits",
+            "defensiveTouchdowns": "defensive touchdowns",
+        },
+        "interceptions": {
+            "interceptions": "interceptions caught",
+            "interceptionYards": "interception yards",
+            "interceptionTouchdowns": "interception touchdowns",
+        },
+        "kickreturns": {
+            "kickReturns": "kick returns",
+            "kickReturnYards": "kick return yards",
+            "kickReturnTouchdowns": "kick return touchdowns",
+        },
+        "puntreturns": {
+            "puntReturns": "punt returns",
+            "puntReturnYards": "punt return yards",
+            "puntReturnTouchdowns": "punt return touchdowns",
+        },
+        "kicking": {
+            "fieldGoalsMade/fieldGoalAttempts": "field goals",
+            "extraPointsMade/extraPointAttempts": "extra points",
+            "totalKickingPoints": "kicking points",
+        },
+        "punting": {
+            "punts": "punts",
+            "puntYards": "punt yards",
+            "puntsInside20": "punts inside 20",
+        },
+    }
+
+    # Fallback when a group's `keys` array is missing or misaligned with
+    # `stats` (NFL `passing` ships 8 keys for 7 columns — see
+    # _resolve_stat_columns). Keyed by group, then by the display label.
+    _GROUP_LABEL_MAP: dict[str, dict[str, str]] = {
+        "batting": {
+            "AB": "at bats", "R": "runs", "H": "hits", "RBI": "rbis",
+            "HR": "home runs", "BB": "walks", "K": "strikeouts",
+            "AVG": "batting average", "OBP": "on base percentage",
+            "SLG": "slugging percentage", "#P": "pitches seen",
+        },
+        "pitching": {
+            "IP": "innings pitched", "K": "pitching strikeouts",
+            "H": "pitching hits allowed", "R": "pitching runs allowed",
+            "ER": "earned runs", "BB": "pitching walks allowed",
+            "HR": "pitching home runs allowed", "ERA": "era",
+            "PC": "pitch count",
+        },
+        "skaters": {
+            "G": "goals", "A": "assists", "BS": "blocked shots",
+            "HT": "hits", "TK": "takeaways", "GV": "giveaways",
+            "PIM": "penalty minutes", "S": "shots",
+            "SOG": "shootout goals", "+/-": "plus minus", "FW": "faceoffs won",
+        },
+        "goalies": {
+            "SV": "saves", "GA": "goals against", "SA": "shots against",
+            "SV%": "save percentage", "PIM": "penalty minutes",
+        },
+        "passing": {
+            "C/ATT": "completions", "YDS": "passing yards",
+            "TD": "passing touchdowns", "INT": "interceptions thrown",
+            "SACKS": "sacks taken",
+        },
+        "rushing": {
+            "CAR": "carries", "YDS": "rushing yards",
+            "TD": "rushing touchdowns", "LONG": "long rush",
+        },
+        "receiving": {
+            "REC": "receptions", "YDS": "receiving yards",
+            "TD": "receiving touchdowns", "TGTS": "targets",
+            "LONG": "long reception",
+        },
+        "fumbles": {
+            "FUM": "fumbles", "LOST": "fumbles lost", "REC": "fumbles recovered",
+        },
+        "defensive": {
+            "TOT": "tackles", "SOLO": "solo tackles", "SACKS": "sacks",
+            "TFL": "tackles for loss", "PD": "passes defended",
+            "QB HTS": "qb hits", "TD": "defensive touchdowns",
+        },
+        "interceptions": {
+            "INT": "interceptions caught", "YDS": "interception yards",
+            "TD": "interception touchdowns",
+        },
+        "kickreturns": {
+            "NO": "kick returns", "YDS": "kick return yards",
+            "TD": "kick return touchdowns",
+        },
+        "puntreturns": {
+            "NO": "punt returns", "YDS": "punt return yards",
+            "TD": "punt return touchdowns",
+        },
+        "kicking": {"FG": "field goals", "XP": "extra points", "PTS": "kicking points"},
+        "punting": {"NO": "punts", "YDS": "punt yards", "In 20": "punts inside 20"},
+    }
+
+    # ESPN spells the group under `type` for baseball and under `name` for
+    # football and hockey; basketball carries neither. `forwards`/`defenses`
+    # duplicate the `skaters` column set.
+    _GROUP_ALIASES: dict[str, str] = {
+        "forwards": "skaters",
+        "defenses": "skaters",
+        "defense": "skaters",
     }
 
     # Stats that count toward double-double / triple-double
     _DD_CATEGORIES = {"points", "rebounds", "assists", "steals", "blocks"}
+
+    @classmethod
+    def _group_key(cls, stat_group: dict) -> str:
+        """Normalized identity of an ESPN stat group ('batting', 'passing', …).
+
+        Returns "" when ESPN declares no group — basketball, where a single
+        unnamed group per team makes the flat map safe.
+        """
+        raw = stat_group.get("type") or stat_group.get("name") or ""
+        if not isinstance(raw, str):
+            return ""
+        normalized = raw.strip().lower()
+        return cls._GROUP_ALIASES.get(normalized, normalized)
+
+    @classmethod
+    def _resolve_stat_columns(
+        cls, stat_group: dict, group: str, n_values: int
+    ) -> list[str | None]:
+        """Canonical name per column, positionally aligned with a player's stats.
+
+        `None` marks a column to drop. Resolution order per column:
+          1. group-scoped ESPN `keys` entry  — canonical, restyle-proof
+          2. group-scoped display label      — when `keys` is unusable
+          3. the flat legacy _STAT_NORMALIZE — un-namespaced groups only
+
+        `keys` is used ONLY when it lines up with the value count. ESPN ships 8
+        `keys` for the 7 columns of an NFL `passing` group (adjQBR + QBRating
+        for one RTG column), and a blind zip there would shift every stat one
+        position to the left — silently writing each player's yards under
+        completions. Length equality is the whole guard.
+        """
+        labels = stat_group.get("names") or stat_group.get("labels") or []
+        keys = stat_group.get("keys") or []
+        key_map = cls._GROUP_STAT_MAP.get(group, {})
+        label_map = cls._GROUP_LABEL_MAP.get(group, {})
+        use_keys = bool(keys) and len(keys) == n_values and bool(key_map)
+
+        resolved: list[str | None] = []
+        for i in range(n_values):
+            canonical = None
+            if use_keys:
+                canonical = key_map.get(keys[i])
+            if canonical is None and i < len(labels):
+                label = labels[i]
+                if isinstance(label, str):
+                    canonical = label_map.get(label)
+                    if canonical is None and not key_map:
+                        # Only fall through to the flat map for groups we have
+                        # NOT namespaced. A namespaced group that misses a
+                        # column drops it rather than borrowing another
+                        # sport's meaning for the abbreviation.
+                        canonical = cls._STAT_NORMALIZE.get(label.upper())
+            resolved.append(canonical)
+        return resolved
 
     def _parse_boxscore(self, summary_data: dict) -> dict:
         """Parse box score data from ESPN summary response.
@@ -654,6 +926,10 @@ class ESPNAPIService:
         Returns dict of player_name → {stat_name: value, ...}.
         Compound stats like "10-22" (made-attempts) are parsed to extract
         the made value. Double-doubles and triple-doubles are computed.
+
+        Group-aware since #1990: a pitcher's line and a batter's line land
+        under different keys, so a consumer can no longer read hits-allowed as
+        hits. See _GROUP_STAT_MAP.
         """
         players_data = {}
         boxscore = summary_data.get("boxscore", {})
@@ -665,6 +941,10 @@ class ESPNAPIService:
                 stat_names = stat_group.get("names", []) or stat_group.get("labels", [])
                 if not stat_names:
                     continue
+                group = self._group_key(stat_group)
+                columns = self._resolve_stat_columns(
+                    stat_group, group, len(stat_names)
+                )
 
                 for athlete_entry in stat_group.get("athletes", []):
                     athlete = athlete_entry.get("athlete", {})
@@ -677,8 +957,7 @@ class ESPNAPIService:
                         continue
 
                     parsed: dict[str, float] = {}
-                    for abbrev, value_str in zip(stat_names, raw_stats):
-                        canonical = self._STAT_NORMALIZE.get(abbrev.upper())
+                    for canonical, value_str in zip(columns, raw_stats):
                         if not canonical:
                             continue
 
@@ -714,7 +993,7 @@ class ESPNAPIService:
 
         Handles:
         - Simple numbers: "28" → 28.0
-        - Compound stats: "10-22" (made-attempts) → 10.0
+        - Compound stats: "10-22" or "13/22" (made-attempts) → 10.0 / 13.0
         - Percentages: ".455" → 0.455
         - Dashes/empty: "--" or "" → None
         """
@@ -723,14 +1002,21 @@ class ESPNAPIService:
 
         value_str = value_str.strip()
 
-        # Compound stat: "10-22" → extract the made value (first number)
-        if "-" in value_str and not value_str.startswith("-"):
-            parts = value_str.split("-")
-            if len(parts) == 2:
-                try:
-                    return float(parts[0])
-                except ValueError:
-                    return None
+        # Compound stat: "10-22" → extract the made value (first number).
+        # ESPN uses BOTH separators for the same made/attempted idea and which
+        # one you get depends on the sport: basketball FG is "9-16", football
+        # C/ATT is "13/22" and kicking FG/XP are "2/2". Only the dash was
+        # handled, so every football completion, field goal and extra point
+        # parsed to None and was dropped — the column was mapped the whole
+        # time, which is why this never looked like a mapping gap (#1990).
+        for sep in ("-", "/"):
+            if sep in value_str and not value_str.startswith(sep):
+                parts = value_str.split(sep)
+                if len(parts) == 2:
+                    try:
+                        return float(parts[0])
+                    except ValueError:
+                        return None
 
         try:
             return float(value_str)
