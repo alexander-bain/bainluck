@@ -331,6 +331,69 @@ def test_a_reason_seen_on_only_one_day_is_not_called_persistent(tmp_path):
     assert result["boring_reasons_every_day"] == []
 
 
+def test_the_served_window_is_pooled_only_when_every_build_carries_it(tmp_path):
+    old = _artifact(
+        tmp_path, "old.json", [_sample("2026-08-18T20:00:00+00:00", "a1", ["A"])]
+    )
+    new = _artifact(
+        tmp_path,
+        "new.json",
+        [
+            {
+                **_sample("2026-08-19T20:00:00+00:00", "b1", ["A"]),
+                "served_window_size": 20,
+                "served_boring_count": 0,
+            }
+        ],
+    )
+
+    result = pool([old, new])
+
+    assert result["window"] == "futures_only_top20"
+    assert result["served_window"]["available"] is False
+    assert "1 of 2 countable builds" in result["served_window"]["reason"]
+    assert "NOT POOLED" in render(result)
+
+
+def test_the_served_window_pools_when_every_build_carries_it(tmp_path):
+    a = _artifact(
+        tmp_path,
+        "a.json",
+        [
+            {
+                **_sample("2026-08-18T20:00:00+00:00", "a1", ["A"]),
+                "served_window_size": 20,
+                "served_boring_count": 0,
+            }
+        ],
+    )
+    b = _artifact(
+        tmp_path,
+        "b.json",
+        [
+            {
+                **_sample("2026-08-19T20:00:00+00:00", "b1", ["A"]),
+                "served_window_size": 20,
+                "served_boring_count": 1,
+            }
+        ],
+    )
+
+    result = pool([a, b])
+
+    # The futures window says 2/40 = 5%; the served window says 1/40 = 2.5%.
+    # Both are reported, and they are not the same number.
+    assert result["pooled"]["rate"] == 0.05
+    assert result["served_window"] == {
+        "available": True,
+        "window": "served_top20",
+        "slots_graded": 40,
+        "boring_cards": 1,
+        "rate": 0.025,
+    }
+    assert "SERVED window (what the visitor scrolls)" in render(result)
+
+
 def test_render_names_the_zone_it_grouped_by(tmp_path):
     a = _artifact(tmp_path, "a.json", [_sample("2026-08-18T20:00:00+00:00", "a1", ["A"])])
     b = _artifact(tmp_path, "b.json", [_sample("2026-08-19T20:00:00+00:00", "b1", [])])

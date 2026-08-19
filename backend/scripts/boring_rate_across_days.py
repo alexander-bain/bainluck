@@ -136,6 +136,9 @@ def pool(paths: list[Path]) -> dict[str, Any]:
                     "boring_cards": 0,
                     "boring_names": {},
                     "boring_reasons": {},
+                    "served_slots": 0,
+                    "served_boring": 0,
+                    "served_available": 0,
                     "windows": [],
                 },
             )
@@ -156,6 +159,10 @@ def pool(paths: list[Path]) -> dict[str, Any]:
             bucket["cards_graded"] += s["window_size"]
             bucket["boring_cards"] += s["boring_count"]
             bucket["windows"].append(s["at"])
+            if s.get("served_window_size") is not None:
+                bucket["served_available"] += 1
+                bucket["served_slots"] += s["served_window_size"]
+                bucket["served_boring"] += s.get("served_boring_count", 0)
             for b in s.get("boring", []):
                 name = b.get("name") or "?"
                 bucket["boring_names"][name] = bucket["boring_names"].get(name, 0) + 1
@@ -218,9 +225,39 @@ def pool(paths: list[Path]) -> dict[str, Any]:
         if all(r in b["boring_reasons"] for b in per_day.values())
     )
 
+    # The served window is only in artifacts written after the census learned to
+    # measure it. A pool over SOME of the builds is not a smaller sample of the
+    # same thing — it is a different population wearing the same label — so it
+    # is reported as unavailable rather than partially computed.
+    builds_total = sum(b["builds"] for b in per_day.values())
+    served_builds = sum(b["served_available"] for b in per_day.values())
+    if served_builds == builds_total and builds_total:
+        served_slots = sum(b["served_slots"] for b in per_day.values())
+        served_boring = sum(b["served_boring"] for b in per_day.values())
+        served_block = {
+            "available": True,
+            "window": "served_top20",
+            "slots_graded": served_slots,
+            "boring_cards": served_boring,
+            "rate": None if served_slots == 0 else round(served_boring / served_slots, 4),
+        }
+    else:
+        served_block = {
+            "available": False,
+            "reason": (
+                f"{served_builds} of {builds_total} countable builds carry a "
+                "served-window measurement; the rest predate it. A partial pool "
+                "would be a different population under the same label."
+            ),
+        }
+
     return {
         "grouped_by_timezone": TZ_NAME,
         "days": len(per_day),
+        # Every number under `pooled` is the LEGACY futures-only window, named
+        # so a reader never has to guess which of the two it is holding.
+        "window": "futures_only_top20",
+        "served_window": served_block,
         "per_day": dict(sorted(per_day.items())),
         "pooled": {
             "builds": sum(b["builds"] for b in per_day.values()),
@@ -247,6 +284,16 @@ def pool(paths: list[Path]) -> dict[str, Any]:
 def render(result: dict[str, Any]) -> str:
     lines = ["=" * 72, "BORING-RATE@20 — POOLED ACROSS DAYS", "=" * 72]
     lines.append(f"grouped by calendar day in {result['grouped_by_timezone']}")
+    lines.append(f"window: {result['window']}  (the metric's legacy window)")
+    sw = result["served_window"]
+    if sw.get("available"):
+        pct = "n/a" if sw["rate"] is None else f"{100 * sw['rate']:.2f}%"
+        lines.append(
+            f"SERVED window (what the visitor scrolls): "
+            f"{sw['boring_cards']}/{sw['slots_graded']} = {pct}"
+        )
+    else:
+        lines.append(f"SERVED window: NOT POOLED — {sw['reason']}")
     lines.append("")
     for day, b in result["per_day"].items():
         pct = "n/a" if b["rate"] is None else f"{100 * b['rate']:.2f}%"
