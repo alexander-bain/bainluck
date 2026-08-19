@@ -1,0 +1,3546 @@
+{
+ "horizon": [
+  "2026-08-18T17:01:00+00:00",
+  "2026-08-19T17:01:00+00:00"
+ ],
+ "verdicts": {
+  "mlb_schedule_coverage": "PASS (ran)",
+  "flow_sentinel": "PASS (ran)",
+  "grid_sentinel": "PASS (ran)",
+  "horizon_sentinel": "PASS (ran)",
+  "settled_concept_sentinel": "PASS (ran)",
+  "board_sentinel": "BRANCH C = MISSING",
+  "calibration_sentinel": "UNREAD(no_data)"
+ },
+ "raw": {
+  "mlb_schedule_coverage": {
+   "task": "mlb_schedule_coverage",
+   "successes_24h": 1,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 1,
+   "hard_kills_24h": 0,
+   "recent_durations_ms": [
+    1077,
+    734,
+    1587,
+    1345,
+    954,
+    1156,
+    1094,
+    676,
+    1679
+   ],
+   "recent_durations_n": 9,
+   "recent_durations_window_s": 518402.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": 2745.0,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": 2746.0,
+   "last_success_at": "2026-08-19T07:05:03.263000+00:00",
+   "last_duration_ms": "1077",
+   "last_result_summary": {
+    "repair": {
+     "candidates": 0,
+     "redate": 0,
+     "fix_end": 0,
+     "void": 0,
+     "review": 0,
+     "applied": false
+    },
+    "coverage": {
+     "flow": "mlb_schedule_coverage",
+     "date": "2026-08-19",
+     "checked": 15,
+     "our_events": 26,
+     "passed": false,
+     "skipped": false,
+     "counts": {
+      "duplicate_events": 12,
+      "premature_settle": 2,
+      "missing_event": 1
+     },
+     "failures": [
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Detroit Tigers @ Pittsburgh Pirates matches 2 events (expected exactly 1)",
+       "game_pk": 823342,
+       "event_ids": [
+        15199901,
+        15205471
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game San Diego Padres @ New York Mets matches 2 events (expected exactly 1)",
+       "game_pk": 823587,
+       "event_ids": [
+        15199882,
+        15205472
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Atlanta Braves @ Minnesota Twins matches 2 events (expected exactly 1)",
+       "game_pk": 823664,
+       "event_ids": [
+        15194472,
+        15205473
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Chicago White Sox @ Chicago Cubs matches 2 events (expected exactly 1)",
+       "game_pk": 824640,
+       "event_ids": [
+        15199884,
+        15205474
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Arizona Diamondbacks @ Boston Red Sox matches 2 events (expected exactly 1)",
+       "game_pk": 824722,
+       "event_ids": [
+        15200229,
+        15205475
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Miami Marlins @ Philadelphia Phillies matches 2 events (expected exactly 1)",
+       "game_pk": 823424,
+       "event_ids": [
+        15199886,
+        15205476
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game New York Yankees @ Baltimore Orioles matches 2 events (expected exactly 1)",
+       "game_pk": 824801,
+       "event_ids": [
+        15201192,
+        15200817
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game San Francisco Giants @ Cleveland Guardians matches 2 events (expected exactly 1)",
+       "game_pk": 824394,
+       "event_ids": [
+        15201193,
+        15200806
+       ]
+      },
+      {
+       "kind": "premature_settle",
+       "detail": "our event 15201156 is settled (closed) but official MLB status is 'Scheduled' \u2014 premature settle (#1201/gotcha #32)",
+       "game_pk": 824476,
+       "event_ids": [
+        15201156
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Toronto Blue Jays @ Tampa Bay Rays matches 2 events (expected exactly 1)",
+       "game_pk": 822937,
+       "event_ids": [
+        15201194,
+        15200818
+       ]
+      },
+      {
+       "kind": "missing_event",
+       "detail": "official MLB game Athletics @ Kansas City Royals has NO matching event",
+       "game_pk": 824076,
+       "event_ids": []
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Seattle Mariners @ Milwaukee Brewers matches 2 events (expected exactly 1)",
+       "game_pk": 823748,
+       "event_ids": [
+        15201195,
+        15200829
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Washington Nationals @ Texas Rangers matches 2 events (expected exactly 1)",
+       "game_pk": 822860,
+       "event_ids": [
+        15196176,
+        15200830
+       ]
+      },
+      {
+       "kind": "premature_settle",
+       "detail": "our event 15196356 is settled (completed) but official MLB status is 'Scheduled' \u2014 premature settle (#1201/gotcha #32)",
+       "game_pk": 824155,
+       "event_ids": [
+        15196356
+       ]
+      },
+      {
+       "kind": "duplicate_events",
+       "detail": "official MLB game Los Angeles Dodgers @ Colorado Rockies matches 2 events (expected exactly 1)",
+       "game_pk": 824318,
+       "event_ids": [
+        15199902,
+        15205482
+       ]
+      }
+     ]
+    }
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-19T07:05:02.165056+00:00",
+   "health": "healthy"
+  },
+  "flow_sentinel": {
+   "task": "flow_sentinel",
+   "successes_24h": 1,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 4,
+   "hard_kills_24h": 3,
+   "recent_durations_ms": [
+    117905,
+    48421,
+    77456,
+    77565,
+    86931,
+    61089,
+    45266,
+    121032,
+    72405,
+    77752,
+    65713,
+    106291,
+    42854,
+    50903,
+    36744
+   ],
+   "recent_durations_n": 15,
+   "recent_durations_window_s": 518475.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": 2334.0,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": 50858.0,
+   "last_success_at": "2026-08-19T07:11:57.983479+00:00",
+   "last_duration_ms": "117905",
+   "last_result_summary": {
+    "mode": "live",
+    "canary": false,
+    "api": "https://api.bainluck.com",
+    "config": {
+     "chart_density_max_below_bar_pct": 95.0,
+     "event_sample_size": 10
+    },
+    "flows": [
+     {
+      "flow": "search_gold_set",
+      "checked": 25,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "found": 25,
+       "total": 25,
+       "transport_errors": [],
+       "regressions": [],
+       "recoveries": [
+        "lebron james",
+        "aaron rodgers",
+        "next coach fired",
+        "nba mvp",
+        "nfl mvp",
+        "super bowl champion",
+        "fed rate decision",
+        "bitcoin price 2026",
+        "masters winner",
+        "nba rookie of the year",
+        "trump approval"
+       ],
+       "per_entity": [
+        {
+         "query": "lebron james",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 2
+         }
+        },
+        {
+         "query": "aaron rodgers",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "next coach fired",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "nba mvp",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 6,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "nba champion",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "nfl mvp",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 3,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "super bowl champion",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 1,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "world series",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 2
+         }
+        },
+        {
+         "query": "stanley cup",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 2,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "premier league winner",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 9,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "champions league winner",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "ballon d'or",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "heisman",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 9,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "fed rate decision",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "fed chair",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 2
+         }
+        },
+        {
+         "query": "2028 democratic nominee",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 5,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "2028 republican nominee",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 4,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "us recession 2026",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 1,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "best picture oscar",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 1,
+          "results": 0,
+          "futures": 5,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "highest grossing movie",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 1,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "person of the year",
+         "expected_found": true,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "bitcoin price 2026",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 2,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "masters winner",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 1,
+          "results": 0,
+          "futures": 4,
+          "futures_families": 1
+         }
+        },
+        {
+         "query": "nba rookie of the year",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 3,
+          "futures_families": 0
+         }
+        },
+        {
+         "query": "trump approval",
+         "expected_found": false,
+         "found": true,
+         "concept_first": true,
+         "counts": {
+          "event_concepts": 0,
+          "results": 0,
+          "futures": 10,
+          "futures_families": 1
+         }
+        }
+       ]
+      }
+     },
+     {
+      "flow": "search_gold_top1",
+      "checked": 8,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "top1_ok": 8,
+       "total": 8,
+       "top1_rate": 1.0,
+       "misses": [],
+       "per_entity": [
+        {
+         "query": "grammys",
+         "kind": "concept",
+         "marker": "event:awards:grammys",
+         "top1_ok": true
+        },
+        {
+         "query": "oscars",
+         "kind": "concept",
+         "marker": "event:awards:oscars",
+         "top1_ok": true
+        },
+        {
+         "query": "emmys",
+         "kind": "concept",
+         "marker": "event:awards:emmys",
+         "top1_ok": true
+        },
+        {
+         "query": "masters winner",
+         "kind": "concept",
+         "marker": "event:golf:",
+         "top1_ok": true
+        },
+        {
+         "query": "world cup",
+         "kind": "concept",
+         "marker": "event:soccer:world-cup",
+         "top1_ok": true
+        },
+        {
+         "query": "pats",
+         "kind": "team",
+         "marker": "patriots",
+         "top1_ok": true
+        },
+        {
+         "query": "revs",
+         "kind": "team",
+         "marker": "revolution",
+         "top1_ok": true
+        },
+        {
+         "query": "niners",
+         "kind": "team",
+         "marker": "49ers",
+         "top1_ok": true
+        }
+       ]
+      }
+     },
+     {
+      "flow": "duplicate_events",
+      "checked": 208,
+      "passed": false,
+      "failures": [
+       {
+        "detail": "esports: ZOTIX vs NEXORA appears 7x (ids [15207887, 15208832, 15207393, 15204705, 15206431, 15205955, 15207375])"
+       },
+       {
+        "detail": "esports: INFURITY Gaming vs Inner Circle Prospect appears 22x (ids [15204709, 15204710, 15204711, 15204712, 15207885, 15206435, 15207408, 15205952, 15208854, 15207360, 15208855, 15208834, 15207872, 15207871, 15206434, 15207359, 15206433, 15207409, 15207373, 15207395, 15205953, 15205951])"
+       },
+       {
+        "detail": "esports: NAVI Junior vs OLDBOYS- appears 7x (ids [15204706, 15206436, 15208856, 15207870, 15207358, 15207410, 15205950])"
+       },
+       {
+        "detail": "esports: Younglings vs OldBoys appears 7x (ids [15204708, 15208833, 15207886, 15206432, 15207374, 15207394, 15205954])"
+       },
+       {
+        "detail": "esports: FUSION X vs No Sweat Blossom appears 8x (ids [15202732, 15205487, 15207829, 15203251, 15203676, 15206429, 15204014, 15202257])"
+       },
+       {
+        "detail": "esports: 3v Team vs Kits Esports appears 4x (ids [15205154, 15202734, 15208316, 15206430])"
+       },
+       {
+        "detail": "esports: BNK FearX Youth vs Hanwha Life Esports Challengers appears 20x (ids [15203206, 15203203, 15203202, 15205631, 15206739, 15206737, 15206736, 15202709, 15205632, 15202708, 15203724, 15203721, 15203725, 15208668, 15208669, 15208671, 15202705, 15208062, 15208064, 15208065])"
+       },
+       {
+        "detail": "esports: T1 Academy vs KT Rolster Challengers appears 22x (ids [15203207, 15203204, 15203205, 15206754, 15206751, 15206752, 15202294, 15202704, 15208691, 15208674, 15203722, 15208690, 15203723, 15205616, 15208056, 15208044, 15208043, 15205413, 15205414, 15207716, 15207703, 15205617])"
+       }
+      ],
+      "evidence": {
+       "sampled": 208,
+       "duplicates": [
+        {
+         "key": "esports::nexora|zotix::2026-08-19T19:00",
+         "event_ids": [
+          15207887,
+          15208832,
+          15207393,
+          15204705,
+          15206431,
+          15205955,
+          15207375
+         ],
+         "home_team": "ZOTIX",
+         "away_team": "NEXORA",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::infurity gaming|inner circle prospect::2026-08-20T08:00",
+         "event_ids": [
+          15204709,
+          15204710,
+          15204711,
+          15204712,
+          15207885,
+          15206435,
+          15207408,
+          15205952,
+          15208854,
+          15207360,
+          15208855,
+          15208834,
+          15207872,
+          15207871,
+          15206434,
+          15207359,
+          15206433,
+          15207409,
+          15207373,
+          15207395,
+          15205953,
+          15205951
+         ],
+         "home_team": "INFURITY Gaming",
+         "away_team": "Inner Circle Prospect",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::navi junior|oldboys-::2026-08-20T17:15",
+         "event_ids": [
+          15204706,
+          15206436,
+          15208856,
+          15207870,
+          15207358,
+          15207410,
+          15205950
+         ],
+         "home_team": "NAVI Junior",
+         "away_team": "OLDBOYS-",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::oldboys|younglings::2026-08-20T18:30",
+         "event_ids": [
+          15204708,
+          15208833,
+          15207886,
+          15206432,
+          15207374,
+          15207394,
+          15205954
+         ],
+         "home_team": "Younglings",
+         "away_team": "OldBoys",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::fusion x|no sweat blossom::2026-08-20T22:00",
+         "event_ids": [
+          15202732,
+          15205487,
+          15207829,
+          15203251,
+          15203676,
+          15206429,
+          15204014,
+          15202257
+         ],
+         "home_team": "FUSION X",
+         "away_team": "No Sweat Blossom",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::3v team|kits esports::2026-08-20T23:00",
+         "event_ids": [
+          15205154,
+          15202734,
+          15208316,
+          15206430
+         ],
+         "home_team": "3v Team",
+         "away_team": "Kits Esports",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::bnk fearx youth|hanwha life esports challengers::2026-08-21T05:00",
+         "event_ids": [
+          15203206,
+          15203203,
+          15203202,
+          15205631,
+          15206739,
+          15206737,
+          15206736,
+          15202709,
+          15205632,
+          15202708,
+          15203724,
+          15203721,
+          15203725,
+          15208668,
+          15208669,
+          15208671,
+          15202705,
+          15208062,
+          15208064,
+          15208065
+         ],
+         "home_team": "BNK FearX Youth",
+         "away_team": "Hanwha Life Esports Challengers",
+         "sport": "esports"
+        },
+        {
+         "key": "esports::kt rolster challengers|t1 academy::2026-08-21T05:00",
+         "event_ids": [
+          15203207,
+          15203204,
+          15203205,
+          15206754,
+          15206751,
+          15206752,
+          15202294,
+          15202704,
+          15208691,
+          15208674,
+          15203722,
+          15208690,
+          15203723,
+          15205616,
+          15208056,
+          15208044,
+          15208043,
+          15205413,
+          15205414,
+          15207716,
+          15207703,
+          15205617
+         ],
+         "home_team": "T1 Academy",
+         "away_team": "KT Rolster Challengers",
+         "sport": "esports"
+        }
+       ],
+       "provenance_meter": {
+        "measured": true,
+        "reason": null,
+        "window": "30d",
+        "created_unanchored": 6876,
+        "reconciled": 39,
+        "unreconciled": 6837,
+        "window_events": 28031
+       }
+      }
+     },
+     {
+      "flow": "event_completeness",
+      "checked": 5,
+      "passed": false,
+      "failures": [
+       {
+        "event_id": 15200818,
+        "detail": "live baseball_mlb game Tampa Bay Rays vs Toronto Blue Jays has zero markets in every section"
+       },
+       {
+        "event_id": 15200829,
+        "detail": "live baseball_mlb game Milwaukee Brewers vs Seattle Mariners has zero markets in every section"
+       },
+       {
+        "event_id": 15201196,
+        "detail": "live baseball_mlb game Cincinnati Reds vs St. Louis Cardinals has zero markets in every section"
+       }
+      ],
+      "evidence": {
+       "live_tier1_sampled": 5,
+       "no_live_tier1": false
+      }
+     },
+     {
+      "flow": "sports_feed_events",
+      "checked": 1,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "live_sampled": 8,
+       "feed_event_cards": 19
+      }
+     },
+     {
+      "flow": "discover_first_page",
+      "checked": 0,
+      "passed": true,
+      "unknown": true,
+      "skipped": true,
+      "failures": [],
+      "evidence": {
+       "unknown": true,
+       "reason": "/api/feed first-page probe errored: Server error '500 Internal Server Error' for url 'https://api.bainluck.com/api/feed?limit=50&offset=0&event_pct=0.15'\nFor more information check: http",
+       "probe": "identified cold key"
+      }
+     },
+     {
+      "flow": "resolved_state",
+      "checked": 55,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "live_sampled": 8,
+       "completed_sampled": 47,
+       "stale_live_hours": 12.0,
+       "stale_live": [],
+       "future_settled": [],
+       "live_before_commence": [],
+       "inverted_completed": []
+      }
+     },
+     {
+      "flow": "chart_density",
+      "checked": 0,
+      "passed": true,
+      "unknown": true,
+      "skipped": true,
+      "failures": [],
+      "evidence": {
+       "unknown": true,
+       "reason": "deadline budget exhausted",
+       "skipped": true
+      }
+     },
+     {
+      "flow": "category_discover",
+      "checked": 5,
+      "passed": false,
+      "failures": [
+       {
+        "detail": "/api/feed first page returned zero futures items"
+       }
+      ],
+      "evidence": {
+       "checks": 5
+      }
+     },
+     {
+      "flow": "participation_family",
+      "checked": 0,
+      "passed": true,
+      "skipped": true,
+      "failures": [],
+      "evidence": {
+       "golf_prop_markets_sampled": 0,
+       "no_eligible_markets": true
+      }
+     },
+     {
+      "flow": "matured_linkage",
+      "checked": 20,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "headline_pct": 100.0,
+       "checkable_pairs": 20,
+       "backed": 20,
+       "phantom": 0,
+       "by_source": {
+        "kalshi": {
+         "total": 3,
+         "backed": 3,
+         "phantom": 0,
+         "backed_pct": 100.0
+        },
+        "polymarket": {
+         "total": 17,
+         "backed": 17,
+         "phantom": 0,
+         "backed_pct": 100.0
+        }
+       },
+       "events_checked": 20,
+       "events_consistent": 20,
+       "window": "NOW-6h..NOW+24h"
+      }
+     },
+     {
+      "flow": "unlinked_held",
+      "checked": 2000,
+      "passed": false,
+      "failures": [
+       {
+        "event_id": 15197839,
+        "source": "kalshi",
+        "detail": "imminent soccer_conmebol_copa_libertadores event Cruzeiro @ Flamengo-RJ \u2014 we hold unlinked kalshi market #58728759 'Cruzeiro vs Flamengo' whose both teams match this event, but event_id is NULL (matcher miss; event 15197839)"
+       }
+      ],
+      "evidence": {
+       "headline_unlinked_held": 1,
+       "events_checked": 84,
+       "candidates_scanned": 2000,
+       "by_source": {
+        "kalshi": 1
+       }
+      }
+     },
+     {
+      "flow": "season_aggregate_linkage",
+      "checked": 1,
+      "passed": true,
+      "failures": [],
+      "evidence": {
+       "season_aggregate_linked_markets": 0
+      }
+     },
+     {
+      "flow": "frozen_final_scores",
+      "checked": 28,
+      "passed": false,
+      "failures": [
+       {
+        "detail": "settled baseball_mlb event Tampa Bay Rays vs Baltimore Orioles stores score 5-6 but ESPN's FINAL is 2-10 (id 15198635) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Pittsburgh Pirates vs Boston Red Sox stores score 8-4 but ESPN's FINAL is 8-3 (id 15198424) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Atlanta Braves vs Arizona Diamondbacks stores score 0-2 but ESPN's FINAL is 5-3 (id 15198613, WINNER FLIP) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Toronto Blue Jays vs New York Yankees stores score 3-1 but ESPN's FINAL is 3-4 (id 15198425, WINNER FLIP) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Detroit Tigers vs Chicago White Sox stores score 5-9 but ESPN's FINAL is 5-7 (id 15198554) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Cincinnati Reds vs Miami Marlins stores score 1-0 but ESPN's FINAL is 1-7 (id 15198423, WINNER FLIP) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event New York Mets vs Washington Nationals stores score 4-1 but ESPN's FINAL is 4-3 (id 15198474) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Cleveland Guardians vs San Diego Padres stores score 5-7 but ESPN's FINAL is 0-5 (id 15198428) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Minnesota Twins vs Philadelphia Phillies stores score 1-9 but ESPN's FINAL is 5-7 (id 15192158) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Athletics vs Texas Rangers stores score 3-5 but ESPN's FINAL is 5-2 (id 15198638, WINNER FLIP) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event San Francisco Giants vs Colorado Rockies stores score 2-5 but ESPN's FINAL is 7-13 (id 15198429) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Los Angeles Angels vs Kansas City Royals stores score 6-7 but ESPN's FINAL is 0-3 (id 15198430) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Los Angeles Dodgers vs Milwaukee Brewers stores score 1-4 but ESPN's FINAL is 2-6 (id 15199479) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       },
+       {
+        "detail": "settled baseball_mlb event Houston Astros vs Seattle Mariners stores score 10-7 but ESPN's FINAL is 2-3 (id 15198426, WINNER FLIP) \u2014 frozen/wrong final (CAL-P002; POST /api/admin/repairs/event-final-scores?apply=true)"
+       }
+      ],
+      "evidence": {
+       "events_scanned": 28,
+       "groups_scanned": 6,
+       "groups_remaining": 992,
+       "identity_blocked": 0,
+       "winner_flips": 5,
+       "frozen_scores": [
+        {
+         "event_id": 15198635,
+         "sport": "baseball_mlb",
+         "matchup": "Tampa Bay Rays vs Baltimore Orioles",
+         "status": "completed",
+         "stored_score": "5-6",
+         "espn_final": "2-10",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T16:15:00+00:00"
+        },
+        {
+         "event_id": 15198424,
+         "sport": "baseball_mlb",
+         "matchup": "Pittsburgh Pirates vs Boston Red Sox",
+         "status": "completed",
+         "stored_score": "8-4",
+         "espn_final": "8-3",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T17:35:00+00:00"
+        },
+        {
+         "event_id": 15198613,
+         "sport": "baseball_mlb",
+         "matchup": "Atlanta Braves vs Arizona Diamondbacks",
+         "status": "completed",
+         "stored_score": "0-2",
+         "espn_final": "5-3",
+         "winner_flip": true,
+         "commence_time": "2026-08-16T17:35:00+00:00"
+        },
+        {
+         "event_id": 15198425,
+         "sport": "baseball_mlb",
+         "matchup": "Toronto Blue Jays vs New York Yankees",
+         "status": "completed",
+         "stored_score": "3-1",
+         "espn_final": "3-4",
+         "winner_flip": true,
+         "commence_time": "2026-08-16T17:37:00+00:00"
+        },
+        {
+         "event_id": 15198554,
+         "sport": "baseball_mlb",
+         "matchup": "Detroit Tigers vs Chicago White Sox",
+         "status": "completed",
+         "stored_score": "5-9",
+         "espn_final": "5-7",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T17:40:00+00:00"
+        },
+        {
+         "event_id": 15198423,
+         "sport": "baseball_mlb",
+         "matchup": "Cincinnati Reds vs Miami Marlins",
+         "status": "completed",
+         "stored_score": "1-0",
+         "espn_final": "1-7",
+         "winner_flip": true,
+         "commence_time": "2026-08-16T17:40:00+00:00"
+        },
+        {
+         "event_id": 15198474,
+         "sport": "baseball_mlb",
+         "matchup": "New York Mets vs Washington Nationals",
+         "status": "completed",
+         "stored_score": "4-1",
+         "espn_final": "4-3",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T17:40:00+00:00"
+        },
+        {
+         "event_id": 15198428,
+         "sport": "baseball_mlb",
+         "matchup": "Cleveland Guardians vs San Diego Padres",
+         "status": "completed",
+         "stored_score": "5-7",
+         "espn_final": "0-5",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T17:40:00+00:00"
+        },
+        {
+         "event_id": 15192158,
+         "sport": "baseball_mlb",
+         "matchup": "Minnesota Twins vs Philadelphia Phillies",
+         "status": "completed",
+         "stored_score": "1-9",
+         "espn_final": "5-7",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T18:10:00+00:00"
+        },
+        {
+         "event_id": 15198638,
+         "sport": "baseball_mlb",
+         "matchup": "Athletics vs Texas Rangers",
+         "status": "completed",
+         "stored_score": "3-5",
+         "espn_final": "5-2",
+         "winner_flip": true,
+         "commence_time": "2026-08-16T20:05:00+00:00"
+        },
+        {
+         "event_id": 15198429,
+         "sport": "baseball_mlb",
+         "matchup": "San Francisco Giants vs Colorado Rockies",
+         "status": "completed",
+         "stored_score": "2-5",
+         "espn_final": "7-13",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T20:05:00+00:00"
+        },
+        {
+         "event_id": 15198430,
+         "sport": "baseball_mlb",
+         "matchup": "Los Angeles Angels vs Kansas City Royals",
+         "status": "completed",
+         "stored_score": "6-7",
+         "espn_final": "0-3",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T20:07:00+00:00"
+        },
+        {
+         "event_id": 15199479,
+         "sport": "baseball_mlb",
+         "matchup": "Los Angeles Dodgers vs Milwaukee Brewers",
+         "status": "completed",
+         "stored_score": "1-4",
+         "espn_final": "2-6",
+         "winner_flip": false,
+         "commence_time": "2026-08-16T20:10:00+00:00"
+        },
+        {
+         "event_id": 15198426,
+         "sport": "baseball_mlb",
+         "matchup": "Houston Astros vs Seattle Mariners",
+         "status": "completed",
+         "stored_score": "10-7",
+         "espn_final": "2-3",
+         "winner_flip": true,
+         "commence_time": "2026-08-16T23:20:00+00:00"
+        }
+       ]
+      }
+     },
+     {
+      "flow": "winner_field_coherence",
+      "checked": 0,
+      "passed": true,
+      "unknown": true,
+      "skipped": true,
+      "failures": [],
+      "evidence": {
+       "unknown": true,
+       "reason": "census dry-run failed: Server error '500 Internal Server Error' for url 'https://api.bainluck.com/api/admin/repairs/winner-field-coherence?appl"
+      }
+     },
+     {
+      "flow": "team_identity_dupes",
+      "checked": 2,
+      "passed": false,
+      "failures": [
+       {
+        "detail": "182 team-identity clusters awaiting HUMAN adjudication (L2-173) \u2014 backlog exceeds 25. Needs Alex's verdicts at /admin (team-clusters), not an agent fix. (needs-user)"
+       }
+      ],
+      "evidence": {
+       "unresolved_mergeable_pairs": 0,
+       "awaiting_adjudication": 182,
+       "awaiting_alarm_threshold": 25,
+       "clusters_planned": null,
+       "clusters_examined": null
+      }
+     }
+    ],
+    "filed": [
+     {
+      "fingerprint": "d571c71b5fc8",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1941,
+      "body_refresh": "refreshed",
+      "flow": "duplicate_events"
+     },
+     {
+      "fingerprint": "2e1bdad3c1b1",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1957,
+      "body_refresh": "refreshed",
+      "flow": "event_completeness"
+     },
+     {
+      "fingerprint": "10bf3ba1fe1b",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1958,
+      "body_refresh": "refreshed",
+      "flow": "category_discover"
+     },
+     {
+      "fingerprint": "6a31e44ac345",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1510,
+      "body_refresh": "refreshed",
+      "flow": "unlinked_held"
+     },
+     {
+      "fingerprint": "8b3251932e20",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1980,
+      "body_refresh": "refreshed",
+      "flow": "frozen_final_scores"
+     },
+     {
+      "fingerprint": "bbbe68ed999f",
+      "marker": "flow-sentinel-fingerprint",
+      "action": "commented",
+      "issue": 1511,
+      "body_refresh": "refreshed",
+      "flow": "team_identity_dupes"
+     }
+    ],
+    "errors": [],
+    "scorecard": {
+     "flows_total": 16,
+     "flows_verified": 12,
+     "flows_passed": 6,
+     "flows_failed": 6,
+     "flows_unknown": 4,
+     "unknown_flows": [
+      "discover_first_page",
+      "chart_density",
+      "participation_family",
+      "winner_field_coherence"
+     ],
+     "per_flow": [
+      {
+       "flow": "search_gold_set",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 25,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "search_gold_top1",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 8,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "duplicate_events",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 208,
+       "failing": 8,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "event_completeness",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 5,
+       "failing": 3,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "sports_feed_events",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 1,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "discover_first_page",
+       "outcome": "unknown",
+       "passed": false,
+       "checked": 0,
+       "failing": 0,
+       "unknown": true,
+       "skipped": true
+      },
+      {
+       "flow": "resolved_state",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 55,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "chart_density",
+       "outcome": "unknown",
+       "passed": false,
+       "checked": 0,
+       "failing": 0,
+       "unknown": true,
+       "skipped": true
+      },
+      {
+       "flow": "category_discover",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 5,
+       "failing": 1,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "participation_family",
+       "outcome": "unknown",
+       "passed": false,
+       "checked": 0,
+       "failing": 0,
+       "unknown": true,
+       "skipped": true
+      },
+      {
+       "flow": "matured_linkage",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 20,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "unlinked_held",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 2000,
+       "failing": 1,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "season_aggregate_linkage",
+       "outcome": "pass",
+       "passed": true,
+       "checked": 1,
+       "failing": 0,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "frozen_final_scores",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 28,
+       "failing": 14,
+       "unknown": false,
+       "skipped": false
+      },
+      {
+       "flow": "winner_field_coherence",
+       "outcome": "unknown",
+       "passed": false,
+       "checked": 0,
+       "failing": 0,
+       "unknown": true,
+       "skipped": true
+      },
+      {
+       "flow": "team_identity_dupes",
+       "outcome": "fail",
+       "passed": false,
+       "checked": 2,
+       "failing": 1,
+       "unknown": false,
+       "skipped": false
+      }
+     ]
+    },
+    "resolved": [],
+    "duration_seconds": 117.8,
+    "generated_at": "2026-08-19T07:11:57.897651+00:00",
+    "persistence": {
+     "durable": "ok",
+     "durable_generation": 1787123517897,
+     "identity": "sentinel:flow",
+     "volatile": "ok"
+    }
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-19T07:10:00.060659+00:00",
+   "health": "healthy"
+  },
+  "grid_sentinel": {
+   "task": "grid_sentinel",
+   "successes_24h": 1,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 1,
+   "hard_kills_24h": 0,
+   "recent_durations_ms": [
+    3391,
+    6816,
+    6349,
+    4508,
+    3338,
+    4812,
+    3342,
+    12606,
+    3585
+   ],
+   "recent_durations_n": 9,
+   "recent_durations_window_s": 519241.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": 710.0,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": 714.0,
+   "last_success_at": "2026-08-19T07:39:04.894527+00:00",
+   "last_duration_ms": "3391",
+   "last_result_summary": {
+    "mode": "live",
+    "api": "https://api.bainluck.com",
+    "config": {
+     "fill_warn": 0.8,
+     "fill_crit": 0.5,
+     "disagreement_extreme_pp": 40.0,
+     "stale_hours": 12.0
+    },
+    "leagues": [
+     {
+      "league": "mlb",
+      "grid_ok": true,
+      "degraded": false,
+      "teams": 30,
+      "columns": [
+       "make_playoffs",
+       "division",
+       "pennant",
+       "championship"
+      ],
+      "sources": [
+       "kalshi",
+       "odds_api",
+       "polymarket"
+      ],
+      "classified": {
+       "league": "mlb",
+       "phase": "in_season",
+       "real": [],
+       "explained": [],
+       "watch": [
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Tampa Bay Rays \u2192 Division: 30pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Tampa Bay Rays",
+         "diff_pp": 30.3,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Atlanta Braves \u2192 Division: 28pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Atlanta Braves",
+         "diff_pp": 28.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Chicago Cubs \u2192 Make Playoffs: 17pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Chicago Cubs",
+         "diff_pp": 17.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Boston Red Sox \u2192 Make Playoffs: 19pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Boston Red Sox",
+         "diff_pp": 19.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Philadelphia Phillies \u2192 Division: 28pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Philadelphia Phillies",
+         "diff_pp": 27.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement_extreme",
+         "severity": "critical",
+         "detail": "MLB Houston Astros \u2192 Make Playoffs: 49pp source gap \u2014 possible mis-linked market",
+         "seasonal_ok": false,
+         "tier": "plausibility",
+         "team": "Houston Astros",
+         "diff_pp": 49.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement_extreme",
+         "severity": "critical",
+         "detail": "MLB Houston Astros \u2192 Division: 51pp source gap \u2014 possible mis-linked market",
+         "seasonal_ok": false,
+         "tier": "plausibility",
+         "team": "Houston Astros",
+         "diff_pp": 51.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement_extreme",
+         "severity": "critical",
+         "detail": "MLB San Diego Padres \u2192 Make Playoffs: 48pp source gap \u2014 possible mis-linked market",
+         "seasonal_ok": false,
+         "tier": "plausibility",
+         "team": "San Diego Padres",
+         "diff_pp": 48.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Cleveland Guardians \u2192 Division: 31pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Cleveland Guardians",
+         "diff_pp": 31.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Toronto Blue Jays \u2192 Make Playoffs: 16pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Toronto Blue Jays",
+         "diff_pp": 16.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB St. Louis Cardinals \u2192 Make Playoffs: 18pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "St. Louis Cardinals",
+         "diff_pp": 17.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Miami Marlins \u2192 Make Playoffs: 16pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Miami Marlins",
+         "diff_pp": 16.0,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "MLB Pittsburgh Pirates \u2192 Make Playoffs: 32pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "Pittsburgh Pirates",
+         "diff_pp": 32.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        }
+       ]
+      },
+      "verdict": "green",
+      "checks_skipped": [],
+      "watch_count": 13,
+      "stats": {
+       "cells_self_checked": 60,
+       "freshness": {
+        "league": "mlb",
+        "newest": "2026-08-19T07:38:20.878345+00:00",
+        "age_hours": 0.0,
+        "stale": false,
+        "seasonal_ok": false
+       }
+      }
+     },
+     {
+      "league": "nba",
+      "grid_ok": true,
+      "degraded": false,
+      "teams": 30,
+      "columns": [
+       "make_playoffs",
+       "division",
+       "conference",
+       "championship"
+      ],
+      "sources": [
+       "kalshi",
+       "odds_api"
+      ],
+      "classified": {
+       "league": "nba",
+       "phase": "offseason",
+       "real": [],
+       "explained": [],
+       "watch": [
+        {
+         "check": "grid_source_disagreement_extreme",
+         "severity": "critical",
+         "detail": "NBA New York Knicks \u2192 Champion: 89pp source gap \u2014 possible mis-linked market",
+         "seasonal_ok": false,
+         "tier": "plausibility",
+         "team": "New York Knicks",
+         "diff_pp": 89.5,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        },
+        {
+         "check": "grid_source_disagreement",
+         "severity": "info",
+         "detail": "NBA San Antonio Spurs \u2192 Champion: 28pp source gap (blend-hidden)",
+         "seasonal_ok": true,
+         "tier": "plausibility",
+         "team": "San Antonio Spurs",
+         "diff_pp": 27.8,
+         "note": "blend-hidden \u2014 user sees the merged value"
+        }
+       ]
+      },
+      "verdict": "green",
+      "checks_skipped": [],
+      "watch_count": 2,
+      "stats": {
+       "cells_self_checked": 60,
+       "freshness": {
+        "league": "nba",
+        "newest": "2026-08-19T07:35:19.410877+00:00",
+        "age_hours": 0.1,
+        "stale": false,
+        "seasonal_ok": true
+       }
+      }
+     },
+     {
+      "league": "nhl",
+      "grid_ok": true,
+      "degraded": false,
+      "teams": 32,
+      "columns": [
+       "make_playoffs",
+       "division",
+       "conference",
+       "championship"
+      ],
+      "sources": [
+       "kalshi",
+       "odds_api"
+      ],
+      "classified": {
+       "league": "nhl",
+       "phase": "offseason",
+       "real": [],
+       "explained": [
+        {
+         "check": "grid_fill_rate",
+         "severity": "critical",
+         "detail": "NHL 'Make Playoffs': only 1/32 teams filled (3%)",
+         "seasonal_ok": true,
+         "tier": "structural",
+         "column": "Make Playoffs",
+         "fill_pct": 0.031,
+         "explained_by": "NHL is in the offseason \u2014 quiet schedule is expected"
+        }
+       ],
+       "watch": []
+      },
+      "verdict": "green",
+      "checks_skipped": [],
+      "watch_count": 0,
+      "stats": {
+       "cells_self_checked": 60,
+       "freshness": {
+        "league": "nhl",
+        "newest": "2026-08-19T07:37:31.146918+00:00",
+        "age_hours": 0.0,
+        "stale": false,
+        "seasonal_ok": true
+       }
+      }
+     }
+    ],
+    "filed": [],
+    "errors": [],
+    "scorecard": {
+     "leagues_total": 3,
+     "leagues_red": 0,
+     "leagues_green": 3,
+     "leagues_unverified": 0,
+     "per_league": [
+      {
+       "league": "mlb",
+       "verdict": "green",
+       "checks_skipped": [],
+       "phase": "in_season",
+       "real_defects": 0,
+       "explained_artifacts": 0,
+       "watch": 13,
+       "teams": 30,
+       "columns": [
+        "make_playoffs",
+        "division",
+        "pennant",
+        "championship"
+       ],
+       "cells_self_checked": 60
+      },
+      {
+       "league": "nba",
+       "verdict": "green",
+       "checks_skipped": [],
+       "phase": "offseason",
+       "real_defects": 0,
+       "explained_artifacts": 0,
+       "watch": 2,
+       "teams": 30,
+       "columns": [
+        "make_playoffs",
+        "division",
+        "conference",
+        "championship"
+       ],
+       "cells_self_checked": 60
+      },
+      {
+       "league": "nhl",
+       "verdict": "green",
+       "checks_skipped": [],
+       "phase": "offseason",
+       "real_defects": 0,
+       "explained_artifacts": 1,
+       "watch": 0,
+       "teams": 32,
+       "columns": [
+        "make_playoffs",
+        "division",
+        "conference",
+        "championship"
+       ],
+       "cells_self_checked": 60
+      }
+     ]
+    },
+    "resolved": [],
+    "duration_seconds": 3.3,
+    "generated_at": "2026-08-19T07:39:04.826789+00:00",
+    "persistence": {
+     "durable": "ok",
+     "durable_generation": 1787125144826,
+     "identity": "sentinel:grid",
+     "volatile": "ok"
+    }
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-19T07:39:01.480422+00:00",
+   "health": "healthy"
+  },
+  "horizon_sentinel": {
+   "task": "horizon_sentinel",
+   "successes_24h": 1,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 1,
+   "hard_kills_24h": 0,
+   "recent_durations_ms": [
+    349,
+    341,
+    665,
+    14090,
+    328,
+    22621,
+    424,
+    461,
+    17212
+   ],
+   "recent_durations_n": 9,
+   "recent_durations_window_s": 518468.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": 590.0,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": 590.0,
+   "last_success_at": "2026-08-19T07:41:08.470743+00:00",
+   "last_duration_ms": "349",
+   "last_result_summary": {
+    "mode": "live",
+    "api": "https://api.bainluck.com",
+    "as_of": "2026-08-19",
+    "calendar_entries": 21,
+    "in_window_checked": 3,
+    "findings": [],
+    "n_findings": 0,
+    "p0": [],
+    "covered": [
+     {
+      "slug": "us-open-tennis-2026",
+      "name": "US Open Tennis 2026",
+      "phase": "t7"
+     },
+     {
+      "slug": "vuelta-2026",
+      "name": "Vuelta a Espa\u00f1a 2026",
+      "phase": "t7"
+     },
+     {
+      "slug": "emmys-2026",
+      "name": "Emmy Awards 2026",
+      "phase": "t30"
+     }
+    ],
+    "surface_tbd": [],
+    "filed": [],
+    "duration_s": 0.27,
+    "generated_at": "2026-08-19T07:41:08.388006+00:00",
+    "persistence": {
+     "durable": "ok",
+     "durable_generation": 1787125268388,
+     "identity": "sentinel:horizon",
+     "volatile": "ok"
+    }
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-19T07:41:08.102250+00:00",
+   "health": "healthy"
+  },
+  "settled_concept_sentinel": {
+   "task": "settled_concept_sentinel",
+   "successes_24h": 1,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 1,
+   "hard_kills_24h": 0,
+   "recent_durations_ms": [
+    174,
+    482,
+    301,
+    277,
+    209,
+    263,
+    240,
+    139,
+    241
+   ],
+   "recent_durations_n": 9,
+   "recent_durations_window_s": 518757.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": 4.0,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": 5.0,
+   "last_success_at": "2026-08-19T07:50:57.387944+00:00",
+   "last_duration_ms": "174",
+   "last_result_summary": {
+    "mode": "live",
+    "api": "https://api.bainluck.com",
+    "as_of": "2026-08-19",
+    "targets": 0,
+    "checked_settled": 0,
+    "green": 0,
+    "red": 0,
+    "green_streak_to_close": 2,
+    "closeable_concepts": [],
+    "concepts": [],
+    "filed": [],
+    "duration_s": 0.11,
+    "generated_at": "2026-08-19T07:50:57.319566+00:00",
+    "persistence": {
+     "durable": "ok",
+     "durable_generation": 1787125857319,
+     "identity": "sentinel:settled-concept",
+     "volatile": "ok"
+    }
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-19T07:50:57.196815+00:00",
+   "health": "healthy"
+  },
+  "board_sentinel": {
+   "task": "board_sentinel",
+   "successes_24h": 0,
+   "failures_24h": 0,
+   "incompletes_24h": 0,
+   "starts_24h": 0,
+   "hard_kills_24h": 0,
+   "recent_durations_ms": [
+    16338,
+    16096,
+    16969,
+    15842,
+    16050,
+    15174,
+    17864,
+    15329
+   ],
+   "recent_durations_n": 8,
+   "recent_durations_window_s": 432001.0,
+   "recent_durations_saturated": false,
+   "successes_window_s": null,
+   "failures_window_s": null,
+   "incompletes_window_s": null,
+   "starts_window_s": null,
+   "last_success_at": "2026-08-18T07:50:16.409451+00:00",
+   "last_duration_ms": "16338",
+   "last_result_summary": {
+    "mode": "live",
+    "verdict": "red",
+    "counts": {
+     "open_issues_scanned": 536,
+     "open_alert_intake": 65,
+     "open_project_items": 536,
+     "in_inbox": 206,
+     "by_column": {
+      "Inbox": 206,
+      "Review / Verify": 158,
+      "Ready": 14,
+      "In Progress": 45,
+      "Done": 3,
+      "Needs User": 20,
+      "Blocked": 14,
+      "Parked": 76
+     },
+     "columns_available": true,
+     "population_complete": true
+    },
+    "thresholds": {
+     "inbox_triage_hours": 48.0,
+     "template_p1_share_cap": 0.35,
+     "template_p1_min_population": 6
+    },
+    "real": [
+     {
+      "check": "missing_area_label",
+      "issue": 1923,
+      "detail": "#1923 'interestingness-side-by-side ranks PRE-interleave \u2014 add a ?s' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1690,
+      "detail": "#1690 'Discover leader % authority: couple the rendered probability' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1681,
+      "detail": "#1681 'OTLP telemetry destination unreachable \u2014 payloads dropped wi' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1680,
+      "detail": "#1680 '[Data Quality] calibration_publish_age: no calibration publi' has no area:* label \u2014 assign one so this alert-intake card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1679,
+      "detail": "#1679 'C244: the browser rail's navigation-teardown allowance is to' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1678,
+      "detail": "#1678 'C243: three P1s in the event-concept cache/warmer \u2014 lock has' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1651,
+      "detail": "#1651 'hub.py has event.py's mirror-only-on-empty bug \u2014 a cold miss' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1643,
+      "detail": "#1643 'C236: the calibration cross-surface parity gate is vacuous \u2014' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1641,
+      "detail": "#1641 'C235: EXPLAIN rail \u2014 ANALYZE can execute operational functio' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1633,
+      "detail": "#1633 'Swift joins CodeQL \u2014 one-session plumbing item under the dai' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1632,
+      "detail": "#1632 'Native analytics consent gate \u2014 rides the first native queue' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1625,
+      "detail": "#1625 'Major golf pages admit foreign markets and fields through le' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1603,
+      "detail": "#1603 'OPENAI_API_KEY missing from Actions secrets \u2014 social-ground-' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1593,
+      "detail": "#1593 'Untracked orphan test file interrupts the entire local backe' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1586,
+      "detail": "#1586 'Kalshi live capture has degraded: recent cohorts ~12% captur' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1576,
+      "detail": "#1576 'Claude Code `!` shell escape hatch silently no-ops \u2014 kills t' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1550,
+      "detail": "#1550 'PROGRAM PARENT: Discover \u2014 feed ordering, interestingness, s' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1549,
+      "detail": "#1549 'PROGRAM PARENT: Events \u2014 props are the story (event pages)' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1548,
+      "detail": "#1548 'PROGRAM PARENT: Plumbing / infra (capped)' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1547,
+      "detail": "#1547 'PROGRAM PARENT: Native \u2014 iOS/iPadOS/macOS/watchOS' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1546,
+      "detail": "#1546 'PROGRAM PARENT: UX \u2014 product & admin surfaces' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1545,
+      "detail": "#1545 'PROGRAM PARENT: Latency \u2014 speed' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1544,
+      "detail": "#1544 'PROGRAM PARENT: Calibration \u2014 accuracy & completeness' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1537,
+      "detail": "#1537 'Curation-source backlog (beyond email/Kalshi/Wikipedia)' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1536,
+      "detail": "#1536 'Wikipedia pageview salience as a curation + surface-timing s' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1535,
+      "detail": "#1535 'Kalshi featured/trending as a second curation source (cross-' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1534,
+      "detail": "#1534 'Curation intake: one abstraction for external editorial/crow' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "missing_area_label",
+      "issue": 1533,
+      "detail": "#1533 'Auto-apply Polymarket email curation as a bounded Discover s' has no area:* label \u2014 assign one so this card routes"
+     },
+     {
+      "check": "needs_agent_conflict",
+      "issue": 1754,
+      "detail": "#1754 'Search never returns the real Boston Red Sox \u2014 duplicate tea' is blocked yet still carries needs-agent \u2014 clear one so it routes honestly"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1890,
+      "age_hours": 72.0,
+      "detail": "#1890 'Branch protection requires a check named `test` that no job ' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1881,
+      "age_hours": 72.0,
+      "detail": "#1881 'Typeahead does not fold diacritics: 'k\u00f6ln' and 'koln' return' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1880,
+      "age_hours": 72.0,
+      "detail": "#1880 'Typeahead never mints the cycling event concept that /search' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1877,
+      "age_hours": 72.0,
+      "detail": "#1877 'Sentry ingest-liveness sentinel: every health read must carr' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1871,
+      "age_hours": 72.0,
+      "detail": "#1871 'Kalshi retention looks per-SERIES, not per-age: markets at 4' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1869,
+      "age_hours": 72.0,
+      "detail": "#1869 '[P0][security] Live ADMIN_TOKEN is committed in a public rep' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1867,
+      "age_hours": 72.0,
+      "detail": "#1867 'Gold set cannot discriminate MC3 (partial tokens) at all, an' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1863,
+      "age_hours": 72.0,
+      "detail": "#1863 'precompute_calibration draw-authority: lower(btrim(name)) in' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1861,
+      "age_hours": 72.0,
+      "detail": "#1861 'Gold set cannot grade an outcome-evidence change \u2014 #1843 dep' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1858,
+      "age_hours": 72.0,
+      "detail": "#1858 'Browser audit: console.no_errors on consent.my_stuff_denied' has resided in Inbox 72h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1856,
+      "age_hours": 96.0,
+      "detail": "#1856 '/api/admin/dashboard is a reproducible 30s H12 timeout \u2014 the' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1853,
+      "age_hours": 96.0,
+      "detail": "#1853 'Disposition the 17,124 never-graded Kalshi outcomes: 2,856 r' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1848,
+      "age_hours": 96.0,
+      "detail": "#1848 'iOS build gate is absent from CI \u2014 Swift changes are compile' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1843,
+      "age_hours": 96.0,
+      "detail": "#1843 'Typeahead ranks futures markets on their DISPLAY top-3 outco' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1842,
+      "age_hours": 96.0,
+      "detail": "#1842 'redis-census reports \"complete\" about work it did not do: th' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1840,
+      "age_hours": 96.0,
+      "detail": "#1840 'Recentre the interestingness signal: blending it is currentl' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1834,
+      "age_hours": 96.0,
+      "detail": "#1834 'Period-label vocabulary differs between iOS and web; and Gam' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1833,
+      "age_hours": 96.0,
+      "detail": "#1833 'Chart x-axis timestamp soup: a 22-hour domain rendered for a' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1832,
+      "age_hours": 96.0,
+      "detail": "#1832 'Unexplained bare-digit period chips (\"0\", \"8\") \u2014 and normali' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1831,
+      "age_hours": 96.0,
+      "detail": "#1831 'Game Segments renders \"2 4 8\" for a 9-inning game and totals' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1830,
+      "age_hours": 96.0,
+      "detail": "#1830 '\"-27% since open\" in red while the Red Sox went 60\u219287: unlab' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1828,
+      "age_hours": 96.0,
+      "detail": "#1828 'Cross-game contamination: 14 of 14 MLB events carry in-game ' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1826,
+      "age_hours": 96.0,
+      "detail": "#1826 'Polymarket empty-book midpoints are served as the price 0.5:' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1825,
+      "age_hours": 96.0,
+      "detail": "#1825 'Golf winner field is incoherent by construction: unweighted ' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1822,
+      "age_hours": 96.0,
+      "detail": "#1822 'Browser audit: network.no_unexpected_failures on discover.ro' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1821,
+      "age_hours": 96.0,
+      "detail": "#1821 'Browser audit: content.real_card_or_named_empty on discover.' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1820,
+      "age_hours": 96.0,
+      "detail": "#1820 'Browser audit: console.no_errors on consent.navigation' has resided in Inbox 96h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1817,
+      "age_hours": 120.0,
+      "detail": "#1817 'Phase-2 unlink reads Kalshi tickers as UTC when they are Eas' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1815,
+      "age_hours": 120.0,
+      "detail": "#1815 'Blend ratification: put two Discover slates in front of Alex' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1810,
+      "age_hours": 120.0,
+      "detail": "#1810 'canonical_question_key: same-question identity from the CU f' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1808,
+      "age_hours": 120.0,
+      "detail": "#1808 'CU split-brain: v1 and v2 enrichment writers thrash market_m' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1804,
+      "age_hours": 120.0,
+      "detail": "#1804 'Browser rail cannot verify the next-edition strip: the tourn' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1800,
+      "age_hours": 120.0,
+      "detail": "#1800 'task-metrics and schedule-adherence use two different identi' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1799,
+      "age_hours": 120.0,
+      "detail": "#1799 'Branch program/latency-20-superseded-by-INT031 holds the onl' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1795,
+      "age_hours": 120.0,
+      "detail": "#1795 'horizon_sentinel will file a P0 during the 2027 Masters for ' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1792,
+      "age_hours": 120.0,
+      "detail": "#1792 'The line-move story is already on the wire and nothing rende' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1790,
+      "age_hours": 120.0,
+      "detail": "#1790 'schedule-adherence reports a 50-sample p95 next to a 19-hour' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1789,
+      "age_hours": 120.0,
+      "detail": "#1789 'Browser audit: network.no_unexpected_failures on tournament.' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1788,
+      "age_hours": 120.0,
+      "detail": "#1788 'Browser audit: content.main_region_nonblank on tournament.te' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1787,
+      "age_hours": 120.0,
+      "detail": "#1787 'Browser audit: network.no_unexpected_failures on discover.la' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1786,
+      "age_hours": 120.0,
+      "detail": "#1786 'Browser audit: content.real_card_or_named_empty on discover.' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1785,
+      "age_hours": 120.0,
+      "detail": "#1785 'Browser audit: network.no_unexpected_failures on consent.rea' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1784,
+      "age_hours": 120.0,
+      "detail": "#1784 'Browser audit: network.no_unexpected_failures on consent.ide' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1783,
+      "age_hours": 120.0,
+      "detail": "#1783 'Browser audit: network.no_unexpected_failures on consent.gra' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1782,
+      "age_hours": 120.0,
+      "detail": "#1782 'Browser audit: console.no_errors on consent.grant_then_revok' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1781,
+      "age_hours": 120.0,
+      "detail": "#1781 'Browser audit: network.no_unexpected_failures on consent.gra' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1780,
+      "age_hours": 120.0,
+      "detail": "#1780 'Browser audit: network.no_unexpected_failures on consent.dec' has resided in Inbox 120h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1778,
+      "age_hours": 144.0,
+      "detail": "#1778 'Native calibration fixture is a second copy: give BainLuckTe' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1777,
+      "age_hours": 144.0,
+      "detail": "#1777 '[Bug Report] It\u2019s awkward to see \u201cMma\u201d with the 2nd and 3rd ' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1775,
+      "age_hours": 144.0,
+      "detail": "#1775 'Swift 6 main-actor isolation: project-wide MainActor default' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1774,
+      "age_hours": 144.0,
+      "detail": "#1774 'Rage-shake dedup fingerprint is too coarse: distinct owner b' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1771,
+      "age_hours": 144.0,
+      "detail": "#1771 '[Bug Report] First card I\u2019m served is super stale :-(' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1765,
+      "age_hours": 144.0,
+      "detail": "#1765 '[Data Quality] datagolf_freshness: No DataGolf markets updat' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1763,
+      "age_hours": 144.0,
+      "detail": "#1763 'Futures surface rebuild \u2014 retire /futures index now; slugs, ' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1762,
+      "age_hours": 144.0,
+      "detail": "#1762 'Entity pages step 0b \u2014 the three signature elements: Headlin' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1757,
+      "age_hours": 144.0,
+      "detail": "#1757 'Search: a truncated or foreign-morphology team name no longe' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1754,
+      "age_hours": 144.0,
+      "detail": "#1754 'Search never returns the real Boston Red Sox \u2014 duplicate tea' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1753,
+      "age_hours": 144.0,
+      "detail": "#1753 'E9: teams.py::_get_championship_path averages across sources' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1752,
+      "age_hours": 144.0,
+      "detail": "#1752 'E7: teams.py serves an in-season Red Sox with empty champion' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1751,
+      "age_hours": 144.0,
+      "detail": "#1751 'E5: league page hardcodes GRID_SLUG_MAP, and \"View full grid' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1750,
+      "age_hours": 144.0,
+      "detail": "#1750 'E4: sports/[key] ships the banned empty state (\"Check back l' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1749,
+      "age_hours": 144.0,
+      "detail": "#1749 'E3: sport/[sport] page holds register knowledge \u2014 stale hand' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1748,
+      "age_hours": 144.0,
+      "detail": "#1748 'E2: hub OutcomeRow draws null probability as a 0%-width bar ' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1747,
+      "age_hours": 144.0,
+      "detail": "#1747 'E1: hub sections render chrome at length 1 \u2014 section header ' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1746,
+      "age_hours": 144.0,
+      "detail": "#1746 'Entity pages step 4 \u2014 players (gated, last): person entities' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1745,
+      "age_hours": 144.0,
+      "detail": "#1745 'Entity pages step 3 \u2014 teams (the long tail): envelope on /ap' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1741,
+      "age_hours": 144.0,
+      "detail": "#1741 'PROGRAM: Entity page templates \u2014 backend-declared tiers for ' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1740,
+      "age_hours": 144.0,
+      "detail": "#1740 'Search/typeahead undeclared degradation: search's degraded f' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1739,
+      "age_hours": 144.0,
+      "detail": "#1739 'watchOS freshness lies: \"Xs ago\" never re-ticks after a fail' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1738,
+      "age_hours": 144.0,
+      "detail": "#1738 'Hub availability laundering: undeclared 24h-stale league_fut' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1737,
+      "age_hours": 144.0,
+      "detail": "#1737 '/health/ready reads five keys nothing writes and never flips' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1736,
+      "age_hours": 144.0,
+      "detail": "#1736 'Freshness architecture \u2014 ruling 026 conformance program' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1735,
+      "age_hours": 144.0,
+      "detail": "#1735 'Live context slice 1 \u2014 the Prop Clock + event-page live mode' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1728,
+      "age_hours": 144.0,
+      "detail": "#1728 'Settled props print a red MISS on props that HIT \u2014 'Hits + R' has resided in Inbox 144h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1720,
+      "age_hours": 168.0,
+      "detail": "#1720 'Browser audit: content.real_card_or_named_empty on event.pag' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1715,
+      "age_hours": 168.0,
+      "detail": "#1715 'Backend: /api/events?status=completed uses a UTC calendar-da' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1712,
+      "age_hours": 168.0,
+      "detail": "#1712 'Backend: duplicate UFC concept cards \u2014 one card split by a U' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1711,
+      "age_hours": 168.0,
+      "detail": "#1711 'Backend: highlight.label says \"Overtime\" on a 0-0 game that ' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1709,
+      "age_hours": 168.0,
+      "detail": "#1709 'Concepts with priced underlying markets should surface a hea' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1708,
+      "age_hours": 168.0,
+      "detail": "#1708 'Discover landing page: 3 of 8 tournament cards say nothing a' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1703,
+      "age_hours": 168.0,
+      "detail": "#1703 'Bug-report endpoint blocks the event loop ~19s on a dead bro' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1702,
+      "age_hours": 168.0,
+      "detail": "#1702 'Alex interestingness rules R1/R4/R9 are filed-but-unticketed' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1700,
+      "age_hours": 168.0,
+      "detail": "#1700 'Tournament cards never say when: a 3-days-out event and one ' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1696,
+      "age_hours": 168.0,
+      "detail": "#1696 '2028 Presidential card: unresolved 'Party A-L' placeholders ' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1694,
+      "age_hours": 168.0,
+      "detail": "#1694 'ALLOWED_PARAM_KEYS has no type linkage \u2014 the L2-217 silent-d' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1693,
+      "age_hours": 168.0,
+      "detail": "#1693 'FunnelDimensions.shape drifts from the canonical MarketShape' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1691,
+      "age_hours": 168.0,
+      "detail": "#1691 'browser-audit: the concurrency key ignores `pack`, so two la' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1689,
+      "age_hours": 168.0,
+      "detail": "#1689 'Source-dark empty states should say why \u2014 an empty rail read' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1687,
+      "age_hours": 168.0,
+      "detail": "#1687 'Blend freshness: a dark source must EXIT the live blend, and' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1686,
+      "age_hours": 168.0,
+      "detail": "#1686 'Category pill inconsistency: one story, two pills (Iran: geo' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1685,
+      "age_hours": 168.0,
+      "detail": "#1685 'Raw upstream market text is used as the card headline' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1684,
+      "age_hours": 168.0,
+      "detail": "#1684 'Dismiss teaches the feed, and the reader is never told' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1683,
+      "age_hours": 168.0,
+      "detail": "#1683 'Discover cards lead to two different destinations with no si' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1682,
+      "age_hours": 168.0,
+      "detail": "#1682 'Discover nav names things without saying what they are (unla' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1681,
+      "age_hours": 168.0,
+      "detail": "#1681 'OTLP telemetry destination unreachable \u2014 payloads dropped wi' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1679,
+      "age_hours": 168.0,
+      "detail": "#1679 'C244: the browser rail's navigation-teardown allowance is to' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1668,
+      "age_hours": 168.0,
+      "detail": "#1668 'Browser audit: network.no_unexpected_failures on consent.my_' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1667,
+      "age_hours": 168.0,
+      "detail": "#1667 'Browser audit: network.no_unexpected_failures on consent.def' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1666,
+      "age_hours": 168.0,
+      "detail": "#1666 'Browser audit: console.no_errors on consent.deferred_event' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1665,
+      "age_hours": 168.0,
+      "detail": "#1665 'Browser audit: network.no_unexpected_failures on consent.two' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1663,
+      "age_hours": 168.0,
+      "detail": "#1663 'Browser audit: content.main_region_nonblank on consent.two_t' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1662,
+      "age_hours": 168.0,
+      "detail": "#1662 'Browser audit: network.no_unexpected_failures on consent.nav' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1658,
+      "age_hours": 168.0,
+      "detail": "#1658 'Browser audit: telemetry.page_view_exactly_once on consent.g' has resided in Inbox 168h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1646,
+      "age_hours": 192.0,
+      "detail": "#1646 'Browser audit: content.real_card_or_named_empty on event.pag' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1644,
+      "age_hours": 192.0,
+      "detail": "#1644 'Browser audit: content.real_card_or_named_empty on event.pag' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1637,
+      "age_hours": 192.0,
+      "detail": "#1637 'admin db-query row cap is skipped when the SQL merely contai' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1636,
+      "age_hours": 192.0,
+      "detail": "#1636 'API serves no gzip/brotli: a settled event page transfers 1,' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1634,
+      "age_hours": 192.0,
+      "detail": "#1634 '_query_event_source_coverage has 1.4x cold headroom against ' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1633,
+      "age_hours": 192.0,
+      "detail": "#1633 'Swift joins CodeQL \u2014 one-session plumbing item under the dai' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1630,
+      "age_hours": 192.0,
+      "detail": "#1630 'Polymarket duplicate player-prop rows carry conflicting pric' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1629,
+      "age_hours": 192.0,
+      "detail": "#1629 'game-markets: Polymarket player props never reach the typed ' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1625,
+      "age_hours": 192.0,
+      "detail": "#1625 'Major golf pages admit foreign markets and fields through le' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1622,
+      "age_hours": 192.0,
+      "detail": "#1622 'Codex eval-corpus generator emits 'from backend.scripts.eval' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1618,
+      "age_hours": 192.0,
+      "detail": "#1618 'Doubles pairings slip past isLikelyPersonName \u2014 \"A / B\" stil' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1616,
+      "age_hours": 192.0,
+      "detail": "#1616 'Browser audit: network.no_unexpected_failures on tournament.' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1615,
+      "age_hours": 192.0,
+      "detail": "#1615 'Browser audit: console.no_errors on tournament.f1' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1614,
+      "age_hours": 192.0,
+      "detail": "#1614 'Browser audit: console.no_errors on tournament.tennis' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1612,
+      "age_hours": 192.0,
+      "detail": "#1612 'Browser audit: console.no_errors on tournament.combat' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1611,
+      "age_hours": 192.0,
+      "detail": "#1611 'Browser audit: content.main_region_nonblank on tournament.co' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1610,
+      "age_hours": 192.0,
+      "detail": "#1610 'Browser audit: console.no_errors on tournament.election' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1606,
+      "age_hours": 192.0,
+      "detail": "#1606 'The slow-event ring cannot attribute a stage outside /api/fe' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1605,
+      "age_hours": 192.0,
+      "detail": "#1605 'GET /api/events repeats the odds-enrichment window scan LAT-' has resided in Inbox 192h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1601,
+      "age_hours": 216.0,
+      "detail": "#1601 'poll_live_prediction_markets serialises against itself on fu' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1598,
+      "age_hours": 216.0,
+      "detail": "#1598 'The REPLACEMENT browser-audit rail has been red since 2026-0' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1595,
+      "age_hours": 216.0,
+      "detail": "#1595 '/api/admin/dashboard 'database' section returns an aborted-t' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1592,
+      "age_hours": 216.0,
+      "detail": "#1592 '[Regression watch] /sports renders empty 'Live Now'/'Just Ha' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1590,
+      "age_hours": 216.0,
+      "detail": "#1590 'Search relevance: 'The Emmys' tops 'world series', a minor-l' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1587,
+      "age_hours": 216.0,
+      "detail": "#1587 'game-markets is 2.25s for 8.5 KB on the event detail page (n' has resided in Inbox 216h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1581,
+      "age_hours": 240.0,
+      "detail": "#1581 'A threshold ladder must be rungs of ONE question: outcome-pa' has resided in Inbox 240h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1575,
+      "age_hours": 240.0,
+      "detail": "#1575 'Orphaned WIP destroyed in shared tree 2026-08-07: nine files' has resided in Inbox 240h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1571,
+      "age_hours": 240.0,
+      "detail": "#1571 'CodeQL has failed on every master commit for 6+ runs: Swift ' has resided in Inbox 240h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1564,
+      "age_hours": 288.0,
+      "detail": "#1564 '[Bug Report] How come none of the playoff grids have a \u201cmake' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1563,
+      "age_hours": 288.0,
+      "detail": "#1563 'Auto-file rageshake bug reports as deduped alert-intake GitH' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1562,
+      "age_hours": 288.0,
+      "detail": "#1562 'Wire blend-parity browser pack into browser-audit.yml as a d' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1561,
+      "age_hours": 288.0,
+      "detail": "#1561 'Live-edge carry-forward has no staleness limit: pre-game eve' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1560,
+      "age_hours": 288.0,
+      "detail": "#1560 'Admin Slice E: tier1-gaps coalesced view (PARKED \u2014 build onl' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1559,
+      "age_hours": 288.0,
+      "detail": "#1559 'Admin Slice D: split admin_data_quality.py god-module + norm' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1558,
+      "age_hours": 288.0,
+      "detail": "#1558 'Admin Slice C: single matching/source surface + cockpit runb' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1557,
+      "age_hours": 288.0,
+      "detail": "#1557 'Admin Slice B: unify keyboard-queue state machine + single l' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1556,
+      "age_hours": 288.0,
+      "detail": "#1556 'Admin: audit log + structured logging for db-query and destr' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1555,
+      "age_hours": 288.0,
+      "detail": "#1555 'Admin Slice A: collapse sidebar 8\u21924 pillars + defragment the' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1554,
+      "age_hours": 288.0,
+      "detail": "#1554 'Admin suite overhaul: declutter, de-dupe, automate (read-onl' has resided in Inbox 288h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1550,
+      "age_hours": 312.0,
+      "detail": "#1550 'PROGRAM PARENT: Discover \u2014 feed ordering, interestingness, s' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1549,
+      "age_hours": 312.0,
+      "detail": "#1549 'PROGRAM PARENT: Events \u2014 props are the story (event pages)' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1548,
+      "age_hours": 312.0,
+      "detail": "#1548 'PROGRAM PARENT: Plumbing / infra (capped)' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1547,
+      "age_hours": 312.0,
+      "detail": "#1547 'PROGRAM PARENT: Native \u2014 iOS/iPadOS/macOS/watchOS' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1545,
+      "age_hours": 312.0,
+      "detail": "#1545 'PROGRAM PARENT: Latency \u2014 speed' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1544,
+      "age_hours": 312.0,
+      "detail": "#1544 'PROGRAM PARENT: Calibration \u2014 accuracy & completeness' has resided in Inbox 312h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1543,
+      "age_hours": 336.0,
+      "detail": "#1543 'Soccer tournament concept UX (World Cup) \u2014 rendered-good bar' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1541,
+      "age_hours": 336.0,
+      "detail": "#1541 'odds_api championship futures never settle \u2014 FIFA World Cup ' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1540,
+      "age_hours": 336.0,
+      "detail": "#1540 'Morning Digest quality: settled markets shown as 'Biggest Mo' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1537,
+      "age_hours": 336.0,
+      "detail": "#1537 'Curation-source backlog (beyond email/Kalshi/Wikipedia)' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1536,
+      "age_hours": 336.0,
+      "detail": "#1536 'Wikipedia pageview salience as a curation + surface-timing s' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1535,
+      "age_hours": 336.0,
+      "detail": "#1535 'Kalshi featured/trending as a second curation source (cross-' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1534,
+      "age_hours": 336.0,
+      "detail": "#1534 'Curation intake: one abstraction for external editorial/crow' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1533,
+      "age_hours": 336.0,
+      "detail": "#1533 'Auto-apply Polymarket email curation as a bounded Discover s' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1529,
+      "age_hours": 336.0,
+      "detail": "#1529 'Roll the shared game-market classifier into events.py + admi' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1528,
+      "age_hours": 336.0,
+      "detail": "#1528 'Capture-truth program: per-game market-class capture + well-' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1526,
+      "age_hours": 336.0,
+      "detail": "#1526 'Discover card drops the leading outcome: distribution_outcom' has resided in Inbox 336h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1524,
+      "age_hours": 360.0,
+      "detail": "#1524 '[Horizon] US Open Tennis 2026 \u2014 T-30 candidate' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1523,
+      "age_hours": 360.0,
+      "detail": "#1523 '[Calibration Sentinel] new-format break: category=table_tenn' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1516,
+      "age_hours": 360.0,
+      "detail": "#1516 'poll_datagolf degraded \u2014 4 consecutive asyncpg DeadlockDetec' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1511,
+      "age_hours": 360.0,
+      "detail": "#1511 '[Flow Sentinel] unmerged team-identity dupes remain or adjud' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1510,
+      "age_hours": 360.0,
+      "detail": "#1510 '[Flow Sentinel] imminent event has an unlinked winner market' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1502,
+      "age_hours": 360.0,
+      "detail": "#1502 'Discover ranking controls report values without provenance, ' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1495,
+      "age_hours": 360.0,
+      "detail": "#1495 'Settled events never resolve the hero probability to the res' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1486,
+      "age_hours": 360.0,
+      "detail": "#1486 'Discover concept/bundle feed cards render with zero inline o' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1485,
+      "age_hours": 360.0,
+      "detail": "#1485 'Board Sentinel + health-filer marker parsers: anchor detecti' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1466,
+      "age_hours": 360.0,
+      "detail": "#1466 'Calibration and backfill completeness \u2014 recover every availa' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "stale_inbox",
+      "issue": 1449,
+      "age_hours": 360.0,
+      "detail": "#1449 '[Board Sentinel] 3 board-hygiene defect(s): duplicate_finger' has resided in Inbox 360h (>48h triage bar)"
+     },
+     {
+      "check": "blocked_in_inbox",
+      "issue": 1840,
+      "labels": [
+       "blocked"
+      ],
+      "detail": "#1840 'Recentre the interestingness signal: blending it is currentl' is blocked but sits in Inbox \u2014 move it out of active intake"
+     },
+     {
+      "check": "blocked_in_inbox",
+      "issue": 1754,
+      "labels": [
+       "blocked"
+      ],
+      "detail": "#1754 'Search never returns the real Boston Red Sox \u2014 duplicate tea' is blocked but sits in Inbox \u2014 move it out of active intake"
+     },
+     {
+      "check": "blocked_in_inbox",
+      "issue": 1746,
+      "labels": [
+       "blocked"
+      ],
+      "detail": "#1746 'Entity pages step 4 \u2014 players (gated, last): person entities' is blocked but sits in Inbox \u2014 move it out of active intake"
+     },
+     {
+      "check": "blocked_in_inbox",
+      "issue": 1560,
+      "labels": [
+       "parked"
+      ],
+      "detail": "#1560 'Admin Slice E: tier1-gaps coalesced view (PARKED \u2014 build onl' is parked but sits in Inbox \u2014 move it out of active intake"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1947,
+      "detail": "#1947 'Ruling 048 arm A is unsound as implemented: production holds' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1946,
+      "detail": "#1946 'Ruling 048's bounding clause has no arrival channel: events ' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1940,
+      "detail": "#1940 'Production can be deployed without master, CI, or the Integr' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1925,
+      "detail": "#1925 'P1: Sox @ Pirates 2026-08-15 never created (row #1 of the 32' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1922,
+      "detail": "#1922 'warm_typeahead stalls for minutes at a time \u2014 the head goes ' carries 'blocked' but sits in 'In Progress' (expected the 'Blocked' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1918,
+      "detail": "#1918 'MLB event writer is binding team_ids to the wrong club RIGHT' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1890,
+      "detail": "#1890 'Branch protection requires a check named `test` that no job ' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1888,
+      "detail": "#1888 'A clock-dependent classifier writes PERSISTENT state: _seaso' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1869,
+      "detail": "#1869 '[P0][security] Live ADMIN_TOKEN is committed in a public rep' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1829,
+      "detail": "#1829 'The hero blend is the stale sportsbook, verbatim: 87% for a ' carries 'needs-user' but sits in 'In Progress' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1825,
+      "detail": "#1825 'Golf winner field is incoherent by construction: unweighted ' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1815,
+      "detail": "#1815 'Blend ratification: put two Discover slates in front of Alex' carries 'needs-user' but sits in 'Inbox' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1718,
+      "detail": "#1718 'Discover hero movement threshold is 10 points while the ladd' is in the 'Needs User' column but lacks the 'needs-user' label"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1680,
+      "detail": "#1680 '[Data Quality] calibration_publish_age: no calibration publi' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1597,
+      "detail": "#1597 'P1: /api/calibration serves a 9.6-day-stale payload \u2014 precom' carries 'needs-user' but sits in 'In Progress' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1501,
+      "detail": "#1501 'Sentry error quota exhausted \u2014 backend errors dropped since ' carries 'needs-user' but sits in 'In Progress' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1279,
+      "detail": "#1279 'P0 SECURITY: auth-bypass pack \u2014 passwordless admin mint + no' carries 'needs-user' but sits in 'Review / Verify' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1170,
+      "detail": "#1170 '\"Lucky\" label tamagotchi: gamified family labeling (P1 rater' carries 'parked' but sits in 'In Progress' (expected the 'Parked' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1145,
+      "detail": "#1145 '[Calibration Sentinel] calibration break: category=hockey \u00b7 ' is in the 'Parked' column but lacks the 'parked' label"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 1145,
+      "detail": "#1145 '[Calibration Sentinel] calibration break: category=hockey \u00b7 ' carries 'needs-user' but sits in 'Parked' (expected the 'Needs User' column)"
+     },
+     {
+      "check": "label_status_parity",
+      "issue": 490,
+      "detail": "#490 'Confidence tiers on Discover cards \u2014 signal bars (high/mediu' is in the 'Needs User' column but lacks the 'needs-user' label"
+     },
+     {
+      "check": "ready_scoping",
+      "issue": 1521,
+      "detail": "#1521 'Frontend TypeScript debt: clear the 89 baselined errors and ' is Ready but has no owner signal (needs-agent / owner-ready / in-progress / assignee)"
+     }
+    ],
+    "unknown": [],
+    "offenders": [
+     490,
+     1145,
+     1170,
+     1279,
+     1449,
+     1466,
+     1485,
+     1486,
+     1495,
+     1501,
+     1502,
+     1510,
+     1511,
+     1516,
+     1521,
+     1523,
+     1524,
+     1526,
+     1528,
+     1529,
+     1533,
+     1534,
+     1535,
+     1536,
+     1537,
+     1540,
+     1541,
+     1543,
+     1544,
+     1545,
+     1546,
+     1547,
+     1548,
+     1549,
+     1550,
+     1554,
+     1555,
+     1556,
+     1557,
+     1558,
+     1559,
+     1560,
+     1561,
+     1562,
+     1563,
+     1564,
+     1571,
+     1575,
+     1576,
+     1581,
+     1586,
+     1587,
+     1590,
+     1592,
+     1593,
+     1595,
+     1597,
+     1598,
+     1601,
+     1603,
+     1605,
+     1606,
+     1610,
+     1611,
+     1612,
+     1614,
+     1615,
+     1616,
+     1618,
+     1622,
+     1625,
+     1629,
+     1630,
+     1632,
+     1633,
+     1634,
+     1636,
+     1637,
+     1641,
+     1643,
+     1644,
+     1646,
+     1651,
+     1658,
+     1662,
+     1663,
+     1665,
+     1666,
+     1667,
+     1668,
+     1678,
+     1679,
+     1680,
+     1681,
+     1682,
+     1683,
+     1684,
+     1685,
+     1686,
+     1687,
+     1689,
+     1690,
+     1691,
+     1693,
+     1694,
+     1696,
+     1700,
+     1702,
+     1703,
+     1708,
+     1709,
+     1711,
+     1712,
+     1715,
+     1718,
+     1720,
+     1728,
+     1735,
+     1736,
+     1737,
+     1738,
+     1739,
+     1740,
+     1741,
+     1745,
+     1746,
+     1747,
+     1748,
+     1749,
+     1750,
+     1751,
+     1752,
+     1753,
+     1754,
+     1757,
+     1762,
+     1763,
+     1765,
+     1771,
+     1774,
+     1775,
+     1777,
+     1778,
+     1780,
+     1781,
+     1782,
+     1783,
+     1784,
+     1785,
+     1786,
+     1787,
+     1788,
+     1789,
+     1790,
+     1792,
+     1795,
+     1799,
+     1800,
+     1804,
+     1808,
+     1810,
+     1815,
+     1817,
+     1820,
+     1821,
+     1822,
+     1825,
+     1826,
+     1828,
+     1829,
+     1830,
+     1831,
+     1832,
+     1833,
+     1834,
+     1840,
+     1842,
+     1843,
+     1848,
+     1853,
+     1856,
+     1858,
+     1861,
+     1863,
+     1867,
+     1869,
+     1871,
+     1877,
+     1880,
+     1881,
+     1888,
+     1890,
+     1918,
+     1922,
+     1923,
+     1925,
+     1940,
+     1946,
+     1947
+    ],
+    "filed": {
+     "fingerprint": "4571dcf6fd3e",
+     "marker": "board-sentinel-fingerprint",
+     "action": "commented",
+     "issue": 1449,
+     "verdict": "red"
+    },
+    "duration_seconds": 16.3,
+    "generated_at": "2026-08-18T07:50:00.083112+00:00"
+   },
+   "consecutive_failures": "0",
+   "last_verdict": "unverified",
+   "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+   "last_started_at": "2026-08-18T07:50:00.052253+00:00",
+   "health": "no_data"
+  },
+  "calibration_sentinel": {
+   "task": "calibration_sentinel",
+   "status": "no_data"
+  }
+ }
+}
