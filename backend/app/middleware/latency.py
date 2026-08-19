@@ -23,6 +23,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from app.utils.request_timing import REQUEST_START_HEADER
+
 logger = logging.getLogger(__name__)
 
 # Sample every Nth request to limit Redis writes.
@@ -76,6 +78,25 @@ SLOW_EVENT_MAX = int(os.getenv("LATENCY_SLOW_EVENT_MAX", "500"))
 # existed). Bounded by SLOW_EVENT_MAX, so the TTL costs nothing extra.
 SLOW_EVENT_TTL_SECONDS = int(os.getenv("LATENCY_SLOW_EVENT_TTL", str(7 * 24 * 3600)))
 SLOW_EVENT_KEY = "latency:slow_events"
+
+# #1917 (LAT-P070): the router-queue / app / DB split.
+#
+# `X-Feed-Stages` attributes /api/feed and nothing else, so every other endpoint's
+# tail — /api/golf/tournaments/{slug}'s measured p90 15.260 s under load against a
+# 2.451 s quiet baseline — could be seen but not attributed. LAT-P069 measured that
+# BOTH terms of the requested split were unreachable: `X-Request-Start` had 0 hits
+# in app/, and `debug_timing` 0 hits in routes/golf.py.
+#
+# Kill switch rather than a constant: this writes a response header on every /api
+# request, and a rail with no off switch is one that gets reverted wholesale the
+# first time it is suspected. Default ON — an instrument nobody enables measures
+# nothing.
+TIMING_SPLIT_ENABLED = os.getenv("TIMING_SPLIT_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 # #1500: cache-status buckets recorded alongside each sample. Constrained to a
 # fixed allowlist so the dimension can never grow unbounded — an unknown header
@@ -219,6 +240,7 @@ async def _record_slow_event(
     cache_bucket: str,
     response,
     rss_mb: Optional[float] = None,
+    split: Optional[dict] = None,
 ) -> None:
     """Append one tail observation to the bounded slow-event ring (#1459).
 
@@ -245,6 +267,7 @@ async def _record_slow_event(
             cache_bucket=cache_bucket,
             stages=stages,
             rss_mb=rss_mb,
+            split=split,
         )
         pipe = r.pipeline(transaction=False)
         # LPUSH + LTRIM(0, MAX-1) keeps the ring newest-first and capped, so a
@@ -269,9 +292,53 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         if path == "/" or not path.startswith("/api") or "/admin" in path:
             return await call_next(request)
 
+        # #1917 (LAT-P070): the router-queue term is read HERE, at the moment the
+        # dyno first has the request — not after call_next. Reading it later would
+        # fold the app's own service time into "queue time", which is the exact
+        # mis-attribution the probe exists to rule out.
+        db_token = None
+        router_ms: Optional[float] = None
+        if TIMING_SPLIT_ENABLED:
+            try:
+                from app.utils.request_timing import begin_db_timing, router_queue_ms
+
+                router_ms = router_queue_ms(request.headers.get(REQUEST_START_HEADER))
+                db_token = begin_db_timing()
+            except Exception:
+                logger.debug("Timing split setup failed", exc_info=True)
+
         start = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            db_snapshot = None
+            if db_token is not None:
+                try:
+                    from app.utils.request_timing import current_db_timing, end_db_timing
+
+                    db_snapshot = current_db_timing()
+                    end_db_timing(db_token)
+                except Exception:
+                    logger.debug("Timing split teardown failed", exc_info=True)
         duration_ms = (time.perf_counter() - start) * 1000
+
+        # Build the split and publish it on the response. Wrapped whole: an
+        # observability rail must never be the reason a request fails.
+        split: Optional[dict] = None
+        if TIMING_SPLIT_ENABLED:
+            try:
+                from app.utils.request_timing import (
+                    SPLIT_HEADER,
+                    build_split,
+                    format_split_header,
+                )
+
+                split = build_split(
+                    wall_ms=duration_ms, db=db_snapshot, router_ms=router_ms
+                )
+                response.headers[SPLIT_HEADER] = format_split_header(split)
+            except Exception:
+                logger.debug("Timing split emit failed", exc_info=True)
 
         # Log memory for slow requests to diagnose OOM crashes (#809)
         rss_mb: Optional[float] = None
@@ -297,7 +364,7 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         # gating it behind sampling would throw away 9 of every 10 of them.
         if duration_ms >= SLOW_EVENT_MS:
             await _record_slow_event(
-                normalized, duration_ms, _cache_bucket(response), response, rss_mb
+                normalized, duration_ms, _cache_bucket(response), response, rss_mb, split
             )
 
         # Sampling: per-endpoint 1-in-N, with an always-sample allowlist (#1500).

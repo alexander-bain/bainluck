@@ -378,6 +378,91 @@ RETIRED_TASK_LABELS = frozenset({
 _NOT_GREEN_VERDICTS = frozenset({"partial", "unknown", "failed"})
 
 
+#: LAT-P070 (#1609, #1501): terminal fields a run can only have written from an
+#: END handler. If any of them post-dates the last start, that run reached a
+#: handler — whatever the counters say.
+_TERMINAL_STAMP_FIELDS = ("last_success_at", "last_failure_at", "last_incomplete_at")
+
+#: Tolerance on the start/terminal comparison. Both stamps are written by the
+#: same process from the same clock, so this only absorbs sub-second ordering
+#: noise; it is NOT a window.
+_TERMINAL_STAMP_TOLERANCE_S = 1.0
+
+
+def _parse_iso(value):
+    """Epoch seconds from one of the metric hash's ISO stamps, or ``None``."""
+    # Function-local, matching this module's existing convention (see
+    # `_now_iso`); `datetime` is deliberately not a module-level name here.
+    from datetime import datetime
+
+    if not value:
+        return None
+    if isinstance(value, bytes):
+        try:
+            value = value.decode()
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _terminal_evidence_refutes_hard_kill(result: dict):
+    """Did the LAST run demonstrably reach an end handler? Reason, or ``None``.
+
+    ``hard_kills_24h`` is DERIVED — ``starts − (successes + failures +
+    incompletes)`` — and the four counters do **not** share a window: each is
+    stamped ``SET NX EX 86400`` at its own first increment, so each expires on
+    its own schedule. For a task whose cadence is *exactly* 24 h, every key's
+    expiry therefore lands within milliseconds of the next increment, and
+    whether that increment lands on a live key (2) or a dead one (a fresh 1) is
+    a race — one that can resolve DIFFERENTLY for ``starts`` and ``successes``,
+    because they are written a fraction of a second apart.
+
+    **Measured on production, 2026-08-18T22:45Z, one morning, two tasks, the
+    same race resolving in opposite directions:**
+
+    * ``mlb_schedule_coverage`` — ``starts_24h: 1``, ``successes_24h: 0`` (no
+      success window at all) ⇒ a derived ``hard_kills_24h: 1`` and
+      ``health: critical, "1 runs started, none reached an end handler —
+      hard-killed"``. Yet the same payload carried ``last_started_at
+      07:05:00.095``, ``last_success_at 07:05:00.851``, ``last_duration_ms
+      734`` and a fully populated ``last_result_summary`` for 2026-08-18. A run
+      that never reached an end handler cannot have written any of those three —
+      **they ARE the end handler's writes.**
+    * ``grid_sentinel`` — ``starts_24h: 0``, ``successes_24h: 1``. The inverse,
+      saved from a negative only by the ``max(0, …)`` clamp.
+
+    So the reconciliation is not a fudge factor; it is the payload's own
+    self-consistency, and it refutes **exactly one** kill — the last run — which
+    is the only run these stamps are evidence about. A genuine kill among
+    earlier runs survives, because nothing here speaks for those.
+
+    This is doctrine clause 1 in counter form: "could not compare" must not
+    render as "hard-killed". A phantom kill is worse than a missing one — it
+    files an issue, it turns a health surface red, and (LAT-P069's exact
+    warning) it makes a graded read blame the wrong cause.
+    """
+    started = _parse_iso(result.get("last_started_at"))
+    if started is None:
+        return None
+    for field_name in _TERMINAL_STAMP_FIELDS:
+        ended = _parse_iso(result.get(field_name))
+        if ended is None:
+            continue
+        if ended >= started - _TERMINAL_STAMP_TOLERANCE_S:
+            return (
+                f"counter-window artifact: {field_name}={result.get(field_name)} "
+                f"post-dates last_started_at={result.get('last_started_at')}, so the "
+                "last run DID reach an end handler; the zero terminal counter is an "
+                "independently-expiring 24h window on a ~24h cadence, not a kill"
+            )
+    return None
+
+
 def _bump_window_counter(pipe, key: str):
     """Increment a 24h counter WITHOUT sliding its expiry forward.
 
@@ -1066,6 +1151,14 @@ def get_task_metrics(task_name: str) -> dict:
         # SIGKILL (Heroku R15 memory) or a hard ``time_limit`` teardown. Clamped
         # at zero because a run can legitimately start in one 24h window and
         # finish in the next.
+        #
+        # 🔴 LAT-P070 (#1609, #1501): this subtraction spans FOUR INDEPENDENT
+        # WINDOWS. The comment forty lines below already says they do not share
+        # one — "each opens at its own first increment" — and this line subtracts
+        # across them anyway. See ``_terminal_evidence_refutes_hard_kill``: the
+        # difference is reconciled against the terminal timestamps before it is
+        # published, because on an exactly-daily task the derivation is a
+        # coin flip.
         hard_kills_24h = max(0, starts_24h - (successes_24h + failures_24h + incompletes_24h))
 
         # LAT-P022 (#1609): the counters' own window ages. Every count above is
@@ -1147,6 +1240,21 @@ def get_task_metrics(task_name: str) -> dict:
             else:
                 result[k_str] = v_str
 
+        # LAT-P070 (#1609, #1501): reconcile the DERIVED kill count against the
+        # terminal stamps now that the hash has been merged in above. Done here
+        # and not at the subtraction because the evidence lives in the hash, and
+        # done before the health block because the health block asserts the
+        # mechanism ("hard-killed (memory / hard time limit)") out loud.
+        hard_kill_refutation = None
+        if hard_kills_24h > 0:
+            hard_kill_refutation = _terminal_evidence_refutes_hard_kill(result)
+            if hard_kill_refutation:
+                # Exactly one — the last run — because that is the only run these
+                # stamps are evidence about. Earlier kills survive.
+                hard_kills_24h = max(0, hard_kills_24h - 1)
+                result["hard_kills_24h"] = hard_kills_24h
+                result["hard_kills_refuted"] = hard_kill_refutation
+
         # Compute health status. Retired tasks report a distinct "retired"
         # health so their stale metrics can't latch the health rollups to
         # degraded/critical (those rollups filter on health == degraded/critical).
@@ -1177,6 +1285,17 @@ def get_task_metrics(task_name: str) -> dict:
             # windows took the reading at face value and went looking for a
             # scheduler fault while the beat fired hourly and died of memory.
             if starts_24h > 0:
+                # LAT-P070: ...unless the payload's own terminal stamps say the
+                # last run DID reach a handler. Then this branch would publish a
+                # mechanism ("hard-killed") that the same payload refutes, and a
+                # daily task would flip red on a millisecond race between two
+                # independently-expiring counters. Measured: `mlb_schedule_coverage`
+                # read critical/hard-killed with a 734 ms duration and a full
+                # result summary from the same morning.
+                if hard_kill_refutation:
+                    result["health"] = "healthy"
+                    result["health_reason"] = hard_kill_refutation
+                    return result
                 result["health"] = "critical"
                 result["health_reason"] = (
                     f"{starts_24h} runs started, none reached an end handler "

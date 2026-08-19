@@ -212,12 +212,21 @@ def build_slow_event(
     cache_bucket: str,
     stages: Optional[str] = None,
     rss_mb: Optional[float] = None,
+    split: Optional[dict] = None,
 ) -> str:
     """Serialise one tail observation for the slow-event ring.
 
     JSON rather than the colon-delimited member form used above: this record has
     optional fields and a free-text stage string, and ``parse_sample_member``
     already shows what positional parsing costs once a field becomes optional.
+
+    ``split`` (#1917, LAT-P070) carries the router-queue / app / DB attribution
+    from :mod:`app.utils.request_timing`. It rides the tail ring rather than a
+    new key family for the same reason the cache bucket does — Redis here is
+    Premium-0 / 50 MB / allkeys-lru — and it is what turns the tail from a
+    stakeout into a read: a rare 15 s golf request records WHY it was 15 s at the
+    moment it happens, instead of needing a loaded window to be re-created by
+    hand. Only the attribution fields are kept; the display-only ones are not.
     """
     record = {
         "t": round(float(timestamp), 3),
@@ -232,6 +241,17 @@ def build_slow_event(
             record["top_stage"], record["top_stage_ms"] = top[0], round(top[1], 1)
     if rss_mb is not None and math.isfinite(rss_mb):
         record["rss_mb"] = round(float(rss_mb), 1)
+    if isinstance(split, dict):
+        for key in ("db_ms", "app_ms", "router_queue_ms", "queries", "max_query_ms"):
+            value = split.get(key)
+            # `None` means UNUSABLE and is written as such — dropping the key
+            # would let a reader default it to 0 and conclude the router took no
+            # time, which is gotcha #53's exact shape.
+            if value is None:
+                record[key] = None
+                continue
+            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                record[key] = value
     return json.dumps(record, separators=(",", ":"), allow_nan=False)
 
 
@@ -291,4 +311,78 @@ def summarize_slow_events(records: Sequence[dict]) -> dict:
         bucket["max_ms"] = round(max(bucket["max_ms"], float(record["ms"])), 1)
         cache = record.get("cache") or "none"
         summary["by_cache"][cache] = summary["by_cache"].get(cache, 0) + 1
+    summary["by_layer"] = _summarize_layers(usable)
     return summary
+
+
+#: #1917 (LAT-P070): the layer rollup. `by_top_stage` answers "which stage" and can
+#: only do it for `/api/feed`; this answers "which LAYER" for every endpoint, which
+#: is the axis the golf probe's prediction is graded on (DB > 70 %, app 10–25 %,
+#: router < 10 %, HALT at router > 30 %).
+#:
+#: It exists because the split was otherwise written and never read: the ring
+#: records `db_ms`/`app_ms`/`router_queue_ms` per event, and without a rollup the
+#: only way to use them is to hand-parse the raw list — which is the stakeout the
+#: whole rail exists to replace.
+_LAYER_FIELDS = ("db_ms", "app_ms", "router_queue_ms")
+
+
+def _summarize_layers(usable: Sequence[dict]) -> dict:
+    """Per-layer totals over the tail events that carry a split.
+
+    Three counts, and the distinction between them is the point (gotcha #53):
+
+    * ``n_attributed`` — events carrying the split at all. Events recorded before
+      the instrument shipped do not, and must not be averaged in as zeros.
+    * ``router_n_usable`` — of those, how many had a **usable** ``X-Request-Start``.
+      A `None` there means "could not measure the router", and folding it into a
+      mean as 0 would manufacture the very "router is cheap" conclusion the HALT
+      condition is supposed to be able to refute.
+    * ``dominant`` — the layer with the largest total, or ``None`` when nothing is
+      attributed. Never a default layer: "we don't know" is not "it was the app".
+    """
+    attributed = [r for r in usable if any(f in r for f in _LAYER_FIELDS)]
+    out: dict = {
+        "n_attributed": len(attributed),
+        "n_unattributed": len(usable) - len(attributed),
+        "router_n_usable": 0,
+        "totals_ms": {},
+        # Shape-stable: every key is present on the empty path too. A payload
+        # whose KEYS depend on its data forces every consumer to write the
+        # `.get(...) or {}` dance, and the one that forgets reads a missing key
+        # as a zero — the same could-not-check/nothing-to-report collapse the
+        # rest of this module is built to avoid.
+        "means_ms": {field_name: None for field_name in _LAYER_FIELDS},
+        "shares": {},
+        "dominant": None,
+    }
+    if not attributed:
+        return out
+
+    totals = {"db_ms": 0.0, "app_ms": 0.0, "router_queue_ms": 0.0}
+    counts = {"db_ms": 0, "app_ms": 0, "router_queue_ms": 0}
+    for record in attributed:
+        for field_name in _LAYER_FIELDS:
+            value = record.get(field_name)
+            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                continue  # absent, or an explicit null meaning "unusable"
+            totals[field_name] += float(value)
+            counts[field_name] += 1
+
+    out["router_n_usable"] = counts["router_queue_ms"]
+    out["totals_ms"] = {k: round(v, 1) for k, v in totals.items()}
+    out["means_ms"] = {
+        k: round(totals[k] / counts[k], 1) if counts[k] else None for k in totals
+    }
+    measured = {k: v for k, v in totals.items() if counts[k]}
+    if measured:
+        out["dominant"] = max(measured, key=measured.get)
+    # The share each layer holds of the measured total — the number the prediction
+    # is stated in. Router is included only when it was actually readable, so a
+    # fleet with no usable header reports shares over db+app and says so via
+    # `router_n_usable: 0` rather than crediting the router with 0 %.
+    denom = sum(measured.values())
+    out["shares"] = (
+        {k: round(v / denom, 3) for k, v in measured.items()} if denom > 0 else {}
+    )
+    return out
