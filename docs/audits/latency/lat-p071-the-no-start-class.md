@@ -129,11 +129,19 @@ counter created `SET NX EX 86400` at its own first increment, so it is bounded a
 gradeable  <=>  interval_s <= WINDOW_COUNTER_TTL / MIN_EXPECTED_FIRES  =  43,200 s  =  12 h
 ```
 
-**33 of 123 scheduled entries are on the wrong side of that line** — every one 24-hourly or weekly.
-A further 7 have no counter window at all. Each of the 33 reports
-`window_too_short(expected=0.89<2.0)`: a string that reads as a condition about to clear. **It never
-clears.** The counter cannot outlive its own TTL, so the expectation cannot reach 2.0, so the verdict
-cannot change — not tomorrow, not ever, while both constants hold.
+**38 of 123 scheduled entries are on the wrong side of that line** — every one 24-hourly or weekly.
+The number is split two ways and both halves matter:
+
+| | count | what it reports today |
+|---|---|---|
+| interval > 12 h, counter exists | **33** | `window_too_short(expected=0.89<2.0)` — reads as *about to clear* |
+| interval > 12 h, counter absent | **5** | `no_interval_or_window` |
+| interval ≤ 12 h, counter absent | 2 | `no_interval_or_window` — includes **`warm_typeahead`**, §6 |
+
+**The 33 never clear.** The counter cannot outlive its own TTL, so the expectation cannot reach 2.0,
+so the verdict cannot change — not tomorrow, not ever, while both constants hold. That is a
+different fact from the sentence the payload prints, and a reader who waits for it to clear waits
+forever.
 
 Among the 33: **`flow_sentinel`, `grid_sentinel`, `horizon_sentinel`, `settled_concept_sentinel`,
 `board_sentinel`, `mlb_schedule_coverage`** — **all six of the tasks T5 grades.** That is not a
@@ -456,9 +464,70 @@ Two commits, both behind the fence.
    twenty. The messages a starved beat waits behind were never once read. Adds both ends, plus
    `coverage` — a census that cannot say how much it saw is an anecdote with a total attached.
 
-12 mutations across the two, all caught — **after two rounds that found three real gaps in my own
-tests** (an ahead-drift guard duplicated in two places so deleting either was invisible; a uniform
-fixture that could not tell the head of a slice from its tail; a coverage boundary no test sat on).
+3. **`c6f9a571` — the availability fix** for the outage in §3e. Off-loop, single-flighted, memoised
+   with the cache state disclosed, `?fresh=1` to bypass. See ruling 096.
+
+4. **`8880d79a` — three defects that only running things found.** Details below.
+
+### 6a — The dry run, and what it changed
+
+The stamp arm was graded **offline against real production stamps** before it could deploy
+(`docs/audits/latency/lat-p071-stamp-arm-dry-run.txt`). Three things came out of it that the design
+did not produce:
+
+| task | old | new | newest stamp |
+|---|---|---|---|
+| `flow_sentinel` | unmeasurable | on_schedule | 8.0 h (0.3×) |
+| `mlb_schedule_coverage` | unmeasurable | on_schedule | 22.5 h (0.9×) |
+| `grid_sentinel` · `horizon_sentinel` · `board_sentinel` · `settled_concept_sentinel` | unmeasurable | on_schedule | 21.7–22.1 h (0.9×) |
+| `calibration_sentinel` (weekly) | unmeasurable | on_schedule | 47.1 h (0.3×) |
+| `export_engagement` | unmeasurable | on_schedule | 25.4 h (**1.1×**) |
+| **`warm_typeahead`** | unmeasurable | **missing** | **3.6 h (1,301×)** |
+
+1. **Zero false MISSINGs across 12 healthy beats.** That is the safety property that decides whether
+   this arm survives contact with an on-call rotation.
+2. **`STAMP_LATE_TOLERANCE = 2.0` was vindicated on real data, unplanned.** Most daily sentinels sit
+   at 0.9×. `export_engagement` reads **1.1× while healthy** — at a tolerance of 1.0 it would be
+   reported MISSING today. The boundary-flap the constant was chosen to avoid is a row in this table,
+   not a hypothetical.
+3. **The arm was silent on the one task that mattered most, and the table is why it no longer is.**
+   `warm_typeahead` has a 10-second interval — nowhere near the 12 h ceiling — so the first version
+   declined it. Its counter had expired, so the rate arm was mute too. **Both arms silent on the
+   largest single publisher into the queue this whole program is about, stalled 3.6 hours.** A
+   no-window row now takes the stamp arm regardless of interval, with `STAMP_MIN_TOLERANCE_S = 300`
+   flooring the tolerance so a fast beat is not flagged on twenty seconds of jitter.
+
+Incidentally: the arm grades a *weekly* beat correctly at 0.3×, so it **subsumes** the T5 protocol's
+manual cadence exclusion (§2 of that document) rather than sitting beside it.
+
+### 6b — And the full suite found one the dry run could not
+
+`16,709 passed / 1 failed`, and the 1 was mine: the 5-second memo **masked a live broker failure**.
+`test_response_shape_on_inspect_error` asserts that when `inspect` raises the payload says
+`inspect_error` rather than 200-ing silently — a gotcha #53 contract — and a cached success
+satisfied the request without ever making the call that would have failed.
+
+A 5-second window of that is an acceptable price for the availability the memo buys, and `_cache`
+discloses it. Having no way out is not. `?fresh=1` bypasses the memo *read* (never the off-loop or
+single-flight protections), a raising call writes nothing to the cache, and **both halves are
+pinned**: one test asserts the memo does mask a fresh failure inside the TTL — the cost, stated
+rather than tolerated in silence — and one asserts the bypass surfaces it.
+
+### 6c — Mutations
+
+**23 across the window, all caught — after three rounds that found five real gaps in my own tests.**
+The gaps are the interesting part, because each was invisible to review:
+
+* an ahead-drift guard **duplicated in two places**, so deleting either one alone changed nothing;
+* a **uniform fixture** that could not tell the head of a slice from its tail;
+* a **coverage boundary** no test sat on (`cap >= depth` vs `cap > depth`);
+* a loop-block test that **counted ticks against a fixed 10-iteration loop**, so it capped at 10 and
+  read identically blocked or not — and its rewrite to measure inter-tick **gaps** still failed,
+  because a blocked loop produces no gap at all (measured: off-loop 44 ticks / 0.024 s max gap;
+  on-loop 5 ticks / 0.011 s — **the gap assertion passed in both worlds**). Tick *rate* separates
+  them ~9×;
+* a TTL bound written as `TTL + 1`, which **self-adjusts** — setting the TTL to a billion seconds
+  still "expired".
 
 **Owed, and named:** the census's first production read. It deploys behind the 17:01Z fence, so the
 oldest-end composition — the direct evidence for who the backlog is *made* of — could not be
