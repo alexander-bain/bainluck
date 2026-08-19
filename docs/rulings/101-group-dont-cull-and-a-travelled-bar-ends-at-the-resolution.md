@@ -62,13 +62,35 @@ view would work in-game"* is taken as the green light — it lives in live state
 and only there, where there is no resolution to end at and the journey is the
 whole content.
 
-### The gate before any of that is built
+### The gate before any of that is built — DISCHARGED, same cycle
 
 **First, verify whether the endpoint-not-resolution is presentational or a
 payload gap.** If the rows reaching the client carry no resolution, this is not
 a UI defect at all — it routes to grading, and a presentational fix would ship a
 bar that still cannot reach 0/100 because nothing ever told it where 0/100 is.
-Diagnose before mocking.
+
+**Answered: PRESENTATIONAL.** Measured on production 2026-08-19 (#2011). Among
+rows that actually reach the travelled bar, `hit` is typed on **39/41 (95%)** on
+event 15199902 and **4/4** on 15194472. `frontend/lib/propDivergence.ts` builds
+every row from `over_probability` and `pregame_mark` and contains **zero**
+references to `hit`, `actual`, `is_winner` or `resolution_source` — it does not
+import `propGrade.ts` at all, though the rows it receives already carry those
+fields and a sibling module already parses them for the prop cards.
+
+The diagnosis also found something the screenshot could not show, and it is the
+stronger reason to fix this: **the rail ranks by travel**, and post-game travel
+is computed from the last traded price. So `Ozzie Albies: Home Runs O/U 0.5` —
+pregame 8.5%, resolved HIT, a 91.5-point surprise — draws a FLAT bar and ranks
+**dead last**, while a prop that merely drifted ranks first. Post-game, THE
+DIVERGENCE is sorting the biggest surprises to the bottom of the page.
+
+So `surprise = |resolution − pregameMark|` replaces `travel` as the post-game
+**ranking key**, not merely as the number printed on the row.
+
+Residual that does route to grading, and it is small: `WITHHOLD` rows (2 of 41
+on the larger event) carry no typed verdict, must render
+`SETTLED_NO_GRADE_LABEL` with no bar and no surprise number, and must not be
+ranked by a fabricated surprise of 0.
 
 ## 3. Screenshot durability — option 2 ratified
 
