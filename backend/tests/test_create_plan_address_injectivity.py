@@ -239,3 +239,60 @@ class TestTheCallerEdgeIsExecuted:
         out = await fn(_NoSession(), True, plan_hash="0" * 32, population="2")
         assert out["applied"] is False and out["refused"] is True
         assert out["reason_codes"], "a refusal must name itself"
+
+
+class TestADeriverNeverEmitsARulingItCannotCite:
+    """Queue 371 ruling (b)(3): an inherited template ruling is a forged credential.
+
+    The CREATE deriver stamped every plan it built with
+    `"ruling": "Alex 2026-08-17 — attended CREATE from venue truth, approved"`.
+    That sentence is a claim about a HUMAN APPROVAL OF A POPULATION, and the code
+    building the plan cannot know it: population 3 was minted fresh in window 369
+    with four Aug-19 games Alex had never seen, and inherited the string anyway.
+    An auditor reading `cdc2bae95…` would have found an approval that did not exist.
+
+    Omit the field. A missing credential prompts the question; a forged one answers
+    it. Approval provenance goes ON THE ARTIFACT, recorded by whoever takes the MC.
+    """
+
+    #: An approval is a claim about a person's decision. A ruling NUMBER is a
+    #: citation, and those stay legal.
+    _APPROVAL_WORDS = ("approved", "approval", "signed off", "alex", "mc taken")
+
+    @staticmethod
+    def _code_lines(text):
+        """Comment lines are not emissions.
+
+        A guard that reads its own explanation as a violation teaches the next
+        author to delete the explanation.
+        """
+        return [ln for ln in text.splitlines() if not ln.strip().startswith("#")]
+
+    def test_the_create_deriver_emits_no_ruling_key(self):
+        from app.tasks import create_events_from_truth as rail
+
+        code = "\n".join(self._code_lines(inspect.getsource(rail.repair)))
+        assert '"ruling":' not in code, (
+            "the CREATE deriver is stamping a ruling into every plan context again"
+        )
+
+    def test_no_deriver_context_asserts_a_human_approval(self):
+        """Repo-wide: a plan context may cite a ruling, never assert an approval."""
+        import pathlib
+        import re
+
+        tasks = pathlib.Path(inspect.getsourcefile(__import__("app.tasks", fromlist=["x"]))).parent
+        offenders = []
+        for path in sorted(tasks.glob("*.py")):
+            for line in self._code_lines(path.read_text(encoding="utf-8")):
+                if not re.search(r'"ruling"\s*:', line):
+                    continue
+                lowered = line.lower()
+                if any(word in lowered for word in self._APPROVAL_WORDS):
+                    offenders.append(f"{path.name}: {line.strip()}")
+        assert not offenders, (
+            "a deriver is asserting a human approval it cannot cite:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nCite a ruling NUMBER, or omit the field and record the approval "
+            "on the artifact with its date and its rows."
+        )

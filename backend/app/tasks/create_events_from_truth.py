@@ -590,8 +590,25 @@ async def repair(
         context={
             "issue": "#1796",
             "population": population,
-            "queue": 369,
-            "ruling": "Alex 2026-08-17 — attended CREATE from venue truth, approved",
+            # NO `ruling` KEY, DELIBERATELY (queue 371 ruling (b)(3)).
+            #
+            # This deriver used to stamp every plan it built with
+            # `"ruling": "Alex 2026-08-17 — attended CREATE from venue truth,
+            # approved"`. That string is a claim about a HUMAN APPROVAL OF A
+            # POPULATION, and the deriver cannot know it: population 3 was minted
+            # fresh in window 369 with four Aug-19 games Alex had never seen, and
+            # it inherited the sentence anyway. An auditor reading that artifact
+            # would have found an approval that did not exist.
+            #
+            # A deriver must not emit a ruling it cannot cite — omit the field. An
+            # inherited template ruling is a FORGED CREDENTIAL, and it is worse
+            # than no credential, because a missing one prompts the question and a
+            # forged one answers it. Approval provenance is recorded ON THE
+            # ARTIFACT by whoever takes the MC, naming the date and the rows.
+            #
+            # (`context` is outside `plan_hash` — the address is the sorted row
+            # digests — so recording provenance later never re-addresses a
+            # reviewed plan, and dropping this key never re-addressed one either.)
             "truth_set_hash": truth.get("truth_id_hash"),
             "sport_id": MLB_SPORT_ID,
             "sport_key": "baseball_mlb",
