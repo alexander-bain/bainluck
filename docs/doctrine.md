@@ -94,7 +94,7 @@ not been played (#1945). The guard is now one function
 (`app/utils/game_pairing.live_write_is_premature`), re-exported under its historical
 ESPN name so there is no second copy to drift.
 
-### 10. A line in a spec needs a fixture ON the line.
+### 11. A line in a spec needs a fixture ON the line.
 
 `0.7 - 0.5 !== 0.2`. A threshold assembled from decimal inputs lands a few ULPs either
 side of its intended value at random, so whether two identically-specified cases fall the
