@@ -131,6 +131,55 @@ _OBLIGATION_MAX_AGE_S = 365 * 86400
 
 _OWNER = "repair:pm-never-graded"
 
+# ---------------------------------------------------------------------------
+# Attendance (CAL-P073, C-APPLY-PRE-1912-R2 input 1)
+# ---------------------------------------------------------------------------
+#
+# The pages were already ROW-SAFE — content-addressed plan, compare-and-set,
+# counted exclusions, a persisted invalidation debt. They did not compose into
+# an attended PROGRAMME, and the difference is what one Alex MC is being asked
+# to cover: **~5,661 calls may ride one authorisation only if mid-wave progress
+# is readable.** That is the contract, not a nicety, so the three things below
+# are part of the rail rather than an operator's spreadsheet.
+#
+# The specific defect, and it is not subtle once named: ``_dry_run`` called
+# ``_load_cohort(..., before_id=None)`` unconditionally. The cohort self-drains
+# on APPLY (a written row gains a ``resolution_source`` and leaves the HAVING),
+# so the wave did advance — but only through applying. **Two consecutive
+# dry-runs returned the identical 40 markets, forever.** An operator therefore
+# could not read ahead, could not step over a page that keeps failing at the
+# venue, and could not resume someone else's session. A rail whose only way to
+# move forward is to write is not attendable; it is a ratchet with a human
+# holding it.
+
+#: Cumulative wave progress. One durable slot, overwritten every call, so a
+#: DIFFERENT operator in a DIFFERENT session can read where the wave stands.
+#: Progress kept only in a response body is progress one closed terminal
+#: destroys.
+PROGRESS_IDENTITY = "calibration:repair:pm_never_graded:wave_progress"
+WAVE_PROGRESS_SCHEMA = "calibration-repair-wave-progress/v1"
+
+#: Categories measured at ZERO never-graded markets. They are a tripwire on the
+#: COHORT PREDICATE, not on the data: this rail crowns outcomes from a venue
+#: answer, and the one failure that would not announce itself is the population
+#: quietly widening to include markets nobody scoped. A canary that goes
+#: non-zero means the thing being drained is no longer the thing that was
+#: measured — which is precisely the claim an MC is authorising.
+ZERO_POPULATION_CANARIES: tuple[str, ...] = ("rodeo", "olympics", "legal", "crypto")
+
+#: Statement budget for the canary read. Much tighter than the full census,
+#: because this runs on EVERY progress read and shares the 25 s call budget.
+#: On expiry the canaries are ABSENT with a reason and the verdict is
+#: ``unmeasured`` — never ``clean``. A tripwire that cannot be read has not
+#: been read, and reporting that as "no canary tripped" is gotcha #53 committed
+#: inside the instrument built to prevent it.
+_CANARY_TIMEOUT_MS = 6_000
+
+#: Canary verdicts.
+CANARY_CLEAN = "clean"
+CANARY_TRIPPED = "TRIPPED"
+CANARY_UNMEASURED = "unmeasured"
+
 
 # ---------------------------------------------------------------------------
 # Population
@@ -293,6 +342,232 @@ async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
     return ok, "ok" if ok else f"obligation persist rejected: {result.get('status')}"
 
 
+_CANARY_SQL = f"""
+    SELECT COALESCE(fm.llm_sport_category, 'unknown') AS category,
+           count(*) AS markets
+    FROM (
+        SELECT fm.id, fm.llm_sport_category
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+          AND fm.external_id LIKE '0x%'
+          AND fm.llm_sport_category = ANY(:cats)
+        GROUP BY fm.id, fm.llm_sport_category
+        {POPULATION_HAVING_SQL}
+    ) fm
+    GROUP BY 1
+"""
+
+
+def evaluate_canaries(
+    counts: dict[str, int] | None, *, note: str
+) -> dict[str, Any]:
+    """Grade the zero-population tripwires. UNMEASURED IS NOT CLEAN.
+
+    Returns a verdict per canary plus one overall, and the overall degrades in
+    the safe direction: any tripped canary is ``TRIPPED``; otherwise any
+    unmeasured canary is ``unmeasured``; only an all-measured, all-zero read is
+    ``clean``. Pure so the precedence can be graded without a database.
+    """
+    if counts is None:
+        return {
+            "measured": False,
+            "verdict": CANARY_UNMEASURED,
+            "reason": note,
+            "canaries": {
+                name: {"markets": None, "verdict": CANARY_UNMEASURED}
+                for name in ZERO_POPULATION_CANARIES
+            },
+            "note": (
+                "A tripwire that could not be read has NOT been read. This is "
+                "not a clean canary panel and must not be attended as one."
+            ),
+        }
+    per: dict[str, Any] = {}
+    for name in ZERO_POPULATION_CANARIES:
+        n = int(counts.get(name, 0))
+        per[name] = {
+            "markets": n,
+            "verdict": CANARY_CLEAN if n == 0 else CANARY_TRIPPED,
+        }
+    tripped = sorted(k for k, v in per.items() if v["verdict"] == CANARY_TRIPPED)
+    return {
+        "measured": True,
+        "verdict": CANARY_TRIPPED if tripped else CANARY_CLEAN,
+        "reason": note,
+        "tripped": tripped,
+        "canaries": per,
+        "note": (
+            "A canary above zero means the never-graded population now includes "
+            "a category nobody scoped — the cohort predicate moved, so the "
+            "measurement the MC authorised no longer describes what is being "
+            "drained. HALT and re-census."
+            if tripped else
+            "All four measured at zero: the drained population is still the "
+            "population that was measured."
+        ),
+    }
+
+
+async def _read_canaries(session) -> dict[str, Any]:
+    """Bounded read of the four canary categories. Never raises, never lies."""
+    try:
+        await session.execute(
+            text(f"SET LOCAL statement_timeout = {_CANARY_TIMEOUT_MS}")
+        )
+        rows = (
+            await session.execute(
+                text(_CANARY_SQL), {"cats": list(ZERO_POPULATION_CANARIES)}
+            )
+        ).all()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return evaluate_canaries(
+            None, note=f"canary_read_failed: {type(exc).__name__}: {str(exc)[:120]}"
+        )
+    return evaluate_canaries({r.category: int(r.markets) for r in rows}, note="ok")
+
+
+async def _load_progress() -> tuple[dict[str, Any] | None, str]:
+    """``(record, note)``. A missing record is a wave that has not started."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            PROGRESS_IDENTITY,
+            expected_version=WAVE_PROGRESS_SCHEMA,
+            max_age_s=_OBLIGATION_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"progress read raised: {type(exc).__name__}"
+    if read.status == "missing":
+        return None, "missing"
+    if not read.ok or read.envelope is None:
+        return None, f"progress unreadable: {read.status}"
+    payload = read.envelope.payload
+    if not isinstance(payload, dict):
+        return None, "progress malformed"
+    return payload, "ok"
+
+
+async def _save_progress(record: dict[str, Any]) -> tuple[bool, str]:
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=PROGRESS_IDENTITY,
+                schema_version=WAVE_PROGRESS_SCHEMA,
+                payload=record,
+                complete=True,
+                source=_OWNER,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"progress persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"progress persist rejected: {result.get('status')}"
+
+
+def fold_progress(
+    prior: dict[str, Any] | None,
+    *,
+    mode: str,
+    examined_markets: int = 0,
+    planned_markets: int = 0,
+    written_legs: int = 0,
+    written_markets: int = 0,
+    cursor: int | None,
+) -> dict[str, Any]:
+    """Fold one call into the cumulative wave record. Pure.
+
+    ``calls`` counts every call including this one, which is what makes the
+    ``~5,661`` in the MC checkable against reality rather than against a plan.
+    The cursor is carried as ``resume_after_id`` and is deliberately allowed to
+    be ``None`` — a call that examined nothing has no cursor to offer, and
+    inventing one (say, the prior value) would let an operator believe a page
+    was walked when it was not.
+    """
+    prior = prior if isinstance(prior, dict) else {}
+
+    def _n(key: str) -> int:
+        v = prior.get(key)
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+    return {
+        "schema": WAVE_PROGRESS_SCHEMA,
+        "owner": _OWNER,
+        "cohort": "pm_never_graded",
+        "issue": 1912,
+        "calls": _n("calls") + 1,
+        "dry_runs": _n("dry_runs") + (1 if mode == "dry_run" else 0),
+        "applies": _n("applies") + (1 if mode == "apply" else 0),
+        "examined_markets_total": _n("examined_markets_total") + max(0, examined_markets),
+        "planned_markets_total": _n("planned_markets_total") + max(0, planned_markets),
+        "written_legs_total": _n("written_legs_total") + max(0, written_legs),
+        "written_markets_total": _n("written_markets_total") + max(0, written_markets),
+        "last_mode": mode,
+        "last_cursor": cursor,
+        # The one field an operator resumes FROM. Kept at the prior value when
+        # this call produced none, because the last real cursor is still the
+        # right place to resume — unlike the counters, this is a position, not
+        # a tally, and a position does not decay by going unused.
+        "resume_after_id": cursor if cursor is not None else prior.get("resume_after_id"),
+    }
+
+
+async def progress_read(
+    session,
+    *,
+    mode: str,
+    examined_markets: int = 0,
+    planned_markets: int = 0,
+    written_legs: int = 0,
+    written_markets: int = 0,
+    cursor: int | None = None,
+) -> dict[str, Any]:
+    """The attendance block returned on EVERY dry-run and EVERY apply.
+
+    Three things an attended programme needs and the page-at-a-time rail did
+    not have: a durable identity progress can be re-read from, a resume cursor,
+    and the canary panel — evaluated here rather than offered as a separate
+    call, because a check an operator has to remember to run is a check that
+    gets skipped on call 300 of 5,661.
+    """
+    canaries = await _read_canaries(session)
+    prior, prior_note = await _load_progress()
+    record = fold_progress(
+        prior,
+        mode=mode,
+        examined_markets=examined_markets,
+        planned_markets=planned_markets,
+        written_legs=written_legs,
+        written_markets=written_markets,
+        cursor=cursor,
+    )
+    saved, save_note = await _save_progress(record)
+    return {
+        "identity": PROGRESS_IDENTITY,
+        "schema": WAVE_PROGRESS_SCHEMA,
+        "durable": saved,
+        "durable_note": save_note,
+        "prior_note": prior_note,
+        "wave": record,
+        "canaries": canaries,
+        "attendance": (
+            "READABLE — this block is re-derivable from the durable identity by "
+            "any operator in any session."
+            if saved else
+            "NOT DURABLE — this call's progress exists only in this response. "
+            f"({save_note}) Record the numbers before closing the terminal."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -303,6 +578,7 @@ async def repair(
     apply: bool = False,
     limit: int | None = None,
     plan_hash: str | None = None,
+    after_id: int | None = None,
 ) -> dict[str, Any]:
     """Dry-run (build a plan) or apply (execute a reviewed one). Never both.
 
@@ -310,16 +586,27 @@ async def repair(
     which calls ``fn(db, apply, **extra)`` — ``apply`` is POSITIONAL there, and
     a keyword-only parameter would have made this repair permanently
     un-appliable while looking correct in isolation.
+
+    ``after_id`` is the dry-run's keyset resume cursor. The dispatcher already
+    declares the parameter and passes it only to repairs whose signature
+    accepts one; until CAL-P073 this one did not, so the cursor arrived at the
+    router and was silently dropped — the page was fixed at "the newest 40"
+    on every call.
     """
     started = time.monotonic()
     if apply:
         return await _apply_reviewed_plan(session, plan_hash, started)
     return await _dry_run(
-        session, min(limit or APPLY_MARKET_CAP, APPLY_MARKET_CAP), started
+        session,
+        min(limit or APPLY_MARKET_CAP, APPLY_MARKET_CAP),
+        started,
+        after_id=after_id,
     )
 
 
-async def _dry_run(session, limit: int, started: float) -> dict[str, Any]:
+async def _dry_run(
+    session, limit: int, started: float, after_id: int | None = None
+) -> dict[str, Any]:
     """Venue-verify a bounded page and emit the plan. WRITES NOTHING.
 
     The venue answer is the ONLY thing that may crown an outcome here. The
@@ -336,7 +623,15 @@ async def _dry_run(session, limit: int, started: float) -> dict[str, Any]:
         _load_outcomes,
     )
 
-    rows = await _load_cohort(session, limit, None, cohort=_COHORT_NEVER_GRADED)
+    # ``_load_cohort`` walks ``ORDER BY fm.id DESC``, so its keyset predicate is
+    # ``fm.id < :before``. The dispatcher's vocabulary for a resume cursor is
+    # ``after_id`` — "after" in WALK ORDER, which on a descending walk is a
+    # smaller id. The two names are kept aligned here rather than renaming the
+    # router's parameter, because that one is shared with repairs that walk
+    # ascending and would then be wrong for them instead.
+    rows = await _load_cohort(
+        session, limit, after_id, cohort=_COHORT_NEVER_GRADED
+    )
     outcomes_by_market = await _load_outcomes(session, [r.id for r in rows])
 
     service = PolymarketAPIService()
@@ -409,6 +704,14 @@ async def _dry_run(session, limit: int, started: float) -> dict[str, Any]:
     )
     plan_ok, plan_note = await _save_plan(plan) if planned else (False, "nothing to plan")
 
+    # The keyset cursor for the NEXT page. The walk is id-descending, so the
+    # smallest id this call examined is where the next one resumes. Derived
+    # from what was EXAMINED, not from what was planned: a page whose markets
+    # all excluded still moved through the population, and resuming from the
+    # planned set would re-walk every exclusion forever.
+    next_cursor = min(examined) if examined else None
+    page_exhausted = len(rows) < limit
+
     return {
         "mode": "dry_run",
         "wrote": False,
@@ -420,11 +723,27 @@ async def _dry_run(session, limit: int, started: float) -> dict[str, Any]:
         "plan_persisted": plan_ok,
         "plan_note": plan_note,
         "plan_hash": plan.plan_hash if plan_ok else None,
+        "resumed_after_id": after_id,
+        "next_cursor": next_cursor,
+        "page_exhausted": page_exhausted,
+        "progress": await progress_read(
+            session,
+            mode="dry_run",
+            examined_markets=len(examined),
+            planned_markets=len(plan.market_ids),
+            cursor=next_cursor,
+        ),
         "elapsed_s": round(time.monotonic() - started, 2),
         "next": (
             f"POST …/pm-never-graded?apply=true&plan_hash={plan.plan_hash}"
             if plan_ok else
             "NOT APPLIABLE — the plan was not persisted; re-run the dry-run."
+        ),
+        "next_page": (
+            "POST …/pm-never-graded?after_id=" + str(next_cursor)
+            if next_cursor is not None else
+            "NO CURSOR — this call examined nothing, so it cannot say where to "
+            "resume. Re-run; do not guess a cursor."
         ),
         "wave_rule": (
             "Ruling 046: one apply per read. This repair joins the wave with "
@@ -571,6 +890,18 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
         "invalidation_why": why,
         "obligation_persisted": ob_ok,
         "obligation_note": ob_note,
+        # Attendance on the APPLY too, not just the dry-run. An apply is the
+        # call that changes the population, so a wave record that only counted
+        # dry-runs would drift further from the truth with every write — and
+        # the canary panel is most load-bearing immediately after a write,
+        # because that is when the cohort can have moved.
+        "progress": await progress_read(
+            session,
+            mode="apply",
+            written_legs=len(written),
+            written_markets=len(market_ids),
+            cursor=None,
+        ),
         "elapsed_s": round(time.monotonic() - started, 2),
         "note": (
             "success:false with legs_written>0 is an HONEST state — the rows "
