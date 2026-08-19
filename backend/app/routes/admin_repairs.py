@@ -301,6 +301,19 @@ async def run_repair(
         description="Keyset resume cursor (date half). Half a keyset is a different "
                     "walk, not a resume, so the repair refuses one without the other.",
     ),
+    since: str = Query(
+        None,
+        description="Inclusive lower bound on commence_time (YYYY-MM-DD), for repairs "
+                    "that scan a date range. Omit to use the repair's own default.",
+    ),
+    until: str = Query(
+        None,
+        description="EXCLUSIVE upper bound on commence_time (YYYY-MM-DD), for repairs "
+                    "that scan a date range. This is what makes a reviewed population's "
+                    "COMPLETED half addressable separately from its LIVE half — an "
+                    "apply is bound to a whole plan by content address, so a half that "
+                    "cannot be scoped cannot be applied alone (#1798, queue 374).",
+    ),
     plan_hash: str = Query(
         None,
         description="Content address of the reviewed dry-run plan, for repairs whose "
@@ -349,6 +362,7 @@ async def run_repair(
             ("limit", limit), ("sport", sport),
             ("newest_first", newest_first), ("offset", offset),
             ("after_id", after_id), ("after_date", after_date),
+            ("since", since), ("until", until),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),
