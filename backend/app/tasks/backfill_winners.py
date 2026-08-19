@@ -2867,7 +2867,13 @@ _PROP_TICKER_TO_STAT = {
     "kxnhlsaves": "saves",
     "kxmlbhit": "hits",
     "kxmlbhr": "home runs",
-    "kxmlbks": "strikeouts",
+    # #1990: KXMLBKS is a PITCHER prop, not a batter one — the series' own
+    # rules say "If this pitcher does not start the game ... resolves to Fair
+    # Market Price". Before the group-aware parser both quantities collapsed
+    # into one "strikeouts" key, so this read whichever group ESPN happened to
+    # emit last. It now names the pitching key explicitly; pointing it back at
+    # bare "strikeouts" would grade every pitcher prop off a BATTER's K count.
+    "kxmlbks": "pitching strikeouts",
     "kxnba2d": "double doubles",
 }
 
@@ -2936,8 +2942,13 @@ async def _resolve_kalshi_player_props_from_boxscore():
                            -- NHL points (reproduced under-marking: hockey ~38pp,
                            -- baseball ~21pp). Every _PROP_TICKER_TO_STAT mapping is
                            -- verified against the authoritative ESPN stat-key map
-                           -- (services/espn_api.py: H->hits, HR->home runs,
-                           -- SO->strikeouts, G->goals, A->assists, ...), and the
+                           -- (services/espn_api.py `_GROUP_STAT_MAP`, which is
+                           -- GROUP-scoped since #1990: batting hits->hits,
+                           -- pitching strikeouts->pitching strikeouts, goalies
+                           -- saves->saves, ...). The pre-#1990 version of this
+                           -- comment cited "SO->strikeouts"; ESPN never emitted
+                           -- SO for baseball, so that entry was dead the whole
+                           -- time and no MLB K prop could grade. And the
                            -- write is idempotent (only flips when the box_score
                            -- verdict CHANGES, gotcha #21-safe). Re-grade reads the
                            -- event's OWN box score by player+stat — not an event

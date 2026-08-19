@@ -121,19 +121,34 @@ def test_regrade_broadened_beyond_kxnhlpts():
 async def test_regrade_flips_mismarked_mlb_strikeouts_prop(monkeypatch):
     """#937: an already-box_score-resolved MLB strikeouts prop that was wrongly
     graded a loser flips to winner when re-graded (8 K >= 6), proving the
-    broadening fixes non-NHL props with the verified ESPN stat-key mapping."""
+    broadening fixes non-NHL props with the verified ESPN stat-key mapping.
+
+    #1990 — the fixture below was CORRECTED, and the correction is the point.
+    It used to read ``{"strikeouts": 8}``, a shape production never once held:
+    the parser looked up ESPN's ``SO`` for a label ESPN spells ``K``, so the
+    stored MLB stat vocabulary contained *zero* strikeouts, for every player of
+    every game. This test was green for the whole period the feature was 100%
+    broken, because it asserted against a hand-written box score rather than
+    one the parser could produce. Pitcher strikeouts now land under
+    ``pitching strikeouts`` (KXMLBKS is a pitcher prop — the series rules say
+    "if this pitcher does not start the game..."), which is what the fixture
+    now uses.
+    """
     import app.tasks.backfill_winners as bw
 
     outcome = _row(
         outcome_id=99,
         outcome_name="Gerrit Cole: 6+",
-        ticker="KXMLBKS-26JUL04NYY",   # strikeouts -> 'strikeouts'
+        ticker="KXMLBKS-26JUL04NYY",   # pitcher strikeouts -> 'pitching strikeouts'
         cur_winner=False,              # mis-graded loser
         event_id=3,
     )
     bs = _row(
         id=3,
-        box_score_data={"source": "espn", "players": {"gerrit cole": {"strikeouts": 8}}},
+        box_score_data={
+            "source": "espn",
+            "players": {"gerrit cole": {"pitching strikeouts": 8}},
+        },
     )
     captured = {"winner_ids": None, "loser_ids": None}
     session = AsyncMock()
@@ -167,3 +182,64 @@ async def test_regrade_flips_mismarked_mlb_strikeouts_prop(monkeypatch):
 
     assert captured["winner_ids"] == [99], stats   # flipped the mis-graded loser to winner
     assert not captured["loser_ids"]
+
+
+async def test_pitcher_prop_does_not_grade_off_a_batters_strikeouts(monkeypatch):
+    """#1990: a batter's K count must never settle a PITCHER's strikeout prop.
+
+    The two quantities used to share one key, so whichever stat group ESPN
+    emitted last decided the grade. They are separate keys now, and this
+    asserts the separation is load-bearing rather than cosmetic: a box score
+    carrying only the BATTING key leaves the pitcher prop ungraded (0 >= 6 is
+    False, and the row is already False, so the idempotent writer skips it)
+    instead of settling it off the wrong number.
+    """
+    import app.tasks.backfill_winners as bw
+
+    outcome = _row(
+        outcome_id=101,
+        outcome_name="Gerrit Cole: 6+",
+        ticker="KXMLBKS-26JUL04NYY",
+        cur_winner=False,
+        event_id=4,
+    )
+    # A batter's line: 8 strikeouts means he struck out eight times.
+    bs = _row(
+        id=4,
+        box_score_data={"source": "espn", "players": {"gerrit cole": {"strikeouts": 8}}},
+    )
+    captured = {"winner_ids": None, "loser_ids": None}
+    session = AsyncMock()
+
+    async def _execute(stmt, params=None):
+        sql = str(getattr(stmt, "text", stmt))
+        if "FROM futures_outcomes" in sql and "box_score_data FROM events" not in sql:
+            return _Result([outcome])
+        if "box_score_data FROM events" in sql:
+            return _Result([bs])
+        if "is_winner = true" in sql:
+            captured["winner_ids"] = (params or {}).get("ids")
+            return MagicMock(rowcount=len(captured["winner_ids"] or []))
+        if "is_winner = false" in sql:
+            captured["loser_ids"] = (params or {}).get("ids")
+            return MagicMock(rowcount=len(captured["loser_ids"] or []))
+        return MagicMock(rowcount=0)
+
+    session.execute = AsyncMock(side_effect=_execute)
+    session.commit = AsyncMock()
+
+    class _CM:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(bw, "get_task_session", lambda: _CM())
+    await _resolve_kalshi_player_props_from_boxscore()
+
+    # The batting key is NOT reachable from a pitcher prop.
+    assert not captured["winner_ids"], (
+        "a batter's 8 strikeouts graded a pitcher's 6+ prop a winner — the "
+        "#1990 collision is back"
+    )
