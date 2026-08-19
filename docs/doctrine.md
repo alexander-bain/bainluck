@@ -120,7 +120,7 @@ merely easier to read.
 *Corollary:* an instrument that reports the wrong quantity confidently outranks a
 missing one in cost, because a missing instrument is owed and a wrong one is believed.
 
-### 7. An identifier in a directive is a proposal; the ledger allocates.
+### 10. An identifier in a directive is a proposal; the ledger allocates.
 
 A number, slot, or name handed down in an instruction is a *request for* an allocation,
 never the allocation itself. Authority to ask is not authority to reserve, because the
@@ -142,6 +142,17 @@ the files in the merged tree** rather than by trusting either side's number (#19
 only on the *number* — which is recoverable by renumbering — instead of on a shared append
 region, where the only correct resolution is keep-both and the merged commit carries a new
 patch-id forever, so `git cherry` reports landed work as new on every later cycle.
+
+*This clause renumbered itself while being written, which is the cheapest possible demonstration
+of it.* It was banked as **7** against a `docs/doctrine.md` holding six clauses. Within four hours
+calibration-67 merged and took 6 and 7, was reverted, then **re-landed** as CAL-P071 alongside
+CAL-P072 — moving "duration is not occupancy" from 6 to 8 and pushing the ledger to nine clauses.
+The number was a proposal both times; the ledger allocated **10**.
+
+⚠️ **And note what this file still is: a shared append region.** Doctrine has exactly the collision
+shape ruling 001 removed from rulings, and it has now produced three conflicts in two days. The
+one-file-per-clause treatment is the obvious fix and is deliberately *not* done here — it is a
+layout change that belongs to whoever owns this file, not to a lane passing through.
 
 ---
 
