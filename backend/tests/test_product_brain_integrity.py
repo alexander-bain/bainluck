@@ -531,7 +531,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: integrator's (a READY whose branch head moved is withdrawn), 086 is latency's, 087 is ux's
 #: second. The allocation came from RULING-CLAIMS.md, not from counting files — counting files
 #: is how you get the FLOOR, reading the ledger is how you get the NUMBER.
-MINIMUM_BANKED_RULINGS = 84
+MINIMUM_BANKED_RULINGS = 85
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -94,6 +94,26 @@ not been played (#1945). The guard is now one function
 (`app/utils/game_pairing.live_write_is_premature`), re-exported under its historical
 ESPN name so there is no second copy to drift.
 
+### 10. A line in a spec needs a fixture ON the line.
+
+`0.7 - 0.5 !== 0.2`. A threshold assembled from decimal inputs lands a few ULPs either
+side of its intended value at random, so whether two identically-specified cases fall the
+same way depends on which decimals someone happened to write them with. Every boundary
+therefore ships as a NAMED comparison — `travelAtOrAbove()`, `spread_exceeds()` — with a
+fixture sitting exactly on it, never a bare inline `>`/`>=`.
+
+The reason this is doctrine and not a style note: the defect is invisible to ordinary
+test data. A suite whose fixtures all sit clearly inside or clearly outside the band
+passes under either comparison, so the bug survives every assertion and every review, and
+only a fixture ON the line can see it (ruling **087**'s shape — an exclusion that gets
+quieter as it gets more wrong).
+
+*Named failures, one in each direction:* on the shipped prop rail a `>=` spec was
+implemented as `>` and **a prop that moved exactly twenty points read as NOT surprising**,
+silently, because no fixture sat on the line (cycle 98). Conversely, sweeping every pair
+whose intended spread equals the divergence threshold, a bare `>` **wrongly gates 78 of
+601** — the epsilon-tolerant `spread_exceeds` gates 0 (cycle 99, ruling **096**).
+
 ---
 
 ## Related

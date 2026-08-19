@@ -1,0 +1,1040 @@
+{
+ "_provenance": {
+  "what": "Every LIVE two-source event blend in production, captured for the ruling-(b) structural test.",
+  "read_at": "2026-08-19T04:5xZ (2026-08-18 ~21:5x PT)",
+  "deployed_commit": "962f668a",
+  "query": "SELECT id, status, win_probability_sources FROM events WHERE status IN ('scheduled','live') AND win_probability_sources IS NOT NULL",
+  "filter": "keys restricted to aggregation.SOURCE_WEIGHTS and parsed through the shipped parse_source_entry; 'betting_book_count' is METADATA and is NOT a source (cycle 98's 7.2x over-read)",
+  "population": 76,
+  "note": "Yesterday's read of the same population was 79. It drifts with the slate; the test asserts PROPERTIES, never the count."
+ },
+ "events": [
+  {
+   "event_id": 14780143,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.64,
+     "updated_at": "2026-08-19T04:31:43.454582+00:00"
+    },
+    "betting": {
+     "value": 0.6374,
+     "updated_at": "2026-08-16T03:00:29.573977+00:00"
+    },
+    "betting_book_count": 17
+   }
+  },
+  {
+   "event_id": 14780144,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.77,
+     "updated_at": "2026-08-19T04:31:44.678130+00:00"
+    },
+    "betting": {
+     "value": 0.7619,
+     "updated_at": "2026-08-16T03:00:29.620238+00:00"
+    },
+    "betting_book_count": 17
+   }
+  },
+  {
+   "event_id": 14780146,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.565,
+     "updated_at": "2026-08-19T04:31:40.440251+00:00"
+    },
+    "betting": {
+     "value": 0.5691,
+     "updated_at": "2026-08-16T03:00:29.710251+00:00"
+    },
+    "betting_book_count": 17
+   }
+  },
+  {
+   "event_id": 14850560,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.7,
+     "updated_at": "2026-08-19T04:31:49.130693+00:00"
+    },
+    "betting": 0.7122
+   }
+  },
+  {
+   "event_id": 14947541,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.19,
+     "updated_at": "2026-08-19T04:31:42.941456+00:00"
+    },
+    "betting": 0.2503
+   }
+  },
+  {
+   "event_id": 14947542,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.295,
+     "updated_at": "2026-08-19T04:31:45.276008+00:00"
+    },
+    "betting": 0.376
+   }
+  },
+  {
+   "event_id": 14947543,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.385,
+     "updated_at": "2026-08-19T04:31:44.126721+00:00"
+    },
+    "betting": 0.5239
+   }
+  },
+  {
+   "event_id": 14947546,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": 0.5967,
+    "polymarket": {
+     "value": 0.445,
+     "updated_at": "2026-08-19T04:31:42.013845+00:00"
+    }
+   }
+  },
+  {
+   "event_id": 14947548,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.285,
+     "updated_at": "2026-08-19T04:31:46.974135+00:00"
+    },
+    "betting": 0.3723
+   }
+  },
+  {
+   "event_id": 14959574,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": 0.2794,
+    "polymarket": {
+     "value": 0.285,
+     "updated_at": "2026-08-19T04:31:40.818406+00:00"
+    }
+   }
+  },
+  {
+   "event_id": 14959575,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.79,
+     "updated_at": "2026-08-19T04:31:45.228513+00:00"
+    },
+    "betting": 0.9085
+   }
+  },
+  {
+   "event_id": 14961187,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.11,
+     "updated_at": "2026-08-19T04:31:47.311817+00:00"
+    },
+    "betting": 0.1731
+   }
+  },
+  {
+   "event_id": 14961189,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.34,
+     "updated_at": "2026-08-19T04:31:47.381917+00:00"
+    },
+    "betting": 0.489
+   }
+  },
+  {
+   "event_id": 14961191,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.39,
+     "updated_at": "2026-08-19T04:31:46.679400+00:00"
+    },
+    "betting": 0.5539
+   }
+  },
+  {
+   "event_id": 14961192,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.425,
+     "updated_at": "2026-08-19T04:31:46.356525+00:00"
+    },
+    "betting": 0.5641
+   }
+  },
+  {
+   "event_id": 14961194,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.28,
+     "updated_at": "2026-08-19T04:31:45.031800+00:00"
+    },
+    "betting": 0.4354
+   }
+  },
+  {
+   "event_id": 14961231,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.19,
+     "updated_at": "2026-08-19T04:31:43.553702+00:00"
+    },
+    "betting": 0.2942
+   }
+  },
+  {
+   "event_id": 14961232,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.135,
+     "updated_at": "2026-08-19T04:31:45.495338+00:00"
+    },
+    "betting": 0.1785
+   }
+  },
+  {
+   "event_id": 14968102,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": 0.2881,
+    "polymarket": {
+     "value": 0.26,
+     "updated_at": "2026-08-19T04:31:48.494055+00:00"
+    }
+   }
+  },
+  {
+   "event_id": 14968105,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": 0.6398,
+    "polymarket": {
+     "value": 0.44,
+     "updated_at": "2026-08-19T04:31:45.382728+00:00"
+    }
+   }
+  },
+  {
+   "event_id": 14970076,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8894,
+     "updated_at": "2026-08-18T00:29:43.919584+00:00"
+    },
+    "polymarket": {
+     "value": 0.47,
+     "updated_at": "2026-08-19T04:31:41.186213+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 14970278,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.445,
+     "updated_at": "2026-08-17T18:29:27.641809+00:00"
+    },
+    "polymarket": {
+     "value": 0.31,
+     "updated_at": "2026-08-16T04:44:55.100692+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 14970279,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5891,
+     "updated_at": "2026-08-17T18:29:28.122664+00:00"
+    },
+    "polymarket": {
+     "value": 0.07,
+     "updated_at": "2026-08-19T04:31:41.512655+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 14970281,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8622,
+     "updated_at": "2026-08-17T18:29:27.977052+00:00"
+    },
+    "polymarket": {
+     "value": 0.72,
+     "updated_at": "2026-08-16T04:44:55.172696+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 14970283,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5357,
+     "updated_at": "2026-08-17T18:29:27.843686+00:00"
+    },
+    "polymarket": {
+     "value": 0.39,
+     "updated_at": "2026-08-16T04:45:13.902472+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 14970285,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6345,
+     "updated_at": "2026-08-17T18:29:28.051795+00:00"
+    },
+    "polymarket": {
+     "value": 0.07,
+     "updated_at": "2026-08-19T04:31:46.894974+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15011303,
+   "status": "live",
+   "win_probability_sources": {
+    "kalshi": 0.01,
+    "betting": {
+     "value": 0.8419,
+     "updated_at": "2026-08-19T00:23:05.782434+00:00"
+    },
+    "betting_book_count": 6
+   }
+  },
+  {
+   "event_id": 15169645,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.69,
+     "updated_at": "2026-08-19T04:31:44.038890+00:00"
+    },
+    "betting": {
+     "value": 0.7505,
+     "updated_at": "2026-08-16T22:29:02.213793+00:00"
+    },
+    "betting_book_count": 6
+   }
+  },
+  {
+   "event_id": 15176690,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.935,
+     "updated_at": "2026-08-19T04:31:42.469440+00:00"
+    },
+    "betting": {
+     "value": 0.9066,
+     "updated_at": "2026-08-16T22:29:01.315677+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15186671,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.405,
+     "updated_at": "2026-08-19T04:31:45.564956+00:00"
+    },
+    "betting": {
+     "value": 0.5883,
+     "updated_at": "2026-08-19T00:23:05.318094+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15186673,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.435,
+     "updated_at": "2026-08-19T04:31:45.597083+00:00"
+    },
+    "betting": {
+     "value": 0.6863,
+     "updated_at": "2026-08-19T00:23:05.428399+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15186674,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6543,
+     "updated_at": "2026-08-19T00:23:05.490814+00:00"
+    },
+    "polymarket": {
+     "value": 0.49,
+     "updated_at": "2026-08-19T04:31:42.339248+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15186678,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5752,
+     "updated_at": "2026-08-17T05:19:01.178706+00:00"
+    },
+    "polymarket": 0.5,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186679,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6226,
+     "updated_at": "2026-08-17T05:19:01.337180+00:00"
+    },
+    "polymarket": 0.545,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186680,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5254,
+     "updated_at": "2026-08-17T05:19:01.386729+00:00"
+    },
+    "polymarket": 0.5,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186681,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.4611,
+     "updated_at": "2026-08-17T05:19:01.685378+00:00"
+    },
+    "polymarket": 0.35,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186682,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6709,
+     "updated_at": "2026-08-17T05:19:01.761251+00:00"
+    },
+    "polymarket": 0.555,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186683,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7721,
+     "updated_at": "2026-08-17T05:19:01.790777+00:00"
+    },
+    "polymarket": 0.64,
+    "betting_book_count": 9
+   }
+  },
+  {
+   "event_id": 15186697,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7537,
+     "updated_at": "2026-08-17T05:19:01.134614+00:00"
+    },
+    "polymarket": 0.505,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186698,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.4272,
+     "updated_at": "2026-08-17T05:19:01.241450+00:00"
+    },
+    "polymarket": 0.5,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186699,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6008,
+     "updated_at": "2026-08-17T05:19:01.278144+00:00"
+    },
+    "polymarket": {
+     "value": 0.53,
+     "updated_at": "2026-08-19T04:31:45.990694+00:00"
+    },
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186700,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.4477,
+     "updated_at": "2026-08-17T05:19:01.422774+00:00"
+    },
+    "polymarket": 0.34,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186701,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.3693,
+     "updated_at": "2026-08-17T05:19:01.498359+00:00"
+    },
+    "polymarket": 0.515,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186702,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7,
+     "updated_at": "2026-08-17T05:19:01.562343+00:00"
+    },
+    "polymarket": 0.5,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15186703,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7514,
+     "updated_at": "2026-08-17T05:19:01.601675+00:00"
+    },
+    "polymarket": 0.495,
+    "betting_book_count": 9
+   }
+  },
+  {
+   "event_id": 15186704,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.59,
+     "updated_at": "2026-08-17T05:19:01.920481+00:00"
+    },
+    "polymarket": 0.505,
+    "betting_book_count": 10
+   }
+  },
+  {
+   "event_id": 15189677,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.88,
+     "updated_at": "2026-08-19T04:31:45.155465+00:00"
+    },
+    "betting": {
+     "value": 0.8642,
+     "updated_at": "2026-08-16T22:29:01.424830+00:00"
+    },
+    "betting_book_count": 3
+   }
+  },
+  {
+   "event_id": 15193260,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5045,
+     "updated_at": "2026-08-18T02:27:12.545021+00:00"
+    },
+    "polymarket": {
+     "value": 0.33,
+     "updated_at": "2026-08-19T04:31:41.851415+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15193268,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5,
+     "updated_at": "2026-08-18T02:27:12.563383+00:00"
+    },
+    "polymarket": {
+     "value": 0.475,
+     "updated_at": "2026-08-19T04:31:44.337602+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15193291,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5483,
+     "updated_at": "2026-08-18T02:27:12.410784+00:00"
+    },
+    "polymarket": {
+     "value": 0.465,
+     "updated_at": "2026-08-19T04:31:45.459322+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15193889,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.905,
+     "updated_at": "2026-08-19T04:31:42.435898+00:00"
+    },
+    "betting": {
+     "value": 0.8731,
+     "updated_at": "2026-08-16T22:29:01.393834+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15196100,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.625,
+     "updated_at": "2026-08-19T04:31:48.004685+00:00"
+    },
+    "betting": {
+     "value": 0.6062,
+     "updated_at": "2026-08-19T03:17:06.753907+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196101,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.835,
+     "updated_at": "2026-08-19T04:31:47.825917+00:00"
+    },
+    "betting": {
+     "value": 0.8069,
+     "updated_at": "2026-08-19T03:17:06.526387+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196102,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.525,
+     "updated_at": "2026-08-19T04:31:47.587572+00:00"
+    },
+    "betting": {
+     "value": 0.5203,
+     "updated_at": "2026-08-19T03:17:05.759293+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196103,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.385,
+     "updated_at": "2026-08-19T04:31:47.656637+00:00"
+    },
+    "betting": {
+     "value": 0.6176,
+     "updated_at": "2026-08-19T03:17:05.895924+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196104,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.22,
+     "updated_at": "2026-08-19T04:31:47.713786+00:00"
+    },
+    "betting": {
+     "value": 0.2373,
+     "updated_at": "2026-08-19T03:17:05.962937+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196105,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.455,
+     "updated_at": "2026-08-19T04:31:48.039819+00:00"
+    },
+    "betting": {
+     "value": 0.5545,
+     "updated_at": "2026-08-19T03:17:06.036468+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196106,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.275,
+     "updated_at": "2026-08-19T04:31:47.877465+00:00"
+    },
+    "betting": {
+     "value": 0.299,
+     "updated_at": "2026-08-19T03:17:06.576100+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196107,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.7875,
+     "updated_at": "2026-08-19T04:31:47.923790+00:00"
+    },
+    "betting": {
+     "value": 0.7661,
+     "updated_at": "2026-08-19T03:17:06.638756+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15196507,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7437,
+     "updated_at": "2026-08-18T20:57:08.377429+00:00"
+    },
+    "polymarket": 0.56,
+    "betting_book_count": 6
+   }
+  },
+  {
+   "event_id": 15197813,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8108,
+     "updated_at": "2026-08-17T05:19:02.184204+00:00"
+    },
+    "polymarket": {
+     "value": 0.505,
+     "updated_at": "2026-08-19T04:31:43.623737+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15198863,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.875,
+     "updated_at": "2026-08-19T04:31:47.754823+00:00"
+    },
+    "betting": {
+     "value": 0.8474,
+     "updated_at": "2026-08-19T03:17:06.410858+00:00"
+    },
+    "betting_book_count": 8
+   }
+  },
+  {
+   "event_id": 15198910,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.875,
+     "updated_at": "2026-08-19T04:31:48.065085+00:00"
+    },
+    "betting": {
+     "value": 0.8673,
+     "updated_at": "2026-08-19T03:17:06.220270+00:00"
+    },
+    "betting_book_count": 7
+   }
+  },
+  {
+   "event_id": 15199042,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.75,
+     "updated_at": "2026-08-15T12:06:30.492130+00:00"
+    },
+    "polymarket": {
+     "value": 0.5,
+     "updated_at": "2026-08-19T04:31:42.389783+00:00"
+    },
+    "betting_book_count": 3
+   }
+  },
+  {
+   "event_id": 15199595,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6019,
+     "updated_at": "2026-08-17T18:54:15.595346+00:00"
+    },
+    "polymarket": {
+     "value": 0.42,
+     "updated_at": "2026-08-19T04:31:46.931547+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15199700,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8623,
+     "updated_at": "2026-08-16T18:58:34.740352+00:00"
+    },
+    "polymarket": {
+     "value": 0.47,
+     "updated_at": "2026-08-19T04:31:42.109505+00:00"
+    },
+    "betting_book_count": 7
+   }
+  },
+  {
+   "event_id": 15199730,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.4646,
+     "updated_at": "2026-08-16T13:31:33.300780+00:00"
+    },
+    "polymarket": {
+     "value": 0.48,
+     "updated_at": "2026-08-19T04:31:41.719511+00:00"
+    },
+    "betting_book_count": 1
+   }
+  },
+  {
+   "event_id": 15199744,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5038,
+     "updated_at": "2026-08-17T18:54:15.637267+00:00"
+    },
+    "polymarket": {
+     "value": 0.495,
+     "updated_at": "2026-08-19T04:31:47.430519+00:00"
+    },
+    "betting_book_count": 7
+   }
+  },
+  {
+   "event_id": 15199747,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.5369,
+     "updated_at": "2026-08-16T20:13:35.200898+00:00"
+    },
+    "polymarket": {
+     "value": 0.49,
+     "updated_at": "2026-08-19T04:31:41.565105+00:00"
+    },
+    "betting_book_count": 4
+   }
+  },
+  {
+   "event_id": 15199769,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6541,
+     "updated_at": "2026-08-16T20:13:35.116319+00:00"
+    },
+    "polymarket": {
+     "value": 0.75,
+     "updated_at": "2026-08-19T04:31:45.126874+00:00"
+    },
+    "betting_book_count": 6
+   }
+  },
+  {
+   "event_id": 15199800,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7993,
+     "updated_at": "2026-08-17T18:54:15.738882+00:00"
+    },
+    "polymarket": {
+     "value": 0.5,
+     "updated_at": "2026-08-19T04:31:46.417523+00:00"
+    },
+    "betting_book_count": 6
+   }
+  },
+  {
+   "event_id": 15199831,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.6857,
+     "updated_at": "2026-08-16T19:51:30.756383+00:00"
+    },
+    "polymarket": {
+     "value": 0.51,
+     "updated_at": "2026-08-16T20:14:28.478079+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15199832,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8615,
+     "updated_at": "2026-08-16T19:51:30.812767+00:00"
+    },
+    "polymarket": {
+     "value": 0.545,
+     "updated_at": "2026-08-19T04:31:42.976469+00:00"
+    },
+    "betting_book_count": 3
+   }
+  },
+  {
+   "event_id": 15199885,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.7118,
+     "updated_at": "2026-08-16T19:51:30.774843+00:00"
+    },
+    "polymarket": {
+     "value": 0.545,
+     "updated_at": "2026-08-19T04:31:46.718300+00:00"
+    },
+    "betting_book_count": 5
+   }
+  },
+  {
+   "event_id": 15200823,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.8185,
+     "updated_at": "2026-08-18T00:58:43.471162+00:00"
+    },
+    "polymarket": {
+     "value": 0.655,
+     "updated_at": "2026-08-19T04:31:46.751510+00:00"
+    },
+    "betting_book_count": 4
+   }
+  },
+  {
+   "event_id": 15200827,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "value": 0.3274,
+     "updated_at": "2026-08-18T00:58:43.541331+00:00"
+    },
+    "polymarket": {
+     "value": 0.275,
+     "updated_at": "2026-08-19T04:31:39.885790+00:00"
+    },
+    "betting_book_count": 4
+   }
+  }
+ ]
+}
