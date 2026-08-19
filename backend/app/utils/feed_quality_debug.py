@@ -868,3 +868,65 @@ def build_feed_quality_debug(
             "bucket_counts": dict(missing_bucket_counts.most_common()),
         },
     }
+
+
+def served_window_quality(
+    served_items: list[dict[str, Any]],
+    *,
+    ground_truth_items: list[dict[str, Any]] | None = None,
+    top_n: int = 20,
+) -> dict[str, Any]:
+    """Grade the first ``top_n`` cards AS SERVED, not the first ``top_n`` futures.
+
+    `boring-rate@20` has always been computed by filtering the payload to
+    ``type == "futures"`` and taking the first twenty of that list. The served
+    payload interleaves bundle/concept/tournament cards, so the two windows are
+    the same only when the page contains nothing but futures.
+
+    They routinely do not. Measured on three production payloads 2026-08-19, the
+    served top-20 held 4-6 bundle cards, and every card the futures window
+    flagged at rank 17-20 sat at served position 22-24 — past the fold of the
+    page the metric names, and past the window
+    ``enforce_first_page_quality_floor`` protects. On the same payload the
+    server's own ``debug_summary.boring_count`` read 0 while a futures-window
+    re-classification read 2. Both were right about their own window.
+
+    This lives here, next to ``build_feed_quality_debug``, because the audit
+    script and the census both need it and doctrine clause 5 is one predicate,
+    one implementation — two copies of a window definition is exactly how the
+    two windows drifted apart in the first place.
+
+    The denominator is SLOTS. A page that is mostly bundles has not thereby
+    earned a smaller denominator; a bundle is not an offender, but it is also
+    not absent from the screen.
+    """
+    window = served_items[:top_n]
+    futures = [i for i in window if i.get("type") == "futures"]
+    debug = build_feed_quality_debug(
+        futures,
+        ground_truth_items=ground_truth_items or [],
+        top_n=max(len(futures), 1),
+    )
+    boring = [
+        {
+            "rank": c.get("rank"),
+            "name": c.get("name"),
+            "quality_class": c.get("quality_class"),
+            "reasons": c.get("reasons"),
+        }
+        for c in debug["items"]
+        if c["quality_class"] in ("low_quality", "suppress")
+    ]
+    types: dict[str, int] = {}
+    for item in window:
+        key = item.get("type") or "?"
+        types[key] = types.get(key, 0) + 1
+    return {
+        "window": "served_top20" if top_n == 20 else f"served_top{top_n}",
+        "slots": len(window),
+        "futures_in_window": len(futures),
+        "non_futures_in_window": len(window) - len(futures),
+        "boring_count": len(boring),
+        "boring": boring,
+        "types": types,
+    }

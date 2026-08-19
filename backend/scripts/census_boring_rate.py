@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT))
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
+    served_window_quality,
 )
 
 TOP_N = 20
@@ -84,14 +85,63 @@ def _read(client: httpx.Client, url: str, params: dict) -> dict:
     }
 
 
+def _boring_rows(classified: list[dict]) -> list[dict]:
+    return [
+        {
+            "rank": c.get("rank"),
+            "name": c.get("name"),
+            "quality_class": c.get("quality_class"),
+            "reasons": c.get("reasons"),
+        }
+        for c in classified
+        if c["quality_class"] in BORING_CLASSES
+    ]
+
+
 def _classify(payload: dict, ground_truth_items: list[dict]) -> dict:
-    items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
+    """Both windows, because they are not the same window and only one is real.
+
+    THE FUTURES WINDOW (legacy, kept): filter the payload to `type == "futures"`
+    and take the first 20. This is what `audit_feed_quality.py` has always
+    measured and what every prior cycle's `boring-rate@20` refers to, so it stays
+    — renaming a metric mid-series destroys the comparison the series exists for.
+
+    THE SERVED WINDOW (added): the first 20 cards of the payload AS SERVED,
+    counting how many of them are boring futures. Bundles, concepts and
+    tournaments occupy real slots on a real screen; they are not offenders, but
+    they are not invisible either.
+
+    The two disagree by the number of non-futures cards in the page, and that is
+    not a rounding difference. Measured 2026-08-19 on three production payloads:
+    the served top-20 held **4–6 bundle cards**, so every card the futures window
+    flagged at rank 17–20 was at SERVED position **22, 23, 24** — past the fold
+    of the page it claims to describe, and past the window
+    `enforce_first_page_quality_floor` protects. The server's own
+    `debug_summary.boring_count` read 0 on the same payload the futures window
+    scored 2, and both were right about their own window.
+
+    So a futures-window rate is not the user-facing rate, and a control targeting
+    the served page cannot be graded by it. Both are reported, each labelled with
+    its window; neither silently replaces the other.
+    """
+    served = payload.get("items", [])
+    items = [i for i in served if i.get("type") == "futures"]
+
     debug = build_feed_quality_debug(
         items, ground_truth_items=ground_truth_items, top_n=TOP_N
     )
     classified = debug["items"]
     window = classified[:TOP_N]
-    boring = [c for c in window if c["quality_class"] in BORING_CLASSES]
+    boring = _boring_rows(window)
+
+    # The served window: same classifier, but the slots are counted the way the
+    # page counts them. One implementation, shared with the audit script
+    # (doctrine clause 5) — two copies of a window definition is how the two
+    # windows drifted apart to begin with.
+    served_report = served_window_quality(
+        served, ground_truth_items=ground_truth_items, top_n=TOP_N
+    )
+
     # Independence by content. Two reads that produced the same ordered window
     # are one build, whatever `cache.status` said about them.
     fingerprint = hashlib.sha256(
@@ -105,15 +155,16 @@ def _classify(payload: dict, ground_truth_items: list[dict]) -> dict:
         "window_size": len(window),
         "boring_count": len(boring),
         "short_window": len(window) < TOP_N,
-        "boring": [
-            {
-                "rank": c.get("rank"),
-                "name": c.get("name"),
-                "quality_class": c.get("quality_class"),
-                "reasons": c.get("reasons"),
-            }
-            for c in boring
-        ],
+        "boring": boring,
+        # --- the served window, named so it can never be mistaken for the above
+        "served_window_size": served_report["slots"],
+        "served_futures_in_window": served_report["futures_in_window"],
+        "served_boring_count": served_report["boring_count"],
+        "served_boring": served_report["boring"],
+        "served_window_types": served_report["types"],
+        # How far the two windows are apart on THIS read, so the offset is a
+        # measured number in the artifact rather than a claim in a report.
+        "non_futures_in_served_window": served_report["non_futures_in_window"],
     }
 
 
@@ -196,6 +247,9 @@ def main() -> int:
 
     boring_total = sum(s["boring_count"] for s in counted)
     window_total = sum(s["window_size"] for s in counted)
+    served_boring_total = sum(s.get("served_boring_count", 0) for s in counted)
+    served_window_total = sum(s.get("served_window_size", 0) for s in counted)
+    served_offset_total = sum(s.get("non_futures_in_served_window", 0) for s in counted)
 
     default_ok = [d for d in default_reads if d.get("ok")]
     default_degraded = [d for d in default_ok if d.get("degraded_reason")]
@@ -217,8 +271,25 @@ def main() -> int:
             st: sum(1 for s in samples if s.get("cache_status") == st)
             for st in sorted({s.get("cache_status") for s in samples if s.get("ok")})
         },
+        "window": "futures_only_top20",
         "cards_graded": window_total,
         "boring_cards": boring_total,
+        # The user-facing window. Reported alongside, never instead of — a
+        # metric renamed mid-series takes its own history with it.
+        "served_window": {
+            "window": "served_top20",
+            "slots_graded": served_window_total,
+            "boring_cards": served_boring_total,
+            "rate": (
+                None
+                if served_window_total == 0
+                else round(served_boring_total / served_window_total, 4)
+            ),
+            "non_futures_slots": served_offset_total,
+            "distinct_boring_cards": sorted(
+                {b["name"] for s in counted for b in s.get("served_boring", [])}
+            ),
+        },
         "boring_rate_at_20": (
             None if window_total == 0 else round(boring_total / window_total, 4)
         ),
@@ -253,10 +324,18 @@ def main() -> int:
         print("This is a FAILED census, not a passing one.")
     else:
         print(
-            f"BORING-RATE@20 (aggregate): {boring_total}/{window_total} cards "
-            f"= {100 * boring_total / window_total:.2f}% "
+            f"BORING-RATE@20 [futures-only window]: {boring_total}/{window_total} "
+            f"cards = {100 * boring_total / window_total:.2f}% "
             f"over {len(counted)} independent reads"
         )
+        if served_window_total:
+            print(
+                f"BORING-RATE@20 [SERVED window — what the visitor scrolls]: "
+                f"{served_boring_total}/{served_window_total} slots "
+                f"= {100 * served_boring_total / served_window_total:.2f}%  "
+                f"({served_offset_total} of those slots are non-futures cards, "
+                f"which is why the two windows differ)"
+            )
     print(f"excluded: {summary['excluded']}")
     print(f"default-feed degrade rate: {len(default_degraded)}/{len(default_ok)} "
           f"{summary['default_feed']['degrade_reasons']}")

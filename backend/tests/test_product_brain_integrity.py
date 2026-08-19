@@ -561,7 +561,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: own branch, per Fable's INT-090 ruling (b): 096 was already burned into filed issue #1994,
 #: and the cited number stays while the uncited one moves. Counted on the merged tree again
 #: rather than incremented: 94 files match `docs/rulings/[0-9][0-9][0-9]-*.md` here.
-MINIMUM_BANKED_RULINGS = 94
+MINIMUM_BANKED_RULINGS = 95
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
