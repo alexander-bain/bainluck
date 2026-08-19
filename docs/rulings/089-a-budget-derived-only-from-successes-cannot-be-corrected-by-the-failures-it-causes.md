@@ -147,5 +147,5 @@ The argument that does not carry is "the phase keeps failing, so give it more."
 
 ## Doctrine
 
-The clause that survives deleting this case is lifted to `docs/doctrine.md` clause 8:
+The clause that survives deleting this case is lifted to `docs/doctrine.md` clause 9:
 **a bound derived only from successes cannot be corrected by the failures it causes.**

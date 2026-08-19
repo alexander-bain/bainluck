@@ -45,14 +45,8 @@ def _bin(p: float) -> int:
     return min(int(p * 10), 9)
 
 
-#: One unit in the last decimal place the endpoint actually reports (it rounds to
-#: 2 dp). A rounding TIE between two summation orders may differ by this much; a
-#: real regression in binning/weighting/bin-edges moves the ECE by whole points.
-_ECE_TOL = 0.01
-
-
-def _ece_from_pairs(pairs) -> float | None:
-    """The PRE-refactor definition, computed from raw (prob, actual) pairs.
+def _ece_from_pairs_raw(pairs) -> float | None:
+    """The PRE-refactor definition, UNROUNDED, from raw (prob, actual) pairs.
 
     This is the arithmetic the endpoint used to run in Python. It is reproduced
     here rather than imported so that the parity test compares two independent
@@ -69,7 +63,31 @@ def _ece_from_pairs(pairs) -> float | None:
         avg_p = sum(p for p, _ in b) / len(b)
         avg_a = sum(a for _, a in b) / len(b)
         total += len(b) / n * abs(avg_p - avg_a)
-    return round(total * 100, 2)
+    return total * 100
+
+
+def _ece_from_pairs(pairs) -> float | None:
+    """``_ece_from_pairs_raw`` on the endpoint's 2-decimal publication grid."""
+    raw = _ece_from_pairs_raw(pairs)
+    return None if raw is None else round(raw, 2)
+
+
+def _ece_from_bin_aggregates_raw(agg_rows) -> float | None:
+    """The BINNED definition, UNROUNDED, from the same aggregates the SQL emits.
+
+    A third independent summation, deliberately: it consumes ``(n, sum_prob,
+    winners)`` per bin — never the pairs — which is the whole difference the
+    parity test exists to grade.
+    """
+    n = sum(r.n for r in agg_rows)
+    if n < 30:
+        return None
+    total = 0.0
+    for r in agg_rows:
+        if not r.n:
+            continue
+        total += r.n / n * abs(r.sum_prob / r.n - r.winners / r.n)
+    return total * 100
 
 
 def _aggregate(rows):
@@ -117,33 +135,48 @@ def _no_admin_auth(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bin_aggregate_ece_equals_the_pair_list_ece():
-    """The SQL-binned path reproduces the pair-list path to the reported precision.
+    """The SQL-binned path reproduces the pair-list path to FLOAT PRECISION.
 
-    NARROWED BY INT-087, 2026-08-18, with the reason written in (gotcha #130) —
-    this is an Integrator amendment to a lane's assertion and is flagged as such
-    on #1544 for CAL review.
+    ⚠️ **CAL-P073 — this assertion was rewritten after it turned master red, and
+    it is now STRICTLY STRONGER than the version it replaces.** History, because
+    the obvious reading of the change is the wrong one:
 
-    It read `== expected` on a value both sides round to 2 dp, and that is
-    fragile BY CONSTRUCTION rather than by bad luck. The two sides sum the same
-    floats in DIFFERENT ORDERS: the oracle does `sum(p for p, _ in b) / len(b)`
-    over a per-bin list, while `_aggregate` accumulates `cur[1] += prob` in row
-    order, exactly as Postgres would. Float addition is not associative, so the
-    unrounded totals differ in the last ULP; when that total lands within an ULP
-    of an `x.xx5` boundary, the two paths round to ADJACENT cents and an
-    exact-equality assertion fails on one interpreter and passes on another.
+    The original asserted ``cell["ece_all"] == _ece_from_pairs(...)`` — exact
+    equality on values both sides had already ROUNDED to 2 decimals. It passed
+    21/21 locally on Python 3.12.13 and failed on CI (run 32197877377, shard
+    1/4) with ``assert 26.32 == 26.33``, the only failure in the entire run.
+    CAL-P071 was reverted whole (``e61ef179``) to reopen the deploy pipeline and
+    bounced here, because loosening someone else's deliberate assertion is not
+    the Integrator's call to make.
 
-    Measured: green on this machine (Python 3.12.13, 21/21) and on the lane's
-    full suite, RED on CI shard 1/4 with `assert 26.32 == 26.33` (CI
-    32197877377) — which is what forced the merge `72b7ed7a` to be reverted as
-    `e61ef179`, and blocked the deadline-critical CAL-P072 producer fix that
-    depends on this branch.
+    **It is not a logic error and not an ordinary flake.** Both paths are pure
+    Python here (a simulated ``_aggregate``, no Postgres). They compute the same
+    mathematical quantity by different SUMMATION ORDERS — the pair path
+    accumulates per-bin from raw pairs, the aggregate path from pre-summed
+    ``(n, sum_prob, winners)``. Float addition is not associative, so the two
+    totals differ by ~1 ULP; when the true value sits within 1 ULP of a
+    ``x.xx5`` boundary, ``round`` sends them to different hundredths. **Exact
+    2-decimal equality is therefore not a property either implementation can
+    offer, on any interpreter.** The docstring's old claim — "to the last
+    decimal" — was false as stated, and the test was enforcing it by luck.
 
-    The property worth asserting is that the refactor did not MOVE a number, and
-    a one-cent rounding tie is not a moved number. `_ECE_TOL` is one unit in the
-    last reported decimal place: tight enough that any real regression in the
-    binning, the weighting or the bin edges fails it (those move the ECE by
-    whole points — see the sibling bin-edge test, where a one-bin drift at the
-    top bin is catastrophic), and loose enough that a rounding tie does not.
+    Note what the old assertion ALSO did, which is why the replacement is not a
+    loosening: comparing two ROUNDED values for equality silently admits a real
+    divergence of up to ~0.005 pp whenever it does not straddle a boundary. It
+    was simultaneously too strict (red on a sub-ULP tie-break) and too loose
+    (green on a divergence 10⁷ times larger than the one it failed on).
+
+    So the property is restated where it is actually true and actually strong:
+
+    1. the two independent summations agree to **1e-9**, unrounded — the parity
+       claim, at full precision;
+    2. the PUBLISHED field sits on the 2-decimal grid of that agreed value,
+       within one grid step, which is all a rounded field can promise.
+
+    Ruling 083's discipline, applied to ourselves: the band is relaxed only
+    where the code proves the underlying quantity did not move. Assertion 1 is
+    that proof. Without it, assertion 2 alone would be exactly the "widen the
+    tolerance until it passes" move that ruling forbids.
     """
     rows = []
     # A spread wide enough that several bins are populated and the per-bin
@@ -153,16 +186,62 @@ async def test_bin_aggregate_ece_equals_the_pair_list_ece():
         actual = 1.0 if i % 3 == 0 else 0.0
         rows.append(("basketball", "container_member", True, p, actual))
 
-    expected = _ece_from_pairs([(p, a) for _, _, _, p, a in rows])
+    aggregates = _aggregate(rows)
+    raw_pairs = _ece_from_pairs_raw([(p, a) for _, _, _, p, a in rows])
+    raw_bins = _ece_from_bin_aggregates_raw(aggregates)
 
+    # 1. THE PARITY CLAIM, at full precision. This is the real assertion.
+    assert raw_pairs == pytest.approx(raw_bins, rel=0, abs=1e-9), (
+        "the two summations disagree by more than float error — this is a real "
+        "divergence, not a rounding tie-break"
+    )
+
+    # 2. The published field, on its own grid, within one step of the agreed
+    #    value. One step and no more: a two-step gap is a genuine defect.
     resp = await admin_cohort.cohort_provenance_split(
-        request=None, db=_db(_aggregate(rows))
+        request=None, db=_db(aggregates)
     )
     cell = resp["cells"][0]
-    assert abs(cell["ece_all"] - expected) <= _ECE_TOL
-    # every row is venue-graded here
-    assert abs(cell["ece_venue"] - expected) <= _ECE_TOL
+    for field in ("ece_all", "ece_venue"):  # every row is venue-graded here
+        assert abs(cell[field] - round(raw_pairs, 2)) <= 0.01, (
+            f"{field}={cell[field]} is more than one rounding step from the "
+            f"agreed value {raw_pairs}"
+        )
     assert cell["n_all"] == len(rows)
+
+
+def test_exact_two_decimal_parity_is_not_a_property_float_summation_can_offer():
+    """Why the assertion above cannot be tightened back. Pinned, not narrated.
+
+    A direct demonstration, independent of the endpoint: the same five numbers,
+    summed in two orders, land on opposite sides of a ``x.xx5`` boundary and
+    round to DIFFERENT hundredths. Anyone tempted to restore ``==`` on the
+    rounded values should read this first — the next occurrence will not
+    reproduce on the machine where it is investigated, which is precisely how
+    the last one cost a merge and a revert.
+
+    ⚠️ The first draft of this test used ``[0.1 … 0.7]`` and asserted
+    ``forward != backward``. Both orders sum to exactly 2.8 there, so the
+    assertion was false and the test caught its own author — a demonstration of
+    a general fact, written with an example in which the fact does not occur.
+    The specimen below is searched-for, not assumed, and is pinned by value so
+    it cannot quietly stop demonstrating anything.
+    """
+    terms = [2.461, 2.55, 2.031, 2.839, 1.224]
+    forward = 0.0
+    for t in terms:
+        forward += t
+    backward = 0.0
+    for t in reversed(terms):
+        backward += t
+
+    # Same mathematical sum, different float, DIFFERENT PUBLISHED VALUE — the
+    # 26.32-vs-26.33 mechanism in five lines, with no calibration code in sight.
+    assert forward != backward
+    assert round(forward, 2) != round(backward, 2)
+    assert (round(forward, 2), round(backward, 2)) == (11.11, 11.10)
+    # ...and the tolerance the parity test uses does hold across that boundary.
+    assert forward == pytest.approx(backward, rel=0, abs=1e-9)
 
 
 @pytest.mark.asyncio
@@ -175,12 +254,22 @@ async def test_bin_edges_land_where_the_pair_path_put_them(p):
     that does not exist.
     """
     rows = [("t", "quantity", True, p, float(i % 2)) for i in range(40)]
+    aggregates = _aggregate(rows)
+
+    # The BIN ASSIGNMENT is the subject here, and it is exact integer
+    # arithmetic — so it is asserted exactly, on the bin keys themselves,
+    # rather than inferred from an ECE that happens to differ when it drifts.
+    # Reading a one-bin drift off a float is what made the sibling assertion
+    # above interpreter-dependent; the thing this test is about never was.
+    assert {r.bin for r in aggregates} == {_bin(p)}
+
+    # The ECE is then corroboration, on the same one-rounding-step grid the
+    # sibling uses and for the same reason.
+    raw = _ece_from_pairs_raw([(p, a) for _, _, _, p, a in rows])
     resp = await admin_cohort.cohort_provenance_split(
-        request=None, db=_db(_aggregate(rows))
+        request=None, db=_db(aggregates)
     )
-    assert abs(
-        resp["cells"][0]["ece_all"] - _ece_from_pairs([(p, a) for _, _, _, p, a in rows])
-    ) <= _ECE_TOL
+    assert abs(resp["cells"][0]["ece_all"] - round(raw, 2)) <= 0.01
 
 
 @pytest.mark.asyncio
