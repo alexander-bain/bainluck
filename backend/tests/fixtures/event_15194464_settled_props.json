@@ -1,0 +1,334 @@
+{
+ "box_score": {
+  "Brandon Young": {
+   "hits": 8.0,
+   "home runs": 3.0,
+   "runs": 4.0,
+   "walks": 1.0
+  },
+  "Bryan Baker": {
+   "hits": 0.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Cam Booser": {
+   "hits": 2.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 1.0
+  },
+  "Cam Sanders": {
+   "hits": 0.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Carlos Narvaez": {
+   "at bats": 2.0,
+   "batting average": 0.173,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 1.0
+  },
+  "Casey Legumina": {
+   "hits": 2.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Cedric Mullins": {
+   "at bats": 4.0,
+   "batting average": 0.209,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Chandler Simpson": {
+   "at bats": 4.0,
+   "batting average": 0.309,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Christian Encarnacion-Strand": {
+   "at bats": 4.0,
+   "batting average": 0.263,
+   "hits": 2.0,
+   "home runs": 1.0,
+   "rbis": 4.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Christian Franklin": {
+   "at bats": 2.0,
+   "batting average": 0.2,
+   "hits": 2.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Coby Mayo": {
+   "at bats": 4.0,
+   "batting average": 0.214,
+   "hits": 2.0,
+   "home runs": 1.0,
+   "rbis": 1.0,
+   "runs": 2.0,
+   "walks": 0.0
+  },
+  "Colton Cowser": {
+   "at bats": 2.0,
+   "batting average": 0.216,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Gunnar Henderson": {
+   "at bats": 4.0,
+   "batting average": 0.222,
+   "hits": 2.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Jackson Holliday": {
+   "at bats": 5.0,
+   "batting average": 0.244,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Jeremiah Jackson": {
+   "at bats": 4.0,
+   "batting average": 0.227,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Jonathan Aranda": {
+   "at bats": 4.0,
+   "batting average": 0.287,
+   "hits": 2.0,
+   "home runs": 0.0,
+   "rbis": 1.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Jonny DeLuca": {
+   "at bats": 1.0,
+   "batting average": 0.265,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 2.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Jorge Mateo": {
+   "at bats": 2.0,
+   "batting average": 0.244,
+   "hits": 1.0,
+   "home runs": 1.0,
+   "rbis": 2.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Josh Walker": {
+   "hits": 1.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 1.0
+  },
+  "Junior Caminero": {
+   "at bats": 4.0,
+   "batting average": 0.273,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Kevin Kelly": {
+   "hits": 2.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Leody Taveras": {
+   "at bats": 0.0,
+   "batting average": 0.226,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Liam Hicks": {
+   "at bats": 3.0,
+   "batting average": 0.282,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Nick Fortes": {
+   "at bats": 0.0,
+   "batting average": 0.269,
+   "hits": 0.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Pete Alonso": {
+   "at bats": 5.0,
+   "batting average": 0.267,
+   "hits": 2.0,
+   "home runs": 1.0,
+   "rbis": 1.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Richie Palacios": {
+   "at bats": 3.0,
+   "batting average": 0.242,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 1.0
+  },
+  "Rico Garcia": {
+   "hits": 0.0,
+   "home runs": 0.0,
+   "runs": 0.0,
+   "walks": 1.0
+  },
+  "Ryan Vilade": {
+   "at bats": 3.0,
+   "batting average": 0.257,
+   "hits": 1.0,
+   "home runs": 1.0,
+   "rbis": 1.0,
+   "runs": 1.0,
+   "walks": 1.0
+  },
+  "Shane McClanahan": {
+   "hits": 4.0,
+   "home runs": 1.0,
+   "runs": 3.0,
+   "walks": 0.0
+  },
+  "Taylor Walls": {
+   "at bats": 2.0,
+   "batting average": 0.222,
+   "hits": 1.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 0.0
+  },
+  "Tyler O'Neill": {
+   "at bats": 5.0,
+   "batting average": 0.223,
+   "hits": 2.0,
+   "home runs": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0
+  },
+  "Tyler Wells": {
+   "hits": 3.0,
+   "home runs": 2.0,
+   "runs": 3.0,
+   "walks": 0.0
+  },
+  "Yandy Diaz": {
+   "at bats": 3.0,
+   "batting average": 0.304,
+   "hits": 2.0,
+   "home runs": 1.0,
+   "rbis": 1.0,
+   "runs": 2.0,
+   "walks": 1.0
+  },
+  "Yennier Cano": {
+   "hits": 3.0,
+   "home runs": 0.0,
+   "runs": 3.0,
+   "walks": 0.0
+  }
+ },
+ "props": [
+  [
+   "Pete Alonso: Home Runs O/U 0.5",
+   "Under",
+   0.5
+  ],
+  [
+   "Pete Alonso: Home Runs O/U 0.5",
+   "Over",
+   0.5
+  ],
+  [
+   "Baltimore Orioles vs. Tampa Bay Rays",
+   "Yes",
+   null
+  ],
+  [
+   "Baltimore Orioles vs. Tampa Bay Rays",
+   "No",
+   null
+  ],
+  [
+   "Brandon Young: Strikeouts O/U 3.5",
+   "Under",
+   3.5
+  ],
+  [
+   "Brandon Young: Strikeouts O/U 3.5",
+   "Over",
+   3.5
+  ],
+  [
+   "Jonny DeLuca: Home Runs O/U 1.5",
+   "Under",
+   1.5
+  ],
+  [
+   "Jonny DeLuca: Home Runs O/U 1.5",
+   "Over",
+   1.5
+  ],
+  [
+   "Shane McClanahan: Strikeouts O/U 4.5",
+   "Under",
+   4.5
+  ],
+  [
+   "Shane McClanahan: Strikeouts O/U 4.5",
+   "Over",
+   4.5
+  ],
+  [
+   "Baltimore Orioles vs. Tampa Bay Rays",
+   "Baltimore Orioles vs. Tampa Bay Rays",
+   null
+  ]
+ ]
+}
