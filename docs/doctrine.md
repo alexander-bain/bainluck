@@ -190,6 +190,40 @@ the beat schedule. Nothing puts them on the same screen, so the comparison is ne
 neither failure announces itself, because an expired key and a never-written key are the same
 absence (clause 1, and gotcha #53).
 
+### 12. Read-only is a property of the query, not of the intent.
+
+"It only reads" describes what a caller *means to change*, and says nothing about what the call
+*costs to serve*. A request that writes nothing can still hold the one resource every other
+request needs — an event loop, a connection, a worker slot, a lock — and while it holds it, the
+service is down for everyone. Safety and cheapness are separate axes, and the word "read-only" is
+routinely used to assert the second by proving the first.
+
+The tell is an endpoint that is exempted from the guards precisely *because* it is read-only: no
+destructive-secret check, no rate limit, no single-flight, often an auto-refreshing dashboard tab
+pointed straight at it. The exemption is granted on the axis that was never the risk.
+
+*The rule:* price a read by **what it occupies and for how long**, not by whether it mutates.
+Anything that blocks — a broadcast, a fan-out, an unbounded scan, a synchronous client inside an
+async handler — is bounded, moved off the shared resource, and single-flighted, whatever its verb.
+And an instrument that measures contention must be priced hardest of all, because it is used most
+exactly when the resource is already scarce.
+
+*Named failure:* `GET /api/admin/celery-debug` calls `celery_app.control.inspect()` **four times,
+inline, at `timeout=5`, inside an `async def`**. `inspect` is a broadcast: it publishes to a
+control exchange and blocks until every worker replies or the timeout expires, so one request can
+hold the single uvicorn event loop for up to twenty seconds. Two read-only samplers polling it at
+20 s and 8 s black-holed **the entire production API for ~10 minutes**, `/api/health` included,
+with `heroku ps` reporting `web.1: up` throughout. The proof is the recovery: killing the two
+pollers by pid returned p50 to 0.227 s within 25 seconds, with nothing restarted — the dyno was
+never unhealthy, the loop was never free (#1994, ruling **096**, LAT-P071 §3e). The endpoint was
+exempt from the destructive-secret guard *because it does not write*.
+
+*The compounding form:* the program was measuring **why scheduled work cannot get a slot**, using
+an endpoint that consumes the web dyno's only loop to ask. The instrument was part of the
+phenomenon. Sibling: gotcha #40's `db-query`, and `celery-debug`'s own memoisation, which then had
+to be given a `?fresh=1` bypass because a 5-second cache **masked a live broker failure** — buying
+availability with a window in which a real error reads as a healthy 200 (clause 1 again).
+
 ---
 
 ## Related
