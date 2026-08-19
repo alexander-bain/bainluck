@@ -32,6 +32,7 @@ from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
+from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenance
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -581,15 +582,20 @@ async def record_discover_interactions(
     session_id = _session_id_from_request(request)
     discover_config = await _load_discover_runtime_config()
     # Provenance at source — trust the writer, not the log.
-    # Header `X-Discover-Provenance` is the explicit stamp for warmer/sentinel/
-    # gold_session/admin; absence → unknown. Never default to user.
-    _PROVENANCE_VALUES = {"user", "warmer", "sentinel", "gold_session", "admin", "unknown"}
-    raw_prov = (request.headers.get("X-Discover-Provenance") or "").strip().lower()
+    # The header is the explicit stamp for play/warmer/sentinel/gold_session/
+    # admin; absence OR an unrecognised value → unknown. Never default to user.
+    #
+    # The allowlist lives in `app/utils/discover_provenance.py` and is asserted
+    # equal to the enum the migration creates. It was inlined here as a literal
+    # set, and that is how it came to accept `play` while the database enum
+    # could not store it: the ORM took a value PostgreSQL would reject, and the
+    # route specimen "passed" because the test double does not enforce enums.
+    raw_prov = request.headers.get(PROVENANCE_HEADER)
     # Also accept the batch-level provenance field when callers send it there
     # (gold_session labeling surfaces use this).
-    if not raw_prov:
-        raw_prov = (getattr(body, "provenance", None) or "").strip().lower()  # type: ignore[attr-defined]
-    provenance = raw_prov if raw_prov in _PROVENANCE_VALUES else "unknown"
+    if not (raw_prov or "").strip():
+        raw_prov = getattr(body, "provenance", None)  # type: ignore[attr-defined]
+    provenance = normalize_provenance(raw_prov)
 
     rows = []
     for event in body.interactions:

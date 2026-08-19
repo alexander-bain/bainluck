@@ -203,6 +203,10 @@ export function sendKidInteraction(
       headers: {
         "Content-Type": "application/json",
         "x-session-id": kidSessionId(),
+        // Provenance at source. Play is its OWN enum value and is never folded
+        // into `user`, nor inferred later from `source === "play"` — training
+        // slices choose Play inclusion explicitly, per slice.
+        "X-Discover-Provenance": "play",
       },
       body: JSON.stringify({
         interactions: [
@@ -243,6 +247,10 @@ export function sendKidPrediction(
       headers: {
         "Content-Type": "application/json",
         "x-session-id": kidSessionId(),
+        // Provenance at source. Play is its OWN enum value and is never folded
+        // into `user`, nor inferred later from `source === "play"` — training
+        // slices choose Play inclusion explicitly, per slice.
+        "X-Discover-Provenance": "play",
       },
       body: JSON.stringify(payload),
       keepalive: true,
