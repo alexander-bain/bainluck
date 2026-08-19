@@ -2545,6 +2545,29 @@ def precompute_calibration_main(self):
     return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
 
 
+@celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
+                 name="app.tasks.cohort_cell_census")
+def cohort_cell_census(self, page_size=1000, resume=True):
+    """#1978: the all-cells provenance census, as a resumable worker.
+
+    NOT on the beat schedule, deliberately. It reads the same population the
+    deadline-critical q268 producer reads hourly from :15 to ~:35, and CAL-P074
+    measured self-inflicted contention costing a cell its whole first pass. It is
+    operator-triggered (``POST /api/admin/cohort-cell-census/run``) so the quiet
+    window is a choice a human makes, not a cron guess.
+
+    Resumable by design rather than budgeted: the same job measured 645
+    markets/s quiet and 101 markets/s contended, and ruling 089 is precisely
+    about a bound derived from the quiet number cancelling every contended run.
+    It checkpoints per page, so a cancellation costs one page. Re-invoke until
+    ``complete: true``. Reads only; writes no market data (gotcha #21)."""
+    from app.tasks.cohort_cell_census_worker import run_cohort_cell_census
+    return _tracked_run(
+        "cohort_cell_census",
+        run_cohort_cell_census(page_size=int(page_size), resume=bool(resume)),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_time_horizon_calibration")
 def compute_time_horizon_calibration(self):
     """Precompute time-horizon calibration and cache in Redis (every 6h)."""
