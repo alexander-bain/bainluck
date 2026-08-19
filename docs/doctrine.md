@@ -316,6 +316,46 @@ code's.
 
 ---
 
+### 15. An intervention on a period-quantised system is judged against the quantiser, not the average.
+
+Where a control variable is *also* the quantiser of some periodic quantity, the
+mean of that quantity is the wrong statistic to reason from. A quantiser coarser
+than the distribution it acts on puts **every** sample on the same side of the
+threshold, and an average — or a median, or a "typical case" — hides that there
+is no branch left under it.
+
+The tell is that the arithmetic on the side you are optimising is *correct*. It
+usually is. The error is not a bad calculation; it is a second role the control
+variable plays that the calculation never had a term for.
+
+*Named failure:* `warm_typeahead`'s beat interval. The proposal to move it 10s →
+60s was reasoned entirely from arrival: 72.0% of everything published to the
+`background` queue, ~82% of fires no-ops, a 60% cut. All true, all undisputed.
+But the beat also quantises the warmer's pass period —
+`P(B) = B * ceil(max(wall, floor) / B)` — and the period is measured against a
+hard **45s** cliff, `/typeahead`'s response-cache TTL. At B = 60 the quantiser is
+coarser than the whole measured wall distribution (29.4–42.6s), so P = 60s at the
+best, median **and** worst wall alike. LAT-P063 had already graded 20 passes for
+20: crossing that TTL does not degrade the head gradually, it empties it. The
+halt fired on evidence already in the tree, before any deploy (#1609, #1866,
+`app/utils/typeahead_beat_budget.py`).
+
+*Corollary, and it is the sharper half:* **a change that arithmetically fits
+inside a measured gap is still refused when the gap is narrower than the
+sample's own uncertainty.** `B = 22` happens to give P = 44s across the entire
+measured range — 1s of headroom, computed against a maximum drawn from 20
+passes. A maximum from a finite sample is a lower bound on the true maximum, so
+every margin computed against it inherits that. 1.4s of headroom is not a
+margin, it is a coincidence, and the corollary was vindicated inside the window
+that banked this clause: the wall's p95 was subsequently measured at **44.6s**,
+above the 42.6s "maximum" the margin had been computed from.
+
+*Sibling of clause 3* (a percentage padded for safety is an absolute threshold in
+disguise) — both are cases where the number being reasoned about and the number
+that actually decides are different quantities.
+
+---
+
 ## Related
 
 | Where | What it holds |
