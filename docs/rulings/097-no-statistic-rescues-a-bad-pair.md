@@ -1,4 +1,4 @@
-# RULING 096 — No statistic rescues a bad pair; a tie prints the midpoint
+# RULING 097 — No statistic rescues a bad pair; a tie prints the midpoint
 
 date: 2026-08-19
 author: Fable

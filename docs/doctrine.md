@@ -112,7 +112,7 @@ quieter as it gets more wrong).
 implemented as `>` and **a prop that moved exactly twenty points read as NOT surprising**,
 silently, because no fixture sat on the line (cycle 98). Conversely, sweeping every pair
 whose intended spread equals the divergence threshold, a bare `>` **wrongly gates 78 of
-601** — the epsilon-tolerant `spread_exceeds` gates 0 (cycle 99, ruling **096**).
+601** — the epsilon-tolerant `spread_exceeds` gates 0 (cycle 99, ruling **097**).
 
 ---
 
