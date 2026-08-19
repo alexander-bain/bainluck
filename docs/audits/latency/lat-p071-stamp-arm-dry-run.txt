@@ -1,0 +1,48 @@
+LAT-P071 — DRY RUN of the stamp arm against REAL PRODUCTION STAMPS
+stamps fetched 2026-08-19T05:24-05:26Z; graded 2026-08-19T05:33:27.690992+00:00
+adherence payload: /api/admin/celery/schedule-adherence read 2026-08-19T04:3xZ
+constants: WINDOW_COUNTER_TTL=86400  STAMP_LATE_TOLERANCE=2.0  STAMP_MIN_TOLERANCE_S=300.0
+
+NOT DEPLOYED. This grades the fix OFFLINE against production stamps, because it
+rides the 17:01Z fence. 27 of the 40 structurally-blind tasks could not be fetched
+at all — they answer `no_data` under their own short name (#1800). The route uses
+the label map and will see them; this dry run guesses the label and does not.
+
+task                             OLD verdict   NEW verdict   newest stamp (x its interval)
+----------------------------------------------------------------------------------------------
+backfill_combat_wps              unmeasurable  on_schedule   13.9h (0.6x)
+board_sentinel                   unmeasurable  on_schedule   21.7h (0.9x)
+calibration_sentinel             unmeasurable  on_schedule   47.2h (0.3x)
+capture_featured_markets         unmeasurable  on_schedule   20.0h (0.8x)
+check_data_quality               unmeasurable  on_schedule   12.2h (0.5x)
+export_engagement                unmeasurable  on_schedule   25.4h (1.1x)
+flow_sentinel                    unmeasurable  on_schedule   8.0h (0.3x)
+grid_register_sentinel           unmeasurable  on_schedule   22.0h (0.9x)
+grid_sentinel                    unmeasurable  on_schedule   22.1h (0.9x)
+horizon_sentinel                 unmeasurable  on_schedule   21.9h (0.9x)
+mlb_schedule_coverage            unmeasurable  on_schedule   22.5h (0.9x)
+settled_concept_sentinel         unmeasurable  on_schedule   21.8h (0.9x)
+warm_typeahead                   unmeasurable  missing       3.6h (1304.2x)   <<< THE ONE THAT MATTERS
+----------------------------------------------------------------------------------------------
+NEW verdicts: {'on_schedule': 12, 'missing': 1} — every one of these was 'unmeasurable' before.
+
+THREE THINGS THIS DRY RUN ESTABLISHED THAT DESIGN DID NOT:
+
+1. ZERO FALSE MISSINGS on 12 healthy beats. That is the safety property that
+   matters — an arm that pages for healthy daily tasks would be retired in a week.
+
+2. STAMP_LATE_TOLERANCE = 2.0 IS VINDICATED ON REAL DATA, unplanned. Most daily
+   sentinels sit at 0.9x. `export_engagement` reads 1.1x and is HEALTHY — at a
+   tolerance of 1.0 it would be reported MISSING today. The boundary-flap this
+   constant was chosen to avoid is not hypothetical; it is one row in this table.
+
+3. THE NO-WINDOW ROUTE WAS ADDED BECAUSE OF THIS TABLE. `warm_typeahead` has a 10s
+   interval, nowhere near the 12h blindness ceiling, so the first version of the arm
+   declined it and left it `unmeasurable`. Its counter had EXPIRED, so the rate arm
+   was mute too — and it is the largest single publisher into the queue #1609 is
+   about, stalled 3.6 hours. Both arms silent on the one task that mattered most.
+   A count of unknown age is unusable; a moment is not.
+
+Also note `calibration_sentinel` at 0.3x: the stamp arm grades a WEEKLY beat
+correctly without needing the T5 protocol's manual cadence exclusion, which it
+therefore subsumes.

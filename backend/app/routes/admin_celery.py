@@ -161,7 +161,38 @@ async def celery_dashboard(
     }
 
 
-def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None):
+def _stamp_ages_s(metric, now_epoch):
+    """``(newest_terminal_age_s, newest_start_age_s)`` from one metrics row.
+
+    LAT-P071. The stamp arm needs AGES, and only a caller with a clock can turn
+    the hash's ISO strings into them — which is why this lives here and not in
+    the pure grader.
+
+    A stamp in the FUTURE returns ``None`` rather than a negative age. Ahead-drift
+    is a real failure mode in this tree (ruling 008 names two lane-lock incidents
+    caused by it), and a negative age would sail through every ``age <= limit``
+    comparison below as the freshest possible reading — a clock-skewed stamp
+    would certify a dead beat as healthy. Unknown is the safe answer; it grades
+    ``unmeasurable``, which is visible, instead of ``on_schedule``, which is not.
+    """
+    from app.tasks.redis_state import _parse_iso, _TERMINAL_STAMP_FIELDS
+
+    def _age(value):
+        epoch = _parse_iso(value)
+        if epoch is None:
+            return None
+        age = now_epoch - epoch
+        return age if age >= 0 else None
+
+    terminals = [a for a in (_age(metric.get(f)) for f in _TERMINAL_STAMP_FIELDS)
+                 if a is not None]
+    return (min(terminals) if terminals else None,
+            _age(metric.get("last_started_at")))
+
+
+def build_schedule_adherence(
+    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None
+):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
     Split out from the route so the join logic is unit-testable against fixed
@@ -178,8 +209,12 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
     even when the label join finds nothing, so being invisible to the join no
     longer means being invisible to the surface.
     """
+    import time as _time
+
+    from app.tasks.redis_state import WINDOW_COUNTER_TTL
     from app.utils.schedule_adherence import adherence, beat_intervals, find_lapping
 
+    now_epoch = _time.time() if now_epoch is None else now_epoch
     intervals = beat_intervals(beat_schedule)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
@@ -190,6 +225,7 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
         label = label_map.get(full_name)
         m = by_label.get(label) if label else None
         d = deliveries.get(full_name) or {}
+        terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
             # NOT "healthy" — it is a beat entry the health surface cannot see,
@@ -223,6 +259,12 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).
             durations_window_s=(m or {}).get("recent_durations_window_s"),
             durations_saturated=(m or {}).get("recent_durations_saturated"),
+            # LAT-P071: the stamp arm's inputs. `counter_ttl_s` is read from the
+            # writer's own constant rather than transcribed, so the ceiling the
+            # grader computes can never drift from the TTL that creates it.
+            newest_terminal_age_s=terminal_age,
+            newest_start_age_s=start_age,
+            counter_ttl_s=float(WINDOW_COUNTER_TTL),
         )
 
     lapping = find_lapping(graded)
@@ -233,10 +275,38 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
         "scheduled_tasks": len(intervals),
         "graded": len(graded),
         "verdict_counts": counts,
+        # LAT-P071: how many entries each ARM answered. Without this the reader
+        # cannot tell a rate-arm PASS from a stamp-arm PASS, and the two support
+        # very different claims — the rate arm says "it fired N times in a
+        # measured window", the stamp arm says only "something happened
+        # recently". Reporting one number for both would launder the weaker
+        # evidence into the stronger one's confidence.
+        "arm_counts": _arm_counts(graded),
         "lapping": lapping,
         "unmapped": unmapped,
         "all": graded,
     }
+
+
+def _arm_counts(graded):
+    """Per-arm verdict tallies, plus the standing blind-spot census.
+
+    ``rate_arm_blind_total`` is a property of the SCHEDULE and the counter TTL,
+    not of today's traffic, so it does not move when the system is healthy. That
+    is the point: it is the number that says how much of the beat schedule this
+    endpoint could never grade before the stamp arm existed (measured 33 of 123
+    on 2026-08-19), and it should be watched for growth every time a slow beat
+    is added.
+    """
+    out = {}
+    for g in graded.values():
+        arm = g.get("arm", "rate")
+        bucket = out.setdefault(arm, {})
+        bucket[g["verdict"]] = bucket.get(g["verdict"], 0) + 1
+    out["rate_arm_blind_total"] = sum(
+        1 for g in graded.values() if g.get("rate_arm_blind")
+    )
+    return out
 
 
 @router.get("/celery/schedule-adherence")
@@ -292,21 +362,120 @@ async def get_task_metrics_endpoint(
     return get_task_metrics(task_name)
 
 
+#: How long an inspect snapshot may be reused. celery's `inspect` is a BROADCAST:
+#: every call publishes to a control exchange and blocks until every worker
+#: replies or the timeout expires. Four of them in one handler is up to 20s of
+#: blocking work.
+#:
+#: 🔴 THIS CONSTANT EXISTS BECAUSE THE ENDPOINT TOOK PRODUCTION DOWN.
+#: LAT-P071, 2026-08-19 05:00–05:03Z: two read-only samplers polling
+#: `/api/admin/celery-debug` (one at 20s, one at 8s) drove the whole API to HTTP
+#: 503 at the 30s H12 ceiling — `/api/health` included — for ~10 minutes, while
+#: `heroku ps` reported the web dyno `up` the entire time with uptime unbroken.
+#: Killing the two pollers restored p50 to 0.23s within 25 seconds, four
+#: consecutive calls, with no restart. The dyno was never unhealthy: the single
+#: uvicorn event loop was simply never free.
+#:
+#: Nothing about the endpoint looked dangerous — it is a read-only debug route,
+#: and that is exactly why it is one auto-refreshing dashboard tab away from an
+#: outage. 5s is chosen to be shorter than any plausible human refresh and longer
+#: than the tightest sane poll.
+_INSPECT_TTL_S = 5.0
+_INSPECT_CACHE: dict = {"at": 0.0, "data": None}
+_INSPECT_LOCK = None
+
+
+async def _inspect_snapshot(timeout=5, fresh=False):
+    """One celery `inspect` broadcast set, OFF the event loop, memoised and
+    single-flighted.
+
+    Three protections, and each one is load-bearing for a different failure:
+
+    * **off-loop** (`run_in_threadpool`) — a broadcast is socket I/O plus
+      pure-Python message assembly, both of which release the GIL, so a thread
+      genuinely helps here. (Contrast gotcha #38: `to_thread` does NOT help a
+      C-level `json.loads`, which holds the GIL for the whole parse. The
+      distinction is why this is worth stating rather than assuming.)
+    * **single-flight** — concurrent callers share ONE broadcast instead of each
+      starting four. Without it, off-loop only moves the pile-up into the
+      threadpool, where exhausting the 40 default threads stalls every other
+      route that needs one.
+    * **memoised** — a poller faster than `_INSPECT_TTL_S` gets the cached
+      snapshot. This is the protection that would actually have prevented the
+      LAT-P071 outage, because the load there was cadence, not concurrency.
+
+    The cache state is DISCLOSED in the payload. A debug endpoint that silently
+    serves a stale snapshot is worse than a slow one — it invites conclusions
+    about a moment that has passed.
+
+    🔴 `fresh=True` BYPASSES THE MEMO, AND IS NOT A TEST ACCOMMODATION. Caught by
+    the full suite, not by review: a warm cache **masked a live broker failure**.
+    `test_response_shape_on_inspect_error` asserts that when `inspect` raises the
+    payload says `inspect_error` rather than 200-ing silently — a gotcha #53
+    contract — and a 5 s-old success satisfied the request without ever making the
+    call that would have failed.
+
+    A 5 s window of that is an acceptable cost for the availability the memo buys,
+    and `_cache` discloses it. What is NOT acceptable is having no way out: an
+    operator asking "are my workers alive" must be able to get an UNCACHED answer.
+    So the bypass exists, it still runs off-loop and single-flighted (it skips the
+    memo READ, never the protections), and a raising call writes nothing to the
+    cache — an error is not a snapshot.
+    """
+    import asyncio
+    import time as _time
+
+    from starlette.concurrency import run_in_threadpool
+
+    global _INSPECT_LOCK
+    if _INSPECT_LOCK is None:
+        _INSPECT_LOCK = asyncio.Lock()
+
+    now = _time.time()
+    cached = _INSPECT_CACHE.get("data")
+    if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+        return cached, {"cached": True, "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+
+    async with _INSPECT_LOCK:
+        # Re-check inside the lock: whoever we queued behind has just refreshed it.
+        now = _time.time()
+        cached = _INSPECT_CACHE.get("data")
+        if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+            return cached, {"cached": True,
+                            "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+
+        def _blocking():
+            from app.tasks import celery_app
+            i = celery_app.control.inspect(timeout=timeout)
+            return {
+                "ping": i.ping() or {},
+                "active": i.active() or {},
+                "reserved": i.reserved() or {},
+                "registered": i.registered() or {},
+                "stats": i.stats() or {},
+            }
+
+        data = await run_in_threadpool(_blocking)
+        _INSPECT_CACHE["data"] = data
+        _INSPECT_CACHE["at"] = _time.time()
+        return data, {"cached": False, "age_s": 0.0}
+
+
 @router.get("/celery/inspect")
 async def celery_inspect(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    fresh: bool = Query(False, description="Bypass the 5s inspect memo"),
 ):
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
     _check_admin_secret(secret, request=request)
 
-    from app.tasks import celery_app
-    i = celery_app.control.inspect(timeout=5)
-    registered = i.registered() or {}
-    active = i.active() or {}
-    reserved = i.reserved() or {}
+    snap, cache_state = await _inspect_snapshot(fresh=fresh)
+    registered = snap["registered"]
+    active = snap["active"]
+    reserved = snap["reserved"]
 
-    result = {}
+    result = {"_cache": cache_state}
     for worker_name in set(list(registered) + list(active) + list(reserved)):
         worker_tasks = registered.get(worker_name, [])
         taxonomy = [t for t in worker_tasks if "taxonomy" in t or "event_tag" in t]
@@ -326,6 +495,125 @@ async def celery_inspect(
     return result
 
 
+#: Kombu's redis transport publishes with ``lpush`` and consumes with ``rpop``
+#: (verified against the installed kombu, not assumed). So index 0 is the NEWEST
+#: message and index -1 is the OLDEST — the one about to be served. Both ends are
+#: censused because they answer different questions and the existing
+#: ``celery-debug`` sample only ever saw one of them.
+_QUEUE_CENSUS_MAX_CAP = 4000
+
+#: Celery splits one logical queue across per-priority Redis keys. With no
+#: priorities in use everything lands on the base key, but a census that read
+#: only the base key would silently under-report the moment that changed — and
+#: an under-count here reads as "the backlog cleared".
+_PRIORITY_SUFFIXES = ("", "\x06\x163", "\x06\x166", "\x06\x169")
+
+
+def _census_slice(raw_entries):
+    """Task-name histogram for a list of raw celery message bodies.
+
+    A body that will not parse is counted as ``parse_error`` rather than
+    skipped. Dropping it would shrink the denominator silently, and a census
+    whose denominator moves is not a census.
+    """
+    import json as _json
+    from collections import Counter
+
+    names = []
+    for raw in raw_entries:
+        try:
+            names.append(
+                (_json.loads(raw).get("headers") or {}).get("task") or "unknown"
+            )
+        except Exception:
+            names.append("parse_error")
+    return dict(Counter(names).most_common()), names
+
+
+@router.get("/celery/queue-census")
+async def celery_queue_census(
+    request: Request,
+    queue: str = Query("background"),
+    cap: int = Query(1000, ge=20, le=_QUEUE_CENSUS_MAX_CAP),
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """What is ACTUALLY in a queue, from both ends, with its coverage stated.
+
+    LAT-P071. ``celery-debug`` samples ``lrange(queue, 0, 19)`` under the comment
+    "see what's piled up". Two things are wrong with reading it that way, and the
+    program has now been misled by both:
+
+    1. **It is the wrong end.** ``lpush``/``rpop`` means index 0 is the newest
+       ARRIVAL. The messages that are piled up — the ones a starved beat is stuck
+       behind — are at the far end, and no instrument in this tree has ever
+       looked at them.
+    2. **20 of 2,842 is not a sample of anything.** It is a window at one end of
+       an ordered list, and LAT-P066 was careful to say so; but a bare
+       ``{"warm_typeahead": 18}`` in a payload gets read as a proportion anyway.
+
+    So this returns both ends, both histograms, and — the field that makes the
+    other two safe to read — ``coverage``: what fraction of the depth was
+    actually examined, and whether the read was ``truncated``. A census that
+    cannot say how much it saw is an anecdote with a total attached.
+
+    Read-only: ``lrange`` and ``llen`` only. Nothing here consumes, acks, moves
+    or purges a message.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    per_key, depth = {}, 0
+    for suffix in _PRIORITY_SUFFIXES:
+        key = f"{queue}{suffix}"
+        n = r.llen(key)
+        if n:
+            per_key[repr(key)] = n
+            depth += n
+
+    half = max(1, cap // 2)
+    # Both slices come off the BASE key. A per-priority queue deep enough to need
+    # its own census is a different situation and gets reported as a depth, not
+    # guessed at from the base key's composition.
+    base = queue
+    base_len = r.llen(base)
+    newest_raw = r.lrange(base, 0, min(half, base_len) - 1) if base_len else []
+    oldest_raw = r.lrange(base, -min(half, base_len), -1) if base_len else []
+    newest_hist, _ = _census_slice(newest_raw)
+    oldest_hist, oldest_names = _census_slice(oldest_raw)
+
+    examined = len(newest_raw) + len(oldest_raw)
+    # The two slices overlap once the cap exceeds the depth; past that point the
+    # census is COMPLETE and `examined` would double-count. Say complete.
+    complete = base_len > 0 and cap >= base_len
+    seen = base_len if complete else examined
+
+    return {
+        "queue": queue,
+        "depth": depth,
+        "depth_by_key": per_key,
+        "cap": cap,
+        "coverage": {
+            "examined": seen,
+            "of_depth": depth,
+            "pct": round(100.0 * seen / depth, 1) if depth else None,
+            "complete": complete,
+            "truncated": bool(depth) and not complete,
+        },
+        # `oldest_first` is the SERVICE order. The first name in it is the next
+        # message this queue will hand to a worker.
+        "next_to_be_served": oldest_names[-1] if oldest_names else None,
+        "oldest_end": oldest_hist,
+        "newest_end": newest_hist,
+        "note": (
+            "lpush/rpop: index 0 is the newest arrival, index -1 is served next. "
+            "oldest_end is the backlog a starved beat waits behind; newest_end is "
+            "the current arrival mix."
+        ),
+    }
+
+
 @router.post("/celery-purge-background")
 async def celery_purge_background(request: Request, secret: str = Query(None)):
     """Purge stale tasks from the background queue."""
@@ -336,24 +624,27 @@ async def celery_purge_background(request: Request, secret: str = Query(None)):
 
 
 @router.get("/celery-debug")
-async def celery_debug(request: Request, secret: str = Query(None)):
+async def celery_debug(
+    request: Request,
+    secret: str = Query(None),
+    fresh: bool = Query(False, description="Bypass the 5s inspect memo"),
+):
     """Inspect Celery worker status and queue lengths."""
     _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
 
     result = {}
 
-    # Worker ping
+    # Worker ping. Off-loop, single-flighted and memoised — see `_inspect_snapshot`.
+    # This handler used to make FOUR blocking 5s broadcasts inline in an `async
+    # def`, which is what took the API down on 2026-08-19 (LAT-P071).
     try:
-        inspector = celery_app.control.inspect(timeout=5)
-        result["ping"] = inspector.ping() or "no response"
-        result["active"] = inspector.active() or "no response"
-        result["registered"] = {
-            k: len(v) for k, v in (inspector.registered() or {}).items()
-        }
+        snap, result["_cache"] = await _inspect_snapshot(fresh=fresh)
+        result["ping"] = snap["ping"] or "no response"
+        result["active"] = snap["active"] or "no response"
+        result["registered"] = {k: len(v) for k, v in snap["registered"].items()}
         result["stats"] = {
             k: {"total": v.get("total", {}), "pool": v.get("pool", {}).get("max-concurrency")}
-            for k, v in (inspector.stats() or {}).items()
+            for k, v in snap["stats"].items()
         }
     except Exception as e:
         result["inspect_error"] = str(e)

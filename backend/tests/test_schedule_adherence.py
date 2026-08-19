@@ -144,8 +144,13 @@ class TestAdherenceRefusesToGuess:
         # deploy for a system that is running perfectly.
         g = adherence(starts=5, starts_window_s=None, interval_s=60)
         assert g["verdict"] == "unmeasurable"
-        assert g["reason"] == "no_interval_or_window"
         assert g["ratio"] is None
+        # LAT-P071 widened the REASON string only: a no-window row now routes to
+        # the stamp arm, which says so and — with no stamps supplied, as here —
+        # still refuses. The contract this test guards (unmeasurable, never
+        # `behind`, no ratio) is unchanged; the wording is strictly more specific.
+        assert "no counter window" in g["reason"]
+        assert "no start or terminal stamp" in g["reason"]
 
     def test_missing_interval_is_unmeasurable(self):
         g = adherence(starts=5, starts_window_s=3600, interval_s=None)
@@ -285,3 +290,212 @@ class TestExpectedFires:
         assert expected_fires(None, 60) is None
         assert expected_fires(3600, None) is None
         assert expected_fires(3600, 0) is None
+
+
+# ---------------------------------------------------------------------------
+# LAT-P071 — the STAMP arm.
+#
+# The defect: the rate arm needs ``window_s / interval_s >= MIN_EXPECTED_FIRES``,
+# and ``window_s`` cannot exceed the counter's TTL. At the production constants
+# (86400s, 2.0) that puts a hard 12-hour ceiling on what it can grade, and 33 of
+# 123 production beat entries — including five of the six sentinels T5 grades —
+# sit above it PERMANENTLY while reporting ``window_too_short``, a string that
+# reads as a condition about to clear.
+#
+# These tests care about the same thing the module already cares about: the
+# refusals. The stamp arm may say ``missing`` only when it has evidence, and it
+# must never launder "never observed" into "stopped running".
+# ---------------------------------------------------------------------------
+
+from app.utils.schedule_adherence import (  # noqa: E402
+    STAMP_LATE_TOLERANCE,
+    rate_arm_is_structurally_blind,
+)
+
+DAY = 86400.0
+TTL = 86400.0
+
+
+class TestRateArmBlindness:
+    def test_daily_beat_is_blind_at_production_constants(self):
+        # 86400 > 86400/2. The measured production case.
+        assert rate_arm_is_structurally_blind(DAY, TTL) is True
+
+    def test_six_hourly_beat_is_not_blind(self):
+        # 21600 <= 43200: its counter reaches gradeability in the back half of
+        # every TTL cycle. Genuinely transient, and must not be relabelled.
+        assert rate_arm_is_structurally_blind(21600.0, TTL) is False
+
+    def test_exactly_at_the_ceiling_is_not_blind(self):
+        assert rate_arm_is_structurally_blind(TTL / MIN_EXPECTED_FIRES, TTL) is False
+
+    def test_unknown_ttl_never_asserts_forever(self):
+        # "Can never be graded" is a claim about the TTL. Without one, the claim
+        # is unsupported, and the honest answer is to fall back to the old words.
+        assert rate_arm_is_structurally_blind(DAY, None) is False
+
+    def test_ceiling_moves_with_the_ttl_it_is_derived_from(self):
+        # Not transcribed: raise the TTL and the daily beat becomes gradeable.
+        assert rate_arm_is_structurally_blind(DAY, 4 * DAY) is False
+
+
+class TestStampArm:
+    def test_blind_beat_with_recent_terminal_is_on_schedule(self):
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=3600.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+        assert g["arm"] == "stamp"
+        assert g["stamp_kind"] == "terminal"
+        assert g["stamp_age_over_interval"] == 0.04
+
+    def test_late_is_reported_as_a_number_not_a_failure(self):
+        # T5's whole claim is "late, never missing". A beat 1.5 intervals stale
+        # is late; calling it missing would refute T5 on the detector's opinion.
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=1.5 * DAY, counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_age_over_interval"] == 1.5
+
+    def test_a_whole_missed_fire_is_missing(self):
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=2.5 * DAY, counter_ttl_s=TTL)
+        assert g["verdict"] == "missing"
+        assert "whole scheduled fire" in g["reason"]
+
+    def test_boundary_is_inclusive_and_does_not_flap(self):
+        # Exactly at tolerance is still a pass. The bug being avoided is a
+        # correct system crossing its own threshold on a punctual schedule.
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=STAMP_LATE_TOLERANCE * DAY,
+                      counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+
+    def test_start_without_terminal_still_counts_as_having_run(self):
+        # T5 protocol branch B. Adherence asks whether the beat FIRED; whether
+        # it finished is #1716's open question and has its own flag.
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      terminals=0, newest_terminal_age_s=None,
+                      newest_start_age_s=600.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_kind"] == "start"
+
+    def test_no_stamp_at_all_is_unmeasurable_not_missing(self):
+        # Gotcha #53. A task never observed is not a task that stopped, and
+        # grading it ``missing`` would make this arm worse than the silence it
+        # replaces — it would page for every beat the label join cannot see.
+        g = adherence(starts=0, starts_window_s=None, interval_s=DAY,
+                      counter_ttl_s=TTL)
+        assert g["verdict"] == "unmeasurable"
+        assert g["arm"] == "stamp"
+        assert "no start or terminal stamp" in g["reason"]
+
+    def test_newest_of_the_two_stamps_wins(self):
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=5 * DAY, newest_start_age_s=60.0,
+                      counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_kind"] == "start"
+
+    def test_rate_arm_still_wins_when_it_can_speak(self):
+        # A blind-by-interval beat whose window somehow DID reach the bar keeps
+        # the stronger evidence. The stamp arm is a fallback, not a takeover.
+        g = adherence(starts=2, starts_window_s=3 * DAY, interval_s=DAY,
+                      newest_terminal_age_s=10 * DAY, counter_ttl_s=TTL)
+        assert g["arm"] == "rate"
+        assert g["verdict"] != "missing"
+
+    def test_transient_shortfall_keeps_the_rate_arm_and_says_so(self):
+        g = adherence(starts=0, starts_window_s=7000, interval_s=21600.0,
+                      newest_terminal_age_s=10 * DAY, counter_ttl_s=TTL)
+        assert g["arm"] == "rate"
+        assert g["verdict"] == "unmeasurable"
+        assert "transient" in g["reason"]
+
+    def test_no_ttl_supplied_reproduces_the_old_behaviour_exactly(self):
+        # Every existing caller passes no TTL. It must be a pure no-op for them.
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=99 * DAY)
+        assert g["arm"] == "rate"
+        assert g["verdict"] == "unmeasurable"
+        assert g["rate_arm_blind"] is False
+
+    def test_missing_sorts_above_every_other_verdict_in_the_worklist(self):
+        graded = {
+            "overruns": adherence(starts=59, starts_window_s=3600, interval_s=60,
+                                  durations_ms=[59_000] * 5),
+            "behind": adherence(starts=1, starts_window_s=3600, interval_s=60),
+            "missing": adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                                 newest_terminal_age_s=9 * DAY, counter_ttl_s=TTL),
+        }
+        assert [r["task"] for r in find_lapping(graded)][0] == "missing"
+
+    def test_the_grader_guard_itself_rejects_a_negative_age(self):
+        # The other half of the mutation finding: the grader must not trust its
+        # caller to have sanitised the age. A negative age is the freshest
+        # possible reading under `age <= limit`, so an unguarded grader would
+        # certify a dead beat as healthy the moment any caller skipped the check.
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=-7200.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "unmeasurable"
+        assert g["stamp_age_s"] is None
+
+
+class TestStampArmReachesAMuteRateArm:
+    """LAT-P071b — a no-window row takes the stamp arm regardless of interval.
+
+    Found by dry-running the arm against production stamps, not by design.
+    `warm_typeahead` has a 10s interval — nowhere near the 12h blindness ceiling
+    — but its starts counter had EXPIRED, so `window_s` was None and the rate arm
+    was mute. Its last start stamp was 2h55m old against a 10s cadence: 1,050x,
+    unambiguously missing, and it is the largest single publisher into the queue
+    #1609 is about. A count of unknown age is unusable; a moment is not.
+    """
+
+    def test_a_fast_beat_with_no_window_is_graded_on_its_stamp(self):
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["arm"] == "stamp"
+        assert g["verdict"] == "missing"
+        assert g["stamp_age_over_interval"] == 1050.0
+
+    def test_it_says_MUTE_not_BLIND_so_the_message_is_not_nonsense(self):
+        # "rate arm blind (interval 10s > 43200s ceiling)" would make a reader
+        # correctly conclude the grader is broken. The two routes into this arm
+        # are different facts and get different words.
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert "no counter window" in g["reason"]
+        assert "blind" not in g["reason"]
+        assert g["rate_arm_blind"] is False
+
+    def test_a_YOUNG_window_stays_a_transient_rate_shrug(self):
+        # A window that exists but is short will age into gradeability on its
+        # own. Routing it to the stamp arm would trade a self-healing silence for
+        # a permanent second opinion.
+        g = adherence(starts=1, starts_window_s=60, interval_s=600.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["arm"] == "rate"
+        assert "transient" in g["reason"]
+
+    def test_the_absolute_floor_protects_a_fast_beat_from_ordinary_jitter(self):
+        # 2 x 10s would call a healthy beat missing after twenty seconds — a
+        # deploy restart, one slow upstream call, a worker recycling a child.
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=120.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+
+    def test_the_floor_does_not_loosen_a_slow_beat(self):
+        # For a daily beat the floor is irrelevant and 2 intervals governs.
+        from app.utils.schedule_adherence import STAMP_MIN_TOLERANCE_S
+        assert STAMP_MIN_TOLERANCE_S < DAY * STAMP_LATE_TOLERANCE
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=2.5 * DAY, counter_ttl_s=TTL)
+        assert g["verdict"] == "missing"
+
+    def test_no_interval_at_all_still_refuses_outright(self):
+        # Without an interval there is nothing to compare an age against, and the
+        # stamp arm must not invent one.
+        g = adherence(starts=5, starts_window_s=None, interval_s=None,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "unmeasurable"
+        assert g["reason"] == "no_interval_or_window"

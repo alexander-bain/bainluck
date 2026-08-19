@@ -198,6 +198,42 @@ shape ruling 001 removed from rulings, and it has now produced three conflicts i
 one-file-per-clause treatment is the obvious fix and is deliberately *not* done here — it is a
 layout change that belongs to whoever owns this file, not to a lane passing through.
 
+### 11. A TTL compared against a cadence is a bug in both directions.
+
+Any expiry chosen without reference to the period of the thing it holds will be wrong, and it
+will be wrong **differently depending on which side of the period it lands on**. Two failures,
+not one:
+
+- **TTL ≈ cadence** → the value races its own expiry every period. Sibling values written a
+  fraction of a second apart can resolve that race in *opposite* directions, so a derived
+  quantity computed from both is not merely stale — it is **arithmetically impossible**.
+- **TTL < k × cadence**, where `k` is the sample size some consumer requires → the value can
+  *never* satisfy that consumer. Not "not yet": never, while both constants hold. And it will
+  report the shortfall in the language of a transient condition, because the code that wrote
+  the message could not see the ceiling either.
+
+*The rule:* an expiry is stated **in units of the period it must span**, and any consumer with a
+minimum-sample requirement is checked against the resulting ceiling **at the point the constant
+is defined**. A consumer that cannot be satisfied by the ceiling does not get a longer wait; it
+gets **a different instrument** — one keyed on a *moment* rather than a *count*, because a
+timestamp carries its own age and has no expiry to race.
+
+*Named failures — one constant, `WINDOW_COUNTER_TTL = 86400`, both directions, found six hours
+apart:* it equals a daily beat's cadence, so `mlb_schedule_coverage` reported
+`hard_kills_24h: 1` and `health: critical` in a payload that carried that same run's
+`last_success_at`, `last_duration_ms` and `last_result_summary` — the end handler's own writes
+(LAT-P070, `ef782755`). And it is less than **twice** any daily cadence, so
+`schedule-adherence`'s rate arm — which needs `MIN_EXPECTED_FIRES = 2.0` — reported
+`window_too_short(expected=0.89<2.0)` for **33 of 123 scheduled entries**, permanently, including
+**all six sentinels T5 grades** (LAT-P071, `58267ed9`). Sibling: `REFRESH_LOCK_TTL = 120` guards a
+single-flight dispatch whose publish→start lag was measured at **123 minutes** the same night, so
+the guard is a function of wall time and the thing it guards is a function of queue position.
+
+*Why it keeps happening:* a TTL is written next to the value it protects, and a cadence lives in
+the beat schedule. Nothing puts them on the same screen, so the comparison is never made — and
+neither failure announces itself, because an expired key and a never-written key are the same
+absence (clause 1, and gotcha #53).
+
 ---
 
 ## Related

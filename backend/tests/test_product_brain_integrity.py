@@ -550,7 +550,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: so neither number could simply be taken. 92 is the counted union of docs/rulings/[0-9]{3}-*
 #: on the merged tree, not an increment of either claim — COUNT, do not add.
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber.
-MINIMUM_BANKED_RULINGS = 92
+#: INT-090 merge (program/latency-64 onto master @ 50601960): HEAD said 92, the branch said 84,
+#: and — for the ninth consecutive cycle — neither is the merged truth. Resolved the documented
+#: way, by COUNTING `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree: **93**, which is
+#: master's 92 plus latency's **096** (a read-only endpoint is not a safe endpoint; the
+#: measurement is load). COUNT, never add, never take a side (#1910, ruling 088).
+MINIMUM_BANKED_RULINGS = 93
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
