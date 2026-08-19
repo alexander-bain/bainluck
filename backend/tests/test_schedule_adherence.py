@@ -144,8 +144,13 @@ class TestAdherenceRefusesToGuess:
         # deploy for a system that is running perfectly.
         g = adherence(starts=5, starts_window_s=None, interval_s=60)
         assert g["verdict"] == "unmeasurable"
-        assert g["reason"] == "no_interval_or_window"
         assert g["ratio"] is None
+        # LAT-P071 widened the REASON string only: a no-window row now routes to
+        # the stamp arm, which says so and — with no stamps supplied, as here —
+        # still refuses. The contract this test guards (unmeasurable, never
+        # `behind`, no ratio) is unchanged; the wording is strictly more specific.
+        assert "no counter window" in g["reason"]
+        assert "no start or terminal stamp" in g["reason"]
 
     def test_missing_interval_is_unmeasurable(self):
         g = adherence(starts=5, starts_window_s=3600, interval_s=None)
@@ -433,3 +438,64 @@ class TestStampArm:
                       newest_terminal_age_s=-7200.0, counter_ttl_s=TTL)
         assert g["verdict"] == "unmeasurable"
         assert g["stamp_age_s"] is None
+
+
+class TestStampArmReachesAMuteRateArm:
+    """LAT-P071b — a no-window row takes the stamp arm regardless of interval.
+
+    Found by dry-running the arm against production stamps, not by design.
+    `warm_typeahead` has a 10s interval — nowhere near the 12h blindness ceiling
+    — but its starts counter had EXPIRED, so `window_s` was None and the rate arm
+    was mute. Its last start stamp was 2h55m old against a 10s cadence: 1,050x,
+    unambiguously missing, and it is the largest single publisher into the queue
+    #1609 is about. A count of unknown age is unusable; a moment is not.
+    """
+
+    def test_a_fast_beat_with_no_window_is_graded_on_its_stamp(self):
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["arm"] == "stamp"
+        assert g["verdict"] == "missing"
+        assert g["stamp_age_over_interval"] == 1050.0
+
+    def test_it_says_MUTE_not_BLIND_so_the_message_is_not_nonsense(self):
+        # "rate arm blind (interval 10s > 43200s ceiling)" would make a reader
+        # correctly conclude the grader is broken. The two routes into this arm
+        # are different facts and get different words.
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert "no counter window" in g["reason"]
+        assert "blind" not in g["reason"]
+        assert g["rate_arm_blind"] is False
+
+    def test_a_YOUNG_window_stays_a_transient_rate_shrug(self):
+        # A window that exists but is short will age into gradeability on its
+        # own. Routing it to the stamp arm would trade a self-healing silence for
+        # a permanent second opinion.
+        g = adherence(starts=1, starts_window_s=60, interval_s=600.0,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["arm"] == "rate"
+        assert "transient" in g["reason"]
+
+    def test_the_absolute_floor_protects_a_fast_beat_from_ordinary_jitter(self):
+        # 2 x 10s would call a healthy beat missing after twenty seconds — a
+        # deploy restart, one slow upstream call, a worker recycling a child.
+        g = adherence(starts=0, starts_window_s=None, interval_s=10.0,
+                      newest_start_age_s=120.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "on_schedule"
+
+    def test_the_floor_does_not_loosen_a_slow_beat(self):
+        # For a daily beat the floor is irrelevant and 2 intervals governs.
+        from app.utils.schedule_adherence import STAMP_MIN_TOLERANCE_S
+        assert STAMP_MIN_TOLERANCE_S < DAY * STAMP_LATE_TOLERANCE
+        g = adherence(starts=1, starts_window_s=77000, interval_s=DAY,
+                      newest_terminal_age_s=2.5 * DAY, counter_ttl_s=TTL)
+        assert g["verdict"] == "missing"
+
+    def test_no_interval_at_all_still_refuses_outright(self):
+        # Without an interval there is nothing to compare an age against, and the
+        # stamp arm must not invent one.
+        g = adherence(starts=5, starts_window_s=None, interval_s=None,
+                      newest_start_age_s=10_500.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "unmeasurable"
+        assert g["reason"] == "no_interval_or_window"

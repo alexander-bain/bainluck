@@ -87,6 +87,22 @@ OVERRUN_RATIO = 0.8
 #: what T5 asks for — *late, never missing*.
 STAMP_LATE_TOLERANCE = 2.0
 
+#: An absolute FLOOR under the tolerance above, in seconds.
+#:
+#: Two intervals is the right shape for a slow beat and a hair-trigger for a fast
+#: one: at a 10s cadence it would call a beat ``missing`` after twenty seconds of
+#: ordinary jitter — a deploy restart, one slow upstream call, a worker recycling
+#: a child. The stamp arm reaches fast beats only via the no-window route (their
+#: starts counter expired), so this floor is what keeps that route from becoming
+#: an alarm generator.
+#:
+#: 300s is chosen against the two numbers that bracket it: comfortably above any
+#: jitter a 10-60s beat can produce, and two orders of magnitude below the
+#: **2h 55m** `warm_typeahead` stall this arm exists to catch (1,050x its own
+#: interval). A threshold with nothing on either side of it is a guess; this one
+#: has both.
+STAMP_MIN_TOLERANCE_S = 300.0
+
 
 def percentile(values, p: float):
     """Nearest-rank percentile. ``None`` for an empty sample.
@@ -200,11 +216,16 @@ def _grade_on_stamp(
             ((newest_terminal_age_s, "terminal"), (newest_start_age_s, "start"))
             if a is not None and a >= 0]
     ceiling = counter_ttl_s / MIN_EXPECTED_FIRES if counter_ttl_s else None
-    blind_note = (
-        f"rate arm blind (interval {interval_s:.0f}s > "
-        f"{ceiling:.0f}s ceiling from counter TTL)"
-        if ceiling else "rate arm blind"
-    )
+    if not out["rate_arm_blind"]:
+        # Reached via the no-window route, not the too-slow one. Say which, or a
+        # reader sees "rate arm blind (interval 10s > 43200s ceiling)" and
+        # correctly concludes the grader is broken.
+        blind_note = "rate arm mute (no counter window — the counter has expired)"
+    elif ceiling:
+        blind_note = (f"rate arm blind (interval {interval_s:.0f}s > "
+                      f"{ceiling:.0f}s ceiling from counter TTL)")
+    else:
+        blind_note = "rate arm blind"
     if not ages:
         out["reason"] = f"{blind_note}; no start or terminal stamp recorded"
         return out
@@ -214,7 +235,8 @@ def _grade_on_stamp(
     out["stamp_kind"] = kind
     out["stamp_age_over_interval"] = round(age / interval_s, 2)
 
-    if age <= interval_s * STAMP_LATE_TOLERANCE:
+    tolerance_s = max(interval_s * STAMP_LATE_TOLERANCE, STAMP_MIN_TOLERANCE_S)
+    if age <= tolerance_s:
         out["verdict"] = "on_schedule"
         out["reason"] = (
             f"{blind_note}; graded on stamps: newest {kind} {age/3600.0:.1f}h ago, "
@@ -226,8 +248,8 @@ def _grade_on_stamp(
     out["reason"] = (
         f"{blind_note}; graded on stamps: newest {kind} {age/3600.0:.1f}h ago, "
         f"{out['stamp_age_over_interval']:.2f}x its {interval_s:.0f}s interval "
-        f"(>{STAMP_LATE_TOLERANCE:.1f}x — at least one whole scheduled fire "
-        f"recorded nothing)"
+        f"(over a {tolerance_s:.0f}s tolerance — at least one whole scheduled "
+        f"fire recorded nothing)"
     )
     return out
 
@@ -350,9 +372,19 @@ def adherence(
 
     if exp is None or exp < MIN_EXPECTED_FIRES:
         # The rate arm cannot speak. Before falling back to silence, ask WHY it
-        # cannot — the two reasons need different words and, since LAT-P071, get
-        # a different arm.
-        if out["rate_arm_blind"]:
+        # cannot — the reasons need different words and, since LAT-P071, two of
+        # the three get a different arm.
+        #
+        # NO WINDOW AT ALL takes the stamp arm regardless of interval, and that
+        # is the case a dry-run against production caught. `warm_typeahead` has a
+        # 10 s interval — nowhere near the 12 h blindness ceiling — but its starts
+        # counter had expired, so `window_s` was `None` and the rate arm was mute.
+        # Its last start stamp was 2 h 55 m old against a 10 s interval: **1,050x**,
+        # screamingly missing, and the largest single publisher into the queue
+        # this whole program is about. A count of unknown age is unusable; a
+        # moment is not. Where a window is merely YOUNG the counter will age into
+        # gradeability on its own, and that stays a transient rate-arm shrug.
+        if out["rate_arm_blind"] or (exp is None and interval_s):
             return _grade_on_stamp(
                 out, interval_s, newest_terminal_age_s, newest_start_age_s,
                 counter_ttl_s,

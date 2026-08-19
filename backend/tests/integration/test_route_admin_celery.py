@@ -308,7 +308,16 @@ class TestCeleryDebug:
             patch("redis.from_url", return_value=mock_redis_instance),
         ):
             resp = await client.get(
-                "/api/admin/celery-debug", headers={"Authorization": "Bearer test-secret"}
+                # `fresh=1` bypasses the 5s inspect memo added by LAT-P071
+                # (#1994). Without it this test's contract — "when the broker is
+                # down, SAY SO rather than 200-ing silently", a gotcha #53
+                # contract — can be satisfied by a 5s-old cached success from an
+                # earlier request, so the call that would have failed is never
+                # made. The full suite caught exactly that. Diagnosing a broker is
+                # the case the bypass exists for; asserting it here is the same
+                # contract, taken through the door built for it.
+                "/api/admin/celery-debug?fresh=1",
+                headers={"Authorization": "Bearer test-secret"},
             )
 
         assert resp.status_code == 200

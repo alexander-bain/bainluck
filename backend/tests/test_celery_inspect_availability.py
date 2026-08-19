@@ -250,3 +250,60 @@ class TestNoInlineBroadcastsSurvive:
             "celery control.inspect() must only be called from inside "
             "_inspect_snapshot's threadpool body"
         )
+
+
+class TestTheMemoCannotPermanentlyHideABrokenBroker:
+    """LAT-P071b — caught by the FULL suite, not by review.
+
+    A warm cache satisfied a request without making the call that would have
+    failed, so `test_response_shape_on_inspect_error`'s contract — when the
+    broker is down, SAY SO — was silently weakened to "…unless someone asked in
+    the last five seconds". A 5s window of that is an acceptable price for the
+    availability the memo buys, and `_cache` discloses it. Having no way out is
+    not: an operator asking "are my workers alive" must be able to get an
+    UNCACHED answer.
+    """
+
+    def _fake(self, raising=False):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        if raising:
+            fake.control.inspect.side_effect = Exception("broker down")
+        else:
+            fake.control.inspect.side_effect = lambda **kw: _SlowInspector(**kw)
+        return fake
+
+    def test_a_warm_cache_does_mask_a_fresh_failure_within_the_ttl(self):
+        # Asserted, not tolerated in silence. This is the cost of the memo, and a
+        # test that pins it is what stops the cost growing unnoticed.
+        async def main():
+            with patch("app.tasks.celery_app", self._fake(), create=True):
+                await ac._inspect_snapshot()
+            with patch("app.tasks.celery_app", self._fake(raising=True), create=True):
+                return await ac._inspect_snapshot()
+
+        _snap, state = _run(main())
+        assert state["cached"] is True
+
+    def test_fresh_bypasses_the_memo_and_surfaces_the_failure(self):
+        async def main():
+            with patch("app.tasks.celery_app", self._fake(), create=True):
+                await ac._inspect_snapshot()
+            with patch("app.tasks.celery_app", self._fake(raising=True), create=True):
+                return await ac._inspect_snapshot(fresh=True)
+
+        with pytest.raises(Exception, match="broker down"):
+            _run(main())
+
+    def test_a_raising_call_writes_nothing_to_the_cache(self):
+        # An error is not a snapshot. Caching one would turn a transient broker
+        # blip into five seconds of guaranteed failure for every caller.
+        async def main():
+            with patch("app.tasks.celery_app", self._fake(raising=True), create=True):
+                try:
+                    await ac._inspect_snapshot()
+                except Exception:
+                    pass
+            return ac._INSPECT_CACHE["data"]
+
+        assert _run(main()) is None

@@ -385,7 +385,7 @@ _INSPECT_CACHE: dict = {"at": 0.0, "data": None}
 _INSPECT_LOCK = None
 
 
-async def _inspect_snapshot(timeout=5):
+async def _inspect_snapshot(timeout=5, fresh=False):
     """One celery `inspect` broadcast set, OFF the event loop, memoised and
     single-flighted.
 
@@ -407,6 +407,20 @@ async def _inspect_snapshot(timeout=5):
     The cache state is DISCLOSED in the payload. A debug endpoint that silently
     serves a stale snapshot is worse than a slow one — it invites conclusions
     about a moment that has passed.
+
+    🔴 `fresh=True` BYPASSES THE MEMO, AND IS NOT A TEST ACCOMMODATION. Caught by
+    the full suite, not by review: a warm cache **masked a live broker failure**.
+    `test_response_shape_on_inspect_error` asserts that when `inspect` raises the
+    payload says `inspect_error` rather than 200-ing silently — a gotcha #53
+    contract — and a 5 s-old success satisfied the request without ever making the
+    call that would have failed.
+
+    A 5 s window of that is an acceptable cost for the availability the memo buys,
+    and `_cache` discloses it. What is NOT acceptable is having no way out: an
+    operator asking "are my workers alive" must be able to get an UNCACHED answer.
+    So the bypass exists, it still runs off-loop and single-flighted (it skips the
+    memo READ, never the protections), and a raising call writes nothing to the
+    cache — an error is not a snapshot.
     """
     import asyncio
     import time as _time
@@ -419,14 +433,14 @@ async def _inspect_snapshot(timeout=5):
 
     now = _time.time()
     cached = _INSPECT_CACHE.get("data")
-    if cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+    if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
         return cached, {"cached": True, "age_s": round(now - _INSPECT_CACHE["at"], 2)}
 
     async with _INSPECT_LOCK:
         # Re-check inside the lock: whoever we queued behind has just refreshed it.
         now = _time.time()
         cached = _INSPECT_CACHE.get("data")
-        if cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+        if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
             return cached, {"cached": True,
                             "age_s": round(now - _INSPECT_CACHE["at"], 2)}
 
@@ -451,11 +465,12 @@ async def _inspect_snapshot(timeout=5):
 async def celery_inspect(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    fresh: bool = Query(False, description="Bypass the 5s inspect memo"),
 ):
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
     _check_admin_secret(secret, request=request)
 
-    snap, cache_state = await _inspect_snapshot()
+    snap, cache_state = await _inspect_snapshot(fresh=fresh)
     registered = snap["registered"]
     active = snap["active"]
     reserved = snap["reserved"]
@@ -609,7 +624,11 @@ async def celery_purge_background(request: Request, secret: str = Query(None)):
 
 
 @router.get("/celery-debug")
-async def celery_debug(request: Request, secret: str = Query(None)):
+async def celery_debug(
+    request: Request,
+    secret: str = Query(None),
+    fresh: bool = Query(False, description="Bypass the 5s inspect memo"),
+):
     """Inspect Celery worker status and queue lengths."""
     _check_admin_secret(secret, request=request)
 
@@ -619,7 +638,7 @@ async def celery_debug(request: Request, secret: str = Query(None)):
     # This handler used to make FOUR blocking 5s broadcasts inline in an `async
     # def`, which is what took the API down on 2026-08-19 (LAT-P071).
     try:
-        snap, result["_cache"] = await _inspect_snapshot()
+        snap, result["_cache"] = await _inspect_snapshot(fresh=fresh)
         result["ping"] = snap["ping"] or "no response"
         result["active"] = snap["active"] or "no response"
         result["registered"] = {k: len(v) for k, v in snap["registered"].items()}
