@@ -678,6 +678,10 @@ export interface RelatedFuture {
   resolution_date: string | null;
   bookmaker_count?: number;
   all_sources?: string[];
+  // #1986: set when two sources answering ONE question were merged through the
+  // standing blend into this single row. Distinct from bookmaker_count, which
+  // counts books inside a single source's own aggregate.
+  source_count?: number;
   matched_player?: {
     name: string;
     espn_id?: string;

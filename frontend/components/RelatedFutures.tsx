@@ -2424,7 +2424,10 @@ export default function RelatedFutures({
         prob: f.probability || 0,
         change: f.probability_change_24h ?? null,
         resolved,
-        sources: f.bookmaker_count ?? (f.all_sources?.length ?? 1),
+        // #1986: a row merged from two sources must report TWO, not the winner
+        // row's own bookmaker_count. source_count is set by the backend blend
+        // pass; fall back to the previous derivation when it is absent.
+        sources: f.source_count ?? f.bookmaker_count ?? (f.all_sources?.length ?? 1),
       };
     });
   };

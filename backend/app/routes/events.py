@@ -6345,6 +6345,11 @@ _PROP_NAME_STAT_COMBOS = [
     ("points + assists", ["points", "assists"]),
     ("rebounds + assists", ["rebounds", "assists"]),
 ]
+# Outcome names that are a SIDE, never a person. Looking these up in the box
+# score is the miss that made a settled game report 12 ungradeable rungs.
+_NON_PLAYER_OUTCOME_NAMES = frozenset(
+    {"over", "under", "yes", "no"}
+)
 _PROP_NAME_STAT_SINGLES = [
     "home runs", "three pointers", "double doubles", "triple doubles",
     "strikeouts", "rebounds", "assists", "points", "blocks", "steals",
@@ -6425,19 +6430,43 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     stat_keys = _prop_stat_keys(market, ctx)
     if not stat_keys:
         return result
-    # Player name = part before ":" in the outcome ("Jayson Tatum: 30+").
-    oname = getattr(outcome, "name", None) or ""
-    colon = oname.find(":")
-    player_name = oname[:colon].strip() if colon > 0 else oname.strip()
-    if not player_name:
-        return result
+    # WHERE THE PLAYER'S NAME LIVES IS PER-SOURCE (#1976 §2; same assumption
+    # class as UX-P097's line-placement bug). Kalshi puts the player in the
+    # OUTCOME ("Jayson Tatum: 30+") and leaves the market generic; Polymarket
+    # puts the player in the MARKET ("Pete Alonso: Home Runs O/U 0.5") and
+    # leaves the outcome a bare "Over"/"Under". Reading only the outcome graded
+    # zero of a settled game's Polymarket props — every rung rendered
+    # "Resolved · grading unavailable" while the box score held the answer.
+    # Candidates are tried in order and the OUTCOME still wins, so no prop that
+    # grades today can change: this is strictly a fallback.
     normalize = ctx["normalize"]
     norm_box = ctx["norm_box"]
-    player_stats = norm_box.get(normalize(player_name))
-    # Flipped "Last, First" fallback (mirrors the authoritative resolver).
-    if player_stats is None and "," in player_name:
-        parts = player_name.split(",", 1)
-        player_stats = norm_box.get(normalize(f"{parts[1].strip()} {parts[0].strip()}"))
+
+    def _name_candidates() -> list:
+        cands = []
+        oname = getattr(outcome, "name", None) or ""
+        colon = oname.find(":")
+        if colon > 0:
+            cands.append(oname[:colon].strip())
+        elif oname.strip() and oname.strip().lower() not in _NON_PLAYER_OUTCOME_NAMES:
+            # A bare outcome name can BE the player, but "Over"/"Under"/"Yes"/
+            # "No" never are — looking those up is what silently missed.
+            cands.append(oname.strip())
+        mname = getattr(market, "name", None) or ""
+        mcolon = mname.find(":")
+        if mcolon > 0:
+            cands.append(mname[:mcolon].strip())
+        return [c for c in cands if c]
+
+    player_stats = None
+    for player_name in _name_candidates():
+        player_stats = norm_box.get(normalize(player_name))
+        # Flipped "Last, First" fallback (mirrors the authoritative resolver).
+        if player_stats is None and "," in player_name:
+            parts = player_name.split(",", 1)
+            player_stats = norm_box.get(normalize(f"{parts[1].strip()} {parts[0].strip()}"))
+        if isinstance(player_stats, dict):
+            break
     if not isinstance(player_stats, dict):
         return result
     total = 0.0
@@ -8193,6 +8222,17 @@ async def get_related_futures(
     from app.utils.related_futures import dedup_by_merge_group
     home_futures = dedup_by_merge_group(home_futures)
     away_futures = dedup_by_merge_group(away_futures)
+
+    # #1986 — the pass above keys multi-outcome groups on
+    # (merge_group, outcome_name), so two sources that name the same entity
+    # differently ("Tampa Bay" vs "Tampa Bay Rays") land in DIFFERENT buckets
+    # and both survive: the event page rendered "World Series Champion 8%" and
+    # "World Series Champion 4%" as two rows. This second pass catches only
+    # what the first leaves behind — a genuine cross-source duplicate of one
+    # question — and blends it to a single number per the standing ruling.
+    from app.utils.futures_source_merge import merge_relabel_collisions
+    home_futures = merge_relabel_collisions(home_futures)
+    away_futures = merge_relabel_collisions(away_futures)
 
     # ── Enrich matchup outcomes with team logos ───────────────────
     # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
