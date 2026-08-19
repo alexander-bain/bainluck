@@ -362,6 +362,91 @@ async def get_task_metrics_endpoint(
     return get_task_metrics(task_name)
 
 
+#: How long an inspect snapshot may be reused. celery's `inspect` is a BROADCAST:
+#: every call publishes to a control exchange and blocks until every worker
+#: replies or the timeout expires. Four of them in one handler is up to 20s of
+#: blocking work.
+#:
+#: 🔴 THIS CONSTANT EXISTS BECAUSE THE ENDPOINT TOOK PRODUCTION DOWN.
+#: LAT-P071, 2026-08-19 05:00–05:03Z: two read-only samplers polling
+#: `/api/admin/celery-debug` (one at 20s, one at 8s) drove the whole API to HTTP
+#: 503 at the 30s H12 ceiling — `/api/health` included — for ~10 minutes, while
+#: `heroku ps` reported the web dyno `up` the entire time with uptime unbroken.
+#: Killing the two pollers restored p50 to 0.23s within 25 seconds, four
+#: consecutive calls, with no restart. The dyno was never unhealthy: the single
+#: uvicorn event loop was simply never free.
+#:
+#: Nothing about the endpoint looked dangerous — it is a read-only debug route,
+#: and that is exactly why it is one auto-refreshing dashboard tab away from an
+#: outage. 5s is chosen to be shorter than any plausible human refresh and longer
+#: than the tightest sane poll.
+_INSPECT_TTL_S = 5.0
+_INSPECT_CACHE: dict = {"at": 0.0, "data": None}
+_INSPECT_LOCK = None
+
+
+async def _inspect_snapshot(timeout=5):
+    """One celery `inspect` broadcast set, OFF the event loop, memoised and
+    single-flighted.
+
+    Three protections, and each one is load-bearing for a different failure:
+
+    * **off-loop** (`run_in_threadpool`) — a broadcast is socket I/O plus
+      pure-Python message assembly, both of which release the GIL, so a thread
+      genuinely helps here. (Contrast gotcha #38: `to_thread` does NOT help a
+      C-level `json.loads`, which holds the GIL for the whole parse. The
+      distinction is why this is worth stating rather than assuming.)
+    * **single-flight** — concurrent callers share ONE broadcast instead of each
+      starting four. Without it, off-loop only moves the pile-up into the
+      threadpool, where exhausting the 40 default threads stalls every other
+      route that needs one.
+    * **memoised** — a poller faster than `_INSPECT_TTL_S` gets the cached
+      snapshot. This is the protection that would actually have prevented the
+      LAT-P071 outage, because the load there was cadence, not concurrency.
+
+    The cache state is DISCLOSED in the payload. A debug endpoint that silently
+    serves a stale snapshot is worse than a slow one — it invites conclusions
+    about a moment that has passed.
+    """
+    import asyncio
+    import time as _time
+
+    from starlette.concurrency import run_in_threadpool
+
+    global _INSPECT_LOCK
+    if _INSPECT_LOCK is None:
+        _INSPECT_LOCK = asyncio.Lock()
+
+    now = _time.time()
+    cached = _INSPECT_CACHE.get("data")
+    if cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+        return cached, {"cached": True, "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+
+    async with _INSPECT_LOCK:
+        # Re-check inside the lock: whoever we queued behind has just refreshed it.
+        now = _time.time()
+        cached = _INSPECT_CACHE.get("data")
+        if cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
+            return cached, {"cached": True,
+                            "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+
+        def _blocking():
+            from app.tasks import celery_app
+            i = celery_app.control.inspect(timeout=timeout)
+            return {
+                "ping": i.ping() or {},
+                "active": i.active() or {},
+                "reserved": i.reserved() or {},
+                "registered": i.registered() or {},
+                "stats": i.stats() or {},
+            }
+
+        data = await run_in_threadpool(_blocking)
+        _INSPECT_CACHE["data"] = data
+        _INSPECT_CACHE["at"] = _time.time()
+        return data, {"cached": False, "age_s": 0.0}
+
+
 @router.get("/celery/inspect")
 async def celery_inspect(
     request: Request,
@@ -370,13 +455,12 @@ async def celery_inspect(
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
     _check_admin_secret(secret, request=request)
 
-    from app.tasks import celery_app
-    i = celery_app.control.inspect(timeout=5)
-    registered = i.registered() or {}
-    active = i.active() or {}
-    reserved = i.reserved() or {}
+    snap, cache_state = await _inspect_snapshot()
+    registered = snap["registered"]
+    active = snap["active"]
+    reserved = snap["reserved"]
 
-    result = {}
+    result = {"_cache": cache_state}
     for worker_name in set(list(registered) + list(active) + list(reserved)):
         worker_tasks = registered.get(worker_name, [])
         taxonomy = [t for t in worker_tasks if "taxonomy" in t or "event_tag" in t]
@@ -528,21 +612,20 @@ async def celery_purge_background(request: Request, secret: str = Query(None)):
 async def celery_debug(request: Request, secret: str = Query(None)):
     """Inspect Celery worker status and queue lengths."""
     _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
 
     result = {}
 
-    # Worker ping
+    # Worker ping. Off-loop, single-flighted and memoised — see `_inspect_snapshot`.
+    # This handler used to make FOUR blocking 5s broadcasts inline in an `async
+    # def`, which is what took the API down on 2026-08-19 (LAT-P071).
     try:
-        inspector = celery_app.control.inspect(timeout=5)
-        result["ping"] = inspector.ping() or "no response"
-        result["active"] = inspector.active() or "no response"
-        result["registered"] = {
-            k: len(v) for k, v in (inspector.registered() or {}).items()
-        }
+        snap, result["_cache"] = await _inspect_snapshot()
+        result["ping"] = snap["ping"] or "no response"
+        result["active"] = snap["active"] or "no response"
+        result["registered"] = {k: len(v) for k, v in snap["registered"].items()}
         result["stats"] = {
             k: {"total": v.get("total", {}), "pool": v.get("pool", {}).get("max-concurrency")}
-            for k, v in (inspector.stats() or {}).items()
+            for k, v in snap["stats"].items()
         }
     except Exception as e:
         result["inspect_error"] = str(e)
