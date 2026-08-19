@@ -288,6 +288,32 @@ phenomenon. Sibling: gotcha #40's `db-query`, and `celery-debug`'s own memoisati
 to be given a `?fresh=1` bypass because a 5-second cache **masked a live broker failure** — buying
 availability with a window in which a real error reads as a healthy 200 (clause 1 again).
 
+### 14. Two measurements never computed side by side have not been compared.
+
+When one number grades another — a metric grading a control, an audit grading a
+pipeline, a census grading a repair — the two must be produced by one artifact
+that prints both. Not reviewed together; **computed** together, so the
+difference is a value someone has to read.
+
+The failure this prevents is not carelessness, it is the case where **both
+readings are defensible**. Each side tests its own half, each is green, and the
+disagreement lives in the only place neither test covers. No amount of care
+finds it, because there is nothing to be careless about: the control is right
+about its window and the metric is right about its own.
+
+*Named failure:* `enforce_first_page_quality_floor` protects the first twenty
+SERVED cards and was doing it perfectly — zero boring futures in the served
+top-20. `audit_feed_quality.py` grades it by filtering to `type == "futures"`
+first, which is a different twenty, offset by the 4-6 bundle cards the page
+interleaves. Every card the metric flagged sat at served position 22-24. The
+number reported as the lane's finding, and kept a P2 open for a month, was a
+true statement about a window with no screen behind it (ruling **098**).
+
+*Corollary:* the window, unit or population is part of a metric's NAME. A rate
+whose denominator is implicit will be read against whichever denominator the
+reader has in mind, which is usually the product's, which is usually not the
+code's.
+
 ---
 
 ## Related
