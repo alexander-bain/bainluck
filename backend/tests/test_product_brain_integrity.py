@@ -543,14 +543,14 @@ def test_ruling_numbers_are_unique() -> None:
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber. Every number
 #: 060-088 is now banked.
 #:
-#: INT-087 cycle 5 lands calibration's **089** (a budget derived only from SUCCESSES cannot be
-#: corrected by the failures it causes — the futures phase cancelled at its own derived
-#: 159,637 ms cap for 111 consecutive beats). 85 -> **86 BY COUNTING**, ninth consecutive cycle.
-#: calibration-68's own comment called this exactly: it said 85 while 088 was unmerged and that
-#: "a merge that lands it moves this to 86 — COUNT, do not add." 088 landed earlier in this same
-#: session (latency-62, `6e23d346`), so 86 is the counted union, not an increment.
+#: INT-088 lands #1991's **095** (a census of a moving population is fiction) and #1988's
+#: **090-094** (Fable's five queue-371 rulings) in the same cycle. 86 -> **92 BY COUNTING**:
+#: the two branches each carried their own floor bump against different bases (#1991 said 87
+#: from a base of 86; #1988 said 90 from a base of 85, already stale by one when it was written),
+#: so neither number could simply be taken. 92 is the counted union of docs/rulings/[0-9]{3}-*
+#: on the merged tree, not an increment of either claim — COUNT, do not add.
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber.
-MINIMUM_BANKED_RULINGS = 87
+MINIMUM_BANKED_RULINGS = 92
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
