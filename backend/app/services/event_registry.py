@@ -136,6 +136,61 @@ _TAG_UNANCHORED = "provenance:unanchored"
 ODDS_LISTING_IS_NOT_A_DEREFERENCE = False
 
 
+# ── The StatPal listing is not a dereference either (#1989, queue 374) ──────
+#
+# The same defect as the Odds sites, on a second provider, and it is the reason
+# the Odds fix alone did not restore the slate. Cite this at both StatPal
+# ingestion call sites.
+#
+# What was there: ``schedule_derived=bool(fixture.fixture_id)``. That is true
+# whenever a fixture carries an id — i.e. always, for MLB — so it is #1946's
+# shape again: a flag that is always true is not a gate. And the record it was
+# asserted on is a LISTING. ``:186`` reads ``get_fixtures(sport)`` and ``:342``
+# reads ``get_live_scores(sport)``; both ask by SPORT and get rows back. Neither
+# hands the provider an id and asks "what game is this?", which is the only
+# thing arm B is for.
+#
+# Measured (queue 373 item 3, read-only replay of the real matcher's predicate
+# against production MLB rows 2026-08-17 → 2026-08-28):
+#
+#   :186 season-schedule, population 94 — 40 step-1 hits, 54 window absorptions,
+#        54/54 onto a row ALREADY HOLDING A DIFFERENT statpal fixture id.
+#   :342 livescores,      population  8 —  0 step-1 hits,  8 window absorptions,
+#         8/8 likewise.
+#
+# 62 of 62. Arm B was doing ZERO legitimate work on this path; it was 100%
+# absorber. Unanchored, the same populations produce 54 and 8 CREATEs and no
+# absorptions.
+#
+# ``:342`` is the more dangerous of the two BECAUSE of its own pre-check. It
+# skips any event matching on exact team names within ±6h, which removes the
+# same-game case and leaves only the wrong-game band: the eight survivors sit at
+# +21.92h, −24.00h, +4.00h, −24.00h, +22.00h, −20.00h, −20.00h, −20.00h — the
+# ±28h annulus, i.e. the adjacent game in the series. A narrower population that
+# is ENTIRELY wrong beats a wider one that is mostly right.
+#
+# The two absorbers fed each other, and that is the specimen. Event 15199901
+# holds statpal fixture ``355284`` (Tigers @ Pirates 2026-08-18T22:40Z) but its
+# ``commence_time`` was dragged to 2026-08-19T16:35Z by the Odds absorber — a
+# DIFFERENT game, fixture ``355299``. StatPal then found that row at dt=+0.00h
+# and absorbed it, writing its second id on top. So a dt≈0.00h reading here is
+# not evidence of a same-game match; it is evidence that a previous absorption
+# already completed.
+#
+# Cost of leaving it, measured in production 2026-08-19T14:35Z with the Odds
+# half already deployed: ESPN's Aug-19 MLB slate is 15 games, all scheduled. We
+# held 6 correct rows — the six created 21 minutes after v3856, unabsorbed,
+# which is the Odds fix working — plus 8 Aug-18 rows dragged +24h onto Aug-19
+# clock slots, four of them flying ``live`` with a finished score (one 22-0) on
+# a game that had not started. 7 of the 9 missing Aug-19 games map one-to-one
+# onto a dragged row carrying the SAME two clubs inside ±28h.
+#
+# Step 1 is untouched, exactly as for Odds: a claim whose fixture id is already
+# on a row still finds it with no window and no names, so repeat polls are
+# unaffected. What stops is a NEW fixture id reaching the ±28h matcher.
+STATPAL_LISTING_IS_NOT_A_DEREFERENCE = False
+
+
 def _tag_source(source: str) -> str:
     return f"provenance:source:{source}"
 

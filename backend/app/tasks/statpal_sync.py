@@ -169,6 +169,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     else:
                         from app.services.event_registry import (
                             find_or_create_event, EventIdentity, EventClaim,
+                            STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                         )
                         claim_id = fixture.fixture_id or f"statpal_{fixture.home_team}_{fixture.away_team}"
                         identity = EventIdentity(
@@ -176,14 +177,18 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             home_team_name=fixture.home_team,
                             away_team_name=fixture.away_team,
                             commence_time=fixture.start_time,
-                            # Ruling 048 arm B, but ONLY with a real fixture_id. The
-                            # fallback above synthesizes an id out of the two team
-                            # names — that is a label wearing an id's clothing
-                            # (ruling 042), it dereferences to nothing, and it must
-                            # not buy absorption. No fixture_id ⇒ create.
+                            # Ruling 048: NOT arm B. `get_fixtures(sport)` is a
+                            # season-schedule LISTING — we asked by sport and got
+                            # rows back — so a fixture id arriving alongside its
+                            # teams and date is co-arrival, not dereference.
+                            # Measured 54/54 wrong-game absorptions on this site.
+                            # (The synthesized `statpal_<home>_<away>` fallback id
+                            # was never an anchor either — a label wearing an id's
+                            # clothing, ruling 042 — so nothing is lost by no
+                            # longer distinguishing the two.)
                             claim=EventClaim(
                                 "statpal", claim_id,
-                                schedule_derived=bool(fixture.fixture_id),
+                                schedule_derived=STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                             ),
                             commence_time_source="statpal",
                             status="scheduled",
@@ -305,6 +310,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                 # StatPal season-schedule doesn't include playoffs, but livescores does.
                 from app.services.event_registry import (
                     find_or_create_event, EventIdentity, EventClaim,
+                    STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                 )
                 live_created = 0
                 for live_fix in live:
@@ -334,12 +340,16 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         home_team_name=live_fix.home_team,
                         away_team_name=live_fix.away_team,
                         commence_time=live_fix.start_time,
-                        # Ruling 048 arm B, real fixture_id only — see the
-                        # season-schedule site above for why the name-synthesized
-                        # fallback id does not count as an anchor.
+                        # Ruling 048: NOT arm B — see the season-schedule site
+                        # above. `get_live_scores(sport)` is a listing too. This
+                        # is the WORSE of the two sites: the ±6h pre-check just
+                        # above strips the same-game case, so everything that
+                        # reached the ±28h matcher was the adjacent game in the
+                        # series — measured 8/8 wrong-game, at +21.9h/−24h/+4h/
+                        # −24h/+22h/−20h/−20h/−20h.
                         claim=EventClaim(
                             "statpal", claim_id,
-                            schedule_derived=bool(live_fix.fixture_id),
+                            schedule_derived=STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                         ),
                         commence_time_source="statpal",
                         status="live",
