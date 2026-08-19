@@ -825,6 +825,270 @@ def create_gate(
 
 
 # ---------------------------------------------------------------------------
+# The mapping repair plan (#1918, queues 363/370) — the fourth rail
+#
+# ``team_identity_mapping`` rows whose ``team_id`` points at a DIFFERENT club
+# than the one ``source_name`` names. Alex approved 133; three were held out
+# because a live ``before`` check would abort on them and one was never
+# reviewed, leaving the 130 staged at
+# ``ARTIFACT-Q370-MAPPING-REPAIR-PLAN-130-STAGED.json``.
+#
+# HOW THIS DIFFERS FROM THE CREATE RAIL, WHICH IS THE PATTERN IT COPIES
+#
+# The create rail's compare half is an EXISTENCE check, because the row it
+# writes does not exist yet. Here the row does exist and carries a known
+# ``before.team_id``, so the compare half is an ordinary compare-and-set — and
+# it belongs INSIDE the UPDATE for the same reason the existence check belongs
+# inside the INSERT: a check performed in front of the statement reads a world
+# the statement then changes. ``resolve_team`` step 3 AUTO-REGISTERS its hit, so
+# these rows are written by live traffic, and three of the original 133 were
+# observed rotating between review and apply. That is not a hypothetical race.
+# ---------------------------------------------------------------------------
+
+#: Bumped to /v2 by the length-prefixed digest (C-APPLY-PRE-MAPPING). A /v1
+#: artifact now decodes as CORRUPT, which is the fix working: its address was
+#: minted by an encoder that could not distinguish one field's content from a
+#: field boundary, so the address did not mean what the reviewer was told.
+MAPPING_REPAIR_PLAN_SCHEMA = "team-identity-mapping-repair-plan/v2"
+_MAPPING_PLAN_NS = "team-identity-mapping-repair-plan"
+
+#: The CAS lost. Either the row's ``team_id`` is no longer the reviewed
+#: ``before`` — ``resolve_team`` re-registered it, which is the live rotation
+#: the three held-out rows exhibit — or the row is gone. One reason, because the
+#: operator's next move is the same for both: re-derive and get it re-reviewed.
+REASON_MAPPING_BEFORE_DRIFT = "MAPPING_BEFORE_TEAM_DRIFT"
+
+#: The reviewed mapping id has no row at all at apply time.
+REASON_MAPPING_ROW_MISSING = "MAPPING_ROW_MISSING"
+
+
+@dataclass(frozen=True)
+class PlannedMappingRepair:
+    """One mapping the dry-run decided to re-point, and the state it decided on.
+
+    ``before_team_id`` is the compare half of the compare-and-set. It is
+    CARRIED, not re-read: an apply that re-read it would be asking the same
+    question the review already answered, and would answer it from a world that
+    has moved.
+    """
+
+    mapping_id: int
+    source: str
+    sport_key: str
+    source_name: str
+    before_team_id: int
+    before_club: str
+    after_team_id: int
+    after_club: str
+
+    @property
+    def row_key(self) -> str:
+        """One mapping row is one work item, so its id IS its key.
+
+        Unlike the binding rail — where an event has two independently
+        approvable sides — there is nothing here to compose a key from.
+        """
+        return str(self.mapping_id)
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "mapping_id": int(self.mapping_id),
+            "source": self.source,
+            "sport_key": self.sport_key,
+            "source_name": self.source_name,
+            "before": {"team_id": int(self.before_team_id), "club": self.before_club},
+            "after": {"team_id": int(self.after_team_id), "club": self.after_club},
+        }
+
+    def digest_line(self) -> str:
+        """The eight fields the reviewer read, length-prefixed.
+
+        These are exactly the eight the queue-363 deriver already addressed on —
+        deliberately unchanged, so the ONLY difference between the old address
+        and the new one is the encoding. Adding a ninth field here would make it
+        impossible to say whether a changed address meant "the encoder was
+        fixed" or "the plan is about something else now".
+
+        ``club`` names are inside even though the apply writes only
+        ``team_id``, and that is the point rather than an oversight: the club
+        names are what a human read in order to approve, and an address exists
+        to promise that what the human read is what the apply writes. They are
+        also the free-text fields — the ones the old ``"|".join`` could not
+        encode injectively.
+        """
+        return digest_fields(
+            int(self.mapping_id),
+            self.source,
+            self.sport_key,
+            self.source_name,
+            int(self.before_team_id),
+            self.before_club,
+            int(self.after_team_id),
+            self.after_club,
+        )
+
+
+@dataclass(frozen=True)
+class MappingRepairPlan:
+    """The reviewed re-point set, as a content-addressed object."""
+
+    rows: tuple[PlannedMappingRepair, ...] = ()
+    context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return self.rows
+
+    @property
+    def row_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(r.row_key for r in self.rows))
+
+    @property
+    def mapping_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({int(r.mapping_id) for r in self.rows}))
+
+    @property
+    def plan_hash(self) -> str:
+        lines = sorted(r.digest_line() for r in self.rows)
+        return input_fingerprint(_MAPPING_PLAN_NS, str(len(lines)), *lines)
+
+    def duplicate_mapping_ids(self) -> list[int]:
+        """Mapping ids named more than once. Must be empty.
+
+        Two plan rows for one mapping would be two different re-points of the
+        same row, and whichever ran second would silently win — an outcome no
+        reviewer chose, because the artifact shows both.
+        """
+        seen: dict[int, int] = {}
+        for r in self.rows:
+            seen[int(r.mapping_id)] = seen.get(int(r.mapping_id), 0) + 1
+        return sorted(k for k, n in seen.items() if n > 1)
+
+    def self_pointing_rows(self) -> list[int]:
+        """Rows whose ``after`` equals their ``before``. Must be empty.
+
+        A no-op WRITE is not harmless here: the CAS cannot distinguish it from a
+        successful repair, so it would report as applied while nothing changed.
+        """
+        return sorted(
+            int(r.mapping_id) for r in self.rows
+            if int(r.before_team_id) == int(r.after_team_id)
+        )
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "schema": MAPPING_REPAIR_PLAN_SCHEMA,
+            "plan_hash": self.plan_hash,
+            "row_count": len(self.rows),
+            "mapping_id_count": len(self.mapping_ids),
+            "duplicate_mapping_ids": self.duplicate_mapping_ids(),
+            "self_pointing_mapping_ids": self.self_pointing_rows(),
+            "rows": [r.as_payload() for r in self.rows],
+            "context": dict(self.context),
+        }
+
+
+def build_mapping_repair_plan(
+    rows: Iterable[PlannedMappingRepair], *, context: Mapping[str, Any] | None = None
+) -> MappingRepairPlan:
+    return MappingRepairPlan(rows=tuple(rows), context=dict(context or {}))
+
+
+def decode_mapping_repair_plan(raw: Any) -> tuple[MappingRepairPlan | None, str]:
+    """``(plan, reason)``. The stored address is RE-DERIVED, never believed."""
+    if not isinstance(raw, Mapping):
+        return None, REASON_PLAN_MISSING
+    if raw.get("schema") != MAPPING_REPAIR_PLAN_SCHEMA:
+        return None, REASON_PLAN_CORRUPT
+    raw_rows = raw.get("rows")
+    if not isinstance(raw_rows, list):
+        return None, REASON_PLAN_CORRUPT
+    rows: list[PlannedMappingRepair] = []
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        before = row.get("before")
+        after = row.get("after")
+        if not isinstance(before, Mapping) or not isinstance(after, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        try:
+            # Subscript + coerce, never `.get()`: a missing field must land in
+            # the `except` and become PLAN_ARTIFACT_CORRUPT, not decode as None
+            # and sail past the digest (the queue-368 sport_id lesson).
+            rows.append(
+                PlannedMappingRepair(
+                    mapping_id=int(row["mapping_id"]),
+                    source=str(row["source"]),
+                    sport_key=str(row["sport_key"]),
+                    source_name=str(row["source_name"]),
+                    before_team_id=int(before["team_id"]),
+                    before_club=str(before["club"]),
+                    after_team_id=int(after["team_id"]),
+                    after_club=str(after["club"]),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, REASON_PLAN_CORRUPT
+    ctx = raw.get("context")
+    plan = MappingRepairPlan(
+        rows=tuple(rows), context=dict(ctx) if isinstance(ctx, Mapping) else {}
+    )
+    if plan.plan_hash != raw.get("plan_hash"):
+        return None, REASON_PLAN_CORRUPT
+    if plan.duplicate_mapping_ids():
+        return None, REASON_PLAN_CORRUPT
+    if plan.self_pointing_rows():
+        return None, REASON_PLAN_CORRUPT
+    return plan, "ok"
+
+
+def mapping_repair_gate(
+    plan: MappingRepairPlan, observed_team_ids: Mapping[int, int | None]
+) -> tuple[bool, list[dict[str, Any]]]:
+    """The live half of the CAS, asked as a SET before any write.
+
+    *Every reviewed mapping must STILL hold the ``before.team_id`` the reviewer
+    approved.* A row that has rotated is not an error in the world —
+    ``resolve_team`` step 3 auto-registers, so the pipeline moving a mapping is
+    the pipeline working — but it IS a row this plan may no longer act on.
+
+    Named, never skipped, and retiring THAT ROW ONLY: a wholesale refusal would
+    let one live re-registration cancel 129 approved siblings, which is the
+    failure ``create_gate``'s docstring records from the other rail.
+
+    ``observed_team_ids`` maps mapping_id → current ``team_id``, with ``None``
+    for a mapping id that has no row. Both readings are drift; they are reported
+    with different ``reason_code``s because "someone re-pointed it" and "it is
+    gone" are different facts about the world even though the plan's response to
+    them is the same.
+
+    Returns ``(ok, drifted)``.
+    """
+    drifted: list[dict[str, Any]] = []
+    for row in plan.rows:
+        observed = observed_team_ids.get(int(row.mapping_id), None)
+        if observed is None:
+            drifted.append(
+                {
+                    "mapping_id": int(row.mapping_id),
+                    "expected_before_team_id": int(row.before_team_id),
+                    "observed_team_id": None,
+                    "reason_code": REASON_MAPPING_ROW_MISSING,
+                }
+            )
+        elif int(observed) != int(row.before_team_id):
+            drifted.append(
+                {
+                    "mapping_id": int(row.mapping_id),
+                    "expected_before_team_id": int(row.before_team_id),
+                    "observed_team_id": int(observed),
+                    "reason_code": REASON_MAPPING_BEFORE_DRIFT,
+                }
+            )
+    return (not drifted), drifted
+
+
+# ---------------------------------------------------------------------------
 # The cursor
 # ---------------------------------------------------------------------------
 

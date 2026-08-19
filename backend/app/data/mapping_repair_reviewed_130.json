@@ -1,0 +1,1862 @@
+{
+  "_comment": "The REVIEWED 130 team_identity_mapping re-points (#1918). Committed, not read from .claude/handoff/ \u2014 that directory is gitignored, so a consumer pointed at it reads nothing on Heroku and the rail would refuse in production while passing locally. Same shape and same reason as app/data/event_create_truth_set.json. Rows are VERBATIM from ARTIFACT-Q370-MAPPING-REPAIR-PLAN-130-STAGED.json; membership is asserted byte-identical by tests/test_mapping_repair_consumer.py.",
+  "held_out": {
+    "rows": [
+      4168917,
+      4168966,
+      4168971,
+      35192094
+    ],
+    "rule": "a row is held out when either standing caution from NOTE-TO-FABLE-FROM-LANE1-369-MAPPING-DELTA.md touches it, or when it was never reviewed",
+    "why": {
+      "35192094": "caution 1 + 2 \u2014 in-transaction `before` check ABORTS; live `before` has rotated",
+      "4168917": "caution 1 + 2 \u2014 in-transaction `before` check ABORTS; live `before` has rotated",
+      "4168966": "EXCLUDED by Fable ruling (c) \u2014 the one genuinely unreviewed row",
+      "4168971": "caution 1 + 2 \u2014 in-transaction `before` check ABORTS; live `before` has rotated"
+    }
+  },
+  "provenance": {
+    "approval": "Alex's existing approval of the 133 CARRIES for these rows (Fable ruling (c), queue 370): 0 of the 133 common rows have a different WRITE, so the exact-match gate passes.",
+    "delta": {
+      "artifact": "ARTIFACT-Q368-MAPPING-DELTA-133-134.json"
+    },
+    "parent_certified_plan": {
+      "artifact": "ARTIFACT-Q363-MAPPING-REPAIR-PLAN.json",
+      "plan_hash": "2cf5fd35a3668a1e9efd87fa6f25a71c",
+      "row_count": 133
+    },
+    "parent_rederived_plan": {
+      "artifact": "ARTIFACT-Q367-MAPPING-REPAIR-PLAN-V2-DRIFTED.json",
+      "plan_hash": "04d24862f8d3fc4d36a294e3e95d209a",
+      "row_count": 134
+    },
+    "relation_to_approved_set": "STRICT SUBSET of the approved 133. No row here writes anything the 133 did not already write; three rows are HELD OUT, none added."
+  },
+  "resolution_rule": "re-point team_id to the team whose canonical name IS source_name within the SAME sport_id; exactly one candidate required; classes other than CROSS_CLUB_poison are excluded from the plan, not repaired",
+  "row_count": 130,
+  "rows": [
+    {
+      "after": {
+        "club": "San Diego Padres",
+        "team_id": 867
+      },
+      "before": {
+        "club": "Chicago White Sox",
+        "team_id": 851
+      },
+      "mapping_id": 1164132,
+      "source": "polymarket",
+      "source_name": "San Diego Padres",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Chicago White Sox",
+        "team_id": 851
+      },
+      "before": {
+        "club": "Los Angeles Angels",
+        "team_id": 864
+      },
+      "mapping_id": 1164133,
+      "source": "polymarket",
+      "source_name": "Chicago White Sox",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 861
+      },
+      "before": {
+        "club": "Cleveland Guardians",
+        "team_id": 2695
+      },
+      "mapping_id": 1164134,
+      "source": "polymarket",
+      "source_name": "Los Angeles Dodgers",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Cleveland Guardians",
+        "team_id": 2695
+      },
+      "before": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 861
+      },
+      "mapping_id": 1164135,
+      "source": "polymarket",
+      "source_name": "Cleveland Guardians",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Seattle Mariners",
+        "team_id": 850
+      },
+      "before": {
+        "club": "Athletics",
+        "team_id": 862
+      },
+      "mapping_id": 1164137,
+      "source": "polymarket",
+      "source_name": "Seattle Mariners",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "New York Yankees",
+        "team_id": 6610
+      },
+      "before": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "mapping_id": 1567055,
+      "source": "odds_api",
+      "source_name": "New York Yankees",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Central Arkansas",
+        "team_id": 14664
+      },
+      "before": {
+        "club": "Austin Peay Governors",
+        "team_id": 3248
+      },
+      "mapping_id": 1600235,
+      "source": "kalshi",
+      "source_name": "Central Arkansas",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Dallas Baptist",
+        "team_id": 12955
+      },
+      "before": {
+        "club": "Oral Roberts Golden Eagles",
+        "team_id": 3214
+      },
+      "mapping_id": 1600285,
+      "source": "kalshi",
+      "source_name": "Dallas Baptist",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "St. John's",
+        "team_id": 12755
+      },
+      "before": {
+        "club": "Alabama Crimson Tide",
+        "team_id": 3288
+      },
+      "mapping_id": 1772886,
+      "source": "kalshi",
+      "source_name": "St. John's",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Penn State",
+        "team_id": 13386
+      },
+      "before": {
+        "club": "Iowa Hawkeyes",
+        "team_id": 891
+      },
+      "mapping_id": 1772887,
+      "source": "kalshi",
+      "source_name": "Penn State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Charleston Southern",
+        "team_id": 14644
+      },
+      "before": {
+        "club": "Charleston Cougars",
+        "team_id": 933
+      },
+      "mapping_id": 1772896,
+      "source": "kalshi",
+      "source_name": "Charleston Southern",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Georgia",
+        "team_id": 14637
+      },
+      "before": {
+        "club": "Texas Longhorns",
+        "team_id": 883
+      },
+      "mapping_id": 1772909,
+      "source": "kalshi",
+      "source_name": "Georgia",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Ohio State",
+        "team_id": 14627
+      },
+      "before": {
+        "club": "UCLA Bruins",
+        "team_id": 887
+      },
+      "mapping_id": 2069655,
+      "source": "kalshi",
+      "source_name": "Ohio State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "North Florida",
+        "team_id": 12752
+      },
+      "before": {
+        "club": "Jacksonville Dolphins",
+        "team_id": 4069
+      },
+      "mapping_id": 2069658,
+      "source": "kalshi",
+      "source_name": "North Florida",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Alabama",
+        "team_id": 14638
+      },
+      "before": {
+        "club": "St. John's Red Storm",
+        "team_id": 903
+      },
+      "mapping_id": 2069659,
+      "source": "kalshi",
+      "source_name": "Alabama",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Arkansas",
+        "team_id": 13768
+      },
+      "before": {
+        "club": "Missouri Tigers",
+        "team_id": 7074
+      },
+      "mapping_id": 2071610,
+      "source": "kalshi",
+      "source_name": "Arkansas",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Louisiana Tech",
+        "team_id": 13955
+      },
+      "before": {
+        "club": "Southern Miss Golden Eagles",
+        "team_id": 901
+      },
+      "mapping_id": 2209064,
+      "source": "kalshi",
+      "source_name": "Louisiana Tech",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Louisiana",
+        "team_id": 13952
+      },
+      "before": {
+        "club": "UC San Diego Tritons",
+        "team_id": 893
+      },
+      "mapping_id": 2314287,
+      "source": "kalshi",
+      "source_name": "Louisiana",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Colorado Rockies",
+        "team_id": 866
+      },
+      "before": {
+        "club": "San Francisco Giants",
+        "team_id": 869
+      },
+      "mapping_id": 2666904,
+      "source": "polymarket",
+      "source_name": "Colorado Rockies",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Athletics",
+        "team_id": 862
+      },
+      "before": {
+        "club": "Seattle Mariners",
+        "team_id": 850
+      },
+      "mapping_id": 2666907,
+      "source": "polymarket",
+      "source_name": "Athletics",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Toronto Blue Jays",
+        "team_id": 873
+      },
+      "before": {
+        "club": "New York Yankees",
+        "team_id": 865
+      },
+      "mapping_id": 2666909,
+      "source": "polymarket",
+      "source_name": "Toronto Blue Jays",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "New York Yankees",
+        "team_id": 865
+      },
+      "before": {
+        "club": "Baltimore Orioles",
+        "team_id": 854
+      },
+      "mapping_id": 2666910,
+      "source": "polymarket",
+      "source_name": "New York Yankees",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Milwaukee Brewers",
+        "team_id": 2913
+      },
+      "before": {
+        "club": "Texas Rangers",
+        "team_id": 852
+      },
+      "mapping_id": 2666913,
+      "source": "polymarket",
+      "source_name": "Milwaukee Brewers",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Cincinnati Reds",
+        "team_id": 2693
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 2913
+      },
+      "mapping_id": 2666914,
+      "source": "polymarket",
+      "source_name": "Cincinnati Reds",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Illinois",
+        "team_id": 13770
+      },
+      "before": {
+        "club": "Bradley Braves",
+        "team_id": 917
+      },
+      "mapping_id": 2920543,
+      "source": "kalshi",
+      "source_name": "Illinois",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Ole Miss",
+        "team_id": 14623
+      },
+      "before": {
+        "club": "North Carolina Tar Heels",
+        "team_id": 888
+      },
+      "mapping_id": 2920554,
+      "source": "kalshi",
+      "source_name": "Ole Miss",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 10707
+      },
+      "before": {
+        "club": "San Francisco Giants",
+        "team_id": 6609
+      },
+      "mapping_id": 3437019,
+      "source": "odds_api",
+      "source_name": "Los Angeles Dodgers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "before": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 10707
+      },
+      "mapping_id": 3437022,
+      "source": "odds_api",
+      "source_name": "Arizona Diamondbacks",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Cincinnati Reds",
+        "team_id": 10713
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 10709
+      },
+      "mapping_id": 3437025,
+      "source": "odds_api",
+      "source_name": "Cincinnati Reds",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "mapping_id": 3454925,
+      "source": "odds_api",
+      "source_name": "Chicago White Sox",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "before": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "mapping_id": 3454926,
+      "source": "odds_api",
+      "source_name": "Milwaukee Brewers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "New York Mets",
+        "team_id": 10737
+      },
+      "before": {
+        "club": "Los Angeles Angels",
+        "team_id": 10712
+      },
+      "mapping_id": 3454928,
+      "source": "odds_api",
+      "source_name": "New York Mets",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "UNC Greensboro",
+        "team_id": 14633
+      },
+      "before": {
+        "club": "Pittsburgh Panthers",
+        "team_id": 3756
+      },
+      "mapping_id": 3473168,
+      "source": "kalshi",
+      "source_name": "UNC Greensboro",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "San Francisco Giants",
+        "team_id": 869
+      },
+      "before": {
+        "club": "Colorado Rockies",
+        "team_id": 866
+      },
+      "mapping_id": 3641475,
+      "source": "polymarket",
+      "source_name": "San Francisco Giants",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Houston Astros",
+        "team_id": 2691
+      },
+      "before": {
+        "club": "New York Mets",
+        "team_id": 863
+      },
+      "mapping_id": 3641477,
+      "source": "polymarket",
+      "source_name": "Houston Astros",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "New York Mets",
+        "team_id": 863
+      },
+      "before": {
+        "club": "Houston Astros",
+        "team_id": 2691
+      },
+      "mapping_id": 3641478,
+      "source": "polymarket",
+      "source_name": "New York Mets",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Boston Red Sox",
+        "team_id": 853
+      },
+      "before": {
+        "club": "Minnesota Twins",
+        "team_id": 855
+      },
+      "mapping_id": 3641481,
+      "source": "polymarket",
+      "source_name": "Boston Red Sox",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Minnesota Twins",
+        "team_id": 855
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 853
+      },
+      "mapping_id": 3641482,
+      "source": "polymarket",
+      "source_name": "Minnesota Twins",
+      "sport_key": "baseball_mlb_preseason"
+    },
+    {
+      "after": {
+        "club": "Texas State",
+        "team_id": 12758
+      },
+      "before": {
+        "club": "Coastal Carolina Chanticleers",
+        "team_id": 908
+      },
+      "mapping_id": 3784257,
+      "source": "kalshi",
+      "source_name": "Texas State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Cleveland Guardians",
+        "team_id": 10744
+      },
+      "before": {
+        "club": "Colorado Rockies",
+        "team_id": 10708
+      },
+      "mapping_id": 4168915,
+      "source": "polymarket",
+      "source_name": "Cleveland Guardians",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Seattle Mariners",
+        "team_id": 10743
+      },
+      "before": {
+        "club": "Chicago Cubs",
+        "team_id": 10714
+      },
+      "mapping_id": 4168916,
+      "source": "polymarket",
+      "source_name": "Seattle Mariners",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Miami Marlins",
+        "team_id": 10716
+      },
+      "before": {
+        "club": "Washington Nationals",
+        "team_id": 10711
+      },
+      "mapping_id": 4168918,
+      "source": "polymarket",
+      "source_name": "Miami Marlins",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "before": {
+        "club": "Houston Astros",
+        "team_id": 2691
+      },
+      "mapping_id": 4168923,
+      "source": "polymarket",
+      "source_name": "Chicago White Sox",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Cincinnati Reds",
+        "team_id": 10713
+      },
+      "before": {
+        "club": "St. Louis Cardinals",
+        "team_id": 10740
+      },
+      "mapping_id": 4168926,
+      "source": "polymarket",
+      "source_name": "Cincinnati Reds",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "San Diego Padres",
+        "team_id": 10745
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 853
+      },
+      "mapping_id": 4168928,
+      "source": "polymarket",
+      "source_name": "San Diego Padres",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Houston Astros",
+        "team_id": 10715
+      },
+      "before": {
+        "club": "Seattle Mariners",
+        "team_id": 850
+      },
+      "mapping_id": 4168930,
+      "source": "polymarket",
+      "source_name": "Houston Astros",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Pittsburgh Pirates",
+        "team_id": 10736
+      },
+      "before": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "mapping_id": 4168937,
+      "source": "polymarket",
+      "source_name": "Pittsburgh Pirates",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "New York Mets",
+        "team_id": 10737
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "mapping_id": 4168938,
+      "source": "polymarket",
+      "source_name": "New York Mets",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Washington Nationals",
+        "team_id": 10711
+      },
+      "before": {
+        "club": "Miami Marlins",
+        "team_id": 10716
+      },
+      "mapping_id": 4168939,
+      "source": "polymarket",
+      "source_name": "Washington Nationals",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Chicago Cubs",
+        "team_id": 10714
+      },
+      "before": {
+        "club": "Athletics",
+        "team_id": 862
+      },
+      "mapping_id": 4168940,
+      "source": "polymarket",
+      "source_name": "Chicago Cubs",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Texas Rangers",
+        "team_id": 10742
+      },
+      "before": {
+        "club": "Los Angeles Angels",
+        "team_id": 10712
+      },
+      "mapping_id": 4168941,
+      "source": "polymarket",
+      "source_name": "Texas Rangers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Philadelphia Phillies",
+        "team_id": 10746
+      },
+      "before": {
+        "club": "St. Louis Cardinals",
+        "team_id": 2692
+      },
+      "mapping_id": 4168942,
+      "source": "polymarket",
+      "source_name": "Philadelphia Phillies",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 10709
+      },
+      "mapping_id": 4168955,
+      "source": "polymarket",
+      "source_name": "Arizona Diamondbacks",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Toronto Blue Jays",
+        "team_id": 11493
+      },
+      "before": {
+        "club": "San Francisco Giants",
+        "team_id": 6609
+      },
+      "mapping_id": 4168960,
+      "source": "polymarket",
+      "source_name": "Toronto Blue Jays",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "St. Louis Cardinals",
+        "team_id": 10740
+      },
+      "before": {
+        "club": "Cincinnati Reds",
+        "team_id": 10713
+      },
+      "mapping_id": 4168962,
+      "source": "polymarket",
+      "source_name": "St. Louis Cardinals",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Minnesota Twins",
+        "team_id": 10739
+      },
+      "before": {
+        "club": "San Diego Padres",
+        "team_id": 10745
+      },
+      "mapping_id": 4168965,
+      "source": "polymarket",
+      "source_name": "Minnesota Twins",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "San Francisco Giants",
+        "team_id": 6609
+      },
+      "before": {
+        "club": "Minnesota Twins",
+        "team_id": 855
+      },
+      "mapping_id": 4168972,
+      "source": "polymarket",
+      "source_name": "San Francisco Giants",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "San Francisco Giants",
+        "team_id": 6609
+      },
+      "before": {
+        "club": "Colorado Rockies",
+        "team_id": 866
+      },
+      "mapping_id": 4191715,
+      "source": "statpal",
+      "source_name": "San Francisco Giants",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "New York Yankees",
+        "team_id": 6610
+      },
+      "before": {
+        "club": "San Francisco Giants",
+        "team_id": 6609
+      },
+      "mapping_id": 4191716,
+      "source": "statpal",
+      "source_name": "New York Yankees",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "New York Mets",
+        "team_id": 10737
+      },
+      "before": {
+        "club": "Houston Astros",
+        "team_id": 2691
+      },
+      "mapping_id": 4191717,
+      "source": "statpal",
+      "source_name": "New York Mets",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "before": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "mapping_id": 4191719,
+      "source": "statpal",
+      "source_name": "Milwaukee Brewers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "mapping_id": 4191720,
+      "source": "statpal",
+      "source_name": "Chicago White Sox",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Baltimore Orioles",
+        "team_id": 10738
+      },
+      "before": {
+        "club": "New York Yankees",
+        "team_id": 865
+      },
+      "mapping_id": 4191723,
+      "source": "statpal",
+      "source_name": "Baltimore Orioles",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Minnesota Twins",
+        "team_id": 10739
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 853
+      },
+      "mapping_id": 4191724,
+      "source": "statpal",
+      "source_name": "Minnesota Twins",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Cincinnati Reds",
+        "team_id": 10713
+      },
+      "before": {
+        "club": "Boston Red Sox",
+        "team_id": 10709
+      },
+      "mapping_id": 4191725,
+      "source": "statpal",
+      "source_name": "Cincinnati Reds",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Boston Red Sox",
+        "team_id": 10709
+      },
+      "before": {
+        "club": "Minnesota Twins",
+        "team_id": 855
+      },
+      "mapping_id": 4191726,
+      "source": "statpal",
+      "source_name": "Boston Red Sox",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Houston Astros",
+        "team_id": 10715
+      },
+      "before": {
+        "club": "New York Mets",
+        "team_id": 863
+      },
+      "mapping_id": 4191727,
+      "source": "statpal",
+      "source_name": "Houston Astros",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Texas Rangers",
+        "team_id": 10742
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 2913
+      },
+      "mapping_id": 4191732,
+      "source": "statpal",
+      "source_name": "Texas Rangers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 10707
+      },
+      "before": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "mapping_id": 4191735,
+      "source": "statpal",
+      "source_name": "Los Angeles Dodgers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Arizona Diamondbacks",
+        "team_id": 10710
+      },
+      "before": {
+        "club": "Los Angeles Dodgers",
+        "team_id": 10707
+      },
+      "mapping_id": 4191736,
+      "source": "statpal",
+      "source_name": "Arizona Diamondbacks",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Seattle Mariners",
+        "team_id": 10743
+      },
+      "before": {
+        "club": "Athletics",
+        "team_id": 862
+      },
+      "mapping_id": 4191737,
+      "source": "statpal",
+      "source_name": "Seattle Mariners",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Athletics",
+        "team_id": 11494
+      },
+      "before": {
+        "club": "Seattle Mariners",
+        "team_id": 850
+      },
+      "mapping_id": 4191740,
+      "source": "statpal",
+      "source_name": "Athletics",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Hokkaido Nippon-Ham Fighters",
+        "team_id": 12484
+      },
+      "before": {
+        "club": "Saitama Seibu Lions",
+        "team_id": 12485
+      },
+      "mapping_id": 4323255,
+      "source": "kalshi",
+      "source_name": "Hokkaido Nippon-Ham Fighters",
+      "sport_key": "baseball_npb"
+    },
+    {
+      "after": {
+        "club": "Pittsburgh Panthers",
+        "team_id": 3756
+      },
+      "before": {
+        "club": "North Carolina Tar Heels",
+        "team_id": 888
+      },
+      "mapping_id": 4356104,
+      "source": "espn",
+      "source_name": "Pittsburgh Panthers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Rutgers Scarlet Knights",
+        "team_id": 938
+      },
+      "before": {
+        "club": "Ohio State Buckeyes",
+        "team_id": 879
+      },
+      "mapping_id": 4356111,
+      "source": "espn",
+      "source_name": "Rutgers Scarlet Knights",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Nebraska Cornhuskers",
+        "team_id": 944
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 4356119,
+      "source": "espn",
+      "source_name": "Nebraska Cornhuskers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "UNC Wilmington Seahawks",
+        "team_id": 3220
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 5055652,
+      "source": "espn",
+      "source_name": "UNC Wilmington Seahawks",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Toledo Rockets",
+        "team_id": 6088
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 5055654,
+      "source": "espn",
+      "source_name": "Toledo Rockets",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "UConn Huskies",
+        "team_id": 949
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 5361243,
+      "source": "espn",
+      "source_name": "UConn Huskies",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Kennesaw State Owls",
+        "team_id": 13447
+      },
+      "before": {
+        "club": "Missouri State Bears",
+        "team_id": 13527
+      },
+      "mapping_id": 5361249,
+      "source": "espn",
+      "source_name": "Kennesaw State Owls",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Florida Atlantic Owls",
+        "team_id": 918
+      },
+      "before": {
+        "club": "Rice Owls",
+        "team_id": 941
+      },
+      "mapping_id": 5361253,
+      "source": "espn",
+      "source_name": "Florida Atlantic Owls",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Wichita State Shockers",
+        "team_id": 13526
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 5361263,
+      "source": "espn",
+      "source_name": "Wichita State Shockers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "High Point Panthers",
+        "team_id": 3616
+      },
+      "before": {
+        "club": "Longwood Lancers",
+        "team_id": 6378
+      },
+      "mapping_id": 5361292,
+      "source": "espn",
+      "source_name": "High Point Panthers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "UC San Diego Tritons",
+        "team_id": 893
+      },
+      "before": {
+        "club": "Cal Poly Mustangs",
+        "team_id": 2888
+      },
+      "mapping_id": 5361315,
+      "source": "espn",
+      "source_name": "UC San Diego Tritons",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "San Diego State Aztecs",
+        "team_id": 14063
+      },
+      "before": {
+        "club": "Washington State Cougars",
+        "team_id": 14560
+      },
+      "mapping_id": 5782380,
+      "source": "espn",
+      "source_name": "San Diego State Aztecs",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Richmond Spiders",
+        "team_id": 3212
+      },
+      "before": {
+        "club": "George Mason Patriots",
+        "team_id": 13149
+      },
+      "mapping_id": 5782392,
+      "source": "espn",
+      "source_name": "Richmond Spiders",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Xavier Musketeers",
+        "team_id": 942
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 6087215,
+      "source": "espn",
+      "source_name": "Xavier Musketeers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Florida Gulf Coast Eagles",
+        "team_id": 3252
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 6087227,
+      "source": "espn",
+      "source_name": "Florida Gulf Coast Eagles",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Memphis Tigers",
+        "team_id": 2711
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 6087257,
+      "source": "espn",
+      "source_name": "Memphis Tigers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Cal State Fullerton Titans",
+        "team_id": 13458
+      },
+      "before": {
+        "club": "UC San Diego Tritons",
+        "team_id": 893
+      },
+      "mapping_id": 6087273,
+      "source": "espn",
+      "source_name": "Cal State Fullerton Titans",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Gonzaga Bulldogs",
+        "team_id": 4072
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 6087275,
+      "source": "espn",
+      "source_name": "Gonzaga Bulldogs",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Georgia Southern",
+        "team_id": 14018
+      },
+      "before": {
+        "club": "Mercer Bears",
+        "team_id": 8457
+      },
+      "mapping_id": 6106625,
+      "source": "kalshi",
+      "source_name": "Georgia Southern",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Eastern Kentucky",
+        "team_id": 13439
+      },
+      "before": {
+        "club": "Lipscomb Bisons",
+        "team_id": 3441
+      },
+      "mapping_id": 6276008,
+      "source": "kalshi",
+      "source_name": "Eastern Kentucky",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Missouri State",
+        "team_id": 13383
+      },
+      "before": {
+        "club": "Jacksonville State Gamecocks",
+        "team_id": 13450
+      },
+      "mapping_id": 6864249,
+      "source": "kalshi",
+      "source_name": "Missouri State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Oklahoma State",
+        "team_id": 12954
+      },
+      "before": {
+        "club": "Texas Tech Red Raiders",
+        "team_id": 8458
+      },
+      "mapping_id": 6864581,
+      "source": "kalshi",
+      "source_name": "Oklahoma State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "California Baptist Lancers",
+        "team_id": 13641
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 7075422,
+      "source": "espn",
+      "source_name": "California Baptist Lancers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Utah Tech Trailblazers",
+        "team_id": 7073
+      },
+      "before": {
+        "club": "Sacramento St Hornets",
+        "team_id": 2536
+      },
+      "mapping_id": 7075427,
+      "source": "espn",
+      "source_name": "Utah Tech Trailblazers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Dayton Flyers",
+        "team_id": 10704
+      },
+      "before": {
+        "club": "Notre Dame Fighting Irish",
+        "team_id": 913
+      },
+      "mapping_id": 7285037,
+      "source": "espn",
+      "source_name": "Dayton Flyers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "George Mason Patriots",
+        "team_id": 13149
+      },
+      "before": {
+        "club": "Saint Joseph's Hawks",
+        "team_id": 2545
+      },
+      "mapping_id": 7285039,
+      "source": "espn",
+      "source_name": "George Mason Patriots",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Pennsylvania Quakers",
+        "team_id": 2530
+      },
+      "before": {
+        "club": "Columbia Lions",
+        "team_id": 13807
+      },
+      "mapping_id": 7285045,
+      "source": "espn",
+      "source_name": "Pennsylvania Quakers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Rhode Island Rams",
+        "team_id": 12800
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 7285070,
+      "source": "espn",
+      "source_name": "Rhode Island Rams",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Murray State Racers",
+        "team_id": 13748
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 7285124,
+      "source": "espn",
+      "source_name": "Murray State Racers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "San Francisco Dons",
+        "team_id": 2534
+      },
+      "before": {
+        "club": "Saint Mary's Gaels",
+        "team_id": 2539
+      },
+      "mapping_id": 7285142,
+      "source": "espn",
+      "source_name": "San Francisco Dons",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Pacific Tigers",
+        "team_id": 3617
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 7285145,
+      "source": "espn",
+      "source_name": "Pacific Tigers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Northwestern State Demons",
+        "team_id": 14057
+      },
+      "before": {
+        "club": "Lamar Cardinals",
+        "team_id": 927
+      },
+      "mapping_id": 7285159,
+      "source": "espn",
+      "source_name": "Northwestern State Demons",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Murray State",
+        "team_id": 14013
+      },
+      "before": {
+        "club": "Purdue Boilermakers",
+        "team_id": 881
+      },
+      "mapping_id": 7411226,
+      "source": "kalshi",
+      "source_name": "Murray State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Arizona State",
+        "team_id": 14649
+      },
+      "before": {
+        "club": "Baylor Bears",
+        "team_id": 915
+      },
+      "mapping_id": 7734596,
+      "source": "kalshi",
+      "source_name": "Arizona State",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Stephen F. Austin Lumberjacks",
+        "team_id": 3218
+      },
+      "before": {
+        "club": "Lamar Cardinals",
+        "team_id": 927
+      },
+      "mapping_id": 9093710,
+      "source": "espn",
+      "source_name": "Stephen F. Austin Lumberjacks",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Nicholls Colonels",
+        "team_id": 14086
+      },
+      "before": {
+        "club": "Houston Christian Huskies",
+        "team_id": 14562
+      },
+      "mapping_id": 9408308,
+      "source": "espn",
+      "source_name": "Nicholls Colonels",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Saitama Seibu Lions",
+        "team_id": 12485
+      },
+      "before": {
+        "club": "Hokkaido Nippon-Ham Fighters",
+        "team_id": 12484
+      },
+      "mapping_id": 9541021,
+      "source": "kalshi",
+      "source_name": "Saitama Seibu Lions",
+      "sport_key": "baseball_npb"
+    },
+    {
+      "after": {
+        "club": "Radford Highlanders",
+        "team_id": 14198
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 10270317,
+      "source": "espn",
+      "source_name": "Radford Highlanders",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Tohoku Rakuten Golden Eagles",
+        "team_id": 12490
+      },
+      "before": {
+        "club": "Orix Buffaloes",
+        "team_id": 12492
+      },
+      "mapping_id": 10581528,
+      "source": "kalshi",
+      "source_name": "Tohoku Rakuten Golden Eagles",
+      "sport_key": "baseball_npb"
+    },
+    {
+      "after": {
+        "club": "Belmont Bruins",
+        "team_id": 2865
+      },
+      "before": {
+        "club": "UCLA Bruins",
+        "team_id": 887
+      },
+      "mapping_id": 12736463,
+      "source": "espn",
+      "source_name": "Belmont Bruins",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Longwood Lancers",
+        "team_id": 6378
+      },
+      "before": {
+        "club": "South Carolina Upstate Spartans",
+        "team_id": 3250
+      },
+      "mapping_id": 15429625,
+      "source": "espn",
+      "source_name": "Longwood Lancers",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Merrimack Warriors",
+        "team_id": 14546
+      },
+      "before": {
+        "club": "TBD",
+        "team_id": 14702
+      },
+      "mapping_id": 15429626,
+      "source": "espn",
+      "source_name": "Merrimack Warriors",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "Davidson Wildcats",
+        "team_id": 3245
+      },
+      "before": {
+        "club": "George Mason Patriots",
+        "team_id": 13149
+      },
+      "mapping_id": 15429629,
+      "source": "espn",
+      "source_name": "Davidson Wildcats",
+      "sport_key": "baseball_ncaa"
+    },
+    {
+      "after": {
+        "club": "SSG Landers",
+        "team_id": 12795
+      },
+      "before": {
+        "club": "Lotte Giants",
+        "team_id": 12796
+      },
+      "mapping_id": 16930958,
+      "source": "kalshi",
+      "source_name": "SSG Landers",
+      "sport_key": "baseball_kbo"
+    },
+    {
+      "after": {
+        "club": "NC Dinos",
+        "team_id": 12789
+      },
+      "before": {
+        "club": "KT Wiz",
+        "team_id": 12793
+      },
+      "mapping_id": 16931148,
+      "source": "kalshi",
+      "source_name": "NC Dinos",
+      "sport_key": "baseball_kbo"
+    },
+    {
+      "after": {
+        "club": "KT Wiz",
+        "team_id": 12793
+      },
+      "before": {
+        "club": "NC Dinos",
+        "team_id": 12789
+      },
+      "mapping_id": 16931149,
+      "source": "kalshi",
+      "source_name": "KT Wiz",
+      "sport_key": "baseball_kbo"
+    },
+    {
+      "after": {
+        "club": "Lotte Giants",
+        "team_id": 12796
+      },
+      "before": {
+        "club": "SSG Landers",
+        "team_id": 12795
+      },
+      "mapping_id": 16931161,
+      "source": "kalshi",
+      "source_name": "Lotte Giants",
+      "sport_key": "baseball_kbo"
+    },
+    {
+      "after": {
+        "club": "Orix Buffaloes",
+        "team_id": 12492
+      },
+      "before": {
+        "club": "Tohoku Rakuten Golden Eagles",
+        "team_id": 12490
+      },
+      "mapping_id": 17554009,
+      "source": "kalshi",
+      "source_name": "Orix Buffaloes",
+      "sport_key": "baseball_npb"
+    },
+    {
+      "after": {
+        "club": "Athletics",
+        "team_id": 11494
+      },
+      "before": {
+        "club": "Kansas City Royals",
+        "team_id": 11625
+      },
+      "mapping_id": 35107619,
+      "source": "kalshi",
+      "source_name": "Athletics",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Los Angeles Angels",
+        "team_id": 10712
+      },
+      "before": {
+        "club": "Milwaukee Brewers",
+        "team_id": 2913
+      },
+      "mapping_id": 35192088,
+      "source": "polymarket",
+      "source_name": "Los Angeles Angels",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Athletics",
+        "team_id": 11494
+      },
+      "before": {
+        "club": "New York Mets",
+        "team_id": 863
+      },
+      "mapping_id": 35192092,
+      "source": "polymarket",
+      "source_name": "Athletics",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Atlanta Braves",
+        "team_id": 11626
+      },
+      "before": {
+        "club": "Chicago White Sox",
+        "team_id": 10734
+      },
+      "mapping_id": 35192098,
+      "source": "polymarket",
+      "source_name": "Atlanta Braves",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Milwaukee Brewers",
+        "team_id": 10735
+      },
+      "before": {
+        "club": "Atlanta Braves",
+        "team_id": 872
+      },
+      "mapping_id": 35192101,
+      "source": "polymarket",
+      "source_name": "Milwaukee Brewers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Boston Red Sox",
+        "team_id": 10709
+      },
+      "before": {
+        "club": "Colorado Rockies",
+        "team_id": 866
+      },
+      "mapping_id": 35192105,
+      "source": "polymarket",
+      "source_name": "Boston Red Sox",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Kansas City Royals",
+        "team_id": 11625
+      },
+      "before": {
+        "club": "Detroit Tigers",
+        "team_id": 10747
+      },
+      "mapping_id": 35216886,
+      "source": "polymarket",
+      "source_name": "Kansas City Royals",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Detroit Tigers",
+        "team_id": 10747
+      },
+      "before": {
+        "club": "Kansas City Royals",
+        "team_id": 871
+      },
+      "mapping_id": 35216887,
+      "source": "polymarket",
+      "source_name": "Detroit Tigers",
+      "sport_key": "baseball_mlb"
+    },
+    {
+      "after": {
+        "club": "Tohoku Rakuten Golden Eagles",
+        "team_id": 12490
+      },
+      "before": {
+        "club": "Orix Buffaloes",
+        "team_id": 12492
+      },
+      "mapping_id": 39014156,
+      "source": "polymarket",
+      "source_name": "Tohoku Rakuten Golden Eagles",
+      "sport_key": "baseball_npb"
+    }
+  ],
+  "source_artifact": "ARTIFACT-Q370-MAPPING-REPAIR-PLAN-130-STAGED.json",
+  "v1_plan_hash": "6b4a42f85a3cd169b611ac7105a7a1e8",
+  "v2_plan_hash": "dd4de8942f41ee020a073a4147f64204"
+}
