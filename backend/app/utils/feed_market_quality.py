@@ -1052,12 +1052,38 @@ def _is_narrow_range(text: str) -> bool:
     return False
 
 
-def _has_named_salient_entity(name: str) -> bool:
+# #1958 — the OFFICE is not an ENTITY. "Maine State Senate winner?" carries
+# three proper-case tokens (Maine / State / Senate) and none of them names a
+# person, team, company or place-as-subject: they name the seat being contested.
+# The salience test was written for "people, teams, companies, places, and
+# diseases" and these tokens are governmental boilerplate that happens to be
+# title-cased, so it returns True on a card with no salient entity at all.
+#
+# Scoped deliberately to the regional-election path (`_has_named_salient_entity`
+# keeps its full vocabulary everywhere else). A global stopword would also drop
+# "Supreme Court", "Federal Reserve" and every other institution that IS the
+# subject of its market — the defect here is not that office nouns are never
+# salient, it is that in "<PLACE> <OFFICE> winner?" nothing else is present.
+_OFFICE_NOUNS = frozenset(
+    {
+        "state", "senate", "house", "delegates", "governor", "mayor", "mayoral",
+        "commission", "commissioner", "council", "assembly", "legislature",
+        "legislative", "board", "district", "county", "committee", "seat",
+        "election", "elections", "primary", "runoff", "winner", "race",
+        "control", "chamber", "public", "service", "attorney", "general",
+        "secretary", "treasurer", "auditor", "sheriff", "supervisor",
+        "alderman", "selectman", "ward", "precinct", "city", "town",
+    }
+)
+
+
+def _has_named_salient_entity(name: str, *, ignore_office_nouns: bool = False) -> bool:
     # Proper-case words are a useful salience hint for people, teams, companies,
     # places, and diseases. Exclude title-case boilerplate by requiring either
     # multiple proper tokens or a known high-salience pattern.
     proper_tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", name)
-    filtered = [t for t in proper_tokens if t.lower() not in _STOPWORDS]
+    stop = _STOPWORDS | _OFFICE_NOUNS if ignore_office_nouns else _STOPWORDS
+    filtered = [t for t in proper_tokens if t.lower() not in stop]
     return len(filtered) >= 2 or bool(
         _COMPELLING_RE.search(name) or _OUTBREAK_RE.search(name)
     )
@@ -1239,6 +1265,39 @@ def classify_market_quality(
         name,
         re.IGNORECASE,
     )
+
+    # ── #1958: ADMISSION DECISION for `regional_us_election + salient_entity` ──
+    #
+    # The Maine specimen. "Maine State Senate winner?" was the ONE card boring on
+    # every day of the two-day census (2026-08-18/19) — standing, not rotation —
+    # and it carried exactly these two reasons. Fable asked for a named decision
+    # rather than letting it keep riding the story cap.
+    #
+    # DECIDED, in two parts:
+    #
+    # 1. **The pairing was never real.** `salient_entity` fires here on the
+    #    OFFICE — Maine / State / Senate — and the same false positive covers
+    #    "Virginia House of Delegates", "Georgia Public Service Commission",
+    #    "New Jersey Governor". Re-tested without office nouns, the Maine card
+    #    has no salient entity, so the specimen class dissolves rather than being
+    #    adjudicated: it is a plain `regional_us_election`, which is already
+    #    ruled low quality. A signal that mistakes the seat for the candidate
+    #    would have re-proposed this card for admission every cycle.
+    #
+    # 2. **Salience alone does not admit a regional election.** Where a genuine
+    #    named person IS present ("Will Zohran Mamdani win the NYC mayoral
+    #    election?"), the card keeps `salient_entity` and its higher ceiling —
+    #    but it stays `low_quality`, because a state-legislature race with a
+    #    famous candidate is still a state-legislature race for a low-double-digit
+    #    audience that mostly does not live there. What WOULD admit one is
+    #    national consequence — chamber control, a major governorship — which is
+    #    a different signal, already carried by `_MAJOR_ELECTION_RE`, and is not
+    #    something a proper-noun count can stand in for.
+    #
+    # So this narrows a false positive; it does not open a new admission path.
+    if regional_election:
+        has_salient = _has_named_salient_entity(name, ignore_office_nouns=True)
+
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
 
