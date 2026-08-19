@@ -1,0 +1,748 @@
+{
+ "_provenance": {
+  "source": "GET https://api.bainluck.com/api/feed?limit=49&include_events=false&include_futures=true",
+  "captured_at_utc": "2026-08-18T23:2xZ (PROGRAM UX cycle 96, UX-P099)",
+  "x_feed_cache": "miss  \u2014 a forced fresh build, not a cached page",
+  "heroku_release": "v3849",
+  "master_sha": "43f33396",
+  "issue": "#1958",
+  "note": "The SERVED payload, verbatim, reduced to the fields the audit's oracle reads. `external_id` is null and `top_outcomes` is truncated to three on every card because that is what the wire carries \u2014 which is exactly why `is_first_page_quality_offender` keys on the server's own recorded verdict instead of re-deriving one from here."
+ },
+ "cards": [
+  {
+   "served_rank": 1,
+   "type": "futures",
+   "score": 85,
+   "id": 1,
+   "name": "MLB World Series Winner",
+   "llm_sport_category": "baseball",
+   "external_id": null,
+   "status": "open",
+   "source": "odds_api",
+   "outcome_names": [
+    "Los Angeles Dodgers",
+    "New York Yankees",
+    "Milwaukee Brewers"
+   ]
+  },
+  {
+   "served_rank": 2,
+   "type": "bundle",
+   "score": 86.0,
+   "id": "theme:story:us_2028_election:108326-108445",
+   "name": "2028 Election",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 3,
+   "type": "futures",
+   "score": 83,
+   "id": 86832,
+   "name": "NFL Super Bowl Winner",
+   "llm_sport_category": "football",
+   "external_id": null,
+   "status": "open",
+   "source": "odds_api",
+   "outcome_names": [
+    "Los Angeles Rams",
+    "Buffalo Bills",
+    "Seattle Seahawks"
+   ]
+  },
+  {
+   "served_rank": 4,
+   "type": "bundle",
+   "score": 90.0,
+   "id": "theme:story:ai:109596-52755922",
+   "name": "AI",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 5,
+   "type": "bundle",
+   "score": 80.0,
+   "id": "theme:story:major_entertainment_events:56775571-52755801",
+   "name": "Awards Season",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 6,
+   "type": "futures",
+   "score": 88,
+   "id": 12194657,
+   "name": "Who will Taylor Swift's bridesmaids be?",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Gigi Hadid",
+    "Blake Lively",
+    "Abigail Anderson"
+   ]
+  },
+  {
+   "served_rank": 7,
+   "type": "bundle",
+   "score": 88.0,
+   "id": "theme:story:middle_east_conflict:59153546-113232-113200-3484764",
+   "name": "Middle East",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 8,
+   "type": "bundle",
+   "score": 88.0,
+   "id": "theme:story:macro_rates:20570794-113752-113032",
+   "name": "Fed & Rates",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 9,
+   "type": "futures",
+   "score": 72,
+   "id": 59152044,
+   "name": "Will Warsh\u2019s remarks not air?",
+   "llm_sport_category": "economics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "-No Qualifying Event-",
+    "No",
+    "Yes"
+   ]
+  },
+  {
+   "served_rank": 10,
+   "type": "futures",
+   "score": 64,
+   "id": 16756482,
+   "name": "Will WHO declare Hantavirus a Public Health Emergency of International Concern this Year?",
+   "llm_sport_category": "health",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "WHO declare Hantavirus a Public Healt..."
+   ]
+  },
+  {
+   "served_rank": 11,
+   "type": "futures",
+   "score": 57,
+   "id": 58992492,
+   "name": "Will Tropical Storm Lala make landfall in Hawaii as a hurricane?",
+   "llm_sport_category": "weather",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Tropical Storm Lala"
+   ]
+  },
+  {
+   "served_rank": 12,
+   "type": "futures",
+   "score": 53,
+   "id": 59139556,
+   "name": "Dutch Grand Prix: Driver Winner",
+   "llm_sport_category": "motorsports",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Lando Norris",
+    "Lewis Hamilton",
+    "Charles Leclerc"
+   ]
+  },
+  {
+   "served_rank": 13,
+   "type": "futures",
+   "score": 51,
+   "id": 59087216,
+   "name": "LIV Golf Indianapolis Champion?",
+   "llm_sport_category": "golf",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Jon Rahm",
+    "Joaquin Niemann",
+    "Bryson DeChambeau"
+   ]
+  },
+  {
+   "served_rank": 14,
+   "type": "futures",
+   "score": 49,
+   "id": 58920345,
+   "name": "What will be the top US Netflix movie this week?",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "The Last House",
+    "Don't Say Good Luck",
+    "72 Hours"
+   ]
+  },
+  {
+   "served_rank": 15,
+   "type": "futures",
+   "score": 39,
+   "id": 109798,
+   "name": "Michigan Democratic Senate nominee?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Abdul El-Sayed",
+    "Haley Stevens",
+    "Mallory McMorrow"
+   ]
+  },
+  {
+   "served_rank": 16,
+   "type": "futures",
+   "score": 23,
+   "id": 59150635,
+   "name": "Will Meta (META) close above $540 on August 19?",
+   "llm_sport_category": "economics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "$540",
+    "Yes",
+    "No"
+   ]
+  },
+  {
+   "served_rank": 17,
+   "type": "futures",
+   "score": 80,
+   "id": 171,
+   "name": "Canadian Team to Win the Stanley Cup\u00ae Before the 2030-31 Season",
+   "llm_sport_category": "hockey",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Canadian Team to Win the Stanley Cup\u00ae..."
+   ]
+  },
+  {
+   "served_rank": 18,
+   "type": "futures",
+   "score": 86,
+   "id": 112921,
+   "name": "Will China invade Taiwan by end of 2026?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "China invade Taiwan by end of 2026"
+   ]
+  },
+  {
+   "served_rank": 19,
+   "type": "futures",
+   "score": 88,
+   "id": 20569379,
+   "name": "Russia x Ukraine ceasefire agreement by...?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "December 31",
+    "October 31"
+   ]
+  },
+  {
+   "served_rank": 20,
+   "type": "bundle",
+   "score": 89.0,
+   "id": "theme:story:us_state_races:55686617-109081",
+   "name": "State Races",
+   "llm_sport_category": null,
+   "external_id": null,
+   "status": null,
+   "source": null,
+   "outcome_names": []
+  },
+  {
+   "served_rank": 21,
+   "type": "futures",
+   "score": 85,
+   "id": 52755659,
+   "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+   "llm_sport_category": "hockey",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Florida Panthers",
+    "Carolina Hurricanes",
+    "Colorado Avalanche"
+   ]
+  },
+  {
+   "served_rank": 22,
+   "type": "futures",
+   "score": 78,
+   "id": 113354,
+   "name": "China x Philippines military clash before 2027?",
+   "llm_sport_category": "geopolitics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "China x Philippines military clash"
+   ]
+  },
+  {
+   "served_rank": 23,
+   "type": "futures",
+   "score": 78,
+   "id": 34277822,
+   "name": "US Open Men's Singles Winner",
+   "llm_sport_category": "tennis",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Jannik Sinner",
+    "Carlos Alcaraz",
+    "Alexander Zverev"
+   ]
+  },
+  {
+   "served_rank": 24,
+   "type": "futures",
+   "score": 78,
+   "id": 31834253,
+   "name": "Champions League Winner",
+   "llm_sport_category": "soccer",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Barcelona",
+    "PSG",
+    "Real Madrid"
+   ]
+  },
+  {
+   "served_rank": 25,
+   "type": "futures",
+   "score": 75,
+   "id": 108328,
+   "name": "Who will be Trump's next Press Secretary?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Alina Habba",
+    "Scott Jennings",
+    "Anna Kelly"
+   ]
+  },
+  {
+   "served_rank": 26,
+   "type": "futures",
+   "score": 77,
+   "id": 59153592,
+   "name": "Next Mayor of Cape Town?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Geordin Hill-Lewis",
+    "Nontando Nolutshungu",
+    "Dereleen James"
+   ]
+  },
+  {
+   "served_rank": 27,
+   "type": "futures",
+   "score": 75,
+   "id": 52756010,
+   "name": "Big Brother Season 28 \u00b7 Winner",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Dee Valladares",
+    "Rick Devens",
+    "Barrett Pfeiffer"
+   ]
+  },
+  {
+   "served_rank": 28,
+   "type": "futures",
+   "score": 74,
+   "id": 56775477,
+   "name": "2030 FIFA World Cup Champion",
+   "llm_sport_category": "soccer",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Spain",
+    "France",
+    "England"
+   ]
+  },
+  {
+   "served_rank": 29,
+   "type": "futures",
+   "score": 71,
+   "id": 131023,
+   "name": "Will Samuel Alito announce his retirement by...?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "June 30, 2027",
+    "December 31",
+    "September 30"
+   ]
+  },
+  {
+   "served_rank": 30,
+   "type": "futures",
+   "score": 71,
+   "id": 55674288,
+   "name": "Lululemon Americas comparable sales growth in Q2",
+   "llm_sport_category": "economics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Above -14%",
+    "Above -13%",
+    "Above -12%"
+   ]
+  },
+  {
+   "served_rank": 31,
+   "type": "futures",
+   "score": 70,
+   "id": 59153578,
+   "name": "How many gays become Federal Deputy in Brazil Elections?",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "10-14",
+    "<5",
+    "5-9"
+   ]
+  },
+  {
+   "served_rank": 32,
+   "type": "futures",
+   "score": 69,
+   "id": 59153591,
+   "name": "Next Mayor of Tshwane (Pretoria)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Cilliers Brink",
+    "Nasiphi Moya",
+    "Omphile Maotwe"
+   ]
+  },
+  {
+   "served_rank": 33,
+   "type": "futures",
+   "score": 68,
+   "id": 59153587,
+   "name": "Next Mayor of Mangaung (Bloemfontein)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Gregory Nthatisi",
+    "Werner Pretorius",
+    "Sam Matiase"
+   ]
+  },
+  {
+   "served_rank": 34,
+   "type": "futures",
+   "score": 67,
+   "id": 56722520,
+   "name": "Will Netanyahu visit New York City by...?",
+   "llm_sport_category": "geopolitics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "December 31",
+    "September 30"
+   ]
+  },
+  {
+   "served_rank": 35,
+   "type": "futures",
+   "score": 64,
+   "id": 59153594,
+   "name": "Lula participates in debate before first round?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Lula participates in debate before fi..."
+   ]
+  },
+  {
+   "served_rank": 36,
+   "type": "futures",
+   "score": 63,
+   "id": 52755895,
+   "name": "Will Trump try to fire Lisa Cook again?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Before Jan 1, 2027",
+    "Before Oct 1, 2026",
+    "Before Sep 1, 2026"
+   ]
+  },
+  {
+   "served_rank": 37,
+   "type": "futures",
+   "score": 61,
+   "id": 59153593,
+   "name": "Fl\u00e1vio Bolsonaro participates in debate before first round?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Fl\u00e1vio Bolsonaro participates in deba..."
+   ]
+  },
+  {
+   "served_rank": 38,
+   "type": "futures",
+   "score": 60,
+   "id": 59153588,
+   "name": "Next Mayor of Buffalo City (East London)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Yomelela Tyali",
+    "Bongiwe Sauli"
+   ]
+  },
+  {
+   "served_rank": 39,
+   "type": "futures",
+   "score": 60,
+   "id": 59153586,
+   "name": "Next Mayor of Nelson Mandela Bay (Port Elizabeth)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Sinawo Thambo"
+   ]
+  },
+  {
+   "served_rank": 40,
+   "type": "futures",
+   "score": 60,
+   "id": 59154760,
+   "name": "When will Trump announce a new White House Press Secretary?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "September 30",
+    "September 11",
+    "September 4"
+   ]
+  },
+  {
+   "served_rank": 41,
+   "type": "futures",
+   "score": 59,
+   "id": 59153589,
+   "name": "Next Mayor of eThekwini (Durban)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Hlengiwe Mkhaliphi"
+   ]
+  },
+  {
+   "served_rank": 42,
+   "type": "futures",
+   "score": 59,
+   "id": 59153590,
+   "name": "Next Mayor of Ekurhuleni (Germiston)?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "Pelisa Nkunjana"
+   ]
+  },
+  {
+   "served_rank": 43,
+   "type": "futures",
+   "score": 59,
+   "id": 59087208,
+   "name": "Nexo Championship - Make the Cut",
+   "llm_sport_category": "golf",
+   "external_id": null,
+   "status": "open",
+   "source": "datagolf",
+   "outcome_names": [
+    "Patrick Reed",
+    "Eugenio Chacarra",
+    "Ewen Ferguson"
+   ]
+  },
+  {
+   "served_rank": 44,
+   "type": "futures",
+   "score": 58,
+   "id": 108619,
+   "name": "2026 Midterms: Congress Balance of Power?",
+   "llm_sport_category": "politics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "D-House, D-Senate",
+    "D-House, R-Senate",
+    "R-House, R-Senate"
+   ]
+  },
+  {
+   "served_rank": 45,
+   "type": "futures",
+   "score": 56,
+   "id": 59087213,
+   "name": "AdventHealth Championship - Make the Cut",
+   "llm_sport_category": "golf",
+   "external_id": null,
+   "status": "open",
+   "source": "datagolf",
+   "outcome_names": [
+    "Ross Steelman",
+    "Ben Kohles",
+    "Tommy Morrison"
+   ]
+  },
+  {
+   "served_rank": 46,
+   "type": "futures",
+   "score": 54,
+   "id": 59153577,
+   "name": "How many gays become Governor in Brazil Elections?",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "0",
+    "1",
+    "2+"
+   ]
+  },
+  {
+   "served_rank": 47,
+   "type": "futures",
+   "score": 54,
+   "id": 59153570,
+   "name": "How many transgenders become Federal Deputy in Brazil Elections?",
+   "llm_sport_category": "entertainment",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "2-3",
+    "0-1",
+    "4-5"
+   ]
+  },
+  {
+   "served_rank": 48,
+   "type": "futures",
+   "score": 51,
+   "id": 57774297,
+   "name": "US real GDP growth in Q1 2027?",
+   "llm_sport_category": "economics",
+   "external_id": null,
+   "status": "open",
+   "source": "kalshi",
+   "outcome_names": [
+    "Above 0.0%",
+    "Above 0.5%",
+    "Above 1.0%"
+   ]
+  },
+  {
+   "served_rank": 49,
+   "type": "futures",
+   "score": 49,
+   "id": 17411349,
+   "name": "UFC: Khamzat Chimaev to Land 1st Minute Takedown?",
+   "llm_sport_category": "mma",
+   "external_id": null,
+   "status": "open",
+   "source": "polymarket",
+   "outcome_names": [
+    "UFC: Khamzat Chimaev to Land 1st Minu..."
+   ]
+  }
+ ]
+}

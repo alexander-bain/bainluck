@@ -502,8 +502,20 @@ export interface DiscoverMarketTrace {
   };
   final_ranking: {
     survived_final_caps: boolean;
+    /** Served rank from the shared display chain (#1982). Null when not returned. */
     final_futures_rank: number | null;
+    /** Rank in the full assembled feed, before the page slice. */
+    assembled_rank?: number | null;
+    /**
+     * Index in the UNSORTED raw candidate pool. This used to be exported as
+     * `final_futures_rank`, which is why the trace reported "81 of 81" for a card
+     * on the first screen (#1982). It says which pool found the card, nothing more.
+     */
+    raw_pool_position?: number | null;
+    /** The score the served payload carries for this card. */
     final_score: number | null;
+    /** The independent `_score_market_trace` recompute — diverges from served. */
+    score_trace_final?: number | null;
     scored_futures_count: number;
   };
   rank_phases?: {
@@ -520,9 +532,14 @@ export interface DiscoverMarketTrace {
     post_diversity_rank: number | null;
     returned_rank: number | null;
     returned: boolean;
+    assembled_rank?: number | null;
     raw_futures_count: number;
     post_dedupe_futures_count: number;
     assembled_count: number;
+    /** The partial-build probe's own answer, kept so the divergence stays visible. */
+    probe_returned_rank?: number | null;
+    probe_assembled_count?: number;
+    served_item_score?: number | null;
     dropped_by_canonical_dedupe: boolean;
     canonical_replacement: {
       id: number | null;
@@ -530,6 +547,8 @@ export interface DiscoverMarketTrace {
       score: number | null;
     } | null;
   };
+  /** Serve-time terms this reconstruction does not model (#1982 acceptance). */
+  unmodeled_serve_time_terms?: string[];
   suggested_fix: string;
 }
 

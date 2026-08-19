@@ -1814,6 +1814,106 @@ def diversify_discover_first_page(
     return selected + remainder
 
 
+def is_first_page_quality_offender(item: dict) -> bool:
+    """Does this card count against `boring-rate@20` / `ladder-rate@20`?
+
+    Keyed on the verdict the SERVER recorded at scoring time
+    (``_quality_ladder_or_bucket`` / ``_quality_class``), not on a re-derivation
+    from the served card. The audit's oracle re-runs ``classify_market_quality``
+    over the rendered name, category and *displayed* outcomes — which has no
+    ``external_id`` and a truncated outcome list, so the ticker-prefix and
+    numeric-outcome-ladder arms can miss there and cannot miss here. Keying on
+    the stronger verdict makes this control a superset of the metric it serves,
+    which is the safe direction: it can never admit a card the audit would flag.
+    """
+    if item.get("_quality_ladder_or_bucket"):
+        return True
+    return item.get("_quality_class") in ("low_quality", "suppress")
+
+
+def enforce_first_page_quality_floor(
+    items: list[dict],
+    *,
+    first_page_size: int = 20,
+) -> tuple[list[dict], dict]:
+    """The ladder admission arm — #1958, Fable ruling (d) 2026-08-18.
+
+    **The target and the mechanism used to be different shapes.** The audit
+    targets ``boring-rate@20 = 0`` and ``ladder-rate@20 = 0``: aggregate counts
+    over the first twenty served cards. The only aggregate control that existed
+    was ``cap_low_quality_families(cap=1)`` — a cap PER FAMILY. A single equity
+    ladder rung therefore had no sibling to be capped against and sailed onto the
+    first page unopposed, which is exactly the #1958 episode: one card ("Will Meta
+    (META) close above $540") produced BOTH failing metrics, with exactly one
+    ``low_quality`` row in all 44 futures and zero ``suppress``. A per-family cap
+    cannot enforce a per-page target no matter what number it is set to.
+
+    So the control is stated in the target's own terms: **zero offenders in the
+    first-page window.**
+
+    **It demotes; it never drops.** Ruling (d) is explicit that named Alex
+    exclusions remain the ONLY hard-drops — those are the ``suppress`` arms, each
+    one a specific editorial call he made. A ladder is not on that list: it is a
+    card that should not lead, which is a different claim from a card that should
+    not exist. Each offender in the window is SWAPPED with the best clean card
+    from beyond it, so the ladder keeps its place in the feed further down and
+    the page keeps its length. Nothing is deleted and nothing is reordered except
+    the swap itself, so ``compose_lead``'s prefix contract (C185) survives unless
+    the lead card is itself an offender.
+
+    **The shortfall is loud** (gotcha #53, "no silent caps"). When the pool has
+    no clean replacement the offender STAYS — a short page is a worse failure
+    than a boring one (#1091: a diversity cap emptied the Sports tab) — and the
+    returned meta says how many stayed and why. A control that silently gave up
+    would report the same green as one that worked.
+
+    Returns:
+        ``(items, meta)`` where meta carries ``offenders_in_window``,
+        ``demoted``, ``unreplaced`` and ``clean_replacements_available``.
+    """
+    window_size = min(first_page_size, len(items))
+    if window_size <= 0:
+        return items, {
+            "offenders_in_window": 0,
+            "demoted": 0,
+            "unreplaced": 0,
+            "clean_replacements_available": 0,
+        }
+
+    window = items[:window_size]
+    tail = items[window_size:]
+    offender_positions = [
+        idx for idx, item in enumerate(window) if is_first_page_quality_offender(item)
+    ]
+    clean_tail_positions = [
+        idx for idx, item in enumerate(tail) if not is_first_page_quality_offender(item)
+    ]
+
+    meta = {
+        "offenders_in_window": len(offender_positions),
+        "demoted": 0,
+        "unreplaced": 0,
+        "clean_replacements_available": len(clean_tail_positions),
+    }
+    if not offender_positions:
+        return items, meta
+
+    # Pair each offender with the highest-placed clean card beyond the window.
+    # The tail is already in served order, so "first available" IS "best".
+    swaps = min(len(offender_positions), len(clean_tail_positions))
+    meta["demoted"] = swaps
+    meta["unreplaced"] = len(offender_positions) - swaps
+
+    new_window = list(window)
+    new_tail = list(tail)
+    for pair in range(swaps):
+        w_idx = offender_positions[pair]
+        t_idx = clean_tail_positions[pair]
+        new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
+
+    return new_window + new_tail, meta
+
+
 _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("survivor", re.compile(r"\bsurvivor\b", re.IGNORECASE), 88),
     ("music_charts", re.compile(r"\b(spotify|billboard)\b", re.IGNORECASE), 88),

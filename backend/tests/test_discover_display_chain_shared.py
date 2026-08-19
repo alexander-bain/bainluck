@@ -210,7 +210,16 @@ class TestChainContract:
             event_pct=0.15,
             timing_cb=seen.append,
         )
-        assert seen == ["ranking", "reviewed_filter", "bundles", "lead_composition"], (
+        assert seen == [
+            "ranking",
+            "reviewed_filter",
+            "bundles",
+            "lead_composition",
+            # #1958: the first-page quality floor runs AFTER lead composition,
+            # because that is the only order in which it sees the same twenty
+            # cards `boring-rate@20` / `ladder-rate@20` are counted over.
+            "first_page_quality_floor",
+        ], (
             "get_feed's per-stage timings are built from these callbacks; "
             f"got {seen}"
         )
