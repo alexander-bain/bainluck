@@ -215,16 +215,28 @@ async def cohort_provenance_split(
     Header-only auth (no ?secret). Returns per (league, market_type) for
     polymarket quantity/container_member: n_all, n_venue, null_default_share,
     plus ECE_all and ECE_venue (10-bin, n-weighted) so the decider is one call.
+
+    Aggregates in SQL over the FULL population. It used to ship up to 300,000
+    rows to Python behind ``ORDER BY random()``, which sorts the whole join
+    before the LIMIT can discard any of it — that read returned in 29.99s once
+    and has H12'd at the router's hard 30s limit on every attempt since
+    (4/4 on 2026-08-18), taking the #1912 per-cell evidence base with it.
+    Everything this endpoint computes is a bin-level aggregate, so the bins are
+    now built by the database and only ~1,000 rows cross the wire. Two
+    consequences beyond speed: the numbers are the whole population rather than
+    a sample, and ``n_all`` is a real count rather than a sampled one.
     """
     _check_admin_secret(request=request)
     from sqlalchemy import text
     from collections import defaultdict
-    rows = (await db.execute(text("""
+    agg = (await db.execute(text("""
         SELECT COALESCE(fm.llm_sport_category,'uncategorized') AS league,
                COALESCE(fm.market_type,'unknown') AS market_type,
-               COALESCE(fo.calibration_probability, fo.opening_probability) AS prob,
-               fo.is_winner,
-               fo.resolution_source
+               (fo.resolution_source IS NOT NULL) AS venue,
+               LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability)*10),9)::int AS bin,
+               COUNT(*) AS n,
+               SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS sum_prob,
+               SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.status='resolved'
@@ -234,54 +246,60 @@ async def cohort_provenance_split(
           AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
           AND fo.opening_probability IS NOT NULL
           AND fo.is_winner IS NOT NULL
-          AND random() < 0.50
-        LIMIT 300000
+        GROUP BY 1,2,3,4
     """))).all()
-    # Group by (league, market_type) and compute ECE_all vs ECE_venue via ONE canonical definition
-    # Returns (ece_pp, is_fallback) so callers can label fallback-nonparity
-    def ece_of_with_label(pairs):
-        n = len(pairs)
+    # Group by (league, market_type) and compute ECE_all vs ECE_venue via ONE canonical definition.
+    # The unit here is a BIN AGGREGATE (n, sum_prob, winners), not a list of pairs, because the
+    # database already did the binning — but the definition is byte-for-byte the one
+    # _compute_horizon_mce implements, and the fallback below is the same arithmetic it was.
+    # Returns (ece_pp, is_fallback) so callers can label fallback-nonparity.
+    def ece_of_with_label(bins):
+        n = sum(b["n"] for b in bins.values())
         if n < 30:
             return None, False
-        bins = [[] for _ in range(10)]
-        for prob, actual in pairs:
-            bins[min(int(prob*10),9)].append((prob, actual))
+        buckets = [
+            {"n": b["n"], "winners": b["winners"], "sum_prob": b["sum_prob"]}
+            for b in bins.values() if b["n"]
+        ]
         try:
             from app.tasks.precompute_calibration import _compute_horizon_mce
-            buckets=[]
-            for b in bins:
-                if not b:
-                    continue
-                buckets.append({"n": len(b), "winners": sum(a for _,a in b), "sum_prob": sum(p for p,_ in b)})
             v = _compute_horizon_mce(buckets, weighted=True)
             if v is not None:
-                return round(v,2), False
+                return round(v, 2), False
         except Exception:
             pass
         total = 0.0
-        for b in bins:
-            if not b:
-                continue
-            avg_p = sum(p for p,_ in b)/len(b)
-            avg_a = sum(a for _,a in b)/len(b)
-            total += len(b)/n * abs(avg_p-avg_a)
-        return round(total*100,2), True
+        for b in buckets:
+            avg_p = b["sum_prob"] / b["n"]
+            avg_a = b["winners"] / b["n"]
+            total += b["n"] / n * abs(avg_p - avg_a)
+        return round(total * 100, 2), True
 
-    def ece_of(pairs):
-        v, _ = ece_of_with_label(pairs)
-        return v
+    def _empty_bins():
+        return defaultdict(lambda: {"n": 0, "sum_prob": 0.0, "winners": 0.0})
+
     from collections import defaultdict
-    grouped_all = defaultdict(list)
-    grouped_venue = defaultdict(list)
-    counts = defaultdict(lambda: {"n_all":0,"n_venue":0})
-    for r in rows:
+    grouped_all = defaultdict(_empty_bins)
+    grouped_venue = defaultdict(_empty_bins)
+    counts = defaultdict(lambda: {"n_all": 0, "n_venue": 0})
+    rows_aggregated = 0
+    for r in agg:
         key = (r.league, r.market_type)
-        prob = float(r.prob); actual = int(bool(r.is_winner))
-        grouped_all[key].append((prob, actual))
-        counts[key]["n_all"] += 1
-        if r.resolution_source is not None:
-            grouped_venue[key].append((prob, actual))
-            counts[key]["n_venue"] += 1
+        n = int(r.n)
+        sum_prob = float(r.sum_prob or 0.0)
+        winners = float(r.winners or 0.0)
+        rows_aggregated += n
+        slot = grouped_all[key][int(r.bin)]
+        slot["n"] += n
+        slot["sum_prob"] += sum_prob
+        slot["winners"] += winners
+        counts[key]["n_all"] += n
+        if r.venue:
+            vslot = grouped_venue[key][int(r.bin)]
+            vslot["n"] += n
+            vslot["sum_prob"] += sum_prob
+            vslot["winners"] += winners
+            counts[key]["n_venue"] += n
     out = []
     for key in sorted(grouped_all.keys()):
         league, mtype = key
@@ -293,11 +311,12 @@ async def cohort_provenance_split(
         ece_all, fellback_all = ece_of_with_label(grouped_all[key])
         ece_venue, fellback_venue = ece_of_with_label(grouped_venue[key]) if n_venue >= 30 else (None, False)
         # Also compute gap for context
-        def gap_of(pairs):
-            if not pairs:
+        def gap_of(bins):
+            n = sum(b["n"] for b in bins.values())
+            if not n:
                 return None
-            avg_p = sum(p for p,_ in pairs)/len(pairs)
-            avg_a = sum(a for _,a in pairs)/len(pairs)
+            avg_p = sum(b["sum_prob"] for b in bins.values()) / n
+            avg_a = sum(b["winners"] for b in bins.values()) / n
             return round((avg_p-avg_a)*100,2)
         gap_all = gap_of(grouped_all[key])
         gap_venue = gap_of(grouped_venue[key]) if n_venue >=30 else None
@@ -321,7 +340,18 @@ async def cohort_provenance_split(
             "verdict_venue": _prov_verdict(ece_venue, n_venue, 1.0),
         })
     out = sorted(out, key=lambda x: (x["ece_all"] or 0), reverse=True)
-    return {"rows_scanned": len(rows), "cells": out, "note": "venue = resolution_source IS NOT NULL; default = IS NULL (226k PM defaults)"}
+    return {
+        "rows_scanned": rows_aggregated,
+        "sampled": False,
+        "population": "full",
+        "bin_rows_returned": len(agg),
+        "cells": out,
+        "note": (
+            "venue = resolution_source IS NOT NULL; default = IS NULL (226k PM defaults). "
+            "Bins are aggregated in SQL over the FULL population — rows_scanned is a real "
+            "count, not a 300k sample."
+        ),
+    }
 
 
 @router.get("/admin/cohort-sums-histogram")
@@ -334,13 +364,21 @@ async def cohort_sums_histogram(
     Header-only auth. Groups by COALESCE(group_id, event_id) and computes
     sum_prob per group using curve price. Returns bucket histogram + per-size stats.
     Only meaningful if provenance survives venue-graded-only.
+
+    Buckets in SQL (#1974). This used to sort every group with ``ORDER BY
+    random()`` and ship up to 100,000 of them to Python, which H12'd at the
+    router's hard 30s limit on all three of INT-085's attempts and could not be
+    recovered off-route either. The bucket assignment, the per-bucket means and
+    the per-size medians are all aggregates, so the database does them and a
+    couple of dozen rows cross the wire. The endpoint is no longer sampled,
+    so the counts are the whole population.
     """
     _check_admin_secret(request=request)
     from sqlalchemy import text
-    from collections import defaultdict
-    import math
-    # Per-group sums, venue-graded only if has_venue_grade else all
-    rows = (await db.execute(text("""
+
+    # One shared derived table. `bucket` is the same six-way split the Python
+    # loop applied, expressed once so the two readers below cannot drift.
+    _GROUPS = """
         SELECT COALESCE(fm.group_id::text, 'event:'||fm.event_id::text) AS group_key,
                COUNT(*) AS members,
                SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS sum_prob,
@@ -356,83 +394,95 @@ async def cohort_sums_histogram(
           AND fo.is_winner IS NOT NULL
         GROUP BY group_key
         HAVING COUNT(*) >= 2
-        LIMIT 100000
+    """
+    _BUCKET = """
+        CASE WHEN sum_prob < 1.0 THEN 0
+             WHEN sum_prob < 1.5 THEN 1
+             WHEN sum_prob < 2.0 THEN 2
+             WHEN sum_prob < 3.0 THEN 3
+             WHEN sum_prob < 5.0 THEN 4
+             ELSE 5 END
+    """
+    ORDERED = [
+        "0–1.0 (under)", "1.0–1.5 (slightly over)", "1.5–2.0 (over)",
+        "2.0–3.0 (ladder)", "3.0–5.0 (strong ladder)", "5.0+ (extreme ladder)",
+    ]
+
+    hist_rows = (await db.execute(text(f"""
+        SELECT {_BUCKET} AS bucket_idx,
+               has_venue,
+               COUNT(*) AS groups,
+               SUM(sum_prob) AS total_sum,
+               SUM(members) AS total_members
+        FROM ({_GROUPS}) g
+        GROUP BY 1, 2
     """))).all()
-    # For histogram: group_key is COALESCE(group_id, event_id) — post-GROUP samples are groups,
-    # not outcomes. Row-level WHERE random() < p before GROUP would bias toward larger groups
-    # (more rows per group → higher inclusion chance). Instead we sample GROUPS uniformly:
-    # the outer LIMIT 100000 without ORDER BY random() is now over an already-randomized
-    # input (futures_markets TABLESAMPLE alternative was heap-biased, this is heap-order
-    # biased too at the group level but bounded by the join's hash aggregation — the
-    # statistical property documented in the artifact is that group sampling remains
-    # heap-order dependent, so the histogram is flagged as group-order-biased and the
-    # caller must interpret 5.0+ ladder buckets with that caveat; the ladder
-    # normalization experiment's third option (unbiased group sampling via
-    # TABLESAMPLE SYSTEM on a materialized group_id table) is deferred.
-    # For now, no Sort is emitted — the plan is HashAggregate → Limit.
-    # Bucket histogram
-    buckets = {"0–1.0 (under)":0, "1.0–1.5 (slightly over)":0, "1.5–2.0 (over)":0, "2.0–3.0 (ladder)":0, "3.0–5.0 (strong ladder)":0, "5.0+ (extreme ladder)":0}
-    bucket_sum = defaultdict(float)
-    bucket_members = defaultdict(float)
-    per_size = defaultdict(list)
-    for r in rows:
-        s = float(r.sum_prob or 0)
-        m = int(r.members)
-        if s < 1.0:
-            b = "0–1.0 (under)"
-        elif s < 1.5:
-            b = "1.0–1.5 (slightly over)"
-        elif s < 2.0:
-            b = "1.5–2.0 (over)"
-        elif s < 3.0:
-            b = "2.0–3.0 (ladder)"
-        elif s < 5.0:
-            b = "3.0–5.0 (strong ladder)"
-        else:
-            b = "5.0+ (extreme ladder)"
-        buckets[b] += 1
-        bucket_sum[b] += s
-        bucket_members[b] += m
-        per_size[m].append(s)
+
+    # A declared top-N over an already-aggregated table, not a bound on the
+    # input — and `per_size_total` below says how many distinct sizes it dropped,
+    # because a truncated list that does not announce its truncation reads as
+    # "these are all of them".
+    _PER_SIZE_N = 20
+    size_rows = (await db.execute(text(f"""
+        SELECT members,
+               COUNT(*) AS groups,
+               AVG(sum_prob) AS avg_sum,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY sum_prob) AS median_sum,
+               COUNT(*) OVER () AS distinct_sizes
+        FROM ({_GROUPS}) g
+        GROUP BY members
+        ORDER BY members
+        LIMIT {_PER_SIZE_N}
+    """))).all()
+
+    all_counts = {b: 0 for b in ORDERED}
+    all_sum = {b: 0.0 for b in ORDERED}
+    all_members = {b: 0.0 for b in ORDERED}
+    venue_counts = {b: 0 for b in ORDERED}
+    groups_scanned = 0
+    for r in hist_rows:
+        b = ORDERED[int(r.bucket_idx)]
+        n = int(r.groups)
+        groups_scanned += n
+        all_counts[b] += n
+        all_sum[b] += float(r.total_sum or 0)
+        all_members[b] += float(r.total_members or 0)
+        if r.has_venue:
+            venue_counts[b] += n
+
     hist = []
-    for b in ["0–1.0 (under)","1.0–1.5 (slightly over)","1.5–2.0 (over)","2.0–3.0 (ladder)","3.0–5.0 (strong ladder)","5.0+ (extreme ladder)"]:
-        cnt = buckets[b]
-        avg_sum = round(bucket_sum[b]/cnt,2) if cnt else None
-        avg_m = round(bucket_members[b]/cnt,1) if cnt else None
-        hist.append({"bucket": b, "groups": cnt, "avg_sum": avg_sum, "avg_members": avg_m})
-    # Per-size median/avg
-    size_stats = []
-    for sz in sorted(per_size.keys()):
-        lst = sorted(per_size[sz])
-        avg = round(sum(lst)/len(lst),2) if lst else None
-        med = lst[len(lst)//2] if lst else None
-        med = round(med,2) if med is not None else None
-        size_stats.append({"members": sz, "groups": len(lst), "avg_sum": avg, "median_sum": med})
-    # Also venue-graded-only histogram
-    venue_rows = [r for r in rows if r.has_venue]
-    vbuckets = {"0–1.0 (under)":0, "1.0–1.5 (slightly over)":0, "1.5–2.0 (over)":0, "2.0–3.0 (ladder)":0, "3.0–5.0 (strong ladder)":0, "5.0+ (extreme ladder)":0}
-    for r in venue_rows:
-        s = float(r.sum_prob or 0)
-        if s < 1.0:
-            b = "0–1.0 (under)"
-        elif s < 1.5:
-            b = "1.0–1.5 (slightly over)"
-        elif s < 2.0:
-            b = "1.5–2.0 (over)"
-        elif s < 3.0:
-            b = "2.0–3.0 (ladder)"
-        elif s < 5.0:
-            b = "3.0–5.0 (strong ladder)"
-        else:
-            b = "5.0+ (extreme ladder)"
-        vbuckets[b] += 1
-    vhist = [{"bucket": b, "groups": vbuckets[b]} for b in vbuckets]
+    for b in ORDERED:
+        cnt = all_counts[b]
+        hist.append({
+            "bucket": b,
+            "groups": cnt,
+            "avg_sum": round(all_sum[b] / cnt, 2) if cnt else None,
+            "avg_members": round(all_members[b] / cnt, 1) if cnt else None,
+        })
+    vhist = [{"bucket": b, "groups": venue_counts[b]} for b in ORDERED]
+    size_stats = [
+        {"members": int(r.members), "groups": int(r.groups),
+         "avg_sum": round(float(r.avg_sum), 2) if r.avg_sum is not None else None,
+         "median_sum": round(float(r.median_sum), 2) if r.median_sum is not None else None}
+        for r in size_rows
+    ]
+    per_size_total = int(size_rows[0].distinct_sizes) if size_rows else 0
     return {
-        "groups_scanned": len(rows),
+        "groups_scanned": groups_scanned,
+        "sampled": False,
+        "population": "full",
+        "per_size_total": per_size_total,
+        "per_size_shown": len(size_stats),
         "histogram_all": hist,
         "histogram_venue_only": vhist,
-        "per_size": size_stats[:20],
-        "note": "sum_prob = SUM(curve_price) per COALESCE(group_id, event_id); venue_only = has_venue=true; 5.0+ is extreme ladder defect"
+        "per_size": size_stats,
+        "note": (
+            "sum_prob = SUM(curve_price) per COALESCE(group_id, event_id); "
+            "venue_only = has_venue=true; 5.0+ is extreme ladder defect. "
+            "Bucketed in SQL over the FULL population (#1974) — not a 100k sample. "
+            "median_sum is PERCENTILE_CONT(0.5); the pre-#1974 value was the "
+            "upper of the two middles for even counts."
+        ),
     }
 
 
