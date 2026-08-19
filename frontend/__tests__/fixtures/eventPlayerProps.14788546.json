@@ -1,0 +1,826 @@
+[
+ {
+  "market_name": "Joshua B\u00e1ez: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "over_probability": 0.0805,
+  "pregame_mark": 0.075,
+  "source": "polymarket",
+  "threshold": 0.5
+ },
+ {
+  "market_name": "Joshua B\u00e1ez: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "over_probability": 0.0875,
+  "pregame_mark": 0.075,
+  "source": "polymarket",
+  "threshold": 0.5
+ },
+ {
+  "market_name": "Iv\u00e1n Herrera: Home Runs O/U 1.5",
+  "outcome_name": "Under",
+  "over_probability": 0.07,
+  "pregame_mark": 0.065,
+  "source": "polymarket",
+  "threshold": 1.5
+ },
+ {
+  "market_name": "Iv\u00e1n Herrera: Home Runs O/U 1.5",
+  "outcome_name": "Over",
+  "over_probability": 0.07,
+  "pregame_mark": 0.065,
+  "source": "polymarket",
+  "threshold": 1.5
+ },
+ {
+  "market_name": "Andre Pallante: Strikeouts O/U 4.5",
+  "outcome_name": "Over",
+  "over_probability": 0.4625,
+  "pregame_mark": 0.515,
+  "source": "polymarket",
+  "threshold": 4.5
+ },
+ {
+  "market_name": "Andre Pallante: Strikeouts O/U 4.5",
+  "outcome_name": "Under",
+  "over_probability": 0.3575,
+  "pregame_mark": 0.515,
+  "source": "polymarket",
+  "threshold": 4.5
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits",
+  "outcome_name": "Alec Burleson: 4+",
+  "over_probability": 0.275,
+  "pregame_mark": 0.17,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Bryan Torres: 1+",
+  "over_probability": 0.44,
+  "pregame_mark": 0.72,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Bryan Torres: 2+",
+  "over_probability": 0.44,
+  "pregame_mark": 0.63,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Bryan Torres: 3+",
+  "over_probability": 0.32,
+  "pregame_mark": 0.32,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Bryan Torres: 4+",
+  "over_probability": 0.23,
+  "pregame_mark": 0.23,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Bryan Torres: 5+",
+  "over_probability": 0.23,
+  "pregame_mark": 0.23,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "JJ Bleday: 2+",
+  "over_probability": 0.3567,
+  "pregame_mark": 0.41,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "JJ Bleday: 3+",
+  "over_probability": 0.26,
+  "pregame_mark": 0.32,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "JJ Bleday: 4+",
+  "over_probability": 0.225,
+  "pregame_mark": 0.2,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "JJ Bleday: 5+",
+  "over_probability": 0.225,
+  "pregame_mark": 0.33,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Edwin Arroyo: 3+",
+  "over_probability": 0.38,
+  "pregame_mark": 0.38,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Jimmy Crooks: 2+",
+  "over_probability": 0.35,
+  "pregame_mark": 0.35,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Spencer Steer: 1+",
+  "over_probability": 0.4933,
+  "pregame_mark": 0.76,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Spencer Steer: 2+",
+  "over_probability": 0.4933,
+  "pregame_mark": 0.59,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Spencer Steer: 3+",
+  "over_probability": 0.36,
+  "pregame_mark": 0.36,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Spencer Steer: 4+",
+  "over_probability": 0.305,
+  "pregame_mark": 0.33,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Spencer Steer: 5+",
+  "over_probability": 0.305,
+  "pregame_mark": 0.31,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Nathaniel Lowe: 2+",
+  "over_probability": 0.27,
+  "pregame_mark": 0.27,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Tyler Stephenson: 4+",
+  "over_probability": 0.18,
+  "pregame_mark": 0.18,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Tyler Stephenson: 5+",
+  "over_probability": 0.09,
+  "pregame_mark": 0.09,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Jordan Walker: 1+",
+  "over_probability": 0.42,
+  "pregame_mark": 0.3,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Jordan Walker: 2+",
+  "over_probability": 0.42,
+  "pregame_mark": 0.62,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Jordan Walker: 3+",
+  "over_probability": 0.41,
+  "pregame_mark": 0.41,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Jordan Walker: 5+",
+  "over_probability": 0.315,
+  "pregame_mark": 0.17,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 2+",
+  "over_probability": 0.49,
+  "pregame_mark": 0.49,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 3+",
+  "over_probability": 0.49,
+  "pregame_mark": 0.79,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 4+",
+  "over_probability": 0.49,
+  "pregame_mark": 0.57,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 5+",
+  "over_probability": 0.49,
+  "pregame_mark": 0.89,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 6+",
+  "over_probability": 0.22,
+  "pregame_mark": 0.22,
+  "source": "kalshi",
+  "threshold": 6.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 7+",
+  "over_probability": 0.12,
+  "pregame_mark": 0.12,
+  "source": "kalshi",
+  "threshold": 7.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brycen Mautz: 8+",
+  "over_probability": 0.06,
+  "pregame_mark": 0.06,
+  "source": "kalshi",
+  "threshold": 8.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 3+",
+  "over_probability": 0.535,
+  "pregame_mark": 0.535,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 4+",
+  "over_probability": 0.46,
+  "pregame_mark": 0.46,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 5+",
+  "over_probability": 0.46,
+  "pregame_mark": 0.56,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 8+",
+  "over_probability": 0.18,
+  "pregame_mark": 0.18,
+  "source": "kalshi",
+  "threshold": 8.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 9+",
+  "over_probability": 0.18,
+  "pregame_mark": 0.18,
+  "source": "kalshi",
+  "threshold": 9.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Strikeouts",
+  "outcome_name": "Matthew Liberatore: 10+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.05,
+  "source": "kalshi",
+  "threshold": 10.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 2+",
+  "over_probability": 0.46,
+  "pregame_mark": 0.46,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 3+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.05,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 4+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.06,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 5+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.39,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 6+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.23,
+  "source": "kalshi",
+  "threshold": 6.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 7+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.14,
+  "source": "kalshi",
+  "threshold": 7.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Strikeouts",
+  "outcome_name": "Brady Singer: 8+",
+  "over_probability": 0.05,
+  "pregame_mark": 0.06,
+  "source": "kalshi",
+  "threshold": 8.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "JJ Wetherholt: 1+",
+  "over_probability": 0.655,
+  "pregame_mark": 0.79,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "JJ Wetherholt: 2+",
+  "over_probability": 0.43,
+  "pregame_mark": 0.6,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "JJ Wetherholt: 3+",
+  "over_probability": 0.39,
+  "pregame_mark": 0.39,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Ivan Herrera: 1+",
+  "over_probability": 0.5033,
+  "pregame_mark": 0.79,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Ivan Herrera: 2+",
+  "over_probability": 0.4633,
+  "pregame_mark": 0.6,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Ivan Herrera: 3+",
+  "over_probability": 0.335,
+  "pregame_mark": 0.39,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Ivan Herrera: 4+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.31,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Ivan Herrera: 5+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.31,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Alec Burleson: 1+",
+  "over_probability": 0.58,
+  "pregame_mark": 0.79,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Alec Burleson: 2+",
+  "over_probability": 0.4633,
+  "pregame_mark": 0.63,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Alec Burleson: 3+",
+  "over_probability": 0.4633,
+  "pregame_mark": 0.44,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Alec Burleson: 5+",
+  "over_probability": 0.22,
+  "pregame_mark": 0.22,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Elly De La Cruz: 1+",
+  "over_probability": 0.52,
+  "pregame_mark": 0.77,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Elly De La Cruz: 2+",
+  "over_probability": 0.43,
+  "pregame_mark": 0.58,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Elly De La Cruz: 3+",
+  "over_probability": 0.2275,
+  "pregame_mark": 0.4,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Elly De La Cruz: 4+",
+  "over_probability": 0.2275,
+  "pregame_mark": 0.235,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Elly De La Cruz: 5+",
+  "over_probability": 0.12,
+  "pregame_mark": 0.12,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Nolan Gorman: 1+",
+  "over_probability": 0.45,
+  "pregame_mark": 0.7,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Nolan Gorman: 2+",
+  "over_probability": 0.45,
+  "pregame_mark": 0.5,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Nolan Gorman: 3+",
+  "over_probability": 0.37,
+  "pregame_mark": 0.37,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Victor Scott: 1+",
+  "over_probability": 0.365,
+  "pregame_mark": 0.65,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Victor Scott: 2+",
+  "over_probability": 0.365,
+  "pregame_mark": 0.41,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Blake Dunn: 2+",
+  "over_probability": 0.36,
+  "pregame_mark": 0.49,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Blake Dunn: 5+",
+  "over_probability": 0.16,
+  "pregame_mark": 0.16,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Pedro Pag\u00e9s: 2+",
+  "over_probability": 0.425,
+  "pregame_mark": 0.45,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits + Runs + RBIs",
+  "outcome_name": "Masyn Winn: 3+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.31,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Masyn Winn: 5+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.53,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Sal Stewart: 1+",
+  "over_probability": 0.6433,
+  "pregame_mark": 0.76,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "JJ Bleday: 1+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.17,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Dane Myers: 1+",
+  "over_probability": 0.315,
+  "pregame_mark": 0.14,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Tyler Stephenson: 1+",
+  "over_probability": 0.295,
+  "pregame_mark": 0.13,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Matt McLain: 1+",
+  "over_probability": 0.28,
+  "pregame_mark": 0.12,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Blake Dunn: 1+",
+  "over_probability": 0.285,
+  "pregame_mark": 0.1,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Home Runs",
+  "outcome_name": "Masyn Winn: 1+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.1,
+  "source": "kalshi",
+  "threshold": 1.0
+ },
+ {
+  "market_name": "St. Louis vs Cincinnati: Hits",
+  "outcome_name": "Masyn Winn: 2+",
+  "over_probability": 0.32,
+  "pregame_mark": 0.25,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Nelson Vel\u00e1zquez: 2+",
+  "over_probability": 0.45,
+  "pregame_mark": 0.45,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Nelson Vel\u00e1zquez: 3+",
+  "over_probability": 0.29,
+  "pregame_mark": 0.29,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Nelson Vel\u00e1zquez: 4+",
+  "over_probability": 0.28,
+  "pregame_mark": 0.28,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Nelson Vel\u00e1zquez: 5+",
+  "over_probability": 0.28,
+  "pregame_mark": 0.28,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Eugenio Su\u00e1rez: 2+",
+  "over_probability": 0.43,
+  "pregame_mark": 0.43,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Eugenio Su\u00e1rez: 3+",
+  "over_probability": 0.35,
+  "pregame_mark": 0.35,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Eugenio Su\u00e1rez: 4+",
+  "over_probability": 0.26,
+  "pregame_mark": 0.26,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Eugenio Su\u00e1rez: 5+",
+  "over_probability": 0.26,
+  "pregame_mark": 0.3,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "P.J. Higgins: 2+",
+  "over_probability": 0.41,
+  "pregame_mark": 0.41,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Sal Stewart: 2+",
+  "over_probability": 0.23,
+  "pregame_mark": 0.34,
+  "source": "kalshi",
+  "threshold": 2.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Sal Stewart: 3+",
+  "over_probability": 0.23,
+  "pregame_mark": 0.23,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Sal Stewart: 4+",
+  "over_probability": 0.23,
+  "pregame_mark": 0.3,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Sal Stewart: 5+",
+  "over_probability": 0.16,
+  "pregame_mark": 0.16,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Dane Myers: 4+",
+  "over_probability": 0.31,
+  "pregame_mark": 0.31,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Dane Myers: 5+",
+  "over_probability": 0.19,
+  "pregame_mark": 0.19,
+  "source": "kalshi",
+  "threshold": 5.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Noelvi Marte: 3+",
+  "over_probability": 0.29,
+  "pregame_mark": 0.29,
+  "source": "kalshi",
+  "threshold": 3.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Noelvi Marte: 4+",
+  "over_probability": 0.2,
+  "pregame_mark": 0.2,
+  "source": "kalshi",
+  "threshold": 4.0
+ },
+ {
+  "market_name": "Cincinnati vs St. Louis: Hits + Runs + RBIs",
+  "outcome_name": "Noelvi Marte: 5+",
+  "over_probability": 0.16,
+  "pregame_mark": 0.16,
+  "source": "kalshi",
+  "threshold": 5.0
+ }
+]
