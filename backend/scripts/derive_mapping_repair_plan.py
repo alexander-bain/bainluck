@@ -55,9 +55,14 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.utils.calibration_phase_ledger import input_fingerprint  # noqa: E402
+from app.utils.repair_apply_plan import digest_fields  # noqa: E402
 
 HANDOFF = pathlib.Path(__file__).resolve().parents[2] / ".claude/handoff"
-SCHEMA = "team-identity-mapping-repair-plan/v1"
+# /v2 since C-APPLY-PRE-MAPPING: the digest below is length-prefixed. A /v1
+# artifact refuses as CORRUPT in the consumer, which is the fix working — its
+# address was minted by an encoder that could not tell a field's content from
+# a field boundary.
+SCHEMA = "team-identity-mapping-repair-plan/v2"
 _NS = "team-identity-mapping-repair-plan"
 
 #: The target sport comes from the MAPPING'S OWN ``sport_key``, never from the
@@ -144,13 +149,27 @@ def main() -> int:
         )
 
     plan_rows = sorted(buckets["CROSS_CLUB_poison"], key=lambda r: r["mapping_id"])
+    # LENGTH-PREFIXED, not `"|".join` (C-APPLY-PRE-MAPPING). The raw join is not
+    # injective over free text, so two materially different reviewed rows could
+    # collapse onto ONE content address:
+    #
+    #     source="poly|market", sport_key="baseball_mlb"  -> "…|poly|market|baseball_mlb|…"
+    #     source="poly",        sport_key="market|baseball_mlb" -> "…|poly|market|baseball_mlb|…"
+    #
+    # The numeric ids were never at risk, which is exactly why it survived four
+    # windows of review: the fields it corrupts are the ones a HUMAN reads, and
+    # the address is the promise that what the human read is what the apply
+    # writes. `digest_fields` encodes each field as `len:value`, so the delimiter
+    # carries no meaning a value can imitate.
+    #
+    # The eight fields are UNCHANGED. Only the encoding moved, so the 130 staged
+    # rows' membership is byte-identical and Alex's approval carries to the new
+    # address — verified before shipping, not assumed.
     digest = [
-        "|".join(
-            [
-                str(r["mapping_id"]), r["source"], r["sport_key"], r["source_name"],
-                str(r["before"]["team_id"]), r["before"]["club"],
-                str(r["after"]["team_id"]), r["after"]["club"],
-            ]
+        digest_fields(
+            str(r["mapping_id"]), r["source"], r["sport_key"], r["source_name"],
+            str(r["before"]["team_id"]), r["before"]["club"],
+            str(r["after"]["team_id"]), r["after"]["club"],
         )
         for r in plan_rows
     ]

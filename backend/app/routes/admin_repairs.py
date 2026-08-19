@@ -20,7 +20,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
-             | event-create-from-truth }
+             | event-create-from-truth | team-identity-mapping-repair }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -29,7 +29,8 @@ transactional session and RETURNS its own before/after census in the response bo
      the comment above was decoration. Re-synced again 2026-08-17, CAL-P065,
      adding the two pm-never-graded entries in the commit that registered them.
      Re-synced again 2026-08-18, queue 369, adding event-create-from-truth in the
-     commit that registered it.)
+     commit that registered it. Re-synced again 2026-08-19, queue 373, adding
+     team-identity-mapping-repair in the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -276,6 +277,14 @@ _REPAIRS = {
     # Accepts ?population=&plan_hash=. ATTENDED ONLY: never wire this to a beat.
     "event-create-from-truth": (
         "app.tasks.create_events_from_truth",
+        "repair",
+    ),
+    # #1918 queue 373: the attended MAPPING consumer. Re-points the 130 reviewed
+    # `team_identity_mapping` rows whose team_id names a different club than
+    # their source_name. Declares `plan_hash`, so apply=true without one is
+    # refused. Same contract as event-create-from-truth, one table over.
+    "team-identity-mapping-repair": (
+        "app.tasks.repair_team_identity_mapping",
         "repair",
     ),
 }
