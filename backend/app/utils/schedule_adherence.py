@@ -70,6 +70,23 @@ SELF_GATE_MATERIAL_RATIO = 0.1
 #: upstream hiccup from overlapping.
 OVERRUN_RATIO = 0.8
 
+#: How many of its own intervals a beat may go without any recorded activity
+#: before the STAMP arm (below) calls it ``missing``.
+#:
+#: Not 1.0, and the reason is the defect this arm exists to route around. A
+#: punctual daily beat sits at age 0.99x its interval for the last minutes of
+#: every cycle, so a 1.0 threshold flips it to ``missing`` every time a fire
+#: runs ten minutes late — a boundary that a *correct* system crosses daily.
+#: That is the same shape as the counter race in §3 of the LAT-P070 T5 protocol
+#: (``WINDOW_COUNTER_TTL`` == a daily cadence), and replacing one cadence-equals-
+#: threshold bug with another would be a poor trade.
+#:
+#: At 2.0 the claim is unambiguous and cannot flap: **an entire scheduled fire
+#: came and went with nothing recorded.** Lateness short of that is reported as
+#: a number (``stamp_age_over_interval``) and not as a verdict, which is exactly
+#: what T5 asks for — *late, never missing*.
+STAMP_LATE_TOLERANCE = 2.0
+
 
 def percentile(values, p: float):
     """Nearest-rank percentile. ``None`` for an empty sample.
@@ -117,6 +134,104 @@ def expected_fires(window_s, interval_s):
     return window_s / float(interval_s)
 
 
+def rate_arm_is_structurally_blind(interval_s, counter_ttl_s):
+    """Can the RATE arm *ever* grade a beat this slow? Arithmetic, not a guess.
+
+    LAT-P071. The rate arm needs ``window_s / interval_s >= MIN_EXPECTED_FIRES``.
+    ``window_s`` is the age of a counter created ``SET NX EX <ttl>`` at its own
+    first increment, so it is bounded above by ``counter_ttl_s`` and by nothing
+    else. Therefore::
+
+        gradeable  <=>  interval_s <= counter_ttl_s / MIN_EXPECTED_FIRES
+
+    At the production values (86400s TTL, 2.0 fires) that ceiling is **12 hours**,
+    and every beat slower than it is ``unmeasurable`` *forever* — not today, not
+    until the counter warms up, but for as long as both constants hold.
+
+    Measured on production 2026-08-19T04:3xZ: **33 of 123** scheduled entries are
+    on the wrong side of that line, all 24-hourly or weekly, and they include
+    **five of the six sentinels T5 grades**. The rate arm reported every one of
+    them as ``window_too_short(expected=0.89<2.0)``, a string that reads as a
+    transient condition about to clear. It never clears. Naming the two cases
+    apart is most of this function's value: a reader who cannot tell "wait for
+    the counter" from "this can never be answered this way" will keep waiting.
+
+    Returns ``False`` when ``counter_ttl_s`` is unknown, because an unknown TTL
+    cannot support the claim *forever* and asserting it anyway would be the same
+    over-reach in the opposite direction.
+    """
+    if not interval_s or interval_s <= 0 or not counter_ttl_s or counter_ttl_s <= 0:
+        return False
+    return interval_s > counter_ttl_s / MIN_EXPECTED_FIRES
+
+
+def _grade_on_stamp(
+    out, interval_s, newest_terminal_age_s, newest_start_age_s, counter_ttl_s
+):
+    """The second arm: grade a too-slow beat on its STAMPS instead of its counters.
+
+    LAT-P071, generalising §3 and §6 of the LAT-P070 T5 grading protocol from the
+    one task it was written for to the 33 that need it.
+
+    A stamp is a moment, not a count, so it carries its own age and needs no
+    window. That is the entire reason this works where the rate arm cannot: the
+    thing that defeats the rate arm — a counter TTL shorter than two intervals —
+    has no purchase on a timestamp.
+
+    THE THREE BRANCHES ARE THE PROTOCOL'S, NOT NEW ONES:
+
+    * a terminal inside tolerance -> **it ran**. Late is not a fail; T5's whole
+      claim is *late, never missing*, and lateness leaves as a number.
+    * no terminal but a START inside tolerance -> **it still ran.** Adherence
+      asks whether the beat fires, and it fired. Whether it then finished is
+      #1716's open question and already has its own flag (``never_completes``);
+      answering it here would decide that question by accident, which this
+      module refuses to do elsewhere and will not start doing here.
+    * neither -> **``missing``**. The only reading that triggers T5's halt, and
+      the only one this arm will assert.
+
+    No stamp at all is ``unmeasurable`` — an absent observation is a shape, not
+    an observed absence (gotcha #53). It is *not* graded ``missing``, which is
+    the mistake that would make this arm worse than the silence it replaces:
+    a task that has simply never been seen would be reported as one that stopped.
+    """
+    out["arm"] = "stamp"
+    ages = [(a, k) for a, k in
+            ((newest_terminal_age_s, "terminal"), (newest_start_age_s, "start"))
+            if a is not None and a >= 0]
+    ceiling = counter_ttl_s / MIN_EXPECTED_FIRES if counter_ttl_s else None
+    blind_note = (
+        f"rate arm blind (interval {interval_s:.0f}s > "
+        f"{ceiling:.0f}s ceiling from counter TTL)"
+        if ceiling else "rate arm blind"
+    )
+    if not ages:
+        out["reason"] = f"{blind_note}; no start or terminal stamp recorded"
+        return out
+
+    age, kind = min(ages)
+    out["stamp_age_s"] = round(age, 1)
+    out["stamp_kind"] = kind
+    out["stamp_age_over_interval"] = round(age / interval_s, 2)
+
+    if age <= interval_s * STAMP_LATE_TOLERANCE:
+        out["verdict"] = "on_schedule"
+        out["reason"] = (
+            f"{blind_note}; graded on stamps: newest {kind} {age/3600.0:.1f}h ago, "
+            f"{out['stamp_age_over_interval']:.2f}x its {interval_s:.0f}s interval"
+        )
+        return out
+
+    out["verdict"] = "missing"
+    out["reason"] = (
+        f"{blind_note}; graded on stamps: newest {kind} {age/3600.0:.1f}h ago, "
+        f"{out['stamp_age_over_interval']:.2f}x its {interval_s:.0f}s interval "
+        f"(>{STAMP_LATE_TOLERANCE:.1f}x — at least one whole scheduled fire "
+        f"recorded nothing)"
+    )
+    return out
+
+
 def adherence(
     *,
     starts,
@@ -128,6 +243,9 @@ def adherence(
     deliveries_window_s=None,
     durations_window_s=None,
     durations_saturated=None,
+    newest_terminal_age_s=None,
+    newest_start_age_s=None,
+    counter_ttl_s=None,
 ):
     """Grade one task's schedule adherence from its recorded counters.
 
@@ -198,6 +316,11 @@ def adherence(
         "p95_sample_n": len(durations_ms or []),
         "p95_window_s": durations_window_s,
         "p95_sample_saturated": durations_saturated,
+        "arm": "rate",
+        "stamp_age_s": None,
+        "stamp_kind": None,
+        "stamp_age_over_interval": None,
+        "rate_arm_blind": rate_arm_is_structurally_blind(interval_s, counter_ttl_s),
         "verdict": "unmeasurable",
         "reason": "",
     }
@@ -225,14 +348,23 @@ def adherence(
     if p95 is not None and interval_s:
         out["p95_over_interval"] = round(p95 / 1000.0 / interval_s, 2)
 
-    if exp is None:
-        out["reason"] = "no_interval_or_window"
-        return out
-    if exp < MIN_EXPECTED_FIRES:
-        # The honest answer. A 90-second window has nothing to say about an
-        # hourly beat, and saying it anyway is how a detector earns its mute.
+    if exp is None or exp < MIN_EXPECTED_FIRES:
+        # The rate arm cannot speak. Before falling back to silence, ask WHY it
+        # cannot — the two reasons need different words and, since LAT-P071, get
+        # a different arm.
+        if out["rate_arm_blind"]:
+            return _grade_on_stamp(
+                out, interval_s, newest_terminal_age_s, newest_start_age_s,
+                counter_ttl_s,
+            )
+        if exp is None:
+            out["reason"] = "no_interval_or_window"
+            return out
+        # The honest answer, and now an honestly TRANSIENT one: this counter is
+        # young for its interval and will age into gradeability on its own.
         out["reason"] = (
-            f"window_too_short(expected={exp:.2f}<{MIN_EXPECTED_FIRES})"
+            f"window_too_short(expected={exp:.2f}<{MIN_EXPECTED_FIRES}); "
+            "transient — the counter can still reach this interval"
         )
         return out
 
@@ -369,7 +501,12 @@ def find_lapping(graded):
     should own a completion verdict is still open; whether the WORK-LIST may
     silently drop a task that has never once finished is not.
     """
-    order = {"overruns": 0, "behind": 1, "unmeasurable": 3}
+    # LAT-P071: ``missing`` sorts above everything. It is the only verdict that
+    # asserts a beat produced NOTHING across a whole scheduled fire, and it is
+    # the one that triggers T5's halt — a work-list that buried it under a
+    # lapping-but-running task would invert the urgency. The other values are
+    # unchanged so the existing relative order is preserved exactly.
+    order = {"missing": -1, "overruns": 0, "behind": 1, "unmeasurable": 3}
 
     def _key(item):
         _name, g = item

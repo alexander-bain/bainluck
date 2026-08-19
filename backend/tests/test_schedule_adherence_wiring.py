@@ -539,3 +539,130 @@ class TestRouteJoin:
         graded = out["all"]["app.tasks.sync_statpal_schedules"]
         assert graded["interval_s"] == 900.0
         assert graded["verdict"] == "on_schedule"
+
+
+# ---------------------------------------------------------------------------
+# LAT-P071 — the route half of the stamp arm.
+#
+# The pure grader is tested in test_schedule_adherence.py. What can only be
+# tested here is the JOIN: that the route turns the metrics hash's ISO stamps
+# into ages against a real clock, reads the counter TTL from the writer's own
+# constant, and refuses a stamp that lies in the future.
+# ---------------------------------------------------------------------------
+
+class TestStampArmWiring:
+    DAY = 86400.0
+
+    @staticmethod
+    def _iso(epoch):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+    def _sched(self):
+        return {"b": {"task": "app.tasks.daily_thing", "schedule": self.DAY}}
+
+    def _run(self, now, **stamps):
+        m = _metrics("daily_thing", starts=1, window_s=77000)
+        m.update(stamps)
+        return build_schedule_adherence(
+            self._sched(), [m], {"app.tasks.daily_thing": "daily_thing"},
+            now_epoch=now,
+        )["all"]["app.tasks.daily_thing"]
+
+    def test_daily_beat_is_graded_instead_of_shrugged_at(self):
+        # Before LAT-P071 this returned unmeasurable/window_too_short forever.
+        now = 1_787_000_000.0
+        g = self._run(now, last_success_at=self._iso(now - 3600))
+        assert g["arm"] == "stamp"
+        assert g["verdict"] == "on_schedule"
+        assert g["rate_arm_blind"] is True
+
+    def test_a_daily_beat_that_skipped_a_whole_day_is_missing(self):
+        now = 1_787_000_000.0
+        g = self._run(now, last_success_at=self._iso(now - 3 * self.DAY))
+        assert g["verdict"] == "missing"
+
+    def test_a_future_stamp_is_refused_not_treated_as_fresh(self):
+        # Ahead-drift. A clock-skewed stamp yields a NEGATIVE age, which sails
+        # through every `age <= limit` test as the freshest reading possible —
+        # certifying a dead beat as healthy. Unknown must beat wrong here.
+        now = 1_787_000_000.0
+        g = self._run(now, last_success_at=self._iso(now + 7200))
+        assert g["verdict"] == "unmeasurable"
+        assert g["stamp_age_s"] is None
+
+    def test_a_future_terminal_does_not_hide_a_usable_start(self):
+        now = 1_787_000_000.0
+        g = self._run(now, last_success_at=self._iso(now + 7200),
+                      last_started_at=self._iso(now - 600))
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_kind"] == "start"
+
+    def test_failure_and_incomplete_stamps_also_count_as_having_run(self):
+        # T5's question is "did it run", not "did it succeed". A daily sentinel
+        # that ran and failed is a failing sentinel, not a missing beat, and the
+        # two need different remedies.
+        now = 1_787_000_000.0
+        for field in ("last_failure_at", "last_incomplete_at"):
+            g = self._run(now, **{field: self._iso(now - 60)})
+            assert g["verdict"] == "on_schedule", field
+
+    def test_the_ttl_ceiling_comes_from_the_writer_not_a_literal(self):
+        # If WINDOW_COUNTER_TTL ever moves, the ceiling must move with it or the
+        # grader silently mis-classifies which beats are structurally blind.
+        from app.tasks.redis_state import WINDOW_COUNTER_TTL
+        from app.utils.schedule_adherence import (
+            MIN_EXPECTED_FIRES, rate_arm_is_structurally_blind,
+        )
+        ceiling = WINDOW_COUNTER_TTL / MIN_EXPECTED_FIRES
+        assert rate_arm_is_structurally_blind(ceiling + 1, WINDOW_COUNTER_TTL)
+        assert not rate_arm_is_structurally_blind(ceiling - 1, WINDOW_COUNTER_TTL)
+
+    def test_arm_counts_separate_the_two_kinds_of_pass(self):
+        # A stamp-arm pass says only "something happened recently"; a rate-arm
+        # pass says "it fired N times in a measured window". One tally for both
+        # would launder the weaker evidence into the stronger one's confidence.
+        now = 1_787_000_000.0
+        sched = {
+            "d": {"task": "app.tasks.daily_thing", "schedule": self.DAY},
+            "m": {"task": "app.tasks.minute_thing", "schedule": 60.0},
+        }
+        daily = _metrics("daily_thing", starts=1, window_s=77000)
+        daily["last_success_at"] = self._iso(now - 3600)
+        out = build_schedule_adherence(
+            sched, [daily, _metrics("minute_thing", starts=59, window_s=3600)],
+            {"app.tasks.daily_thing": "daily_thing",
+             "app.tasks.minute_thing": "minute_thing"},
+            now_epoch=now,
+        )
+        assert out["arm_counts"]["stamp"] == {"on_schedule": 1}
+        assert out["arm_counts"]["rate"] == {"on_schedule": 1}
+        assert out["arm_counts"]["rate_arm_blind_total"] == 1
+
+    def test_the_blind_census_is_a_schedule_property_not_a_health_one(self):
+        # It must not fall to zero just because every blind beat is healthy —
+        # that is the number that says how much of the schedule the rate arm
+        # could never grade, and it should only move when the schedule does.
+        now = 1_787_000_000.0
+        daily = _metrics("daily_thing", starts=1, window_s=77000)
+        daily["last_success_at"] = self._iso(now - 60)
+        out = build_schedule_adherence(
+            self._sched(), [daily], {"app.tasks.daily_thing": "daily_thing"},
+            now_epoch=now,
+        )
+        assert out["verdict_counts"] == {"on_schedule": 1}
+        assert out["arm_counts"]["rate_arm_blind_total"] == 1
+
+    def test_the_route_guard_itself_rejects_a_future_stamp(self):
+        # Found by mutation: `test_a_future_stamp_is_refused...` above passes
+        # even with this guard deleted, because the pure grader ALSO drops
+        # negative ages. Two independent guards, one test — removing either one
+        # alone was invisible. This pins the route half on its own.
+        from app.routes.admin_celery import _stamp_ages_s
+        now = 1_787_000_000.0
+        terminal, start = _stamp_ages_s(
+            {"last_success_at": self._iso(now + 7200),
+             "last_started_at": self._iso(now - 300)}, now,
+        )
+        assert terminal is None
+        assert start == pytest.approx(300.0)

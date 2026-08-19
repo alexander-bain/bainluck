@@ -161,7 +161,38 @@ async def celery_dashboard(
     }
 
 
-def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None):
+def _stamp_ages_s(metric, now_epoch):
+    """``(newest_terminal_age_s, newest_start_age_s)`` from one metrics row.
+
+    LAT-P071. The stamp arm needs AGES, and only a caller with a clock can turn
+    the hash's ISO strings into them — which is why this lives here and not in
+    the pure grader.
+
+    A stamp in the FUTURE returns ``None`` rather than a negative age. Ahead-drift
+    is a real failure mode in this tree (ruling 008 names two lane-lock incidents
+    caused by it), and a negative age would sail through every ``age <= limit``
+    comparison below as the freshest possible reading — a clock-skewed stamp
+    would certify a dead beat as healthy. Unknown is the safe answer; it grades
+    ``unmeasurable``, which is visible, instead of ``on_schedule``, which is not.
+    """
+    from app.tasks.redis_state import _parse_iso, _TERMINAL_STAMP_FIELDS
+
+    def _age(value):
+        epoch = _parse_iso(value)
+        if epoch is None:
+            return None
+        age = now_epoch - epoch
+        return age if age >= 0 else None
+
+    terminals = [a for a in (_age(metric.get(f)) for f in _TERMINAL_STAMP_FIELDS)
+                 if a is not None]
+    return (min(terminals) if terminals else None,
+            _age(metric.get("last_started_at")))
+
+
+def build_schedule_adherence(
+    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None
+):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
     Split out from the route so the join logic is unit-testable against fixed
@@ -178,8 +209,12 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
     even when the label join finds nothing, so being invisible to the join no
     longer means being invisible to the surface.
     """
+    import time as _time
+
+    from app.tasks.redis_state import WINDOW_COUNTER_TTL
     from app.utils.schedule_adherence import adherence, beat_intervals, find_lapping
 
+    now_epoch = _time.time() if now_epoch is None else now_epoch
     intervals = beat_intervals(beat_schedule)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
@@ -190,6 +225,7 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
         label = label_map.get(full_name)
         m = by_label.get(label) if label else None
         d = deliveries.get(full_name) or {}
+        terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
             # NOT "healthy" — it is a beat entry the health surface cannot see,
@@ -223,6 +259,12 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).
             durations_window_s=(m or {}).get("recent_durations_window_s"),
             durations_saturated=(m or {}).get("recent_durations_saturated"),
+            # LAT-P071: the stamp arm's inputs. `counter_ttl_s` is read from the
+            # writer's own constant rather than transcribed, so the ceiling the
+            # grader computes can never drift from the TTL that creates it.
+            newest_terminal_age_s=terminal_age,
+            newest_start_age_s=start_age,
+            counter_ttl_s=float(WINDOW_COUNTER_TTL),
         )
 
     lapping = find_lapping(graded)
@@ -233,10 +275,38 @@ def build_schedule_adherence(beat_schedule, metrics, label_map, deliveries=None)
         "scheduled_tasks": len(intervals),
         "graded": len(graded),
         "verdict_counts": counts,
+        # LAT-P071: how many entries each ARM answered. Without this the reader
+        # cannot tell a rate-arm PASS from a stamp-arm PASS, and the two support
+        # very different claims — the rate arm says "it fired N times in a
+        # measured window", the stamp arm says only "something happened
+        # recently". Reporting one number for both would launder the weaker
+        # evidence into the stronger one's confidence.
+        "arm_counts": _arm_counts(graded),
         "lapping": lapping,
         "unmapped": unmapped,
         "all": graded,
     }
+
+
+def _arm_counts(graded):
+    """Per-arm verdict tallies, plus the standing blind-spot census.
+
+    ``rate_arm_blind_total`` is a property of the SCHEDULE and the counter TTL,
+    not of today's traffic, so it does not move when the system is healthy. That
+    is the point: it is the number that says how much of the beat schedule this
+    endpoint could never grade before the stamp arm existed (measured 33 of 123
+    on 2026-08-19), and it should be watched for growth every time a slow beat
+    is added.
+    """
+    out = {}
+    for g in graded.values():
+        arm = g.get("arm", "rate")
+        bucket = out.setdefault(arm, {})
+        bucket[g["verdict"]] = bucket.get(g["verdict"], 0) + 1
+    out["rate_arm_blind_total"] = sum(
+        1 for g in graded.values() if g.get("rate_arm_blind")
+    )
+    return out
 
 
 @router.get("/celery/schedule-adherence")
