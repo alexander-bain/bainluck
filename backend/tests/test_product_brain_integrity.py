@@ -1116,6 +1116,109 @@ def test_ruling_claims_ledger_is_ascending_with_no_repeated_number() -> None:
     )
 
 
+#: Words that carry no identity. A claim and a file that share only these share
+#: nothing: "a gate is not the one that runs" and "a claim is not the one that
+#: runs" would agree on every token in this set and on no fact.
+_TITLE_STOPWORDS = frozenset(
+    """
+    a an and are as at be because before but by can cannot did do does for from
+    had has have how in into is it its must never no not of on one only or our
+    over own same so than that the their them then there these they this those
+    to two up was what when where which who whose why will with you your
+    """.split()
+)
+
+
+def _title_tokens(text: str) -> set:
+    """Distinctive words in a ruling title or slug. Lowercased, stopwords out."""
+    return {
+        tok
+        for tok in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if tok not in _TITLE_STOPWORDS and len(tok) > 2
+    }
+
+
+def _assert_the_claim_is_for_THIS_ruling(path, num, claims, ledger) -> None:
+    """A claim on the NUMBER is not a claim BY YOU (queue 371 item 3).
+
+    The gate this guards used to read `if num in live_claims: continue` — it
+    passed as long as the number was claimed **by anyone**. That admits the exact
+    collision the ledger exists to prevent, one step further along:
+
+        lane A claims 085 for "a READY whose branch head moved is withdrawn"
+        lane B writes docs/rulings/085-something-else.md and never claims
+
+    085 is in `live_claims`, so the file walks straight past the check. The
+    unclaimed-number case is caught; the **claim-jumping** case — the one where
+    two lanes both believe they hold 085 — is not, and it is the more dangerous
+    of the two, because lane A has already cited 085 in prose that now points at
+    lane B's ruling.
+
+    There is no author field on a ruling file, so "is this claimant YOU" is
+    checked the only way the artifacts allow and the only way that matters: the
+    claim must be **for this ruling**. A claim whose title shares no distinctive
+    word with the file's slug is a claim on someone else's work.
+
+    A claim carrying NO title fails too, and deliberately: it names a number and
+    nothing else, so it cannot answer the question. Could-not-check never renders
+    as nothing-to-report.
+    """
+    claim = next((c for c in claims if c["num"] == num), None)
+    if claim is None:  # pragma: no cover — caller already matched on num
+        return
+
+    raw = claim["raw"]
+    # The title region starts after the FIRST status word that follows the date —
+    # the same anchoring `_parse_claim_line` uses, and for the same two reasons.
+    # Searching from the start of the line matches `claimed` inside `claimed-by`,
+    # so the "title" would begin at the LANE. Splitting on the LAST status word
+    # instead eats any title that ends in one ("...; branch not yet merged").
+    # Either way the check reads empty because of its own parser rather than
+    # because the ledger said nothing, which is the failure it exists to catch.
+    date_hit = CLAIM_DATE_RE.search(raw)
+    after_date = date_hit.end() if date_hit else 0
+    status_hit = STATUS_WORD_RE.search(raw, after_date)
+    title_region = raw[status_hit.end():] if status_hit else raw[after_date:]
+    claim_tokens = _title_tokens(title_region)
+    file_tokens = _title_tokens(path.stem[4:])  # drop the "NNN-" prefix
+
+    if not claim_tokens:
+        pytest.fail(
+            f"ruling {num:03d} is claimed in {RULING_CLAIMS_RELPATH} but the "
+            "claim line carries NO TITLE, so it cannot be checked against "
+            f"docs/rulings/{path.name}. A claim that names a number and nothing "
+            "else records that the number is taken; it does not record WHAT it "
+            "was taken for, which is the only thing that distinguishes your "
+            "claim from someone else's.\n\n"
+            f"  claim: {raw.strip()}\n\n"
+            "FIX: complete the line with the ruling's short title:\n"
+            f"  {num:03d}  claimed-by <lane>  <YYYY-MM-DD>  — <status> — "
+            "<short title>\n"
+            f"  {_ledger_snapshot(ledger)}"
+        )
+
+    if claim_tokens & file_tokens:
+        return
+
+    pytest.fail(
+        f"docs/rulings/{path.name} sits on ruling number {num:03d}, which IS "
+        f"claimed in {RULING_CLAIMS_RELPATH} — but claimed for a DIFFERENT "
+        f"ruling, by {claim['lane'] or 'an unnamed lane'}:\n\n"
+        f"  claim: {raw.strip()}\n"
+        f"  file:  {path.name}\n\n"
+        "A claim on the NUMBER is not a claim BY YOU. Two lanes both holding "
+        "085 is the 2026-08-12 double-write with the ledger's own permission "
+        "slip attached: the number-is-claimed check passes, both trees are "
+        "green, and the lane that claimed FIRST has already cited 085 in prose "
+        "that now points at this file.\n\n"
+        "FIX: if the number really is yours, the claim line is wrong — correct "
+        "its title. If it is not, `git fetch`, claim the next free number, and "
+        "renumber THIS file plus its PRODUCT-BRAIN index line; the lane that "
+        "claimed SECOND is the one that moves.\n"
+        f"  {_ledger_snapshot(ledger)}"
+    )
+
+
 def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
     """docs/rulings/ → ledger. The direction that catches the double-write.
 
@@ -1149,6 +1252,7 @@ def test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed() -> None:
         if num < floor:
             continue  # predates the ledger (rulings 001–028)
         if num in live_claims:
+            _assert_the_claim_is_for_THIS_ruling(path, num, claims, ledger)
             continue
         if num in burned:
             pytest.fail(
@@ -1396,9 +1500,14 @@ def _ledger_with_every_ruling_claimed(extra_line: str = "") -> str:
     Built from `_ruling_files()` rather than hardcoded, so it cannot go stale the
     next time a lane banks a ruling — the same staleness trap the ledger's own
     floor-not-oracle header describes.
+
+    Each claim's TITLE is the file's own slug, because since queue 371 the gate
+    also checks that a claim is for THIS ruling and not merely on its number. A
+    fixture titled `t` would be a fixture in which every claim is a claim-jump.
     """
     body = "\n".join(
-        f"{int(p.name[:3]):03d}  claimed-by lane1  2026-08-12  — merged   — t"
+        f"{int(p.name[:3]):03d}  claimed-by lane1  2026-08-12  — merged   — "
+        f"{p.stem[4:].replace('-', ' ')}"
         for p in _ruling_files()
     )
     return f"# L\n\n## RULINGS\n\n{body}{extra_line}\n\n## GOTCHAS\n125  x\n"
@@ -1440,9 +1549,11 @@ def test_an_unreadable_status_is_fatal_on_a_number_a_file_occupies(
     On an occupied number the parser genuinely cannot tell burned from live, and
     that ambiguity does change an answer — so it fails, and it names the number.
     """
-    occupied = min(int(p.name[:3]) for p in _ruling_files())
-    canonical = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — t"
-    illegible = f"{occupied:03d}  claimed-by lane1  2026-08-12  — ?? none ?? — t"
+    occupied_path = min(_ruling_files(), key=lambda p: int(p.name[:3]))
+    occupied = int(occupied_path.name[:3])
+    title = occupied_path.stem[4:].replace("-", " ")
+    canonical = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — {title}"
+    illegible = f"{occupied:03d}  claimed-by lane1  2026-08-12  — ?? none ?? — {title}"
     _with_ledger(
         monkeypatch,
         _ledger_with_every_ruling_claimed().replace(canonical, illegible),
@@ -1457,6 +1568,93 @@ def test_an_unreadable_status_is_fatal_on_a_number_a_file_occupies(
         "about shared mutable state that cannot identify the state is the "
         "unfalsifiable-green defect wearing a different hat"
     )
+
+
+def test_a_claim_by_ANOTHER_lane_on_the_same_number_is_caught(
+    monkeypatch, tmp_path
+) -> None:
+    """Queue 371 item 3: the guard must check the number is claimed by THIS
+    claimant, not by anyone.
+
+    The cross-claimant collision, staged exactly: the ledger holds a live claim
+    on an occupied number, but the claim is for a DIFFERENT ruling. Before the
+    fix this passed — `if num in live_claims: continue` asked only whether the
+    number was taken, so lane B's file walked past lane A's claim and both lanes
+    left believing they held it.
+    """
+    occupied_path = min(_ruling_files(), key=lambda p: int(p.name[:3]))
+    occupied = int(occupied_path.name[:3])
+    title = occupied_path.stem[4:].replace("-", " ")
+    mine = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — {title}"
+    theirs = (
+        f"{occupied:03d}  claimed-by ux-53  2026-08-12  — merged   — "
+        "quantum bicycle repair for underwater philately"
+    )
+    _with_ledger(
+        monkeypatch,
+        _ledger_with_every_ruling_claimed().replace(mine, theirs),
+        tmp_path,
+    )
+
+    with pytest.raises(pytest.fail.Exception) as exc:
+        test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed()
+    message = str(exc.value)
+    assert "claimed for a DIFFERENT ruling" in message
+    assert "ux-53" in message, "the failure must name WHO holds the number"
+    assert occupied_path.name in message
+    assert "digest=" in message, "a verdict names the snapshot it came from (F5)"
+
+
+def test_a_claim_with_no_title_cannot_certify_a_file(monkeypatch, tmp_path) -> None:
+    """The unverifiable case is a refusal, not a pass.
+
+    A claim line that carries a number and no title records that the number is
+    taken and nothing about what it was taken FOR — so it cannot distinguish
+    your claim from a claim-jump. Could-not-check never renders as
+    nothing-to-report.
+    """
+    occupied_path = min(_ruling_files(), key=lambda p: int(p.name[:3]))
+    occupied = int(occupied_path.name[:3])
+    title = occupied_path.stem[4:].replace("-", " ")
+    titled = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — {title}"
+    bare = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged"
+    _with_ledger(
+        monkeypatch,
+        _ledger_with_every_ruling_claimed().replace(titled, bare),
+        tmp_path,
+    )
+
+    with pytest.raises(pytest.fail.Exception) as exc:
+        test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed()
+    assert "carries NO TITLE" in str(exc.value)
+
+
+def test_a_matching_claim_still_passes(monkeypatch, tmp_path) -> None:
+    """Both directions (gotcha #43). The guard must not fail the honest case.
+
+    Same number, same lane, a title that is a re-wording of the file's slug
+    rather than a copy of it — which is what a real ledger line looks like.
+    """
+    occupied_path = min(_ruling_files(), key=lambda p: int(p.name[:3]))
+    occupied = int(occupied_path.name[:3])
+    slug_words = occupied_path.stem[4:].split("-")
+    distinctive = next(
+        (w for w in slug_words if w not in _TITLE_STOPWORDS and len(w) > 2),
+        slug_words[-1],
+    )
+    title = occupied_path.stem[4:].replace("-", " ")
+    exact = f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — {title}"
+    reworded = (
+        f"{occupied:03d}  claimed-by lane1  2026-08-12  — merged   — "
+        f"on {distinctive}, restated in other words (landed `abc1234`)"
+    )
+    _with_ledger(
+        monkeypatch,
+        _ledger_with_every_ruling_claimed().replace(exact, reworded),
+        tmp_path,
+    )
+
+    test_every_ruling_file_at_or_above_the_ledger_floor_is_claimed()
 
 
 def test_the_snapshot_notice_fires_once_per_session(monkeypatch, tmp_path) -> None:
