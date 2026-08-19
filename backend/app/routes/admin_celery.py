@@ -396,6 +396,125 @@ async def celery_inspect(
     return result
 
 
+#: Kombu's redis transport publishes with ``lpush`` and consumes with ``rpop``
+#: (verified against the installed kombu, not assumed). So index 0 is the NEWEST
+#: message and index -1 is the OLDEST — the one about to be served. Both ends are
+#: censused because they answer different questions and the existing
+#: ``celery-debug`` sample only ever saw one of them.
+_QUEUE_CENSUS_MAX_CAP = 4000
+
+#: Celery splits one logical queue across per-priority Redis keys. With no
+#: priorities in use everything lands on the base key, but a census that read
+#: only the base key would silently under-report the moment that changed — and
+#: an under-count here reads as "the backlog cleared".
+_PRIORITY_SUFFIXES = ("", "\x06\x163", "\x06\x166", "\x06\x169")
+
+
+def _census_slice(raw_entries):
+    """Task-name histogram for a list of raw celery message bodies.
+
+    A body that will not parse is counted as ``parse_error`` rather than
+    skipped. Dropping it would shrink the denominator silently, and a census
+    whose denominator moves is not a census.
+    """
+    import json as _json
+    from collections import Counter
+
+    names = []
+    for raw in raw_entries:
+        try:
+            names.append(
+                (_json.loads(raw).get("headers") or {}).get("task") or "unknown"
+            )
+        except Exception:
+            names.append("parse_error")
+    return dict(Counter(names).most_common()), names
+
+
+@router.get("/celery/queue-census")
+async def celery_queue_census(
+    request: Request,
+    queue: str = Query("background"),
+    cap: int = Query(1000, ge=20, le=_QUEUE_CENSUS_MAX_CAP),
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """What is ACTUALLY in a queue, from both ends, with its coverage stated.
+
+    LAT-P071. ``celery-debug`` samples ``lrange(queue, 0, 19)`` under the comment
+    "see what's piled up". Two things are wrong with reading it that way, and the
+    program has now been misled by both:
+
+    1. **It is the wrong end.** ``lpush``/``rpop`` means index 0 is the newest
+       ARRIVAL. The messages that are piled up — the ones a starved beat is stuck
+       behind — are at the far end, and no instrument in this tree has ever
+       looked at them.
+    2. **20 of 2,842 is not a sample of anything.** It is a window at one end of
+       an ordered list, and LAT-P066 was careful to say so; but a bare
+       ``{"warm_typeahead": 18}`` in a payload gets read as a proportion anyway.
+
+    So this returns both ends, both histograms, and — the field that makes the
+    other two safe to read — ``coverage``: what fraction of the depth was
+    actually examined, and whether the read was ``truncated``. A census that
+    cannot say how much it saw is an anecdote with a total attached.
+
+    Read-only: ``lrange`` and ``llen`` only. Nothing here consumes, acks, moves
+    or purges a message.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    per_key, depth = {}, 0
+    for suffix in _PRIORITY_SUFFIXES:
+        key = f"{queue}{suffix}"
+        n = r.llen(key)
+        if n:
+            per_key[repr(key)] = n
+            depth += n
+
+    half = max(1, cap // 2)
+    # Both slices come off the BASE key. A per-priority queue deep enough to need
+    # its own census is a different situation and gets reported as a depth, not
+    # guessed at from the base key's composition.
+    base = queue
+    base_len = r.llen(base)
+    newest_raw = r.lrange(base, 0, min(half, base_len) - 1) if base_len else []
+    oldest_raw = r.lrange(base, -min(half, base_len), -1) if base_len else []
+    newest_hist, _ = _census_slice(newest_raw)
+    oldest_hist, oldest_names = _census_slice(oldest_raw)
+
+    examined = len(newest_raw) + len(oldest_raw)
+    # The two slices overlap once the cap exceeds the depth; past that point the
+    # census is COMPLETE and `examined` would double-count. Say complete.
+    complete = base_len > 0 and cap >= base_len
+    seen = base_len if complete else examined
+
+    return {
+        "queue": queue,
+        "depth": depth,
+        "depth_by_key": per_key,
+        "cap": cap,
+        "coverage": {
+            "examined": seen,
+            "of_depth": depth,
+            "pct": round(100.0 * seen / depth, 1) if depth else None,
+            "complete": complete,
+            "truncated": bool(depth) and not complete,
+        },
+        # `oldest_first` is the SERVICE order. The first name in it is the next
+        # message this queue will hand to a worker.
+        "next_to_be_served": oldest_names[-1] if oldest_names else None,
+        "oldest_end": oldest_hist,
+        "newest_end": newest_hist,
+        "note": (
+            "lpush/rpop: index 0 is the newest arrival, index -1 is served next. "
+            "oldest_end is the backlog a starved beat waits behind; newest_end is "
+            "the current arrival mix."
+        ),
+    }
+
+
 @router.post("/celery-purge-background")
 async def celery_purge_background(request: Request, secret: str = Query(None)):
     """Purge stale tasks from the background queue."""
