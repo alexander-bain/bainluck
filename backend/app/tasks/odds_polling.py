@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.services.odds_api import OddsAPIService
+from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -841,6 +842,12 @@ async def _poll_all_odds():
         sports_skipped = 0
         scores_updated = 0
         stat_model_from_poll = 0
+        # #1981: every score write refused because the row's own commence says the
+        # provider id on it names a DIFFERENT game. Counted, never silent — a guard
+        # whose refusals are invisible is indistinguishable from a guard that is off.
+        scores_refused_stale_id = 0
+        scores_refused_unverifiable = 0
+        scores_unbound_id = 0
 
         # Get Redis client for per-sport poll tracking
         try:
@@ -1248,6 +1255,61 @@ async def _poll_all_odds():
                             else:
                                 score_commence = None
 
+                            # #1981 — THE GUARD. Everything below this point writes to a
+                            # row we found BY `external_id`, so `external_id` cannot also
+                            # be the evidence that the row is the right one; that is
+                            # circular, and it is exactly how this site stamped the
+                            # previous night's final onto the next night's game every
+                            # SCORE_FETCH_INTERVAL seconds. The row's OWN commence_time is
+                            # the independent signal, so ask it: is the id on this row
+                            # still current?
+                            #
+                            # Ruling (b)(2), queue 371: the writer owns `external_id`
+                            # currency — it re-verifies, re-binds, or nulls a stale id; it
+                            # never compares against one. This site takes the RE-VERIFY
+                            # arm and refuses. It deliberately does NOT re-bind or null
+                            # here: `events.external_id` is UNIQUE, so nulling a stale id
+                            # with no replacement makes the next discovery pass create a
+                            # duplicate of a game that is on tonight's slate, and re-binding
+                            # is an attended repair with a reviewed population and an Alex
+                            # MC (#1981 cleanup, queue 371 item 5) — not something a 300s
+                            # poller does to production rows unwatched.
+                            event_obj = _score_events_by_ext.get(external_id)
+                            currency = external_id_currency(
+                                event_obj.commence_time if event_obj else None,
+                                score_commence,
+                                row_found=event_obj is not None,
+                            )
+                            if currency is not IdCurrency.CURRENT:
+                                if currency is IdCurrency.STALE:
+                                    scores_refused_stale_id += 1
+                                    logger.warning(
+                                        "#1981 refused score write: external_id %s is STALE on "
+                                        "event %s (row commence %s) — provider record is %s @ %s, "
+                                        "start %s. No write made; the stale binding needs the "
+                                        "attended repair.",
+                                        external_id,
+                                        event_obj.id,
+                                        event_obj.commence_time,
+                                        away_team,
+                                        home_team,
+                                        score_commence,
+                                    )
+                                elif currency is IdCurrency.UNVERIFIABLE:
+                                    scores_refused_unverifiable += 1
+                                    logger.warning(
+                                        "#1981 refused score write: cannot verify external_id %s "
+                                        "on event %s — row commence %s, provider start %s. A check "
+                                        "that could not run is not a check that passed.",
+                                        external_id,
+                                        event_obj.id,
+                                        event_obj.commence_time,
+                                        score_commence,
+                                    )
+                                else:  # UNBOUND — no row of ours holds this provider id
+                                    scores_unbound_id += 1
+                                continue
+
                             if is_completed and (not score_commence or score_commence <= now):
                                 event_status = "completed"
                             elif is_completed and score_commence and score_commence > now:
@@ -1262,21 +1324,16 @@ async def _poll_all_odds():
                             update_values = {}
                             if event_status is not None:
                                 update_values["status"] = event_status
-                            if event_status == "completed":
-                                event_obj_pre = _score_events_by_ext.get(external_id)
-                                if event_obj_pre and not event_obj_pre.completed_at:
-                                    update_values["completed_at"] = now
+                            if event_status == "completed" and not event_obj.completed_at:
+                                update_values["completed_at"] = now
 
                             if home_score is not None:
                                 update_values["home_score"] = home_score
                             if away_score is not None:
                                 update_values["away_score"] = away_score
 
-                            # Use batch-loaded event to check if score changed
-                            event_obj = _score_events_by_ext.get(external_id)
-
                             # Record score snapshot if scores changed
-                            if event_obj and home_score is not None and away_score is not None:
+                            if home_score is not None and away_score is not None:
                                 old_home = event_obj.home_score
                                 old_away = event_obj.away_score
                                 if old_home != home_score or old_away != away_score:
@@ -1289,9 +1346,13 @@ async def _poll_all_odds():
                                     session.add(score_snap)
 
                             if update_values:
+                                # Write to the row we VERIFIED, by primary key. Addressing
+                                # the UPDATE by `external_id` again would re-open the gap
+                                # the guard just closed: the row checked and the row written
+                                # would be joined by nothing but the id under suspicion.
                                 await session.execute(
                                     Event.__table__.update()
-                                    .where(Event.external_id == external_id)
+                                    .where(Event.id == event_obj.id)
                                     .values(**update_values)
                                 )
                             scores_updated += 1
@@ -1421,6 +1482,12 @@ async def _poll_all_odds():
             "sports_polled": sports_polled,
             "sports_skipped": sports_skipped,
             "scores_updated": scores_updated,
+            # #1981 — the guard's refusals ride out with the run so a spike is legible
+            # from `task-metrics` without reading logs. A non-zero `stale_id` count is a
+            # standing population for the attended `external_id` repair, not noise.
+            "scores_refused_stale_id": scores_refused_stale_id,
+            "scores_refused_unverifiable": scores_refused_unverifiable,
+            "scores_unbound_id": scores_unbound_id,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
             "live_gei_updated": live_gei_updated,
