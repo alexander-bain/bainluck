@@ -1,0 +1,66 @@
+LAT-P071 — #1996: is the background queue LOSING messages or consuming them?
+One-hour trend, 1 sample / 300s (deliberately 10x inside the 1/30s mitigation this
+window published after taking production down at that endpoint — #1994).
+
+THE IDENTITY:   delta_bg = arrivals - consumed - lost      =>   lost = arrivals - consumed - delta_bg
+Scheduled background inflow, computed from the live beat schedule: 8.33 msg/min
+                                                     per 5-min tick: 42 messages
+
+ts             bg     d_bg  consumed   arr_impl   lost_est note
+--------------------------------------------------------------------------------------------
+06:03:37     2327        -        31          -          - baseline
+06:08:37     2326       -1         4          3         39 large unexplained departure
+06:13:37     2359      +33         3         36          6 
+06:18:17     2246        -   UNKNOWN    UNKNOWN    UNKNOWN inspect returned NO worker replies
+06:23:16     2138        -   UNKNOWN    UNKNOWN    UNKNOWN inspect returned NO worker replies
+06:28:37     2165        -        77          -          - baseline
+06:33:37     2079      -86        14        -72        114 ARRIVALS IMPOSSIBLE (<0)
+06:38:37     2095      +16         8         24         18 large unexplained departure
+06:43:16     1978        -   UNKNOWN    UNKNOWN    UNKNOWN inspect returned NO worker replies
+06:48:37     1982        -       121          -          - baseline
+06:53:37     1887      -95        19        -76        118 ARRIVALS IMPOSSIBLE (<0)
+06:58:37     1916      +29         1         30         12 
+--------------------------------------------------------------------------------------------
+
+READING IT — and the finding is that the DISCRIMINATOR ITSELF is not sound here.
+
+Two intervals give **negative implied arrivals**, which is arithmetically impossible
+under pure consumption: more messages left the queue than were executed plus
+published. Taken at face value that is direct evidence of LOSS, and it is the
+single strongest signal this window produced for #1996.
+
+But it may not be taken at face value, for a reason this same file demonstrates:
+
+  * `stats.total` is a PER-WORKER-PROCESS cumulative counter, summed here across
+    whatever workers answered the broadcast. A worker that does not reply
+    contributes ZERO, and the sum silently under-counts — which is
+    indistinguishable from loss.
+  * Two ticks returned NO replies at all (`totals: {}`, `active: null`), 34 minutes
+    into a worker generation that `heroku ps` shows had been up since 05:44:21Z.
+    So broadcast failure under load is not hypothetical here; it is observed, twice,
+    in twelve samples.
+  * Worse, the failures CLUSTER on the drops. The instrument that is supposed to
+    discriminate loss becomes unreliable in exactly the conditions that produce the
+    phenomenon it is measuring.
+
+⚠️ AND MY OWN SAMPLER COMMITTED GOTCHA #53 WHILE MEASURING THIS. An empty inspect
+was recorded as `exec = 0`, which read as a counter RESET — and a counter reset
+reads as a worker restart. I very nearly reported "a restart coincides with a
+113-message drop", which would have been support for candidate L1 manufactured
+out of an absent observation. `heroku ps` refuted it: no restart. Empty totals are
+now rendered UNKNOWN above, and the delta chain is BROKEN across them rather than
+bridged — a delta computed across a gap is a claim about a period nobody watched.
+
+VERDICT: LOSS leads, and is NOT established. #1996 stays open.
+
+WHAT THE NEXT WINDOW SHOULD BUILD, since `stats.total` cannot answer this:
+  1. Per-worker reply tracking, so a partial broadcast is VISIBLE as partial rather
+     than arriving as a smaller number.
+  2. Better: a Redis-side accounting that needs no broadcast at all — celery's
+     `task_prerun` already writes a per-task delivery counter (`get_all_task_deliveries`),
+     which is a worker-side WRITE rather than a control-plane READ, and so does not
+     depend on a worker answering a question while it is busy.
+  3. `INFO stats evicted_keys` sampled across a drop, to eliminate or confirm the
+     Redis `allkeys-lru` candidate (L2) — the instance was at 41.45M when measured.
+Route 2 is the cheap one and it exists already; it was simply never differenced.
+
