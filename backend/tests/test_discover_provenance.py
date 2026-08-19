@@ -43,9 +43,19 @@ from app.utils.discover_provenance import (
 from app.utils.provenance_drift import is_within_drift, validate_label_join_drift
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-MIGRATION = (
-    REPO / "backend/alembic/versions/add_disc_interactions_provenance.py"
-)
+VERSIONS = REPO / "backend/alembic/versions"
+MIGRATION = VERSIONS / "add_disc_interactions_provenance.py"
+PLAY_MIGRATION = VERSIONS / "add_prov_play_enum_value.py"
+
+
+def _load(path, name):
+    """Import a migration by path — they are not on sys.path as modules."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ---------------------------------------------------------------------------
@@ -54,38 +64,90 @@ MIGRATION = (
 
 
 class TestEnumAndAllowlistAgree:
-    def test_the_migration_declares_all_seven_values(self):
-        """`play` included — a six-value enum makes PostgreSQL reject every
-        Play interaction at commit, while the ORM accepts it happily."""
-        import importlib.util
+    def test_the_base_revision_declares_only_what_it_applied(self):
+        """Six values — the ones production's `pg_enum` actually holds.
 
-        spec = importlib.util.spec_from_file_location("_prov_mig", MIGRATION)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        assert mod.PROVENANCE_VALUES == (
-            "user", "play", "warmer", "sentinel", "gold_session", "admin", "unknown",
+        This is the assertion that looks backwards and is not. `play` belongs in
+        the enum; it does not belong in THIS revision, because this revision has
+        already run (`alembic_version = add_disc_int_provenance`, verified
+        2026-08-19) and Alembic runs a revision once. Adding `play` here changes
+        what a fresh database gets and changes nothing about the database with
+        the bug — while making every reader believe it was fixed.
+        """
+        mod = _load(MIGRATION, "_prov_mig")
+        assert mod.PROVENANCE_VALUES_AS_APPLIED == (
+            "user", "warmer", "sentinel", "gold_session", "admin", "unknown",
         )
-        assert "play" in mod.PROVENANCE_VALUES
+        assert "play" not in mod.PROVENANCE_VALUES_AS_APPLIED, (
+            "`play` was added back into an already-applied revision — it can "
+            "never reach production from there; use add_prov_play_value"
+        )
 
-    def test_the_runtime_allowlist_equals_the_migration_enum(self):
-        """The binding that replaces an import.
+    def test_the_next_revision_adds_play_and_chains_linearly(self):
+        """The seventh value lives in a revision that has NOT run."""
+        play = _load(PLAY_MIGRATION, "_prov_play")
+        base = _load(MIGRATION, "_prov_mig_b")
+        assert play.PLAY_VALUE == "play"
+        assert play.down_revision == base.revision, (
+            "the play revision must chain directly off the base revision — a "
+            "second head fails the Heroku release phase and the site does not "
+            "deploy at all"
+        )
+        assert len(play.revision) <= 32  # gotcha #1
+
+    def test_the_runtime_allowlist_equals_the_migration_CHAIN(self):
+        """The binding that replaces an import — held against the chain.
 
         Two frozen lists drift; this is the thing that fails when they do. The
         receiver accepting a value the enum cannot store is the exact defect
         C-ADHOC-PROV-CORE found.
+
+        Held against `base + play` rather than against one file, and
+        order-sensitively, because that is the enum both databases converge on:
+        a fresh DB creates the six then appends `play`; production already has
+        the six and appends `play`. Same labels, same ordinals. An assertion
+        against a single migration file is what stayed green while the shipped
+        enum matched neither it nor the allowlist.
         """
-        import importlib.util
+        base = _load(MIGRATION, "_prov_mig2")
+        play = _load(PLAY_MIGRATION, "_prov_play2")
+        assert PROVENANCE_VALUES == base.PROVENANCE_VALUES_AS_APPLIED + (
+            play.PLAY_VALUE,
+        )
 
-        spec = importlib.util.spec_from_file_location("_prov_mig2", MIGRATION)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        assert PROVENANCE_VALUES == mod.PROVENANCE_VALUES
-
-    def test_upgrade_and_downgrade_name_the_same_seven(self):
+    def test_upgrade_and_downgrade_name_the_same_six(self):
         """A downgrade that drops a differently-spelled type leaves the enum behind."""
         src = MIGRATION.read_text()
         # Both halves must build the enum from the shared constant, not a literal.
-        assert src.count("sa.Enum(*PROVENANCE_VALUES, name=\"discover_provenance\")") == 2
+        assert src.count(
+            "*PROVENANCE_VALUES_AS_APPLIED, name=\"discover_provenance\""
+        ) == 2
+
+    def test_the_play_revision_uses_add_value_not_a_type_rebuild(self):
+        """A table rewrite in the release phase is gotcha #31 with an UPDATE.
+
+        `ALTER TYPE … ADD VALUE` is a catalog insert. The alternative — new type,
+        `ALTER TABLE … TYPE … USING`, drop, rename — rewrites the whole table
+        inside Heroku's ~5-minute release window, and a release that times out
+        is a site that does not deploy.
+        """
+        src = PLAY_MIGRATION.read_text()
+        assert "ADD VALUE IF NOT EXISTS" in src, (
+            "must be idempotent: autocommit_block() means this statement is NOT "
+            "rolled back if a later one in the same revision fails"
+        )
+        assert "autocommit_block" in src, (
+            "ALTER TYPE ADD VALUE needs the autocommit block — required outright "
+            "before PG12, and the block costs nothing on 17"
+        )
+        assert not re.search(r"ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN", src, re.I), (
+            "the play revision performs a table rewrite — use ADD VALUE"
+        )
+
+    def test_the_play_revision_is_postgres_guarded(self):
+        """`ALTER TYPE` is PostgreSQL-only; a sqlite replay must not raise."""
+        src = PLAY_MIGRATION.read_text()
+        assert 'dialect.name != "postgresql"' in src
 
     def test_the_migration_performs_no_data_update(self):
         """A whole-table UPDATE in the release migration is a deploy hazard AND

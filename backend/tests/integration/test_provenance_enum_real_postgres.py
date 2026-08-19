@@ -26,7 +26,9 @@ cannot be mistaken for a passing one.
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import pathlib
 import uuid
 
 import pytest
@@ -48,30 +50,166 @@ pytestmark = [
 
 ENUM_NAME = "discover_provenance"
 
-
-@pytest.fixture
-async def pg_session():
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-    engine = create_async_engine(DB_URL)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with maker() as session:
-        yield session
-    await engine.dispose()
+_VERSIONS = pathlib.Path(__file__).resolve().parents[2] / "alembic/versions"
 
 
-@pytest.fixture
-async def provenance_enum(pg_session):
-    """Create the enum exactly as the migration does, from the same constant."""
+def _load(filename: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, _VERSIONS / filename)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+#: The two revisions under test, imported so their OWN constants and their OWN
+#: SQL string drive this file. Nothing below re-spells a statement the schema
+#: already spells — the previous version of this file built the enum from
+#: `PROVENANCE_VALUES` and then asserted the result equalled `PROVENANCE_VALUES`,
+#: which is a self-oracle: it could not have failed no matter what shipped.
+_BASE = _load("add_disc_interactions_provenance.py", "_pg_prov_base")
+_PLAY = _load("add_prov_play_enum_value.py", "_pg_prov_play")
+
+#: What the base revision's source SAYS it created. Read from the module, so it
+#: tracks any edit anyone makes to that file.
+SIX_PER_SOURCE = _BASE.PROVENANCE_VALUES_AS_APPLIED
+
+#: What production's `pg_enum` ACTUALLY holds — measured, not read from source:
+#:
+#:     SELECT enumlabel, enumsortorder FROM pg_enum e
+#:       JOIN pg_type t ON t.oid = e.enumtypid
+#:      WHERE t.typname = 'discover_provenance' ORDER BY enumsortorder;
+#:     -- user 1 | warmer 2 | sentinel 3 | gold_session 4 | admin 5 | unknown 6
+#:
+#: Frozen deliberately, and NOT derived from the constant above. That
+#: independence is the entire point: this literal cannot be moved by editing a
+#: migration, so if someone edits the already-applied revision's tuple, the two
+#: fixture paths stop agreeing and this file goes red. An in-place edit to a
+#: revision that has already run is invisible to every source-reading assertion,
+#: because source is the one thing such an edit definitely changes.
+SIX_IN_PRODUCTION_2026_08_19 = (
+    "user",
+    "warmer",
+    "sentinel",
+    "gold_session",
+    "admin",
+    "unknown",
+)
+
+
+async def _create_enum(pg_session, labels):
+    from sqlalchemy import text
+
+    rendered = ", ".join(f"'{v}'" for v in labels)
+    await pg_session.execute(text(f"CREATE TYPE {ENUM_NAME} AS ENUM ({rendered})"))
+    await pg_session.commit()
+
+
+async def _run_play_revision(pg_session):
+    """Execute the play revision's OWN statement, not a copy of it."""
+    from sqlalchemy import text
+
+    # `ALTER TYPE … ADD VALUE` is what the migration runs inside
+    # `op.get_context().autocommit_block()`. asyncpg gives each `execute` its own
+    # implicit transaction here, and the commit below is the block's analogue.
+    await pg_session.execute(text(_PLAY.add_value_sql(ENUM_NAME)))
+    await pg_session.commit()
+
+
+@pytest.fixture(params=["fresh_database", "migration_already_applied"])
+async def provenance_enum(request, pg_session):
+    """Build the enum by running the CHAIN, from both start states.
+
+    This is the addendum's named verify, and it is two paths because the defect
+    it guards is *exactly* the difference between them:
+
+    * **fresh_database** — nothing exists, so BOTH revisions execute. The type is
+      built from the base revision's own tuple **as its source currently reads**,
+      then the play revision runs. This is CI.
+    * **migration_already_applied** — the type already exists from an earlier
+      deploy and `alembic_version` is at `add_disc_int_provenance`, so the base
+      revision **never executes again**. The type is built from the six labels
+      production was *measured* to hold, and only the play revision runs. This is
+      production.
+
+    The two paths differ in exactly one way, and it is the way that matters:
+    the first follows the base revision's source, the second follows a frozen
+    measurement of production that no source edit can move. Editing an
+    already-applied revision changes the first and not the second, so the two
+    stop agreeing and this file goes red — which is the whole failure mode. If
+    both paths simply re-read the same constant, they are one path written
+    twice, and the gate is decorative.
+
+    Both must end at seven values *in the same order*. Parametrising the fixture
+    means every assertion in this file is asked twice, once per path, rather
+    than the two-path claim being made once and then left behind.
+    """
     from sqlalchemy import text
 
     await pg_session.execute(text(f"DROP TYPE IF EXISTS {ENUM_NAME} CASCADE"))
-    labels = ", ".join(f"'{v}'" for v in PROVENANCE_VALUES)
-    await pg_session.execute(text(f"CREATE TYPE {ENUM_NAME} AS ENUM ({labels})"))
     await pg_session.commit()
-    yield
+
+    if request.param == "fresh_database":
+        await _create_enum(pg_session, SIX_PER_SOURCE)
+    else:
+        await _create_enum(pg_session, SIX_IN_PRODUCTION_2026_08_19)
+    await _run_play_revision(pg_session)
+
+    yield request.param
     await pg_session.execute(text(f"DROP TYPE IF EXISTS {ENUM_NAME} CASCADE"))
     await pg_session.commit()
+
+
+class TestTheChainConvergesFromBothStartStates:
+    async def test_the_play_revision_is_idempotent(self, pg_session, provenance_enum):
+        """`IF NOT EXISTS` — because `autocommit_block()` means this statement is
+        not rolled back with the rest of a failed revision, so a retry re-runs it.
+
+        Also the thing that makes the two fixture paths safe to collapse if the
+        base revision is ever partially applied.
+        """
+        from sqlalchemy import text
+
+        await _run_play_revision(pg_session)
+        await _run_play_revision(pg_session)
+        rows = (
+            await pg_session.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = :n ORDER BY e.enumsortorder"
+                ),
+                {"n": ENUM_NAME},
+            )
+        ).scalars().all()
+        assert len(rows) == 7, f"re-running ADD VALUE changed the enum: {rows}"
+
+    async def test_play_lands_last_on_both_paths(self, pg_session, provenance_enum):
+        """Ordinals, not just membership.
+
+        Enum ordinals are what `ORDER BY provenance` and every btree range scan
+        on the column mean. Seven values in two different orders is two types
+        with one name, and the gate would be green against a shape production
+        does not have.
+        """
+        from sqlalchemy import text
+
+        rows = (
+            await pg_session.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = :n ORDER BY e.enumsortorder"
+                ),
+                {"n": ENUM_NAME},
+            )
+        ).scalars().all()
+
+        expected = SIX_IN_PRODUCTION_2026_08_19 + ("play",)
+        assert tuple(rows) == expected, (
+            f"path={provenance_enum}: chain produced {rows}, expected {expected}"
+        )
+        # And the receiver's allowlist is that same tuple — the binding this
+        # whole change exists to enforce, asked of PostgreSQL rather than source.
+        assert tuple(rows) == PROVENANCE_VALUES
 
 
 class TestTheEnumCanRepresentEveryAcceptedValue:
