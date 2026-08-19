@@ -542,7 +542,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: (`c5eecff4`), so the merged tree holds both files and the count is higher again.
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber. Every number
 #: 060-088 is now banked.
-MINIMUM_BANKED_RULINGS = 85
+MINIMUM_BANKED_RULINGS = 90
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
