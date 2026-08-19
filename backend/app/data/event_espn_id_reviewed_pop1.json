@@ -1,0 +1,69 @@
+{
+  "schema": "event-espn-id-reviewed-set/v1",
+  "issue": "#1947",
+  "population": "1",
+  "source_artifact": ".claude/handoff/ARTIFACT-Q369-ATTENDED-CLEANUP-PLAN.json",
+  "source_section": "population_1_CORRECT",
+  "reviewed_at": "2026-08-18",
+  "committed_by": "lane1 queue 375, per SPEC-Q370",
+  "operation": "UPDATE events.espn_id ONLY — correction, never deletion (ruling 079)",
+  "explicitly_not_written": [
+    "commence_time — ruling (a) withdrew it; it is an ADDRESSED field here, never a written one",
+    "status / home_score / away_score / completed_at — #1981's writer owns these",
+    "no deletion of any row, under any branch"
+  ],
+  "why_this_file_is_committed": [
+    "The reviewed object is a SET OF TRIPLES, not a count (ruling 079). An approval given",
+    "over a number does not transfer to whatever a later re-derivation finds under that",
+    "number, so the ids a reviewer read have to be readable by the code that writes them.",
+    "It sits in the repo rather than in the handoff directory because .claude/ is gitignored:",
+    "a reviewed set the deployed rail cannot open is not a reviewed set."
+  ],
+  "rows": [
+    {
+      "event_id": 15199901,
+      "matchup": "Detroit Tigers @ Pittsburgh Pirates",
+      "our_commence_time": "2026-08-18T22:40:00Z",
+      "wrong_espn_id": "401816564",
+      "wrong_id_is": "2026-08-17T23:00Z FINAL PIT/DET 8-5",
+      "true_espn_id": "401816572",
+      "true_id_is": "2026-08-18T22:40Z SCHEDULED PIT/DET"
+    },
+    {
+      "event_id": 15199886,
+      "matchup": "Miami Marlins @ Philadelphia Phillies",
+      "our_commence_time": "2026-08-18T22:40:00Z",
+      "wrong_espn_id": "401816565",
+      "wrong_id_is": "2026-08-17T22:40Z FINAL PHI/MIA 6-5",
+      "true_espn_id": "401816573",
+      "true_id_is": "2026-08-18T22:40Z SCHEDULED PHI/MIA"
+    },
+    {
+      "event_id": 15199882,
+      "matchup": "San Diego Padres @ New York Mets",
+      "our_commence_time": "2026-08-18T23:10:00Z",
+      "wrong_espn_id": "401816566",
+      "wrong_id_is": "2026-08-17T23:10Z FINAL NYM/SD 2-1",
+      "true_espn_id": "401816575",
+      "true_id_is": "2026-08-18T23:10Z SCHEDULED NYM/SD"
+    },
+    {
+      "event_id": 15200229,
+      "matchup": "Arizona Diamondbacks @ Boston Red Sox",
+      "our_commence_time": "2026-08-18T23:10:00Z",
+      "wrong_espn_id": "401816562",
+      "wrong_id_is": "2026-08-17T23:10Z FINAL BOS/ARI 11-1",
+      "true_espn_id": "401816571",
+      "true_id_is": "2026-08-18T23:10Z SCHEDULED BOS/ARI"
+    },
+    {
+      "event_id": 15200216,
+      "matchup": "Athletics @ Kansas City Royals",
+      "our_commence_time": "2026-08-20T18:10:00Z",
+      "wrong_espn_id": "401816568",
+      "wrong_id_is": "2026-08-17T23:40Z FINAL KC/ATH 9-5",
+      "true_espn_id": "401816606",
+      "true_id_is": "2026-08-20T18:10Z SCHEDULED KC/ATH"
+    }
+  ]
+}
