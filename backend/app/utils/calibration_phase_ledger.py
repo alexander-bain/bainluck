@@ -227,6 +227,21 @@ MIN_OBSERVATIONS = 1
 #: beat cannot permanently inflate a budget once it ages out.
 HISTORY_WINDOW = 10
 
+# --- Budget provenance -------------------------------------------------------
+#
+# Which rule produced a phase's ``budget_ms``. Carried in the payload so a
+# reallocated budget can never be read as a measured one — the same reason
+# CAL-P071 made ``unit_projection`` name its divisor in ``per_beat_basis``.
+#: ``max(observed completions) * BUDGET_SAFETY``, untouched.
+BUDGET_BASIS_MEASURED = "measured"
+#: Measured, then scaled DOWN proportionally because the declared total would
+#: have overrun the window. Honest: the build genuinely does not have that time.
+BUDGET_BASIS_SCALED_DOWN = "measured_scaled_down"
+#: Measured, then handed the window slack no other phase declared (ruling 089).
+BUDGET_BASIS_PLUS_SLACK = "measured_plus_window_slack"
+#: No completed observation exists, so no budget does either.
+BUDGET_BASIS_UNMEASURED = "unmeasured"
+
 
 # =============================================================================
 # Plan
@@ -256,6 +271,15 @@ class PhaseBudget:
     unit_ms: Optional[int] = None
     units_total: Optional[int] = None
     units_done: Optional[int] = None
+    #: WHICH RULE produced ``budget_ms`` — one of the ``BUDGET_BASIS_*``
+    #: constants. A number in a plan is not self-describing: 1,172,893 ms could
+    #: be a measured cost or a reallocation, and only one of those is evidence
+    #: about how long the phase takes. Naming the rule is the same discipline
+    #: CAL-P071 applied to the ETA's divisor.
+    budget_basis: str = BUDGET_BASIS_MEASURED
+    #: How much of ``budget_ms`` is window slack rather than measurement.
+    #: Subtract it and you have the measured number back, unmodified.
+    slack_assigned_ms: int = 0
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -270,6 +294,8 @@ class PhaseBudget:
             "unit_ms": self.unit_ms,
             "units_total": self.units_total,
             "units_done": self.units_done,
+            "budget_basis": self.budget_basis,
+            "slack_assigned_ms": self.slack_assigned_ms,
         }
 
 
@@ -463,6 +489,26 @@ class PhasePlan:
     def declared_ms(self) -> int:
         return sum(b.budget_ms or 0 for b in self.budgets)
 
+    @property
+    def slack_target(self) -> Optional[str]:
+        """Which phase received the window slack, or ``None`` if none did.
+
+        Read this, not :func:`bottleneck_phase`, to ask a FINISHED plan what it
+        chose. The two disagree by design and the disagreement is not a bug:
+        ``bottleneck_phase`` asks "which phase has been observed running past
+        its own budget", and a phase that has just been handed the window is no
+        longer such a phase — its floor now sits comfortably inside its budget,
+        which is precisely the outcome the reallocation was for. Re-running the
+        selector over the plan it already produced therefore names the RUNNER-UP.
+        Caught by ``test_bottleneck_is_the_largest_floor_over_its_own_budget``
+        before this shipped; the fix is a recorded decision rather than a
+        re-derived one.
+        """
+        for budget in self.budgets:
+            if budget.slack_assigned_ms:
+                return budget.name
+        return None
+
     def as_payload(self) -> dict[str, Any]:
         verdict = self.feasibility
         infeasible = self.infeasible_phases
@@ -487,6 +533,13 @@ class PhasePlan:
             "cleanup_margin_ms": self.cleanup_margin_ms,
             "deadline_ms": self.soft_limit_ms - self.cleanup_margin_ms,
             "declared_ms": self.declared_ms,
+            # Ruling 089. ``declared_ms`` alone cannot say whether the window is
+            # fully spent because a phase EARNED it or because one was handed
+            # what nobody claimed; these two make the difference readable off
+            # the row, which is how the ~72%-unallocated defect would have been
+            # visible without arithmetic.
+            "slack_target": self.slack_target,
+            "unallocated_ms": max(0, self.available_ms - self.declared_ms),
             "infeasible_phases": list(infeasible),
             # The bucket that makes an empty ``infeasible_phases`` readable.
             # Every required phase lands in exactly one of the four lists, so a
@@ -508,6 +561,105 @@ def _statement_timeout_for(budget_ms: int) -> int:
     """The inner backstop: strictly less than the phase budget, always >= 1ms."""
     gap = max(1, min(STATEMENT_INNER_MARGIN_MS, budget_ms // 10))
     return max(1, budget_ms - gap)
+
+
+def bottleneck_phase(budgets: Iterable[PhaseBudget]) -> Optional[str]:
+    """The one phase MEASUREMENT says the window is being withheld from.
+
+    A phase qualifies on truncation evidence and nothing else: it has a measured
+    ``budget_ms`` **and** a ``floor_ms`` strictly greater than it — i.e. it has
+    been observed running past its own allotment without finishing. That is a
+    fact this plan recorded about this phase, not a preference for a phase name,
+    which is why ``futures`` appears nowhere in this function.
+
+    Ties go to the larger floor. No qualifying phase means there is no
+    bottleneck to name, and the slack stays unallocated: a plan with no evidence
+    of truncation has no basis for moving time anywhere, and inventing one is
+    the constant this module keeps refusing to write.
+
+    A phase with **no** measured budget is deliberately not a candidate. Its
+    cost is unknown in both directions, so handing it the window would be a
+    guess dressed as an allocation — and the only such phase in the deployed
+    plan (``serialize_gate_publish``, floors ~1.7-2.3 s) is already covered by
+    :data:`CLEANUP_MARGIN_MS`, which is reserved outside the window for exactly
+    that tail.
+    """
+    best: Optional[PhaseBudget] = None
+    for budget in budgets:
+        if budget.budget_ms is None or budget.floor_ms is None:
+            continue
+        if budget.floor_ms <= budget.budget_ms:
+            continue
+        if best is None or budget.floor_ms > (best.floor_ms or 0):
+            best = budget
+    return best.name if best is not None else None
+
+
+def _assign_window_slack(
+    budgets: list[PhaseBudget], *, available_ms: int
+) -> list[PhaseBudget]:
+    """Give the beat's unallocated time to the phase that is starving on it.
+
+    Ruling 089, from the CAL-P072 attribution. ``derive_plan`` budgets each
+    phase at ``max(observed) * BUDGET_SAFETY`` and then stops, so whatever the
+    measured phases do not claim is simply never handed out. On 2026-08-18 the
+    deployed plan declared **382,139 ms of a 1,380,000 ms window** — ~72% of
+    every beat unallocated — while the phase that needed it ran under a
+    159,637 ms statement timeout derived from its 177,374 ms budget. The
+    22:15Z beat's ``read:futures_unit`` stage measured **159,801 ms**: our own
+    cap, plus 164 ms of overhead, cancelled by Postgres and thrown as a
+    ``QueryCanceledError``. Nothing banked, for the 111th consecutive beat.
+
+    **The unallocated time was never a safety margin.** The window's real
+    reservations are already taken out before this function sees it:
+    :data:`CLEANUP_MARGIN_MS` for the publish tail, and
+    :data:`STATEMENT_INNER_MARGIN_MS` inside every statement timeout. What is
+    left over is left over because no phase's measurement claimed it.
+
+    And a cap cannot be corrected by the thing it caps. A cancelled phase
+    records a FLOOR, and ``derive_plan`` forbids a floor from producing a budget
+    — correctly, since a phase cancelled at 159,801 ms took longer than that by
+    an unknown amount. So the budget is pinned to the ten pre-q268 completions
+    (47-118 s, from beats where nearly every unit was already banked) and every
+    new failure raises a floor the budget is not allowed to read. It is a
+    ratchet with one direction, and 111 consecutive failures is its fixed point.
+    Reallocation is what breaks that loop from outside it.
+
+    Bounded by construction: the reallocated budget is exactly
+    ``available_ms`` minus every other phase's declared budget, minus a
+    lower-bound reserve for any phase with no budget at all, so the declared
+    total can reach the window ceiling and never exceed it. Nothing is taken
+    from a measured phase — this only spends time that was going to expire
+    unspent.
+    """
+    declared = sum(b.budget_ms or 0 for b in budgets)
+    # A phase with no budget would otherwise be allocated nothing. Its worst
+    # floor is the only lower bound on its cost that exists, so reserve exactly
+    # that and no invented margin on top; a phase with neither reserves nothing,
+    # because there is nothing to reserve FROM.
+    reserved = sum(b.floor_ms or 0 for b in budgets if b.budget_ms is None)
+    slack = available_ms - declared - reserved
+    if slack <= 0:
+        return budgets
+    target = bottleneck_phase(budgets)
+    if target is None:
+        return budgets
+    out: list[PhaseBudget] = []
+    for budget in budgets:
+        if budget.name != target or budget.budget_ms is None:
+            out.append(budget)
+            continue
+        widened = budget.budget_ms + slack
+        out.append(
+            replace(
+                budget,
+                budget_ms=widened,
+                statement_timeout_ms=_statement_timeout_for(widened),
+                budget_basis=BUDGET_BASIS_PLUS_SLACK,
+                slack_assigned_ms=slack,
+            )
+        )
+    return out
 
 
 def _decode_unit_cost(raw: Any) -> tuple[Optional[int], Optional[int], Optional[int]]:
@@ -621,6 +773,12 @@ def derive_plan(
     for name, ms, flag, count, floor_ms, floor_count in raw:
         budget_ms = max(1, int(ms * scale)) if ms is not None else None
         unit_ms, units_total, units_done = _decode_unit_cost(unit_costs.get(name))
+        if budget_ms is None:
+            basis = BUDGET_BASIS_UNMEASURED
+        elif scale < 1.0:
+            basis = BUDGET_BASIS_SCALED_DOWN
+        else:
+            basis = BUDGET_BASIS_MEASURED
         budgets.append(
             PhaseBudget(
                 name=name,
@@ -636,8 +794,13 @@ def derive_plan(
                 unit_ms=unit_ms,
                 units_total=units_total,
                 units_done=units_done,
+                budget_basis=basis,
             )
         )
+    # Scaling down and handing out slack are mutually exclusive by arithmetic:
+    # ``scale < 1`` only when the declared total already overruns the window, in
+    # which case there is no slack to hand out and this returns unchanged.
+    budgets = _assign_window_slack(budgets, available_ms=available)
     return PhasePlan(
         budgets=tuple(budgets),
         soft_limit_ms=soft_limit_ms,

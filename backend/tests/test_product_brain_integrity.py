@@ -519,7 +519,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: is again nobody's side. This is the collision #1910 exists to make impossible.
 #: RESOLVED BY COUNTING, seventh consecutive cycle. HEAD said 83, program/latency-61 said 82,
 #: and neither is the merged truth. Documented rule: COUNT
-#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree. Measured here: **84**.
+#: `docs/rulings/[0-9][0-9][0-9]-*.md` in the MERGED tree. Measured here: **85**.
 #:
 #: 84 = the 83 that stood after the ux wave, plus latency's **086** (the working gauge nobody
 #: reads is the same as no gauge), which FILLS the last open gap above 060. The only remaining
@@ -542,7 +542,15 @@ def test_ruling_numbers_are_unique() -> None:
 #: (`c5eecff4`), so the merged tree holds both files and the count is higher again.
 #: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber. Every number
 #: 060-088 is now banked.
-MINIMUM_BANKED_RULINGS = 85
+#:
+#: INT-087 cycle 5 lands calibration's **089** (a budget derived only from SUCCESSES cannot be
+#: corrected by the failures it causes — the futures phase cancelled at its own derived
+#: 159,637 ms cap for 111 consecutive beats). 85 -> **86 BY COUNTING**, ninth consecutive cycle.
+#: calibration-68's own comment called this exactly: it said 85 while 088 was unmerged and that
+#: "a merge that lands it moves this to 86 — COUNT, do not add." 088 landed earlier in this same
+#: session (latency-62, `6e23d346`), so 86 is the counted union, not an increment.
+#: Gaps 057-059 remain reserved for program/calibration-53's blocked renumber.
+MINIMUM_BANKED_RULINGS = 86
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

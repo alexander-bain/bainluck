@@ -210,15 +210,40 @@ def test_a_floor_inside_the_window_is_recorded_but_not_infeasible():
 
 
 def test_a_measured_phase_keeps_its_budget_even_with_an_older_floor():
-    """A phase that has since completed is measured; the floor stays as history."""
+    """A phase that has since completed is measured; the floor stays as history.
+
+    AMENDED by ruling 089 (CAL-P072), and narrowed rather than deleted. The
+    invariant this test was written to protect — *measurement is not overwritten*
+    — still holds exactly, and is asserted below against
+    ``budget_ms - slack_assigned_ms``, which is the measured number recoverable
+    unmodified. What no longer holds is the stronger reading that ``budget_ms``
+    itself never moves: a floor above the budget is now truncation evidence, and
+    the phase carrying it is handed the window slack no phase claimed.
+
+    The ledger keeps ``history`` and ``floors`` as two independent rolling
+    windows with no ordering between them, so "an OLDER floor" is not a state
+    this rule can distinguish from a current one, and it does not pretend to.
+    That is deliberate rather than sloppy: a budget is a CEILING on a statement,
+    not a reservation of wall clock, so a phase handed slack it does not need
+    still completes in the time it takes and hands the rest onward. Nothing is
+    taken from any other phase — ``test_calibration_window_slack_p072`` pins
+    that both ways.
+    """
     plan = derive_plan(
         {name: [10_000] for name in REQUIRED_PHASES},
         floors={PHASE_FUTURES: [200_000]},
     )
+    futures = plan.by_name(PHASE_FUTURES)
     assert plan.provisional is False
-    assert plan.by_name(PHASE_FUTURES).budget_ms == int(10_000 * BUDGET_SAFETY)
-    assert plan.by_name(PHASE_FUTURES).floor_ms == 200_000
+    assert futures.budget_ms - futures.slack_assigned_ms == int(10_000 * BUDGET_SAFETY)
+    assert futures.floor_ms == 200_000
     assert plan.infeasible_phases == ()
+    # Every phase WITHOUT truncation evidence keeps its measured budget whole.
+    for name in REQUIRED_PHASES:
+        if name == PHASE_FUTURES:
+            continue
+        assert plan.by_name(name).budget_ms == int(10_000 * BUDGET_SAFETY)
+        assert plan.by_name(name).slack_assigned_ms == 0
 
 
 def test_no_floors_leaves_the_budget_fields_alone_but_says_it_checked_nothing():
