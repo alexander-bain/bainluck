@@ -95,6 +95,17 @@ SIX_IN_PRODUCTION_2026_08_19 = (
 )
 
 
+@pytest.fixture
+async def pg_session():
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    engine = create_async_engine(DB_URL)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        yield session
+    await engine.dispose()
+
+
 async def _create_enum(pg_session, labels):
     from sqlalchemy import text
 
