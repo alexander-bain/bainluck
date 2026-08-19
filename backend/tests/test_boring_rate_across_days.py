@@ -244,6 +244,93 @@ def test_only_a_card_boring_on_every_day_is_called_standing(tmp_path):
     assert result["boring_on_every_day"] == ["Maine State Senate winner?"]
 
 
+def test_a_dated_card_rotates_its_name_but_the_reason_class_persists(tmp_path):
+    """The real 2026-08-18/19 shape, and the reason per-name persistence is not enough.
+
+    "Will Meta (META) close above $540 on August 19?" is a different NAME every
+    morning, so a name-only check reports the whole dated-equity-ladder class as
+    rotation. The reasons do not rotate.
+    """
+    a = _artifact(
+        tmp_path,
+        "a.json",
+        [
+            {
+                **_sample("2026-08-18T20:00:00+00:00", "a1", []),
+                "boring_count": 1,
+                "boring": [
+                    {
+                        "rank": 18,
+                        "name": "Will Meta (META) close above $540 on August 18?",
+                        "quality_class": "low_quality",
+                        "reasons": ["ladder_or_bucket", "daily_equity_direction"],
+                    }
+                ],
+            }
+        ],
+    )
+    b = _artifact(
+        tmp_path,
+        "b.json",
+        [
+            {
+                **_sample("2026-08-19T20:00:00+00:00", "b1", []),
+                "boring_count": 1,
+                "boring": [
+                    {
+                        "rank": 18,
+                        "name": "Will Meta (META) close above $540 on August 19?",
+                        "quality_class": "low_quality",
+                        "reasons": ["ladder_or_bucket", "daily_equity_direction"],
+                    }
+                ],
+            }
+        ],
+    )
+
+    result = pool([a, b])
+
+    assert result["boring_on_every_day"] == []  # names rotate — correctly
+    assert result["boring_reasons_every_day"] == [
+        "daily_equity_direction",
+        "ladder_or_bucket",
+    ]
+    assert "daily_equity_direction" in render(result)
+
+
+def test_a_reason_seen_on_only_one_day_is_not_called_persistent(tmp_path):
+    a = _artifact(
+        tmp_path,
+        "a.json",
+        [
+            {
+                **_sample("2026-08-18T20:00:00+00:00", "a1", []),
+                "boring_count": 1,
+                "boring": [
+                    {"name": "A", "quality_class": "low_quality", "reasons": ["one_off"]}
+                ],
+            }
+        ],
+    )
+    b = _artifact(
+        tmp_path,
+        "b.json",
+        [
+            {
+                **_sample("2026-08-19T20:00:00+00:00", "b1", []),
+                "boring_count": 1,
+                "boring": [
+                    {"name": "B", "quality_class": "low_quality", "reasons": ["other"]}
+                ],
+            }
+        ],
+    )
+
+    result = pool([a, b])
+
+    assert result["boring_reasons_every_day"] == []
+
+
 def test_render_names_the_zone_it_grouped_by(tmp_path):
     a = _artifact(tmp_path, "a.json", [_sample("2026-08-18T20:00:00+00:00", "a1", ["A"])])
     b = _artifact(tmp_path, "b.json", [_sample("2026-08-19T20:00:00+00:00", "b1", [])])

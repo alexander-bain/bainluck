@@ -135,6 +135,7 @@ def pool(paths: list[Path]) -> dict[str, Any]:
                     "cards_graded": 0,
                     "boring_cards": 0,
                     "boring_names": {},
+                    "boring_reasons": {},
                     "windows": [],
                 },
             )
@@ -158,6 +159,11 @@ def pool(paths: list[Path]) -> dict[str, Any]:
             for b in s.get("boring", []):
                 name = b.get("name") or "?"
                 bucket["boring_names"][name] = bucket["boring_names"].get(name, 0) + 1
+                # Names rotate; classes do not. See `boring_reasons_every_day`.
+                for reason in b.get("reasons") or ["?"]:
+                    bucket["boring_reasons"][reason] = (
+                        bucket["boring_reasons"].get(reason, 0) + 1
+                    )
 
     if not per_day:
         raise PoolRefusal(
@@ -186,6 +192,9 @@ def pool(paths: list[Path]) -> dict[str, Any]:
         bucket["boring_names"] = dict(
             sorted(bucket["boring_names"].items(), key=lambda kv: -kv[1])
         )
+        bucket["boring_reasons"] = dict(
+            sorted(bucket["boring_reasons"].items(), key=lambda kv: -kv[1])
+        )
 
     graded = sum(b["cards_graded"] for b in per_day.values())
     boring = sum(b["boring_cards"] for b in per_day.values())
@@ -196,6 +205,17 @@ def pool(paths: list[Path]) -> dict[str, Any]:
     persistent = sorted(
         n for n in all_names
         if all(n in b["boring_names"] for b in per_day.values())
+    )
+    # A DATED card ("… close above $540 on August 19?") is a new name every
+    # morning, so a per-NAME persistence check reports the whole dated-ladder
+    # class as rotation and understates a defect that is in fact standing.
+    # The reason set is what does not rotate.
+    all_reasons: set[str] = set()
+    for b in per_day.values():
+        all_reasons |= set(b["boring_reasons"])
+    persistent_reasons = sorted(
+        r for r in all_reasons
+        if all(r in b["boring_reasons"] for b in per_day.values())
     )
 
     return {
@@ -215,6 +235,7 @@ def pool(paths: list[Path]) -> dict[str, Any]:
         # A card boring on EVERY day is a standing defect; a card boring on one
         # day is a rotation. The distinction is the point of reading days.
         "boring_on_every_day": persistent,
+        "boring_reasons_every_day": persistent_reasons,
         "deduped": {
             "same_day_repeat_builds": same_day_repeats,
             "cross_day_repeat_builds": cross_day_repeats,
@@ -253,6 +274,14 @@ def render(result: dict[str, Any]) -> str:
         lines.append("  boring on EVERY day (a standing defect, not rotation):")
         for name in result["boring_on_every_day"]:
             lines.append(f"    - {name}")
+    if result["boring_reasons_every_day"]:
+        lines.append("")
+        lines.append(
+            "  reasons present on EVERY day (the class persists even where the "
+            "card name rotates):"
+        )
+        for reason in result["boring_reasons_every_day"]:
+            lines.append(f"    - {reason}")
     dd = result["deduped"]
     lines.append("")
     lines.append(
