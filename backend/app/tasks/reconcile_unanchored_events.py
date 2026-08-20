@@ -182,6 +182,19 @@ _CENSUS_SQL = text(
     """
 )
 
+# #2048: every provider-id bind is CAST, and the cast is not decoration.
+#
+# ``:external_id IS NOT NULL`` hands PostgreSQL a parameter inside a NullTest, which
+# supplies no type context — the Param node is minted UNKNOWNOID and parse analysis
+# ends with "could not determine data type of parameter $N". The ``o.external_id =
+# :external_id`` alongside it does NOT rescue it: that resolves the parameter *slot*,
+# but the node built for the null test was already fixed as unknown. The null test
+# came first, so the null test decides.
+#
+# Measured cost of the missing cast: the drain threw on 100% of DRAINABLE rows at
+# every scan size from the day ruling 048 landed, so the bound the ruling accepted
+# duplicates against had never once been exercised. ``_CENSUS_SQL`` above already
+# uses this pattern for its one bind; this is the same pattern, applied to all three.
 _TWIN_SQL = text(
     """
     SELECT o.id, o.external_id, o.espn_id, o.statpal_fixture_id,
@@ -189,10 +202,12 @@ _TWIN_SQL = text(
       FROM events o
      WHERE o.id <> :eid
        AND (
-            (:external_id IS NOT NULL AND o.external_id = :external_id)
-         OR (:espn_id IS NOT NULL AND o.espn_id = :espn_id)
-         OR (:statpal_fixture_id IS NOT NULL
-             AND o.statpal_fixture_id = :statpal_fixture_id)
+            (CAST(:external_id AS varchar) IS NOT NULL
+             AND o.external_id = CAST(:external_id AS varchar))
+         OR (CAST(:espn_id AS varchar) IS NOT NULL
+             AND o.espn_id = CAST(:espn_id AS varchar))
+         OR (CAST(:statpal_fixture_id AS varchar) IS NOT NULL
+             AND o.statpal_fixture_id = CAST(:statpal_fixture_id AS varchar))
        )
     """
 )
@@ -245,13 +260,21 @@ async def reconcile(
 
     drainable = [r for r in scanned if classify_row(r) == DISPOSITION_DRAINABLE]
     for row in drainable:
+        # #2048, second half: a per-row ``except`` is not per-row isolation on
+        # PostgreSQL. A failed statement aborts the whole transaction, so without a
+        # savepoint the FIRST error takes every later row down with it — reporting
+        # one defect as N, each with a different exception type. That is exactly the
+        # production signature (ProgrammingError, then DBAPIError on the corpse).
+        # A bare ``rollback()`` would be the wrong repair: in an ``apply=True`` pass
+        # it discards merges already applied this run. The boundary must be per row.
         try:
-            twins = (await session.execute(_TWIN_SQL, {
-                "eid": row.id,
-                "external_id": row.external_id,
-                "espn_id": row.espn_id,
-                "statpal_fixture_id": row.statpal_fixture_id,
-            })).mappings().all()
+            async with session.begin_nested():
+                twins = (await session.execute(_TWIN_SQL, {
+                    "eid": row.id,
+                    "external_id": row.external_id,
+                    "espn_id": row.espn_id,
+                    "statpal_fixture_id": row.statpal_fixture_id,
+                })).mappings().all()
         except Exception as exc:  # noqa: BLE001
             errors.append(f"twin lookup for {row.id}: {type(exc).__name__}")
             continue
@@ -282,7 +305,12 @@ async def reconcile(
                 continue
 
             try:
-                await _absorb(session, keep=twin["id"], drop=row.id)
+                # Same containment as the twin lookup above, and it matters more
+                # here: this path DELETEs. A failure mid-absorb must roll back its
+                # own pair and nothing else — neither the pairs already drained in
+                # this run, nor the pairs after it.
+                async with session.begin_nested():
+                    await _absorb(session, keep=twin["id"], drop=row.id)
                 drained.append({**pair, "applied": True})
             except UnanchoredMergeRefused as exc:
                 # #1947: the in-transaction guard refused on the FRESH rows. That
@@ -388,10 +416,26 @@ async def run_reconcile_unanchored(
     apply: bool = False,
     limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
-    """Task entry point — opens its own session."""
-    from app.database import AsyncSessionLocal
+    """Task entry point — opens its own session.
 
-    async with AsyncSessionLocal() as session:
+    #2051: this previously imported ``AsyncSessionLocal`` from ``app.database``, a
+    module that has never existed in this repo. The import is deferred, so nothing
+    catches it until the beat fires — and then it fires every time: 48 invocations a
+    day, 48 ``ModuleNotFoundError``s, **zero successes since the task was scheduled**
+    (``consecutive_failures: 97``, Sentry BAINLUCK-12D).
+
+    Filed and fixed alongside #2048 deliberately. #2048 makes the drain able to
+    drain; on its own it changes nothing, because the scheduled caller never reaches
+    the code. Ruling 048's bound needs BOTH halves — one is a query that throws, the
+    other is a task that cannot start.
+
+    ``get_task_session`` is what every other task in ``app/tasks`` uses; it commits on
+    clean exit and rolls back on exception, so the explicit commit below is kept only
+    to make the apply path's intent legible at the call site.
+    """
+    from app.tasks.base import get_task_session
+
+    async with get_task_session() as session:
         result = await reconcile(session, apply=apply, limit=limit)
         if apply:
             await session.commit()

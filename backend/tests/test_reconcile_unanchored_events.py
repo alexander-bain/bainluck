@@ -100,6 +100,20 @@ class TestTheZeroIsNotOneZero:
 # ── the verdict ────────────────────────────────────────────────────────────
 
 
+class _Savepoint:
+    """#2048: the drain contains each row's DB work in a savepoint.
+
+    Modelled here because a fake without it makes the drain look broken; the
+    containment itself is asserted in ``test_reconcile_unanchored_bind_2048.py``.
+    """
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class _Session:
     """Answers the census, then the twin lookup. Records every write."""
 
@@ -110,6 +124,9 @@ class _Session:
         self.calls = 0
         self.writes: list = []
         self.committed = False
+
+    def begin_nested(self):
+        return _Savepoint()
 
     async def execute(self, stmt, params=None):
         self.calls += 1
