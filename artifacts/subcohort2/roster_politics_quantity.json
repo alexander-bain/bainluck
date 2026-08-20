@@ -1,0 +1,8 @@
+{
+  "detail": {
+    "error": "query_failed",
+    "reason": "statement_timeout",
+    "correlation_id": "18c09a182f69",
+    "sql_fingerprint": "89fa3c4238b83653"
+  }
+}

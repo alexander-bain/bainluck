@@ -1,0 +1,24 @@
+{
+  "columns": [
+    "n",
+    "k_n",
+    "k_avg",
+    "nonk_avg",
+    "k_win",
+    "nonk_win"
+  ],
+  "rows": [
+    [
+      996,
+      0,
+      null,
+      "0.54321435742971887550",
+      0,
+      498
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 90.1,
+  "sql_fingerprint": "e147dcf5f50aab2f"
+}
