@@ -367,9 +367,25 @@ describe("the state machine is a triple, not a boolean", () => {
     expect(by("Line Moved").surprising).toBe(true);
     expect(by("Line Moved").sentence).toBeTruthy();
 
-    // Ranked FIRST — conviction still decides the order …
-    expect(rows[0].player).toBe("Heavy Favourite");
-    // … and still says nothing beyond its own bar.
+    // ── UX-P108 FLIPPED THE ORDER, AND ONLY THE ORDER ────────────────────────
+    //
+    // UX-P106 asserted `rows[0].player === "Heavy Favourite"` — conviction
+    // decided the order. Alex's movement-first ruling reverses it: a question
+    // the market CHANGED ITS MIND about outranks one it has merely been
+    // confident about since the board opened.
+    //
+    // ** AND THE FULL ORDER IS PINNED, BECAUSE ITS THIRD PLACE IS THE RULING'S
+    // SHARPEST EDGE. ** "Quiet" moved two points (60% -> 62%) and outranks a 93%
+    // favourite that has not moved at all. That is not an accident of this
+    // fixture, it is what a strict movement TIER means, and it is asserted here
+    // so the trade is visible in the suite rather than discovered on a card.
+    // See `PROP_TRAVEL_FLOOR` for why the tier's floor is the same half-point
+    // line that types `direction`: any higher and a row whose bar visibly draws
+    // a journey would rank below a flat one, which is the complaint this ruling
+    // came from, re-created one tier down.
+    expect(rows.map((r) => r.player)).toEqual(["Line Moved", "Quiet", "Heavy Favourite"]);
+    // … and the favourite STILL says nothing beyond its own bar. Demoting a row
+    // is not the same as narrating it, and this is the half UX-P106 established.
     expect(by("Heavy Favourite").surprising).toBe(false);
     expect(by("Heavy Favourite").sentence).toBeNull();
 

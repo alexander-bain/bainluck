@@ -23,15 +23,74 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests import ruling_ledger
+
 DOCTRINE = Path(__file__).resolve().parents[2] / "docs" / "doctrine.md"
 
 #: `### 12. Two measurements never computed side by side ...`
 CLAUSE_RE = re.compile(r"^### (?P<num>\d+)\. (?P<title>.+)$", re.MULTILINE)
 
+#: A claim line in the ledger's `## DOCTRINE CLAUSES` section:
+#: `14   claimed-by ux   2026-08-19  — claimed  — **Two measurements ...**`
+#:
+#: ONE OR TWO DIGITS, which is what keeps this parser and the RULINGS one from
+#: reading each other's lines even if a section boundary ever slipped: a ruling
+#: claim opens with exactly three digits, a clause claim with one or two.
+CLAUSE_CLAIM_RE = re.compile(r"^(?P<num>\d{1,2})\s+")
+
+#: The clause series gained a ledger section on 2026-08-19 (UX-P103), and this
+#: gate on 2026-08-20 (UX-P108, Fable's ruling). Clauses 1-13 were banked before
+#: either existed and cannot be retro-claimed by the lanes that wrote them —
+#: several of those lanes are long finished.
+#:
+#: A TRACKED CONSTANT rather than "whatever the ledger happens to start at":
+#: deriving the floor from the ledger would make the gate vacuous the moment the
+#: ledger lost a row, which is the same self-defeating shape as a baseline
+#: computed from the thing it is meant to constrain.
+CLAUSE_CLAIM_FLOOR = 14
+
 
 def _clauses() -> list[tuple[int, str]]:
     text = DOCTRINE.read_text()
     return [(int(m.group("num")), m.group("title")) for m in CLAUSE_RE.finditer(text)]
+
+
+def _normalise(text: str) -> str:
+    """Lowercase, collapse whitespace, drop markdown emphasis and trailing stop.
+
+    Parse for MEANING, not punctuation (ruling 063). The ledger's titles are
+    written inside `**bold**` and the doctrine headings are not; a comparison
+    that treated an asterisk as significant would manufacture a failure on every
+    correctly-claimed clause.
+    """
+    return re.sub(r"\s+", " ", text.replace("*", "").replace("`", "")).strip().lower().rstrip(".")
+
+
+def _clause_claims() -> tuple[list, list]:
+    """(claims, dropped) from the ledger's DOCTRINE CLAUSES section.
+
+    `dropped` is returned rather than swallowed so a test can assert it is
+    empty: ruling 063's "a partial parse must BURN, never VANISH". A claim-shaped
+    line this parser cannot fully read still burns its number — the number is the
+    fact the ledger exists to record, and no failure to read the prose around it
+    may delete that fact.
+    """
+    ledger = ruling_ledger.require(
+        DOCTRINE.parents[1], "doctrine clause", "a `### N.` clause in docs/doctrine.md"
+    )
+    ruling_ledger.announce(ledger, "DOCTRINE CLAUSES", "DOCTRINE CLAUSES")
+    claims, dropped = [], []
+    for line in ruling_ledger.section_lines(
+        ledger.read_text(encoding="utf-8"), "DOCTRINE CLAUSES"
+    ):
+        m = CLAUSE_CLAIM_RE.match(line)
+        if not m:
+            continue
+        try:
+            claims.append({"num": int(m.group("num")), "raw": line})
+        except ValueError:  # pragma: no cover — unreachable by the regex
+            dropped.append(line)
+    return claims, dropped
 
 
 def test_doctrine_file_exists_and_has_clauses():
@@ -91,4 +150,108 @@ def test_every_clause_has_a_body():
         f"docs/doctrine.md clauses {empty} have no body (under 40 characters). "
         "A heading whose paragraph was dropped in a conflict resolution reads "
         "exactly like a clause nobody bothered to write."
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE LEDGER CLAIM — Fable ruling, 2026-08-20, banked by UX-P108
+# ---------------------------------------------------------------------------
+#
+#   "doctrine-CLAUSE numbers now claim through RULING-CLAIMS.md exactly like
+#    ruling numbers. A clause banked without a ledger claim is a staging defect
+#    from here on."
+#
+# The tests above catch a COLLISION once both clauses are in one tree. They
+# cannot catch the thing that actually costs cycles: two live lanes each about
+# to write the same next number, neither able to see the other, because the
+# collision does not exist yet. That is what the ledger is for, and until this
+# ruling the clause series had a section in it that nothing checked.
+#
+# Named failures behind the ruling: one UX clause wore FIVE numbers in two
+# cycles (6 -> 10 -> 11 -> 12 -> 13 -> 14), and three consecutive UX windows
+# skipped a payable clause rather than risk a sixth renumber.
+#
+# ⚠️ THIS IS A LOCAL GATE. `.gitignore` ignores `.claude/`, so the ledger never
+# reaches CI — `ruling_ledger.require` SKIPS there, by design and loudly. It
+# fires at authoring time on the lane's own machine, which is earlier than CI
+# and is the only moment at which the information is still actionable.
+
+
+def test_clause_claim_parser_is_not_vacuous():
+    """Runs first, for the same reason the rulings gate's does.
+
+    A parser that yields zero claims blesses everything: zero claims means zero
+    UNCLAIMED clauses too, and the gate below would pass over a tree in which
+    nothing was ever claimed. So assert the ledger yields claims AT ALL, and
+    that no claim-shaped line was silently discarded on the way.
+    """
+    claims, dropped = _clause_claims()
+    assert not dropped, (
+        f"claim-shaped lines in the DOCTRINE CLAUSES section were dropped: "
+        f"{dropped}. Ruling 063: a partial parse must BURN the number, never "
+        "make it vanish — a line this parser cannot read is still a claim."
+    )
+    assert claims, (
+        "the ledger's `## DOCTRINE CLAUSES` section yielded ZERO claims. Either "
+        "the heading was renamed (this parser keys on `## DOCTRINE CLAUSES`) or "
+        "the line format changed. Until it yields claims, the gate below is "
+        "blessing every clause in the tree."
+    )
+
+
+def test_every_clause_above_the_floor_is_claimed_in_the_ledger():
+    """The ruling, enforced.
+
+    One direction only, deliberately. A clause CLAIMED but not yet written is
+    the normal and desirable state — that is a lane reserving a number ahead of
+    banking it, which is the whole mechanism. A clause WRITTEN but not claimed
+    is the staging defect.
+    """
+    claimed = {c["num"] for c in _clause_claims()[0]}
+    unclaimed = [
+        (n, t) for n, t in _clauses() if n >= CLAUSE_CLAIM_FLOOR and n not in claimed
+    ]
+    assert not unclaimed, (
+        "docs/doctrine.md clauses written WITHOUT a ledger claim: "
+        + "; ".join(f"### {n}. {t}" for n, t in unclaimed)
+        + f".\n\nFable ruling 2026-08-20: a clause banked without a claim in "
+        f"{ruling_ledger.RULING_CLAIMS_RELPATH} is a staging defect. Claim the "
+        "number in the `## DOCTRINE CLAUSES` section of the ledger in the MAIN "
+        "worktree BEFORE writing the heading — the number is allocated by the "
+        "claim, not by the file (ruling 069). Do not commit the ledger."
+    )
+    # Non-vacuity: the floor must not have drifted above every clause in the
+    # tree, which would make the assertion above trivially true.
+    assert [n for n, _ in _clauses() if n >= CLAUSE_CLAIM_FLOOR], (
+        f"no clause in docs/doctrine.md is at or above CLAUSE_CLAIM_FLOOR "
+        f"({CLAUSE_CLAIM_FLOOR}), so this gate checked nothing."
+    )
+
+
+def test_a_claim_is_for_ITS_clause_and_not_merely_on_the_number():
+    """A claim-jump: the right number, somebody else's clause.
+
+    The rulings gate learned this one the expensive way — three lanes each held
+    a claim on 053/054/055 for three entirely different subjects, and every
+    number-only check passed. Matching the TITLE is what separates "this clause
+    is claimed" from "this number is taken by something".
+
+    Titles are compared normalised (see `_normalise`), because the ledger writes
+    them bolded and the heading does not; verified against the three live rows
+    (14, 15, 16) at the time this gate was written.
+    """
+    by_num = {c["num"]: c["raw"] for c in _clause_claims()[0]}
+    mismatched = []
+    for num, title in _clauses():
+        if num < CLAUSE_CLAIM_FLOOR or num not in by_num:
+            continue
+        if _normalise(title) not in _normalise(by_num[num]):
+            mismatched.append((num, title))
+    assert not mismatched, (
+        "ledger claims whose title does not match the clause they are supposed "
+        "to cover: "
+        + "; ".join(f"### {n}. {t}" for n, t in mismatched)
+        + ". Either the clause was renamed after it was claimed (update the "
+        "ledger row) or this number is claimed by a DIFFERENT lane's clause, "
+        "which is a collision — the later claim renumbers (ruling 055)."
     )

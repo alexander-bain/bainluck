@@ -274,16 +274,37 @@ describe("the rail Alex ruled on", () => {
     expect(rail.structuralSuppressed).toBe(3);
   });
 
-  it("15199902 promotes the two 92.5% rows — and the game agreed with one of them", () => {
+  it("SUPERSEDED BY UX-P108, AND THE COST IS RECORDED: the two 92.5% rows lose their slots to movers", () => {
+    // UX-P107 counted promoting `Braxton Fulford: 1+` and `Max Muncy (LAD): 1+`
+    // — both marked 92.5%, both travelled 0.0 points — among its wins. Alex's
+    // movement-first ruling takes both slots back, and this test is rewritten to
+    // say so rather than deleted (ruling 049: a claim already committed is
+    // corrected IN the record).
     const rail = selectDivergenceRows({ playerProps: DODGERS, status: "scheduled" });
-    expect(labels(rail.rows)).toContain("Braxton Fulford: 1+ hits + runs + rbis");
-    expect(labels(rail.rows)).toContain("Max Muncy (LAD): 1+ hits + runs + rbis");
+    expect(labels(rail.rows)).not.toContain("Braxton Fulford: 1+ hits + runs + rbis");
+    expect(labels(rail.rows)).not.toContain("Max Muncy (LAD): 1+ hits + runs + rbis");
+    // …because five questions on this card actually moved, and they are the five.
+    expect(rail.rows.every((r) => r.direction !== "flat")).toBe(true);
 
-    // P106's coherence property SURVIVES the filter: the settled rail's top five
-    // surprises and the script's five rows still share two rows.
+    // ── THE COHERENCE PROPERTY WEAKENS, MEASURED AND NOT GLOSSED ──────────────
+    //
+    // UX-P106 established that the script's five rows and the settled rail's
+    // five biggest surprises overlap, and P107 measured that overlap at 2. Under
+    // movement-first it is 1, and the direction is structural rather than
+    // incidental: the settled key is |resolution − mark|, which is maximised by
+    // exactly the near-certain marks this ruling stops leading with.
+    //
+    // Recorded at its NEW value, with the old one named. What survives is worth
+    // saying: the single row that appears on both rails is Freddie Freeman's 3+,
+    // the biggest surprise of the game (93.0 points) — kept because it also
+    // travelled 35.5 points before first pitch, i.e. the movement tier caught the
+    // game's best story on its own terms rather than by predicting it.
     const settled = selectDivergenceRows({ playerProps: DODGERS, status: "completed" });
     const scriptKeys = new Set(rail.rows.map((r) => r.key));
-    expect(settled.rows.filter((r) => scriptKeys.has(r.key))).toHaveLength(2);
+    const overlap = settled.rows.filter((r) => scriptKeys.has(r.key));
+    expect(overlap).toHaveLength(1);
+    expect(overlap[0].label).toBe("Freddie Freeman: 3+ hits + runs + rbis");
+    expect(settled.rows[0].label).toBe("Freddie Freeman: 3+ hits + runs + rbis");
   });
 
   it("NOTHING IT SUPPRESSED TURNED OUT TO MATTER — the safety check, on a finished game", () => {
@@ -305,17 +326,24 @@ describe("the rail Alex ruled on", () => {
     expect(rail.rows).toHaveLength(2);
   });
 
-  it("THE RESIDUAL, RECORDED: the freed slots refill with rungs one point less extreme", () => {
-    // Not a defect this queue is hiding — a measured property of the population,
-    // and the reason a certainty line cannot finish this job on its own. If a
-    // later change makes the Phillies rail lead with questions near a coin flip,
-    // this test reds and the finding has been superseded, which is the point.
+  it("THE RESIDUAL IS GONE — and the test that recorded it is the one that says so", () => {
+    // ** THIS ASSERTION USED TO RUN THE OTHER WAY. ** UX-P107 shipped it as
+    // "THE RESIDUAL, RECORDED: the freed slots refill with rungs one point less
+    // extreme", asserting >= 3 rows at conviction >= 0.4, and wrote in its own
+    // body: "If a later change makes the Phillies rail lead with questions near
+    // a coin flip, this test reds and the finding has been superseded, which is
+    // the point."
+    //
+    // Alex's movement-first ruling is that change, and this test did red. It is
+    // inverted rather than deleted, so the residual's whole life — found,
+    // recorded, closed — stays legible in one place.
     const rail = selectDivergenceRows({ playerProps: PHILLIES, status: "scheduled" });
-    const rungs = rail.rows.filter((r) => r.conviction >= 0.4);
-    expect(rungs.length).toBeGreaterThanOrEqual(3);
-    // and the card genuinely has few views to lead with instead
-    const nearFlip = candidates(PHILLIES).filter((r) => r.conviction < 0.25);
-    expect(nearFlip).toHaveLength(8);
+    expect(rail.rows.filter((r) => r.conviction >= 0.4)).toHaveLength(0);
+    // The population itself did not change — the ranking did. Same 8 near-flip
+    // questions, same continuum of rungs; they are simply no longer what the
+    // rail leads with.
+    expect(candidates(PHILLIES).filter((r) => r.conviction < 0.25)).toHaveLength(8);
+    expect(candidates(PHILLIES).filter((r) => r.conviction >= 0.4).length).toBeGreaterThan(3);
   });
 });
 
@@ -477,6 +505,35 @@ describe("selection-loop mechanics", () => {
     // Three structural rungs ahead of two real questions from the same player.
     // Charged against RAIL_MAX_PER_PLAYER, the two real ones never render — the
     // rule would have silenced the player in whose name it fired.
+    //
+    // ** THE TWO REAL QUESTIONS ARE NOW TWO DIFFERENT STATS, AND THAT IS THE
+    // POINT OF THE EDIT. ** UX-P107 wrote this fixture with both survivors on
+    // the Hits ladder, which UX-P108's one-per-ladder cap correctly reduces to
+    // one — so the original fixture could no longer distinguish "the player cap
+    // was spent by a suppressed rung" (the defect under test) from "the ladder
+    // cap fired" (working as ruled). Two stats separate them again: the player
+    // cap is the only thing that could stop the second row, so if a suppressed
+    // rung ever charges against it, this reds.
+    const rows = [
+      rung("Deep Ladder", "Hits", 6, 0.03),
+      rung("Deep Ladder", "Hits", 5, 0.04),
+      rung("Deep Ladder", "Hits", 4, 0.05),
+      rung("Deep Ladder", "Hits", 3, 0.22),
+      rung("Deep Ladder", "Home Runs", 2, 0.7),
+    ];
+    const rail = selectDivergenceRows({ playerProps: rows, status: "scheduled" });
+    expect(rail.structuralSuppressed).toBe(3);
+    expect(labels(rail.rows).sort()).toEqual([
+      "Deep Ladder: 2+ home runs",
+      "Deep Ladder: 3+ hits",
+    ]);
+  });
+
+  it("ONE RUNG PER LADDER — and the suppressed rungs ahead of it do not take the slot either", () => {
+    // Alex's cap, on the same fixture shape the test above uses, with both
+    // survivors back on ONE ladder. Exactly one of them reaches the rail, and it
+    // is the higher-ranked one — not the first rung the loop happened to walk
+    // past, which is what a cap charged before the structural floor would give.
     const rows = [
       rung("Deep Ladder", "Hits", 6, 0.03),
       rung("Deep Ladder", "Hits", 5, 0.04),
@@ -486,10 +543,37 @@ describe("selection-loop mechanics", () => {
     ];
     const rail = selectDivergenceRows({ playerProps: rows, status: "scheduled" });
     expect(rail.structuralSuppressed).toBe(3);
-    expect(labels(rail.rows).sort()).toEqual([
-      "Deep Ladder: 2+ hits",
-      "Deep Ladder: 3+ hits",
-    ]);
+    // The 3+ rung, not the 2+ one. Neither has moved, so both sit in the
+    // conviction tier, where 3+ (priced 22%, conviction 0.28) outranks 2+
+    // (priced 70%, conviction 0.20) — the cap takes the rail's OWN top-ranked
+    // survivor rather than whichever rung the loop reached first.
+    expect(labels(rail.rows)).toEqual(["Deep Ladder: 3+ hits"]);
+    // Non-vacuity in the other direction (gotcha #43): the rung it did NOT show
+    // is still eligible and still reachable through the expand.
+    expect(rail.eligible).toBe(5);
+    expect(labels(candidates(rows))).toContain("Deep Ladder: 2+ hits");
+  });
+
+  it("THE DOUBLE-TURNER ROWS ALEX NAMED ARE GONE FROM HIS OWN CARD", () => {
+    // The shape the cap was ruled for, on the real payload. UX-P107's rail
+    // carried `Trea Turner: 4+ hits` at row 4 and `Trea Turner: 3+ hits` at row
+    // 5 — one ladder, one point apart, neither having moved.
+    const rail = selectDivergenceRows({ playerProps: PHILLIES, status: "scheduled" });
+    const ladders = rail.rows.map((r) => `${r.player}|${r.stat}`);
+    expect(new Set(ladders).size).toBe(ladders.length);
+    expect(labels(rail.rows).filter((l) => l.startsWith("Trea Turner"))).toHaveLength(0);
+    // Both Turner rungs are still eligible; this is rail capacity, not a loss.
+    expect(labels(candidates(PHILLIES))).toEqual(
+      expect.arrayContaining(["Trea Turner: 4+ hits", "Trea Turner: 3+ hits"]),
+    );
+  });
+
+  it("EVERY CARD: one rung per ladder, on all four production payloads", () => {
+    for (const [id, rows] of ALL) {
+      const rail = selectDivergenceRows({ playerProps: rows, status: "scheduled" });
+      const ladders = rail.rows.map((r) => `${r.player}|${r.stat}`);
+      expect(`${id}: ${new Set(ladders).size}`).toBe(`${id}: ${ladders.length}`);
+    }
   });
 });
 

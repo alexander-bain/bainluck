@@ -13,13 +13,13 @@ explicit Alex ruling — update the marker list below IN THE SAME CHANGE and say
 so in the commit message. Do not delete a marker to make the test pass.
 """
 
-import hashlib
 import re
 import warnings
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+from tests import ruling_ledger
 
 PRODUCT_BRAIN = (
     Path(__file__).resolve().parents[2] / "docs" / "PRODUCT-BRAIN.md"
@@ -593,7 +593,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: a delta to any of those three numbers would produce a floor no tree has ever held. Thirteenth
 #: consecutive cycle in which the branch, HEAD and the merged tree disagree, and the thirteenth in
 #: which counting the tree is the only thing that has been right (#1910, ruling 088).
-MINIMUM_BANKED_RULINGS = 101
+MINIMUM_BANKED_RULINGS = 102
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
@@ -789,7 +789,7 @@ def test_index_section_is_the_last_section_so_appends_do_not_touch_rulings() -> 
 # ---------------------------------------------------------------------------
 
 #: Relative to a worktree root. Untracked by design — see the block above.
-RULING_CLAIMS_RELPATH = Path(".claude") / "handoff" / "RULING-CLAIMS.md"
+RULING_CLAIMS_RELPATH = ruling_ledger.RULING_CLAIMS_RELPATH
 
 #: Layer 1 — the NUMBER, parsed alone and first. Anything in the RULINGS section
 #: that opens with three digits is a claim on that number, and F1 says it burns
@@ -832,49 +832,16 @@ def _main_worktree_root() -> Path:
     nothing else in this file shells out, and a test that shells out fails
     differently (and more confusingly) when git is absent than when it is.
     """
-    repo_root = PRODUCT_BRAIN.parents[1]
-    dot_git = repo_root / ".git"
-    if dot_git.is_dir():
-        return repo_root  # already the main worktree
-    if not dot_git.is_file():
-        return repo_root
-    pointer = dot_git.read_text(encoding="utf-8").strip()
-    if not pointer.startswith("gitdir:"):
-        return repo_root
-    worktree_gitdir = Path(pointer.split(":", 1)[1].strip())
-    if not worktree_gitdir.is_absolute():
-        worktree_gitdir = (repo_root / worktree_gitdir).resolve()
-    commondir_file = worktree_gitdir / "commondir"
-    if not commondir_file.is_file():
-        return repo_root
-    common = Path(commondir_file.read_text(encoding="utf-8").strip())
-    if not common.is_absolute():
-        common = (worktree_gitdir / common).resolve()
-    return common.parent
+    return ruling_ledger.main_worktree_root(PRODUCT_BRAIN.parents[1])
 
 
 def _find_ruling_claims_ledger():
     """The ledger path, or None. Current tree first, then the main worktree."""
-    for root in (PRODUCT_BRAIN.parents[1], _main_worktree_root()):
-        candidate = root / RULING_CLAIMS_RELPATH
-        if candidate.is_file():
-            return candidate
-    return None
+    return ruling_ledger.find_ledger(PRODUCT_BRAIN.parents[1])
 
 
-class LedgerSnapshotNotice(UserWarning):
-    """Emitted once per session so a PASSING run also names what it read.
-
-    F5 / ruling 063. A failure message can carry its own provenance, but a pass
-    prints nothing, and "the suite was green" was exactly the claim that turned
-    out to be unfalsifiable on 2026-08-14. pytest shows its warnings summary by
-    default, so this lands in the output of every run that actually consumed the
-    ledger — and in no run that did not.
-    """
-
-
-#: One notice per session, not one per test.
-_SNAPSHOT_ANNOUNCED = False
+#: Re-exported so this module's public surface is unchanged by the extraction.
+LedgerSnapshotNotice = ruling_ledger.LedgerSnapshotNotice
 
 
 def _ledger_snapshot(ledger: Path) -> str:
@@ -886,50 +853,31 @@ def _ledger_snapshot(ledger: Path) -> str:
     compares.
     """
     text = ledger.read_text(encoding="utf-8")
-    section = "\n".join(_ledger_rulings_section(text))
-    digest = hashlib.sha256(section.encode("utf-8")).hexdigest()[:12]
-    mtime = datetime.fromtimestamp(ledger.stat().st_mtime, tz=timezone.utc)
     claims, dropped = _parse_ledger_claims(text)
     deviations = sum(1 for c in claims if not c["canonical"])
-    return (
-        f"ledger={ledger} digest={digest} "
-        f"mtime={mtime.strftime('%Y-%m-%dT%H:%M:%SZ')} "
-        f"claims={len(claims)} deviations={deviations} dropped={len(dropped)}"
+    return ruling_ledger.snapshot(
+        ledger,
+        "RULINGS",
+        f"claims={len(claims)} deviations={deviations} dropped={len(dropped)}",
     )
 
 
 def _announce_snapshot(ledger: Path) -> None:
-    global _SNAPSHOT_ANNOUNCED
-    if _SNAPSHOT_ANNOUNCED:
-        return
-    _SNAPSHOT_ANNOUNCED = True
-    warnings.warn(
-        "RULING-CLAIMS ledger consumed by this run — "
-        + _ledger_snapshot(ledger)
-        + ". This gate reads SHARED MUTABLE STATE in the main worktree "
-        "(untracked, appended to by every live lane). Ruling 063: a verdict "
-        "names the snapshot it came from, so quote this line rather than "
-        "'the suite was green'.",
-        LedgerSnapshotNotice,
-        stacklevel=2,
+    text = ledger.read_text(encoding="utf-8")
+    claims, dropped = _parse_ledger_claims(text)
+    deviations = sum(1 for c in claims if not c["canonical"])
+    ruling_ledger.announce(
+        ledger,
+        "RULINGS",
+        "RULINGS",
+        f"claims={len(claims)} deviations={deviations} dropped={len(dropped)}",
     )
 
 
 def _require_ruling_claims_ledger() -> Path:
-    ledger = _find_ruling_claims_ledger()
-    if ledger is None:
-        pytest.skip(
-            "LOCAL GATE, NOT A CI GATE — no .claude/handoff/RULING-CLAIMS.md "
-            "found in this tree or in the main worktree. This is expected and "
-            "correct on CI and in a fresh clone: .gitignore ignores `.claude/`, "
-            "so the ledger is untracked and never reaches a runner or a linked "
-            "worktree. The gate is designed to fire at AUTHORING time on the "
-            "lane's own machine — earlier than CI, which is the point. If you "
-            "are a developer about to add docs/rulings/NNN-<slug>.md and you see "
-            "this skip locally, create the ledger in the MAIN worktree "
-            "(~/bainluck/.claude/handoff/RULING-CLAIMS.md) and claim your number "
-            "in it BEFORE writing the file. Do not commit the ledger to fix this."
-        )
+    ledger = ruling_ledger.require(
+        PRODUCT_BRAIN.parents[1], "ruling", "docs/rulings/NNN-<slug>.md"
+    )
     _announce_snapshot(ledger)
     return ledger
 
@@ -943,21 +891,11 @@ def _ledger_rulings_section(text: str) -> list:
     look like a claim on ruling 125 and silently bless a file that has none.
     `### ` sub-headings inside the section (the live-collision writeup) do NOT
     terminate it and carry no claim-shaped lines.
+
+    The bounding rule itself now lives in `ruling_ledger.section_lines`, because
+    the DOCTRINE CLAUSES series needs the same bound for the same reason.
     """
-    lines = text.splitlines()
-    start = None
-    for i, line in enumerate(lines):
-        if line.startswith("## RULINGS"):
-            start = i + 1
-            break
-    if start is None:
-        return []
-    end = len(lines)
-    for j in range(start, len(lines)):
-        if lines[j].startswith("## "):
-            end = j
-            break
-    return lines[start:end]
+    return ruling_ledger.section_lines(text, "RULINGS")
 
 
 def _status_field(line: str, after: int) -> str:
@@ -1480,6 +1418,20 @@ def test_the_canonical_shape_is_counted_but_never_fatal() -> None:
     )
 
 
+def _digest_of(snapshot: str) -> str:
+    """The `digest=` field, found BY NAME.
+
+    UX-P108: this used to be `snapshot.split()[1]`, and adding a `section=`
+    field to the shared snapshot silently moved the digest to index 2 — a
+    positional read of a self-describing string, which is the punctuation-over-
+    meaning parse ruling 063 forbids one file over. Fixed at the read.
+    """
+    for field in snapshot.split():
+        if field.startswith("digest="):
+            return field
+    raise AssertionError(f"no digest= field in snapshot: {snapshot!r}")
+
+
 def test_the_snapshot_names_the_state_a_verdict_came_from(tmp_path) -> None:
     """F5. A verdict that cannot name its input is not falsifiable.
 
@@ -1507,7 +1459,7 @@ def test_the_snapshot_names_the_state_a_verdict_came_from(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    assert _ledger_snapshot(ledger).split()[1] == first.split()[1], (
+    assert _digest_of(_ledger_snapshot(ledger)) == _digest_of(first), (
         "a GOTCHAS-only edit must not move the RULINGS digest, or nobody will "
         "compare two digests that differ for reasons they do not care about"
     )
@@ -1524,7 +1476,7 @@ def test_the_snapshot_names_the_state_a_verdict_came_from(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    assert _ledger_snapshot(ledger).split()[1] != first.split()[1], (
+    assert _digest_of(_ledger_snapshot(ledger)) != _digest_of(first), (
         "a new RULINGS claim MUST move the digest — otherwise the snapshot "
         "cannot distinguish the RED state from the GREEN one it became"
     )
@@ -1711,10 +1663,16 @@ def test_the_snapshot_notice_fires_once_per_session(monkeypatch, tmp_path) -> No
     # Patched one layer DOWN from the other tests on purpose: they replace
     # `_require_ruling_claims_ledger`, which is the function that emits, so
     # patching it there would test the stub instead of the seam.
+    #
+    # UX-P108 moved that seam into `ruling_ledger`, so the patch moved with it.
+    # The once-per-session latch is now a SET keyed by series rather than a
+    # bool, because the clause gate reads a different section of the same file
+    # and its snapshot must not be suppressed by this one having already fired —
+    # two verdicts from two sections need two receipts.
     ledger = tmp_path / "RULING-CLAIMS.md"
     ledger.write_text(_ledger_with_every_ruling_claimed(), encoding="utf-8")
-    monkeypatch.setitem(globals(), "_find_ruling_claims_ledger", lambda: ledger)
-    monkeypatch.setitem(globals(), "_SNAPSHOT_ANNOUNCED", False)
+    monkeypatch.setattr(ruling_ledger, "find_ledger", lambda _root: ledger)
+    monkeypatch.setattr(ruling_ledger, "_ANNOUNCED", set())
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
