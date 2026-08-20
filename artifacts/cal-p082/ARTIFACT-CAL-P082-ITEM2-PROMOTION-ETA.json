@@ -1,0 +1,91 @@
+{
+  "queue": "CAL-P082",
+  "item": 2,
+  "issue": 2007,
+  "captured_at": "2026-08-20T21:51:15.187333+00:00",
+  "question": "When does tolerance_pp descend from 100.0 for the first time?",
+  "mechanism": "tolerance_pp is bounded by served_drift, which is monotone-up-until-promotion and is SATURATED at 128/128. It descends on the PROMOTION beat and on no other. promote_if_complete() promotes iff the BUILDING bank covers all 128 planned units, so the bound's first descent == the beat on which rebuild_units_banked reaches 128.",
+  "no_treadmill": "retain_planned_units keeps a unit iff its KEY is in the plan, and CAL-P028 made the key the SLOT, not the membership. Drift on the building bank is MEASURED (staged:units_drifted = 5 of 13 checkable at 21:15Z) and does NOT drop the unit. So the building bank accumulates monotonically toward 128 and the ETA is a division, not a race.",
+  "state_at_2115Z": {
+    "rebuild_units_banked": 20,
+    "planned": 128,
+    "remaining": 108,
+    "unit_ms_mean": 131140,
+    "unit_ms_worst": 341668,
+    "window_left_ms": 400151,
+    "staged:beats_to_publish": 12,
+    "beat_cadence": "hourly at :15 UTC"
+  },
+  "beat_history": [
+    {
+      "beat": "2026-08-20T18:15Z",
+      "units_this_beat": 6,
+      "banked_after": 5,
+      "carried": null,
+      "source": "artifacts/cal-p080/restage-verdict-twobeat.json"
+    },
+    {
+      "beat": "2026-08-20T19:15Z",
+      "units_this_beat": 8,
+      "banked_after": 13,
+      "carried": null,
+      "source": "artifacts/cal-p080/restage-verdict-twobeat.json"
+    },
+    {
+      "beat": "2026-08-20T20:15Z",
+      "units_this_beat": 0,
+      "banked_after": 13,
+      "carried": [
+        "futures",
+        "sports"
+      ],
+      "source": "artifacts/cal-p081/ARTIFACT-CAL-P081-ROLLING-RESTAGE.json + CAL-P081 report"
+    },
+    {
+      "beat": "2026-08-20T21:15Z",
+      "units_this_beat": 7,
+      "banked_after": 20,
+      "carried": [],
+      "source": "artifacts/cal-p082/beats.jsonl (ledger gen 1787261587576)"
+    }
+  ],
+  "scenarios": [
+    {
+      "label": "the BUILD's own projection (staged:beats_to_publish = 12)",
+      "rate_units_per_beat": 9.0,
+      "beats": 12,
+      "eta_utc": "2026-08-21T09:15:00+00:00",
+      "eta_pdt": "2026-08-21 02:15 PDT"
+    },
+    {
+      "label": "mean of the 3 beats that RAN the unit loop",
+      "rate_units_per_beat": 7.0,
+      "beats": 16,
+      "eta_utc": "2026-08-21T13:15:00+00:00",
+      "eta_pdt": "2026-08-21 06:15 PDT"
+    },
+    {
+      "label": "last beat alone (7 units)",
+      "rate_units_per_beat": 7,
+      "beats": 16,
+      "eta_utc": "2026-08-21T13:15:00+00:00",
+      "eta_pdt": "2026-08-21 06:15 PDT"
+    },
+    {
+      "label": "mean of ALL 4 beats incl. the carried zero (today's realised rate)",
+      "rate_units_per_beat": 5.25,
+      "beats": 21,
+      "eta_utc": "2026-08-21T18:15:00+00:00",
+      "eta_pdt": "2026-08-21 11:15 PDT"
+    }
+  ],
+  "headline_eta": "Between ~09:15Z and ~19:15Z on Wed 2026-08-21 (02:15\u201312:15 PDT). Central estimate ~13:15Z / 06:15 PDT \u2014 16 beats at the 7-per-beat rate the unit loop actually achieves when it is not carried.",
+  "what_moves_it_EARLIER": [
+    "program/calibration-78's carry guard: it removes the 20:15Z-shaped zero beats, which is the whole difference between the 4-beat realised rate (5.25/beat) and the running rate (7/beat)."
+  ],
+  "what_moves_it_LATER": [
+    "Every deploy that lands between :15 and :35 kills the in-flight beat mid-loop. Six releases landed between 16:16Z and 20:07Z on 2026-08-20; each one truncates a beat, and a truncated beat banks fewer units (the cursor checkpoints per unit, so nothing banked is lost \u2014 but nothing further is gained either).",
+    "staged:window_stop:unit_too_large fired on the 21:15Z beat with 400,151 ms of window left: the admission gate refused the 8th unit because the evidence said it would not fit. Unit cost is uneven (mean 131,140 ms vs worst 341,668 ms), so the tail of the partition may bank more slowly than the mean predicts."
+  ],
+  "how_it_will_be_reported": "The promotion beat itself, quoted from the ledger: staged:units_banked reaching 128, served_at re-stamped, staged:units_drifted resetting to 0, and tolerance_pp on /api/calibration reading BELOW 100.0. The bound's first descent is the number Fable asked for, and it is a single reading on a single beat."
+}
