@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
+import { propVerdictLabel } from "@/lib/propGrade";
 
 interface TotalPointsSpectrumProps {
   data: GameMarketsResponse;
@@ -265,7 +266,15 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
                       : { background: "rgba(239,68,68,0.15)", color: "#EF4444" }
                     }
                   >
-                    {finalHit ? "HIT" : "MISS"}
+                    {/* `finalHit === true`, not `finalHit`, ONLY to preserve
+                        today's behaviour exactly while the words move into
+                        `propGrade` (UX-P105). It is nullable here — a completed
+                        game with no score prints a red MISS on a total nobody
+                        knows, which is #1638's class in a component that never
+                        got #1638's treatment. Flagged, not changed, because a
+                        vocabulary commit is the wrong place to alter what a
+                        badge asserts. See #2025. */}
+                    {propVerdictLabel(finalHit === true)}
                   </span>
                 </div>
               </div>

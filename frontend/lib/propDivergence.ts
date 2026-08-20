@@ -20,6 +20,8 @@
 
 import { parsePlayerName } from "./playerPropsGrouping";
 import type { PlayerPropRow } from "./playerPropsGrouping";
+import type { PropGrade } from "./propGrade";
+import { readOverSideResolution } from "./propResolution";
 
 /**
  * The surprise threshold — MEASURED, not tuned.
@@ -66,6 +68,52 @@ export const PROP_SURPRISE_TRAVEL = 0.2;
  * measurement to record, not a knob to turn.
  */
 export const PROP_OFF_SCRIPT_TRAVEL = 0.1;
+
+/**
+ * POST-GAME the ranking key is SURPRISE, not travel — #2011, ruled by Fable
+ * (cycle 102 (c)): "the post-game rail must rank by |resolution − pregame
+ * mark|, not travel."
+ *
+ * Travel is a distance between two PRICES. Once a question has resolved, the
+ * last traded price is not where it ended — the outcome is. A prop marked 92.5%
+ * that resolved NO has travelled 0.0 points and surprised by 92.5, and on
+ * production event `15199902` it ranks **18th of 39** by travel while a
+ * 9.5-point non-event (Ohtani 2+ home runs) ranks 2nd. Three such rows on that
+ * one page: Braxton Fulford 1+ (92.5 pts, travel-rank 18), Connor Norby 1+
+ * (92.0, rank 19), Willi Castro 2+ (83.0, rank 30).
+ *
+ * ── BOTH CONSTANTS MEASURED ON THE SETTLED POPULATION, NOT COPIED ──
+ *
+ * Surprise over 57 typed rows across 12 settled production events
+ * (2026-08-19): p25 7.0 · p50 13.0 · p75 20.0 · **p90 83.0** · max 93.0. Even
+ * more strongly bimodal than travel, and with an EMPTY PLATEAU: the same six
+ * rows clear 50, 60, 70 and 80 points. So any cut inside [0.50, 0.80] selects
+ * an identical set, and the constant does not balance on the plateau's width.
+ *
+ * `PROP_SURPRISE_RESOLUTION = 0.50` takes the plateau's LOWER edge, where the
+ * number also means something without a percentile: a surprise of half or more
+ * is a question whose pregame mark favoured **the other outcome**. 6/57 =
+ * 10.5% of rows, which is the same escalation rate `PROP_SURPRISE_TRAVEL`
+ * produces in-game (11%) — V2's shape is preserved across the whistle rather
+ * than re-tuned.
+ */
+export const PROP_SURPRISE_RESOLUTION = 0.5;
+
+/**
+ * The post-game fold — the settled twin of `PROP_OFF_SCRIPT_TRAVEL`, and for
+ * the same job: keeping "off script" from collapsing into "exists".
+ *
+ * p75 of the settled distribution above = 0.20, selecting 15/57 = 26.3% —
+ * alongside the travel fold's 34/100 = 34% on the mock's own game. A 0.10 cut
+ * was measured and rejected: it admits 59.6% of rows, because post-game the
+ * floor on surprise is set by the mark itself (a prop marked 8% that resolved
+ * NO surprises by 8 points), and a heavy favourite doing exactly what it was
+ * supposed to do is the script being FOLLOWED, not left.
+ *
+ * Same discipline as its three neighbours: a future population that moves this
+ * is a new measurement to record, not a knob to turn.
+ */
+export const PROP_OFF_SCRIPT_RESOLUTION = 0.2;
 
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
@@ -127,12 +175,39 @@ export interface DivergenceRow {
   travel: number;
   /** Which way it travelled. `flat` when travel rounds to nothing. */
   direction: "over" | "under" | "flat";
-  /** travel at or above PROP_SURPRISE_TRAVEL (inclusive; see travelAtOrAbove). */
+  /**
+   * In-game: travel at or above PROP_SURPRISE_TRAVEL. Post-game: surprise at or
+   * above PROP_SURPRISE_RESOLUTION. One flag, two measured lines — the surface
+   * asks "does this row escalate to prose", and the answer depends on whether
+   * the question is still open.
+   */
   surprising: boolean;
   /** Present only when `surprising`. V2: the sentence is an escalation. */
   sentence: string | null;
   /** Settled games freeze: the bar shows the journey, it stops implying motion. */
   settled: boolean;
+  /**
+   * POST-GAME ONLY (#2011). Where the question actually landed, on the same
+   * over axis `current` and `pregameMark` are quoted on: 1 the over resolved
+   * YES, 0 it resolved NO, `null` nothing may be stated.
+   *
+   * Deliberately null on a live row even if a leg happens to carry a `hit`:
+   * the in-game treatment is the red/green travelled bar, explicitly approved,
+   * and only there.
+   */
+  resolution: 0 | 1 | null;
+  /**
+   * POST-GAME ONLY. `|resolution - pregameMark|`, and the settled RANKING KEY.
+   * `null` when the row carries no readable verdict — never a fabricated 0,
+   * which would file the ungraded rows in among the genuinely unsurprising
+   * ones (#2011's named residual).
+   */
+  surprise: number | null;
+  /**
+   * POST-GAME ONLY. The settled state from `readPropGrade`, so the surface can
+   * say `SETTLED_NO_GRADE_LABEL` for a WITHHOLD rather than inventing silence.
+   */
+  grade: PropGrade | null;
 }
 
 export interface DivergenceDrop {
@@ -158,10 +233,29 @@ export interface DivergenceResult {
   /** Total eligible rows before the cap — the denominator for "5 of N". */
   eligible: number;
   /**
+   * POST-GAME ONLY. Settled questions with no readable verdict. They are
+   * eligible — they are real questions and the expand still lists them — but
+   * the rail will not spend one of its five slots saying nothing.
+   */
+  ungraded: number;
+  /**
+   * Whether the game is over. On the result rather than inferred from the rows,
+   * because an EMPTY rail still has to know — `rows.some(r => r.settled)` reads
+   * "not settled" for a settled page with nothing to show, which is how the
+   * heading came to say "What's moving" over a finished game.
+   */
+  settled: boolean;
+  /**
    * Why there are no rows, when there are none. Same three-way vocabulary
    * `groupPlayerProps` already uses, extended rather than reinvented.
+   *
+   * `ungraded` is the fourth member, added by #2011: a settled game every one
+   * of whose questions went ungraded is neither `clean` (nothing was wrong with
+   * the data we were shown) nor `unreadable` (no guard caught anything) — it is
+   * a page with real questions and no published outcomes, and saying so is the
+   * honest-empty ruling 027 asks for.
    */
-  emptyReason: "none" | "clean" | "unreadable" | null;
+  emptyReason: "none" | "clean" | "unreadable" | "ungraded" | null;
 }
 
 export interface DivergenceInput {
@@ -249,8 +343,21 @@ export function divergenceSentence(
   pregameMark: number,
   current: number,
   settled: boolean,
+  resolution?: 0 | 1 | null,
 ): string {
   const question = label.includes(": ") ? label.split(": ").slice(1).join(": ") : label;
+
+  // #2011: post-game the sentence must state the OUTCOME, not the last traded
+  // price. "finished at 58%" is a price wearing the grammar of a result, and it
+  // is the sentence half of the same defect as the bar that ends there.
+  if (settled && resolution != null) {
+    // Same vocabulary as the badge beside it and the prop card below it —
+    // `hit` / `missed` is the verb form of PROP_HIT_LABEL / PROP_MISS_LABEL,
+    // not a third word (see `resolutionLabel`, and #1650).
+    const verdict = resolution === 1 ? "and it hit." : "and it missed.";
+    return `${possessive(player)} ${question} was marked ${pct(pregameMark)} — ${verdict}`;
+  }
+
   const tail = settled
     ? `finished at ${pct(current)}.`
     : `it's ${pct(current)} now.`;
@@ -275,6 +382,8 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     nonBenignCount: 0,
     notSelected: 0,
     eligible: 0,
+    ungraded: 0,
+    settled,
     emptyReason,
   });
 
@@ -293,14 +402,42 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     };
   }
 
+  const ungraded = settled ? candidates.filter((r) => r.surprise == null).length : 0;
+
   const perPlayer = new Map<string, number>();
   const selected: DivergenceRow[] = [];
   for (const row of candidates) {
     if (selected.length >= RAIL_MAX_ROWS) break;
+    // #2011: post-game the rail names the biggest surprises. A question with no
+    // published verdict has no surprise, and spending one of five slots on
+    // "Resolved · grading unavailable" is the rail asserting it has a story
+    // when it does not. The expand still lists every one of them.
+    //
+    // `break`, not `continue`, ON PURPOSE: `bySurprise` already sorts every
+    // ungraded row behind every graded one, so the first one IS the end of the
+    // list. A `continue` would be a SECOND expression of that same rule, and
+    // the two would then be free to disagree — a mutation that reversed the
+    // sort's null-handling passed the whole suite while the filter quietly
+    // covered for it. One rule, load-bearing, and now mutation-visible.
+    if (settled && row.surprise == null) break;
     const n = perPlayer.get(row.player) ?? 0;
     if (n >= RAIL_MAX_PER_PLAYER) continue;
     perPlayer.set(row.player, n + 1);
     selected.push(withSentence(row, settled));
+  }
+
+  if (selected.length === 0) {
+    // A settled page with real questions and not one published outcome. Neither
+    // `clean` nor `unreadable`: honest-empty needs its own word (ruling 027).
+    return {
+      ...empty(settled && ungraded > 0 ? "ungraded" : "clean"),
+      dropped,
+      nonBenignCount,
+      notSelected: candidates.length,
+      eligible: candidates.length,
+      ungraded,
+      settled,
+    };
   }
 
   return {
@@ -309,6 +446,8 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     nonBenignCount,
     notSelected: candidates.length - selected.length,
     eligible: candidates.length,
+    ungraded,
+    settled,
     emptyReason: null,
   };
 }
@@ -324,6 +463,7 @@ function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
       row.pregameMark,
       row.current,
       settled,
+      row.resolution,
     ),
   };
 }
@@ -384,8 +524,19 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // Parsing FIRST and keying on `player|stat|threshold` is correct for both:
   // the Over/Under legs parse to the same identity and collapse, while distinct
   // players parse to distinct identities and survive.
+  //
+  // #2011 ADDS ONE THING TO THIS: the sibling leg is COLLAPSED, not DISCARDED.
+  //
+  // Both legs of a Polymarket O/U carry a typed `hit`, and they type opposite
+  // verdicts about opposite sides of the same line. Keeping whichever arrived
+  // first and reading its `hit` as the over-side result is a coin flip on the
+  // ingest order — so every leg's verdict is collected here and reconciled by
+  // `readOverSideResolution`, which maps them all onto the over axis and
+  // withholds if they then disagree.
   const seen = new Set<string>();
   const candidates: DivergenceRow[] = [];
+  /** Every leg of a question, in payload order, keyed by parsed identity. */
+  const legs = new Map<string, PlayerPropRow[]>();
 
   for (const row of rows) {
     const marketName = (row.market_name || "").trim();
@@ -421,7 +572,12 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     }
 
     const key = `${parsed.player}|${parsed.stat}|${threshold}`;
-    if (seen.has(key)) continue; // the sibling Over/Under leg of the SAME question
+    // The sibling Over/Under leg of the SAME question: it contributes no second
+    // row, but it DOES contribute its verdict.
+    const bucket = legs.get(key);
+    if (bucket) bucket.push(row);
+    else legs.set(key, [row]);
+    if (seen.has(key)) continue;
     seen.add(key);
 
     const travel = Math.abs(current - pregameMark);
@@ -438,7 +594,27 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       surprising: travelAtOrAbove(travel, PROP_SURPRISE_TRAVEL),
       sentence: null,
       settled,
+      resolution: null,
+      surprise: null,
+      grade: null,
     });
+  }
+
+  // POST-GAME: restate every row on the resolution axis. Nothing here runs on a
+  // live game — the in-game treatment is the travelled bar, and only there.
+  if (settled) {
+    for (const row of candidates) {
+      const { grade, resolution } = readOverSideResolution(legs.get(row.key) ?? []);
+      row.grade = grade;
+      row.resolution = resolution;
+      row.surprise = resolution == null ? null : Math.abs(resolution - row.pregameMark);
+      // The escalation line changes with the question's state; the escalation
+      // RULE does not (V2). An ungraded row can never escalate — it has nothing
+      // to say, and `surprise` is null rather than a fabricated 0.
+      row.surprising =
+        row.surprise != null &&
+        travelAtOrAbove(row.surprise, PROP_SURPRISE_RESOLUTION);
+    }
   }
 
   const dropped: DivergenceDrop[] = [...dropCounts.entries()].map(
@@ -453,20 +629,54 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     .filter((d) => !d.benign)
     .reduce((n, d) => n + d.count, 0);
 
-  // Rank by travel, then by current price so the order is total and stable
-  // across renders (a pure tie on travel is common — many props do not move).
-  candidates.sort(
-    (a, b) => b.travel - a.travel || b.current - a.current || a.key.localeCompare(b.key),
-  );
+  candidates.sort(settled ? bySurprise : byTravel);
 
   return { candidates, dropped, nonBenignCount, settled, noRows: false };
 }
 
+/**
+ * In-game order: by travel, then by current price so the order is total and
+ * stable across renders (a pure tie on travel is common — many props do not
+ * move).
+ */
+function byTravel(a: DivergenceRow, b: DivergenceRow): number {
+  return b.travel - a.travel || b.current - a.current || a.key.localeCompare(b.key);
+}
+
+/**
+ * Post-game order: by surprise from the pregame mark (#2011).
+ *
+ * Ungraded rows sort AFTER every graded one, and among themselves by travel so
+ * the order stays total. They are NOT given a surprise of 0 — that would file
+ * a question we could not read in among the questions that went exactly as
+ * marked, which is the residual #2011 names by hand.
+ */
+function bySurprise(a: DivergenceRow, b: DivergenceRow): number {
+  const as = a.surprise;
+  const bs = b.surprise;
+  if (as == null && bs == null) return byTravel(a, b);
+  if (as == null) return 1;
+  if (bs == null) return -1;
+  return bs - as || byTravel(a, b);
+}
+
 export interface DivergenceDetailResult {
-  /** Questions that left their pregame mark, ranked by travel. Above the fold. */
+  /**
+   * Questions that left their pregame mark. Above the fold.
+   * In-game the fold is travel; post-game it is surprise (#2011).
+   */
   offScript: DivergenceRow[];
-  /** Questions still on script. Below the fold, same bar, no sentence. */
+  /** Questions still on script. Below the fold, same treatment, no sentence. */
   onScript: DivergenceRow[];
+  /**
+   * POST-GAME ONLY. Settled questions carrying no readable verdict — rendered
+   * `SETTLED_NO_GRADE_LABEL`, with no bar and no surprise number.
+   *
+   * A third group, not a tail of `onScript`, because "still on script" is a
+   * CLAIM about how the question landed and these are exactly the questions we
+   * cannot make that claim about. Always empty in-game.
+   */
+  ungraded: DivergenceRow[];
   /** `offScript.length` — the mock's "N off script" badge. */
   offScriptCount: number;
   /** Every eligible question. The rail's `eligible` and this agree by construction. */
@@ -497,9 +707,15 @@ export interface DivergenceDetailResult {
  *      questions, which is the "why are we losing markets" complaint V3 exists
  *      to answer, re-introduced by the very screen meant to resolve it.
  *
- * The fold is `PROP_OFF_SCRIPT_TRAVEL`. Note a row below the fold can never be
- * surprising (0.10 < 0.20), so sentences appear above the fold by construction
- * rather than by a second rule — asserted, not assumed.
+ * The in-game fold is `PROP_OFF_SCRIPT_TRAVEL`; the post-game fold is
+ * `PROP_OFF_SCRIPT_RESOLUTION` (#2011). In BOTH states a row below the fold can
+ * never be surprising (0.10 < 0.20 and 0.20 < 0.50), so sentences appear above
+ * the fold by construction rather than by a second rule — asserted, not assumed.
+ *
+ * Partitioning post-game by TRAVEL would be the ranking defect wearing a
+ * different hat: Braxton Fulford's 1+ was marked 92.5% and did not happen, and
+ * travelled 0.0 points doing it, so a travel fold files a 92.5-point surprise
+ * under "Still on script".
  */
 export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetailResult {
   const built = buildCandidates(input);
@@ -516,6 +732,7 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
       ...base,
       offScript: [],
       onScript: [],
+      ungraded: [],
       offScriptCount: 0,
       eligible: 0,
       emptyReason: "none",
@@ -527,6 +744,7 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
       ...base,
       offScript: [],
       onScript: [],
+      ungraded: [],
       offScriptCount: 0,
       eligible: 0,
       emptyReason: nonBenignCount > 0 ? "unreadable" : "clean",
@@ -535,8 +753,15 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
 
   const offScript: DivergenceRow[] = [];
   const onScript: DivergenceRow[] = [];
+  const ungraded: DivergenceRow[] = [];
   for (const row of candidates) {
-    if (travelAtOrAbove(row.travel, PROP_OFF_SCRIPT_TRAVEL)) offScript.push(withSentence(row, settled));
+    if (settled && row.surprise == null) {
+      ungraded.push(row);
+      continue;
+    }
+    const distance = settled ? (row.surprise as number) : row.travel;
+    const fold = settled ? PROP_OFF_SCRIPT_RESOLUTION : PROP_OFF_SCRIPT_TRAVEL;
+    if (travelAtOrAbove(distance, fold)) offScript.push(withSentence(row, settled));
     else onScript.push(row);
   }
 
@@ -544,6 +769,7 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
     ...base,
     offScript,
     onScript,
+    ungraded,
     offScriptCount: offScript.length,
     eligible: candidates.length,
     emptyReason: null,

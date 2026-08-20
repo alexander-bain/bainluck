@@ -20,6 +20,7 @@ import {
   RAIL_MAX_ROWS,
   RAIL_MAX_PER_PLAYER,
   selectDivergenceRows,
+  selectDivergenceDetail,
   divergenceSentence,
   isBenignDrop,
   isSettledStatus,
@@ -260,23 +261,63 @@ describe("the label and the sentence", () => {
     ).toBe("Soto's 2+ hits opened at 10% — it's 32% now.");
   });
 
-  it("freezes the language on a settled game rather than implying motion", () => {
+  it("states the OUTCOME on a settled game, never the last traded price", () => {
+    // UX-P105 (#2011). This test used to assert `finished at 60%` — a PRICE
+    // read out with the grammar of a result. Alex's verdict on the expand
+    // captures was that post-game it "doesn't make any sense", and the
+    // measurement behind it is worse than cosmetic: the price is also what the
+    // rail RANKED by, so a question that resolved against a heavy favourite
+    // without ever trading sorted to the bottom.
+    const graded = polyRow("Juan Soto", "Hits", 1.5, 0.1, 0.6) as PlayerPropRow & {
+      hit?: boolean;
+    };
+    graded.hit = true; // the "Over" leg hit: the over resolved YES
+
     const live = selectDivergenceRows({
-      playerProps: [polyRow("Juan Soto", "Hits", 1.5, 0.1, 0.6)],
+      playerProps: [graded],
       status: "scheduled",
     }).rows[0];
     const done = selectDivergenceRows({
-      playerProps: [polyRow("Juan Soto", "Hits", 1.5, 0.1, 0.6)],
+      playerProps: [graded],
       status: "completed",
     }).rows[0];
 
     expect(live.settled).toBe(false);
     expect(live.sentence).toContain("now.");
+    expect(live.resolution).toBeNull();
+
     expect(done.settled).toBe(true);
-    expect(done.sentence).toContain("finished at");
-    expect(done.sentence).not.toContain("now.");
-    // The bar still shows the journey either way.
+    expect(done.resolution).toBe(1);
+    expect(done.surprise).toBeCloseTo(0.9, 6); // |1 - 0.10|, not |0.60 - 0.10|
+    expect(done.sentence).toBe("Soto's 2+ hits was marked 10% — and it hit.");
+    expect(done.sentence).not.toContain("finished at");
+    // Travel is still computed — it is simply no longer what settles the rank.
     expect(done.travel).toBeCloseTo(0.5, 6);
+  });
+
+  it("withholds the outcome when the settled row carries no typed verdict", () => {
+    const done = selectDivergenceRows({
+      playerProps: [polyRow("Juan Soto", "Hits", 1.5, 0.1, 0.6)],
+      status: "completed",
+    });
+    // The rail will not spend a slot on a question with nothing to say; it
+    // reports the honest-empty instead, and the expand still lists the row.
+    expect(done.rows).toHaveLength(0);
+    expect(done.emptyReason).toBe("ungraded");
+    expect(done.ungraded).toBe(1);
+    expect(done.eligible).toBe(1);
+
+    const detail = selectDivergenceDetail({
+      playerProps: [polyRow("Juan Soto", "Hits", 1.5, 0.1, 0.6)],
+      status: "completed",
+    });
+    expect(detail.ungraded).toHaveLength(1);
+    const row = detail.ungraded[0];
+    expect(row.settled).toBe(true);
+    expect(row.resolution).toBeNull();
+    expect(row.surprise).toBeNull();
+    expect(row.sentence).toBeNull();
+    expect(row.grade?.state).toBe("WITHHOLD");
   });
 
   it("reads settledness from the standing status vocabulary", () => {
