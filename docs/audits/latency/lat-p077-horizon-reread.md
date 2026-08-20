@@ -373,3 +373,114 @@ One intervention per window, and ruling 110 was it. Specified for the successor:
   a different and also useful number;
 * never report a single aggregate cold rate over a probe set whose membership in the warmed
   head is unmeasured — that is the number that swung 80 → 0 → 45 while telling nobody why.
+
+---
+
+## 7. The five-hour head watch — §6.3 confirmed, and a flaw found in this window's own probe
+
+§6.3 rested on a 20-minute run. To settle whether the two cold terms are *structurally* out of
+the warmed head or merely transiently, the five terms were probed every 300 s for five hours:
+**55 rounds, 275 reads, 18:35:59Z → 23:32:34Z.**
+
+| term | cold | p50 |
+|---|---|---|
+| `world cup` | 15/55 = 27 % | 248 ms |
+| `super bowl` | 17/55 = 31 % | 280 ms |
+| `world series` | 19/55 = 35 % | 295 ms |
+| **`stanley cup`** | **54/55 = 98 %** | **5,230 ms** |
+| **`nba champion`** | **53/55 = 96 %** | **5,897 ms** |
+
+Overall 158/275 = 57 % cold, p50 2,500 ms, p95 7,704 ms.
+
+**§6.3 holds and is stronger than stated.** The two terms are cold across five hours and across
+both probe spacings (95 s and 300 s). The other three rotate — warm at 95 s spacing, ~30 % cold
+at 300 s — which is head membership drifting under real traffic, exactly as §6.3 predicted.
+
+### 🔴 …and the three apparent exceptions are a defect in THIS window's instrument
+
+`stanley cup` read warm once and `nba champion` twice. Those reads are **3.2 ms, 3.4 ms and
+5.4 ms**. The 275 reads separate into two clean populations:
+
+* **110 legitimate warm reads, minimum 220 ms**, p50 237 ms;
+* **7 reads between 3.0 ms and 5.6 ms**, clustered at exactly two instants — all five terms
+  simultaneously at **22:08:54Z**, and two terms at **22:18:21Z**.
+
+Five terms returning in ~3 ms in the same instant is an outage signature, not five cache hits.
+A response ~90× faster than the fastest legitimate warm read is not a fast success.
+
+**So the corrected reading is that `stanley cup` and `nba champion` were NEVER legitimately warm
+in 55 rounds** — 0/55 each, not 1/55 and 2/55.
+
+The defect is mine: the probe recorded `time_total` only and **not the HTTP status**, so a fast
+error is indistinguishable from a fast success. That is gotcha #53's shape inside this window's
+own instrument, and it was caught only because 3 ms is physically implausible against a 220 ms
+floor — i.e. by luck of magnitude, not by design. **Any successor probe must record the status
+code and the byte count alongside the timing.** (The 15- and 60-read runs in §6 used the same
+script and carry the same gap; no sub-50 ms reads appear in either, so their numbers stand.)
+
+### And four reads never completed at all
+
+Four reads hit the 30-second `curl --max-time` cap outright — `nba champion` 20:37:43Z,
+`stanley cup` 22:17:51Z, `world cup` 22:18:21Z, `stanley cup` 23:32:19Z. Those are not slow
+reads, they are failures, and they are counted here merely as "cold". The user-facing cost of
+#1866 is therefore **understated** by every number in this document.
+
+---
+
+## 8. Item 4 — the 24 h stamp census, GRADED
+
+**Delivered at a true 24-hour span for the first time in four cycles.**
+
+```
+python3 backend/scripts/stamp_arm_read.py --grade /tmp/lat-p073-stamp-arm-series.jsonl
+GRADE EXIT CODE: 0
+```
+
+| field | value |
+|---|---|
+| `samples` | **264** |
+| `first_read_at` | 2026-08-19T23:36:43Z |
+| `last_read_at` | 2026-08-20T23:40:13Z |
+| **`span_h`** | **24.06** |
+| `above_ceiling_total_values` | **[39]** — never moved |
+| `above_ceiling_stable` | **true** |
+| `stamp_tasks_ever_not_on_schedule` | **12 tasks, every one `unmeasurable`** |
+| coverage list | `[24 … 37]`, 14 distinct values |
+
+**The pass:** no stamp task ever flipped to `behind` or `overruns` in 24 hours — all 12
+entries in `stamp_tasks_ever_not_on_schedule` are `unmeasurable`, which is a gap in grading,
+not a missed schedule. The headline never left 39.
+
+### 🔴 The coverage list is the finding — and the finding REVERSES the framing it inherited
+
+Three cycles have reported coverage as a **range**, and it widened every time: `[27,28]` at
+LAT-P074, `[24…32]` at LAT-P075, `[24…33]` at LAT-P076, `[24…37]` here. That reads as a
+population growing steadily less stable.
+
+**It is the wrong statistic, and it manufactured the trend.** A range is a max minus a min over
+a growing sample, so it can only widen as samples accumulate — the same "a sampled maximum is a
+lower bound" clause this program banked in ruling 104. Measured on the same 264 samples:
+
+| | first 60 | first 120 | first 180 | all 264 |
+|---|---|---|---|---|
+| range | 24–33 | 24–33 | 24–37 | 24–37 |
+
+And the distribution over time shows the opposite of churn — it shows **convergence**:
+
+| quarter | range | median |
+|---|---|---|
+| 1 | 24–33 | 31 |
+| 2 | 25–36 | 29 |
+| 3 | 35–37 | 36 |
+| **4** | **36–37** | **37** |
+
+In the final quarter (66 samples) `above_ceiling_graded` is **36 of 39, range 36–36 — perfectly
+stable**, with 3 unmapped and the stamp arm steady at 24–25 `on_schedule` / 12 `unmeasurable`.
+
+> **The graded population is not churning. It converged, and it has been stable at 36 of 39 for
+> the last six hours of the window.**
+
+The honest residual is therefore **3 unmapped + 12 stamp-unmeasurable**, and that is a fixed,
+nameable list rather than a moving one — which is a considerably better position than three
+cycles of widening ranges implied. What was owed was never "watch the range widen"; it was to
+report the population's *distribution*, which nobody had done.

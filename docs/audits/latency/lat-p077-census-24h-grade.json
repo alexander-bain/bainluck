@@ -1,0 +1,67 @@
+{
+ "series": "/tmp/lat-p073-stamp-arm-series.jsonl",
+ "samples": 264,
+ "first_read_at": "2026-08-19T23:36:43Z",
+ "last_read_at": "2026-08-20T23:40:13Z",
+ "span_s": 86610.0,
+ "span_h": 24.06,
+ "stamp_tasks_seen": 54,
+ "stamp_tasks_covered_per_sample": [
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+  33,
+  34,
+  35,
+  36,
+  37
+ ],
+ "stamp_tasks_ever_not_on_schedule": {
+  "app.tasks.sync_statpal_rosters": [
+   "unmeasurable"
+  ],
+  "app.tasks.recategorize_other": [
+   "unmeasurable"
+  ],
+  "app.tasks.canonicalize_entities": [
+   "unmeasurable"
+  ],
+  "app.tasks.backfill_canonical_keys": [
+   "unmeasurable"
+  ],
+  "app.tasks.audit_canonical_keys": [
+   "unmeasurable"
+  ],
+  "app.tasks.check_kalshi_freshness": [
+   "unmeasurable"
+  ],
+  "app.tasks.audit_prediction_market_links": [
+   "unmeasurable"
+  ],
+  "app.tasks.audit_related_futures": [
+   "unmeasurable"
+  ],
+  "app.tasks.snapshot_discover_ground_truth_diagnostics": [
+   "unmeasurable"
+  ],
+  "app.tasks.compute_matching_metrics": [
+   "unmeasurable"
+  ],
+  "app.tasks.sync_rosters": [
+   "unmeasurable"
+  ],
+  "app.tasks.send_daily_digest": [
+   "unmeasurable"
+  ]
+ },
+ "above_ceiling_total_values": [
+  39
+ ],
+ "above_ceiling_stable": true
+}
