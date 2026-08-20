@@ -11,6 +11,11 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update as _sql_update
 
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.espn_id_stamp import (
+    REFUSED as _ESPN_STAMP_REFUSED,
+    STAMPED as _ESPN_STAMP_STAMPED,
+    stamp_espn_id_if_unheld,
+)
 from app.utils.game_pairing import (
     PREGAME_LIVE_GRACE as _PREGAME_LIVE_GRACE,
     Pairing,
@@ -834,6 +839,15 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
     }
 
     sched_identity_cache: set[tuple[int, str]] = set()
+
+    # #2017: track espn_ids already spoken for by a row in this pass, the same
+    # way the live pass does (`espn_sync.py` `claimed_espn_ids`). The DB check
+    # inside `stamp_espn_id_if_unheld` is the real guard; this set makes the
+    # in-pass case explicit instead of relying on autoflush ordering.
+    sched_claimed_espn_ids: set[str] = {
+        ev.espn_id for ev in scheduled_events if ev.espn_id
+    }
+
     for event in scheduled_events:
         matched_espn = None
 
@@ -921,9 +935,26 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                 event.commence_time_source = "espn"
         if ee.broadcasts and not event.broadcast_info:
             event.broadcast_info = ", ".join(ee.broadcasts)
+
+        # #2017: this pass is the AMPLIFIER for the espn_id collision class.
+        # It loads every `scheduled` row for the sport with NO time window and,
+        # unlike its live-pass sibling in `espn_sync.py` (which keeps a
+        # `claimed_espn_ids` set), it kept none — so once a duplicate exists,
+        # the next 60s tick stamped the same espn_id onto both halves. The
+        # write now refuses when another row already holds the id, and the
+        # refusal is counted rather than logged-and-forgotten.
         if ee.espn_id and not event.espn_id:
-            event.espn_id = ee.espn_id
-            stats["scheduled_espn_ids_set"] = stats.get("scheduled_espn_ids_set", 0) + 1
+            verdict, _holder = await stamp_espn_id_if_unheld(
+                session, event, ee.espn_id,
+                context=f"sync_scheduled_events[{sport_key}]",
+                claimed=sched_claimed_espn_ids,
+            )
+            if verdict == _ESPN_STAMP_REFUSED:
+                stats["scheduled_espn_id_refused"] = (
+                    stats.get("scheduled_espn_id_refused", 0) + 1
+                )
+            elif verdict == _ESPN_STAMP_STAMPED:
+                stats["scheduled_espn_ids_set"] = stats.get("scheduled_espn_ids_set", 0) + 1
 
         # Update importance from ESPN season type for scheduled events too
         if ee.season_type is not None:
