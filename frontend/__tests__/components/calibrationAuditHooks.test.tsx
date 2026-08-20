@@ -189,13 +189,44 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
   });
 
   test("the stale banner is decided in one place, not re-derived at the JSX", () => {
-    // Reading `cache.status` again here is how "degraded" would silently outrank
-    // a refusal: two independent conditionals, and whichever is checked first
-    // wins. The banner renders off the same decision the refusal does.
-    expect(SOURCE).toContain("{contract.degraded && (");
+    // Reading the payload's staleness fields again here is how a disclosure
+    // would silently outrank a refusal: two independent conditionals, and
+    // whichever is checked first wins. The banner renders off ONE pure
+    // decision, taken above the conditional returns.
+    //
+    // CAL-P077 (#2007 item 1b): that decision moved from `contract.degraded` to
+    // `staleness`, because the two questions are different. The contract asks
+    // "may this build label these numbers"; `decideCalibrationStaleness` asks
+    // "what must the reader be told about them", and it answers with three
+    // states where `degraded` had one. The assertion follows the INVARIANT
+    // rather than the identifier: whatever the gate is called, it must be a
+    // single pure decision and the JSX must not re-read the raw fields.
+    expect(SOURCE).toContain("{staleness && (");
+    expect(SOURCE).toContain("useMemo(() => decideCalibrationStaleness(data), [data])");
     const bannerIdx = SOURCE.indexOf('data-testid="calibration-stale-banner"');
     const before = SOURCE.slice(Math.max(0, bannerIdx - 600), bannerIdx);
     expect(before).not.toContain('data.cache?.status === "stale"');
+    expect(before).not.toContain('data.availability !==');
+    expect(before).not.toContain("staged?.frozen_over_drift");
+  });
+
+  test("the banner names WHICH kind of staleness, as data", () => {
+    // #2007 item 1b. "Not being refreshed right now" is true of a dated
+    // last-good and FALSE of a frozen input bank — the curve rebuilds hourly
+    // there, and only the census under it is old. A rail (and a person) has to
+    // be able to tell the two apart without parsing the sentence.
+    const i = SOURCE.indexOf('data-testid="calibration-stale-banner"');
+    const block = SOURCE.slice(i, i + 900);
+    expect(block).toContain("data-staleness-kind={staleness.kind}");
+    expect(block).toContain("data-staged-at=");
+    expect(block).toContain("data-units-drifted=");
+    // The false sentence may appear ONLY under the last-good branch.
+    const falseCopy = SOURCE.indexOf("are not being refreshed right now");
+    const lastGoodBranch = SOURCE.indexOf('staleness.kind === "last-good"');
+    const frozenBranch = SOURCE.indexOf('staleness.kind === "frozen-inputs"');
+    expect(lastGoodBranch).toBeGreaterThan(-1);
+    expect(falseCopy).toBeGreaterThan(lastGoodBranch);
+    expect(falseCopy).toBeLessThan(frozenBranch);
   });
 
   test("the stale banner is dated as data, not only as formatted prose", () => {
