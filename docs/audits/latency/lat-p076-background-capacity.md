@@ -1,8 +1,24 @@
-# LAT-P076 — the background queue is oversubscribed, and two of LAT-P075's facts about it were wrong
+# LAT-P076 — the background queue runs near saturation, and two of LAT-P075's facts about it were wrong
 
-**Window:** 2026-08-19 21:00 PDT → (2026-08-20 04:00Z →). **Branch:** `program/latency-69`.
-**Issues:** #1866 (p1), #2014 (p2), #1609 (p1).
+**Window:** 2026-08-19 21:00 PDT → 2026-08-19 23:00 PDT (2026-08-20 04:00–06:00Z).
+**Branch:** `program/latency-69`. **Issues:** #1866 (p1), #2014 (p2), #1609 (p1).
 **Authority:** Fable directive 2026-08-20, item 3 — "measure and propose the fix shape".
+
+> 🔴 **READ §6 BEFORE ACTING ON §0 OR §2. This document was overtaken by events twice.**
+>
+> 1. **§0 says `-68` is undeployed and R1–R3 cannot be graded. It deployed mid-window.**
+>    §6 grades all three against production. §0 is left as written rather than edited,
+>    because it was true when written.
+> 2. **§2 concludes the queue is oversubscribed at rho 1.09–1.50. The direct occupancy
+>    census (§3) measured 90 % busy, and the post-deploy period agrees with the census.**
+>    The demand model **overstates**. §6 states the corrected load: **~0.90 measured.**
+>
+> The two corrections in §1 are unaffected and stand.
+>
+> **Headline: the user-felt number went 80 % cold → 0 % cold, 2,779 ms p50 → 218 ms p50**,
+> confirmed by a control that removes the TTL as an explanation. **The capacity proposal in
+> §4 is consequently DOWNGRADED from urgent to open, and nothing topology-shaped should ship
+> on this window's numbers.**
 
 ---
 
@@ -91,7 +107,17 @@ Pinned by `test_the_background_queue_carries_102_beats_not_57`, which asserts th
 
 ---
 
-## 2. The real mechanism: rho >= 1. The tail is a deficit, not a fluctuation.
+## 2. The demand model: rho 1.09–1.50 — ⚠️ **SUPERSEDED IN PART BY §3 AND §6**
+
+> **This section's conclusion ("the tail is a deficit") does not survive the measurements that
+> follow it.** The direct occupancy census in §3 read **90 % busy**, and the post-deploy period
+> in §6 (p50 40.5–45.2 s, p95 74.9–82.4 s) is not what a queue at 1.5x capacity produces. The
+> model **overstates**, most likely because it prices every scheduled fire at a full run while
+> many background beats no-op or self-gate cheaply.
+>
+> The section is kept in full because the **method** is reusable and the **bracket** is still
+> the right input to a capacity decision (a lever should clear the upper end to be safe). Read
+> the rho figures below as the model's output, not as the load.
 
 Method: the **live beat schedule** (exact intervals, from config — not a sampled fire rate)
 joined to per-task durations from `/api/admin/celery/schedule-adherence` and
@@ -308,3 +334,106 @@ number.
 (`find_lapping`) does **not** shrink, because the queue stays at rho 0.63–1.05 without the
 warmer. This is the prediction that distinguishes "we rescued the warmer" from "we fixed the
 queue", and it is designed to be able to embarrass lever A.
+
+---
+
+## 6. 🔴 THE GATE OPENED MID-WINDOW. R1–R3 GRADED AGAINST PRODUCTION.
+
+§0 above was written when `-68` was unmerged. **It merged and deployed during this window** —
+INT-093, master `79960ee1`, Heroku **v3872**, `/api/health` commit verified. `b785a44e` is an
+ancestor of `origin/master`. §0 is left standing as written, because it was true when written
+and rewriting it would hide that the grade was taken late rather than skipped.
+
+Instrument: `GET /api/admin/typeahead-warmer/last`, two reads 345.7 s apart, plus the §0
+protocol re-run verbatim. `response_cache_ttl_s` reads **65** — the ratified TTL is live.
+
+### THE USER-FELT NUMBER — Fable's line one
+
+`_STATIC_FLOOR` primed, then read three times at 60 s spacing. **Identical method to §0.**
+
+| | before (LAT-P075) | **after (v3872)** |
+|---|---|---|
+| **cold reads** | **12/15 = 80 %** | **0/15 = 0 %** |
+| cold p50 / max | 2,779 ms / 6,250 ms | — (no cold reads) |
+| **all-reads p50** | — | **218 ms** |
+| all-reads p95 / max | — | 223 ms / 232 ms |
+
+⚠️ **The method has a hole the TTL raise opened, and it was controlled for.** §0 read at 60 s
+spacing *past* a 45 s TTL. The TTL is now **65 s**, so a 60 s re-read can be served by the
+response cache written by the *previous read* — which would manufacture a warm result. Identical
+method, different meaning.
+
+**Control: the same protocol at 95 s spacing**, beyond the 65 s TTL, so the response cache must
+have expired and the read has to reach the warmer's index:
+
+| control (95 s spacing) | cold | p50 |
+|---|---|---|
+| 3 rounds x 5 terms | **0/15 = 0 %** | **218 ms** |
+
+**The control agrees exactly.** The warm reads are the warmer's index, not the response cache.
+**80 % cold → 0 % cold is real.**
+
+### R1 — PASS
+
+| | before | after |
+|---|---|---|
+| executions / beat fire | 30.5 % | **≥ 100 %** (44 executions vs 34.6 fires in a 345.7 s window) |
+| `skips.by_reason.lock` per pass | 1.6 | **5.3** (3.3x) |
+
+**PASS on the primary clause** (30.5 % → ≥ 95 %). ⚠️ **The ratio exceeding 100 % means the
+denominator is wrong, and that is reported rather than rounded to 100 %**: `fires = Δt / 10 s`
+assumes exactly one fire per beat interval, and celery beat can emit catch-up fires after a
+stall. The honest reading is "essentially every fire now executes"; the exact multiple is not
+measurable with this denominator. The sub-clause "skips up 4–5x" measured **3.3x** — under
+prediction, reported as such.
+
+### R2 — 🔴 **FAILS on the clause it was written to be able to fail on**
+
+| | before | after (t1 / t2) | prediction | grade |
+|---|---|---|---|---|
+| period p50 | 46.5 s | 40.5 / 45.2 s | improves ≤ 1 beat interval (10 s) | **HOLDS** (1.3–6.0 s) |
+| **period p95** | **176.5 s** | **82.4 / 74.9 s** | **does NOT materially improve** | 🔴 **FAILS** (−53 to −58 %) |
+| period max | 326.3 s | 266.7 s | does NOT materially improve | HOLDS (−18 %, one sample) |
+| passes with loss | 15/32 | 3–4/32 | — | — |
+
+**p95 collapsed. LAT-P075 registered that exact outcome as the one that would prove it wrong to
+demote #2014, so: #2014 IS UN-DEMOTED.** The `expires` change moved the period tail, and this
+lane said it would not.
+
+**The mechanism LAT-P075 missed.** Its argument was "the pile drains on the first free slot
+either way". That is true of the *pile*, but not of the *prefetch buffer*: with `expires: 10` a
+freed slot pulls messages that are already expired and discards them one after another, and if
+the buffer holds only expired messages the worker must wait for the **next** beat fire to get a
+live one. With `expires: 120` the first message pulled is live and starts immediately. That is a
+real period effect, and it is larger after a long stall — i.e. exactly in the tail.
+
+⚠️ **Two confounds, both stated because they cut against the grade above.**
+1. **The deploy restarted `worker-background`**, clearing whatever backlog existed. The read is
+   30–60 min post-restart. A near-saturated queue looks best immediately after a restart.
+2. **TTL 45 → 65 shipped in the same release.** It cannot affect the *period* (it is a response
+   cache, not a scheduler), so the period attribution is safe — but the user-felt number has
+   both changes in it and cannot separate them.
+
+**A longer-horizon re-read is OWED** before R2's failure is treated as settled. The 266.7 s max
+occurred **631 s before the read, not at boot**, so the tail has not been eliminated — which is
+the part of R2 that held.
+
+### R3 — PASS, and exceeded
+
+Predicted static-floor cold rate 80 % → **55–70 %**, explicitly "not to zero". Measured **0 %**,
+confirmed by the >TTL control. The prediction was too pessimistic; recorded as a miss in the
+lane's favour, which is still a miss.
+
+### What this does to §2's headline
+
+The post-deploy period (p50 40.5–45.2 s, p95 74.9–82.4 s) is **not what a queue at 1.5x capacity
+produces.** Together with the census's 90 %-busy reading, the demand model in §2 is confirmed to
+**overstate**. §2 and the module docstring are corrected accordingly: the load is **~0.90
+measured**, with a model bracket of 1.09–1.50 that runs high.
+
+**The capacity proposal in §4 is therefore DOWNGRADED from urgent to open.** The user-felt cost
+that motivated it is, for now, gone. What remains true and still worth Alex's ruling: the queue
+runs near saturation, the 266 s tail survives, and 45 beats are on it by default rather than by
+decision. **Nothing about the topology should ship on this window's numbers** — the user-felt
+emergency that would have justified spending $25/mo has been resolved by a change that cost
+nothing.

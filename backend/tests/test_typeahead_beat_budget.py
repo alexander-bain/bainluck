@@ -706,8 +706,23 @@ def test_the_background_queue_carries_102_beats_not_57():
     assert explicit + implicit == BACKGROUND_BEAT_COUNT == 102
 
 
-def test_the_background_queue_is_oversubscribed_on_BOTH_duration_estimators():
-    """rho >= 1 under mean AND p95 — the tail is a deficit, not a fluctuation.
+def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
+    """The MODEL's rho >= 1 under mean AND p95 — and a direct census disagrees.
+
+    🔴 **This test was renamed after it was first committed, and the rename is
+    the finding.** It was `..._is_oversubscribed_on_BOTH_duration_estimators`,
+    asserting a claim about the QUEUE. It only ever asserted a property of two
+    CONSTANTS, and a direct 26-sample occupancy census of the same queue
+    measured **90 % of slot-observations busy** — five idle, which a queue truly
+    at rho >= 1 does not produce. The post-deploy period (p50 40.5-45.2 s, p95
+    74.9-82.4 s) agrees with the census, not the model.
+
+    So the model overstates, most likely because it prices every scheduled fire
+    at a full run while many background beats no-op or self-gate cheaply. The
+    constants are still the right input to a capacity decision — a lever should
+    clear the UPPER bracket to be safe — but the name promised evidence about
+    reality that the arithmetic could not carry, and the census then contradicted
+    it. Renamed to say what it pins.
 
     A queue at rho >= 1.0 has no steady state: the backlog grows until
     something sheds it. On `background` the thing that sheds it is `expires`
@@ -715,10 +730,8 @@ def test_the_background_queue_is_oversubscribed_on_BOTH_duration_estimators():
     and why raising `expires` made saturation *readable* without making it
     smaller.
 
-    Both estimators are asserted because either one alone is arguable. The p95
-    sum is an upper bound (it prices every run at its slowest). The mean sum is
-    the lower one. The claim is only safe because the bracket does not contain
-    the answer "there is no problem".
+    Both bracket ends are asserted because either alone is arguable. The p95 sum
+    prices every run at its slowest; the mean sum is the lower bound.
 
     **What this would have to see to go red:** the mean-estimator rho dropping
     below 1.0 at concurrency 2 — which is the remedy landing, and must be

@@ -900,6 +900,16 @@ def free_background_slots(
 # `docs/audits/latency/lat-p076-background-capacity.md` for the derivation.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# LAT-P076: `app/utils/typeahead_publish_gate.py` WAS DELETED, not wired. Its
+# post-deploy payoff re-derived to 15.3 slot-s/h = 0.42 % of one slot (v3872:
+# lock-skip p50 36 ms x 5.3 skips per period), confirming LAT-P075's ~0.2 %
+# estimate and Fable's 2026-08-20 delete-on-that-condition directive. The bar to
+# keep it was ~10 % of a slot. Record: `docs/audits/latency/lat-p073-publish-gate-plan.md`.
+# Do not re-create it without re-deriving the payoff FIRST — it put `is_due()`
+# inside the beat loop, where a fault freezes every beat in the system.
+# ---------------------------------------------------------------------------
+
 #: Beat entries whose EFFECTIVE queue is `background`. 57 name it explicitly;
 #: 45 more fall through `task_default_queue`. Pinned by
 #: `test_the_background_queue_carries_102_beats_not_57`.
@@ -934,17 +944,38 @@ def background_utilisation(
     and it is what LAT-P075 wrote. It does not explain a 326 s max, and it
     quietly predicts that adding one slot fixes everything.
 
-    The utilisation says something different and worse. With the warmer
-    included, offered load is **1.09x capacity on the mean estimator and 1.50x
-    on the p95 estimator**. A queue at rho >= 1 does not have a long tail; it
-    has no steady state at all — the backlog grows until something sheds it,
-    and on this queue the thing that sheds it is `expires` discarding warmer
-    messages. **The tail is a deficit, not a fluctuation.**
+    The utilisation says something different. With the warmer included, offered
+    load is **1.09x capacity on the mean estimator and 1.50x on the p95
+    estimator**. A queue at rho >= 1 does not have a long tail; it has no steady
+    state at all — the backlog grows until something sheds it, and on this queue
+    the thing that sheds it is `expires` discarding warmer messages.
 
-    That both estimators land above 1.0 is what makes this actionable. If the
-    mean estimator had come in at 0.8 the honest report would have been "we
-    cannot tell", because the two brackets would disagree about whether a
-    steady state exists at all.
+    🔴 **A DIRECT MEASUREMENT DISAGREES WITH THIS MODEL. Read this before
+    quoting the numbers above.** A 26-sample occupancy census of the same queue
+    (2026-08-20T04:07-04:36Z, pre-deploy, 50 slot-observations) measured **90 %
+    of slot-observations busy** — five idle, both slots busy in 80 % of samples.
+    **A queue truly at rho >= 1 shows ~100 % busy.** 90 % is near-saturation,
+    not permanent deficit.
+
+    So the model **overstates**, and the likely reason is structural: it prices
+    every scheduled fire at a full run, while many background beats no-op or
+    self-gate cheaply. `warm_typeahead` is corrected for that by hand; the other
+    101 are not.
+
+    **Believe the census.** It is a direct count of what happened; the model is a
+    product of two estimates. The honest load is **~0.90 measured, with a model
+    bracket of 1.09-1.50 known to run high** — a queue at or just under
+    saturation, where ordinary co-tenant bursts produce multi-minute waits,
+    rather than one in permanent deficit.
+
+    The post-deploy period supports the census and not the model: with `expires`
+    120 live the period reads p50 40.5-45.2 s and p95 74.9-82.4 s, which a queue
+    genuinely at 1.5x capacity could not produce.
+
+    The constants below are retained as the MODEL's output, not as the load.
+    They remain the right input to a capacity decision — a lever should clear
+    the UPPER bracket to be safe — but they must not be quoted as "the queue is
+    50 % over capacity".
 
     ## What it says about adding a slot
 
