@@ -428,6 +428,34 @@ DELETE_WITHOUT_MERGE_ALLOWLIST = {
         "unanchored single-participant artifact (no external_id/espn_id/"
         "statpal_fixture_id, no distinct team IDs) before deleting, refuses and "
         "counts otherwise, and keeps its >1-candidate ambiguity refusal",
+    # #2020's bounded prune rail. Found BY this census, and allowlisted only after
+    # stating the distinction precisely, because the easy reading is wrong: this
+    # rail DOES establish a cross-event pairing (a surplus copy and the keeper,
+    # matched on name and exact time), which is the very correspondence ruling 048
+    # refuses to merge on.
+    #
+    # What makes it a different question is that NOTHING IS ABSORBED. Ruling 048's
+    # harm requires a TRANSFER — every merging rail repoints `SET event_id = :keep`
+    # before deleting, and that is how 5,142 / 540 / 2,097 rows of one game's data
+    # ended up blended onto another's (#1779/#1798). This rail repoints nothing: it
+    # DELETEs the surplus row's FK rows outright and leaves the keeper untouched, so
+    # the corruption the invariant bounds cannot occur through it. That claim is not
+    # left as prose — `TestTheRailNeverAbsorbs` in
+    # tests/test_prune_unanchored_duplicates_2020.py asserts the rail's source
+    # contains no FK-repointing statement, so the reason here stays true or the
+    # suite goes red.
+    #
+    # And routing it through the primitive was measured, not assumed: every row in
+    # this population carries external_id, espn_id and statpal_fixture_id ALL NULL
+    # (0/0/0 across 72,479 rows, 2026-08-20), so `assert_mergeable` refuses every
+    # pair and the rail becomes a permanent no-op — the same trade the combat entry
+    # above rejected. The safety here is the destructive-token gate, the caller-
+    # supplied census band, and the in-transaction re-verification that a
+    # futures-linked keeper still exists for every row before it is destroyed.
+    "prune":
+        "no absorption: deletes surplus copies and their FK rows outright, never "
+        "repoints event_id onto the keeper, so ruling 048's blending harm has no "
+        "path through it; enforced by TestTheRailNeverAbsorbs",
 }
 
 

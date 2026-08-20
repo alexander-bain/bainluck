@@ -12,6 +12,12 @@ from app.models import Event, FuturesMarket
 from app.models.models import LineMovementAnalysis
 from app.services import get_db, get_db_rw
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
+from app.tasks.prune_unanchored_duplicates import (
+    DEFAULT_MAX_DELETE,
+    MAX_DELETE_CEILING,
+    PruneRefused,
+    prune,
+)
 from app.utils.event_absorption_guard import assert_absorbable_now
 from app.utils.event_merge_invariant import assert_mergeable, shared_provider_id_sql
 
@@ -365,6 +371,62 @@ async def delete_duplicate_events(
     await db.commit()
 
     return {"deleted": result.rowcount, "event_ids": ids}
+
+
+@router.post("/events/prune-unanchored-duplicates")
+async def prune_unanchored_duplicates_endpoint(
+    request: Request,
+    secret: str = Query(None),
+    sport_id: int = Query(..., description="Required. The partition is per-sport."),
+    linked_copies: int = Query(
+        1, ge=0, le=99,
+        description="Fixtures with exactly this many futures-linked copies. "
+                    "1 = Tranche A (the only prunable shape).",
+    ),
+    apply: bool = Query(False, description="DEFAULT FALSE. True deletes."),
+    max_delete: int = Query(DEFAULT_MAX_DELETE, ge=1, le=MAX_DELETE_CEILING),
+    expected_min: Optional[int] = Query(None, description="Required when apply=true"),
+    expected_max: Optional[int] = Query(None, description="Required when apply=true"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """#2020 — the bounded delete rail for the unanchored-duplicate surplus.
+
+    Dry-run by default and readable with the ordinary admin secret, because a census
+    an operator cannot take is a census nobody checks. ``apply`` additionally
+    requires the destructive token AND an expected band; a live count outside the
+    band refuses the call before any write.
+
+    Queue 382 stopped an authorized 61,000-row delete because this endpoint did not
+    exist and the only available rail took a bare id list with no dry-run, no census
+    and no cap. This is the shape that authorization actually described.
+    """
+    _check_admin_secret(secret, request=request)
+    if apply:
+        _check_admin_destructive(request=request)
+
+    try:
+        result = await prune(
+            db,
+            sport_id=sport_id,
+            linked_copies=linked_copies,
+            apply=apply,
+            max_delete=max_delete,
+            expected_min=expected_min,
+            expected_max=expected_max,
+        )
+    except PruneRefused as exc:
+        # A refusal is a 409, not a 500: the rail worked correctly and declined.
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if apply and result.get("terminal") == "complete":
+        await db.commit()
+    else:
+        # Nothing should be pending on a non-apply path; rolling back makes that a
+        # guarantee rather than a reading of the code above.
+        await db.rollback()
+
+    return result
 
 
 @router.post("/events/reconcile-unanchored")
