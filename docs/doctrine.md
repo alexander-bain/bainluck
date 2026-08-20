@@ -391,3 +391,79 @@ that produced it. A suite score with its provenance removed is an empty `200`.
 | `docs/rulings/README.md` | File shape + the collision protocol |
 | `docs/PRODUCT-BRAIN.md` | Standing product judgment and the lane split |
 | `docs/gotchas-reference.md` | The full incident catalog these clauses generalize from |
+
+### 17. A green suite over code that has never executed is evidence about the suite, not about the code.
+
+Lifted out of ruling 102, which named the obligation ("every worker, consumer,
+task and script ships with at least one IMPURE test that starts it") on one
+case. The general sentence survives deleting that case: **a test proves a
+DECISION; only an execution proves the code runs.** Wherever a body of tests
+exercises pure functions around an entry point without ever entering it, the
+pass rate measures the tests' internal consistency and says nothing whatever
+about whether the thing works.
+
+The reason this is worth a clause rather than a habit is the asymmetry in how
+the two failures present. A wrong decision fails a test. **An unstarted entry
+point fails nothing** — it is simply absent from the evidence, and absence reads
+as fine (gotcha #53, one layer up). So the suite gets greener as it grows, and
+the confidence it produces grows with it, and neither has any contact with the
+question being asked.
+
+*Charter case:* `cohort_cell_census` (#1978) merged with **37 tests, all pure**,
+passed CI, passed a clean integration, deployed at v3863 — and died in **73 ms
+on every invocation**, because `get_task_session` is an `@asynccontextmanager`
+the worker hand-drove as a bare async generator. **17,093 green tests over a
+worker that had never run once**, with two further defects queued behind it, all
+three surfaced within minutes of the first real start.
+
+*And it keeps paying out against the lanes that bank it, which is the argument
+for it.* CAL-P077 wrote its reader's impure test first, covered the fold path
+and not the two optional side probes, and lost a 49-cell production sweep to a
+`statement_timeout` in the uncovered branch after thirty cells. CAL-P078 then
+did it again one file over: every test of its new reader stubbed the fold, so
+`from app.database import get_task_session` — a module that does not exist —
+was never executed, and the script died on its first line of real work the first
+time a human ran it. Both were found by running the thing, not by reading it.
+
+The corollary is where the rule earns its keep: **the branch worth starting is
+the one you were least likely to write a test for.** Both payouts above were
+optional paths, side probes and error handlers — the code that only runs when
+something is already wrong, which is exactly when nobody is watching.
+
+### 18. A row-dropping fix is graded on the rows it keeps and on the cells where the mechanism is absent.
+
+Lifted out of ruling 103. Whenever a change improves an aggregate by REMOVING
+observations — an exclusion, a filter, a quality gate, a cohort restriction —
+the headline delta is the one number that cannot be used as evidence, because
+**dropping hard rows lowers an error metric whether or not the reason for
+dropping them is sound.** Every such fix improves its own metric. The
+improvement is not the finding; it is the thing requiring one.
+
+Two things do carry the argument, and they are the ones to demand:
+
+1. **The control cells — where the mechanism is ABSENT and nothing should
+   move.** If the population is dropped for reason R, then cells with little or
+   no R must be near-unmoved. A generic row-dropping effect would move them too,
+   so they are the falsifier. Attack them first.
+2. **The kept sub-population is CORRECT, not merely better.** "Less bad" is
+   consistent with having removed the noisiest rows; "exactly right" is not.
+
+*Case:* the hindsight-capture exclusion measured four candidate policies on the
+full 49-cell population rather than assuming one. **Policy D — the intuitive
+fix, dropping every fallback price — made the pooled curve WORSE (+0.073 pp)
+while discarding 69% of it.** The approved policy moved 3.763 → 1.766 pp
+dropping 9.3%, its eight low-mechanism control cells all moved by ≤ 0.097 pp,
+and the kept sub-population of the worst cell was calibrated to **0.0 pp** — not
+less bad, right. A fallback price is not a bad price; a hindsight price is.
+
+*The trap this closes:* a drop predicate can be blameless in DEFINITION and
+still not be outcome-blind in EFFECT. The hindsight rows had a different winrate
+from the rest (0.296 vs 0.430) — necessarily so, since a post-settlement price
+correlates with the outcome, which IS the corruption. So the exclusion changed
+the cells' outcome mix as well as their price quality, and only the control
+cells distinguish "we removed corruption" from "we removed difficulty".
+
+*Second obligation, from the same case:* a cell that falls below the reporting
+minimum after the drop becomes an **ABSENCE WITH A REASON, never a fixed cell**
+(ruling 075's second clause, on the scoreboard). A metric that improves because
+a cell VANISHED has not improved.

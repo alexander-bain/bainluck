@@ -559,8 +559,13 @@ def test_the_warmer_now_owns_most_of_one_background_slot():
     # FIFO POSITION. `background` is one shared queue with no priority, so when
     # the warmer's pass ends and releases its slot, that slot goes to whichever
     # of the other 56 beats' messages is at the head of the list — not back to
-    # the warmer. Behind one 150 s `rebuild_typeahead_index` the warmer waits
-    # 150 s, with 1.09 slots "free" the whole time.
+    # the warmer. Behind one long co-tenant the warmer waits that long, with
+    # 1.09 slots "free" the whole time.
+    #
+    # ⚠️ LAT-P076: this comment used to name `rebuild_typeahead_index` here.
+    # It routes to `heavy` and is not a co-tenant at all — see
+    # `test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer`.
+    # The observed starvers are `discover_events` and `warm_event_concepts`.
     #
     # So the number that matters is how little slack there is: the warmer alone
     # consumes MORE THAN HALF of a two-slot pool, which is what makes ordinary
@@ -611,3 +616,197 @@ def test_the_expires_fix_does_not_claim_a_period_repair():
         "if one beat interval ever approached the period tail, the expiry change "
         "could plausibly explain it and this correction would need revisiting"
     )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P076 — the two facts LAT-P075 got wrong about this queue, pinned so the
+# next window inherits the correction rather than the claim.
+# ---------------------------------------------------------------------------
+
+
+def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
+    """LAT-P075 named the wrong starver, and named it in three places.
+
+    Its §3 wrote "Behind one 150 s `rebuild_typeahead_index` (p95 150,062 ms)
+    ... the warmer waits that long", and the module docstring and this suite's
+    own comment repeated it. `rebuild_typeahead_index` routes to **`heavy`** —
+    both in `task_routes` and in its own beat `options` — so it contends for
+    `worker-heavy`'s two slots and never for `worker-background`'s. It cannot
+    delay the warmer by one millisecond.
+
+    This matters beyond tidiness: a named cause is what a future window acts
+    on. "Move `rebuild_typeahead_index` off `background`" is a plausible-looking
+    remedy that would have changed nothing, and it is exactly the remedy the
+    prose invited.
+
+    **What this would have to see to go red:** anyone routing
+    `rebuild_typeahead_index` to `background` (which would make the original
+    claim true and is a real proposal someone might make), or deleting its
+    explicit queue so it falls through `task_default_queue` — which IS
+    `background`, so a deletion silently creates the co-tenancy this test
+    denies. The fall-through is the live hazard, not the explicit re-route.
+    """
+    from app.tasks import celery_app
+
+    conf = celery_app.conf
+    entry = conf.beat_schedule["rebuild-typeahead-index"]
+    assert entry["task"] == "app.tasks.rebuild_typeahead_index"
+
+    # Both routing surfaces must say `heavy`. Beat options override
+    # `task_routes`, so agreeing is not redundant — a disagreement means the
+    # queue depends on whether the task was published by beat or by hand.
+    assert entry["options"]["queue"] == "heavy", entry["options"]
+    assert conf.task_routes["app.tasks.rebuild_typeahead_index"]["queue"] == "heavy"
+
+    # And the fall-through hazard, stated as the reason the assertion above is
+    # not enough on its own.
+    assert conf.task_default_queue == "background", (
+        "if the default queue is `background`, then DELETING a queue option is "
+        "the same as routing to `background` — which is how 45 beats got here"
+    )
+
+
+def test_the_background_queue_carries_102_beats_not_57():
+    """57 is the count of beats that NAME `background`. The queue carries 102.
+
+    The other 45 arrive through `task_default_queue = "background"` without
+    naming anything, and they include the heaviest work on the queue:
+    `turbo_collapse_futures` (mean 1,859 s), `backfill_winners` (868 s),
+    `poll_polymarket_markets` (304 s), `discover_events`.
+
+    The distinction is the whole remedy question. A queue that 57 tasks were
+    assigned to is a sizing problem. A queue that 45 further tasks landed on
+    because nobody chose a queue is a DEFAULT problem, and the cheapest lever
+    is to stop the fall-through rather than to buy slots for it.
+
+    **What this would have to see to go red:** the explicit/implicit split
+    moving in either direction — someone giving the 45 an explicit home (good,
+    and the count should then be re-derived), or new beats landing on the
+    default (bad, and this is the only test that would notice). It is
+    deliberately asserted as a SPLIT and not just a total, because a total
+    holds constant while 45 becomes 60 and 57 becomes 42.
+    """
+    from app.tasks import celery_app
+    from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
+
+    conf = celery_app.conf
+    explicit = implicit = 0
+    for entry in conf.beat_schedule.values():
+        task = entry.get("task")
+        named = (entry.get("options") or {}).get("queue") or (
+            conf.task_routes.get(task) or {}
+        ).get("queue")
+        if named == "background":
+            explicit += 1
+        elif named is None and conf.task_default_queue == "background":
+            implicit += 1
+
+    assert explicit == 57, f"explicitly-routed background beats moved: {explicit}"
+    assert implicit == 45, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 102
+
+
+def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
+    """The MODEL's rho >= 1 under mean AND p95 — and a direct census disagrees.
+
+    🔴 **This test was renamed after it was first committed, and the rename is
+    the finding.** It was `..._is_oversubscribed_on_BOTH_duration_estimators`,
+    asserting a claim about the QUEUE. It only ever asserted a property of two
+    CONSTANTS, and a direct 26-sample occupancy census of the same queue
+    measured **90 % of slot-observations busy** — five idle, which a queue truly
+    at rho >= 1 does not produce. The post-deploy period (p50 40.5-45.2 s, p95
+    74.9-82.4 s) agrees with the census, not the model.
+
+    So the model overstates, most likely because it prices every scheduled fire
+    at a full run while many background beats no-op or self-gate cheaply. The
+    constants are still the right input to a capacity decision — a lever should
+    clear the UPPER bracket to be safe — but the name promised evidence about
+    reality that the arithmetic could not carry, and the census then contradicted
+    it. Renamed to say what it pins.
+
+    A queue at rho >= 1.0 has no steady state: the backlog grows until
+    something sheds it. On `background` the thing that sheds it is `expires`
+    dropping warmer messages, which is why the discard was measurable at 30.5 %
+    and why raising `expires` made saturation *readable* without making it
+    smaller.
+
+    Both bracket ends are asserted because either alone is arguable. The p95 sum
+    prices every run at its slowest; the mean sum is the lower bound.
+
+    **What this would have to see to go red:** the mean-estimator rho dropping
+    below 1.0 at concurrency 2 — which is the remedy landing, and must be
+    graded as such rather than re-baselined. It would also red if someone
+    edited the measured constants without re-measuring, which is the failure
+    this program keeps having (42.6 -> 53.9 -> 61.3).
+    """
+    from app.utils.typeahead_beat_budget import (
+        BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H,
+        BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
+        background_utilisation,
+    )
+
+    lo = background_utilisation(
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+    )
+    hi = background_utilisation(
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+    )
+
+    assert lo >= 1.0, f"mean-estimator rho fell below 1.0 ({lo:.2f}) — re-grade"
+    assert hi >= 1.0, f"p95-estimator rho fell below 1.0 ({hi:.2f}) — re-grade"
+    assert 1.05 <= lo <= 1.15, lo
+    assert 1.45 <= hi <= 1.55, hi
+
+    # The queue is over capacity even with the warmer removed entirely, on the
+    # upper estimator. This is why moving the warmer elsewhere RESCUES THE
+    # WARMER but does not repair `background` — a distinction the remedy table
+    # has to carry, because two of the four levers only do the former.
+    ex = background_utilisation(
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
+        include_warmer=False,
+    )
+    assert ex >= 1.0, ex
+
+
+def test_R4_is_not_supported_by_measurement_at_concurrency_3():
+    """LAT-P075 predicted period p95 < 90 s at concurrency 3. Measurement does
+    not support that, and this test exists to stop it being cited as if it did.
+
+    At three slots the utilisation bracket is 0.72 .. 1.00. The upper end is
+    exactly capacity, which is still no steady state. So R4 sits on the
+    assumption that the mean estimator is the right one — an assumption nobody
+    has tested.
+
+    This is a refusal to predict, not a prediction of failure. The point is
+    that "concurrency 3 fixes it" must not be quoted as measured.
+
+    **What this would have to see to go red:** the p95-estimator rho at
+    concurrency 3 dropping clear of 1.0, at which point R4 IS supported and
+    this test should be replaced by one that says so.
+    """
+    from app.utils.typeahead_beat_budget import (
+        BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H,
+        BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
+        background_utilisation,
+    )
+
+    lo3 = background_utilisation(
+        concurrency=3, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+    )
+    hi3 = background_utilisation(
+        concurrency=3, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+    )
+    assert lo3 < 1.0 <= hi3, (
+        f"the concurrency-3 bracket no longer STRADDLES 1.0 ({lo3:.2f}..{hi3:.2f}); "
+        "R4's status has changed and must be re-graded rather than re-asserted"
+    )
+
+    # Four slots clear it under both, which is the honest content of the
+    # capacity proposal: the measured-safe step is 2 -> 4, not 2 -> 3.
+    lo4 = background_utilisation(
+        concurrency=4, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+    )
+    hi4 = background_utilisation(
+        concurrency=4, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+    )
+    assert hi4 < 1.0 and lo4 < 1.0, (lo4, hi4)

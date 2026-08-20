@@ -108,6 +108,16 @@ GAUGE_UNITS_DRIFTED = "staged:units_drifted"
 GAUGE_UNITS_DRIFT_CHECKABLE = "staged:units_drift_checkable"
 GAUGE_UNITS_DRIFT_UNCHECKABLE = "staged:units_drift_uncheckable"
 
+# -- CAL-P078: the SERVING bank's own gauges ----------------------------------
+# After the rolling re-stage there are two banks, and every gauge above this
+# line describes the one being BUILT. The block this module publishes is about
+# the one being SERVED, so where these are present they take precedence — see
+# :func:`build_disclosure` for the two readings that had to change with them.
+GAUGE_SERVED_UNITS = "staged:served_units"
+GAUGE_SERVED_DRIFTED = "staged:served_drifted"
+GAUGE_SERVED_DRIFT_UNCHECKABLE = "staged:served_drift_uncheckable"
+GAUGE_SERVED_AT = "staged:served_at"
+
 
 def unmeasured(reason: str) -> dict[str, Any]:
     """The disclosure for "this could not be read".
@@ -169,7 +179,26 @@ def build_disclosure(
     if not isinstance(ledger_stages, Mapping):
         return unmeasured("ledger_stages_unreadable")
 
+    # -- CAL-P078: prefer the SERVING bank, and say so in every field ---------
+    # Two readings had to change with the rolling re-stage, and BOTH of them
+    # would otherwise have re-manufactured #2007 in a new shape:
+    #
+    # 1. ``staged_generated_at`` — the durable row's write time — used to be the
+    #    instant the bank last advanced, because a beat that banked nothing never
+    #    rewrote the row. Now every beat re-stages units, so it advances every
+    #    beat while the SERVED census may be five beats old. Using it would put
+    #    a fresh timestamp back on a stale curve, which is the exact bug.
+    # 2. ``bank_advanced_this_beat`` used to be evidence that the served census
+    #    had moved. It no longer is: the BUILDER always advances now. So the
+    #    freeze verdict below is computed from the served bank's own drift, and
+    #    the builder's progress is published beside it under its own name.
+    served_units = _int_gauge(ledger_stages, GAUGE_SERVED_UNITS)
+    served_at_epoch = _int_gauge(ledger_stages, GAUGE_SERVED_AT)
+    serving = served_units is not None
+
     banked = _int_gauge(ledger_stages, GAUGE_UNITS_BANKED)
+    if serving:
+        banked = served_units
     if banked is None:
         # The convergence reader records ``staged:convergence_reason:<status>``
         # when it cannot read the cursor. Surface it rather than reporting a
@@ -180,12 +209,22 @@ def build_disclosure(
                 return unmeasured(key)
         return unmeasured("units_banked_absent")
 
-    staged_at = _iso(staged_generated_at)
+    staged_dt = staged_generated_at
+    if serving:
+        if served_at_epoch is None:
+            # A serving bank that has not been dated yet — promoted, not yet
+            # stamped, or stamped by a build that died between the two. It is
+            # UNMEASURED rather than fall back to the durable row's write time,
+            # which after CAL-P078 is the publish clock wearing the census's
+            # name. That substitution IS #2007.
+            return unmeasured("served_at_absent")
+        staged_dt = datetime.fromtimestamp(served_at_epoch, tz=timezone.utc)
+
+    staged_at = _iso(staged_dt)
     if staged_at is None:
         return unmeasured("staged_at_absent")
 
     reference = now or datetime.now(timezone.utc)
-    staged_dt = staged_generated_at
     if staged_dt.tzinfo is None:
         staged_dt = staged_dt.replace(tzinfo=timezone.utc)
     staged_age_s = round((reference - staged_dt).total_seconds())
@@ -194,6 +233,13 @@ def build_disclosure(
     drifted = _int_gauge(ledger_stages, GAUGE_UNITS_DRIFTED)
     checkable = _int_gauge(ledger_stages, GAUGE_UNITS_DRIFT_CHECKABLE)
     uncheckable = _int_gauge(ledger_stages, GAUGE_UNITS_DRIFT_UNCHECKABLE)
+    if serving:
+        drifted = _int_gauge(ledger_stages, GAUGE_SERVED_DRIFTED)
+        uncheckable = _int_gauge(ledger_stages, GAUGE_SERVED_DRIFT_UNCHECKABLE)
+        # There is no served analogue of ``units_drift_checkable``; the
+        # uncheckable count is recorded directly, so the derived one below must
+        # not be computed from a checkable figure that describes the OTHER bank.
+        checkable = None if uncheckable is None else max(0, banked - uncheckable)
 
     # Two independent expressions of the same gap, and they can disagree: the
     # uncheckable gauge is written only when the cursor carries a digest map at
@@ -214,11 +260,19 @@ def build_disclosure(
     # ``advanced`` stays ``None`` and the freeze verdict below refuses to claim
     # either way, which lands on "not fresh" via ``measured`` staying honest.
     advanced = None if this_beat is None else this_beat > 0
-    frozen_over_drift = (advanced is not True) and not drift_known_zero
+    if serving:
+        # The builder advances every beat now, so its progress says NOTHING
+        # about whether the census being served has moved. The served bank is
+        # honest exactly when it has no drift; that is the whole verdict.
+        frozen_over_drift = not drift_known_zero
+    else:
+        frozen_over_drift = (advanced is not True) and not drift_known_zero
 
-    return {
+    block = {
         "measured": True,
         # The instant the futures bank last advanced. NOT the publish time.
+        # Under CAL-P078 this is the instant the SERVED census was completed,
+        # which is the only reading a consumer can compute a row age from.
         "staged_at": staged_at,
         "staged_age_s": staged_age_s,
         "units_banked": banked,
@@ -232,6 +286,15 @@ def build_disclosure(
         "bank_advanced_this_beat": advanced,
         "frozen_over_drift": frozen_over_drift,
     }
+    if serving:
+        # Published beside the served figures rather than folded into them: a
+        # reader who wants to know the rebuild is ALIVE needs a different number
+        # from the one that says how old the curve is, and collapsing the two is
+        # how "the build is fine" came to stand in for "the curve is current".
+        block["rebuild_units_this_beat"] = this_beat
+        block["rebuild_units_banked"] = _int_gauge(ledger_stages, GAUGE_UNITS_BANKED)
+        block["rolling_restage"] = True
+    return block
 
 
 def availability_floor(disclosure: Any) -> Optional[str]:

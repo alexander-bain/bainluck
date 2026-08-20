@@ -233,3 +233,37 @@ migration, no data to unwind — the gate writes nothing.
   own registered prediction. §1's measurement makes it *more* urgent, not less — see the audit doc
   §5 on the wall now reaching 44.6 s against a 45 s cliff.
 - **Shipping anything this cycle.** `beat_schedule_change: false`, `migration_slot: none`.
+
+---
+
+## ⛔ SUPERSEDED — the gate was DELETED, not wired (LAT-P076, 2026-08-20)
+
+`app/utils/typeahead_publish_gate.py` and its 29-test suite **no longer exist.** This plan is
+retained as the record of the reasoning, not as work to be picked up.
+
+Fable's 2026-08-20 directive: *"re-derive the gate module's payoff post-deploy; if ~0.2 % of a
+slot holds on production numbers, delete the module."* Re-derived against **v3872**
+(`/api/health` commit `79960ee1`), from `warm_typeahead`'s own post-deploy metrics:
+
+| input | measured |
+|---|---|
+| lock-skip cost (p50 of 43 sub-2 s durations) | **36 ms** |
+| skips per period | **5.3** |
+| suppressed per period | 191 ms |
+| **payoff** | **15.3 slot-s/h = 0.42 % of one slot** (0.21 % of queue capacity) |
+
+**0.2 % held** (measured 0.42 %, same order). The condition was met, so the module is deleted.
+
+The bar that would have rescued it was ~10 % of a slot — a 24x miss in the derivation. It was
+not missed.
+
+Against that payoff, the hazard was unchanged: `is_due()` runs inside the beat process's
+scheduling loop, so a fault there freezes **every beat in the system**. A certified, unwired,
+highest-blast-radius module with a rounding-error payoff is not an asset — it is an invitation
+for a future window to wire it on stale numbers.
+
+**Also recorded, because it outlives the module:** step 2 of the forced ordering — "count
+publishes" — was **never reachable**. `deliveries` is wired to `task_prerun` and counts
+executions; `queue_depths` is an `LLEN`; `celery-debug` is refused. If a publish counter is
+ever wanted it is its own small piece of work (a `before_task_publish` hook), not a gate
+prerequisite.

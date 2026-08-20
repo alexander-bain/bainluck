@@ -585,6 +585,53 @@ def test_ruling_numbers_are_unique() -> None:
 #: its test half: the test caught both, but it caught them at MERGE time, after the number had
 #: already been minted twice. A number claimed at AUTHORING time cannot collide.
 #:
+#: Raised to **99** by CAL-P077, banking ruling **102** ("a worker ships with a test that starts
+#: it", Fable ruling (a), #1978). THIRTEENTH consecutive cycle. COUNTED against the rebased base
+#: `6e314028`, not inferred: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = **98** before
+#: this ruling's file, **99** after. The branch first wrote 97 against base `62846ab8` (96 files);
+#: master then landed ux's 100 and 101 and moved to 98; the merged tree holds **99**. Neither
+#: side was wrong about itself and neither was the truth — count, never add, never take a side.
+#:
+#: 102 was claimed in `RULING-CLAIMS.md` at authoring time and verified free by sweeping **470**
+#: local and remote refs for `docs/rulings/102-*`, holders_found 0 — which is #2009's ledger half
+#: doing exactly what the note above asks for. The claim held through this rebase: ux took 100
+#: and 101, not 102, so no renumber was owed and the index reads 099 -> 100 -> 101 -> 102 with no
+#: gap.
+#:
+#: Raised to **100** by the INT-094 combined merge — CAL-P077's **102** (above) and lane1
+#: q380's **108** ("a dry run gates only what it executes", Fable, #1947/#1796) in one push.
+#: FOURTEENTH consecutive cycle, and the first one where the collision was CALLED IN ADVANCE:
+#: Fable's directive named the double-claim on 102 and adjudicated it before the merge — the
+#: ledger's claim (`RULING-CLAIMS.md`, digest `b6471e51`, claims=74) wins, so calibration KEEPS
+#: 102 and q380's dry-run ruling renumbered. It went to **108**, NOT to 103: the directive said
+#: "the next free number", and 103-107 are all claimed-and-unmerged (103 calibration/CAL-P078,
+#: 104 latency, 105-107 ux) with the FILES already written on those branches. Measured, not
+#: assumed — 489 local and remote refs swept for `docs/rulings/1[0-9][0-9]-`, and the integrity
+#: gate below refused 103 by name before the sweep did. Both sides wrote 99 and both were right
+#: about themselves; the merged tree holds **100**. COUNTED with
+#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 100 (ruling 088 — count, never add,
+#: never take a side, never eyeball).
+#:
+#: Note what the ledger bought here that the test could not. The test still catches a repeat, but
+#: it catches it at MERGE time with the number already minted twice and two files on disk. The
+#: claim caught it at ADJUDICATION time, so the renumber was a rename and one index line rather
+#: than a cycle of archaeology. That is #2009's ledger half paying out on the first collision
+#: after it was approved.
+#:
+#: Raised to **101** by INT-094 banking ruling **109** ("a READY token is void while its branch
+#: contains a never-merge ancestor", Fable's INT-094 directive) on top of the 102 + 108 pair
+#: above — three rulings in one push, so the delta anyone would have GUESSED is wrong twice over.
+#: COUNTED: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 101.
+#:
+#: Raised to **106** by the INT-095 three-lane merge, in ONE push: calibration-75 banks **103**
+#: ("a price captured after the answer is not a price"), latency-69 banks **104** ("hold the TTL
+#: at 65"), and ux-94 banks **105**, **106** and **107**. Five rulings across three lanes, and
+#: every lane arrived carrying a floor that was correct about ITSELF and wrong about the merge:
+#: latency wrote 99, calibration wrote 100, ux wrote 101, master already held 101. No two of
+#: those agree and none of them is the answer. COUNTED, three times — once after each merge —
+#: with `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'`: 102 -> 103 -> 106. The index runs
+#: 102..109 with no gap and no duplicate; 108 and 109 were INT-094's, which is why the numbers
+#: are not contiguous with the lanes' own. Ruling 088 — count, never add, never take a side.
 #: Raised to **101** by UX-P107 (cycle 104) banking THREE rulings in one window — 105 (suppress
 #: structural rungs), 106 (one direction, and the number is ours) and 107 (an unlabelled unit
 #: invites its own misread). ** COUNTED, not added: ** `ls docs/rulings/[0-9][0-9][0-9]-*.md`
@@ -593,7 +640,15 @@ def test_ruling_numbers_are_unique() -> None:
 #: a delta to any of those three numbers would produce a floor no tree has ever held. Thirteenth
 #: consecutive cycle in which the branch, HEAD and the merged tree disagree, and the thirteenth in
 #: which counting the tree is the only thing that has been right (#1910, ruling 088).
-MINIMUM_BANKED_RULINGS = 103
+#:
+#: Raised to **108** by UX-P109 (cycle 106), banking ruling **112** (movement overrides the
+#: structural floor). ** THREE-WAY, AND COUNTED — the branch, master and the merged tree all
+#: disagreed AGAIN. ** `program/ux-96` said 103 (it carries 105/106/107 from the unmerged
+#: ux-94 stack plus 111 and 112); `origin/master` @ `724fd22c` said 101; the merged tree holds
+#: **108**, which is nobody's number and is the only one that has ever been right. FIFTEENTH
+#: consecutive cycle. `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` after the merge = 108.
+#: Never take a side, never add a delta (#1910, ruling 088).
+MINIMUM_BANKED_RULINGS = 108
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

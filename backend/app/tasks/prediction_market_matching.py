@@ -484,6 +484,101 @@ async def _check_duplicate_kalshi_linkage_reason(
     return None  # No conflicts detected
 
 
+def _kalshi_prefix(external_id) -> str:
+    ext = (external_id or "").lower()
+    return ext.split("-")[0] if "-" in ext else ext
+
+
+def auto_create_commence_time(market, fallback):
+    """The commence_time an auto-created event should carry, and its source.
+
+    Returns ``(commence_time, commence_time_source_or_None)``. Pure: no DB, no
+    clock — ``fallback`` is what the caller already computed from
+    ``market.commence_time``/``now``.
+
+    #2020. Gotcha #14 states it plainly: **a Kalshi market's ``commence_time`` is
+    often its RESOLUTION/CLOSE time, not the game start.** The standing Fable
+    ruling above ``_EVENT_DATE_MAX_DIFF_HOURS`` says the same thing from the other
+    side — *the provider's ticker defines the market's referent* — which is why
+    the whole linkage guard is written against the TICKER date and not against
+    this field.
+
+    So writing ``market.commence_time`` onto a row we create contradicts the only
+    referent the rest of this module trusts. Measured specimen, production
+    2026-08-20: ``KXLOLGAME-26AUG210500GAMTSW`` carries ticker time
+    ``2026-08-21 05:00Z`` and ``market.commence_time`` ``2026-08-23 09:00Z`` —
+    **two days apart**, and every event auto-created from it was stamped with the
+    close time. Prefer the ticker; fall back when there is no parseable one
+    (Polymarket has no ticker at all, so it always falls back).
+
+    Deliberately NARROW: the ticker time is used **only when the fallback
+    actually disagrees with it**, i.e. only where the loop exists. A market whose
+    `commence_time` already agrees with its ticker is the healthy majority and is
+    left exactly as it was — a fix for a runaway must not quietly re-time every
+    event it passes on the way. (Date-only tickers resolve to midnight, which is
+    coarser than a close time that happens to be right; that trade is only worth
+    taking on rows that would otherwise re-create themselves forever.)
+    """
+    ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
+    if ticker_time is None:
+        return fallback, None
+    if not auto_create_self_refutes(market, fallback):
+        return fallback, None  # already coherent — change nothing
+    return ticker_time, "kalshi_ticker"
+
+
+def auto_create_self_refutes(market, commence_time) -> bool:
+    """True when creating this row would produce a link the guard must refuse.
+
+    Pure: no DB, no clock. A TERMINATION check, not a matching rule.
+
+    #2020, and this is the loop it closes. Measured in production 2026-08-19/20:
+    one esports matchup held **297 events for one market** — a new row every ~5
+    minutes for 21.5 hours — and the tagged population went 500 -> 51,673 in three
+    days, bleeding ~2,400 rows/hour. The cycle is self-sustaining and every step
+    of it was individually correct:
+
+      1. the matcher finds a candidate event for the market;
+      2. :func:`_check_duplicate_kalshi_linkage_reason` REFUSES the link, because
+         the ticker date (``26AUG21 05:00``) disagrees with the candidate's
+         ``commence_time`` (``2026-08-23 09:00Z`` — the close time, gotcha #14);
+      3. :func:`_try_link_market` clears ``matched_event`` and falls through to
+         the auto-create;
+      4. the auto-create writes a new event carrying that same close time — so the
+         guard is **guaranteed** to refuse the row we just made, on the next poll,
+         for the identical reason. Go to 1.
+
+    The create path was manufacturing rows its own guard could never accept, and
+    the guard was faithfully refusing them. Neither side is wrong alone.
+
+    This is NOT ruling 048 misfiring. 048 accepts duplicates as a *bounded* cost,
+    bounded by id-keyed reconciliation. A row that re-creates itself every five
+    minutes forever is not a bounded cost; it is a generator, and no drain can
+    outrun it. So the bound has to go where the generation is.
+
+    The rule: **if the row we are about to write would be refused by the very
+    predicate that sent us here, the create cannot converge and must not happen.**
+    Leave the market unlinked and let the funnel say so — an unlinked market is
+    visible and countable; an infinite duplicate stream is only visible in
+    ``count(*)``.
+
+    Note this returns False for the fixed path, by construction: once
+    :func:`auto_create_commence_time` stamps the ticker time, the created row
+    agrees with its own ticker and the next poll LINKS it instead of creating.
+    That is the fix; this predicate is the proof that the fix holds, and the
+    backstop if the commence_time selection is ever changed back.
+    """
+    if getattr(market, "source", None) != "kalshi":
+        return False  # only the Kalshi guard can refuse on ticker date
+    ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
+    if ticker_time is None or commence_time is None:
+        return False  # the guard cannot fire without a ticker date either
+    prefix = _kalshi_prefix(getattr(market, "external_id", None))
+    if _is_combat_kalshi_prefix(prefix):
+        return False  # combat is exempt from the date guard entirely
+    return _ticker_date_conflicts_with_event(ticker_time, commence_time, prefix)
+
+
 async def _check_duplicate_kalshi_linkage(
     session, event_id: int, market, ticker_game_date,
 ) -> bool:
@@ -2278,6 +2373,23 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
         commence_time = now
 
+    # #2020, half one: prefer the TICKER-derived time over Kalshi's own
+    # `commence_time`. See `auto_create_commence_time` for the why.
+    commence_time, commence_source = auto_create_commence_time(
+        market, commence_time,
+    )
+
+    # #2020, half two: REFUSE to create a row this pipeline's own guard will
+    # refuse to link. See `auto_create_self_refutes` for the measured loop.
+    if auto_create_self_refutes(market, commence_time):
+        logger.warning(
+            "Refusing self-refuting auto-create (#2020): %s would create an event "
+            "at commence=%s that _check_duplicate_kalshi_linkage_reason is "
+            "guaranteed to refuse — the create cannot converge",
+            market.external_id, commence_time.isoformat(),
+        )
+        return None
+
     status = "live" if commence_time <= now else "scheduled"
     external_id = f"pm_{market.source}_{market.external_id}"
 
@@ -2289,6 +2401,11 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         home_team_name=team_a,
         away_team_name=team_b,
         commence_time=commence_time,
+        # #2020: say where the time came from. `kalshi_ticker` is a strictly
+        # better provenance than the bare source name, because it records that
+        # this is the TICKER's game time and not Kalshi's close time (gotcha #14)
+        # — the distinction the duplicate loop turned on.
+        commence_time_source=commence_source,
         # RULING 048: schedule_derived stays FALSE here, deliberately. This is the
         # population the ruling was written for. team_a/team_b were PARSED OUT OF
         # THE MARKET NAME or ticker — a label, not a dereference (ruling 042) — and

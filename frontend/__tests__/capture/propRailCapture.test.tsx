@@ -158,7 +158,18 @@ describe("the rendered capture rig", () => {
     },
   );
 
-  it("the app stylesheet was found — an unstyled capture is a misleading one", () => {
+  // JOB 1 ONLY — see the header. The property is "a CAPTURE is never taken
+  // unstyled", and a capture is written only when UX_CAPTURE_DIR is set.
+  // `.next/static/css` exists only after `npm run build`, and CI's frontend-build
+  // job runs `npm ci` -> Jest -> build -> typecheck, so when this ran
+  // unconditionally it was not asserting the stated property at all — it was
+  // asserting that the tree happened to have been built already. It passed for
+  // the lane and again for the Integrator (both had built first) and could never
+  // have been green in CI; it reddened master at `c0a26325` on its first push.
+  // Scoped to the mode it guards, it is now true everywhere and still fires on
+  // every real capture, which is the only time an unstyled render can mislead.
+  const stylesheetGuard = OUT_DIR ? it : it.skip;
+  stylesheetGuard("the app stylesheet was found — an unstyled capture is a misleading one", () => {
     // If this reds, run `npm run build` first. A capture taken without the real
     // CSS looks broken in ways the code is not, and reviewing it wastes the one
     // thing the capture is for.

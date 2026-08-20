@@ -192,6 +192,11 @@ _FLOW_AREA_LABELS = {
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
     "season_aggregate_linkage": "area:event-details",  # season market on a game event (#1220)
     "frozen_final_scores": "area:calibration",  # settled score is not the final (CAL-P002)
+    # #1980: the OTHER half of CAL-P002 — the espn_id, not the score, is the
+    # drifted field. A linkage defect, so it routes to event-details, not
+    # calibration: filing it alongside the score class is how the wrong remedy
+    # gets applied.
+    "espn_id_linkage_drift": "area:event-details",
     "winner_field_coherence": "area:calibration",  # mex market w/ >1 winner or >1 certain leg (CAL-P006)
     "team_identity_dupes": "area:event-details",  # unmerged team-identity dupes / adjudication backlog
 }
@@ -209,6 +214,7 @@ _FLOW_TITLES = {
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
     "season_aggregate_linkage": "season-aggregate market mislinked to a single game event",
     "frozen_final_scores": "settled event stores a non-final (frozen mid-game) score",
+    "espn_id_linkage_drift": "settled event's espn_id names a DIFFERENT game (score repair would corrupt it)",
     "winner_field_coherence": "single-winner market crowned twice, or a field of near-certain legs",
     "team_identity_dupes": "unmerged team-identity dupes remain or adjudication backlog is climbing",
 }
@@ -493,8 +499,13 @@ def frozen_final_score_events(ledger: list[dict]) -> list[dict]:
 
     Pure over the ledger returned by the ``event-final-scores`` repair's DRY-RUN, so
     the guard and the repair share ONE definition of the defect and cannot drift.
-    Identity-blocked rows are deliberately excluded — those are an ``espn_id``
-    linkage defect (a different repair), not a frozen score."""
+
+    🔴 THIS IS THE SCORE CLASS ONLY (#1980, queue 380). Linkage rows — where the
+    ``espn_id`` is itself the wrong field — are excluded here and reported by
+    ``espn_id_linkage_defects`` instead, because the two classes have OPPOSITE
+    remedies: the score repair applied to a linkage row writes another game's
+    final onto it. They used to be excluded here and reported NOWHERE, which is
+    the defect this split closes."""
     out = []
     for e in ledger or []:
         if e.get("action") != "fix_score":
@@ -502,11 +513,132 @@ def frozen_final_score_events(ledger: list[dict]) -> list[dict]:
         out.append({
             "event_id": e.get("event_id"), "sport": e.get("sport_key"),
             "matchup": e.get("matchup"), "status": e.get("status"),
+            "defect_class": e.get("defect_class") or "score_drifted",
             "stored_score": e.get("stored_score"), "espn_final": e.get("espn_final"),
             "winner_flip": bool(e.get("winner_flip")),
             "commence_time": e.get("commence_time"),
         })
     return out
+
+
+def espn_id_linkage_defects(ledger: list[dict]) -> list[dict]:
+    """The OTHER half of CAL-P002 (#1980, queue 380): rows whose ``espn_id`` is
+    the drifted field, not the score.
+
+    A settled row can disagree with ESPN in two different fields, and the fix for
+    one is the corruption for the other. Until this split the rail computed the
+    linkage classes and threw them away: ``espn_not_found`` was a bare counter
+    with no ledger row at all, ``skip_identity_mismatch`` / ``skip_espn_id_wrong_date``
+    landed in the ledger and were then filtered out by
+    ``frozen_final_score_events``. So they were neither repaired nor reported —
+    while the remedy the sentinel printed on every failing line was the SCORE
+    remedy, which for these rows is a write of another game's final.
+
+    Measured 2026-08-19 over the 262 settled MLB rows of the previous 32 days:
+    21 carry a drifted ``espn_id`` (ESPN id offsets of exactly ±15/±30 — one or
+    two slate-days of the same series), and for EIGHT of them the stored score is
+    already CORRECT. The score remedy would have corrupted a correct score on
+    eight rows.
+
+    ``espn_id_unresolvable`` is deliberately a SEPARATE class and NOT returned
+    here. That one is an empty read — the id is simply absent from our own slate
+    and no single game on it is provably ours (a doubleheader, a postponement).
+    Gotcha #53: an empty read is not a fact, so it is surfaced (see
+    ``espn_id_unresolvable_rows``) but never claimed as a defect."""
+    out = []
+    for e in ledger or []:
+        if e.get("defect_class") != "espn_id_drifted":
+            continue
+        out.append({
+            "event_id": e.get("event_id"), "sport": e.get("sport_key"),
+            "matchup": e.get("matchup"), "status": e.get("status"),
+            "defect_class": "espn_id_drifted",
+            "stored_espn_id": e.get("espn_id"),
+            "espn_for_stored_id": e.get("espn_for_stored_id"),
+            "proposed_espn_id": e.get("proposed_espn_id"),
+            "stored_score": e.get("stored_score"),
+            "commence_time": e.get("commence_time"),
+            "reason": e.get("reason"),
+        })
+    return out
+
+
+def espn_id_unresolvable_rows(ledger: list[dict]) -> list[dict]:
+    """Rows this rail CANNOT adjudicate — reported, never claimed (gotcha #53).
+
+    The ``espn_id`` is absent from the row's own slate and no single game on that
+    slate is provably ours. A postponement, a slate gap and a real drift all
+    produce this identical empty read, so inferring "drift" from it would be
+    inventing a fact. It is surfaced with its reason and an explicit "no remedy
+    proven" so it can be adjudicated, and it never counts as a failure — the
+    thing it must never be again is INVISIBLE."""
+    out = []
+    for e in ledger or []:
+        if e.get("defect_class") != "espn_id_unresolvable":
+            continue
+        out.append({
+            "event_id": e.get("event_id"), "sport": e.get("sport_key"),
+            "matchup": e.get("matchup"),
+            "stored_espn_id": e.get("espn_id"),
+            "stored_score": e.get("stored_score"),
+            "commence_time": e.get("commence_time"),
+            "reason": e.get("reason"),
+            "remedy": "none proven — adjudicate by hand; NOT the score repair",
+        })
+    return out
+
+
+def sampled_measurement(result: dict) -> dict:
+    """The coverage label the repair returns, normalised for a flow result.
+
+    #1980: the frozen-score flow reported a specific integer (14 failures) while
+    measuring six (sport, date) groups out of 998 — **0.6% of its own surface**.
+    A gate that reports a specific integer while measuring 0.6% of its surface
+    READS AS A POPULATION, and it was read as one. The count is not wrong; the
+    missing denominator is.
+
+    Older deploys of the repair do not return ``coverage``, so it is reconstructed
+    from the fields they do return rather than omitted — an absent label would
+    reintroduce exactly the ambiguity this exists to remove."""
+    cov = result.get("coverage")
+    if not isinstance(cov, dict):
+        groups_scanned = int(result.get("groups_scanned") or 0)
+        groups_total = int(result.get("groups_total") or 0)
+        events = int(result.get("events_scanned") or 0)
+        population = int(result.get("population") or 0)
+        cov = {
+            "mode": "full" if groups_total and groups_scanned >= groups_total else "sampled",
+            "groups_scanned": groups_scanned,
+            "groups_total": groups_total,
+            "group_sample_rate": (
+                round(groups_scanned / groups_total, 4) if groups_total else None
+            ),
+            "events_scanned": events,
+            "population": population,
+            "event_sample_rate": round(events / population, 4) if population else None,
+        }
+    cov = dict(cov)
+    cov["reader_warning"] = (
+        "SAMPLED — every count on this flow is over the scanned slice above, NOT "
+        "the population. Do not quote it as a total."
+        if cov.get("mode") == "sampled"
+        else "FULL — the scan covered the whole population."
+    )
+    return cov
+
+
+def estimated_population_defects(failing: int, coverage: dict) -> int | None:
+    """Naive extrapolation of a sampled count to the population.
+
+    Deliberately naive and deliberately LABELLED as an estimate: the sample is
+    newest-first, not random, so this is an order-of-magnitude read, not a
+    measurement. It exists so the reader of a sampled finding is handed a
+    population-scale number explicitly rather than mistaking the sample count
+    for one implicitly."""
+    rate = (coverage or {}).get("event_sample_rate")
+    if not rate:
+        return None
+    return int(round(failing / rate))
 
 
 def freshly_written_incoherent_fields(defects: list[dict]) -> list[dict]:
@@ -1155,6 +1287,138 @@ async def _sample_events(client: httpx.AsyncClient, status: str, limit: int) -> 
         return []
 
 
+#: Rows/hour of NEW unanchored events above which ruling 048's "bounded cost" is
+#: not bounded. DERIVED from the #2020 incident rather than chosen to taste:
+#:
+#:   * healthy regime, measured — 2026-08-18 added **6 rows in a day** (0.25/h),
+#:     and the tag's introduction day (08-17) burst to 500 rows over 7 hours
+#:     (71/h) as it first populated;
+#:   * incident regime, measured — 2026-08-19/20 sustained **900-2,400 rows/hour**
+#:     for three days, 500 -> 51,673 total.
+#:
+#: 100/h sits in the empty band between them: 400x the healthy daily rate, above
+#: the one legitimate onset burst on record, and 24x below the incident. A rate
+#: this high has never been benign here.
+UNANCHORED_GROWTH_PER_HOUR_CEILING = 100.0
+
+#: Redis key holding the PRIOR provenance-meter reading, so the growth gate
+#: compares against a value we actually took rather than one it inferred.
+_PROVENANCE_METER_PRIOR_KEY = "bainluck:flow_sentinel:provenance_meter_prior"
+#: 14 days — long enough that a few skipped nightly runs still leave a prior to
+#: compare against, short enough that a months-old reading never becomes the
+#: baseline for a rate.
+_PROVENANCE_METER_PRIOR_TTL_S = 14 * 24 * 3600
+
+
+def _utcnow():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def _load_prior_provenance_meter():
+    """The previous run's reading, or None. Never raises."""
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(_PROVENANCE_METER_PRIOR_KEY)
+        if not raw:
+            return None
+        return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        logger.info("flow sentinel: no prior provenance meter (%s)", exc)
+        return None
+
+
+def _store_provenance_meter(meter: dict, now) -> None:
+    """Persist this run's reading for the next run to compare against."""
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        payload = json.dumps({
+            "read_at": now.isoformat(),
+            "created_unanchored": meter.get("created_unanchored"),
+            "reconciled": meter.get("reconciled"),
+            "unreconciled": meter.get("unreconciled"),
+        })
+        get_redis_client().setex(
+            _PROVENANCE_METER_PRIOR_KEY, _PROVENANCE_METER_PRIOR_TTL_S, payload,
+        )
+    except Exception as exc:
+        logger.info("flow sentinel: could not persist provenance meter (%s)", exc)
+
+
+def provenance_growth(prior, meter: dict, now) -> dict:
+    """Growth of the unanchored population between two REAL readings. Pure.
+
+    Returns a dict that always carries ``measured``; ``rate_per_hour`` is None
+    whenever a rate cannot honestly be computed (no prior, unparseable prior, a
+    non-positive interval, or missing counts). **A rate of None never fails the
+    gate** — an absent comparison is not evidence of health, and it must not be
+    dressed up as one either (gotcha #53).
+
+    ``reconciled_delta`` may be NEGATIVE and that is not a bug in the reader:
+    the meter's `reconciled` was observed moving 180 -> 173 between two live
+    reads during #2020, so it is not monotone and cannot be read as drain
+    progress. It is reported for context and never used as a denominator.
+    """
+    from datetime import datetime, timezone
+
+    out = {
+        "measured": False,
+        "rate_per_hour": None,
+        "created_delta": None,
+        "reconciled_delta": None,
+        "hours": None,
+        "prior_read_at": None,
+    }
+    created = meter.get("created_unanchored")
+    if not isinstance(created, (int, float)):
+        out["reason"] = "current reading has no created_unanchored"
+        return out
+    if not isinstance(prior, dict):
+        out["reason"] = "no prior reading persisted yet — first run, or TTL expired"
+        return out
+    prior_created = prior.get("created_unanchored")
+    if not isinstance(prior_created, (int, float)):
+        out["reason"] = "prior reading has no created_unanchored"
+        return out
+    try:
+        prior_at = datetime.fromisoformat(str(prior.get("read_at")))
+    except (TypeError, ValueError):
+        out["reason"] = "prior reading has an unparseable read_at"
+        return out
+    if prior_at.tzinfo is None:
+        prior_at = prior_at.replace(tzinfo=timezone.utc)
+    hours = (now - prior_at).total_seconds() / 3600.0
+    out["prior_read_at"] = prior_at.isoformat()
+    if hours <= 0:
+        # A prior stamped in the FUTURE would make the rate negative and the gate
+        # would fail OPEN forever — the ahead-drift failure the lane locks already
+        # learned the hard way. Refuse to compute rather than compute a lie.
+        out["reason"] = f"non-positive interval ({hours:.3f}h) — refusing to rate"
+        return out
+    prior_reconciled = prior.get("reconciled")
+    reconciled = meter.get("reconciled")
+    out.update({
+        "measured": True,
+        "hours": hours,
+        "created_delta": int(created - prior_created),
+        "reconciled_delta": (
+            int(reconciled - prior_reconciled)
+            if isinstance(reconciled, (int, float))
+            and isinstance(prior_reconciled, (int, float))
+            else None
+        ),
+        "rate_per_hour": (created - prior_created) / hours,
+    })
+    return out
+
+
 async def _run_provenance_meter(client: httpx.AsyncClient) -> dict:
     """Ruling 048's declared cost, read as a number rather than assumed bounded.
 
@@ -1206,12 +1470,6 @@ async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
                       f"{meter.get('reason') or 'no reason given'}"
         })
     else:
-        # A SINGLE-READ invariant, deliberately, not a trend. The meter emits no
-        # prior value, so a `unreconciled > previous` comparison here would be
-        # dead code wearing the costume of a gate — which is the defect this
-        # whole check is being repaired for. If a trend is wanted later, persist
-        # the prior reading first and compare that; do not infer one.
-        #
         # What one read CAN establish: 048 accepts duplicates because id-keyed
         # reconciliation drains them. If rows were created unanchored and NOT
         # ONE has ever reconciled, the draining half of the bargain is absent,
@@ -1227,6 +1485,39 @@ async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
                               "048's accepted cost is only bounded by the "
                               "reconciliation that is not happening"
                 })
+
+        # #2020: THE GROWTH GATE — and the reason it had to exist.
+        #
+        # The clause above was the whole meter check, and it PASSED throughout the
+        # #2020 incident: `reconciled` had drifted to 173 by incidental means, so
+        # `reconciled == 0` was false while the population grew 500 -> 51,673 in
+        # three days at ~2,400 rows/hour. **A gate that passes while the thing it
+        # guards grows 100x is the crying-wolf failure inverted** — and it is
+        # worse than a noisy alarm, because it is quoted as evidence of health.
+        #
+        # The previous comment here said a trend comparison would be "dead code
+        # wearing the costume of a gate ... if a trend is wanted later, persist
+        # the prior reading first and compare that; do not infer one." That was
+        # exactly right, and this is that: the prior reading is now PERSISTED, so
+        # the comparison is against a value we actually took, never an inferred
+        # one. When there is no prior reading we say so and gate nothing.
+        prior = _load_prior_provenance_meter()
+        growth = provenance_growth(prior, meter, _utcnow())
+        meter["growth"] = growth
+        if growth.get("rate_per_hour") is not None and growth["rate_per_hour"] > (
+            UNANCHORED_GROWTH_PER_HOUR_CEILING
+        ):
+            meter_failures.append({
+                "detail": (
+                    f"unanchored population GROWING at {growth['rate_per_hour']:.0f} "
+                    f"rows/hour (ceiling {UNANCHORED_GROWTH_PER_HOUR_CEILING:.0f}) — "
+                    f"{growth['created_delta']:+d} created and "
+                    f"{growth['reconciled_delta']} reconciled over "
+                    f"{growth['hours']:.2f}h. Ruling 048's cost is bounded by "
+                    "reconciliation draining it; at this rate nothing drains it"
+                )
+            })
+        _store_provenance_meter(meter, _utcnow())
 
     return {
         "flow": "duplicate_events",
@@ -1822,22 +2113,55 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
 # this exact call H12'd at 30.25s because the repair's `limit` bounded its ESPN
 # calls but not its scan — the flow would have reported `unknown` every night,
 # fail-soft and so never RED, without ever guarding anything).
+#
+# (b) WHY IT STAYS SAMPLED, MEASURED 2026-08-19 (#1980, queue 380). A full sweep
+# is not a tuning choice, it is structurally impossible in one request: the
+# repair costs ~0.66 s per (sport, date) group (measured over five MLB dry-runs:
+# 8 groups in 4.51-5.27 s, one at 9.26 s), and `groups_total` for all
+# ESPN-mapped sports is ~1,000 (baseball_mlb alone is 139). That is ~11 minutes
+# against a 30 s router wall and the repair's own 22 s deadline. Widening the
+# budget just moves where it times out.
+#
+# So the sample stays and the LABEL is the fix: every count this flow reports now
+# travels with `coverage` — mode, sample rate, and population — and the issue
+# title/body/comment render it. See `sampled_measurement`. The old failure was
+# never the sample; it was reporting a specific integer with no denominator, so
+# the integer read as a population.
 _FROZEN_SCORE_GROUPS = 6
 
 
-async def _run_frozen_final_scores(client: httpx.AsyncClient) -> dict:
-    """CAL-P002 regression guard: a settled event's stored score MUST be the final.
+async def _run_settled_score_integrity(client: httpx.AsyncClient) -> list[dict]:
+    """ONE measurement, TWO flows (#1980, queue 380).
 
-    Measures by calling the ``event-final-scores`` repair in DRY-RUN (it writes
-    nothing) over the most recent slates, so the guard and the repair can never
-    drift on what counts as a defect. A broken/unauthenticated measurement is
-    SKIPPED, never filed — filing on our own broken instrument is the cry-wolf the
-    grid health score was retired for."""
+    A settled event that disagrees with ESPN is wrong in one of two FIELDS, and
+    the remedies are opposite:
+
+    * ``frozen_final_scores`` — the ``espn_id`` is proven this row's own game and
+      the stored score is not that game's final. Remedy: the score repair.
+    * ``espn_id_linkage_drift`` — the ``espn_id`` is ITSELF wrong. The score
+      remedy on these rows writes ANOTHER GAME'S final onto them. Remedy: the
+      attended ``event-espn-id`` linkage repair.
+
+    They are two flows and not two lists inside one, because the sentinel files
+    ONE deduped issue per flow: sharing an issue means sharing a headline remedy,
+    and a reader who applies the top line of that issue to every row in it
+    corrupts the eight rows (measured, MLB, 32 days) whose score is already
+    correct. Two remedies must be two issues.
+
+    They share ONE dry-run HTTP call — the ESPN scoreboard fetches behind it are
+    the expensive part (~0.66 s per (sport, date) group, measured 2026-08-19), so
+    measuring twice would double the nightly cost to learn nothing new.
+
+    A broken/unauthenticated measurement is SKIPPED for BOTH, never filed —
+    filing on our own broken instrument is the cry-wolf the grid health score was
+    retired for."""
     headers = _admin_headers()
     if headers is None:
-        return _unknown_flow(
-            "frozen_final_scores", "ADMIN_TOKEN unset — repair rail unavailable"
-        )
+        reason = "ADMIN_TOKEN unset — repair rail unavailable"
+        return [
+            _unknown_flow("frozen_final_scores", reason),
+            _unknown_flow("espn_id_linkage_drift", reason),
+        ]
     try:
         resp = await client.post(
             "/api/admin/repairs/event-final-scores",
@@ -1851,43 +2175,105 @@ async def _run_frozen_final_scores(client: httpx.AsyncClient) -> dict:
         resp.raise_for_status()
         result = (resp.json() or {}).get("result") or {}
     except Exception as exc:
-        return _unknown_flow(
-            "frozen_final_scores", f"repair dry-run failed: {str(exc)[:120]}"
-        )
+        reason = f"repair dry-run failed: {str(exc)[:120]}"
+        return [
+            _unknown_flow("frozen_final_scores", reason),
+            _unknown_flow("espn_id_linkage_drift", reason),
+        ]
 
     scanned = int(result.get("events_scanned") or 0)
+    coverage = sampled_measurement(result)
     if scanned == 0:
         # checked == 0 can never be a pass (an empty slate is not evidence).
-        return _unknown_flow(
-            "frozen_final_scores",
-            "no settled ESPN-mapped events in the scanned window",
-            groups_scanned=result.get("groups_scanned"),
-        )
+        reason = "no settled ESPN-mapped events in the scanned window"
+        return [
+            _unknown_flow("frozen_final_scores", reason, coverage=coverage),
+            _unknown_flow("espn_id_linkage_drift", reason, coverage=coverage),
+        ]
 
-    frozen = frozen_final_score_events(result.get("ledger") or [])
-    failures = [
+    ledger = result.get("ledger") or []
+    frozen = frozen_final_score_events(ledger)
+    linkage = espn_id_linkage_defects(ledger)
+    unresolvable = espn_id_unresolvable_rows(ledger)
+
+    score_failures = [
         {"detail": f"settled {f['sport']} event {f['matchup']} stores score "
                    f"{f['stored_score']} but ESPN's FINAL is {f['espn_final']} "
                    f"(id {f['event_id']}"
                    + (", WINNER FLIP" if f["winner_flip"] else "")
-                   + ") — frozen/wrong final (CAL-P002; POST /api/admin/repairs/"
-                     "event-final-scores?apply=true)"}
+                   + ") — frozen/wrong final, espn_id PROVEN correct for this row "
+                     "(CAL-P002; POST /api/admin/repairs/"
+                     "event-final-scores?apply=true)",
+         "event_id": f["event_id"], "defect_class": "score_drifted"}
         for f in frozen
     ]
-    return {
+    linkage_failures = [
+        {"detail": f"settled {f['sport']} event {f['matchup']} carries espn_id "
+                   f"{f['stored_espn_id']}, which is NOT this row's game "
+                   f"({f['reason']})"
+                   + (f" — the game it actually is: espn_id {f['proposed_espn_id']}"
+                      if f.get("proposed_espn_id") else " — no target proven")
+                   + ". 🔴 DO NOT run event-final-scores on this row: the score "
+                     "remedy writes another game's final onto it. Remedy is the "
+                     "LINKAGE repair, POST /api/admin/repairs/event-espn-id "
+                     "(probe -> apply=false -> attended apply=true&plan_hash=...)",
+         "event_id": f["event_id"], "defect_class": "espn_id_drifted",
+         "stored_espn_id": f["stored_espn_id"],
+         "proposed_espn_id": f.get("proposed_espn_id"),
+         "stored_score": f.get("stored_score")}
+        for f in linkage
+    ]
+
+    shared_evidence = {
+        # (b) THE DENOMINATOR. This is a SAMPLE, and it says so, with the rate and
+        # the population next to every count derived from it.
+        "coverage": coverage,
+        "groups_remaining": result.get("groups_remaining"),
+        "next_offset": result.get("next_offset"),
+        "class_counts": {
+            "score_drifted": int(result.get("score_defects") or 0),
+            "espn_id_drifted": int(result.get("espn_id_drifted") or 0),
+            "espn_id_drifted_with_target": int(
+                result.get("espn_id_drifted_with_target") or 0
+            ),
+            "espn_id_unresolvable": int(result.get("espn_id_unresolvable") or 0),
+        },
+    }
+
+    score_flow = {
         "flow": "frozen_final_scores",
         "checked": scanned,
-        "passed": len(failures) == 0,
-        "failures": failures,
+        "passed": len(score_failures) == 0,
+        "failures": score_failures,
+        "coverage": coverage,
         "evidence": {
-            "events_scanned": scanned,
-            "groups_scanned": result.get("groups_scanned"),
-            "groups_remaining": result.get("groups_remaining"),
-            "identity_blocked": result.get("identity_blocked"),
+            **shared_evidence,
+            "estimated_population_failures": estimated_population_defects(
+                len(score_failures), coverage
+            ),
             "winner_flips": result.get("winner_flips"),
             "frozen_scores": frozen,
         },
     }
+    linkage_flow = {
+        "flow": "espn_id_linkage_drift",
+        "checked": scanned,
+        "passed": len(linkage_failures) == 0,
+        "failures": linkage_failures,
+        "coverage": coverage,
+        "evidence": {
+            **shared_evidence,
+            "estimated_population_failures": estimated_population_defects(
+                len(linkage_failures), coverage
+            ),
+            "espn_id_drifted": linkage,
+            # Reported, never claimed (gotcha #53). These are NOT failures — an
+            # empty read is not a fact — but they were previously a bare counter
+            # with no ledger row, i.e. invisible, which is what this fixes.
+            "espn_id_unresolvable_watch": unresolvable,
+        },
+    }
+    return [score_flow, linkage_flow]
 
 
 # Markets walked per sentinel run. Newest-first, so this is "did anything in the
@@ -2050,10 +2436,36 @@ async def _run_team_identity_dupes(client: httpx.AsyncClient) -> dict:
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
+def coverage_phrase(flow_result: dict) -> str:
+    """The parenthetical every sampled flow must carry (#1980).
+
+    ``frozen_final_scores`` reported "14 failing, 87 checked" while its 87 was
+    six (sport, date) groups out of 998 — 0.6% of its own surface. Nothing in the
+    title, the body or the comment said so, and the 14 was consequently read as
+    the population. A flow that measures a slice must SAY it measured a slice, in
+    the first line a reader sees.
+
+    A flow with no coverage block renders exactly as before, so this is additive
+    for every other flow."""
+    cov = flow_result.get("coverage")
+    n = len(flow_result.get("failures") or [])
+    checked = flow_result.get("checked", 0)
+    if not isinstance(cov, dict) or cov.get("mode") != "sampled":
+        return f"{n} failing, {checked} checked"
+    pop = cov.get("population")
+    rate = cov.get("event_sample_rate")
+    pct = f"{rate * 100:.1f}%" if isinstance(rate, (int, float)) else "?"
+    return (
+        f"{n} failing in a SAMPLE of {checked}/{pop} events ({pct} of the population)"
+    )
+
+
 def build_flow_issue_title(flow_result: dict) -> str:
     flow = flow_result["flow"]
-    n = len(flow_result["failures"])
-    title = f"[Flow Sentinel] {_FLOW_TITLES.get(flow, flow)} ({n} failing, {flow_result['checked']} checked)"
+    title = (
+        f"[Flow Sentinel] {_FLOW_TITLES.get(flow, flow)} "
+        f"({coverage_phrase(flow_result)})"
+    )
     return title[:256]
 
 
@@ -2114,10 +2526,9 @@ def build_flow_redetect_comment(flow_result: dict) -> str:
     re-detect comment now carries the failures themselves.
     """
     fp = flow_fingerprint(flow_result["flow"])
-    n = len(flow_result["failures"])
     parts = [
-        f"Flow Sentinel re-observed this failure: **{n} failing** of "
-        f"{flow_result['checked']} checked (fingerprint `{fp}`). Still open.",
+        f"Flow Sentinel re-observed this failure: **{coverage_phrase(flow_result)}** "
+        f"(fingerprint `{fp}`). Still open.",
         "",
         "**Current failures** (this run — the issue body above is frozen at "
         "first-file and does NOT reflect them):",
@@ -2156,14 +2567,30 @@ def build_flow_issue_body(flow_result: dict, *, refreshed: bool = False) -> str:
             f"for. The comment thread below is the history.",
             "",
         ]
+    cov = flow_result.get("coverage")
     parts += [
         f"**Flow:** `{flow}` — {_FLOW_TITLES.get(flow, flow)}  ",
         f"**Checks run:** {flow_result['checked']}  ",
         f"**Failing:** {len(flow_result['failures'])}  ",
         f"**Run against:** {FLOW_SENTINEL_API}",
-        "",
-        "### Failures",
     ]
+    if isinstance(cov, dict) and cov.get("mode") == "sampled":
+        # #1980: the sampled denominator, stated where a reader cannot miss it.
+        # The count above is over the slice, not the population.
+        est = (flow_result.get("evidence") or {}).get("estimated_population_failures")
+        parts += [
+            "",
+            f"> ⚠️ **SAMPLED MEASUREMENT — the count above is NOT a population.** "
+            f"This run scanned {cov.get('groups_scanned')} of "
+            f"{cov.get('groups_total')} (sport, date) groups = "
+            f"{cov.get('events_scanned')} of {cov.get('population')} events "
+            f"({(cov.get('event_sample_rate') or 0) * 100:.1f}% of the surface). "
+            + (f"Naive extrapolation to the population: ~{est} failing. "
+               if est is not None else "")
+            + "Walk the rest with `?offset=<next_offset>` until "
+              "`groups_remaining` is 0.",
+        ]
+    parts += ["", "### Failures"]
     parts += render_failure_lines(flow_result["failures"])
 
     ev = flow_result.get("evidence") or {}
@@ -2327,7 +2754,9 @@ async def _run_flow_sentinel(
         ("matured_linkage", _run_matured_linkage),
         ("unlinked_held", _run_unlinked_held),
         ("season_aggregate_linkage", _run_season_aggregate_linkage),
-        ("frozen_final_scores", _run_frozen_final_scores),
+        # ONE call, TWO flows — the score class and the linkage class have
+        # opposite remedies and so must file separately (#1980).
+        (("frozen_final_scores", "espn_id_linkage_drift"), _run_settled_score_integrity),
         ("winner_field_coherence", _run_winner_field_coherence),
         ("team_identity_dupes", _run_team_identity_dupes),
     )
@@ -2335,17 +2764,29 @@ async def _run_flow_sentinel(
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,
                                  follow_redirects=True) as client:
         for name, runner in runners:
+            # A runner may own MORE THAN ONE flow when the flows share one
+            # expensive measurement (#1980: the score class and the linkage class
+            # come from one ESPN-backed dry-run). Declaring the names here rather
+            # than inferring them from the return value is what lets the crash
+            # path emit a result for EVERY flow the runner owns — an exception
+            # that silently deleted a flow from the scorecard would be the same
+            # invisibility this split was filed to remove.
+            names = (name,) if isinstance(name, str) else tuple(name)
             if _time.monotonic() - start > deadline_seconds:
-                stats["errors"].append({"deadline": f"stopped before {name}"})
+                stats["errors"].append({"deadline": f"stopped before {names[0]}"})
                 break
             try:
                 result = await runner(client)
+                results = list(result) if isinstance(result, list) else [result]
             except Exception as exc:
-                logger.error("Flow sentinel flow %s crashed: %s", name, exc)
-                result = {"flow": name, "checked": 0, "passed": False,
-                          "failures": [{"detail": f"flow crashed: {str(exc)[:150]}"}],
-                          "evidence": {"crash": str(exc)[:200]}}
-            stats["flows"].append(result)
+                logger.error("Flow sentinel flow %s crashed: %s", names[0], exc)
+                results = [
+                    {"flow": n, "checked": 0, "passed": False,
+                     "failures": [{"detail": f"flow crashed: {str(exc)[:150]}"}],
+                     "evidence": {"crash": str(exc)[:200]}}
+                    for n in names
+                ]
+            stats["flows"].extend(results)
 
     # --- Scorecard ---
     # #1494: three outcomes, not two. An UNKNOWN flow (auth/transport/5xx/parse
