@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import PropsSection, { deriveState } from "../../components/event/PropsSection";
 import type { PropMark } from "../../components/event/PropsSection";
-import { SETTLED_NO_GRADE_LABEL } from "../../lib/propGrade";
+import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "../../lib/propGrade";
 
 const ITEMS: PropMark[] = [
   { key: 1, label: "LeBron 25+ points", pregame_mark: 0.6, current: 0.72, graded_result: "hit" },
@@ -47,11 +47,17 @@ describe("PropsSection rendering", () => {
     expect(html).toContain("text-accent-danger");
   });
 
-  test("WHAT HIT shows graded results", () => {
+  test("WHAT HIT shows graded results, in the site's ONE settled vocabulary", () => {
+    // UX-P106. This used to assert the literals "Hit" / "Miss" — the title-case
+    // FOURTH settled vocabulary this section was rendering, on the same event
+    // page as the rail's HIT and the prop cards' HIT. The test was pinning it in
+    // place: a guard written against a hard-coded string cannot tell "correct"
+    // from "the way it happens to be". It now asserts through the constants, so
+    // the words are checked at their single source (`lib/propGrade`).
     const html = renderToStaticMarkup(<PropsSection items={ITEMS} state="graded" />);
     expect(html).toContain("What hit");
-    expect(html).toContain("Hit");
-    expect(html).toContain("Miss");
+    expect(html).toContain(propResultLabel("hit"));
+    expect(html).toContain(propResultLabel("miss"));
   });
 
   test("honest 'pending' placeholder when #195 fields are null (no fabricated number)", () => {
