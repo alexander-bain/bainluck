@@ -171,6 +171,16 @@ def _check_admin_destructive(
     destructive route ever adopts the identity path, revisit this deliberately
     rather than discovering it.
 
+    AMENDED Queue 386 Item 2 (Alex ruling 2026-08-20), which broadened identity
+    admin from a hardcoded id set to a ``users.is_admin`` column and unblocked
+    the admin UI for an identity session. **Identity alone still NEVER unlocks a
+    delete**, and the mechanism is the first line of the body rather than a
+    policy anyone has to remember: this function calls ``_check_admin_secret``,
+    which is token-only. An identity-authenticated request fails there and never
+    reaches the second token at all. ``tests/test_admin_identity_auth_q386.py``
+    pins that — an admin-by-identity request against a destructive endpoint is
+    403 even with a correct ``X-Admin-Destructive-Token``.
+
     Raises HTTPException(403) on failure, naming the missing/mismatched env var —
     the failure will be met by Alex mid-operation, and a generic denial would tell
     him nothing about what to do next. Returns True on success.
@@ -244,7 +254,100 @@ def _admin_user_emails() -> set[str]:
     return values
 
 
+def _user_is_admin(user) -> bool:
+    """Whether this ``User`` row holds the admin role.
+
+    Queue 386 Item 2 (Alex ruling 2026-08-20). Three sources, checked in this
+    order, all OR-ed:
+
+    1. ``users.is_admin`` — the SERVER-SIDE role, the one that is meant to
+       outlive the other two. A grant is one UPDATE, a revocation is one UPDATE,
+       and ``SELECT id, email FROM users WHERE is_admin`` answers *who is an
+       admin right now* without reading source code.
+    2. ``ADMIN_USER_IDS`` / the hardcoded ``DEFAULT_ADMIN_USER_IDS``.
+    3. ``ADMIN_USER_EMAILS`` / ``DEFAULT_ADMIN_EMAILS``.
+
+    (2) and (3) are the pre-existing allowlists and are deliberately KEPT rather
+    than replaced. The column ships in a release; the grant is a separate manual
+    UPDATE Alex runs afterwards. Deleting the allowlists in the same change would
+    open a window — however short — in which the admin UI has no admin, and the
+    person locked out is the one holding the SQL.
+
+    ``__dict__.get`` rather than ``getattr`` for the new column: ``getattr`` on an
+    ORM attribute that was expired or never loaded triggers a lazy refresh, which
+    raises ``MissingGreenlet`` in an async context (a repeat failure in this
+    codebase). ``__dict__`` reads only what the SELECT actually loaded, and an
+    absent key means "not loaded", which resolves to not-admin — the safe reading
+    of an unknown privilege.
+    """
+    if user is None:
+        return False
+    if user.__dict__.get("is_admin") is True:
+        return True
+    if user.id in _admin_user_ids():
+        return True
+    return (user.email or "").lower() in _admin_user_emails()
+
+
+async def _resolve_admin_user(request: Request, db=None):
+    """Resolve the Bearer token to an ADMIN ``User`` row, or ``None``.
+
+    This is the identity arm, factored out so ``_check_admin_auth`` and
+    ``_resolve_admin_email`` cannot drift — the reason it exists is that they had
+    already grown two hand-copied versions of the same lookup, and a privilege
+    check duplicated is a privilege check that will eventually disagree with
+    itself about who is an admin.
+
+    Returns ``None`` for every failure mode — no token, an unverifiable token, a
+    token for a user with no row, a real user who is not an admin. The caller
+    cannot distinguish them, which is deliberate: a 403 that says *which arm
+    failed* is an oracle for probing who has admin.
+    """
+    token = bearer_credentials(request)
+    if not token or db is None:
+        return None
+    try:
+        from app.services.firebase_auth import verify_id_token
+
+        claims = verify_id_token(token)
+        if not claims:
+            return None
+        firebase_uid = claims.get("uid") or claims.get("sub")
+        if not firebase_uid:
+            return None
+        from app.models.models import User
+
+        result = await db.execute(
+            select(User).where(User.firebase_uid == firebase_uid)
+        )
+        user = result.scalar_one_or_none()
+        if user is not None and _user_is_admin(user):
+            return user
+    except Exception:
+        # Any failure in the identity arm is a non-admin, never an error. This
+        # arm runs AFTER the token arm has already declined, so swallowing here
+        # can only ever turn a would-be 500 into the 403 the caller was getting
+        # anyway — it can never upgrade a rejection into an acceptance.
+        pass
+    return None
+
+
 async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
+    """Admin auth accepting EITHER the ADMIN_TOKEN **or** an admin identity.
+
+    ORDER IS LOAD-BEARING (Queue 386 Item 2). One ``Authorization: Bearer <x>``
+    header carries two completely different credentials — the shared ADMIN_TOKEN
+    that every agent lane holds, and a per-user session JWT. The token comparison
+    runs FIRST and is a constant-time ``compare_digest`` against an env var: no
+    database, no JWT parse, no network. A lane's request therefore takes exactly
+    the path it took before this queue and never reaches the identity arm, which
+    is what "lanes keep tokens, zero change to their path" means concretely.
+
+    The identity arm runs only after the token arm has already declined, and it
+    cannot alter that decline — ``_resolve_admin_user`` returns ``None`` on every
+    failure rather than raising. A malformed JWT in the header is a 403, the same
+    403 as a wrong token, with the same body.
+    """
     # 1. ADMIN_TOKEN via Authorization: Bearer header. Queue #252 Item 4: this
     #    must work even when no ?secret= query value is present — identity-aware
     #    endpoints previously only tried this when `secret` was truthy, so the
@@ -255,27 +358,8 @@ async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bo
             return True
     except Exception:
         pass
-    token = bearer_credentials(request)
-    if token:
-        try:
-            from app.services.firebase_auth import verify_id_token
-            claims = verify_id_token(token)
-            if claims:
-                firebase_uid = claims.get("uid") or claims.get("sub")
-                if firebase_uid and db:
-                    from app.models.models import User
-                    result = await db.execute(
-                        select(User).where(User.firebase_uid == firebase_uid)
-                    )
-                    user = result.scalar_one_or_none()
-                    if user and (
-                        user.id in _admin_user_ids()
-                        or (user.email or "").lower() in _admin_user_emails()
-                    ):
-                        return True
-        except Exception:
-            pass
-    return False
+    # 2. Identity: a verified session of a user carrying the admin role.
+    return await _resolve_admin_user(request, db) is not None
 
 
 async def _resolve_admin_email(request: Request, db=None) -> str | None:
@@ -283,30 +367,14 @@ async def _resolve_admin_email(request: Request, db=None) -> str | None:
 
     Returns the email string when the request carries a valid admin Bearer
     token, or ``None`` when the caller is not authenticated or not an admin.
+
+    Note the asymmetry with :func:`_check_admin_auth`: a request authenticated by
+    the shared ADMIN_TOKEN resolves to ``None`` here, and correctly so. The token
+    identifies a *capability*, not a *person* — a dozen lanes hold it. Attributing
+    a gold label to "whoever had the token" would be a provenance claim the
+    system cannot back up, which is worse than no claim at all.
     """
-    token = bearer_credentials(request)
-    if not token:
+    user = await _resolve_admin_user(request, db)
+    if user is None:
         return None
-    try:
-        from app.services.firebase_auth import verify_id_token
-
-        claims = verify_id_token(token)
-        if not claims:
-            return None
-        firebase_uid = claims.get("uid") or claims.get("sub")
-        if not firebase_uid or not db:
-            return None
-        from app.models.models import User
-
-        result = await db.execute(
-            select(User).where(User.firebase_uid == firebase_uid)
-        )
-        user = result.scalar_one_or_none()
-        if user and (
-            user.id in _admin_user_ids()
-            or (user.email or "").lower() in _admin_user_emails()
-        ):
-            return (user.email or "").lower() or None
-    except Exception:
-        pass
-    return None
+    return (user.email or "").lower() or None

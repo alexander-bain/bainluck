@@ -25,6 +25,72 @@ router = APIRouter()
 
 
 # =============================================================================
+# Who am I (admin identity probe)
+# =============================================================================
+
+
+@router.get("/whoami")
+async def admin_whoami(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Report whether THIS request is admin, and by which arm.
+
+    Queue 386 Item 2 (Alex ruling 2026-08-20). The admin UI needs to know, before
+    it renders anything, whether the signed-in session already carries admin —
+    otherwise it has no basis for skipping the secret prompt and Alex types a
+    token he does not need on every reload.
+
+    **This endpoint deliberately does not 403.** Every other admin route answers
+    "no" by raising, which is right for a route that would otherwise *do*
+    something. Here "no" IS the answer, not a refusal: a plain 200 with
+    ``is_admin: false`` lets the client fall back to the prompt in one branch,
+    where a 403 would be indistinguishable from an expired token, a CORS problem,
+    or the API being down — three different fixes behind one status code.
+
+    It leaks nothing the caller does not already hold. ``via`` names the arm that
+    accepted the credential the caller SENT; it never reveals whether some other
+    credential would have worked, and ``email`` is echoed only to the session
+    that authenticated as that very user.
+    """
+    from app.routes.admin_utils import _resolve_admin_user, bearer_credentials
+
+    presented = bearer_credentials(request)
+
+    # Token arm first — same order, same constant-time compare, as every other
+    # admin gate. A lane hitting this endpoint must not pay for a JWT parse.
+    try:
+        if _check_admin_secret(None, request=request):
+            return {
+                "is_admin": True,
+                "via": "token",
+                "email": None,
+                "user_id": None,
+                "authenticated": True,
+            }
+    except Exception:
+        pass
+
+    user = await _resolve_admin_user(request, db)
+    if user is not None:
+        return {
+            "is_admin": True,
+            "via": "identity",
+            "email": (user.email or "").lower() or None,
+            "user_id": user.id,
+            "authenticated": True,
+        }
+
+    return {
+        "is_admin": False,
+        "via": None,
+        "email": None,
+        "user_id": None,
+        "authenticated": bool(presented),
+    }
+
+
+# =============================================================================
 # Excitement Index (EI / Pulse)
 # =============================================================================
 

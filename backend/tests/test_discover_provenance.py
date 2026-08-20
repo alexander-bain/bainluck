@@ -94,10 +94,20 @@ class TestEnumAndAllowlistAgree:
         first, so this revision was re-parented onto it at integration and the
         proxy went red over a chain that is perfectly linear.
 
-        So assert the property, not the proxy: ONE head, and it is this revision.
-        That is strictly stronger — it catches a second head no matter which
-        parent is declared — and it does not have to be edited again by the next
-        lane that lands a migration ahead of this one.
+        So assert the property, not the proxy: ONE head, and this revision is ON
+        the chain that reaches it. That is strictly stronger — it catches a
+        second head no matter which parent is declared — and it does not have to
+        be edited again by the next lane that lands a migration ahead of this
+        one.
+
+        AMENDED Queue 386 Item 2. The version above asserted `heads == [play]`,
+        which was the same over-specification one step further along: it pinned
+        `play` as the head *forever*, so it went red on `add_users_is_admin`
+        (`users.is_admin`) — a linear descendant, exactly the safe case the
+        docstring above says this test was rewritten to stop flagging. A
+        migration landing AFTER this one is not a defect; a second head is. Same
+        lesson, second occurrence, so it is written down here rather than fixed
+        again quietly.
         """
         from alembic.config import Config
         from alembic.script import ScriptDirectory
@@ -107,10 +117,15 @@ class TestEnumAndAllowlistAgree:
 
         script = ScriptDirectory.from_config(Config("alembic.ini"))
         heads = list(script.get_heads())
-        assert heads == [play.revision], (
-            f"expected exactly one alembic head and for it to be the play "
-            f"revision {play.revision!r}, got {heads!r} — a second head fails "
-            f"the Heroku release phase and the site does not deploy at all"
+        assert len(heads) == 1, (
+            f"expected exactly one alembic head, got {heads!r} — a second head "
+            f"fails the Heroku release phase and the site does not deploy at all"
+        )
+        reachable = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+        assert play.revision in reachable, (
+            f"{play.revision!r} is not on the chain that reaches head {heads[0]!r}, "
+            f"so the `play` enum value never reaches production — it has been "
+            f"orphaned onto a side branch"
         )
 
         # And the chain really reaches the base this revision exists to amend:

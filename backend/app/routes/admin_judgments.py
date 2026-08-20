@@ -807,6 +807,58 @@ async def _authorize_admin(secret_value: str | None, request, db) -> bool:
     return await _check_admin_auth(secret_value, request, db)
 
 
+#: Reviewer values that name a SURFACE, not a person. When the writer is an
+#: authenticated admin identity, these are replaced by that admin's email.
+#: Anything else is an explicit attribution the caller meant, and is preserved.
+GENERIC_REVIEWERS = frozenset({"native", "web", "alex", "admin", "ios"})
+
+
+def _is_generic_reviewer(value: Any) -> bool:
+    """Whether ``value`` names a surface rather than a person.
+
+    ``None`` is NOT generic. On the read side ``reviewer=None`` means "do not
+    filter reviewed-state by reviewer at all", which is a different request from
+    "this surface's default reviewer" — folding them together would silently
+    narrow a deliberately unfiltered query to one person's rows.
+    """
+    return isinstance(value, str) and value.strip().lower() in GENERIC_REVIEWERS
+
+#: The ``label_metadata`` key carrying the authenticated writer's email.
+#: Sits alongside ``reviewer_tier`` (``app/utils/reviewer_tier.py``) because it
+#: answers the second half of the same provenance question: the tier says which
+#: POOL a row belongs to, this says which PERSON put it there.
+REVIEWER_IDENTITY_KEY = "reviewer_identity"
+
+
+def _with_reviewer_identity(
+    metadata: dict[str, Any] | None,
+    admin_email: str | None,
+) -> dict[str, Any] | None:
+    """Stamp the authenticated writer's email onto a ``label_metadata`` blob.
+
+    Queue 386 Item 2, invariant 2: *gold labels written under Alex's session are
+    attributed to his authenticated identity.*
+
+    The ``reviewer`` COLUMN is not sufficient on its own for this, which is why a
+    metadata key exists as well. ``reviewer`` is a mutable operational field —
+    it is what reviewed-state keys on, callers set it freely, and it is
+    overwritten by the generic-reviewer resolution a few lines above. The
+    metadata key is written once, only from a VERIFIED session, and only when
+    there is a verified session: a request that authenticated with the shared
+    ADMIN_TOKEN gets no key at all rather than a guess.
+
+    That absence is the honest encoding. A dozen agent lanes hold the token, so
+    "written by the token" identifies no one; recording an assumed email there
+    would put an unfalsifiable provenance claim into the gold corpus, which is
+    strictly worse for ``reviewer_tier`` work than recording nothing (#671).
+    """
+    if not admin_email:
+        return metadata
+    base = dict(metadata) if isinstance(metadata, dict) else {}
+    base[REVIEWER_IDENTITY_KEY] = admin_email
+    return base
+
+
 def _normalize_reason_tags(value: list[str] | str | None) -> list[str]:
     return canonical_reason_tags(value)
 
@@ -1155,14 +1207,24 @@ async def create_judgment(
     if gate["status"] == "conflict":
         raise HTTPException(status_code=409, detail=gate)
 
-    # Resolve reviewer identity: when the caller passes "native" (iOS default)
-    # and is authenticated via Bearer token, persist the admin user's email so
-    # server-side reviewed-state is per-user rather than a shared pool.
+    # Resolve reviewer identity: when the caller passes a SURFACE name rather
+    # than a person, and is authenticated as an admin identity, persist that
+    # admin's email so server-side reviewed-state is per-user, not a shared pool.
+    #
+    # Queue 386 Item 2 (Alex ruling 2026-08-20) widened this from `"native"` only
+    # to the whole generic set. The narrow version had a concrete bug: the web
+    # labeling page asks for candidates with `reviewer="native"` (which resolved
+    # to the email) but WROTE them back with `reviewer="web"` (which did not), so
+    # the two halves of the same session keyed reviewed-state differently and web
+    # labels never suppressed their own cards on the next batch.
+    #
+    # Only GENERIC values are overwritten. An explicit non-generic reviewer is a
+    # deliberate attribution by the caller — the kid `/play` surface names its
+    # reviewer on purpose — and must survive untouched.
+    admin_email = await _resolve_admin_email(request, db)
     reviewer_value = _merged_value(body, "reviewer", reviewer, "alex")
-    if reviewer_value == "native":
-        admin_email = await _resolve_admin_email(request, db)
-        if admin_email:
-            reviewer_value = admin_email
+    if admin_email and _is_generic_reviewer(reviewer_value):
+        reviewer_value = admin_email
 
     surface_value = _merged_value(body, "surface", surface, "discover")
     reason_tags_value = _normalize_reason_tags(
@@ -1204,18 +1266,25 @@ async def create_judgment(
         # with no code path that can write anything but `kid`, rather than a
         # flag on this one that a caller has to remember to set.
         tier=TIER_ALEX,
-        metadata=_structured_label_metadata(
-            body,
-            _merged_value(body, "label_metadata", None),
-            gate=gate,
-            live_card=live_row,
-            # ONE derivation, hoisted above this call and passed to both
-            # consumers (doctrine clause 5). Re-normalising the tags here would
-            # be a second derivation that merely agrees — and the one that
-            # decides the defect route would be free to drift from the one
-            # actually stored on the row.
-            label=label_value,
-            reason_tags=reason_tags_value,
+        # `gold_label_row` (new on master) takes the tier as its own kwarg, so the
+        # `with_tier(...)` wrapper this commit originally carried is redundant and
+        # is dropped rather than nested — two things stamping the tier is how they
+        # come to disagree. `_with_reviewer_identity` still wraps, because it
+        # answers the other half of the provenance question: the tier says which
+        # POOL the row is in, this says which PERSON put it there.
+        metadata=_with_reviewer_identity(
+            _structured_label_metadata(
+                body,
+                _merged_value(body, "label_metadata", None),
+                gate=gate,
+                live_card=live_row,
+                # ONE derivation, hoisted above this call and passed to both
+                # consumers (doctrine clause 5). Re-normalising the tags here
+                # would be a second derivation that merely agrees.
+                label=label_value,
+                reason_tags=reason_tags_value,
+            ),
+            admin_email,
         ),
         # This surface elicits the gold label itself — Alex taps love/fine/bad/
         # kill on the card. Nothing is inferred, and the row says so, because the
@@ -1293,10 +1362,13 @@ async def list_labeling_candidates(
     if not await _authorize_admin(secret, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Resolve reviewer: when "native" and authenticated via Bearer token,
-    # use the admin's email for per-user reviewed state.
+    # Resolve reviewer: when the caller names a SURFACE and is authenticated as
+    # an admin identity, use that admin's email for per-user reviewed state.
+    # Must use the SAME generic set as create_judgment (GENERIC_REVIEWERS) — the
+    # two sides being narrower on the write than on the read is exactly the bug
+    # that made web labels fail to suppress their own cards on the next batch.
     effective_reviewer = reviewer
-    if reviewer == "native":
+    if _is_generic_reviewer(reviewer):
         admin_email = await _resolve_admin_email(request, db)
         if admin_email:
             effective_reviewer = admin_email

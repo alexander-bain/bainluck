@@ -475,6 +475,19 @@ class User(Base):
     photo_url: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # Server-side admin role (Queue 386 Item 2, Alex ruling 2026-08-20).
+    # Admin routes accept EITHER the ADMIN_TOKEN bearer OR a verified session of
+    # a user whose row carries this flag. The flag lives on the ROW, not in an
+    # env var, so the grant is auditable, revocable with one UPDATE, and cannot
+    # drift between the web dyno and the workers the way ADMIN_USER_IDS can.
+    #
+    # NOT granted by any migration: a migration that writes a privilege grant is
+    # a privilege escalation that ships in a diff nobody reads as one. See
+    # docs/admin-identity.md for the one-line SQL Alex runs to grant it.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+
     # Email compliance (CAN-SPAM) — per-type opt-in, all default False
     # Shape: {"digest": false, "bug_updates": false, "market_alerts": false}
     email_preferences: Mapped[Optional[dict]] = mapped_column(

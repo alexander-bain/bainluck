@@ -7,7 +7,6 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import { getIdToken } from "@/lib/firebase";
 import LabelingCard, {
   pct,
   type LabelingCardOutcome,
@@ -66,7 +65,12 @@ export default function LabelingPage() {
   useScrollDepth({ pageType: "admin_labeling" });
   useEngagementTime({ pageType: "admin_labeling" });
 
-  const { secret } = useAdminAuth();
+  // Queue 386 Item 2 (Alex ruling 2026-08-20): this page authenticates with
+  // `authToken` — the pasted ADMIN_TOKEN when there is one, otherwise the
+  // signed-in admin's session JWT — so an identity session labels without ever
+  // seeing the secret prompt. Both arrive in the same Authorization header and
+  // the backend (`_authorize_admin`) tries the token comparison first.
+  const { authToken } = useAdminAuth();
 
   const [candidates, setCandidates] = useState<LabelingCandidate[]>([]);
   const [idx, setIdx] = useState(0);
@@ -84,15 +88,17 @@ export default function LabelingPage() {
     setLoading(true);
     setError(null);
     try {
-      const token = await getIdToken();
+      // No `secret` in the query string. It has not been honoured server-side
+      // since Queue #252 Item 3 (a credential in a URL leaks through history,
+      // Referer and access logs), and under identity mode the value here would
+      // be a session JWT — the same leak with a longer-lived credential.
       const params = new URLSearchParams({
-        secret,
         limit: "50",
         reviewer: "native",
         reviewed_surface: "web_discover",
       });
       const headers: Record<string, string> = {};
-      if (token) headers["Authorization"] = `Bearer ${token}`;
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
       const res = await fetch(`${API_URL}/api/admin/ranking-judgments/candidates?${params}`, { headers });
       if (!res.ok) {
         setError(res.status === 403 ? "Admin access required." : `API error: ${res.status}`);
@@ -106,11 +112,11 @@ export default function LabelingPage() {
       setError(err instanceof Error ? err.message : "Failed to load");
     }
     setLoading(false);
-  }, [secret]);
+  }, [authToken]);
 
   useEffect(() => {
-    if (secret) loadCandidates();
-  }, [secret, loadCandidates]);
+    if (authToken) loadCandidates();
+  }, [authToken, loadCandidates]);
 
   // Auto-load next batch when exhausted
   useEffect(() => {
@@ -125,9 +131,7 @@ export default function LabelingPage() {
     label: string,
     reasonTags: string[],
   ) => {
-    const token = await getIdToken();
     const body = {
-      secret,
       surface: "web_discover",
       rank_seen: candidate.rank,
       item_type: candidate.item_type || "futures",
@@ -175,10 +179,15 @@ export default function LabelingPage() {
       ...(candidate.card_fingerprint
         ? { card_fingerprint: candidate.card_fingerprint }
         : {}),
+      // "web" is a SURFACE, not a person. The backend replaces it with the
+      // authenticated admin's email when the bearer is an identity session, and
+      // stamps `label_metadata.reviewer_identity` alongside `reviewer_tier`
+      // (Queue 386 Item 2 invariant 2 / #671). Under a shared-ADMIN_TOKEN
+      // request it stays "web", because the token names no person.
       reviewer: "web",
     };
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
     const res = await fetch(`${API_URL}/api/admin/ranking-judgments`, {
       method: "POST",
       headers,
@@ -202,7 +211,7 @@ export default function LabelingPage() {
       );
     }
     if (!res.ok) throw new Error(`Submit failed: ${res.status}`);
-  }, [secret]);
+  }, [authToken]);
 
   // Advance to next card
   const advance = useCallback((label: "good" | "bad" | "skip", reason?: string) => {
