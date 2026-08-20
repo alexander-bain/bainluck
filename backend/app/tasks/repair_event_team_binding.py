@@ -230,6 +230,13 @@ from app.utils.repair_apply_plan import (  # noqa: E402
     mutations_outside_approved_keys,
     plan_reason_for_read,
 )
+from app.utils.repair_apply_plan import REASON_BINDING_LOCK_TIMEOUT  # noqa: E402
+from app.utils.repair_lock_budget import (  # noqa: E402
+    LOCK_TIMEOUT_CEILING_MS,
+    SET_LOCK_TIMEOUT_SQL,
+    is_lock_timeout,
+    lock_timeout_value,
+)
 
 
 async def _save_plan(plan) -> tuple[bool, str]:
@@ -313,12 +320,48 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
     drifted: list[dict[str, Any]] = []
     attempted_keys: list[str] = []
 
+    # #2016: bound the STATEMENT, not the gap between rows. Unlike the mapping and
+    # create rails this one writes its WHOLE plan in ONE transaction and commits
+    # once — so a single ``set_config(..., true)`` genuinely covers every UPDATE
+    # below, and re-issuing it per row would be noise rather than the necessary
+    # discipline it is over there. The consequence of the single transaction is
+    # that a contended row has no per-row retirement to offer: the abort takes the
+    # plan with it. That is still strictly better than the 30s wall, because
+    # nothing is committed and the same plan_hash re-applies cleanly.
+    await session.execute(
+        SET_LOCK_TIMEOUT_SQL, {"ms": lock_timeout_value(LOCK_TIMEOUT_CEILING_MS)}
+    )
+
     for row in plan.rows:
         attempted_keys.append(row.row_key)
-        result = await session.execute(
-            _UPDATE_SQL[row.side],
-            {"tid": row.after_id, "eid": row.event_id, "expected": row.expected_before_id},
-        )
+        try:
+            result = await session.execute(
+                _UPDATE_SQL[row.side],
+                {"tid": row.after_id, "eid": row.event_id, "expected": row.expected_before_id},
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is 55P03
+            if not is_lock_timeout(exc):
+                raise
+            await session.rollback()
+            return {
+                "issue": "#1798",
+                "apply": True,
+                "applied": False,
+                "refused": True,
+                "reason_codes": [REASON_BINDING_LOCK_TIMEOUT],
+                "contended_row": {
+                    "event_id": row.event_id,
+                    "side": row.side,
+                    "matchup": row.matchup,
+                },
+                "lock_timeout_ms": LOCK_TIMEOUT_CEILING_MS,
+                "note": (
+                    "Nothing was written and the transaction was rolled back: another "
+                    "transaction holds a lock on this event and the rail declined to "
+                    "wait past the request wall. Find the blocker (pg_blocking_pids), "
+                    "then re-invoke with the SAME plan_hash."
+                ),
+            }
         entry = {
             "event_id": row.event_id,
             "side": row.side,

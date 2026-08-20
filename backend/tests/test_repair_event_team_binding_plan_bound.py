@@ -90,12 +90,23 @@ class _ApplySession:
         self.commits = 0
         self.rollbacks = 0
         self.scans = 0
+        # #2016: this rail writes its whole plan in ONE transaction, so ONE
+        # transaction-scoped ``lock_timeout`` covers every UPDATE below.
+        self.lock_timeout = None
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         params = params or {}
 
+        if "set_config('lock_timeout'" in sql:
+            self.lock_timeout = params["ms"]
+            return _Result([])
+
         if "UPDATE events" in sql:
+            assert self.lock_timeout is not None, (
+                "the UPDATE was issued with no lock_timeout — an unbounded wait on "
+                "the hottest table in the system (#2016)"
+            )
             side = "home" if "home_team_id" in sql else "away"
             row = self.events.get(params["eid"])
             assert "AND %s_team_id = :expected" % side in sql, (

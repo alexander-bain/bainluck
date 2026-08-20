@@ -53,6 +53,25 @@ store could not be read right now. Telling an operator MISSING during a store
 outage sends them to regenerate, which is the one action that destroys the
 evidence.
 
+BOUNDING THE STATEMENT, NOT THE GAP BETWEEN ROWS (#2016)
+
+The write loop's wall-clock check sits at the TOP of the loop, so it cannot bound
+the statement it is about to issue: it is not running while one is in flight.
+Measured on this very rail in queue 377 — a Celery task held one transaction open
+**8m59s** across a run of fast per-event ``SELECT events…``, this rail's UPDATE
+waited 3m52s behind it, and the NEXT apply call waited 2m39s behind the first
+call's advisory lock. Both clients got H12 at 30s while both dynos kept running
+and kept blocking; one lost its response over 21 committed rows, the other got a
+503 over zero. Per-row commits already made the DATA safe — the defect was that
+the two outcomes read identically.
+
+So the budget starts at :func:`repair` entry (the plan load and the gate query are
+charged against it too), and every row issues a transaction-scoped ``lock_timeout``
+before its advisory lock. A contended row is a NAMED per-row finding —
+:data:`REASON_MAPPING_ROW_LOCK_TIMEOUT` — that retires alone while its siblings
+continue, exactly as a drifted row does, and the gate makes it actionable again on
+the next invocation of the same ``plan_hash``.
+
 A NOTE ON THE /v1 ARTIFACTS
 
 The staged 130 (`6b4a42f85a3cd169b611ac7105a7a1e8`) and its parents
@@ -84,6 +103,7 @@ logger = logging.getLogger(__name__)
 from app.utils.repair_apply_plan import (  # noqa: E402
     MAPPING_REPAIR_PLAN_SCHEMA,
     REASON_MAPPING_BEFORE_DRIFT,
+    REASON_MAPPING_ROW_LOCK_TIMEOUT,
     REASON_OUTSIDE_APPROVED,
     REASON_PLAN_UNREADABLE,
     PlannedMappingRepair,
@@ -92,6 +112,12 @@ from app.utils.repair_apply_plan import (  # noqa: E402
     decode_mapping_repair_plan,
     mapping_repair_gate,
     plan_reason_for_read,
+)
+from app.utils.repair_lock_budget import (  # noqa: E402
+    SET_LOCK_TIMEOUT_SQL,
+    ApplyBudget,
+    is_lock_timeout,
+    lock_timeout_value,
 )
 
 #: Durable identity of the reviewed plan artifact. ONE slot: an operator applies
@@ -118,10 +144,14 @@ STAGED_ARTIFACT = "app/data/mapping_repair_reviewed_130.json"
 #: plan_hash continues where the last call stopped.
 APPLY_MAPPING_CAP = 50
 
-#: Wall-clock budget against the web dyno's 30s HTTP wall. A partial page is a
-#: NORMAL outcome and says ``stopped_on_time_budget`` rather than pretending to be
-#: exhausted (gotcha #53).
-APPLY_TIME_BUDGET_S = 20.0
+#: Wall-clock budget for the WHOLE REQUEST against the web dyno's 30s HTTP wall,
+#: started at :func:`repair` entry rather than at loop entry (#2016). The plan
+#: load and the live gate query are both capable of blocking, and both used to
+#: sit outside the budget they were spending — so a 20s "budget" could begin
+#: after 25s of the wall was already gone. A partial page is a NORMAL outcome and
+#: says ``stopped_on_time_budget`` rather than pretending to be exhausted
+#: (gotcha #53).
+APPLY_REQUEST_BUDGET_S = 20.0
 
 #: Namespace half of the advisory lock key, so this rail's locks cannot collide
 #: with another rail's.
@@ -174,6 +204,16 @@ def _lock_key(mapping_id: int) -> int:
     internal whose hash is not contractual across versions.
     """
     return int(zlib.crc32(str(mapping_id).encode("utf-8")) & 0x7FFFFFFF)
+
+
+def _monotonic() -> float:
+    """The rail's clock, as a module-level name so a test can replace it.
+
+    A budget test that cannot control the clock has to either sleep (slow, and
+    flaky under load) or patch the stdlib for the whole process. Neither is a
+    proof; both are gotcha #44 in a new costume. This one name is the seam.
+    """
+    return time.monotonic()
 
 
 def _staged_path() -> pathlib.Path:
@@ -341,8 +381,17 @@ async def _dry_run(session) -> dict[str, Any]:
     }
 
 
-async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, Any]:
-    """Re-point EXACTLY the reviewed mappings, or refuse by name. Never re-derives."""
+async def _apply_reviewed_plan(
+    session, plan_hash: Optional[str], budget: Optional[ApplyBudget] = None
+) -> dict[str, Any]:
+    """Re-point EXACTLY the reviewed mappings, or refuse by name. Never re-derives.
+
+    ``budget`` is the REQUEST's, handed down from :func:`repair` so the plan load
+    and the gate query below are already charged against it (#2016). It is
+    optional only so this function stays directly callable; the entry point
+    always supplies one.
+    """
+    budget = budget or ApplyBudget(APPLY_REQUEST_BUDGET_S, clock=_monotonic)
     plan, reason = await _load_plan()
     ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
     if not ok:
@@ -388,7 +437,7 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
 
     repointed: list[dict[str, Any]] = []
     lost_cas: list[dict[str, Any]] = []
-    started = time.monotonic()
+    lock_timeouts: list[dict[str, Any]] = []
     stopped_on_time_budget = False
     stopped_on_cap = False
 
@@ -396,7 +445,10 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
         if len(repointed) >= APPLY_MAPPING_CAP:
             stopped_on_cap = True
             break
-        if time.monotonic() - started > APPLY_TIME_BUDGET_S:
+        # "Is there room to START another row", not "has the clock run out". A
+        # boundary check that admits a row with 200ms left is the loop-boundary
+        # bug wearing a smaller number (#2016).
+        if not budget.has_room_for_a_row():
             stopped_on_time_budget = True
             break
 
@@ -414,17 +466,6 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
                 "note": "Rolled back mid-loop: a row outside the reviewed plan reached the writer.",
             }
 
-        await session.execute(
-            _LOCK_SQL, {"ns": _ADVISORY_LOCK_NS, "key": _lock_key(row.mapping_id)}
-        )
-        result = await session.execute(
-            _UPDATE_SQL,
-            {
-                "mapping_id": int(row.mapping_id),
-                "before_team_id": int(row.before_team_id),
-                "after_team_id": int(row.after_team_id),
-            },
-        )
         entry = {
             "mapping_id": int(row.mapping_id),
             "source": row.source,
@@ -433,6 +474,51 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
             "before": {"team_id": int(row.before_team_id), "club": row.before_club},
             "after": {"team_id": int(row.after_team_id), "club": row.after_club},
         }
+
+        # Bound the STATEMENT (#2016). Both the advisory lock and the UPDATE can
+        # queue behind another transaction's row lock — measured, 3m52s and
+        # 2m39s, behind one Celery transaction held open 8m59s — and neither is
+        # interruptible from here once issued. ``set_config(..., true)`` is
+        # TRANSACTION-scoped and this loop commits per row, so it is re-issued
+        # inside every row's transaction; hoisting it above the loop would
+        # protect row 1 and silently protect nothing after the first commit.
+        lock_ms = budget.lock_timeout_ms()
+        try:
+            await session.execute(
+                SET_LOCK_TIMEOUT_SQL, {"ms": lock_timeout_value(lock_ms)}
+            )
+            await session.execute(
+                _LOCK_SQL, {"ns": _ADVISORY_LOCK_NS, "key": _lock_key(row.mapping_id)}
+            )
+            result = await session.execute(
+                _UPDATE_SQL,
+                {
+                    "mapping_id": int(row.mapping_id),
+                    "before_team_id": int(row.before_team_id),
+                    "after_team_id": int(row.after_team_id),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is 55P03
+            if not is_lock_timeout(exc):
+                # Anything else is a real write failure and must not be dressed
+                # up as contention (the gotcha-#36 shape, one table over).
+                raise
+            await session.rollback()
+            entry["reason_code"] = REASON_MAPPING_ROW_LOCK_TIMEOUT
+            entry["reason"] = (
+                "another transaction holds a lock on this row and the rail declined "
+                "to keep waiting — nothing was written, the row is untouched, and the "
+                "SAME plan_hash will find it actionable on the next invocation"
+            )
+            entry["lock_timeout_ms"] = lock_ms
+            lock_timeouts.append(entry)
+            logger.warning(
+                "#1918 mapping %s contended: lock_timeout %sms fired, row retires "
+                "individually [plan %s]",
+                row.mapping_id, lock_ms, plan.plan_hash[:12],
+            )
+            continue
+
         if (result.rowcount or 0) == 1:
             await session.commit()
             repointed.append(entry)
@@ -491,22 +577,42 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str]) -> dict[str, A
         "repointed": repointed,
         "gate_drifted": drifted,
         "lost_cas": lost_cas,
+        # #2016: contended rows are NAMED, one entry each, so the operator can see
+        # WHICH row a blocker is sitting on rather than reading a 503 that could
+        # equally mean nothing was written or everything was.
+        "lock_timeouts": lock_timeouts,
+        "stopped_on_lock": [e["mapping_id"] for e in lock_timeouts],
         "verified": verified,
         "remaining": remaining,
         "stopped_on_cap": stopped_on_cap,
         "stopped_on_time_budget": stopped_on_time_budget,
+        "request_budget_s": budget.total_s,
+        "elapsed_s": round(budget.elapsed_s(), 2),
         # gotcha #53: a run that did less than it could must not read the same as
         # a run with nothing left to do.
-        "exhausted": remaining == 0 and not stopped_on_cap and not stopped_on_time_budget,
+        "exhausted": (
+            remaining == 0
+            and not stopped_on_cap
+            and not stopped_on_time_budget
+            and not lock_timeouts
+        ),
         "note": (
             f"{len(repointed)} re-pointed, {len(drifted)} refused by the gate, "
-            f"{len(lost_cas)} lost the CAS. Re-invoke with the SAME plan_hash to continue."
+            f"{len(lost_cas)} lost the CAS, {len(lock_timeouts)} contended. "
+            "Re-invoke with the SAME plan_hash to continue."
         ),
     }
 
 
 async def repair(session, apply: bool = False, plan_hash: Optional[str] = None) -> dict[str, Any]:
-    """Entry point shared by the admin dispatcher and the CLI. Dry run by default."""
+    """Entry point shared by the admin dispatcher and the CLI. Dry run by default.
+
+    The apply's wall clock starts HERE, not in the write loop, so the plan read
+    and the live gate query are charged against the same budget the loop spends
+    (#2016).
+    """
     if not apply:
         return await _dry_run(session)
-    return await _apply_reviewed_plan(session, plan_hash)
+    return await _apply_reviewed_plan(
+        session, plan_hash, budget=ApplyBudget(APPLY_REQUEST_BUDGET_S, clock=_monotonic)
+    )

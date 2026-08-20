@@ -81,6 +81,18 @@ migration slot this lane does not own (#1946 has the same dependency). The resid
 window is milliseconds against a threat measured in hours, the residual outcome is
 a duplicate row rather than a wrong absorption — visible and reversible, per ruling
 048's declared cost — and the after-verification below reports it by name.
+
+AND THAT LOCK IS BOUNDED (#2016)
+
+An advisory lock the rail WAITS on indefinitely re-imports the problem it solves:
+measured on the sibling mapping rail in queue 377, a second attended apply sat
+2m39s behind the first one's advisory lock while both clients had long since been
+handed a 503. The write loop's wall-clock check cannot help — it is not running
+while a statement is in flight. So the budget starts at :func:`repair` entry, and
+every row issues a transaction-scoped ``lock_timeout`` before its advisory lock. A
+contended row is a NAMED per-row finding (:data:`REASON_CREATE_ROW_LOCK_TIMEOUT`)
+that retires alone; the gate makes it actionable again on the next invocation of
+the same ``plan_hash``.
 """
 
 from __future__ import annotations
@@ -100,6 +112,7 @@ logger = logging.getLogger(__name__)
 # C-CERT-1852) and reused by #1798. Imported, never re-implemented.
 from app.utils.repair_apply_plan import (  # noqa: E402
     CREATE_PLAN_SCHEMA,
+    REASON_CREATE_ROW_LOCK_TIMEOUT,
     REASON_OUTSIDE_APPROVED,
     REASON_PLAN_UNREADABLE,
     REASON_TRUTH_ID_PRESENT,
@@ -109,6 +122,12 @@ from app.utils.repair_apply_plan import (  # noqa: E402
     create_gate,
     decode_create_plan,
     plan_reason_for_read,
+)
+from app.utils.repair_lock_budget import (  # noqa: E402
+    SET_LOCK_TIMEOUT_SQL,
+    ApplyBudget,
+    is_lock_timeout,
+    lock_timeout_value,
 )
 
 # The row derivation is shared with `scripts/derive_event_create_plan.py` so the
@@ -136,11 +155,14 @@ PLAN_IDENTITY_TEMPLATE = "repair:event_create_from_truth:apply_plan:pop{populati
 #: the last call stopped. That property is why a small cap costs nothing here.
 APPLY_CREATE_CAP = 50
 
-#: Wall-clock budget for the write loop, against the web dyno's 30s HTTP wall. A
-#: partial page is a NORMAL outcome and says ``stopped_on_time_budget`` rather than
-#: pretending to be exhausted (gotcha #53 — a run that did less than it could must
-#: not be indistinguishable from a run with nothing left to do).
-APPLY_TIME_BUDGET_S = 20.0
+#: Wall-clock budget for the WHOLE REQUEST, against the web dyno's 30s HTTP wall,
+#: started at :func:`repair` entry rather than at loop entry (#2016 — the plan load
+#: and the gate query can both block, and both used to sit outside the budget they
+#: were spending). A partial page is a NORMAL outcome and says
+#: ``stopped_on_time_budget`` rather than pretending to be exhausted (gotcha #53 —
+#: a run that did less than it could must not be indistinguishable from a run with
+#: nothing left to do).
+APPLY_REQUEST_BUDGET_S = 20.0
 
 #: Namespace half of the advisory lock key, so this rail's locks cannot collide with
 #: another rail's.
@@ -220,6 +242,16 @@ def _lock_key(truth_id: str) -> int:
     internal function whose hash is not contractual across versions.
     """
     return int(zlib.crc32(str(truth_id).encode("utf-8")) & 0x7FFFFFFF)
+
+
+def _monotonic() -> float:
+    """The rail's clock, as a module-level name so a test can replace it.
+
+    Same seam and same reason as the mapping rail's: a budget test that cannot
+    control the clock must sleep or patch the stdlib, and neither is a proof
+    (gotcha #44).
+    """
+    return time.monotonic()
 
 
 def _truth_set_path(population: str = "2") -> pathlib.Path:
@@ -309,14 +341,24 @@ async def _present_truth_ids(session, truth_ids) -> set[str]:
     return {str(r[0]) for r in rows if r[0] is not None}
 
 
-async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: str) -> dict[str, Any]:
+async def _apply_reviewed_plan(
+    session,
+    plan_hash: Optional[str],
+    population: str,
+    budget: Optional[ApplyBudget] = None,
+) -> dict[str, Any]:
     """Create EXACTLY the reviewed rows, or refuse by name. Never re-derives.
 
     The derivation below the dry-run is not called from this path. That is the
     substance of the pattern: a work list that can be recomputed at apply time is a
     work list that can differ from the reviewed one, and no amount of
     after-measurement can tell you afterwards which of the two you wrote.
+
+    ``budget`` is the REQUEST's, handed down from :func:`repair` so the plan load
+    and the gate query below are already charged against it (#2016). It is
+    optional only so this function stays directly callable.
     """
+    budget = budget or ApplyBudget(APPLY_REQUEST_BUDGET_S, clock=_monotonic)
     plan, reason = await _load_plan(population)
     ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
     if not ok:
@@ -363,7 +405,7 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: st
 
     created: list[dict[str, Any]] = []
     already_present: list[dict[str, Any]] = []
-    started = time.monotonic()
+    lock_timeouts: list[dict[str, Any]] = []
     stopped_on_time_budget = False
     stopped_on_cap = False
 
@@ -371,7 +413,9 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: st
         if len(created) >= APPLY_CREATE_CAP:
             stopped_on_cap = True
             break
-        if time.monotonic() - started > APPLY_TIME_BUDGET_S:
+        # "Is there room to START another row", against the REQUEST's clock. A
+        # boundary check cannot bound the statement it is about to issue (#2016).
+        if not budget.has_room_for_a_row():
             stopped_on_time_budget = True
             break
 
@@ -389,21 +433,6 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: st
                 "note": "Rolled back mid-loop: a row outside the reviewed plan reached the writer.",
             }
 
-        await session.execute(
-            _LOCK_SQL, {"ns": _ADVISORY_LOCK_NS, "key": _lock_key(row.truth_id)}
-        )
-        result = await session.execute(
-            _INSERT_SQL,
-            {
-                "sport_id": row.sport_id,
-                "truth_id": row.truth_id,
-                "home_team_id": row.home_team_id,
-                "away_team_id": row.away_team_id,
-                "home_name": row.home_name,
-                "away_name": row.away_name,
-                "commence_time": row.commence_time,
-            },
-        )
         entry = {
             "truth_id": row.truth_id,
             "provider": row.provider,
@@ -413,6 +442,53 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: st
             "away": {"id": row.away_team_id, "name": row.away_name},
             "commence_time": row.commence_time,
         }
+
+        # Bound the STATEMENT (#2016). ``events`` is the hottest table in the
+        # system; the advisory lock and the INSERT can both queue behind live
+        # ingest, and neither is interruptible from here once issued.
+        # ``set_config(..., true)`` is TRANSACTION-scoped and this loop commits
+        # per row, so it is re-issued inside every row's transaction — hoisting
+        # it above the loop would protect row 1 and nothing after the first commit.
+        lock_ms = budget.lock_timeout_ms()
+        try:
+            await session.execute(
+                SET_LOCK_TIMEOUT_SQL, {"ms": lock_timeout_value(lock_ms)}
+            )
+            await session.execute(
+                _LOCK_SQL, {"ns": _ADVISORY_LOCK_NS, "key": _lock_key(row.truth_id)}
+            )
+            result = await session.execute(
+                _INSERT_SQL,
+                {
+                    "sport_id": row.sport_id,
+                    "truth_id": row.truth_id,
+                    "home_team_id": row.home_team_id,
+                    "away_team_id": row.away_team_id,
+                    "home_name": row.home_name,
+                    "away_name": row.away_name,
+                    "commence_time": row.commence_time,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is 55P03
+            if not is_lock_timeout(exc):
+                # A real write failure must never be dressed up as contention.
+                raise
+            await session.rollback()
+            entry["reason_code"] = REASON_CREATE_ROW_LOCK_TIMEOUT
+            entry["reason"] = (
+                "another transaction holds a conflicting lock and the rail declined to "
+                "keep waiting — nothing was created, and the SAME plan_hash will find "
+                "this id still missing and still actionable on the next invocation"
+            )
+            entry["lock_timeout_ms"] = lock_ms
+            lock_timeouts.append(entry)
+            logger.warning(
+                "#1796 truth id %s contended: lock_timeout %sms fired, row retires "
+                "individually [plan %s]",
+                row.truth_id, lock_ms, plan.plan_hash[:12],
+            )
+            continue
+
         if (result.rowcount or 0) == 1:
             # Per-row commit: `events` is a hot table and a long transaction over a
             # page of inserts contends with live ingest (measured — the one-off
@@ -502,11 +578,18 @@ async def _apply_reviewed_plan(session, plan_hash: Optional[str], population: st
             "actionable_this_call": len(actionable),
             "created": len(created),
             "already_present": len(already_present),
+            "contended": len(lock_timeouts),
             "remaining": remaining,
         },
-        "exhausted": remaining == 0,
+        "exhausted": remaining == 0 and not lock_timeouts,
         "stopped_on_cap": stopped_on_cap,
         "stopped_on_time_budget": stopped_on_time_budget,
+        # #2016: contended rows are NAMED, one entry each, rather than folded into
+        # a 503 that could equally mean nothing was written or everything was.
+        "lock_timeouts": lock_timeouts,
+        "stopped_on_lock": [e["truth_id"] for e in lock_timeouts],
+        "request_budget_s": budget.total_s,
+        "elapsed_s": round(budget.elapsed_s(), 2),
         "verified_plan_truth_ids": verified,
         "ledger": created,
         "skipped": already_present,
@@ -556,8 +639,15 @@ async def repair(
         }
 
     if apply:
-        # The derivation below does not run. See ``_apply_reviewed_plan``.
-        return await _apply_reviewed_plan(session, plan_hash, population)
+        # The derivation below does not run. See ``_apply_reviewed_plan``. The
+        # request's wall clock starts HERE so the plan read and the gate query are
+        # charged against the same budget the write loop spends (#2016).
+        return await _apply_reviewed_plan(
+            session,
+            plan_hash,
+            population,
+            budget=ApplyBudget(APPLY_REQUEST_BUDGET_S, clock=_monotonic),
+        )
 
     truth, truth_reason = _load_truth_set(population)
     if truth is None:
