@@ -1,0 +1,16 @@
+{
+  "columns": [
+    "n",
+    "fallback"
+  ],
+  "rows": [
+    [
+      855,
+      26
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 282.9,
+  "sql_fingerprint": "0d66273fb98c35c0"
+}

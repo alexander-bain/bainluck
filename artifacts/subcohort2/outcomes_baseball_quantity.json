@@ -1,0 +1,28 @@
+{
+  "columns": [
+    "n",
+    "has_calib",
+    "fallback",
+    "avg_prob",
+    "winners",
+    "sum_prob",
+    "avg_calib",
+    "avg_open"
+  ],
+  "rows": [
+    [
+      4209,
+      4190,
+      19,
+      "0.54318959372772630078",
+      2429,
+      "2286.285000",
+      "0.54183174224343675418",
+      "0.84263157894736842105"
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 384.7,
+  "sql_fingerprint": "33fc93d28113594b"
+}

@@ -1,0 +1,18 @@
+{
+  "columns": [
+    "n",
+    "k_markets",
+    "winners"
+  ],
+  "rows": [
+    [
+      715,
+      0,
+      213
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 529.4,
+  "sql_fingerprint": "3de3b22a568856a1"
+}
