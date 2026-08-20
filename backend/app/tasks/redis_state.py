@@ -1080,6 +1080,29 @@ def record_task_failure(
             "consecutive_failures": str(current + 1),
             "last_verdict": verdict,
             "last_verdict_reason": verdict_reason,
+            # CAL-P080 (#2007): the failure's OWN copy of its classification,
+            # written under a `last_failure_*` name so it lives and dies with
+            # `last_failure_at` and `last_error` beside it.
+            #
+            # This is not duplication of `last_verdict_reason` — it is the fix
+            # for that field being the WRONG PLACE to keep it. `last_verdict*`
+            # describes the last run of any kind, so the next SUCCESS overwrites
+            # it, while `last_error` is never cleared and survives. The two
+            # therefore desynchronise the moment a task recovers, and what is
+            # left is the failure's message without the exception class that
+            # would explain it.
+            #
+            # Measured cost of that, and it is why this line exists:
+            # `precompute_calibration_main` failed at 2026-08-20T16:16:18Z and
+            # the 17:15 beat then succeeded. What survived was
+            # `last_error: "-241"` — a bare `str(exc)`, ambiguous between at
+            # least KeyError(-241), Exception(-241) and a wrapped return code —
+            # with `last_verdict: complete` sitting over the one field that
+            # named the class. A stalled hourly producer could be measured
+            # exactly (one skipped beat = one beat period of frozen
+            # `generated_at`) and the cause could not be named at all, from a
+            # record that had held it twenty-five minutes earlier.
+            "last_failure_type": (verdict_reason or verdict)[:200],
         })
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, failure_key)

@@ -616,6 +616,50 @@ class TestVerdictAwareRecording:
         redis_state.record_task_failure("poll_odds", 100.0, "boom")
         assert fake.hashes["poll_odds"][b"last_verdict"] == b"thrown"
 
+    def test_a_later_success_cannot_erase_the_failures_class(self, monkeypatch):
+        """CAL-P080 (#2007): `last_error` outlives a recovery; its class must too.
+
+        The two fields lived in different namespaces and therefore had different
+        lifetimes. `last_error` is never cleared, so it survives a later success;
+        `last_verdict_reason` describes the LAST RUN OF ANY KIND, so the success
+        overwrites it. What is left after any recovery is a failure message with
+        no exception class attached to it.
+
+        Measured, which is why this test exists rather than a comment:
+        `precompute_calibration_main` failed at 2026-08-20T16:16:18Z and the next
+        hourly beat succeeded at 17:17:43Z. Twenty-five minutes later the record
+        read `last_error: "-241"` — a bare `str(exc)`, ambiguous between at least
+        `KeyError(-241)`, `Exception(-241)` and a wrapped return code — under
+        `last_verdict: complete`. The stall it caused was measurable to the
+        second (one skipped beat on an hourly producer = exactly one beat period
+        of frozen `generated_at`); the cause was unnameable.
+        """
+        fake = self._client(monkeypatch)
+        redis_state.record_task_failure(
+            "precompute_calibration_main", 78568.0, "-241",
+            verdict="thrown", verdict_reason="KeyError",
+        )
+        redis_state.record_task_success(
+            "precompute_calibration_main", 163500.0, {"buckets": 1935},
+            verdict="complete", verdict_reason="ledger:complete+green",
+        )
+
+        hash_ = fake.hashes["precompute_calibration_main"]
+        # The success owns the verdict fields — unchanged, and correct.
+        assert hash_[b"last_verdict"] == b"complete"
+        assert hash_[b"last_verdict_reason"] == b"ledger:complete+green"
+        # ...and the failure still owns its own, beside the error it explains.
+        assert hash_[b"last_error"] == b"-241"
+        assert hash_[b"last_failure_type"] == b"KeyError"
+
+    def test_failure_type_falls_back_to_the_verdict_label(self, monkeypatch):
+        # A caller that passes no reason still gets a class-shaped answer rather
+        # than an empty string, which would be indistinguishable from "not
+        # recorded" — gotcha #53 in miniature.
+        fake = self._client(monkeypatch)
+        redis_state.record_task_failure("poll_odds", 100.0, "boom")
+        assert fake.hashes["poll_odds"][b"last_failure_type"] == b"thrown"
+
     def test_recording_never_raises_on_a_broken_client(self, monkeypatch):
         class _Boom:
             def pipeline(self):

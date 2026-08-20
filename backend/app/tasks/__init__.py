@@ -2568,6 +2568,35 @@ def cohort_cell_census(self, page_size=1000, resume=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
+                 name="app.tasks.calibration_published_twin")
+def calibration_published_twin(self, timeout_ms=None):
+    """CAL-P080 (#2007): Gate 0's DB-direct twin, run where its budget fits.
+
+    NOT on the beat schedule, for the same reason ``cohort_cell_census`` is not:
+    it reads the heavy published-curve population that the deadline-critical
+    hourly q268 producer reads from :15 to ~:35, and CAL-P074 measured
+    self-inflicted contention costing a cell its whole first pass. Operator
+    triggered (``POST /api/admin/calibration-twin/run``) so the quiet window is
+    a choice a human makes, not a cron guess.
+
+    The time limits are the point of the task. The instrument's own budget is
+    240 s and the admin ``db-query`` rail hardcodes 10 s, so the fold had no
+    reachable home; here it does. Reads only, writes no market data (gotcha
+    #21). Enrolled in ``task_verdict.ENFORCED_TASKS`` WITH a terminal, so a run
+    that measured nothing cannot report GREEN."""
+    from app.tasks.calibration_published_twin_worker import (
+        DEFAULT_TIMEOUT_MS,
+        run_published_twin,
+    )
+
+    budget = DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms
+    return _tracked_run(
+        "calibration_published_twin",
+        run_published_twin(timeout_ms=budget),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_time_horizon_calibration")
 def compute_time_horizon_calibration(self):
     """Precompute time-horizon calibration and cache in Redis (every 6h)."""
