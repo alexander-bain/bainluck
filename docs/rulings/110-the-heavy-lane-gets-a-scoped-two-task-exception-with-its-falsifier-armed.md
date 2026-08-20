@@ -91,6 +91,30 @@ Verdicts are three-valued and **INCONCLUSIVE is not HOLD**: if nothing in the se
 graded, the falsifier says it is not armed rather than reporting a clean bill of health
 (gotcha #53).
 
+### Its effective coverage TODAY is 3 of 7, and that is stated rather than implied
+
+Run against real production task-metrics before the move (artifact:
+`docs/audits/latency/lat-p077-heavy-premove-baseline.json`), `grade_move` returns:
+
+```
+VERDICT: HOLD | 3 of 7 watched beats graded, none degraded
+  precompute_calibration_main         hold          p50 214.7s vs pre-move 214.7s
+  compute_calibration_prices          censored      p95 at the 600s soft limit
+  compute_time_horizon_calibration    no_new_runs   0 runs in the last 24h
+  compute_fair_fight_comparison       hold          p50 147.8s vs pre-move 147.8s
+  precompute_source_intelligence      hold          p50 17.5s vs pre-move 17.5s
+  snapshot_coverage_metrics           no_new_runs   0 runs in the last 24h
+  precompute_backfill_winners_status  censored      p95 at the 600s soft limit
+```
+
+So the condition this grant rests on is watched by **three** beats, not seven: two are
+censored at their timeout and two have not run in 24 h. `precompute_source_intelligence` —
+tight, fast, far from its limit — is the one that would show a `heavy` regression first.
+
+**This is a real limit on the guarantee, not a formality.** A degradation confined to the two
+censored beats would be invisible. It is written here so the next reader does not mistake
+"HOLD" for "all seven are fine".
+
 ## 🔴 The trap this nearly fell into, recorded because it will recur
 
 `_tracked_run` registers task metrics under a name that is frequently **not** the task name
