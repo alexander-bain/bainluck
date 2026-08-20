@@ -168,6 +168,32 @@ WAVE_HALT_RAISED = "halted"
 WAVE_HALT_CLEARED = "cleared"
 WAVE_PROGRESS_SCHEMA = "calibration-repair-wave-progress/v1"
 
+#: The fields that say WHICH WAVE a progress record belongs to — CAL-P081,
+#: consuming C-APPLY-PRE-1912-R3 [P2]. Immutable for the life of the wave, so an
+#: after-read that disagrees on any of them is a different record, however large
+#: its call count. Codex accepted a stored record for ``owner=different-rail``,
+#: ``cohort=different-population``, ``issue=9999``, ``calls=999`` as proof that
+#: OUR fold was durable, because equivalence had been reduced to schema plus a
+#: monotone integer. "The identity is single-wave today" is a fact about
+#: deployment; the claim the after-read makes is about these numbers being
+#: readable, and only a record of the same wave can make it true.
+WAVE_IDENTITY_FIELDS = ("owner", "cohort", "issue")
+
+#: The cumulative tallies a WINNING record must also carry at least as much of.
+#: ``calls`` alone is monotone by construction and can rise while the totals it
+#: is supposed to summarise fall — which is exactly the shape of a fold that lost
+#: this call's contribution to a concurrent writer that started from an older
+#: prior. Deliberately excludes ``resume_after_id`` (a position, not a tally) and
+#: ``last_*`` (this-call fields, not cumulative ones).
+WAVE_SUBSUMING_TOTALS = (
+    "dry_runs",
+    "applies",
+    "examined_markets_total",
+    "planned_markets_total",
+    "written_legs_total",
+    "written_markets_total",
+)
+
 #: Categories measured at ZERO never-graded markets. They are a tripwire on the
 #: COHORT PREDICATE, not on the data: this rail crowns outcomes from a venue
 #: answer, and the one failure that would not announce itself is the population
@@ -482,11 +508,26 @@ async def _wave_halt_state() -> tuple[dict[str, Any] | None, str]:
 
 
 async def _raise_wave_halt(reason: str, evidence: Any) -> tuple[bool, str]:
-    """Write the durable halt. Best-effort in the sense that it always REPORTS.
+    """Write the durable halt AND PROVE IT LANDED. Always reports.
 
     A failure to persist the halt is itself reported to the operator on the
     halting response, because a halt nobody can read is the state this function
     exists to prevent.
+
+    **CAL-P081, consuming C-APPLY-PRE-1912-R3 [P1] #1.** Until now this trusted
+    ``result["status"]``. Codex's adversarial publisher stored nothing, answered
+    ``superseded``, and this function returned ``(True, "ok")``; a fresh-process
+    read then returned ``missing`` and ``repair(apply=False)`` dispatched the
+    next page normally. The record whose ENTIRE PURPOSE is to stop page N+1 had
+    the same acknowledgement-not-proof hole that R2 removed from ``_save_progress``
+    one function below — which is the more damning half: the discipline was
+    already in the file, applied to the counters, and not to the stop.
+
+    So the same after-read runs here, and the halt is claimed persisted only when
+    :func:`_wave_halt_state` — the reader every OTHER caller uses to decide
+    whether the wave may proceed — returns a raised record. Proving it with the
+    real reader rather than a bespoke one is deliberate: a bespoke check can pass
+    while the reader that actually gates the wave still says ``missing``.
     """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
@@ -516,8 +557,36 @@ async def _raise_wave_halt(reason: str, evidence: Any) -> tuple[bool, str]:
         )
     except Exception as exc:  # noqa: BLE001
         return False, f"halt persist raised: {type(exc).__name__}"
-    ok = result.get("status") in ("ok", "superseded")
-    return ok, "ok" if ok else f"halt persist rejected: {result.get('status')}"
+    if result.get("status") not in ("ok", "superseded"):
+        return False, f"halt persist rejected: {result.get('status')}"
+
+    # AFTER-READ, NOT ACKNOWLEDGEMENT. See the docstring.
+    stored, read_note = await _wave_halt_state()
+    if stored is None:
+        # ``None`` here is the exact specimen: the publisher said yes and the
+        # reader that gates the wave says there is nothing to stop it. Whether
+        # the note reads "no halt recorded" or "halt explicitly cleared", the
+        # operative fact is the same and it is the dangerous one.
+        return False, (
+            f"halt persist UNPROVED — the wave-halt reader says {read_note!r} "
+            "immediately after a write it acknowledged. Treat the wave as "
+            "UNSTOPPED and stop it by hand before dispatching another page."
+        )
+    if stored.get("state") != WAVE_HALT_RAISED:
+        return False, (
+            f"halt persist UNPROVED — after-read state is {stored.get('state')!r}, "
+            f"not {WAVE_HALT_RAISED!r} ({read_note})"
+        )
+    if stored.get("reason") != reason or stored.get("owner") != _OWNER:
+        # A raised halt belonging to some OTHER trip is still a stop, but it is
+        # not proof that THIS one was recorded, and the two must not read alike:
+        # clearing the other halt would silently un-stop this wave.
+        return False, (
+            "halt persist UNPROVED — the readable halt is a different record "
+            f"(owner={stored.get('owner')!r}, reason={stored.get('reason')!r}); "
+            f"this trip was {reason!r}"
+        )
+    return True, "ok (after-read proved)"
 
 
 async def _is_our_prior_write(session, leg_id: int, leg) -> bool:
@@ -682,6 +751,23 @@ async def _save_progress(record: dict[str, Any]) -> tuple[bool, str]:
     if stored.get("schema") != WAVE_PROGRESS_SCHEMA:
         return False, f"progress after-read has schema {stored.get('schema')!r}"
 
+    # CAL-P081, consuming C-APPLY-PRE-1912-R3 [P2]. Schema-plus-a-bigger-integer
+    # was too weak an equivalence: codex stored a record for
+    # ``owner=different-rail, cohort=different-population, issue=9999, calls=999``
+    # and this function accepted it as proof that OUR fold was durable. A winning
+    # record must SUBSUME this fold, not merely out-count it — and "the identity
+    # is single-wave today" is an argument about deployment, not about what the
+    # claim says. The claim says the numbers are readable; only a record of the
+    # same wave can make that true.
+    for field in WAVE_IDENTITY_FIELDS:
+        if stored.get(field) != record.get(field):
+            return False, (
+                f"progress after-read belongs to a different wave "
+                f"({field}={stored.get(field)!r}, this fold has "
+                f"{record.get(field)!r}) — a larger call count on somebody "
+                "else's record is not proof that ours persisted"
+            )
+
     def _calls(rec: Any) -> int:
         v = rec.get("calls") if isinstance(rec, dict) else None
         return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else -1
@@ -692,6 +778,18 @@ async def _save_progress(record: dict[str, Any]) -> tuple[bool, str]:
             f"(stored calls={_calls(stored)}, attempted={_calls(record)}) — a "
             "concurrent write lost this call's counters"
         )
+    # Monotone counters prove nothing on their own if the totals went backwards:
+    # a winning record subsumes this fold only if every cumulative total it
+    # carries is at least ours.
+    for field in WAVE_SUBSUMING_TOTALS:
+        mine = record.get(field)
+        theirs = stored.get(field)
+        if isinstance(mine, int) and not isinstance(mine, bool):
+            if not isinstance(theirs, int) or isinstance(theirs, bool) or theirs < mine:
+                return False, (
+                    f"progress after-read does not subsume this fold "
+                    f"({field}: stored={theirs!r}, attempted={mine!r})"
+                )
     return True, "ok (after-read proved)"
 
 
@@ -1123,6 +1221,43 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
     )
     intent["state_note"] = "intent — opened before the first write, not after the last"
     intent_ok, intent_note = await _save_obligation(intent)
+
+    if not intent_ok:
+        # ── CAL-P081, consuming C-APPLY-PRE-1912-R3 [P1] #2 ──────────────────
+        # ``intent_ok`` was computed here and then not consulted until AFTER the
+        # loop. Codex forced ``_save_obligation`` to return
+        # ``(False, "publisher unavailable")`` and the real apply still committed
+        # 2/2 legs; the response eventually said ``success: false``, but a process
+        # death after either commit would have left exactly the unnamed
+        # calibration debt the intent-first design claims to make impossible.
+        #
+        # The whole argument for writing the intent BEFORE the first row is that
+        # the debt must exist before the row does. A record we failed to write is
+        # a record that does not exist, so continuing past this point discards
+        # the argument and keeps the ceremony. Refuse instead: no UPDATE, no
+        # commit, nothing to revert, and the operator is told what to fix.
+        return {
+            "mode": "apply",
+            "wrote": False,
+            "success": False,
+            "refused": ["INTENT_NOT_DURABLE"],
+            "plan_hash": plan.plan_hash,
+            "legs_written": 0,
+            "legs_attempted": 0,
+            "obligation_persisted": False,
+            "obligation_note": intent_note,
+            "canaries_preflight": preflight,
+            "note": (
+                "The intent record could not be persisted, so NOTHING WAS "
+                f"WRITTEN ({intent_note}). This is a refusal, not a failure "
+                "mid-wave: no row was touched and no revert is owed. The debt "
+                "record has to exist before the first row does — a row written "
+                "against a debt nobody recorded is a calibration generation "
+                "nobody knows to invalidate. Fix the durable publisher and "
+                "re-present this same plan_hash."
+            ),
+            "progress": await progress_read(session, mode="refused_intent"),
+        }
 
     for leg_id, leg in approved.items():
         if time.monotonic() - started > _MAX_SECONDS:
