@@ -796,20 +796,26 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     if (pregame && row.structural) continue;
     // UX-P108, Alex: AT MOST ONE RUNG PER LADDER, ANYWHERE IN THE RAIL.
     //
-    // Placed directly after the structural floor and BEFORE the per-player cap,
-    // and both neighbours are load-bearing:
+    // ** WHAT PROTECTS THE LADDER IS THAT THE SLOT IS CONSUMED AT PUSH, NOT
+    // WHERE THIS CHECK SITS — and the first draft of this comment said the
+    // opposite. ** A mutation that moved the whole cap ABOVE the structural
+    // floor SURVIVED the entire suite, correctly: the check only READS
+    // `perLadder`, and nothing is recorded until a row actually reaches
+    // `push`, so a rung skipped by the floor (or by the player cap) cannot
+    // have spent anything. Moving the RECORDING up instead is the real defect
+    // shape, and that mutant is killed by four tests.
     //
-    //   after the floor — a suppressed rung must not spend its ladder's single
-    //   slot on the way out. Brady Singer carries SIX structural strikeout rungs
-    //   on `14788546`; charged against this cap, the first one walked past would
-    //   silence the entire ladder including whichever rung the market has a real
-    //   view about. This is the same argument the per-player cap already makes
-    //   one line down, and it applies with more force at a cap of one.
+    // The distinction matters because the danger is concrete. Brady Singer
+    // carries SIX structural strikeout rungs on `14788546`; if any of them
+    // consumed the slot, the entire ladder would go silent — including
+    // whichever rung the market has a real view about — and the rule would have
+    // made the page worse in his name. That is guarded by the write position,
+    // so do not "tidy" the `perLadder.set` upward to sit beside its check.
     //
-    //   before the player cap — so a ladder rejected here does not also consume
-    //   one of its player's two slots. A player with two rungs of one stat and
-    //   one of another should reach the rail with two DIFFERENT stats, not with
-    //   one stat and an empty slot.
+    // The ordering that IS deliberate is cap-before-player-cap: a ladder
+    // rejected here must not also consume one of its player's two slots. A
+    // player with two rungs of one stat and one of another should reach the
+    // rail with two DIFFERENT stats, not one stat and an empty slot.
     //
     // `continue`, never `break`: the sort interleaves ladders, so the next row
     // is very often a different family.
