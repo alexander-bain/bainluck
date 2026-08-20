@@ -44,7 +44,13 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
 
   // Nothing eligible AND nothing went wrong: the page says nothing rather than
   // announcing an absence. A poisoned empty is handled below, not here.
-  if (result.rows.length === 0 && result.nonBenignCount === 0) return null;
+  if (
+    result.rows.length === 0 &&
+    result.nonBenignCount === 0 &&
+    result.emptyReason !== "ungraded"
+  ) {
+    return null;
+  }
 
   const nonBenign = result.dropped.filter((d) => !d.benign);
 
@@ -52,7 +58,10 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
     <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
       <div className="px-4 sm:px-5 py-3 border-b border-surface-border/30 flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-text-primary">
-          {result.rows.some((r) => r.settled) ? "How the props moved" : "What's moving"}
+          {/* #2011: post-game the rail is ranked by how far the OUTCOME landed
+              from the mark, not by how far the price moved — so it stops
+              promising a story about movement. */}
+          {result.rows.some((r) => r.settled) ? "How the props landed" : "What's moving"}
         </h3>
         {result.eligible > result.rows.length && (
           <span className="text-[11px] text-text-muted">
@@ -62,6 +71,17 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
       </div>
 
       <div className="px-4 sm:px-5 py-3 space-y-3.5">
+        {/* HONEST-EMPTY (ruling 027): a settled page whose questions all went
+            ungraded says what is missing and where the list is, rather than
+            filling five slots with "grading unavailable" or vanishing. */}
+        {result.emptyReason === "ungraded" && (
+          <p className="text-[12px] leading-snug text-text-secondary">
+            {result.ungraded} {result.ungraded === 1 ? "question" : "questions"} settled
+            here, and none has a published outcome yet — so there is nothing to
+            rank. They are all listed below.
+          </p>
+        )}
+
         {result.rows.map((row) => (
           <div key={row.key}>
             {/* V2: the sentence is an ESCALATION above its bar, never a

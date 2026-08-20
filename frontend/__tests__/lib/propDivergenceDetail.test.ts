@@ -12,6 +12,18 @@
  * census AGREED WITH THE BUGGY CODE because both shared an assumption, and only
  * a real-payload assertion separated them. So every claim below that could be
  * satisfied by a plausible reimplementation is instead pinned to the fixture.
+ *
+ * ── UX-P105 (#2011): THESE ASSERTIONS NOW RUN IN-GAME, AND THAT IS THE POINT ──
+ *
+ * Every travel-fold claim below used to be driven with `status: "completed"`,
+ * which was only ever a convenient label — the mock measures a distance between
+ * two PRICES, and the travel fold is now an in-game concept, because post-game
+ * the fold is the distance from the mark to the OUTCOME.
+ *
+ * The 14788546 payload carries **zero graded rows** (0 of 100 have a typed
+ * `hit`), so post-game it has nothing to rank and nothing to say. That is not
+ * hidden by moving these to `live`: it is pinned below, in "the same payload,
+ * after the whistle".
  */
 
 import {
@@ -32,14 +44,14 @@ const PHILLIES = phillies as unknown as PlayerPropRow[];
 
 describe("the fold is the mock's own measurement", () => {
   it("reproduces Mock 2's '34 rungs moved 10+ points' on Mock 2's own game", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     // The mock's prose, re-derived from the payload by the shipped parser.
     expect(d.offScriptCount).toBe(34);
     expect(PROP_OFF_SCRIPT_TRAVEL).toBe(0.1);
   });
 
   it("every off-script row really did travel at least the fold, and every on-script row did not", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     expect(d.offScript.length).toBeGreaterThan(0);
     expect(d.onScript.length).toBeGreaterThan(0);
     for (const r of d.offScript) expect(r.travel).toBeGreaterThanOrEqual(PROP_OFF_SCRIPT_TRAVEL);
@@ -83,7 +95,7 @@ describe("the fold is the mock's own measurement", () => {
   });
 
   it("shows every eligible question — the fold splits, it never drops", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     expect(d.offScript.length + d.onScript.length).toBe(d.eligible);
     expect(d.eligible).toBe(100);
   });
@@ -91,8 +103,8 @@ describe("the fold is the mock's own measurement", () => {
 
 describe("the detail view reaches what the rail cannot", () => {
   it("surfaces the 95 questions the five-row rail leaves behind", () => {
-    const rail = selectDivergenceRows({ playerProps: REDS, status: "completed" });
-    const detail = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const rail = selectDivergenceRows({ playerProps: REDS, status: "live" });
+    const detail = selectDivergenceDetail({ playerProps: REDS, status: "live" });
 
     expect(rail.rows).toHaveLength(RAIL_MAX_ROWS);
     expect(rail.notSelected).toBe(95);
@@ -104,8 +116,8 @@ describe("the detail view reaches what the rail cannot", () => {
   });
 
   it("agrees with the rail about the rail's own rows — one admission rule, not two", () => {
-    const rail = selectDivergenceRows({ playerProps: REDS, status: "completed" });
-    const detail = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const rail = selectDivergenceRows({ playerProps: REDS, status: "live" });
+    const detail = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     const all = [...detail.offScript, ...detail.onScript];
     const byKey = new Map(all.map((r) => [r.key, r]));
 
@@ -123,7 +135,7 @@ describe("the detail view reaches what the rail cannot", () => {
   });
 
   it("drops the rail's per-player cap, because completeness is the contract", () => {
-    const detail = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const detail = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     const all = [...detail.offScript, ...detail.onScript];
     const perPlayer = new Map<string, number>();
     for (const r of all) perPlayer.set(r.player, (perPlayer.get(r.player) ?? 0) + 1);
@@ -137,7 +149,7 @@ describe("the detail view reaches what the rail cannot", () => {
 
 describe("V2's escalation is unchanged across the fold", () => {
   it("gives a sentence to exactly the surprising rows, and never below the fold", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
 
     for (const r of d.offScript) {
       expect(Boolean(r.sentence)).toBe(r.travel >= PROP_SURPRISE_TRAVEL);
@@ -151,7 +163,7 @@ describe("V2's escalation is unchanged across the fold", () => {
   });
 
   it("keeps the sentence a minority of the off-script list", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     const sentences = d.offScript.filter((r) => r.sentence).length;
     // 13 of 100 questions clear 0.20 on this payload — p90. If a change makes
     // most of the list prose, the escalation has stopped meaning anything.
@@ -159,15 +171,71 @@ describe("V2's escalation is unchanged across the fold", () => {
     expect(sentences).toBeLessThan(d.offScript.length / 2);
   });
 
-  it("settled games freeze — the sentence says finished, not now", () => {
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+  it("in-game the sentence says now, not finished", () => {
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     const withSentence = d.offScript.filter((r) => r.sentence);
     expect(withSentence.length).toBeGreaterThan(0);
     for (const r of withSentence) {
-      expect(r.settled).toBe(true);
-      expect(r.sentence).toMatch(/finished at \d+%\.$/);
-      expect(r.sentence).not.toMatch(/now\./);
+      expect(r.settled).toBe(false);
+      expect(r.sentence).toMatch(/it's \d+% now\.$/);
+      expect(r.sentence).not.toMatch(/finished at/);
     }
+  });
+});
+
+describe("the same payload, after the whistle (UX-P105, #2011)", () => {
+  /**
+   * 14788546 is a COMPLETED game whose 100 eligible questions carry not one
+   * published verdict. The rail used to render 34 "off script" travelled bars
+   * on it, each ending at a last traded price and labelled `final NN%` — a
+   * price wearing the grammar of a result, which is precisely what Alex called
+   * out and what #2011 removes.
+   *
+   * So the post-game rendering of this payload is a wall of "not graded", and
+   * that is the honest one. It is pinned here rather than left as a surprise,
+   * and the size of it — 100 of 100 — is the supply-side finding routed out of
+   * this cycle, not a rendering bug.
+   */
+  it("has zero published verdicts, so it ranks nothing and claims nothing", () => {
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    expect(d.settled).toBe(true);
+    expect(d.eligible).toBe(100);
+    expect(d.ungraded).toHaveLength(100);
+    expect(d.offScript).toHaveLength(0);
+    expect(d.onScript).toHaveLength(0);
+    for (const r of d.ungraded) {
+      expect(r.surprise).toBeNull();
+      expect(r.resolution).toBeNull();
+      expect(r.sentence).toBeNull();
+    }
+  });
+
+  it("does NOT quietly become an empty section — the loss reaches the reader", () => {
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    // `eligible` still counts them: they are questions, not drops. V3's
+    // distinction between "hidden" and "accounted for" is what makes the
+    // ungraded group renderable instead of a silent filter.
+    expect(d.eligible).toBe(d.ungraded.length);
+    expect(d.emptyReason).toBeNull();
+  });
+
+  it("the rail says so in words instead of filling five slots with nothing", () => {
+    const rail = selectDivergenceRows({ playerProps: REDS, status: "completed" });
+    expect(rail.rows).toHaveLength(0);
+    expect(rail.emptyReason).toBe("ungraded");
+    expect(rail.ungraded).toBe(100);
+    expect(rail.settled).toBe(true);
+    // The expand still leads somewhere — every question is reachable.
+    expect(rail.notSelected).toBe(100);
+    expect(rail.eligible).toBe(100);
+  });
+
+  it("in-game the SAME payload fills the rail normally — the change is post-game only", () => {
+    const rail = selectDivergenceRows({ playerProps: REDS, status: "live" });
+    expect(rail.rows).toHaveLength(RAIL_MAX_ROWS);
+    expect(rail.emptyReason).toBeNull();
+    expect(rail.ungraded).toBe(0);
+    expect(rail.settled).toBe(false);
   });
 });
 
@@ -189,7 +257,7 @@ describe("both directions, per gotcha #43", () => {
     const sources = new Set(REDS.map((r) => r.source));
     expect(sources).toEqual(new Set(["kalshi", "polymarket"]));
 
-    const d = selectDivergenceDetail({ playerProps: REDS, status: "completed" });
+    const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
     const players = new Set([...d.offScript, ...d.onScript].map((r) => r.player));
     // #1639: keying on market_name would collapse the Kalshi rows onto a
     // handful of matchup-titled cards. Many distinct players is the proof it

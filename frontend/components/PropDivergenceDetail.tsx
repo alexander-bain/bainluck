@@ -27,7 +27,13 @@ import {
   type PropDropReason,
 } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
-import PropTravelBar, { pct, signedTravelPoints } from "./PropTravelBar";
+import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import PropTravelBar, {
+  pct,
+  resolutionLabel,
+  signedTravelPoints,
+  surprisePoints,
+} from "./PropTravelBar";
 
 interface Props {
   playerProps?: readonly PlayerPropRow[] | null;
@@ -44,12 +50,20 @@ const REASON_LABEL: Record<PropDropReason, string> = {
 };
 
 function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
+  // The right-hand pill answers "how far from the script": in-game that is the
+  // signed price move, post-game it is the distance from the mark to the
+  // OUTCOME (#2011). `PropTravelBar` already carries the resolution and its
+  // points, so the pill is suppressed post-game rather than duplicated.
+  const pill = settled ? null : signedTravelPoints(row);
   const moveTone =
     row.direction === "over"
       ? "text-accent-live"
       : row.direction === "under"
         ? "text-accent-danger"
         : "text-text-muted";
+
+  const outcome = resolutionLabel(row);
+  const points = surprisePoints(row);
 
   return (
     <div>
@@ -61,14 +75,19 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
         className={`flex items-baseline justify-between gap-3 ${row.sentence ? "mt-0.5" : ""}`}
       >
         <p className="text-[12px] text-text-secondary">{row.label}</p>
-        <span className={`text-[12px] font-medium tabular-nums shrink-0 ${moveTone}`}>
-          {signedTravelPoints(row)}
-        </span>
+        {pill && (
+          <span className={`text-[12px] font-medium tabular-nums shrink-0 ${moveTone}`}>
+            {pill}
+          </span>
+        )}
       </div>
       <PropTravelBar row={row} />
       <p className="sr-only">
-        {settled ? "Script said" : "Script said"} {pct(row.pregameMark)},{" "}
-        {settled ? "finished at" : "now"} {pct(row.current)}.
+        {settled && outcome
+          ? `Script said ${pct(row.pregameMark)}; it ${
+              row.resolution === 1 ? "happened" : "did not happen"
+            }${points ? ` — ${points} from the mark` : ""}.`
+          : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
       </p>
     </div>
   );
@@ -110,7 +129,7 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
         <>
           <div className="flex items-baseline justify-between gap-3 pb-1 pt-4 mt-4 border-t border-surface-border/30">
             <h4 className="text-[12px] font-semibold text-text-primary">
-              Still on script
+              {result.settled ? "Went to script" : "Still on script"}
             </h4>
             <span className="text-[11px] text-text-muted tabular-nums">
               {result.onScript.length}
@@ -124,9 +143,48 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
         </>
       )}
 
+      {/* #2011's named residual: a settled question with no readable verdict is
+          its own group. Folding it into "Went to script" would assert how it
+          landed — the claim we just established we cannot make. */}
+      {result.ungraded.length > 0 && (
+        <>
+          <div className="flex items-baseline justify-between gap-3 pb-1 pt-4 mt-4 border-t border-surface-border/30">
+            <h4 className="text-[12px] font-semibold text-text-primary">
+              Not graded
+            </h4>
+            <span className="text-[11px] text-text-muted tabular-nums">
+              {result.ungraded.length}
+            </span>
+          </div>
+          {/* SAID ONCE, not once per row. `SETTLED_NO_GRADE_LABEL` on a hundred
+              consecutive lines is the vocabulary drift #1650 punished, in its
+              other direction: technically consistent, unreadable in practice.
+              The questions themselves still all appear — completeness is this
+              view's contract (V3). */}
+          <p className="text-[11px] text-text-muted pb-1.5">
+            {SETTLED_NO_GRADE_LABEL} — these questions settled without a published
+            outcome, so there is no result to show against their mark.
+          </p>
+          <ul className="space-y-1">
+            {result.ungraded.map((row) => (
+              <li
+                key={row.key}
+                className="flex items-baseline justify-between gap-3 text-[12px] text-text-muted"
+              >
+                <span>{row.label}</span>
+                <span className="tabular-nums shrink-0">
+                  marked {pct(row.pregameMark)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
       <p className="text-[11px] text-text-muted pt-3 mt-3 border-t border-surface-border/30">
-        Ordered by distance from the pregame mark — the grey tick is what the
-        script said, the marker is where it {result.settled ? "finished" : "is now"}.
+        {result.settled
+          ? "Ordered by how far the outcome landed from the pregame mark."
+          : "Ordered by distance from the pregame mark — the grey tick is what the script said, the marker is where it is now."}
       </p>
 
       {/* V3: a non-benign loss must reach the screen. We do not claim "no
