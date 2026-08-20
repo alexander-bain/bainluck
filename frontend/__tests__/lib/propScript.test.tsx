@@ -204,13 +204,22 @@ describe("the script's DIRECTION is typed off the over-side mark", () => {
     expect(by("Coin Flip").scriptSide).toBe("toss_up");
   });
 
-  it("the RENDERED row quotes the probability of the direction it states", () => {
-    // The inversion one layer up: correct data, wording says the opposite.
-    // "market says NO — 7%" is the shape to make impossible, and it SHIPPED in
-    // a draft of this queue (direction read from `current`, number still read
-    // from `pregameMark`) until a rendered capture showed "market says YES —
-    // 27%" on a row priced at 55%. Asserted on the markup, because that is the
-    // layer where the two halves can disagree.
+  it("EVERY ROW QUOTES THE CHANCE IT HAPPENS — one direction, all the way down", () => {
+    // ── AMENDED BY UX-P107 (Alex, on the P106 capture) ──────────────────────
+    //
+    // This test used to assert the opposite, and it was RIGHT about the defect
+    // it was written for and WRONG about the fix. It pinned "market says NO —
+    // 93%" for a row priced at 7%: the direction word and the probability of
+    // THAT direction, internally consistent, and asserted to be so.
+    //
+    // What it could not see is the page. Read down a five-row rail, 93% here
+    // measures "does not happen" and 55% on the next row measures "does" — a
+    // column of percentages whose subject alternates. Every row correct, the
+    // column unreadable. Alex's first read caught it, no test could have, and
+    // that is the second time in two cycles a suite has PINNED the exact string
+    // a capture then ruled out (#1650's `toContain("Hit")`).
+    //
+    // The contract is now: the number is always the chance it HAPPENS.
     const render = (mark: number) =>
       renderToStaticMarkup(
         <PropTravelBar
@@ -222,16 +231,47 @@ describe("the script's DIRECTION is typed off the over-side mark", () => {
           }
         />,
       );
-    const no = render(0.07);
-    const yes = render(0.93);
-    expect(no).toContain("NO");
-    expect(no).toContain("93%");
-    expect(no).not.toContain("7%");
-    expect(yes).toContain("YES");
-    expect(yes).toContain("93%");
-    // And the aria-label agrees with the visible pill, on the same number.
-    expect(no).toMatch(/aria-label="[^"]*will not happen, 93%/);
-    expect(yes).toMatch(/aria-label="[^"]*will happen, 93%/);
+    const unlikely = render(0.07);
+    const likely = render(0.93);
+
+    expect(unlikely).toContain("7% chance");
+    expect(likely).toContain("93% chance");
+    // The complement must appear NOWHERE — not in the cell, not in the label.
+    expect(unlikely).not.toContain("93%");
+    expect(likely).not.toContain("7%");
+
+    // The banned vocabulary, in both renders and in both cases. A direction
+    // word reads as a verdict on a page where nothing has happened, and
+    // "market" attributes our one number to somebody else.
+    for (const html of [unlikely, likely]) {
+      expect(html).not.toMatch(/YES|NO\b/);
+      expect(html.toLowerCase()).not.toContain("market");
+      expect(html.toLowerCase()).not.toContain("will happen");
+      expect(html.toLowerCase()).not.toContain("will not happen");
+    }
+
+    // The aria-label states the SAME quantity as the visible cell — it was the
+    // second place the direction was spelled out, so it was the second place
+    // the flip could hide.
+    expect(unlikely).toMatch(/aria-label="[^"]*7% chance/);
+    expect(likely).toMatch(/aria-label="[^"]*93% chance/);
+  });
+
+  it("a coin flip states its chance too, rather than opting out of the column", () => {
+    // The old row rendered the words "coin flip" and NO number. Under one
+    // consistent direction that is a hole in the column, and a reader scanning
+    // for the number finds prose.
+    const html = renderToStaticMarkup(
+      <PropTravelBar
+        row={
+          selectDivergenceRows({
+            playerProps: [kalshiRow("Coin Flip", 2, 0.5)],
+            status: "scheduled",
+          }).rows[0]
+        }
+      />,
+    );
+    expect(html).toContain("50% chance");
   });
 
   it("quotes the CURRENT price, on a row whose opening mark disagrees with it", () => {
@@ -250,14 +290,15 @@ describe("the script's DIRECTION is typed off the over-side mark", () => {
     }).rows[0];
     const html = renderToStaticMarkup(<PropTravelBar row={row} />);
 
-    expect(row.scriptSide).toBe("will"); // 55% ⇒ the market now says yes
-    expect(html).toContain("YES");
-    expect(html).toContain("55%");
-    // 27% is the OPENING mark and 73% is its complement. Either appearing here
-    // means the pill and the direction were read off different numbers.
+    expect(row.scriptSide).toBe("will"); // 55% ⇒ the bar grows to the yes side
+    expect(html).toContain("55% chance");
+    // 27% is the OPENING mark and 73% and 45% are complements. Any of them
+    // appearing here means the cell was read off a different number than the
+    // bar was drawn from.
     expect(html).not.toContain("27%");
     expect(html).not.toContain("73%");
-    expect(html).toMatch(/aria-label="[^"]*will happen, 55%/);
+    expect(html).not.toContain("45%");
+    expect(html).toMatch(/aria-label="[^"]*55% chance/);
   });
 
   it("conviction is SYMMETRIC — a 7% claim ranks with a 93% claim, not below it", () => {
@@ -427,11 +468,31 @@ describe("the rendered pregame surface", () => {
     expect(html).not.toContain("How the props landed");
   });
 
-  it("states the direction in words, not only as a number", () => {
-    // The 84% finding, on the screen: a page of sub-50% marks that renders only
-    // numbers reads as "nothing is going to happen tonight".
-    expect(html).toContain("market says");
-    expect(html).toMatch(/YES|NO/);
+  it("STATES ONE QUANTITY, AND ATTRIBUTES IT TO NOBODY", () => {
+    // ── THIS TEST'S PREMISE WAS INVERTED BY ALEX'S RULING, AND SAYING SO IS
+    //    THE POINT OF LEAVING IT HERE ─────────────────────────────────────────
+    //
+    // It used to read "states the direction in words, not only as a number",
+    // reasoning from the 84% finding that a page of sub-50% marks rendering
+    // only numbers reads as "nothing is going to happen tonight". The reasoning
+    // was sound and the remedy was wrong: the words that were added read as a
+    // VERDICT, and the number they attached to changed meaning row to row. The
+    // 84% finding is answered by the BAR — centred, growing out, 7% as loud as
+    // 93% — which is the half of the P106 design Alex explicitly kept.
+    expect(html).toMatch(/\d+% chance/);
+    // TWICE PER ROW ON A FIVE-ROW RAIL, and the doubling is the assertion: the
+    // visible cell and the bar's aria-label print the identical string from the
+    // identical function. A count of 5 would mean one of the two had drifted
+    // into its own phrasing, which is precisely how the banned wording survived
+    // in an aria-label after being fixed on screen.
+    expect(html.match(/% chance/g) ?? []).toHaveLength(10);
+    const visible = html.match(/>(\d+% chance)</g) ?? [];
+    const spoken = html.match(/aria-label="[^"]*?(\d+% chance)"/g) ?? [];
+    expect(visible).toHaveLength(5);
+    expect(spoken).toHaveLength(5);
+    expect(html.toLowerCase()).not.toContain("market says");
+    expect(html).not.toMatch(/>YES</);
+    expect(html).not.toMatch(/>NO</);
   });
 
   it("draws a 7% claim and a 93% claim at the SAME weight", () => {
@@ -465,7 +526,12 @@ describe("the rendered pregame surface", () => {
     expect(bar).not.toContain("now ");
   });
 
-  it("speaks the direction to a screen reader, which the bar cannot", () => {
-    expect(html).toMatch(/aria-label="[^"]*will not happen/);
+  it("speaks the SAME sentence to a screen reader that it shows on the screen", () => {
+    // The bar is a shape, so it says nothing on its own. It used to say "the
+    // market says this will not happen, 93%" — the banned phrasing, in the one
+    // place a rendered capture cannot show it. Now it speaks the identical
+    // string the visible cell prints, from the same function.
+    expect(html).toMatch(/aria-label="[^"]*: \d+% chance"/);
+    expect(html).not.toMatch(/aria-label="[^"]*(will not happen|market)/);
   });
 });

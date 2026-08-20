@@ -85,24 +85,29 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
         )}
       </div>
       <PropTravelBar row={row} />
-      <p className="sr-only">
-        {settled && outcome
-          ? `Script said ${pct(row.pregameMark)}; it ${
-              row.resolution === 1 ? "hit" : "missed"
-            }${points ? ` — ${points} from the mark` : ""}.`
-          : row.pregame
-            ? // "Script said 92%, now 92%" is a non-statement pregame. The
-              // direction is the information, and it is the half a screen
-              // reader cannot get from the bar.
-              row.scriptSide === "toss_up"
-              ? `The market has no view: ${pct(row.pregameMark)}.`
-              : `The market says this ${
-                  row.scriptSide === "will" ? "will" : "will not"
-                } happen: ${pct(
-                  row.scriptSide === "will" ? row.pregameMark : 1 - row.pregameMark,
-                )}.`
+      {/* ── PREGAME HAS NO sr-only LINE ANY MORE (UX-P107) ──────────────────
+          It used to read "The market says this will not happen: 93%" — the
+          complement AND an attribution, in the one place a rendered capture
+          cannot review. Restating it in the ruled direction would have made it
+          word-for-word identical to the bar's own aria-label, which the
+          direction census showed as every number being announced TWICE per
+          row. Ruling 5: nothing beats unhelpful. The bar speaks it once.
+
+          The other two states still need this line, and for the original
+          reason — their bars draw a journey a screen reader cannot see. */}
+      {!row.pregame && (
+        <p className="sr-only">
+          {settled && outcome
+            ? // The surprise number survives HERE and nowhere else on a settled
+              // row (UX-P107). Labelled with its referent, it is not the
+              // unlabelled column Alex ruled out — a screen reader hears
+              // "93 pts from the mark", never a bare number in a grey column.
+              `Script said ${pct(row.pregameMark)}; it ${
+                row.resolution === 1 ? "hit" : "missed"
+              }${points ? ` — ${points} from the mark` : ""}.`
             : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
-      </p>
+        </p>
+      )}
     </div>
   );
 }
@@ -206,7 +211,12 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
         {result.settled
           ? "Ordered by how far the outcome landed from the pregame mark."
           : result.pregame
-            ? "Ordered by how far the market is from a coin flip — the centre line is 50%, and a bar growing left is the market saying it will NOT happen."
+            ? // UX-P107: the legend is the one place a "bar growing left means
+              // the market says NO" gloss could survive the ruling, so it goes
+              // too. Every number on this page is the chance the question
+              // happens; the centre line is the coin flip and the bar is how far
+              // from it we are.
+              "Ordered by how far from a coin flip each question is — the centre line is 50%, and every number is the chance it happens."
             : "Ordered by distance from the pregame mark — the grey tick is what the script said, the marker is where it is now."}
       </p>
 
