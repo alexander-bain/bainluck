@@ -85,7 +85,7 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
       <p className="sr-only">
         {settled && outcome
           ? `Script said ${pct(row.pregameMark)}; it ${
-              row.resolution === 1 ? "happened" : "did not happen"
+              row.resolution === 1 ? "hit" : "missed"
             }${points ? ` — ${points} from the mark` : ""}.`
           : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
       </p>

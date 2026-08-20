@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
-import { isGraded, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import { isGraded, propVerdictLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 import {
   groupPlayerProps,
   type PlayerData,
@@ -101,7 +101,7 @@ function StatBox({
                 className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
                 style={didHit ? { background: `${accent}22`, color: accent } : { background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
               >
-                {didHit ? "HIT" : "MISS"}
+                {propVerdictLabel(didHit)}
               </span>
             )}
             {firstLine != null && (

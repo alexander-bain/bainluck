@@ -289,7 +289,7 @@ describe("the label and the sentence", () => {
     expect(done.settled).toBe(true);
     expect(done.resolution).toBe(1);
     expect(done.surprise).toBeCloseTo(0.9, 6); // |1 - 0.10|, not |0.60 - 0.10|
-    expect(done.sentence).toBe("Soto's 2+ hits was marked 10% — and it happened.");
+    expect(done.sentence).toBe("Soto's 2+ hits was marked 10% — and it hit.");
     expect(done.sentence).not.toContain("finished at");
     // Travel is still computed — it is simply no longer what settles the rank.
     expect(done.travel).toBeCloseTo(0.5, 6);

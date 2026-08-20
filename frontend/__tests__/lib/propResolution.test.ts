@@ -34,7 +34,12 @@ import {
   readOverSideResolution,
   toOverSideGradeFields,
 } from "@/lib/propResolution";
-import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import {
+  PROP_HIT_LABEL,
+  PROP_MISS_LABEL,
+  propVerdictLabel,
+  SETTLED_NO_GRADE_LABEL,
+} from "@/lib/propGrade";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 
 import dodgers from "../fixtures/eventPlayerProps.15199902.settled.json";
@@ -328,7 +333,64 @@ describe("the two post-game constants are the measurement, and they are ordered"
       status: "completed",
     });
     expect(p.offScript[0].surprising).toBe(true);
-    expect(p.offScript[0].sentence).toContain("and it didn't");
+    expect(p.offScript[0].sentence).toContain("and it missed");
+  });
+});
+
+describe("ONE settled vocabulary — the third one was caught in a screenshot", () => {
+  /**
+   * The first draft of `resolutionLabel` returned "HAPPENED" / "DIDN'T HAPPEN"
+   * on a screen that already stacks the prop cards and WHAT HIT, both of which
+   * say HIT / MISS. Three vocabularies for one backend state is #1650, inside
+   * the fix for #2011. No test caught it — the rendered screenshot did.
+   *
+   * So the words now live in `propGrade` and every surface imports them, and
+   * this asserts the import rather than the string: a component that goes back
+   * to a literal is exactly what stops being visible once the words agree.
+   */
+  const SURFACES = [
+    "components/PropTravelBar.tsx",
+    "components/PlayerPropsDashboard.tsx",
+    "components/TotalPointsSpectrum.tsx",
+  ];
+
+  it("no surface hard-codes the verdict words", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const root = path.resolve(__dirname, "../..");
+    let checked = 0;
+    for (const rel of SURFACES) {
+      const src = fs.readFileSync(path.join(root, rel), "utf8");
+      // The literals may appear ONLY in propGrade.ts.
+      expect({ file: rel, hit: /["'`]HIT["'`]/.test(src) }).toEqual({
+        file: rel,
+        hit: false,
+      });
+      expect({ file: rel, miss: /["'`]MISS(ED)?["'`]/.test(src) }).toEqual({
+        file: rel,
+        miss: false,
+      });
+      expect(src).toContain("propVerdictLabel");
+      checked += 1;
+    }
+    expect(checked).toBe(SURFACES.length); // non-vacuity
+  });
+
+  it("the rail's badge and its sentence agree with `propGrade`", () => {
+    expect(propVerdictLabel(true)).toBe(PROP_HIT_LABEL);
+    expect(propVerdictLabel(false)).toBe(PROP_MISS_LABEL);
+
+    const rail = selectDivergenceRows({ playerProps: DODGERS, status: "completed" });
+    const hitRow = rail.rows.find((r) => r.resolution === 1);
+    const missRow = rail.rows.find((r) => r.resolution === 0);
+    expect(hitRow).toBeDefined();
+    expect(missRow).toBeDefined();
+    // The sentence uses the verb form of the same two words, not a third pair.
+    if (hitRow?.sentence) expect(hitRow.sentence).toMatch(/and it hit\.$/);
+    if (missRow?.sentence) expect(missRow.sentence).toMatch(/and it missed\.$/);
+    for (const r of rail.rows) {
+      expect(r.sentence ?? "").not.toMatch(/happened/i);
+    }
   });
 });
 
@@ -340,7 +402,7 @@ describe("the settled sentence states the OUTCOME, never the last traded price",
     for (const s of sentences) {
       expect(s).not.toContain("finished at");
       expect(s).toContain("was marked");
-      expect(s).toMatch(/and it (happened|didn't)\.$/);
+      expect(s).toMatch(/and it (hit|missed)\.$/);
     }
   });
 

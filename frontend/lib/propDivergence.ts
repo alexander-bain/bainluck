@@ -351,7 +351,10 @@ export function divergenceSentence(
   // price. "finished at 58%" is a price wearing the grammar of a result, and it
   // is the sentence half of the same defect as the bar that ends there.
   if (settled && resolution != null) {
-    const verdict = resolution === 1 ? "and it happened." : "and it didn't.";
+    // Same vocabulary as the badge beside it and the prop card below it —
+    // `hit` / `missed` is the verb form of PROP_HIT_LABEL / PROP_MISS_LABEL,
+    // not a third word (see `resolutionLabel`, and #1650).
+    const verdict = resolution === 1 ? "and it hit." : "and it missed.";
     return `${possessive(player)} ${question} was marked ${pct(pregameMark)} — ${verdict}`;
   }
 

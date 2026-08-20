@@ -26,7 +26,7 @@
  */
 
 import type { DivergenceRow } from "@/lib/propDivergence";
-import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import { propVerdictLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 
 export function pct(p: number): string {
   return `${Math.round(p * 100)}%`;
@@ -49,10 +49,19 @@ export function surprisePoints(row: DivergenceRow): string | null {
   return `${Math.round(row.surprise * 100)} pts`;
 }
 
-/** The outcome, in the settled vocabulary. `null` when nothing may be stated. */
+/**
+ * The outcome, in the site's ONE settled vocabulary. `null` when nothing may be
+ * stated.
+ *
+ * This function's first draft returned "HAPPENED" / "DIDN'T HAPPEN" — a THIRD
+ * vocabulary on a screen that already stacks the prop cards and WHAT HIT, both
+ * of which say HIT / MISS. That is #1650 reproduced inside the fix for #2011,
+ * and it was caught in the rendered screenshot rather than by any test, which
+ * is why the words now live in `propGrade` and all three surfaces import them.
+ */
 export function resolutionLabel(row: DivergenceRow): string | null {
   if (row.resolution == null) return null;
-  return row.resolution === 1 ? "HAPPENED" : "DIDN'T HAPPEN";
+  return propVerdictLabel(row.resolution === 1);
 }
 
 /**
@@ -83,8 +92,8 @@ function ResolvedMark({ row }: { row: DivergenceRow }) {
     <div
       className="mt-1.5 flex items-baseline justify-between gap-3 text-[11px] tabular-nums"
       role="img"
-      aria-label={`${row.label}: marked ${pct(row.pregameMark)}, it ${
-        row.resolution === 1 ? "happened" : "did not happen"
+      aria-label={`${row.label}: marked ${pct(row.pregameMark)}, ${
+        row.resolution === 1 ? "hit" : "missed"
       }`}
     >
       <span className="text-text-muted">

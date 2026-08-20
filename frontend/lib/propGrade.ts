@@ -57,6 +57,27 @@ export interface PropGradeFields {
  */
 export const SETTLED_NO_GRADE_LABEL = "Resolved · grading unavailable";
 
+/**
+ * The two settled verdicts, in the site's one settled vocabulary.
+ *
+ * UX-P105 (#2011). These words were literals in `PlayerPropsDashboard` and
+ * `TotalPointsSpectrum`, and THE DIVERGENCE rail's first draft invented a third
+ * pair ("HAPPENED" / "DIDN'T HAPPEN") — on a screen that already shows all
+ * three surfaces stacked, which is #1650 exactly: one backend state wearing
+ * three vocabularies. It was caught in the rendered screenshot, not in a test,
+ * which is the argument for the constant rather than for more review.
+ *
+ * Alex's standing ruling is one system-wide settled language. That can only be
+ * enforced by there being one place the words live.
+ */
+export const PROP_HIT_LABEL = "HIT";
+export const PROP_MISS_LABEL = "MISS";
+
+/** The verdict word for a typed `hit`. */
+export function propVerdictLabel(hit: boolean): string {
+  return hit ? PROP_HIT_LABEL : PROP_MISS_LABEL;
+}
+
 export type PropGradeReason =
   | "explicit_hit"
   | "no_explicit_verdict"
