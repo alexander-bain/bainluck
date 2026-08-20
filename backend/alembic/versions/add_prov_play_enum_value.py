@@ -24,7 +24,19 @@ by PostgreSQL at commit while the ORM accepts it, which is the whole bug
 A value that must appear in an already-migrated database needs a revision that
 has not run yet. This is that revision. Lineage stays linear:
 
-    add_typeahead_index -> add_disc_int_provenance -> add_prov_play_value
+    add_typeahead_index -> add_disc_int_provenance -> add_outcome_price_changed
+                                                   -> add_prov_play_value
+
+**Re-parented at integration (INT-096).** This revision was authored against
+`add_disc_int_provenance` while that was the head. `add_outcome_price_changed`
+(UX-P107's `futures_outcomes.price_changed_at`) landed on master first, at
+`c0a26325`, and is already applied in production — so declaring the older parent
+here produced TWO alembic heads on the merged tree and `test_alembic.py` reds
+with `Multiple alembic heads detected`. The two revisions are independent (a
+nullable column add on `futures_outcomes` versus a catalog-only enum `ADD VALUE`
+on `discover_provenance`), so the order between them carries no meaning; chaining
+after the one that has already shipped is the smaller, linear change and needs no
+`alembic merge`. Nothing else in this file moved.
 
 ## Why `ADD VALUE` and not a type rebuild
 
@@ -70,7 +82,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic. (<=32 chars — gotcha #1.)
 revision = "add_prov_play_value"
-down_revision = "add_disc_int_provenance"
+down_revision = "add_outcome_price_changed"  # re-parented at INT-096; see the docstring
 branch_labels = None
 depends_on = None
 

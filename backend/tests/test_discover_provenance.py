@@ -84,15 +84,45 @@ class TestEnumAndAllowlistAgree:
         )
 
     def test_the_next_revision_adds_play_and_chains_linearly(self):
-        """The seventh value lives in a revision that has NOT run."""
+        """The seventh value lives in a revision that has NOT run.
+
+        This asserted `play.down_revision == base.revision` until INT-096. That
+        was a PROXY for the property the failure message actually names — "a
+        second head fails the Heroku release phase" — and the proxy was true only
+        while `add_disc_int_provenance` happened to be the head. It stopped being
+        true the moment UX-P107's `add_outcome_price_changed` landed on master
+        first, so this revision was re-parented onto it at integration and the
+        proxy went red over a chain that is perfectly linear.
+
+        So assert the property, not the proxy: ONE head, and it is this revision.
+        That is strictly stronger — it catches a second head no matter which
+        parent is declared — and it does not have to be edited again by the next
+        lane that lands a migration ahead of this one.
+        """
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
         play = _load(PLAY_MIGRATION, "_prov_play")
-        base = _load(MIGRATION, "_prov_mig_b")
         assert play.PLAY_VALUE == "play"
-        assert play.down_revision == base.revision, (
-            "the play revision must chain directly off the base revision — a "
-            "second head fails the Heroku release phase and the site does not "
-            "deploy at all"
+
+        script = ScriptDirectory.from_config(Config("alembic.ini"))
+        heads = list(script.get_heads())
+        assert heads == [play.revision], (
+            f"expected exactly one alembic head and for it to be the play "
+            f"revision {play.revision!r}, got {heads!r} — a second head fails "
+            f"the Heroku release phase and the site does not deploy at all"
         )
+
+        # And the chain really reaches the base this revision exists to amend:
+        # `play` is unreachable-by-design from a fresh DB unless it descends from
+        # the revision that creates the enum.
+        base = _load(MIGRATION, "_prov_mig_b")
+        ancestry = {r.revision for r in script.iterate_revisions(play.revision, "base")}
+        assert base.revision in ancestry, (
+            f"{play.revision!r} must descend from {base.revision!r}, which "
+            f"creates the discover_provenance type it adds a value to"
+        )
+
         assert len(play.revision) <= 32  # gotcha #1
 
     def test_the_runtime_allowlist_equals_the_migration_CHAIN(self):
