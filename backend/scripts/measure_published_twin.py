@@ -32,6 +32,7 @@ from app.utils.calibration_published_twin import (  # noqa: E402
     fold_rows_to_cells,
     published_population_fold_sql,
     reconcile,
+    tolerance_pp,
 )
 
 DEFAULT_TIMEOUT_MS = 240_000
@@ -41,6 +42,11 @@ def _parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out", help="write the artifact here")
     p.add_argument("--plan-only", action="store_true", help="print the SQL and exit")
+    p.add_argument(
+        "--bound-only",
+        action="store_true",
+        help="report the BOUND from the payload alone; run no fold and claim no verdict",
+    )
     p.add_argument("--payload", help="a saved /api/calibration body, for offline replay")
     p.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
     p.add_argument(
@@ -89,12 +95,77 @@ def _load_payload(args) -> tuple[dict, str | None]:
         return {}, f"api_unreachable: {type(exc).__name__}: {exc}"
 
 
+def _bound_only(args) -> int:
+    """Report Gate 0's BOUND without touching the database.
+
+    CAL-P079 separated two things this script had always computed together, and
+    they have different reachability:
+
+    * the **bound** comes from :func:`tolerance_pp`, which reads only the
+      payload's ``staged`` block — ``units_banked``, ``units_drifted``,
+      ``units_drift_unknown``. No database, no fold, no credentials.
+    * the **verdict** needs ``db_cells``, and therefore the fold.
+
+    The fold is unreachable from an agent sandbox (TCP 5432 egress is blocked)
+    and — measured in CAL-P079 — is also unreachable through the admin db-query
+    rail, whose row path hardcodes a 10 s ``statement_timeout`` against an
+    instrument whose own default budget is 240 s. That is a real bound on where
+    the verdict can be produced, and it was making the BOUND unreportable too,
+    purely by being in the same function.
+
+    So this mode exists to stop a reachable measurement from being blocked by an
+    unreachable one. It never claims ``agrees``: with no fold there is nothing to
+    agree with, and a mode that could return the gate's pass value while checking
+    nothing is the failure this whole module was written against.
+    """
+    payload, payload_error = _load_payload(args)
+    staged = payload.get("staged")
+    bound = tolerance_pp(staged)
+
+    artifact = {
+        "queue": "CAL-P079",
+        "issue": 2007,
+        "gate": "Gate 0 — BOUND ONLY (no fold, no verdict)",
+        "mode": "bound_only",
+        "payload_error": payload_error,
+        "published_generated_at": payload.get("generated_at"),
+        "published_availability": payload.get("availability"),
+        "staged": staged,
+        "tolerance_pp": bound,
+        # Named, not implied. A reader must not be able to mistake this for the
+        # gate having run.
+        "verdict": "bound_only",
+        "verdict_note": (
+            "The fold was deliberately not run, so no agreement verdict exists. "
+            "This reports only the tolerance the payload's own disclosure earns."
+        ),
+    }
+    if bound is None:
+        artifact["unmeasurable_reason"] = (
+            payload_error or "staged block absent or unmeasured — no bound is earned"
+        )
+
+    text_out = json.dumps(artifact, indent=2, default=str)
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text_out)
+    print(text_out)
+    # 0 = a bound was earned and reported. 2 = it could not be, matching the
+    # full mode's "the gate could not run" code (gotcha #54's amendment: the
+    # VALUE of a non-zero exit is the story).
+    return 0 if bound is not None else 2
+
+
 async def main(argv=None) -> int:
     args = _parse_args(argv)
 
     if args.plan_only:
         print(published_population_fold_sql())
         return 0
+
+    if args.bound_only:
+        return _bound_only(args)
 
     rows, duration_s, fold_error = await _fold(timeout_ms=args.timeout_ms)
     payload, payload_error = _load_payload(args)
