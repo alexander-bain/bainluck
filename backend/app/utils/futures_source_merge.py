@@ -40,12 +40,18 @@ from typing import Any, Optional
 
 from app.utils.aggregation import SOURCE_WEIGHTS, _weighted_median
 from app.utils.source_divergence import SourceDivergence, assess_divergence
+from app.utils.team_identity_resolution import (
+    TeamAliasIndex,
+    resolve_row_team_id,
+    row_entity_is_ambiguous,
+)
 
 __all__ = [
     "merge_relabel_collisions",
     "blend_probabilities",
     "blend_with_verdict",
     "entities_compatible",
+    "rows_name_same_entity",
 ]
 
 
@@ -69,6 +75,47 @@ def entities_compatible(a: Optional[str], b: Optional[str]) -> bool:
         return True
     ta, tb = set(na.split()), set(nb.split())
     return ta <= tb or tb <= ta
+
+
+def rows_name_same_entity(
+    a: dict, b: dict, index: Optional[TeamAliasIndex] = None
+) -> bool:
+    """Do these two rows name the same entity? IDENTITY FIRST, names only after.
+
+    #2001. `entities_compatible` reads string shape, and string shape is exactly
+    what Kalshi destroys: it ships `Los Angeles D` for the Dodgers, so the two
+    sources' rows for ONE question look like two questions and both render.
+
+    This wrapper puts a resolved team id in front of the string test:
+
+    - **Both sides resolve → the ids decide, in BOTH directions.** Equal ids
+      merge a pair the names could never have matched (`Los Angeles D` ↔
+      `Los Angeles Dodgers`). Unequal ids VETO a pair the names might otherwise
+      have matched — which is the half that matters, because a bare
+      `Los Angeles` is token-contained in both `Los Angeles Angels` and
+      `Los Angeles Dodgers` and today's predicate would merge it with whichever
+      came first.
+    - **Either side POSITIVELY names two teams → VETO.** A bare `Los Angeles` is
+      an `alternate_names` entry on both LA clubs, and it is token-contained in
+      `Los Angeles Angels` and `Los Angeles Dodgers` alike — so today's predicate
+      merges it into whichever row it meets first. "This string names two teams"
+      is knowledge, not ignorance, and it refuses.
+    - **Either side merely UNRECOGNISED → fall through to `entities_compatible`,
+      unchanged.** Resolution is additive, never a new way to lose a merge that
+      works today. `index=None` (no roster loaded, or a non-team market) is the
+      same fall-through, so every existing caller keeps its exact behaviour.
+
+    The resolver refuses ambiguity by construction rather than ranking it — see
+    `app/utils/team_identity_resolution` for the census behind that choice, and
+    for why the rows' own stored `team_id` is not consulted.
+    """
+    ta = resolve_row_team_id(a, index)
+    tb = resolve_row_team_id(b, index)
+    if ta is not None and tb is not None:
+        return ta == tb
+    if row_entity_is_ambiguous(a, index) or row_entity_is_ambiguous(b, index):
+        return False
+    return entities_compatible(a.get("outcome_name"), b.get("outcome_name"))
 
 
 def blend_with_verdict(
@@ -141,13 +188,21 @@ def blend_probabilities(rows: list[dict]) -> Optional[float]:
     return blend_with_verdict(rows)[0]
 
 
-def merge_relabel_collisions(rows: list[dict]) -> list[dict]:
+def merge_relabel_collisions(
+    rows: list[dict], team_index: Optional[TeamAliasIndex] = None
+) -> list[dict]:
     """Collapse cross-source duplicates of ONE question into one blended row.
 
     Order-preserving: the merged row takes the position of the first
     contributor. Non-colliding rows pass through untouched and byte-identical.
     The merged row gains `all_sources` and `source_count` so the UI can say
     "2 sources" without printing two contradictory numbers.
+
+    `team_index` (#2001) is optional and additive. Supplied, the entity test
+    resolves both rows to a team id before falling back to name shape, which is
+    what lets a truncated `Los Angeles D` meet `Los Angeles Dodgers` — and what
+    stops it meeting `Los Angeles Angels`. Omitted, behaviour is byte-identical
+    to before, so every existing caller and test is unaffected.
     """
     groups: dict[Any, list[int]] = {}
     for i, r in enumerate(rows):
@@ -176,7 +231,7 @@ def merge_relabel_collisions(rows: list[dict]) -> list[dict]:
                     continue
                 if a.get("market_id") == b.get("market_id"):
                     continue
-                if not entities_compatible(a.get("outcome_name"), b.get("outcome_name")):
+                if not rows_name_same_entity(a, b, team_index):
                     continue
                 partners.append(j)
             if partners:

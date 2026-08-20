@@ -574,7 +574,17 @@ def test_ruling_numbers_are_unique() -> None:
 #: uncommented bump is what made this conflict unreadable — both sides showed 95 and neither
 #: said why — so the rule earns a corollary: the paragraph IS the audit trail, and a constant
 #: raised silently leaves the next resolver counting files to find out what happened.
-MINIMUM_BANKED_RULINGS = 96
+#:
+#: Raised to **98** by the INT-092 combined merge of `program/ux-91` banking **100** (a metric
+#: and its early warning are different jobs) and **101** (group, don't cull). TWELFTH consecutive
+#: cycle, and the SECOND time INT-092 resolved this identical conflict — q375 banked 099 hours
+#: earlier in the same session. HEAD said 96, the branch said 97, the merged tree holds 98.
+#: Neither side was wrong about itself; neither was the truth. COUNT (#1910, ruling 088).
+#:
+#: Two collisions in one Integrator session is the argument for #2009's LEDGER half rather than
+#: its test half: the test caught both, but it caught them at MERGE time, after the number had
+#: already been minted twice. A number claimed at AUTHORING time cannot collide.
+MINIMUM_BANKED_RULINGS = 98
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -1,0 +1,4796 @@
+{
+ "_provenance": {
+  "what": "GET /api/admin/ranking-judgments/candidates?limit=40 \u2014 the LIVE labeling sampler output, captured BEFORE the #2019 fix.",
+  "read_at": "2026-08-19T17:5xZ",
+  "endpoint_candidate_source": "labeling_sampler_v1",
+  "strata": [
+   "top_feed_like",
+   "fresh_public_story",
+   "stale_fixable",
+   "weather",
+   "finance_ladder",
+   "low_confidence",
+   "duplicate_group",
+   "explanation_image_gap",
+   "movement_boundary",
+   "low_volume_editorial"
+  ],
+  "the_defect": "21 of 40 rows returned rendered_probability=null, ranks 1/2/3 among them \u2014 the three blank cards Alex hit. Every one had field_sum > 2.0, the band the served feed renders RAW.",
+  "rows": 40,
+  "outcomes_note": "The pre-fix endpoint emitted top_outcomes:null on every card it withheld, so the captured payload could not carry the very probabilities the defect is about. `outcomes` is therefore read separately from futures_outcomes for all 40 markets (941 rows) \u2014 the real inputs the sampler held when it returned the blanks.",
+  "outcome_rows": 941,
+  "price_age_note": "price_age_days_at_capture = days since max(futures_outcomes.last_updated). market.updated_at is a BULK-WRITE timestamp (identical to the microsecond across unrelated markets) and says ~5h on rows whose prices last moved in May, so it is not a freshness signal."
+ },
+ "rows": [
+  {
+   "market_id": 9812814,
+   "name": "US x Iran permanent peace deal by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:357807",
+   "stratum": "top_feed_like",
+   "category": "geopolitics",
+   "field_sum_at_capture": 7.0065,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "No",
+     "probability": 1.0
+    },
+    {
+     "name": "December 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "August 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 30",
+     "probability": 0.9995
+    },
+    {
+     "name": "October 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "July 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 15",
+     "probability": 0.9985
+    },
+    {
+     "name": "May 13",
+     "probability": 0.0035
+    },
+    {
+     "name": "Yes",
+     "probability": 0.001
+    },
+    {
+     "name": "April 24",
+     "probability": 0.001
+    },
+    {
+     "name": "April 22",
+     "probability": 0.001
+    },
+    {
+     "name": "May 26",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 8",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 15",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 31",
+     "probability": 0.0005
+    },
+    {
+     "name": "April 30",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 22",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 7",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 11",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 63.0
+  },
+  {
+   "market_id": 11461878,
+   "name": "Israel x Hezbollah Ceasefire extended by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:386730",
+   "stratum": "top_feed_like",
+   "category": "geopolitics",
+   "field_sum_at_capture": 2.0375,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "No",
+     "probability": 1.0
+    },
+    {
+     "name": "April 26",
+     "probability": 0.9995
+    },
+    {
+     "name": "Yes",
+     "probability": 0.019
+    },
+    {
+     "name": "April 21",
+     "probability": 0.019
+    }
+   ],
+   "price_age_days_at_capture": 111.0
+  },
+  {
+   "market_id": 113758,
+   "name": "SpaceX IPO closing market cap above ___ ?",
+   "source": "polymarket",
+   "group_id": "polymarket:102007",
+   "stratum": "top_feed_like",
+   "category": "tech",
+   "field_sum_at_capture": 6.002,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": ">$1T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$1.6T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$1.4T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$1.2T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$1.8T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$2T",
+     "probability": 0.9995
+    },
+    {
+     "name": ">$3.2T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$2.4T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$3T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$2.6T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$3.4T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$2.2T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$3.6T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$3.8T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$4T",
+     "probability": 0.0005
+    },
+    {
+     "name": ">$2.8T",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 68.0
+  },
+  {
+   "market_id": 59087214,
+   "name": "BMW Championship Winner",
+   "source": "kalshi",
+   "group_id": "kalshi:KXPGATOUR-BMC26",
+   "stratum": "top_feed_like",
+   "category": "golf",
+   "field_sum_at_capture": 1.054,
+   "rendered_probability_at_capture": 0.225,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219342446,
+     "name": "Scottie Scheffler",
+     "probability": 0.225,
+     "movement": 0.0,
+     "rank": 1
+    },
+    {
+     "id": 219342447,
+     "name": "Rory McIlroy",
+     "probability": 0.0545,
+     "movement": 0.0,
+     "rank": 2
+    },
+    {
+     "id": 219342448,
+     "name": "Xander Schauffele",
+     "probability": 0.0515,
+     "movement": 0.0,
+     "rank": 3
+    },
+    {
+     "id": 219367772,
+     "name": "Ludvig \u00c5berg",
+     "probability": 0.0515,
+     "movement": 0.0,
+     "rank": 4
+    },
+    {
+     "id": 219367774,
+     "name": "Cameron Young",
+     "probability": 0.0425,
+     "movement": 0.0,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Scottie Scheffler",
+     "probability": 0.225
+    },
+    {
+     "name": "Rory McIlroy",
+     "probability": 0.0545
+    },
+    {
+     "name": "Xander Schauffele",
+     "probability": 0.0515
+    },
+    {
+     "name": "Ludvig \u00c5berg",
+     "probability": 0.0515
+    },
+    {
+     "name": "Cameron Young",
+     "probability": 0.0425
+    },
+    {
+     "name": "Sam Burns",
+     "probability": 0.0405
+    },
+    {
+     "name": "Tommy Fleetwood",
+     "probability": 0.0375
+    },
+    {
+     "name": "Matt Fitzpatrick",
+     "probability": 0.0335
+    },
+    {
+     "name": "Si Woo Kim",
+     "probability": 0.0305
+    },
+    {
+     "name": "Viktor Hovland",
+     "probability": 0.0265
+    },
+    {
+     "name": "Hideki Matsuyama",
+     "probability": 0.0265
+    },
+    {
+     "name": "Patrick Cantlay",
+     "probability": 0.0255
+    },
+    {
+     "name": "Chris Gotterup",
+     "probability": 0.0255
+    },
+    {
+     "name": "Wyndham Clark",
+     "probability": 0.0245
+    },
+    {
+     "name": "Collin Morikawa",
+     "probability": 0.0205
+    },
+    {
+     "name": "Justin Thomas",
+     "probability": 0.0205
+    },
+    {
+     "name": "Jake Knapp",
+     "probability": 0.0185
+    },
+    {
+     "name": "Michael Thorbjornsen",
+     "probability": 0.0165
+    },
+    {
+     "name": "Kurt Kitayama",
+     "probability": 0.0155
+    },
+    {
+     "name": "Tom Kim",
+     "probability": 0.0145
+    },
+    {
+     "name": "Min Woo Lee",
+     "probability": 0.014
+    },
+    {
+     "name": "Ryan Gerard",
+     "probability": 0.0135
+    },
+    {
+     "name": "Russell Henley",
+     "probability": 0.0135
+    },
+    {
+     "name": "Maverick McNealy",
+     "probability": 0.0135
+    },
+    {
+     "name": "J.J. Spaun",
+     "probability": 0.0135
+    },
+    {
+     "name": "Michael Brennan",
+     "probability": 0.0125
+    },
+    {
+     "name": "Ben Griffin",
+     "probability": 0.0115
+    },
+    {
+     "name": "Nicolai H\u00f8jgaard",
+     "probability": 0.0115
+    },
+    {
+     "name": "Justin Rose",
+     "probability": 0.0115
+    },
+    {
+     "name": "Sungjae Im",
+     "probability": 0.0105
+    },
+    {
+     "name": "Adam Scott",
+     "probability": 0.0105
+    },
+    {
+     "name": "Rickie Fowler",
+     "probability": 0.0095
+    },
+    {
+     "name": "Alex Smalley",
+     "probability": 0.0095
+    },
+    {
+     "name": "Alex Fitzpatrick",
+     "probability": 0.0085
+    },
+    {
+     "name": "Kristoffer Reitan",
+     "probability": 0.0085
+    },
+    {
+     "name": "Jacob Bridgeman",
+     "probability": 0.0075
+    },
+    {
+     "name": "Robert MacIntyre",
+     "probability": 0.0075
+    },
+    {
+     "name": "Alex Noren",
+     "probability": 0.0075
+    },
+    {
+     "name": "Bud Cauley",
+     "probability": 0.0065
+    },
+    {
+     "name": "Ryan Fox",
+     "probability": 0.0065
+    },
+    {
+     "name": "Gary Woodland",
+     "probability": 0.0065
+    },
+    {
+     "name": "Akshay Bhatia",
+     "probability": 0.0055
+    },
+    {
+     "name": "Aaron Rai",
+     "probability": 0.0055
+    },
+    {
+     "name": "Nicolas Echavarria",
+     "probability": 0.0045
+    },
+    {
+     "name": "Ryo Hisatsune",
+     "probability": 0.0045
+    },
+    {
+     "name": "J.T. Poston",
+     "probability": 0.0045
+    },
+    {
+     "name": "Sepp Straka",
+     "probability": 0.0045
+    },
+    {
+     "name": "Eric Cole",
+     "probability": 0.0035
+    },
+    {
+     "name": "Sahith Theegala",
+     "probability": 0.0035
+    },
+    {
+     "name": "Matthew McCarty",
+     "probability": 0.0025
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 109723,
+   "name": "Will the Virginia redistricting referendum pass?",
+   "source": "kalshi",
+   "group_id": "kalshi:KXVIRGINIAREDISTRICTING-26",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 0.9975,
+   "rendered_probability_at_capture": 0.9975,
+   "top_outcomes_at_capture": [
+    {
+     "id": 1600827,
+     "name": "Yes",
+     "probability": 0.9975,
+     "movement": null,
+     "rank": 1
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Yes",
+     "probability": 0.9975
+    }
+   ],
+   "price_age_days_at_capture": 119.0
+  },
+  {
+   "market_id": 297,
+   "name": "Final: Spain vs Argentina",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMENWORLDCUP-26",
+   "stratum": "top_feed_like",
+   "category": "soccer",
+   "field_sum_at_capture": 1.2085,
+   "rendered_probability_at_capture": 0.999,
+   "top_outcomes_at_capture": [
+    {
+     "id": 2967,
+     "name": "Spain",
+     "probability": 0.999,
+     "movement": 0.0,
+     "rank": 1
+    },
+    {
+     "id": 2920,
+     "name": "Peru",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 31
+    },
+    {
+     "id": 2928,
+     "name": "Ukraine",
+     "probability": 0.01,
+     "movement": 0.0,
+     "rank": 19
+    },
+    {
+     "id": 2923,
+     "name": "Greece",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 26
+    },
+    {
+     "id": 2951,
+     "name": "Chile",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 20
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Spain",
+     "probability": 0.999
+    },
+    {
+     "name": "Peru",
+     "probability": 0.01
+    },
+    {
+     "name": "United Arab Emirates",
+     "probability": 0.01
+    },
+    {
+     "name": "Ukraine",
+     "probability": 0.01
+    },
+    {
+     "name": "China",
+     "probability": 0.01
+    },
+    {
+     "name": "Hungary",
+     "probability": 0.01
+    },
+    {
+     "name": "Serbia",
+     "probability": 0.01
+    },
+    {
+     "name": "Cameroon",
+     "probability": 0.01
+    },
+    {
+     "name": "Georgia",
+     "probability": 0.01
+    },
+    {
+     "name": "Czechia",
+     "probability": 0.01
+    },
+    {
+     "name": "Bosnia and Herzegovina",
+     "probability": 0.01
+    },
+    {
+     "name": "Congo DR",
+     "probability": 0.01
+    },
+    {
+     "name": "Iraq",
+     "probability": 0.01
+    },
+    {
+     "name": "Greece",
+     "probability": 0.01
+    },
+    {
+     "name": "Chile",
+     "probability": 0.01
+    },
+    {
+     "name": "Northern Ireland",
+     "probability": 0.01
+    },
+    {
+     "name": "Costa Rica",
+     "probability": 0.01
+    },
+    {
+     "name": "Poland",
+     "probability": 0.0015
+    },
+    {
+     "name": "Morocco",
+     "probability": 0.001
+    },
+    {
+     "name": "Colombia",
+     "probability": 0.001
+    },
+    {
+     "name": "Switzerland",
+     "probability": 0.001
+    },
+    {
+     "name": "Japan",
+     "probability": 0.001
+    },
+    {
+     "name": "Norway",
+     "probability": 0.001
+    },
+    {
+     "name": "Canada",
+     "probability": 0.001
+    },
+    {
+     "name": "Austria",
+     "probability": 0.001
+    },
+    {
+     "name": "Ecuador",
+     "probability": 0.001
+    },
+    {
+     "name": "Senegal",
+     "probability": 0.001
+    },
+    {
+     "name": "South Korea",
+     "probability": 0.001
+    },
+    {
+     "name": "Turkey",
+     "probability": 0.001
+    },
+    {
+     "name": "Paraguay",
+     "probability": 0.001
+    },
+    {
+     "name": "Scotland",
+     "probability": 0.001
+    },
+    {
+     "name": "Australia",
+     "probability": 0.001
+    },
+    {
+     "name": "Ghana",
+     "probability": 0.001
+    },
+    {
+     "name": "Iran",
+     "probability": 0.001
+    },
+    {
+     "name": "Saudi Arabia",
+     "probability": 0.001
+    },
+    {
+     "name": "Tunisia",
+     "probability": 0.001
+    },
+    {
+     "name": "New Zealand",
+     "probability": 0.001
+    },
+    {
+     "name": "Uzbekistan",
+     "probability": 0.001
+    },
+    {
+     "name": "Jordan",
+     "probability": 0.001
+    },
+    {
+     "name": "Egypt",
+     "probability": 0.001
+    },
+    {
+     "name": "Algeria",
+     "probability": 0.001
+    },
+    {
+     "name": "Cape Verde",
+     "probability": 0.001
+    },
+    {
+     "name": "South Africa",
+     "probability": 0.001
+    },
+    {
+     "name": "Qatar",
+     "probability": 0.001
+    },
+    {
+     "name": "Ivory Coast",
+     "probability": 0.001
+    },
+    {
+     "name": "Curacao",
+     "probability": 0.001
+    },
+    {
+     "name": "Italy",
+     "probability": 0.001
+    },
+    {
+     "name": "Haiti",
+     "probability": 0.001
+    },
+    {
+     "name": "Wales",
+     "probability": 0.001
+    },
+    {
+     "name": "Sweden",
+     "probability": 0.001
+    },
+    {
+     "name": "Romania",
+     "probability": 0.001
+    },
+    {
+     "name": "Denmark",
+     "probability": 0.001
+    },
+    {
+     "name": "Republic of Ireland",
+     "probability": 0.001
+    },
+    {
+     "name": "France",
+     "probability": 0.001
+    },
+    {
+     "name": "Brazil",
+     "probability": 0.001
+    },
+    {
+     "name": "England",
+     "probability": 0.001
+    },
+    {
+     "name": "Argentina",
+     "probability": 0.001
+    },
+    {
+     "name": "Germany",
+     "probability": 0.001
+    },
+    {
+     "name": "Portugal",
+     "probability": 0.001
+    },
+    {
+     "name": "Netherlands",
+     "probability": 0.001
+    },
+    {
+     "name": "Uruguay",
+     "probability": 0.001
+    },
+    {
+     "name": "Belgium",
+     "probability": 0.001
+    },
+    {
+     "name": "USA",
+     "probability": 0.001
+    },
+    {
+     "name": "Croatia",
+     "probability": 0.001
+    },
+    {
+     "name": "Mexico",
+     "probability": 0.001
+    },
+    {
+     "name": "Panama",
+     "probability": 0.001
+    }
+   ],
+   "price_age_days_at_capture": 9.0
+  },
+  {
+   "market_id": 2656292,
+   "name": "Who will be confirmed as Fed Chair?",
+   "source": "polymarket",
+   "group_id": "polymarket:246219",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 27.0025,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Person B",
+     "probability": 1.0
+    },
+    {
+     "name": "Person C",
+     "probability": 1.0
+    },
+    {
+     "name": "Person M",
+     "probability": 1.0
+    },
+    {
+     "name": "Person H",
+     "probability": 1.0
+    },
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Q",
+     "probability": 1.0
+    },
+    {
+     "name": "Person S",
+     "probability": 1.0
+    },
+    {
+     "name": "Person U",
+     "probability": 1.0
+    },
+    {
+     "name": "Person D",
+     "probability": 1.0
+    },
+    {
+     "name": "Person X",
+     "probability": 1.0
+    },
+    {
+     "name": "Person N",
+     "probability": 1.0
+    },
+    {
+     "name": "Person O",
+     "probability": 1.0
+    },
+    {
+     "name": "Person P",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Y",
+     "probability": 1.0
+    },
+    {
+     "name": "Person E",
+     "probability": 1.0
+    },
+    {
+     "name": "Person F",
+     "probability": 1.0
+    },
+    {
+     "name": "Person I",
+     "probability": 1.0
+    },
+    {
+     "name": "Person V",
+     "probability": 1.0
+    },
+    {
+     "name": "Person G",
+     "probability": 1.0
+    },
+    {
+     "name": "Person J",
+     "probability": 1.0
+    },
+    {
+     "name": "Person K",
+     "probability": 1.0
+    },
+    {
+     "name": "Person L",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Z",
+     "probability": 1.0
+    },
+    {
+     "name": "Person R",
+     "probability": 1.0
+    },
+    {
+     "name": "Person T",
+     "probability": 1.0
+    },
+    {
+     "name": "Person W",
+     "probability": 1.0
+    },
+    {
+     "name": "Kevin Warsh",
+     "probability": 0.9985
+    },
+    {
+     "name": "Stephen Miran",
+     "probability": 0.0005
+    },
+    {
+     "name": "Scott Bessent",
+     "probability": 0.0005
+    },
+    {
+     "name": "Kevin Hassett",
+     "probability": 0.0005
+    },
+    {
+     "name": "Michelle Bowman",
+     "probability": 0.0005
+    },
+    {
+     "name": "Jerome Powell",
+     "probability": 0.0005
+    },
+    {
+     "name": "Christopher Waller",
+     "probability": 0.0005
+    },
+    {
+     "name": "Rick Reider",
+     "probability": 0.0005
+    },
+    {
+     "name": "Judy Shelton",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 99.0
+  },
+  {
+   "market_id": 113011,
+   "name": "Ballon d'Or Winner 2026",
+   "source": "polymarket",
+   "group_id": "polymarket:48361",
+   "stratum": "top_feed_like",
+   "category": "soccer",
+   "field_sum_at_capture": 59.026,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "BF",
+     "probability": 1.0
+    },
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "BD",
+     "probability": 1.0
+    },
+    {
+     "name": "AG",
+     "probability": 1.0
+    },
+    {
+     "name": "AK",
+     "probability": 1.0
+    },
+    {
+     "name": "AM",
+     "probability": 1.0
+    },
+    {
+     "name": "AO",
+     "probability": 1.0
+    },
+    {
+     "name": "AS",
+     "probability": 1.0
+    },
+    {
+     "name": "BE",
+     "probability": 1.0
+    },
+    {
+     "name": "BG",
+     "probability": 1.0
+    },
+    {
+     "name": "BM",
+     "probability": 1.0
+    },
+    {
+     "name": "V",
+     "probability": 1.0
+    },
+    {
+     "name": "BH",
+     "probability": 1.0
+    },
+    {
+     "name": "BJ",
+     "probability": 1.0
+    },
+    {
+     "name": "BL",
+     "probability": 1.0
+    },
+    {
+     "name": "BP",
+     "probability": 1.0
+    },
+    {
+     "name": "W",
+     "probability": 1.0
+    },
+    {
+     "name": "AC",
+     "probability": 1.0
+    },
+    {
+     "name": "AW",
+     "probability": 1.0
+    },
+    {
+     "name": "AY",
+     "probability": 1.0
+    },
+    {
+     "name": "BA",
+     "probability": 1.0
+    },
+    {
+     "name": "AR",
+     "probability": 1.0
+    },
+    {
+     "name": "Y",
+     "probability": 1.0
+    },
+    {
+     "name": "AA",
+     "probability": 1.0
+    },
+    {
+     "name": "AI",
+     "probability": 1.0
+    },
+    {
+     "name": "BK",
+     "probability": 1.0
+    },
+    {
+     "name": "BO",
+     "probability": 1.0
+    },
+    {
+     "name": "BQ",
+     "probability": 1.0
+    },
+    {
+     "name": "BS",
+     "probability": 1.0
+    },
+    {
+     "name": "AD",
+     "probability": 1.0
+    },
+    {
+     "name": "AH",
+     "probability": 1.0
+    },
+    {
+     "name": "AT",
+     "probability": 1.0
+    },
+    {
+     "name": "AQ",
+     "probability": 1.0
+    },
+    {
+     "name": "AU",
+     "probability": 1.0
+    },
+    {
+     "name": "X",
+     "probability": 1.0
+    },
+    {
+     "name": "Z",
+     "probability": 1.0
+    },
+    {
+     "name": "AB",
+     "probability": 1.0
+    },
+    {
+     "name": "AF",
+     "probability": 1.0
+    },
+    {
+     "name": "AJ",
+     "probability": 1.0
+    },
+    {
+     "name": "AL",
+     "probability": 1.0
+    },
+    {
+     "name": "AV",
+     "probability": 1.0
+    },
+    {
+     "name": "AX",
+     "probability": 1.0
+    },
+    {
+     "name": "AZ",
+     "probability": 1.0
+    },
+    {
+     "name": "BB",
+     "probability": 1.0
+    },
+    {
+     "name": "BR",
+     "probability": 1.0
+    },
+    {
+     "name": "BT",
+     "probability": 1.0
+    },
+    {
+     "name": "BV",
+     "probability": 1.0
+    },
+    {
+     "name": "BX",
+     "probability": 1.0
+    },
+    {
+     "name": "BU",
+     "probability": 1.0
+    },
+    {
+     "name": "BW",
+     "probability": 1.0
+    },
+    {
+     "name": "BY",
+     "probability": 1.0
+    },
+    {
+     "name": "AN",
+     "probability": 1.0
+    },
+    {
+     "name": "AP",
+     "probability": 1.0
+    },
+    {
+     "name": "AE",
+     "probability": 1.0
+    },
+    {
+     "name": "BN",
+     "probability": 1.0
+    },
+    {
+     "name": "BZ",
+     "probability": 1.0
+    },
+    {
+     "name": "BC",
+     "probability": 1.0
+    },
+    {
+     "name": "BI",
+     "probability": 1.0
+    },
+    {
+     "name": "Harry Kane",
+     "probability": 0.4015
+    },
+    {
+     "name": "Lamine Yamal",
+     "probability": 0.2905
+    },
+    {
+     "name": "Rodri",
+     "probability": 0.115
+    },
+    {
+     "name": "Kylian Mbapp\u00e9",
+     "probability": 0.1015
+    },
+    {
+     "name": "Lionel Messi",
+     "probability": 0.0495
+    },
+    {
+     "name": "Ousmane Demb\u00e9l\u00e9",
+     "probability": 0.0175
+    },
+    {
+     "name": "Khvicha Kvaratskhelia",
+     "probability": 0.0105
+    },
+    {
+     "name": "Erling Haaland",
+     "probability": 0.0035
+    },
+    {
+     "name": "Jude Bellingham",
+     "probability": 0.0035
+    },
+    {
+     "name": "Michael Olise",
+     "probability": 0.0035
+    },
+    {
+     "name": "Fabian Ruiz",
+     "probability": 0.002
+    },
+    {
+     "name": "Pau Cubarsi",
+     "probability": 0.002
+    },
+    {
+     "name": "Achraf Hakimi",
+     "probability": 0.0015
+    },
+    {
+     "name": "Bruno Fernandes",
+     "probability": 0.0015
+    },
+    {
+     "name": "Desire Doue",
+     "probability": 0.0015
+    },
+    {
+     "name": "Pedri",
+     "probability": 0.0015
+    },
+    {
+     "name": "Mohamed Salah",
+     "probability": 0.0015
+    },
+    {
+     "name": "Lautaro Martinez",
+     "probability": 0.0015
+    },
+    {
+     "name": "Luis Diaz",
+     "probability": 0.0015
+    },
+    {
+     "name": "Cristiano Ronaldo",
+     "probability": 0.0015
+    },
+    {
+     "name": "Raphinha",
+     "probability": 0.0015
+    },
+    {
+     "name": "Cole Palmer",
+     "probability": 0.0015
+    },
+    {
+     "name": "Vitinha",
+     "probability": 0.0015
+    },
+    {
+     "name": "Declan Rice",
+     "probability": 0.0015
+    },
+    {
+     "name": "Bukayo Saka",
+     "probability": 0.0015
+    },
+    {
+     "name": "Vin\u00edcius J\u00fanior",
+     "probability": 0.0015
+    },
+    {
+     "name": "Federico Valverde",
+     "probability": 0.0015
+    },
+    {
+     "name": "Julian Alvarez",
+     "probability": 0.0015
+    },
+    {
+     "name": "Enzo Fernandez",
+     "probability": 0.0005
+    },
+    {
+     "name": "Rodrygo",
+     "probability": 0.0005
+    },
+    {
+     "name": "Dominik Szoboszlai",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 29.0
+  },
+  {
+   "market_id": 112855,
+   "name": "Starmer out by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:17725",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 11.001,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "No",
+     "probability": 1.0
+    },
+    {
+     "name": "June 26",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 22",
+     "probability": 0.9995
+    },
+    {
+     "name": "July 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 23",
+     "probability": 0.9995
+    },
+    {
+     "name": "August 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "October 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 25",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 30",
+     "probability": 0.9995
+    },
+    {
+     "name": "December 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "June 24",
+     "probability": 0.9995
+    },
+    {
+     "name": "Yes",
+     "probability": 0.001
+    },
+    {
+     "name": "February 28",
+     "probability": 0.001
+    },
+    {
+     "name": "March 31",
+     "probability": 0.001
+    },
+    {
+     "name": "April 30",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 15",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 19",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 31",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 21",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 15",
+     "probability": 0.0005
+    },
+    {
+     "name": "December 31, 2025",
+     "probability": 0.0
+    }
+   ],
+   "price_age_days_at_capture": 58.0
+  },
+  {
+   "market_id": 59183884,
+   "name": "Chicago WS vs Chicago C",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBGAME-26AUG182005CWSCHC",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 1.0,
+   "rendered_probability_at_capture": 0.605,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219844433,
+     "name": "Chicago C",
+     "probability": 0.605,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219844434,
+     "name": "Chicago WS",
+     "probability": 0.395,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Chicago C",
+     "probability": 0.605
+    },
+    {
+     "name": "Chicago WS",
+     "probability": 0.395
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 389589,
+   "name": "Dublin-Central By-Election Winner",
+   "source": "polymarket",
+   "group_id": "polymarket:218090",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 28.005,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "Person J",
+     "probability": 1.0
+    },
+    {
+     "name": "Person N",
+     "probability": 1.0
+    },
+    {
+     "name": "Person F",
+     "probability": 1.0
+    },
+    {
+     "name": "Person K",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Y",
+     "probability": 1.0
+    },
+    {
+     "name": "Person L",
+     "probability": 1.0
+    },
+    {
+     "name": "Person M",
+     "probability": 1.0
+    },
+    {
+     "name": "Person P",
+     "probability": 1.0
+    },
+    {
+     "name": "Person S",
+     "probability": 1.0
+    },
+    {
+     "name": "Person T",
+     "probability": 1.0
+    },
+    {
+     "name": "Person W",
+     "probability": 1.0
+    },
+    {
+     "name": "Person X",
+     "probability": 1.0
+    },
+    {
+     "name": "Person V",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Z",
+     "probability": 1.0
+    },
+    {
+     "name": "Person A",
+     "probability": 1.0
+    },
+    {
+     "name": "Person E",
+     "probability": 1.0
+    },
+    {
+     "name": "Person G",
+     "probability": 1.0
+    },
+    {
+     "name": "Person C",
+     "probability": 1.0
+    },
+    {
+     "name": "Person H",
+     "probability": 1.0
+    },
+    {
+     "name": "Person D",
+     "probability": 1.0
+    },
+    {
+     "name": "Person I",
+     "probability": 1.0
+    },
+    {
+     "name": "Person O",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Q",
+     "probability": 1.0
+    },
+    {
+     "name": "Person B",
+     "probability": 1.0
+    },
+    {
+     "name": "Person R",
+     "probability": 1.0
+    },
+    {
+     "name": "Person U",
+     "probability": 1.0
+    },
+    {
+     "name": "Daniel Ennis",
+     "probability": 0.9995
+    },
+    {
+     "name": "Malachy Steenson",
+     "probability": 0.0005
+    },
+    {
+     "name": "Eoghan \u00d3 Ceannabh\u00e1in",
+     "probability": 0.0005
+    },
+    {
+     "name": "Janet Horner",
+     "probability": 0.0005
+    },
+    {
+     "name": "Janice Boylan",
+     "probability": 0.0005
+    },
+    {
+     "name": "Mary Fitzpatrick",
+     "probability": 0.0005
+    },
+    {
+     "name": "Gerry Hutch",
+     "probability": 0.0005
+    },
+    {
+     "name": "John Stephens",
+     "probability": 0.0005
+    },
+    {
+     "name": "Gillian Sherratt",
+     "probability": 0.0005
+    },
+    {
+     "name": "Ian Noel Smyth",
+     "probability": 0.0005
+    },
+    {
+     "name": "Ray McAdam",
+     "probability": 0.0005
+    },
+    {
+     "name": "S\u00e9amas McGrattan",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 87.0
+  },
+  {
+   "market_id": 59183794,
+   "name": "Los Angeles D vs Colorado",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBGAME-26AUG182040LADCOL",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 1.0,
+   "rendered_probability_at_capture": 0.925,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219843365,
+     "name": "Los Angeles D",
+     "probability": 0.925,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219843366,
+     "name": "Colorado",
+     "probability": 0.075,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Los Angeles D",
+     "probability": 0.925
+    },
+    {
+     "name": "Colorado",
+     "probability": 0.075
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 10054167,
+   "name": "NBA: LeBron James Next Team",
+   "source": "polymarket",
+   "group_id": "polymarket:362004",
+   "stratum": "top_feed_like",
+   "category": "basketball",
+   "field_sum_at_capture": 7.024,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Team C",
+     "probability": 1.0
+    },
+    {
+     "name": "Team A",
+     "probability": 1.0
+    },
+    {
+     "name": "Team B",
+     "probability": 1.0
+    },
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "Team D",
+     "probability": 1.0
+    },
+    {
+     "name": "Team E",
+     "probability": 1.0
+    },
+    {
+     "name": "Miami Heat",
+     "probability": 0.3765
+    },
+    {
+     "name": "Cleveland Cavaliers",
+     "probability": 0.3745
+    },
+    {
+     "name": "Golden State Warriors",
+     "probability": 0.0985
+    },
+    {
+     "name": "Philadelphia 76ers",
+     "probability": 0.0975
+    },
+    {
+     "name": "Minnesota Timberwolves",
+     "probability": 0.0215
+    },
+    {
+     "name": "Washington Wizards",
+     "probability": 0.0155
+    },
+    {
+     "name": "San Antonio Spurs",
+     "probability": 0.0075
+    },
+    {
+     "name": "Denver Nuggets",
+     "probability": 0.0065
+    },
+    {
+     "name": "Los Angeles Lakers",
+     "probability": 0.0045
+    },
+    {
+     "name": "Dallas Mavericks",
+     "probability": 0.0035
+    },
+    {
+     "name": "Los Angeles Clippers",
+     "probability": 0.0035
+    },
+    {
+     "name": "Boston Celtics",
+     "probability": 0.0025
+    },
+    {
+     "name": "New York Knicks",
+     "probability": 0.0025
+    },
+    {
+     "name": "Indiana Pacers",
+     "probability": 0.0015
+    },
+    {
+     "name": "New Orleans Pelicans",
+     "probability": 0.0005
+    },
+    {
+     "name": "Atlanta Hawks",
+     "probability": 0.0005
+    },
+    {
+     "name": "Charlotte Hornets",
+     "probability": 0.0005
+    },
+    {
+     "name": "Detroit Pistons",
+     "probability": 0.0005
+    },
+    {
+     "name": "Chicago Bulls",
+     "probability": 0.0005
+    },
+    {
+     "name": "Milwaukee Bucks",
+     "probability": 0.0005
+    },
+    {
+     "name": "Portland Trail Blazers",
+     "probability": 0.0005
+    },
+    {
+     "name": "Phoenix Suns",
+     "probability": 0.0005
+    },
+    {
+     "name": "Sacramento Kings",
+     "probability": 0.0005
+    },
+    {
+     "name": "Toronto Raptors",
+     "probability": 0.0005
+    },
+    {
+     "name": "Memphis Grizzlies",
+     "probability": 0.0005
+    },
+    {
+     "name": "Orlando Magic",
+     "probability": 0.0005
+    },
+    {
+     "name": "Brooklyn Nets",
+     "probability": 0.0005
+    },
+    {
+     "name": "Houston Rockets",
+     "probability": 0.0005
+    },
+    {
+     "name": "Utah Jazz",
+     "probability": 0.0005
+    },
+    {
+     "name": "Oklahoma City Thunder",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 29.0
+  },
+  {
+   "market_id": 59183727,
+   "name": "New York vs Chicago",
+   "source": "kalshi",
+   "group_id": "kalshi:KXWNBAGAME-26AUG18NYCHI",
+   "stratum": "top_feed_like",
+   "category": "basketball",
+   "field_sum_at_capture": 1.0,
+   "rendered_probability_at_capture": 0.595,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219842630,
+     "name": "Chicago",
+     "probability": 0.595,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219842631,
+     "name": "New York",
+     "probability": 0.405,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Chicago",
+     "probability": 0.595
+    },
+    {
+     "name": "New York",
+     "probability": 0.405
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 26047522,
+   "name": "US announces new Iran agreement/ceasefire extension by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:517606",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 9.014,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "June 15",
+     "probability": 1.0
+    },
+    {
+     "name": "June 16",
+     "probability": 1.0
+    },
+    {
+     "name": "June 17",
+     "probability": 1.0
+    },
+    {
+     "name": "June 18",
+     "probability": 1.0
+    },
+    {
+     "name": "June 19",
+     "probability": 1.0
+    },
+    {
+     "name": "June 14",
+     "probability": 1.0
+    },
+    {
+     "name": "June 30",
+     "probability": 1.0
+    },
+    {
+     "name": "July 31",
+     "probability": 1.0
+    },
+    {
+     "name": "Yes",
+     "probability": 0.695
+    },
+    {
+     "name": "No",
+     "probability": 0.305
+    },
+    {
+     "name": "May 24",
+     "probability": 0.003
+    },
+    {
+     "name": "May 26",
+     "probability": 0.003
+    },
+    {
+     "name": "June 13",
+     "probability": 0.0015
+    },
+    {
+     "name": "June 9",
+     "probability": 0.0015
+    },
+    {
+     "name": "May 25",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 27",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 5",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 7",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 3",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 30",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 31",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 12",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 28",
+     "probability": 0.0005
+    },
+    {
+     "name": "May 29",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 62.0
+  },
+  {
+   "market_id": 59183728,
+   "name": "Atlanta vs Las Vegas",
+   "source": "kalshi",
+   "group_id": "kalshi:KXWNBAGAME-26AUG18ATLLV",
+   "stratum": "top_feed_like",
+   "category": "basketball",
+   "field_sum_at_capture": 1.0,
+   "rendered_probability_at_capture": 0.845,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219842632,
+     "name": "Atlanta",
+     "probability": 0.845,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219842633,
+     "name": "Las Vegas",
+     "probability": 0.155,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Atlanta",
+     "probability": 0.845
+    },
+    {
+     "name": "Las Vegas",
+     "probability": 0.155
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 23700887,
+   "name": "Iran ceasefire continues through...?",
+   "source": "polymarket",
+   "group_id": "polymarket:504099",
+   "stratum": "top_feed_like",
+   "category": "geopolitics",
+   "field_sum_at_capture": 6.1525,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "May 20",
+     "probability": 1.0
+    },
+    {
+     "name": "May 21",
+     "probability": 1.0
+    },
+    {
+     "name": "May 22",
+     "probability": 1.0
+    },
+    {
+     "name": "May 23",
+     "probability": 1.0
+    },
+    {
+     "name": "May 24",
+     "probability": 0.9995
+    },
+    {
+     "name": "Yes",
+     "probability": 0.9995
+    },
+    {
+     "name": "May 26",
+     "probability": 0.025
+    },
+    {
+     "name": "June 15",
+     "probability": 0.0235
+    },
+    {
+     "name": "June 30",
+     "probability": 0.0215
+    },
+    {
+     "name": "June 7",
+     "probability": 0.0195
+    },
+    {
+     "name": "May 27",
+     "probability": 0.0185
+    },
+    {
+     "name": "July 31",
+     "probability": 0.017
+    },
+    {
+     "name": "May 31",
+     "probability": 0.0115
+    },
+    {
+     "name": "May 28",
+     "probability": 0.0085
+    },
+    {
+     "name": "December 31",
+     "probability": 0.0055
+    },
+    {
+     "name": "May 25",
+     "probability": 0.0025
+    },
+    {
+     "name": "No",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 79.0
+  },
+  {
+   "market_id": 110059,
+   "name": "Fed decision in Jul 2026?",
+   "source": "kalshi",
+   "group_id": "kalshi:KXFEDDECISION-26JUL",
+   "stratum": "top_feed_like",
+   "category": "economics",
+   "field_sum_at_capture": 1.02,
+   "rendered_probability_at_capture": 0.955,
+   "top_outcomes_at_capture": [
+    {
+     "id": 1603554,
+     "name": "Fed maintains rate",
+     "probability": 0.955,
+     "movement": 0.04,
+     "rank": 1
+    },
+    {
+     "id": 1603557,
+     "name": "Hike 25bps",
+     "probability": 0.035,
+     "movement": -0.04,
+     "rank": 2
+    },
+    {
+     "id": 1603556,
+     "name": "Cut >25bps",
+     "probability": 0.01,
+     "movement": -0.005,
+     "rank": 3
+    },
+    {
+     "id": 1603555,
+     "name": "Cut 25bps",
+     "probability": 0.01,
+     "movement": -0.015,
+     "rank": 4
+    },
+    {
+     "id": 1603558,
+     "name": "Hike >25bps",
+     "probability": 0.01,
+     "movement": 0.0,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Fed maintains rate",
+     "probability": 0.955
+    },
+    {
+     "name": "Hike 25bps",
+     "probability": 0.035
+    },
+    {
+     "name": "Cut >25bps",
+     "probability": 0.01
+    },
+    {
+     "name": "Cut 25bps",
+     "probability": 0.01
+    },
+    {
+     "name": "Hike >25bps",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 35.0
+  },
+  {
+   "market_id": 108445,
+   "name": "2028 Democratic presidential nominee",
+   "source": "kalshi",
+   "group_id": "kalshi:KXPRESNOMD-28",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 1.0325,
+   "rendered_probability_at_capture": 0.175,
+   "top_outcomes_at_capture": [
+    {
+     "id": 1592161,
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.175,
+     "movement": 0.04,
+     "rank": 1
+    },
+    {
+     "id": 1592160,
+     "name": "Gavin Newsom",
+     "probability": 0.155,
+     "movement": -0.02,
+     "rank": 2
+    },
+    {
+     "id": 1592164,
+     "name": "Jon Ossoff",
+     "probability": 0.155,
+     "movement": 0.01,
+     "rank": 3
+    },
+    {
+     "id": 1592162,
+     "name": "Kamala Harris",
+     "probability": 0.091,
+     "movement": -0.0035,
+     "rank": 4
+    },
+    {
+     "id": 1592166,
+     "name": "Pete Buttigieg",
+     "probability": 0.055,
+     "movement": 0.0005,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.175
+    },
+    {
+     "name": "Gavin Newsom",
+     "probability": 0.155
+    },
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.155
+    },
+    {
+     "name": "Kamala Harris",
+     "probability": 0.091
+    },
+    {
+     "name": "Pete Buttigieg",
+     "probability": 0.055
+    },
+    {
+     "name": "Mark Kelly",
+     "probability": 0.0525
+    },
+    {
+     "name": "Josh Shapiro",
+     "probability": 0.0455
+    },
+    {
+     "name": "Rahm Emanuel",
+     "probability": 0.039
+    },
+    {
+     "name": "Andy Beshear",
+     "probability": 0.0365
+    },
+    {
+     "name": "Wes Moore",
+     "probability": 0.0235
+    },
+    {
+     "name": "J.B. Pritzker",
+     "probability": 0.0225
+    },
+    {
+     "name": "Ro Khanna",
+     "probability": 0.0205
+    },
+    {
+     "name": "James Talarico",
+     "probability": 0.0175
+    },
+    {
+     "name": "Abdul El-Sayed",
+     "probability": 0.015
+    },
+    {
+     "name": "Michelle Obama",
+     "probability": 0.0105
+    },
+    {
+     "name": "Mitch Landrieu",
+     "probability": 0.01
+    },
+    {
+     "name": "Shawn Fain",
+     "probability": 0.01
+    },
+    {
+     "name": "Gretchen Whitmer",
+     "probability": 0.0085
+    },
+    {
+     "name": "Raphael Warnock",
+     "probability": 0.0085
+    },
+    {
+     "name": "Jon Stewart",
+     "probability": 0.008
+    },
+    {
+     "name": "Chris Murphy",
+     "probability": 0.0065
+    },
+    {
+     "name": "Mark Cuban",
+     "probability": 0.0065
+    },
+    {
+     "name": "Ruben Gallego",
+     "probability": 0.0055
+    },
+    {
+     "name": "Stephen A. Smith",
+     "probability": 0.0055
+    },
+    {
+     "name": "Cory Booker",
+     "probability": 0.0055
+    },
+    {
+     "name": "Bernie Sanders",
+     "probability": 0.0055
+    },
+    {
+     "name": "Elissa Slotkin",
+     "probability": 0.0055
+    },
+    {
+     "name": "Hunter Biden",
+     "probability": 0.005
+    },
+    {
+     "name": "Roy Cooper",
+     "probability": 0.0025
+    },
+    {
+     "name": "Barack Obama",
+     "probability": 0.0025
+    },
+    {
+     "name": "Jamie Dimon",
+     "probability": 0.0025
+    },
+    {
+     "name": "Zohran Mamdani",
+     "probability": 0.0015
+    },
+    {
+     "name": "Tim Walz",
+     "probability": 0.0015
+    },
+    {
+     "name": "John Fetterman",
+     "probability": 0.0015
+    },
+    {
+     "name": "Jared Polis",
+     "probability": 0.0015
+    },
+    {
+     "name": "Hillary Clinton",
+     "probability": 0.0015
+    },
+    {
+     "name": "Amy Klobuchar",
+     "probability": 0.0015
+    },
+    {
+     "name": "Dwayne Johnson",
+     "probability": 0.0015
+    },
+    {
+     "name": "Andrew Yang",
+     "probability": 0.0015
+    },
+    {
+     "name": "Elizabeth Warren",
+     "probability": 0.0015
+    },
+    {
+     "name": "Liz Cheney",
+     "probability": 0.001
+    },
+    {
+     "name": "Gina Raimondo",
+     "probability": 0.001
+    },
+    {
+     "name": "Phil Murphy",
+     "probability": 0.001
+    },
+    {
+     "name": "LeBron James",
+     "probability": 0.001
+    },
+    {
+     "name": "Jasmine Crockett",
+     "probability": 0.001
+    },
+    {
+     "name": "Beto O'Rourke",
+     "probability": 0.001
+    },
+    {
+     "name": "Graham Platner",
+     "probability": 0.001
+    }
+   ],
+   "price_age_days_at_capture": 1.0
+  },
+  {
+   "market_id": 112897,
+   "name": "Presidential Election Winner 2028",
+   "source": "polymarket",
+   "group_id": "polymarket:31552",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 91.948,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Person AC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AU",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AZ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AT",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BM",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CV",
+     "probability": 1.0
+    },
+    {
+     "name": "Person V",
+     "probability": 1.0
+    },
+    {
+     "name": "Person U",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BN",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BW",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CW",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Y",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AY",
+     "probability": 1.0
+    },
+    {
+     "name": "Person R",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BY",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AM",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Z",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person W",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AV",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person X",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person DB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CX",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CT",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BZ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CU",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AN",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person DA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person T",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CZ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Q",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BU",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BX",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AW",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AX",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BV",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BT",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person S",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CM",
+     "probability": 1.0
+    },
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CY",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CN",
+     "probability": 1.0
+    },
+    {
+     "name": "JD Vance",
+     "probability": 0.1985
+    },
+    {
+     "name": "Marco Rubio",
+     "probability": 0.1395
+    },
+    {
+     "name": "Gavin Newsom",
+     "probability": 0.1335
+    },
+    {
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.0805
+    },
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.0805
+    },
+    {
+     "name": "Kamala Harris",
+     "probability": 0.0505
+    },
+    {
+     "name": "Josh Shapiro",
+     "probability": 0.0275
+    },
+    {
+     "name": "Pete Buttigieg",
+     "probability": 0.0235
+    },
+    {
+     "name": "Dwayne 'The Rock' Johnson",
+     "probability": 0.0155
+    },
+    {
+     "name": "Ron DeSantis",
+     "probability": 0.0155
+    },
+    {
+     "name": "Tucker Carlson",
+     "probability": 0.0145
+    },
+    {
+     "name": "Donald Trump",
+     "probability": 0.0145
+    },
+    {
+     "name": "Ro Khanna",
+     "probability": 0.012
+    },
+    {
+     "name": "Gretchen Whitmer",
+     "probability": 0.0115
+    },
+    {
+     "name": "Andy Beshear",
+     "probability": 0.0115
+    },
+    {
+     "name": "Donald Trump Jr.",
+     "probability": 0.0105
+    },
+    {
+     "name": "Thomas Massie",
+     "probability": 0.0105
+    },
+    {
+     "name": "Greg Abbott",
+     "probability": 0.0085
+    },
+    {
+     "name": "Wes Moore",
+     "probability": 0.0085
+    },
+    {
+     "name": "Elon Musk",
+     "probability": 0.0075
+    },
+    {
+     "name": "Tulsi Gabbard",
+     "probability": 0.0075
+    },
+    {
+     "name": "Michelle Obama",
+     "probability": 0.0065
+    },
+    {
+     "name": "Glenn Youngkin",
+     "probability": 0.0065
+    },
+    {
+     "name": "Jamie Dimon",
+     "probability": 0.0065
+    },
+    {
+     "name": "James Talarico",
+     "probability": 0.0065
+    },
+    {
+     "name": "Nikki Haley",
+     "probability": 0.0055
+    },
+    {
+     "name": "JB Pritzker",
+     "probability": 0.0055
+    },
+    {
+     "name": "Pete Hegseth",
+     "probability": 0.0045
+    },
+    {
+     "name": "Ivanka Trump",
+     "probability": 0.0045
+    },
+    {
+     "name": "Zohran Mamdani",
+     "probability": 0.0035
+    },
+    {
+     "name": "Eric Trump",
+     "probability": 0.0035
+    },
+    {
+     "name": "LeBron James",
+     "probability": 0.0025
+    },
+    {
+     "name": "Stephen Smith",
+     "probability": 0.0025
+    },
+    {
+     "name": "Kim Kardashian",
+     "probability": 0.0025
+    },
+    {
+     "name": "Vivek Ramaswamy",
+     "probability": 0.0025
+    },
+    {
+     "name": "Tim Walz",
+     "probability": 0.0015
+    },
+    {
+     "name": "Jalen Brunson",
+     "probability": 0.0015
+    }
+   ],
+   "price_age_days_at_capture": 29.0
+  },
+  {
+   "market_id": 12329949,
+   "name": "Clavicular pregnancy in 2026?",
+   "source": "polymarket",
+   "group_id": "polymarket:400878",
+   "stratum": "top_feed_like",
+   "category": "entertainment",
+   "field_sum_at_capture": 0.9785,
+   "rendered_probability_at_capture": 0.9785,
+   "top_outcomes_at_capture": [
+    {
+     "id": 71009790,
+     "name": "Yes",
+     "probability": 0.9785,
+     "movement": 0.1015,
+     "rank": 1
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Yes",
+     "probability": 0.9785
+    }
+   ],
+   "price_age_days_at_capture": 111.0
+  },
+  {
+   "market_id": 59183857,
+   "name": "Washington vs Texas: Total Runs",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBTOTAL-26AUG182005WSHTEX",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 3.05,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 8.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 9.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 10.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 11.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 12.5 runs scored",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 112895,
+   "name": "Democratic Presidential Nominee 2028",
+   "source": "polymarket",
+   "group_id": "polymarket:30829",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 83.951,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Person CC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person P",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AX",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person S",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BX",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Q",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person T",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AV",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BW",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BV",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BB",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BT",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CM",
+     "probability": 1.0
+    },
+    {
+     "name": "Other",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person R",
+     "probability": 1.0
+    },
+    {
+     "name": "Person X",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AT",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CJ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BY",
+     "probability": 1.0
+    },
+    {
+     "name": "Person V",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AN",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BU",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AM",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AZ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CA",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BK",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BQ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CN",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Z",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BM",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BR",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AD",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AP",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BZ",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CE",
+     "probability": 1.0
+    },
+    {
+     "name": "Person U",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CO",
+     "probability": 1.0
+    },
+    {
+     "name": "Person W",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BF",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BN",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CH",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CI",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BC",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AG",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AY",
+     "probability": 1.0
+    },
+    {
+     "name": "Person BS",
+     "probability": 1.0
+    },
+    {
+     "name": "Person CL",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AW",
+     "probability": 1.0
+    },
+    {
+     "name": "Person Y",
+     "probability": 1.0
+    },
+    {
+     "name": "Person AU",
+     "probability": 1.0
+    },
+    {
+     "name": "Gavin Newsom",
+     "probability": 0.1985
+    },
+    {
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.1445
+    },
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.1435
+    },
+    {
+     "name": "Kamala Harris",
+     "probability": 0.0675
+    },
+    {
+     "name": "Pete Buttigieg",
+     "probability": 0.0505
+    },
+    {
+     "name": "Josh Shapiro",
+     "probability": 0.0495
+    },
+    {
+     "name": "Andy Beshear",
+     "probability": 0.0225
+    },
+    {
+     "name": "Jon Stewart",
+     "probability": 0.0225
+    },
+    {
+     "name": "Ro Khanna",
+     "probability": 0.021
+    },
+    {
+     "name": "Rahm Emanuel",
+     "probability": 0.0195
+    },
+    {
+     "name": "Mark Kelly",
+     "probability": 0.0195
+    },
+    {
+     "name": "Gretchen Whitmer",
+     "probability": 0.0175
+    },
+    {
+     "name": "Dwayne 'The Rock' Johnson",
+     "probability": 0.0115
+    },
+    {
+     "name": "James Talarico",
+     "probability": 0.011
+    },
+    {
+     "name": "Wes Moore",
+     "probability": 0.0105
+    },
+    {
+     "name": "Michelle Obama",
+     "probability": 0.0105
+    },
+    {
+     "name": "Chelsea Clinton",
+     "probability": 0.0085
+    },
+    {
+     "name": "J.B. Pritzker",
+     "probability": 0.0085
+    },
+    {
+     "name": "Roy Cooper",
+     "probability": 0.0065
+    },
+    {
+     "name": "Stephen A. Smith",
+     "probability": 0.0065
+    },
+    {
+     "name": "Mark Cuban",
+     "probability": 0.0065
+    },
+    {
+     "name": "Jasmine Crockett",
+     "probability": 0.0065
+    },
+    {
+     "name": "Chris Murphy",
+     "probability": 0.006
+    },
+    {
+     "name": "Raphael Warnock",
+     "probability": 0.0055
+    },
+    {
+     "name": "Bernie Sanders",
+     "probability": 0.0055
+    },
+    {
+     "name": "Cory Booker",
+     "probability": 0.0055
+    },
+    {
+     "name": "Ruben Gallego",
+     "probability": 0.0045
+    },
+    {
+     "name": "Oprah Winfrey",
+     "probability": 0.0045
+    },
+    {
+     "name": "Zohran Mamdani",
+     "probability": 0.0045
+    },
+    {
+     "name": "LeBron James",
+     "probability": 0.0045
+    },
+    {
+     "name": "Barack Obama",
+     "probability": 0.0035
+    },
+    {
+     "name": "Gina Raimondo",
+     "probability": 0.0035
+    },
+    {
+     "name": "Beto O\u2019Rourke",
+     "probability": 0.0035
+    },
+    {
+     "name": "Phil Murphy",
+     "probability": 0.0035
+    },
+    {
+     "name": "John Fetterman",
+     "probability": 0.0035
+    },
+    {
+     "name": "Hillary Clinton",
+     "probability": 0.0035
+    },
+    {
+     "name": "Graham Platner",
+     "probability": 0.0035
+    },
+    {
+     "name": "Liz Cheney",
+     "probability": 0.0035
+    },
+    {
+     "name": "Hunter Biden",
+     "probability": 0.0035
+    },
+    {
+     "name": "George Clooney",
+     "probability": 0.0035
+    },
+    {
+     "name": "Tim Walz",
+     "probability": 0.0025
+    },
+    {
+     "name": "Jared Polis",
+     "probability": 0.0025
+    },
+    {
+     "name": "Kim Kardashian",
+     "probability": 0.0025
+    },
+    {
+     "name": "MrBeast",
+     "probability": 0.0025
+    },
+    {
+     "name": "Andrew Yang",
+     "probability": 0.0025
+    }
+   ],
+   "price_age_days_at_capture": 29.0
+  },
+  {
+   "market_id": 59181729,
+   "name": "Sri Lanka vs India",
+   "source": "kalshi",
+   "group_id": "kalshi:KXTESTMATCH-26AUG150030INDSRI",
+   "stratum": "top_feed_like",
+   "category": "other",
+   "field_sum_at_capture": 1.02,
+   "rendered_probability_at_capture": 0.925,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219834521,
+     "name": "India",
+     "probability": 0.925,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219834522,
+     "name": "Draw/Tie",
+     "probability": 0.08,
+     "movement": null,
+     "rank": 2
+    },
+    {
+     "id": 219834523,
+     "name": "Sri Lanka",
+     "probability": 0.015,
+     "movement": null,
+     "rank": 3
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "India",
+     "probability": 0.925
+    },
+    {
+     "name": "Draw/Tie",
+     "probability": 0.08
+    },
+    {
+     "name": "Sri Lanka",
+     "probability": 0.015
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 34674491,
+   "name": "Iran closes its airspace by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:577376",
+   "stratum": "top_feed_like",
+   "category": "geopolitics",
+   "field_sum_at_capture": 6.0135,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "August 31",
+     "probability": 1.0
+    },
+    {
+     "name": "July 15",
+     "probability": 1.0
+    },
+    {
+     "name": "June 30",
+     "probability": 0.9995
+    },
+    {
+     "name": "December 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "July 31",
+     "probability": 0.9995
+    },
+    {
+     "name": "No",
+     "probability": 0.8315
+    },
+    {
+     "name": "Yes",
+     "probability": 0.1685
+    },
+    {
+     "name": "June 10",
+     "probability": 0.006
+    },
+    {
+     "name": "June 11",
+     "probability": 0.0035
+    },
+    {
+     "name": "June 9",
+     "probability": 0.0025
+    },
+    {
+     "name": "June 14",
+     "probability": 0.0015
+    },
+    {
+     "name": "June 15",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 12",
+     "probability": 0.0005
+    },
+    {
+     "name": "June 13",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 62.0
+  },
+  {
+   "market_id": 59183774,
+   "name": "Jamaica Kingsmen vs St. Kitts and Nevis Patriots",
+   "source": "kalshi",
+   "group_id": "kalshi:KXCPLMATCH-26AUG182000SKNJAM",
+   "stratum": "top_feed_like",
+   "category": "other",
+   "field_sum_at_capture": 0.995,
+   "rendered_probability_at_capture": 0.615,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219842950,
+     "name": "Jamaica Kingsmen",
+     "probability": 0.615,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219842951,
+     "name": "St. Kitts and Nevis Patriots",
+     "probability": 0.38,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Jamaica Kingsmen",
+     "probability": 0.615
+    },
+    {
+     "name": "St. Kitts and Nevis Patriots",
+     "probability": 0.38
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183966,
+   "name": "Seattle vs Milwaukee",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBGAME-26AUG181940SEAMIL",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 1.005,
+   "rendered_probability_at_capture": 0.995,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219845713,
+     "name": "Milwaukee",
+     "probability": 0.995,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219845714,
+     "name": "Seattle",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Milwaukee",
+     "probability": 0.995
+    },
+    {
+     "name": "Seattle",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183839,
+   "name": "Los Angeles A vs Houston",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBGAME-26AUG182010LAAHOU",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 1.0,
+   "rendered_probability_at_capture": 0.915,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219843723,
+     "name": "Los Angeles A",
+     "probability": 0.915,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219843724,
+     "name": "Houston",
+     "probability": 0.085,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Los Angeles A",
+     "probability": 0.915
+    },
+    {
+     "name": "Houston",
+     "probability": 0.085
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 18121650,
+   "name": "Trump declassifies new UFO files by...?",
+   "source": "polymarket",
+   "group_id": "polymarket:462467",
+   "stratum": "top_feed_like",
+   "category": "politics",
+   "field_sum_at_capture": 3.9995,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "May 31",
+     "probability": 1.0
+    },
+    {
+     "name": "December 31",
+     "probability": 1.0
+    },
+    {
+     "name": "May 15",
+     "probability": 0.9995
+    },
+    {
+     "name": "Yes",
+     "probability": 0.9995
+    },
+    {
+     "name": "No",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 93.0
+  },
+  {
+   "market_id": 59183781,
+   "name": "Los Angeles D vs Colorado: Total Runs",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBTOTAL-26AUG182040LADCOL",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 7.77,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 8.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 9.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 10.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 11.5 runs scored",
+     "probability": 0.845
+    },
+    {
+     "name": "Over 12.5 runs scored",
+     "probability": 0.675
+    },
+    {
+     "name": "Over 13.5 runs scored",
+     "probability": 0.505
+    },
+    {
+     "name": "Over 14.5 runs scored",
+     "probability": 0.395
+    },
+    {
+     "name": "Over 15.5 runs scored",
+     "probability": 0.245
+    },
+    {
+     "name": "Over 16.5 runs scored",
+     "probability": 0.155
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183883,
+   "name": "Washington vs Texas",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBGAME-26AUG182005WSHTEX",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 1.005,
+   "rendered_probability_at_capture": 0.995,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219844431,
+     "name": "Texas",
+     "probability": 0.995,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219844432,
+     "name": "Washington",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 2
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Texas",
+     "probability": 0.995
+    },
+    {
+     "name": "Washington",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183858,
+   "name": "Chicago WS vs Chicago C: Total Runs",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBTOTAL-26AUG182005CWSCHC",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 6.47,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.995
+    },
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.575
+    },
+    {
+     "name": "Over 8.5 runs scored",
+     "probability": 0.42
+    },
+    {
+     "name": "Over 9.5 runs scored",
+     "probability": 0.22
+    },
+    {
+     "name": "Over 10.5 runs scored",
+     "probability": 0.15
+    },
+    {
+     "name": "Over 11.5 runs scored",
+     "probability": 0.09
+    },
+    {
+     "name": "Over 12.5 runs scored",
+     "probability": 0.06
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 7256616,
+   "name": "SpaceX IPO Closing Market Cap",
+   "source": "polymarket",
+   "group_id": "polymarket:307967",
+   "stratum": "top_feed_like",
+   "category": "tech",
+   "field_sum_at_capture": 1.0045,
+   "rendered_probability_at_capture": 0.9995,
+   "top_outcomes_at_capture": [
+    {
+     "id": 38442245,
+     "name": "2.0T-2.5T",
+     "probability": 0.9995,
+     "movement": 0.0045,
+     "rank": 1
+    },
+    {
+     "id": 38442244,
+     "name": "1.5T-2.0T",
+     "probability": 0.0015,
+     "movement": 0.001,
+     "rank": 2
+    },
+    {
+     "id": 38442247,
+     "name": "No IPO before 2028",
+     "probability": 0.001,
+     "movement": 0.0,
+     "rank": 3
+    },
+    {
+     "id": 38442249,
+     "name": "3.0T-3.5T",
+     "probability": 0.0005,
+     "movement": 0.0,
+     "rank": 5
+    },
+    {
+     "id": 38442246,
+     "name": "1.0T-1.5T",
+     "probability": 0.0005,
+     "movement": 0.0,
+     "rank": 6
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "2.0T-2.5T",
+     "probability": 0.9995
+    },
+    {
+     "name": "1.5T-2.0T",
+     "probability": 0.0015
+    },
+    {
+     "name": "No IPO before 2028",
+     "probability": 0.001
+    },
+    {
+     "name": "3.5T+",
+     "probability": 0.0005
+    },
+    {
+     "name": "<1.0T",
+     "probability": 0.0005
+    },
+    {
+     "name": "3.0T-3.5T",
+     "probability": 0.0005
+    },
+    {
+     "name": "1.0T-1.5T",
+     "probability": 0.0005
+    },
+    {
+     "name": "2.5T-3.0T",
+     "probability": 0.0005
+    }
+   ],
+   "price_age_days_at_capture": 68.0
+  },
+  {
+   "market_id": 59093179,
+   "name": "BMW Championship End of Round 1 Leader",
+   "source": "kalshi",
+   "group_id": "kalshi:KXPGAR1LEAD-BMC26",
+   "stratum": "top_feed_like",
+   "category": "golf",
+   "field_sum_at_capture": 1.044,
+   "rendered_probability_at_capture": 0.088,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219367702,
+     "name": "Scottie Scheffler",
+     "probability": 0.088,
+     "movement": -0.005,
+     "rank": 1
+    },
+    {
+     "id": 219367704,
+     "name": "Ludvig Aberg",
+     "probability": 0.0405,
+     "movement": 0.003,
+     "rank": 2
+    },
+    {
+     "id": 219367724,
+     "name": "Sam Burns",
+     "probability": 0.0365,
+     "movement": 0.0,
+     "rank": 3
+    },
+    {
+     "id": 219367706,
+     "name": "Rory McIlroy",
+     "probability": 0.036,
+     "movement": 0.0015,
+     "rank": 4
+    },
+    {
+     "id": 219367705,
+     "name": "Xander Schauffele",
+     "probability": 0.0355,
+     "movement": 0.001,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Scottie Scheffler",
+     "probability": 0.088
+    },
+    {
+     "name": "Ludvig Aberg",
+     "probability": 0.0405
+    },
+    {
+     "name": "Sam Burns",
+     "probability": 0.0365
+    },
+    {
+     "name": "Rory McIlroy",
+     "probability": 0.036
+    },
+    {
+     "name": "Xander Schauffele",
+     "probability": 0.0355
+    },
+    {
+     "name": "Cameron Young",
+     "probability": 0.0345
+    },
+    {
+     "name": "Tommy Fleetwood",
+     "probability": 0.0305
+    },
+    {
+     "name": "Si Woo Kim",
+     "probability": 0.029
+    },
+    {
+     "name": "Hideki Matsuyama",
+     "probability": 0.0275
+    },
+    {
+     "name": "Chris Gotterup",
+     "probability": 0.027
+    },
+    {
+     "name": "Collin Morikawa",
+     "probability": 0.0245
+    },
+    {
+     "name": "Matt Fitzpatrick",
+     "probability": 0.024
+    },
+    {
+     "name": "Justin Thomas",
+     "probability": 0.0235
+    },
+    {
+     "name": "Patrick Cantlay",
+     "probability": 0.0235
+    },
+    {
+     "name": "Viktor Hovland",
+     "probability": 0.0225
+    },
+    {
+     "name": "Wyndham Clark",
+     "probability": 0.022
+    },
+    {
+     "name": "Michael Thorbjornsen",
+     "probability": 0.0215
+    },
+    {
+     "name": "Jake Knapp",
+     "probability": 0.021
+    },
+    {
+     "name": "Min Woo Lee",
+     "probability": 0.0205
+    },
+    {
+     "name": "Sungjae Im",
+     "probability": 0.0195
+    },
+    {
+     "name": "Kurt Kitayama",
+     "probability": 0.019
+    },
+    {
+     "name": "Tom Kim",
+     "probability": 0.019
+    },
+    {
+     "name": "Maverick McNealy",
+     "probability": 0.0185
+    },
+    {
+     "name": "Michael Brennan",
+     "probability": 0.0185
+    },
+    {
+     "name": "Justin Rose",
+     "probability": 0.0185
+    },
+    {
+     "name": "Russell Henley",
+     "probability": 0.0175
+    },
+    {
+     "name": "Ben Griffin",
+     "probability": 0.017
+    },
+    {
+     "name": "Adam Scott",
+     "probability": 0.017
+    },
+    {
+     "name": "J.J. Spaun",
+     "probability": 0.017
+    },
+    {
+     "name": "Ryan Gerard",
+     "probability": 0.0165
+    },
+    {
+     "name": "Rickie Fowler",
+     "probability": 0.016
+    },
+    {
+     "name": "Nicolai Hojgaard",
+     "probability": 0.0155
+    },
+    {
+     "name": "Alex Smalley",
+     "probability": 0.015
+    },
+    {
+     "name": "Jacob Bridgeman",
+     "probability": 0.0145
+    },
+    {
+     "name": "Alex Fitzpatrick",
+     "probability": 0.0145
+    },
+    {
+     "name": "Robert MacIntyre",
+     "probability": 0.0145
+    },
+    {
+     "name": "Kristoffer Reitan",
+     "probability": 0.0145
+    },
+    {
+     "name": "Gary Woodland",
+     "probability": 0.0145
+    },
+    {
+     "name": "Alex Noren",
+     "probability": 0.014
+    },
+    {
+     "name": "Bud Cauley",
+     "probability": 0.0135
+    },
+    {
+     "name": "Nicolas Echavarria",
+     "probability": 0.0135
+    },
+    {
+     "name": "Ryan Fox",
+     "probability": 0.0135
+    },
+    {
+     "name": "Akshay Bhatia",
+     "probability": 0.0115
+    },
+    {
+     "name": "Eric Cole",
+     "probability": 0.0115
+    },
+    {
+     "name": "Sahith Theegala",
+     "probability": 0.0115
+    },
+    {
+     "name": "Ryo Hisatsune",
+     "probability": 0.011
+    },
+    {
+     "name": "Sepp Straka",
+     "probability": 0.0105
+    },
+    {
+     "name": "J.T. Poston",
+     "probability": 0.01
+    },
+    {
+     "name": "Aaron Rai",
+     "probability": 0.01
+    },
+    {
+     "name": "Matthew McCarty",
+     "probability": 0.0085
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59182735,
+   "name": "Highest temperature in Los Angeles on Aug 18, 2026?",
+   "source": "kalshi",
+   "group_id": "kalshi:KXHIGHLAX-26AUG18",
+   "stratum": "top_feed_like",
+   "category": "weather",
+   "field_sum_at_capture": 1.045,
+   "rendered_probability_at_capture": 0.995,
+   "top_outcomes_at_capture": [
+    {
+     "id": 219838417,
+     "name": "81\u00b0 to 82\u00b0",
+     "probability": 0.995,
+     "movement": null,
+     "rank": 1
+    },
+    {
+     "id": 219838418,
+     "name": "74\u00b0 or below",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 2
+    },
+    {
+     "id": 219838419,
+     "name": "75\u00b0 to 76\u00b0",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 3
+    },
+    {
+     "id": 219838420,
+     "name": "77\u00b0 to 78\u00b0",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 4
+    },
+    {
+     "id": 219838421,
+     "name": "79\u00b0 to 80\u00b0",
+     "probability": 0.01,
+     "movement": null,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "81\u00b0 to 82\u00b0",
+     "probability": 0.995
+    },
+    {
+     "name": "74\u00b0 or below",
+     "probability": 0.01
+    },
+    {
+     "name": "75\u00b0 to 76\u00b0",
+     "probability": 0.01
+    },
+    {
+     "name": "77\u00b0 to 78\u00b0",
+     "probability": 0.01
+    },
+    {
+     "name": "79\u00b0 to 80\u00b0",
+     "probability": 0.01
+    },
+    {
+     "name": "83\u00b0 or above",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183715,
+   "name": "New York vs Chicago: Total",
+   "source": "kalshi",
+   "group_id": "kalshi:KXWNBATOTAL-26AUG18NYCHI",
+   "stratum": "top_feed_like",
+   "category": "basketball",
+   "field_sum_at_capture": 5.0,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 168.5 points scored",
+     "probability": 0.995
+    },
+    {
+     "name": "Over 171.5 points scored",
+     "probability": 0.955
+    },
+    {
+     "name": "Over 174.5 points scored",
+     "probability": 0.895
+    },
+    {
+     "name": "Over 177.5 points scored",
+     "probability": 0.72
+    },
+    {
+     "name": "Over 180.5 points scored",
+     "probability": 0.51
+    },
+    {
+     "name": "Over 183.5 points scored",
+     "probability": 0.345
+    },
+    {
+     "name": "Over 186.5 points scored",
+     "probability": 0.205
+    },
+    {
+     "name": "Over 189.5 points scored",
+     "probability": 0.155
+    },
+    {
+     "name": "Over 192.5 points scored",
+     "probability": 0.13
+    },
+    {
+     "name": "Over 194.5 points scored",
+     "probability": 0.09
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183927,
+   "name": "Seattle vs Milwaukee: Total Runs",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBTOTAL-26AUG181940SEAMIL",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 19.81,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 8.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 9.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 10.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 11.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 12.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 13.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 14.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 15.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 16.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 17.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 18.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 19.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 20.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 21.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 22.5 runs scored",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 40533,
+   "name": "2027 Pro Football Champion",
+   "source": "kalshi",
+   "group_id": "kalshi:KXSB-27",
+   "stratum": "top_feed_like",
+   "category": "football",
+   "field_sum_at_capture": 1.085,
+   "rendered_probability_at_capture": 0.145,
+   "top_outcomes_at_capture": [
+    {
+     "id": 643828,
+     "name": "Los Angeles R",
+     "probability": 0.145,
+     "movement": -0.01,
+     "rank": 1
+    },
+    {
+     "id": 643833,
+     "name": "Buffalo",
+     "probability": 0.075,
+     "movement": 0.0,
+     "rank": 2
+    },
+    {
+     "id": 643827,
+     "name": "Seattle",
+     "probability": 0.075,
+     "movement": 0.0,
+     "rank": 3
+    },
+    {
+     "id": 643841,
+     "name": "Baltimore",
+     "probability": 0.065,
+     "movement": 0.0,
+     "rank": 4
+    },
+    {
+     "id": 643834,
+     "name": "Kansas City",
+     "probability": 0.055,
+     "movement": 0.0,
+     "rank": 5
+    }
+   ],
+   "outcomes": [
+    {
+     "name": "Los Angeles R",
+     "probability": 0.145
+    },
+    {
+     "name": "Buffalo",
+     "probability": 0.075
+    },
+    {
+     "name": "Seattle",
+     "probability": 0.075
+    },
+    {
+     "name": "Baltimore",
+     "probability": 0.065
+    },
+    {
+     "name": "Kansas City",
+     "probability": 0.055
+    },
+    {
+     "name": "Cincinnati",
+     "probability": 0.045
+    },
+    {
+     "name": "Dallas",
+     "probability": 0.045
+    },
+    {
+     "name": "Denver",
+     "probability": 0.045
+    },
+    {
+     "name": "Houston",
+     "probability": 0.045
+    },
+    {
+     "name": "Los Angeles C",
+     "probability": 0.045
+    },
+    {
+     "name": "New England",
+     "probability": 0.045
+    },
+    {
+     "name": "Philadelphia",
+     "probability": 0.045
+    },
+    {
+     "name": "San Francisco",
+     "probability": 0.045
+    },
+    {
+     "name": "Chicago",
+     "probability": 0.035
+    },
+    {
+     "name": "Detroit",
+     "probability": 0.035
+    },
+    {
+     "name": "Green Bay",
+     "probability": 0.035
+    },
+    {
+     "name": "Jacksonville",
+     "probability": 0.025
+    },
+    {
+     "name": "Indianapolis",
+     "probability": 0.015
+    },
+    {
+     "name": "Minnesota",
+     "probability": 0.015
+    },
+    {
+     "name": "New York G",
+     "probability": 0.015
+    },
+    {
+     "name": "Pittsburgh",
+     "probability": 0.015
+    },
+    {
+     "name": "Tampa Bay",
+     "probability": 0.015
+    },
+    {
+     "name": "Washington",
+     "probability": 0.015
+    },
+    {
+     "name": "Arizona",
+     "probability": 0.01
+    },
+    {
+     "name": "Atlanta",
+     "probability": 0.01
+    },
+    {
+     "name": "Carolina",
+     "probability": 0.01
+    },
+    {
+     "name": "Cleveland",
+     "probability": 0.01
+    },
+    {
+     "name": "Las Vegas",
+     "probability": 0.01
+    },
+    {
+     "name": "Miami",
+     "probability": 0.01
+    },
+    {
+     "name": "New Orleans",
+     "probability": 0.01
+    },
+    {
+     "name": "New York J",
+     "probability": 0.01
+    },
+    {
+     "name": "Tennessee",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 1.0
+  },
+  {
+   "market_id": 59183716,
+   "name": "Atlanta vs Las Vegas: Total",
+   "source": "kalshi",
+   "group_id": "kalshi:KXWNBATOTAL-26AUG18ATLLV",
+   "stratum": "top_feed_like",
+   "category": "basketball",
+   "field_sum_at_capture": 4.175,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Over 167.5 points scored",
+     "probability": 0.91
+    },
+    {
+     "name": "Over 170.5 points scored",
+     "probability": 0.81
+    },
+    {
+     "name": "Over 173.5 points scored",
+     "probability": 0.7
+    },
+    {
+     "name": "Over 176.5 points scored",
+     "probability": 0.575
+    },
+    {
+     "name": "Over 179.5 points scored",
+     "probability": 0.425
+    },
+    {
+     "name": "Over 182.5 points scored",
+     "probability": 0.33
+    },
+    {
+     "name": "Over 185.5 points scored",
+     "probability": 0.235
+    },
+    {
+     "name": "Over 188.5 points scored",
+     "probability": 0.115
+    },
+    {
+     "name": "Over 191.5 points scored",
+     "probability": 0.075
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  },
+  {
+   "market_id": 59183784,
+   "name": "Los Angeles D vs Colorado: Spread",
+   "source": "kalshi",
+   "group_id": "kalshi:KXMLBSPREAD-26AUG182040LADCOL",
+   "stratum": "top_feed_like",
+   "category": "baseball",
+   "field_sum_at_capture": 2.31,
+   "rendered_probability_at_capture": null,
+   "top_outcomes_at_capture": null,
+   "outcomes": [
+    {
+     "name": "Los Angeles D wins by over 1.5 runs",
+     "probability": 0.795
+    },
+    {
+     "name": "Los Angeles D wins by over 2.5 runs",
+     "probability": 0.66
+    },
+    {
+     "name": "Los Angeles D wins by over 3.5 runs",
+     "probability": 0.405
+    },
+    {
+     "name": "Los Angeles D wins by over 4.5 runs",
+     "probability": 0.265
+    },
+    {
+     "name": "Los Angeles D wins by over 5.5 runs",
+     "probability": 0.13
+    },
+    {
+     "name": "Colorado wins by over 1.5 runs",
+     "probability": 0.03
+    },
+    {
+     "name": "Colorado wins by over 2.5 runs",
+     "probability": 0.015
+    },
+    {
+     "name": "Colorado wins by over 3.5 runs",
+     "probability": 0.01
+    }
+   ],
+   "price_age_days_at_capture": 0.0
+  }
+ ]
+}
