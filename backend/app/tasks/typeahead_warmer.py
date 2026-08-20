@@ -290,6 +290,53 @@ _LAST_PASS_START_KEY = "bainluck:typeahead_warmer:last_pass_start"
 #: in this module.
 _LAST_PASS_START_TTL_SECONDS = 3600
 
+#: The bounded ring of REAL PASS results, and the state hash beside it.
+#:
+#: LAT-P074 (#1866, #1609). These exist because of a distinction the previous
+#: cycle got wrong in BOTH directions, and the correction is worth stating here
+#: rather than in a report nobody will re-read.
+#:
+#: **What LAT-P073 believed:** the pass summary "goes to the task return value
+#: and a log, and nothing can read either". **That is false.** `_tracked_run`
+#: hands the summary to `record_task_success`, which writes it verbatim to
+#: `task_metrics:<name>.last_result_summary`, and
+#: `GET /api/admin/celery/task-metrics/warm_typeahead` returns it. The last pass
+#: result has been readable from production the whole time.
+#:
+#: **What is genuinely missing, and is what these keys add:** that slot holds
+#: exactly ONE outcome and is overwritten by every run — including the no-ops.
+#: Measured 2026-08-20T00:15Z over a saturated 50-sample duration ring: 33 of 50
+#: executions were no-ops (all <= 71 ms) and 17 were real passes (all >= 32.9 s).
+#: So a single-slot read lands on a no-op **two times in three**, and no number
+#: of reads can reconstruct a DISTRIBUTION from a slot that keeps overwriting
+#: itself. #1866 §5 needs the distribution, not the last value:
+#: `MEASURED_WALL_MAX_S` is a known underestimate and cannot be corrected from
+#: one sample; the publish gate's registered halt is `expired` **per pass**; and
+#: #1996 needs no-ops counted rather than discarded.
+#:
+#: Hence a ring of PASSES ONLY (32 — at the measured ~74 s period that is ~40
+#: minutes of history, enough for a wall distribution and short enough that the
+#: memory cost is fixed) plus COUNTERS for the skips, so a no-op is counted and
+#: not merely absent. Three states, never two: a Redis that cannot answer, a
+#: Redis that answers with nothing, and real data are three different findings
+#: (gotcha #53), and `app/utils/typeahead_pass_ring.py` keeps them apart.
+_PASS_RING_KEY = "bainluck:typeahead_warmer:pass_ring"
+
+#: 32 entries. Bounded by LTRIM on every write rather than by TTL, for the same
+#: reason `redis_state._push_duration` is: on an `allkeys-lru` instance an
+#: unbounded key does not merely cost memory, it evicts other people's keys.
+_PASS_RING_MAX = 32
+
+#: Skip counters + the most recent outcome OF ANY KIND. The last-outcome slot is
+#: what makes "the warmer is skipping every beat" distinguishable from "the
+#: warmer has not run at all" without waiting for the ring to fill.
+_WARMER_STATE_KEY = "bainluck:typeahead_warmer:state"
+
+#: Long enough to survive a quiet night, short enough that a dead warmer's last
+#: word ages out instead of being read as current. The reader reports the age of
+#: every record it returns, so a stale ring is visible rather than silent.
+_PASS_RING_TTL_SECONDS = 86400
+
 #: `/typeahead`'s response-cache key, mirrored from `routes/events.py`. Mirrored
 #: rather than imported for the same reason `_MAX_QUERY_CHARS` is — importing
 #: the route at module scope would make this task's import graph the route's.
@@ -586,6 +633,80 @@ def _record_pass_start(now: float) -> None:
         logger.warning("typeahead_warmer: last-pass write failed", exc_info=True)
 
 
+def _pass_ring_record(summary: dict, at: float) -> dict:
+    """The compact ring entry for one outcome. Pure, so the shape is testable.
+
+    Deliberately a PROJECTION of the summary rather than the summary itself: the
+    ring is read by an operator asking "is the wall distribution moving", and a
+    32-deep list of full summaries (with `timeouts` and `errors` carrying query
+    strings) is both larger and harder to read than the eight numbers that
+    answer the question. `timeouts`/`errors` are kept as COUNTS, because their
+    presence changes how a wall should be read and their contents do not.
+    """
+    return {
+        "at": round(at, 3),
+        "terminal": summary.get("terminal"),
+        "skip_reason": summary.get("skip_reason"),
+        "seconds_wall": summary.get("seconds_wall"),
+        "period_s": summary.get("period_s"),
+        "expired": summary.get("expired"),
+        "rebuilt": summary.get("rebuilt"),
+        "fresh": summary.get("fresh"),
+        "warmed": summary.get("warmed"),
+        "total": summary.get("total"),
+        "concurrency": summary.get("concurrency"),
+        "head_source": summary.get("head_source"),
+        "timeouts": len(summary.get("timeouts") or ()),
+        "errors": len(summary.get("errors") or ()),
+    }
+
+
+def _record_outcome(summary: dict, now: float | None = None) -> None:
+    """Persist one outcome so production can read it. Best-effort, never raises.
+
+    ⚠️ **This must never be the reason a pass fails.** The warmer's contract is
+    that it is not load-bearing — a cold miss still builds inline in the route —
+    and an instrument that can break the thing it measures is worse than no
+    instrument. So every path here swallows, logs, and returns.
+
+    A REAL PASS goes on the ring; a SKIP increments its own counter. Both update
+    the last-outcome slot, because "the last thing that happened was a no-op" is
+    an answer and its absence is a different answer.
+    """
+    at = time.time() if now is None else now
+    record = _pass_ring_record(summary, at)
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        pipe = rc.pipeline()
+        pipe.hset(
+            _WARMER_STATE_KEY,
+            mapping={"last_outcome": _json_dumps(record), "last_outcome_at": repr(at)},
+        )
+        if summary.get("terminal") == "skipped":
+            # A skip is COUNTED, not ringed. Counting is what makes the no-op
+            # share readable; ringing them would flush the pass history out of a
+            # 32-deep list inside twenty minutes, since two thirds of executions
+            # are skips (measured, see `_PASS_RING_KEY`).
+            reason = summary.get("skip_reason") or "unknown"
+            pipe.hincrby(_WARMER_STATE_KEY, f"skips:{reason}", 1)
+        else:
+            pipe.lpush(_PASS_RING_KEY, _json_dumps(record))
+            pipe.ltrim(_PASS_RING_KEY, 0, _PASS_RING_MAX - 1)
+            pipe.expire(_PASS_RING_KEY, _PASS_RING_TTL_SECONDS)
+        pipe.expire(_WARMER_STATE_KEY, _PASS_RING_TTL_SECONDS)
+        pipe.execute()
+    except Exception:  # noqa: BLE001 — an instrument never breaks its subject
+        logger.warning("typeahead_warmer: outcome record failed", exc_info=True)
+
+
+def _json_dumps(obj) -> str:
+    import json
+
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
 async def _safe_rollback(session) -> None:
     try:
         await session.rollback()
@@ -638,14 +759,14 @@ async def _warm_typeahead(
     """
     from app.tasks.base import get_task_session
 
-    def _no_work(skip_reason: str, period_s: float | None) -> dict:
+    def _no_work(skip_reason: str, period_s: float | None) -> dict:  # noqa: C901
         # A skip is an accounted-for outcome, not a success and not damage. It
         # gets a NO_WORK terminal so a warmer that skips every single beat
         # cannot hide inside `complete`, and it carries `skip_reason` so the two
         # skips are never conflated: "another pass is running" and "the previous
         # pass was too recent" are opposite diagnoses. A wedged lock and a
         # too-tight floor would otherwise produce the identical summary.
-        return {
+        out = {
             "terminal": "skipped",
             "skip_reason": skip_reason,
             "completed": 0,
@@ -671,6 +792,11 @@ async def _warm_typeahead(
             "period_s": None if period_s is None else round(period_s, 3),
             "min_period_s": MIN_PASS_PERIOD_SECONDS,
         }
+        # Recorded on the SKIP path too, and counted rather than ringed. A
+        # warmer that skips every beat and a warmer that never fires are the
+        # same silence on `last_result_summary`; they are different findings.
+        _record_outcome(out)
+        return out
 
     if not _acquire_run_lock():
         logger.info("typeahead_warmer: another run holds the lock, skipping")
@@ -771,6 +897,11 @@ async def _warm_typeahead(
         "period_s": None if since_last is None else round(since_last, 3),
         "min_period_s": MIN_PASS_PERIOD_SECONDS,
     }
+    # LAT-P074 (#1866). The pass joins the bounded ring so the WALL and PERIOD
+    # distributions — not just the last value — are readable from production.
+    # Placed after the summary is complete and before the log, so a ring entry
+    # and its log line can never disagree.
+    _record_outcome(summary)
     logger.info(
         "typeahead_warmer: %d/%d warmed from %s (%d rebuilt, %d fresh, %d expired) "
         "in %.1fs wall / %.1fs summed at width %d, %s since last pass "

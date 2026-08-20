@@ -150,6 +150,57 @@ MEASURED_WALL_MAX_S = 42.6
 #: every margin computed against it inherits that.
 MEASURED_WALL_SAMPLE_PASSES = 20
 
+# ---------------------------------------------------------------------------
+# LAT-P074 — THE PASS-ONLY WALL, MEASURED. And why it is NOT substituted above.
+#
+# `MEASURED_WALL_MAX_S = 42.6` is a known underestimate (LAT-P073 §5 registered
+# it as owed). It comes from LAT-P063's paired sweep, and the p95 LAT-P073
+# reached for instead (44.6 s) was worse still: it is a percentile over a MIXED
+# distribution of real passes and ~10 ms no-ops, and no-ops only drag a
+# percentile DOWN. Substituting one for the other would have been the
+# projected-vs-measured trap this module's docstring exists to prevent.
+#
+# LAT-P074 took the clean measurement. `warm_typeahead`'s duration history is
+# BIMODAL with a 460x gap and no ambiguity whatsoever — 33 executions at
+# <= 71 ms and 17 at >= 32,852 ms, nothing in between — so "which runs were real
+# passes" needs no judgement call. Read 2026-08-20T00:15Z from
+# `GET /api/admin/celery/task-metrics/warm_typeahead`, saturated 50-sample ring
+# over a 1,261 s window, and corroborated by direct pass summaries sampled off
+# `last_result_summary` (wall 47.776 s, 53.920 s):
+#
+#     pass-only wall   min 32.852 s   p50 40.991 s   p95 47.862 s   max 53.920 s
+#     no-op            max 0.071 s    (n = 33)
+#
+# 🔴 **THESE ARE NOT SUBSTITUTED INTO `MEASURED_WALL_*` ABOVE, AND THAT IS A
+# DECISION RATHER THAN AN OVERSIGHT.** Substituting the MEDIAN flips the LIVE
+# 10 s beat's verdict from `MARGINAL` to `UNSAFE`: at a 40.991 s median,
+# P(10) = 10 * ceil(40.991/10) = 50 s, over the 45 s TTL on a TYPICAL pass and
+# not merely on the tail. That is a production finding requiring the TTL
+# decision Fable holds (LAT-P074 item 3), not a constant edit smuggled in on a
+# measurement commit — ruling 075's shape, where a derivation whose inputs have
+# moved emits a visible refusal instead of quietly re-deriving.
+#
+# The consequence is PINNED, not merely written down:
+# `test_the_pass_only_measurement_grades_the_live_beat_unsafe` asserts the flip,
+# and `test_the_ttl_that_returns_the_live_beat_to_safe` asserts the number that
+# undoes it. Swapping the constants is the FIRST thing to do once the TTL is
+# ruled; until then the grader stays optimistic and the tests say by how much.
+PASS_ONLY_WALL_MIN_S = 32.852
+PASS_ONLY_WALL_MEDIAN_S = 40.991
+PASS_ONLY_WALL_P95_S = 47.862
+PASS_ONLY_WALL_MAX_S = 53.920
+
+#: 17 real passes in the duration ring plus the directly-sampled summaries. A
+#: maximum from a finite sample is a LOWER BOUND on the true maximum, and every
+#: margin derived from it inherits that — which is exactly how 42.6 came to be
+#: wrong by 11.3 s.
+PASS_ONLY_WALL_SAMPLE_PASSES = 17
+
+#: The measured no-op ceiling. Recorded because it is what makes the split
+#: defensible: the two modes are 460x apart, so no threshold between 0.1 s and
+#: 30 s changes a single classification.
+PASS_ONLY_NOOP_MAX_S = 0.071
+
 #: A derived period must clear the TTL by at least this much to be called SAFE.
 #: 5 s is one half of today's beat and roughly twice the 2.4 s that separates the
 #: worst measured wall from the TTL — deliberately larger than the gap it is
@@ -342,3 +393,222 @@ def grade_beat_interval(
 #: constant so the guard test asserts against the ACTUAL proposal rather than
 #: against a number a future reader might assume it was.
 PROPOSED_W_MOVE_BEAT_S = 60.0
+
+
+
+# ---------------------------------------------------------------------------
+# LAT-P074 item 3 — THE TTL DERIVATION. Fable, 2026-08-19:
+#
+#   "derive the TTL per ruling 075 — TTL >= measured worst pass wall + margin,
+#    margin stated — and bring me the number with its registered prediction
+#    (cache-entry loss goes to zero; staleness cost bounded and named)."
+#
+# 🔴 THE FORMULA AS RULED PRICES THE WRONG QUANTITY, AND THE ARITHMETIC SAYS SO
+# RATHER THAN AN OPINION. An entry is rebuilt once per PASS, so what it has to
+# survive is the gap from one rebuild to the next — the pass PERIOD — and the
+# period is the wall QUANTISED UP to the next beat fire (`quantised_period_s`,
+# the same equation LAT-P062 measured directly). At the live 10 s beat the worst
+# measured wall of 53.920 s quantises to a 60 s period. So:
+#
+#     Fable's literal reading   TTL >= 53.920 + margin   ->  59 s at margin 5
+#     the survival requirement  TTL >= 60.000 + margin   ->  65 s at margin 5
+#
+# and at 59 s (or at 60 s) `grade_beat_interval` returns MARGINAL with ZERO
+# headroom, which is precisely the "coincidence of arithmetic" `SAFETY_MARGIN_S`
+# was written to refuse. 65 s is the first value at which the live beat has ever
+# graded SAFE.
+#
+# The margin is NOT a new number invented for this decision — it is
+# `SAFETY_MARGIN_S`, the constant this module already uses to separate SAFE from
+# MARGINAL. Reusing it is deliberate: a decision whose margin was chosen after
+# seeing the answer is a decision whose margin is an output.
+#
+# Ruling 075's three required properties, in order: the shortfall is visible as
+# a REFUSAL (`prediction_holds=False` with a distinct verdict, never an empty
+# success); the record names the floor it measured AND the budget it derived,
+# both numbers, together; and it marks the state as one to FIX rather than one
+# to watch.
+# ---------------------------------------------------------------------------
+
+
+class TtlVerdict:
+    """Four-valued. `REFUSED` is not a synonym for `INSUFFICIENT`."""
+
+    #: The derived TTL clears the quantised period AND the measured period, so
+    #: `cache-entry loss goes to zero` survives contact with production.
+    SUFFICIENT = "sufficient"
+    #: A real derived number whose attached prediction is false at the measured
+    #: period. The number is not wrong; the claim about it is.
+    INSUFFICIENT_FOR_PREDICTION = "insufficient_for_prediction"
+    #: No measured period was supplied, so the prediction cannot be graded
+    #: either way. Distinct from `INSUFFICIENT` on purpose: "I could not check"
+    #: must never render as "I checked and it fails", any more than as a pass
+    #: (ruling 075, second clause).
+    PREDICTION_UNGRADED = "prediction_ungraded"
+    #: The inputs did not support a derivation at all.
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class TtlDerivation:
+    """The whole derivation, with its workings. Rulings 074 and 075."""
+
+    verdict: str
+    reason: str
+    #: The recommendation: smallest integer TTL clearing the quantised period.
+    derived_ttl_s: Optional[float] = None
+    #: Fable's literal reading, carried so the departure is visible rather than
+    #: silently substituted. A derivation that quietly answers a different
+    #: question than the one asked is the shape doctrine clause 2 banks.
+    wall_plus_margin_ttl_s: Optional[float] = None
+    #: The floors, both named in the same record (ruling 075, property 2).
+    measured_wall_floor_s: Optional[float] = None
+    quantised_period_floor_s: Optional[float] = None
+    margin_s: Optional[float] = None
+    beat_s: Optional[float] = None
+    #: The TTL that drives loss to zero at the OBSERVED period, when one is
+    #: supplied. `None` means unmeasured, never zero.
+    loss_free_ttl_s: Optional[float] = None
+    measured_period_s: Optional[float] = None
+    current_ttl_s: Optional[int] = None
+    #: How stale an entry may become at the derived TTL — the cost Fable asked
+    #: to have bounded and named.
+    max_staleness_s: Optional[float] = None
+    notes: tuple = field(default_factory=tuple)
+
+    @property
+    def prediction_holds(self) -> bool:
+        """Does `cache-entry loss goes to zero` survive contact with the period?
+
+        `False` for both `INSUFFICIENT_FOR_PREDICTION` and `PREDICTION_UNGRADED`,
+        and those are different states — read `verdict`, never this alone. The
+        property exists so no call site hand-writes `verdict == SUFFICIENT` and
+        quietly grows a second definition of the same idea.
+        """
+        return self.verdict == TtlVerdict.SUFFICIENT
+
+
+def derive_response_ttl_s(
+    *,
+    worst_pass_wall_s: Optional[float] = None,
+    beat_s: float = CURRENT_BEAT_INTERVAL_S,
+    margin_s: float = SAFETY_MARGIN_S,
+    measured_period_s: Optional[float] = None,
+    current_ttl_s: int = RESPONSE_CACHE_TTL_S,
+) -> TtlDerivation:
+    """Derive `/typeahead`'s response-cache TTL from the measured pass wall.
+
+    Ruling 075, in the direction it was written for: the derived value may never
+    fall below the phase's own measured floor, and where the inputs do not
+    support the claim being made, the output is a refusal naming both numbers
+    rather than a plausible default.
+
+    `worst_pass_wall_s` defaults to the LAT-P074 pass-only maximum. Pass a fresher
+    one from `GET /api/admin/typeahead-warmer/last` (`passes.seconds_wall.max`) —
+    that endpoint exists so this derivation never has to run against a stale
+    constant again, which is how 42.6 s survived being wrong by 11.3 s.
+    """
+    floor = PASS_ONLY_WALL_MAX_S if worst_pass_wall_s is None else worst_pass_wall_s
+
+    if floor is None or floor <= 0:
+        return TtlDerivation(
+            verdict=TtlVerdict.REFUSED,
+            reason="no measured pass wall; a TTL cannot be derived without a floor",
+        )
+    if margin_s is None or margin_s < 0:
+        return TtlDerivation(
+            verdict=TtlVerdict.REFUSED,
+            reason=f"margin must be a non-negative number of seconds, got {margin_s!r}",
+            measured_wall_floor_s=floor,
+        )
+    if beat_s is None or beat_s <= 0:
+        return TtlDerivation(
+            verdict=TtlVerdict.REFUSED,
+            reason=f"beat interval must be positive to quantise a period, got {beat_s!r}",
+            measured_wall_floor_s=floor,
+        )
+    if current_ttl_s is None or current_ttl_s <= 0:
+        return TtlDerivation(
+            verdict=TtlVerdict.REFUSED,
+            reason="current response TTL must be positive",
+            measured_wall_floor_s=floor,
+        )
+
+    period_floor = quantised_period_s(beat_s, floor)
+    derived = float(ceil(period_floor + margin_s))
+    wall_only = float(ceil(floor + margin_s))
+
+    notes = (
+        f"an entry must survive one PASS PERIOD, not one pass wall: "
+        f"period = {beat_s:.0f}s * ceil(max({floor:.3f}s, {MIN_PASS_PERIOD_S}s) / "
+        f"{beat_s:.0f}s) = {period_floor:.0f}s",
+        f"TTL >= {period_floor:.0f}s + {margin_s:.0f}s margin = {derived:.0f}s "
+        f"(vs current {current_ttl_s}s)",
+        f"Fable's literal wall+margin reading gives {wall_only:.0f}s, at which "
+        f"grade_beat_interval still returns MARGINAL with zero headroom",
+        f"the wall floor is a max over {PASS_ONLY_WALL_SAMPLE_PASSES} passes and is "
+        "a LOWER bound on the true maximum",
+    )
+
+    common = {
+        "derived_ttl_s": derived,
+        "wall_plus_margin_ttl_s": wall_only,
+        "measured_wall_floor_s": floor,
+        "quantised_period_floor_s": period_floor,
+        "margin_s": margin_s,
+        "beat_s": beat_s,
+        "current_ttl_s": current_ttl_s,
+        "max_staleness_s": derived,
+        "notes": notes,
+    }
+
+    if measured_period_s is None:
+        return TtlDerivation(
+            verdict=TtlVerdict.PREDICTION_UNGRADED,
+            reason=(
+                f"derived {derived:.0f}s from a {period_floor:.0f}s quantised-period floor "
+                f"+ {margin_s:.0f}s margin, but NO measured period was supplied. The "
+                "prediction 'cache-entry loss goes to zero' is UNGRADED, which is not the "
+                "same as met — the quantiser predicts the period, production measures it, "
+                "and this program has already been wrong about that gap once"
+            ),
+            **common,
+        )
+
+    if measured_period_s <= 0:
+        return TtlDerivation(
+            verdict=TtlVerdict.REFUSED,
+            reason=f"measured period must be positive, got {measured_period_s!r}",
+            **common,
+        )
+
+    loss_free = float(ceil(measured_period_s + margin_s))
+
+    if derived >= loss_free:
+        return TtlDerivation(
+            verdict=TtlVerdict.SUFFICIENT,
+            reason=(
+                f"derived {derived:.0f}s clears the {period_floor:.0f}s quantised period "
+                f"floor and the {measured_period_s:.3f}s measured period; every entry "
+                f"survives to its next rebuild, at a bounded staleness of {derived:.0f}s"
+            ),
+            loss_free_ttl_s=loss_free,
+            measured_period_s=measured_period_s,
+            **common,
+        )
+
+    return TtlDerivation(
+        verdict=TtlVerdict.INSUFFICIENT_FOR_PREDICTION,
+        reason=(
+            f"derived {derived:.0f}s clears the quantised period floor, but the OBSERVED "
+            f"period is {measured_period_s:.3f}s — an entry rebuilt at the start of one "
+            f"pass is dead {measured_period_s - derived:.1f}s before the next pass reaches "
+            f"it. Cache-entry loss does NOT go to zero at {derived:.0f}s; it goes to zero "
+            f"at {loss_free:.0f}s, and a {loss_free:.0f}s TTL is a different conversation. "
+            "When the observed period exceeds the quantiser's prediction, the defect is "
+            "the period, not the TTL"
+        ),
+        loss_free_ttl_s=loss_free,
+        measured_period_s=measured_period_s,
+        **common,
+    )

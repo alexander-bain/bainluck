@@ -1013,3 +1013,104 @@ async def redis_census(
         # empty — the same body as a genuinely empty keyspace (gotcha #53).
         out["verdict"] = "error"
     return out
+
+
+@router.get("/typeahead-warmer/last")
+async def typeahead_warmer_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """The typeahead warmer's recent PASS results, as a distribution.
+
+    LAT-P074 (#1866, #1609, #1996). Read-only, two bounded Redis reads, no
+    celery broadcast — this is deliberately NOT `/celery-debug`'s shape, and the
+    difference is the reason that endpoint has a 🔴 block above it.
+
+    **What this adds that production did not already have, stated exactly.**
+    The last pass summary has always been readable: `_tracked_run` writes it to
+    `task_metrics:warm_typeahead.last_result_summary` and
+    `GET /api/admin/celery/task-metrics/warm_typeahead` returns it. LAT-P073
+    believed otherwise and planned around the gap; the correction is recorded in
+    `app/utils/typeahead_pass_ring.py` so the next reader does not repeat it.
+
+    What that slot cannot do is hold a DISTRIBUTION. It is one value, overwritten
+    by every run, and two thirds of runs are no-ops (measured 2026-08-20T00:15Z:
+    33 of 50 executions <= 71 ms, 17 >= 32.9 s). Three pieces of work need the
+    distribution rather than the last value:
+
+    * `typeahead_beat_budget.MEASURED_WALL_MAX_S` needs a **pass-only** maximum;
+    * the publish gate's registered halt is `expired` **per pass**;
+    * #1996 needs no-ops **counted**, which the skip counters here do.
+
+    **Three states, never two** (gotcha #53, ruling 075 clause 2): `unreadable`
+    means Redis raised and we learned nothing; `no_data` means Redis answered and
+    the warmer has written nothing; `ok` means read the numbers. And inside
+    `ok`, `passes.n == 0` with `skips.total > 0` is a warmer that is firing and
+    skipping every single time — a diagnosis a bare empty ring cannot make.
+
+    Off-loop via `run_in_threadpool` for the same reason `_inspect_snapshot` is:
+    `get_redis_client()` is bounded at 5 s (gotcha #39), and 5 s of a blocked
+    single uvicorn event loop under an auto-refreshing dashboard tab is exactly
+    how #1994 happened at a larger scale. Two Redis ops are microseconds when
+    Redis is healthy; the threadpool is insurance for when it is not.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.tasks.typeahead_warmer import (
+        _PASS_RING_KEY,
+        _PASS_RING_MAX,
+        _PASS_RING_TTL_SECONDS,
+        _WARMER_STATE_KEY,
+    )
+    from app.utils.typeahead_beat_budget import RESPONSE_CACHE_TTL_S
+    from app.utils.typeahead_pass_ring import (
+        decode_records,
+        decode_state,
+        summarise,
+        unreadable,
+    )
+
+    now = time.time()
+
+    def _read():
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        pipe = rc.pipeline()
+        # LRANGE is bounded by the ring's own cap, not by a caller-supplied
+        # number: an endpoint whose cost a caller can raise is an endpoint a
+        # caller can use to hurt the instance (#1807's lesson, one size down).
+        pipe.lrange(_PASS_RING_KEY, 0, _PASS_RING_MAX - 1)
+        pipe.hgetall(_WARMER_STATE_KEY)
+        return pipe.execute()
+
+    try:
+        raw_ring, raw_state = await run_in_threadpool(_read)
+    except Exception as exc:  # noqa: BLE001
+        return unreadable(
+            str(exc)[:300],
+            now=now,
+            ring_max=_PASS_RING_MAX,
+            ttl_s=RESPONSE_CACHE_TTL_S,
+        )
+
+    payload = summarise(
+        decode_records(raw_ring),
+        decode_state(raw_state),
+        now=now,
+        ring_max=_PASS_RING_MAX,
+        ttl_s=RESPONSE_CACHE_TTL_S,
+    )
+    payload["ring_ttl_s"] = _PASS_RING_TTL_SECONDS
+    payload["note"] = (
+        "passes.seconds_wall is the PASS-ONLY wall distribution — the number "
+        "typeahead_beat_budget.MEASURED_WALL_MAX_S must be derived from. "
+        "passes.expired is cache-entry loss: entries whose key was already gone "
+        "when the pass reached them. status=unreadable means the read failed "
+        "and nothing here is a measurement; status=no_data means the warmer has "
+        "written nothing; passes.n=0 with skips.total>0 means it is firing and "
+        "skipping every time."
+    )
+    return payload
