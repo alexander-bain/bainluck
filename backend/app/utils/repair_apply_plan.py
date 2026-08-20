@@ -111,6 +111,19 @@ REASON_CONCURRENT_DRIFT = "CONCURRENT_ROW_DRIFT"
 REASON_TRUTH_ID_PRESENT = "TRUTH_ID_ALREADY_PRESENT"
 REASON_TRUTH_SET_DRIFT = "TRUTH_ID_SET_DRIFT"
 
+#: #2016: the create-rail analogue of ``MAPPING_ROW_LOCK_TIMEOUT`` — this row was
+#: not created because another transaction holds a conflicting lock and the rail
+#: declined to keep waiting past the request wall. It retires alone; its siblings
+#: continue; the next invocation of the SAME plan_hash finds it still missing and
+#: still actionable.
+REASON_CREATE_ROW_LOCK_TIMEOUT = "CREATE_ROW_LOCK_TIMEOUT"
+
+#: #2016: the binding rail writes its whole reviewed plan in ONE transaction, so
+#: it has no per-row retirement to offer — a contended row aborts the transaction
+#: and nothing is committed. That is a REFUSAL with a name, not a hang: the plan
+#: is untouched and the same plan_hash can be re-applied once contention clears.
+REASON_BINDING_LOCK_TIMEOUT = "EVENT_BINDING_LOCK_TIMEOUT"
+
 #: The three refusals that mean "there is no plan object to bind to". Every one of
 #: them stops the apply; they exist separately so the REASON an operator is handed
 #: is the one they can act on.
@@ -860,6 +873,14 @@ REASON_MAPPING_BEFORE_DRIFT = "MAPPING_BEFORE_TEAM_DRIFT"
 
 #: The reviewed mapping id has no row at all at apply time.
 REASON_MAPPING_ROW_MISSING = "MAPPING_ROW_MISSING"
+
+#: #2016: the row is not drifted and not missing — somebody ELSE is holding a
+#: lock on it and the rail declined to keep waiting. A third distinct reading,
+#: for the same reason MISSING and CORRUPT are distinct (gotcha #53): the
+#: operator's next move is "re-invoke, it will still be actionable", which is
+#: the opposite of the re-derive-and-re-review that drift demands. Measured in
+#: queue 377 against a Celery transaction held open 8m59s.
+REASON_MAPPING_ROW_LOCK_TIMEOUT = "MAPPING_ROW_LOCK_TIMEOUT"
 
 
 @dataclass(frozen=True)

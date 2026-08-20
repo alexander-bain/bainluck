@@ -87,6 +87,13 @@ class _Session:
         self.locks = []
         self.commits = 0
         self.rollbacks = 0
+        # #2016: the transaction-scoped ``lock_timeout``. Recorded, and cleared on
+        # every commit/rollback, because that IS its Postgres scope — a double that
+        # let one setting survive a commit would keep passing after somebody
+        # hoisted the ``set_config`` above the per-row loop, which is the exact
+        # mistake the per-row placement exists to prevent.
+        self.lock_timeout = None
+        self.lock_timeouts_seen = []
         self._next_id = 90000
         # Provider ids that the ORDINARY PIPELINE creates in the instant between the
         # gate's read and this row's INSERT. This is the race the in-statement
@@ -96,6 +103,10 @@ class _Session:
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         params = params or {}
+        if "set_config('lock_timeout'" in sql:
+            self.lock_timeout = params["ms"]
+            self.lock_timeouts_seen.append(params["ms"])
+            return _Result()
         if "FROM teams" in sql:
             wanted = set(params["names"])
             return _Result([(n, i) for (n, i) in self.teams if n in wanted])
@@ -146,9 +157,11 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+        self.lock_timeout = None  # SET LOCAL dies with its transaction
 
     async def rollback(self):
         self.rollbacks += 1
+        self.lock_timeout = None
 
 
 def _planned(truth_id, home_id=101, away_id=202, *, sport_id=MLB, commence="2026-08-19T23:05:00+00:00"):
