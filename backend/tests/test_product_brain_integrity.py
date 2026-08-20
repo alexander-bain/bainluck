@@ -646,7 +646,13 @@ def test_ruling_numbers_are_unique() -> None:
 #: already in), which banks ruling **112** ("movement overrides the structural floor"). COUNTED:
 #: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 108. The index reads ...109 -> 111 -> 112;
 #: **110 is still missing on purpose**, claimed-and-unmerged on `program/latency-70`.
-MINIMUM_BANKED_RULINGS = 108
+#:
+#: Raised to **109** by INT-101 banking ruling **113** ("a merge offer is a branch with a green
+#: gate, not a file", Fable, approving this lane's own proposal after the sweep missed live
+#: merge-eligible PRs two cycles running). COUNTED:
+#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 109. 110 remains claimed-and-unmerged on
+#: `program/latency-70`, so the index still reads ...109 -> 111 -> 112 -> 113 with one gap.
+MINIMUM_BANKED_RULINGS = 109
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -166,6 +166,73 @@ def _commits_not_on_base(runner, repo, base, head):
     return {line.strip() for line in out.splitlines() if line.strip()}
 
 
+def open_pull_requests(runner, repo, base):
+    """Open PRs whose head is NOT already on ``base``, with their CI rollup.
+
+    **Ruling 113: a merge offer is a branch with a green gate, not a file.** The
+    token sweep above reads what lanes WROTE; this reads what they OFFERED. Two
+    consecutive Integrator cycles missed live merge-eligible work because a PR
+    is a real offer and no token described it — `#2049`/`#2050` sat behind a
+    token the parser read as ``branch: None``, and `#2054`/`#2055` had no token
+    at all while `#2055` gated 31 downstream applies.
+
+    Returns ``(rows, error)``. **`error` is not optional decoration.** This is
+    the one part of the sweep that makes a NETWORK call, and `gh` missing,
+    unauthenticated, rate-limited or slow all produce an empty list that is
+    indistinguishable from "no PRs are open" (gotcha #53). So the failure is
+    returned as a REASON and rendered as ``NOT RUN``, never as an empty section.
+    """
+    fields = "number,title,headRefName,headRefOid,mergeable,mergeStateStatus,isDraft,statusCheckRollup"
+    try:
+        proc = runner(
+            ["gh", "pr", "list", "--state", "open", "--limit", "100", "--json", fields],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return [], "gh not installed"
+    except Exception as exc:  # noqa: BLE001 - the reason is the product here
+        return [], f"gh could not run: {type(exc).__name__}"
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip().splitlines()
+        return [], f"gh exited {proc.returncode}: {detail[0] if detail else 'no stderr'}"
+    try:
+        raw = json.loads(proc.stdout or "[]")
+    except ValueError:
+        return [], "gh returned output that is not JSON"
+
+    rows = []
+    for pr in raw:
+        head = pr.get("headRefOid") or ""
+        # Contained by CONTENT-bearing ancestry, same test the token sweep uses
+        # for SPENT. A PR whose head is already on base is not an offer.
+        if head and _is_ancestor(runner, repo, head, base):
+            continue
+        checks = pr.get("statusCheckRollup") or []
+        concl = [c.get("conclusion") or c.get("state") or "" for c in checks]
+        failed = [c for c in concl if c in ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED")]
+        pending = [c for c in concl if c in ("", "PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED")]
+        if not checks:
+            ci = "NO CHECKS"
+        elif failed:
+            ci = f"RED ({len(failed)})"
+        elif pending:
+            ci = f"PENDING ({len(pending)})"
+        else:
+            ci = "GREEN"
+        rows.append({
+            "number": pr.get("number"),
+            "branch": pr.get("headRefName"),
+            "head": head[:8],
+            "draft": bool(pr.get("isDraft")),
+            "mergeable": pr.get("mergeable"),
+            "merge_state": pr.get("mergeStateStatus"),
+            "ci": ci,
+            "title": (pr.get("title") or "")[:60],
+        })
+    rows.sort(key=lambda r: r["number"] or 0)
+    return rows, None
+
+
 def never_merge_closure(runner, repo, base, heads):
     """Every commit reachable from a never-merge head and NOT already on ``base``.
 
@@ -200,6 +267,7 @@ def never_merge_closure(runner, repo, base, heads):
 
 
 def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
+          include_prs=True,
           base="origin/master"):
     """Read every READY token, resolve it against git, apply ruling 109."""
     names = sorted(
@@ -232,6 +300,10 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
         never_merge.append({"head": head, "source": "--never-merge"})
 
     closure, unreadable = never_merge_closure(runner, repo, base, never_merge)
+
+    # Ruling 113: the second source. Never lets its own failure read as "none".
+    pr_rows, pr_error = (([], "disabled") if not include_prs
+                         else open_pull_requests(runner, repo, base))
 
     rows = []
     for token in tokens:
@@ -274,6 +346,8 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
         # clean either — an under-read closure produces false LIVE-READY verdicts,
         # which is the exact failure the ruling was written about.
         "containment_ran": bool(never_merge) and not unreadable,
+        "open_prs": pr_rows,
+        "open_prs_error": pr_error,
         "rows": rows,
     }
 
@@ -316,6 +390,44 @@ def render(result) -> str:
                 line += "   [status: ready — short form, fix the token]"
             lines.append(line)
         lines.append("")
+    # ---- ruling 113: the second source, and its NOT-RUN discipline ----
+    err = result.get("open_prs_error")
+    prs = result.get("open_prs") or []
+    if err == "disabled":
+        lines.append(
+            "open PRs: NOT RUN — --no-prs was passed. This is NOT a clean result: a merge "
+            "offer is a branch with a green gate, not a file (ruling 113)."
+        )
+    elif err:
+        lines.append(
+            f"open PRs: NOT RUN — {err}. This is NOT a clean result. An unreadable PR list "
+            "and an empty PR list look identical (gotcha #53), so nothing below rules out a "
+            "green, merge-eligible PR that no token describes (ruling 113)."
+        )
+    elif not prs:
+        lines.append(
+            f"open PRs: RAN against {result['base']} — none open whose head is not already "
+            "upstream."
+        )
+    else:
+        ready = [r for r in prs if r["ci"] == "GREEN" and not r["draft"]]
+        lines.append(
+            f"── OPEN PRs ({len(prs)}) — merge offers the token sweep cannot see (ruling 113); "
+            f"{len(ready)} green and non-draft"
+        )
+        for r in prs:
+            flag = "  [DRAFT]" if r["draft"] else ""
+            lines.append(
+                f"   #{str(r['number']):<6} {str(r['branch']):<38} {r['head']}  "
+                f"{r['ci']:<12} {str(r['merge_state'] or '?'):<10}{flag}  {r['title']}"
+            )
+        lines.append("")
+        lines.append(
+            "   Ruling 034 still governs: a PR promotes a branch into the candidate set and "
+            "does not decide readiness. Confirm by CONTENT before merging."
+        )
+    lines.append("")
+
     void_but_ready = [r for r in result["rows"] if r["verdict"] == VOID]
     if void_but_ready:
         lines.append(
@@ -334,6 +446,8 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--strict", action="store_true",
                         help="exit 1 if any VOID token is still advertising ready")
+    parser.add_argument("--no-prs", action="store_true",
+                        help="skip the open-PR source; reported as NOT RUN, never as clean")
     parser.add_argument("--never-merge", action="append", default=[],
                         help="an additional never-merge head, repeatable")
     parser.add_argument("--base", default="origin/master",
@@ -345,7 +459,8 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
         return 2
 
     result = sweep(args.handoff_dir, args.repo, runner=runner,
-                   extra_never_merge=tuple(args.never_merge), base=args.base)
+                   extra_never_merge=tuple(args.never_merge), base=args.base,
+                   include_prs=not args.no_prs)
     print(json.dumps(result, indent=2) if args.json else render(result), file=stdout)
 
     if args.strict and any(r["verdict"] == VOID for r in result["rows"]):

@@ -285,3 +285,107 @@ def test_void_outranks_spent_and_moved_head():
 
 def test_an_unresolvable_head_is_unresolved_not_clean():
     assert sweep_mod.classify({"head": "abc", "never_merge": False}, None, False, []) == "UNRESOLVED"
+
+
+# ---------------------------------------------------------------------------
+# Ruling 113 — the OPEN-PR source, and its NOT-RUN discipline.
+#
+# The ruling's charter case is two Integrator cycles missing live merge-eligible
+# work, so the property worth pinning is not that PRs render — it is that a PR
+# source which CANNOT BE READ says so, because an unreadable list and an empty
+# list are the same bytes (gotcha #53) and one of them is a lie.
+# ---------------------------------------------------------------------------
+
+class _FakeProc:
+    def __init__(self, stdout="", returncode=0, stderr=""):
+        self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
+
+
+def _pr_runner(payload, *, rc=0, stderr="", ancestors=()):
+    """A runner that answers `gh pr list` and `git merge-base --is-ancestor`."""
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc(json.dumps(payload), rc, stderr)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 0 if cmd[-2] in ancestors else 1)
+        return _FakeProc("", 0)
+    return run
+
+
+def test_a_gh_that_is_not_installed_is_NOT_RUN_never_an_empty_list():
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            raise FileNotFoundError("gh")
+        return _FakeProc("", 0)
+    rows, err = sweep_mod.open_pull_requests(run, ".", "origin/master")
+    assert rows == []
+    assert err == "gh not installed", err
+
+
+def test_a_gh_that_exits_nonzero_reports_the_reason():
+    rows, err = sweep_mod.open_pull_requests(
+        _pr_runner([], rc=4, stderr="HTTP 401: Bad credentials\n"), ".", "origin/master")
+    assert rows == []
+    assert "gh exited 4" in err and "401" in err, err
+
+
+def test_non_json_output_is_NOT_RUN():
+    def run(cmd, **kwargs):
+        return _FakeProc("<html>rate limited</html>", 0)
+    rows, err = sweep_mod.open_pull_requests(run, ".", "origin/master")
+    assert rows == [] and err == "gh returned output that is not JSON"
+
+
+def test_a_pr_already_on_base_is_not_an_offer():
+    payload = [
+        {"number": 1, "headRefName": "a", "headRefOid": "aaaa1111", "statusCheckRollup": []},
+        {"number": 2, "headRefName": "b", "headRefOid": "bbbb2222", "statusCheckRollup": []},
+    ]
+    rows, err = sweep_mod.open_pull_requests(
+        _pr_runner(payload, ancestors={"aaaa1111"}), ".", "origin/master")
+    assert err is None
+    assert [r["number"] for r in rows] == [2], rows
+
+
+@pytest.mark.parametrize("checks,expected", [
+    ([], "NO CHECKS"),
+    ([{"conclusion": "SUCCESS"}, {"conclusion": "SUCCESS"}], "GREEN"),
+    ([{"conclusion": "SUCCESS"}, {"conclusion": "FAILURE"}], "RED (1)"),
+    ([{"conclusion": "SUCCESS"}, {"state": "PENDING"}], "PENDING (1)"),
+    ([{"conclusion": "SUCCESS"}, {"conclusion": "TIMED_OUT"}], "RED (1)"),
+])
+def test_ci_rollup_classification(checks, expected):
+    payload = [{"number": 9, "headRefName": "x", "headRefOid": "cccc3333",
+                "statusCheckRollup": checks}]
+    rows, _ = sweep_mod.open_pull_requests(_pr_runner(payload), ".", "origin/master")
+    assert rows[0]["ci"] == expected
+
+
+def test_render_never_prints_an_empty_PR_SECTION_AS_CLEAN():
+    """The whole ruling, in one assertion.
+
+    A failed PR read must not render as silence. If this ever passes with the
+    NOT-RUN line absent, the sweep is back to answering a narrower question than
+    Phase 0 asked, which is the defect ruling 113 was written for.
+    """
+    base = {
+        "handoff_dir": "/x", "tokens_read": 0, "rows": [], "base": "origin/master",
+        "never_merge_heads": [], "unreadable_never_merge_heads": [], "closure_size": 0,
+        "containment_ran": False,
+    }
+    out = sweep_mod.render({**base, "open_prs": [], "open_prs_error": "gh not installed"})
+    assert "open PRs: NOT RUN" in out
+    assert "gh not installed" in out
+    assert "NOT a clean result" in out
+
+    # ...and a genuinely-empty, successfully-read list is allowed to say so.
+    ok = sweep_mod.render({**base, "open_prs": [], "open_prs_error": None})
+    assert "open PRs: RAN against origin/master" in ok
+    assert "NOT RUN" not in ok.split("open PRs")[1][:120]
+
+
+def test_no_prs_flag_is_reported_as_NOT_RUN_not_as_absence(tmp_path):
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=_pr_runner([]),
+                             include_prs=False)
+    assert result["open_prs_error"] == "disabled"
+    assert "open PRs: NOT RUN" in sweep_mod.render(result)
