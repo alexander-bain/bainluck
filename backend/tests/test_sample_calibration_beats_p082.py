@@ -245,6 +245,10 @@ def test_beat_row_keeps_the_carry_and_the_gauges_the_grader_reads():
             "stages": {"staged:units_this_beat": 7, "staged:units_banked": 20,
                        "rss:peak_mb": 562},
             "stage_counts": {"read:futures_unit": 7, "publish_gate": 1},
+            "phases": [
+                {"name": "futures", "checkpoint_write": "rebuild_in_flight"},
+                {"name": "sports", "checkpoint_write": "ok"},
+            ],
         },
     }
     row = beat_row(record, served={"rebuild_units_banked": 20})
@@ -254,6 +258,34 @@ def test_beat_row_keeps_the_carry_and_the_gauges_the_grader_reads():
     assert "rss:peak_mb" not in row["stages"], "only the graded gauges are lifted"
     assert row["staged_stage_counts"] == {}, "stage_counts is filtered to staged:*"
     assert row["served"]["rebuild_units_banked"] == 20
+
+
+def test_beat_row_carries_the_carry_guards_own_verdict():
+    """CAL-P081's guard writes ``rebuild_in_flight`` as the futures phase's
+    ``checkpoint_write``. Dropping it would leave "the beat advanced" and "the
+    guard fired" indistinguishable from outside — and only the first of those is
+    what `4dc4fa21` claims. A silent absence would read as the comfortable one."""
+    record = {
+        "generation": 1, "generated_at": _HOURS[21], "complete": True,
+        "payload": {"phases": [
+            {"name": "futures", "checkpoint_write": "rebuild_in_flight"},
+            {"name": "sports", "checkpoint_write": "not_attempted"},
+            {"name": "diagnostics"},
+        ]},
+    }
+    row = beat_row(record)
+    assert row["phase_checkpoint"]["futures"] == "rebuild_in_flight"
+    assert row["phase_checkpoint"]["sports"] == "not_attempted"
+    assert row["phase_checkpoint"]["diagnostics"] is None, (
+        "a phase with no checkpoint_write reports None, not a missing key — "
+        "absence of the field and absence of the phase are different facts"
+    )
+
+
+def test_beat_row_survives_a_ledger_with_no_phases_block():
+    row = beat_row({"generation": 1, "generated_at": _HOURS[21], "payload": {}})
+    assert row["phase_checkpoint"] == {}
+    assert row["stages"] == {}
 
 
 def test_rows_are_ordered_by_generation_not_by_file_position():

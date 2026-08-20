@@ -141,6 +141,17 @@ def beat_row(record: dict, served: dict | None = None) -> dict:
             k: v for k, v in (payload.get("stage_counts") or {}).items()
             if str(k).startswith("staged:")
         },
+        # CAL-P081's carry guard announces itself HERE and nowhere else: when a
+        # rolling re-stage is part-way through, ``build_checkpoint`` refuses to
+        # bank the futures phase and records the refusal under its own name,
+        # ``rebuild_in_flight``, rather than leaving a silent absence. Without
+        # this, "the beat advanced" and "the guard fired" are indistinguishable
+        # from outside, and only the first of those is what the fix claims.
+        "phase_checkpoint": {
+            str(p.get("name")): p.get("checkpoint_write")
+            for p in (payload.get("phases") or [])
+            if isinstance(p, dict) and p.get("name")
+        },
     }
     if served is not None:
         row["served"] = served
