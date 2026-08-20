@@ -13,6 +13,16 @@ again, transactionally, before writing a verdict (``/verdict``). The decision
 grammar is the C143 oracle, ported to ``app.utils.label_pass_lifecycle`` and
 proven byte-equivalent by ``tests/test_label_pass_lifecycle.py``. Staleness is
 NEVER inferred from title/LLM/news — only from authoritative lifecycle.
+
+#1873 / UX-P110 — the DRIFT layer, which is a different question from lifecycle.
+A market can be open, un-superseded and future-dated, so every authoritative
+lifecycle signal reads "actionable", while the CARD itself has re-priced since
+Alex looked at it. The pre-existing GET→POST race check cannot see that: it
+compares the proposal's generation, which is stamped once at birth and (by
+#1542's own item-5 fix) never mutated again, so for the drift class it is
+structurally unable to fire. Every served card therefore carries a
+``card_fingerprint`` taken at the resolution the surface renders, and ``/verdict``
+re-derives it inside the write transaction. See ``app.utils.label_pass_card``.
 """
 
 from datetime import datetime, timezone
@@ -35,6 +45,7 @@ from app.utils.eval_promote import (
     is_enabled_value,
     ttl_cutoff,
 )
+from app.utils.label_pass_card import card_fingerprint, compare_snapshot
 from app.utils.label_pass_lifecycle import (
     classify_pending,
     classify_post,
@@ -252,6 +263,34 @@ def _partition_candidates(candidates, markets, now, outcomes_by_market=None):
     }
 
 
+def _drift_outcome(posted_features: dict | None, live_card: dict) -> dict | None:
+    """Pure drift gate: ``None`` when the posted card still matches live.
+
+    Separate from ``_verdict_outcome`` for the same reason ``_card_suppression``
+    is separate from ``classify_pending`` — that one is byte-locked to the C143
+    lifecycle oracle, and card CONTENT is not a lifecycle question. Pure so the
+    refusal and the non-refusal are both provable without a database.
+    """
+    posted = (posted_features or {}).get("card_fingerprint")
+    live = live_card.get("card_fingerprint")
+    if posted == live:
+        return None
+    return {
+        "status": "conflict",
+        "reason": "card_fingerprint_missing" if not posted else "card_drifted",
+        "applied": False,
+        "writes": 0,
+        "expected": live,
+        "posted": posted,
+        "live_card": {
+            "title": live_card.get("title"),
+            "status": live_card.get("status"),
+            "probability": live_card.get("probability"),
+            "field_coherent": live_card.get("field_coherent"),
+        },
+    }
+
+
 def _verdict_outcome(proposal, market, now, *, verdict, kill_switch, duplicate, posted_gen):
     """Pure verdict-time decision (classify_post over the resolved lifecycle)."""
     row = _build_lifecycle_row(proposal, market, now, superseded=False, posted_generation=posted_gen)
@@ -286,18 +325,44 @@ async def _load_outcomes(db, market_ids):
     return by_market
 
 
+def _live_title(proposal, market) -> str | None:
+    """The card's headline, from the LIVE market where one exists (#1873).
+
+    ``DiscoverReviewDecision.item_name`` is a write-time column, stamped from
+    ``data.get("name")`` when the evaluator minted the proposal
+    (``enrich_markets.py:1898``) and never revisited. Queue 355 moved the card's
+    NUMBERS to live state and left its COPY on the snapshot, which is the half
+    Alex actually reported — the exemplar in #1873 is 2024-era text, not a wrong
+    percentage.
+
+    Measured on production 2026-08-20 the current cohort drifts on 1 of 39 and
+    only in casing (``Oscar winner:`` → ``Oscar Winner:``), because the 12-day age
+    cap already retires the old copy before it can rot. So this closes the
+    mechanism, not a live fire — and the snapshot title is kept beside it rather
+    than overwritten, for the same reason ``snapshot_at_write`` is kept.
+    """
+    if market is not None and getattr(market, "name", None):
+        return market.name
+    return getattr(proposal, "item_name", None)
+
+
 def _live_features(proposal, market, outcomes) -> dict:
     """The card Alex grades, derived from LIVE state (#1873/#1874).
 
     The write-time snapshot is not discarded — it is nested under
     ``snapshot_at_write`` so a reader can see what the evaluator originally
-    thought, and ``snapshot_disagrees`` says whether it still holds. That
+    thought, and ``snapshot_comparison`` says whether it still holds. That
     distinction is the whole finding: the pool was never stale, the SNAPSHOT
     was, and a fix that silently swapped one for the other would have hidden
     the evidence for its own necessity.
 
     The probability FIELD is withheld when it cannot be coherent, rather than
     printed as a row of 100%s (honest-empty, ruling 027).
+
+    ** THIS IS ALSO THE VERDICT PATH'S DERIVATION. ** ``/verdict`` re-runs this
+    exact function inside its write transaction and re-fingerprints the result,
+    so the card the drift gate compares against is the card the queue serves, by
+    construction rather than by two implementations agreeing (doctrine clause 5).
     """
     snapshot = dict(proposal.features or {})
     features: dict = {}
@@ -338,26 +403,25 @@ def _live_features(proposal, market, outcomes) -> dict:
         features["outcomes"] = None
         features["field_withheld_reason"] = coherence["reason"]
 
+    features["title"] = _live_title(proposal, market)
+    features["title_at_write"] = getattr(proposal, "item_name", None)
     features["snapshot_at_write"] = snapshot
-    features["snapshot_disagrees"] = _snapshot_disagrees(snapshot, features)
+    # Three-way, never a boolean — a snapshot that carried no reading is not a
+    # snapshot that drifted, and the old boolean counted it as one. See
+    # `compare_snapshot` for the production measurement that forced this.
+    comparison = compare_snapshot(snapshot.get("probability"), features.get("probability"))
+    features["snapshot_comparison"] = comparison
+    features["snapshot_disagrees"] = comparison == "drifted"
+
+    # The binding between this read and the verdict that follows it.
+    features["card_fingerprint"] = card_fingerprint(
+        title=features["title"],
+        status=features.get("status"),
+        resolution_date=features.get("resolution_date"),
+        field_coherent=features.get("field_coherent"),
+        outcomes=features.get("outcomes"),
+    )
     return features
-
-
-def _snapshot_disagrees(snapshot: dict, live: dict) -> bool:
-    """Did the write-time reading survive to serve time?
-
-    Reported rather than acted on. It is the measurement that says how much of
-    the label budget the old behaviour was burning, and it should stay visible
-    after the fix so a regression is legible.
-    """
-    old = snapshot.get("probability")
-    new = live.get("probability")
-    if old is None or new is None:
-        return old is not new
-    try:
-        return abs(float(old) - float(new)) > 0.05
-    except (TypeError, ValueError):
-        return True
 
 
 async def _load_markets(db, targets):
@@ -479,7 +543,7 @@ async def label_pass_pending(
     part = _partition_candidates(candidates, markets, now, outcomes_by_market)
 
     items = []
-    snapshot_disagreements = 0
+    snapshot_tally: dict[str, int] = {}
     for p, gen in part["actionable"]:
         # Queue 355 (#1873): derive the card from LIVE state. This used to
         # render `p.features` — the snapshot captured when the proposal was
@@ -493,10 +557,13 @@ async def label_pass_pending(
         )
         outcomes = outcomes_by_market.get(getattr(market, "id", None)) or []
         features = _live_features(p, market, outcomes)
-        if features.get("snapshot_disagrees"):
-            snapshot_disagreements += 1
+        comparison = features.get("snapshot_comparison")
+        snapshot_tally[comparison] = snapshot_tally.get(comparison, 0) + 1
         # Carry the generation in `features` so the client echoes it back on POST,
         # enabling the transactional GET→POST race check without a client change.
+        # `card_fingerprint` rides the same channel for the same reason — the
+        # client already round-trips this dict verbatim, so the drift gate needs
+        # no frontend change to arm.
         if gen is not None:
             features["generation"] = gen
 
@@ -504,7 +571,11 @@ async def label_pass_pending(
             "id": p.id,
             "item_type": p.item_type,
             "item_id": p.item_id,
-            "item_name": p.item_name,
+            # LIVE copy (#1873). `item_name_at_write` keeps the snapshot beside it
+            # rather than silently replacing it.
+            "item_name": features.get("title"),
+            "item_name_at_write": p.item_name,
+            "card_fingerprint": features.get("card_fingerprint"),
             "category": p.category,
             "archetype": p.archetype,
             "decision": p.decision,
@@ -529,15 +600,31 @@ async def label_pass_pending(
             "reasons": part["suppressed_reasons"],
         },
         "card_source": "live",
-        "snapshot_disagreements": snapshot_disagreements,
+        # Three-way, and the reason is a measurement: on 2026-08-20 the old
+        # boolean reported 33 of 39 served cards as "snapshot no longer matches
+        # live" when NOT ONE of those 39 snapshots carried a probability to
+        # compare against. It was counting absence as drift, under a note that
+        # claimed each one was a card the old behaviour had rendered wrong.
+        # `drifted` is now the only value that means what that note said.
+        "snapshot_comparison": {
+            "drifted": snapshot_tally.get("drifted", 0),
+            "agrees": snapshot_tally.get("agrees", 0),
+            "no_reading": snapshot_tally.get("no_reading", 0),
+            "no_live_reading": snapshot_tally.get("no_live_reading", 0),
+            "unreadable": snapshot_tally.get("unreadable", 0),
+        },
+        "snapshot_disagreements": snapshot_tally.get("drifted", 0),
         "generation": {"oldest": part["oldest_gen"], "newest": part["newest_gen"]},
         "stale_applied_review": stale_applied,
         "note": (
             "Cards are derived from LIVE market state; the write-time snapshot "
-            "is preserved per item under features.snapshot_at_write. "
-            "`snapshot_disagreements` counts served cards whose snapshot no "
-            "longer matches live — under the old behaviour every one of those "
-            "was a card rendered wrong."
+            "is preserved per item under features.snapshot_at_write and the "
+            "write-time title under item_name_at_write. Each served item carries "
+            "a card_fingerprint taken at the resolution the surface renders "
+            "(whole percent); /verdict re-derives it inside its write "
+            "transaction and refuses a verdict whose card moved since the read. "
+            "snapshot_comparison counts drifted / agrees / no_reading "
+            "separately — a snapshot that carried no reading never drifted."
         ),
     }
 
@@ -556,11 +643,17 @@ async def label_pass_verdict(
 ):
     """Record a human verdict on an LLM proposal, revalidated atomically.
 
-    Inside the write transaction the proposal is locked/reloaded and its current
-    lifecycle re-resolved. A proposal that went stale, was superseded, changed
-    generation, or is a duplicate submission is refused with a typed conflict and
-    NO ranking/training row is written — including a stale Skip (retirement is
-    system work, not a human label)."""
+    Inside the write transaction the proposal is locked/reloaded, its current
+    lifecycle re-resolved, and its CARD re-derived from live state. A proposal
+    that went stale, was superseded, changed generation, or is a duplicate
+    submission is refused with a typed conflict and NO ranking/training row is
+    written — including a stale Skip (retirement is system work, not a human
+    label). A proposal whose rendered card moved between the GET and this POST is
+    refused the same way (``card_drifted``); the generation check cannot catch
+    that, because generation is stamped once at birth and never mutated.
+
+    The row this writes records the card the SERVER verified, never the one the
+    request body carried."""
     _check_admin_secret(secret, request=request)
 
     if body.verdict not in ("accept", "reject", "skip"):
@@ -593,6 +686,16 @@ async def label_pass_verdict(
         )
         market = mres.scalar_one_or_none()
 
+    # Re-derive the CARD from live state, inside this transaction, with the same
+    # function the queue serves from. This is what the drift gate below compares
+    # and what the verdict row records — never the request body.
+    live_outcomes = (
+        (await _load_outcomes(db, [market.id])).get(market.id, [])
+        if market is not None
+        else []
+    )
+    live_card = _live_features(proposal, market, live_outcomes)
+
     # Duplicate detection: a verdict already exists for this target.
     dup_res = await db.execute(
         select(DiscoverReviewDecision.id).where(
@@ -623,6 +726,35 @@ async def label_pass_verdict(
             },
         )
 
+    # ── THE DRIFT GATE (#1542 / #1873) ───────────────────────────────────────
+    #
+    # Layered ON TOP of `classify_post`, never folded into it. That function is
+    # byte-locked to the C143 oracle and answers "is this proposal still
+    # current" — a LIFECYCLE question. This answers "is this still the card he
+    # graded" — a CONTENT question. The route already keeps that separation on
+    # the GET side (`_card_suppression`), and it is the same separation here.
+    #
+    # Lifecycle runs FIRST on purpose: if the market resolved between GET and
+    # POST, `lifecycle_terminal` is the true and more useful reason, and a drift
+    # refusal would mask it behind a weaker one.
+    #
+    # ** FAIL CLOSED ON AN ABSENT FINGERPRINT, and that is a deliberate break
+    # with the fail-open NULL policy #2024 shipped. ** The cases are not alike.
+    # There the signal was missing from STORED ROWS, so failing closed would have
+    # emptied the queue on deploy day for a reason no operator could fix. Here
+    # the fingerprint is minted by the GET in the same request cycle: any client
+    # that read the queue after this deploy has one, and the only way to arrive
+    # without it is to post from a page loaded before it. That is precisely the
+    # stale-tab hazard this gate exists for, and its remedy is a reload.
+    #
+    # The refusal detail carries the live card so the client can re-render
+    # without a second round trip, and so a human can see WHAT moved.
+    live_fingerprint = live_card.get("card_fingerprint")
+    drift = _drift_outcome(body.features, live_card)
+    if drift is not None:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=drift)
+
     # Actionable → apply the verdict. Determine the new decision label.
     action = proposal.decision.replace("llm_proposed_", "")
     if body.verdict == "skip":
@@ -633,9 +765,21 @@ async def label_pass_verdict(
     # #222: an Accept applies a bounded, expiring, kill-switchable term to
     # Discover ranking. Stamp the applied term onto the verdict row's features so
     # it is a real audit trail (magnitude, when, whether the switch was live).
+    #
+    # ** THE AUDIT TRAIL IS DERIVED, NOT ACCEPTED. ** This used to be
+    # `dict(body.features or proposal.features or {})` — the row that steers
+    # Discover for fourteen days recorded whatever the browser posted, with no
+    # server check on any of it, and on an empty POST the `or proposal.features`
+    # fallback recorded THE WRITE-TIME SNAPSHOT: the exact stale object #1873 is
+    # about, written into the applied trail by the code meant to prevent it.
+    # `live_card` is the card this transaction verified, so it is the only honest
+    # thing to record. The round-trip tokens are dropped — they are transport,
+    # not evidence.
     applied = False
-    features = dict(body.features or proposal.features or {})
-    features.pop("generation", None)  # the round-trip token is not part of the audit trail
+    features = dict(live_card)
+    features.pop("generation", None)
+    features.pop("card_fingerprint", None)
+    features["graded_card_fingerprint"] = live_fingerprint
     if new_decision in APPLIED_DECISIONS:
         magnitude = EVAL_PROMOTE_ADJ if action == "promote" else -EVAL_DOWNRANK_EXACT
         applied = kill_switch
@@ -651,7 +795,11 @@ async def label_pass_verdict(
     new_row = DiscoverReviewDecision(
         item_type=proposal.item_type,
         item_id=proposal.item_id,
-        item_name=proposal.item_name,
+        # The title Alex actually graded, not the one the evaluator stamped at
+        # birth. This column is the corrective few-shot the judge is re-trained
+        # on (`enrich_markets.py:1812`), so a stale headline here teaches the
+        # model against a card that was never on screen.
+        item_name=live_card.get("title") or proposal.item_name,
         category=proposal.category,
         surface="label_pass",
         archetype=proposal.archetype,

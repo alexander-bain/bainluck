@@ -159,3 +159,60 @@ export function progressLabel(state: SessionState, total: number): string {
   if (t.skipped > 0) parts.push(`${t.skipped} skipped`);
   return parts.join(" · ");
 }
+
+/**
+ * ── WHY A VERDICT CAN BOUNCE, AND WHY THE READER MUST BE TOLD (#1542/#1873) ───
+ *
+ * `/verdict` refuses, with a typed 409 and no row written, when the card moved
+ * between the GET that showed it and the POST that graded it. The session state
+ * machine already rolls the optimistic verdict back, so nothing false is
+ * recorded — but silently. Alex taps Accept, the same card returns, and nothing
+ * on screen says why. A guard whose whole purpose is to protect his label budget
+ * cannot spend one of his labels and then decline to explain itself.
+ *
+ * `adminFetchJSON` throws an Error carrying the response body, so the typed
+ * reason is recoverable without changing the shared helper. Substring, not JSON
+ * parse: the body is truncated to 300 characters and a truncated JSON does not
+ * parse — reaching for `JSON.parse` here is how this returns null in exactly the
+ * case it exists for.
+ */
+export type VerdictRefusal =
+  | "card_drifted"
+  | "card_fingerprint_missing"
+  | "lifecycle_terminal"
+  | "lifecycle_past"
+  | "market_missing"
+  | "proposal_superseded"
+  | "duplicate_verdict"
+  | "posted_generation_mismatch";
+
+const REFUSALS: VerdictRefusal[] = [
+  "card_drifted",
+  "card_fingerprint_missing",
+  "lifecycle_terminal",
+  "lifecycle_past",
+  "market_missing",
+  "proposal_superseded",
+  "duplicate_verdict",
+  "posted_generation_mismatch",
+];
+
+export function verdictRefusal(err: unknown): VerdictRefusal | null {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  if (!message.includes("409")) return null;
+  return REFUSALS.find((r) => message.includes(r)) ?? null;
+}
+
+/** What to tell the person whose keystroke was refused. */
+export function refusalMessage(reason: VerdictRefusal): string {
+  switch (reason) {
+    case "card_drifted":
+      return "This question re-priced while you were reading it — nothing was recorded. The refreshed card is below.";
+    case "card_fingerprint_missing":
+      return "This page was loaded before the card it posted — nothing was recorded. Reload to grade the current card.";
+    case "duplicate_verdict":
+      return "This card already has a verdict — nothing was recorded.";
+    default:
+      return `This card went stale before the verdict landed (${reason}) — nothing was recorded.`;
+  }
+}
