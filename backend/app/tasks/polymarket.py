@@ -18,6 +18,7 @@ from app.utils.feed_market_quality import (
     is_fabricated_midpoint,
 )
 from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
+from app.utils.price_change_stamp import price_changed_at_value  # #2024
 
 logger = logging.getLogger(__name__)
 
@@ -1024,6 +1025,11 @@ async def _process_event_batch(
                             "probability_change_24h": prob - FuturesOutcome.current_probability,
                             "volume": sub_vol,
                             "last_updated": func.now(),
+                            "price_changed_at": price_changed_at_value(  # #2024
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                prob,
+                            ),
                         }
                         if sub_has_open:
                             over_update["opening_probability"] = func.coalesce(
@@ -1086,6 +1092,11 @@ async def _process_event_batch(
                                 "rank": 2,
                                 "volume": sub_vol,
                                 "last_updated": func.now(),
+                                "price_changed_at": price_changed_at_value(  # #2024
+                                    FuturesOutcome.current_probability,
+                                    FuturesOutcome.price_changed_at,
+                                    under_prob,
+                                ),
                             }
                             if sub_under_has_open:
                                 under_update["opening_probability"] = func.coalesce(
@@ -1245,6 +1256,11 @@ async def _process_event_batch(
                         "probability_change_24h": prob - FuturesOutcome.current_probability,
                         "rank_change_24h": FuturesOutcome.rank - rank,
                         "last_updated": func.now(),
+                        "price_changed_at": price_changed_at_value(  # #2024
+                            FuturesOutcome.current_probability,
+                            FuturesOutcome.price_changed_at,
+                            prob,
+                        ),
                     }
                     if has_real_trading:
                         update_set["opening_probability"] = func.coalesce(

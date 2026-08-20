@@ -32,6 +32,24 @@ export function pct(p: number): string {
   return `${Math.round(p * 100)}%`;
 }
 
+/**
+ * THE ONE PREGAME PHRASING, and it lives here so that there is exactly one of
+ * it (UX-P107, Alex's ruling on the capture).
+ *
+ * Takes the OVER-SIDE probability and states it as what it is: the chance the
+ * question happens. Never `1 - p`, never a direction word, never a market.
+ *
+ * A function rather than a template inlined at three call sites — the bar's
+ * visible cell, the bar's aria-label, and the detail view's screen-reader line
+ * — because the defect this ruling fixes was born from exactly that kind of
+ * duplication: the direction was computed in one place and the number in
+ * another, and they drifted apart inside four words. #1650's lesson, applied
+ * before the third vocabulary exists rather than after.
+ */
+export function chanceLabel(overProbability: number): string {
+  return `${pct(overProbability)} chance`;
+}
+
 /** Signed travel in points, the mock's "−40" pill. In-game only. */
 export function signedTravelPoints(row: DivergenceRow): string {
   const pts = Math.round((row.current - row.pregameMark) * 100);
@@ -40,9 +58,21 @@ export function signedTravelPoints(row: DivergenceRow): string {
 }
 
 /**
- * Distance from the pregame mark to the outcome, in points. Post-game only, and
- * unsigned on purpose — the direction is already stated in words next to it,
- * and a "+93" reads as a price move, which is the thing this replaces.
+ * Distance from the pregame mark to the outcome, in points.
+ *
+ * ── NO LONGER RENDERED VISIBLY (UX-P107, Alex ruling on the P106 capture) ────
+ *
+ * It used to sit at the right edge of every settled row as an unlabelled grey
+ * `93 pts`, and Alex's first read of it is the whole case: an unlabelled unit
+ * invites exactly the misread it got. Ruling 5 — *nothing beats unhelpful*. The
+ * sentence beside it already carries the information in words ("marked 93% —
+ * and it missed"), and the card stays RANKED by surprise; it is simply no
+ * longer annotated with the ranking key.
+ *
+ * It survives for the screen-reader line in the detail view, where it is
+ * LABELLED ("93 pts from the mark") and therefore does not have the failure
+ * mode the ruling is about — a sighted reader saw a bare number in a column, a
+ * screen reader hears a number with its referent attached.
  */
 export function surprisePoints(row: DivergenceRow): string | null {
   if (row.surprise == null) return null;
@@ -100,7 +130,10 @@ function ResolvedMark({ row }: { row: DivergenceRow }) {
         marked {pct(row.pregameMark)} <span aria-hidden="true">&rarr;</span>{" "}
         <span className={`font-semibold ${tone}`}>{label}</span>
       </span>
-      <span className="text-text-secondary">{surprisePoints(row)}</span>
+      {/* UX-P107: the unlabelled "93 pts" that used to sit here is GONE. See
+          `surprisePoints`. The row still says everything it said — marked at
+          93%, and it missed — and the card is still ordered by the number that
+          is no longer printed. */}
     </div>
   );
 }
@@ -132,20 +165,35 @@ function ResolvedMark({ row }: { row: DivergenceRow }) {
  * opened — not the opening capture. A first draft quoted the opening mark and
  * the rendered capture showed the cost immediately: Schwarber's row read
  * "opened at 27% — it's 55% now" above a bar saying "market says NO, 73%".
+ *
+ * ── ONE DIRECTION, AND NO "MARKET SAYS" (UX-P107, Alex ruling on the capture) ──
+ *
+ * The shipped row printed a direction word and the probability OF THAT
+ * DIRECTION, which meant the number silently changed meaning row to row:
+ * Schwarber's 55% was the chance it happens, and the very next row's 95% was
+ * the chance it does NOT. Alex's first read caught both halves of that:
+ *
+ *   1. ** THE NUMBER FLIPS DIRECTION DOWN THE PAGE. ** A column of percentages
+ *      where alternate entries measure opposite events is unreadable, and it is
+ *      unreadable in the specific way that does not announce itself — every
+ *      individual row is correct. Every row now quotes the SAME quantity: the
+ *      chance the question HAPPENS. Stowers reads 5% chance, Schwarber 55%.
+ *   2. ** "NO" READ AS A VERDICT ** — the thing didn't happen — on a page where
+ *      nothing has happened yet, and where the site's settled vocabulary really
+ *      does put a verdict in that position (#1650). Dropped entirely.
+ *   3. ** "MARKET SAYS" IS OFF-DOCTRINE. ** *The blend is the product* — this is
+ *      our one number for the question, not a market's opinion we are relaying.
+ *      Whatever labels the number may not attribute it to a market, so it is
+ *      labelled by the only thing it is: a chance.
+ *
+ * The bar itself is UNCHANGED, as ruled — still centred on the coin flip, still
+ * growing out to the side it favours, still equal length for 7% and 93%. It
+ * carries the direction as a shape; the number carries it as one consistent
+ * quantity; nothing carries it as a word.
  */
 function ScriptMark({ row }: { row: DivergenceRow }) {
   const willHappen = row.scriptSide === "will";
   const tossUp = row.scriptSide === "toss_up";
-
-  // The probability OF THE STATED DIRECTION, read off the SAME number the
-  // direction was typed from.
-  //
-  // The second render caught this too: after `scriptSide` moved to `current`,
-  // this line still read `pregameMark`, so Schwarber's row printed "market says
-  // YES — 27%" — the direction from the live price and the number from the
-  // opening capture, contradicting each other inside four words. Deriving both
-  // from one value is what makes that unexpressible rather than merely fixed.
-  const stated = willHappen ? row.current : 1 - row.current;
 
   // Half-width, because the bar spans from the centre to one side only.
   //
@@ -159,24 +207,16 @@ function ScriptMark({ row }: { row: DivergenceRow }) {
     : willHappen
       ? "bg-accent-live"
       : "bg-accent-danger";
-  const textTone = tossUp
-    ? "text-text-muted"
-    : willHappen
-      ? "text-accent-live"
-      : "text-accent-danger";
 
   return (
     <div className="mt-1.5">
       <div
         className="relative h-2 rounded-full bg-surface-border/40"
         role="img"
-        aria-label={
-          tossUp
-            ? `${row.label}: a coin flip, the market has no view`
-            : `${row.label}: the market says this ${
-                willHappen ? "will" : "will not"
-              } happen, ${pct(stated)}`
-        }
+        // ONE DIRECTION HERE TOO, and it is the same string the sighted reader
+        // gets. The aria-label used to be the second place the direction was
+        // spelled out in words, so it was the second place the flip could hide.
+        aria-label={`${row.label}: ${chanceLabel(row.current)}`}
       >
         {/* The coin flip. Every claim on the page is measured from here. */}
         <div className="absolute left-1/2 -top-0.5 h-3 w-px -translate-x-1/2 bg-text-muted" />
@@ -190,20 +230,19 @@ function ScriptMark({ row }: { row: DivergenceRow }) {
           }
         />
       </div>
-      <div className="mt-1 flex items-baseline justify-between gap-2 text-[11px] tabular-nums">
-        <span className="text-text-muted">
-          {tossUp ? (
-            "coin flip"
-          ) : (
-            <>
-              market says{" "}
-              <span className={`font-semibold ${textTone}`}>
-                {willHappen ? "YES" : "NO"}
-              </span>
-            </>
-          )}
+      {/* ONE CELL, because there is nothing honest to put in the other one.
+          The question is named above the bar, the bar draws the conviction, and
+          this states the one quantity every row on the page states. A left-hand
+          legend would either attribute the number to a market or repeat the
+          bar — ruling 5, nothing beats unhelpful.
+
+          NEUTRAL TONE, deliberately: colour lives on the bar, where it means
+          "which side of the coin flip". On the number it would read as a
+          judgement about the number, which is the verdict problem again. */}
+      <div className="mt-1 flex justify-end text-[11px] tabular-nums">
+        <span className="text-text-secondary font-medium">
+          {chanceLabel(row.current)}
         </span>
-        {!tossUp && <span className="text-text-secondary font-medium">{pct(stated)}</span>}
       </div>
     </div>
   );

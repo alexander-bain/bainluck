@@ -9,6 +9,7 @@ from sqlalchemy import func
 
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
+from app.utils.price_change_stamp import price_changed_at_value  # #2024
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +333,11 @@ async def _poll_futures_odds():
                                     "current_american_odds": american,
                                     "rank": rank,
                                     "last_updated": func.now(),
+                                    "price_changed_at": price_changed_at_value(  # #2024
+                                        FuturesOutcome.current_probability,
+                                        FuturesOutcome.price_changed_at,
+                                        prob,
+                                    ),
                                 }
                             ).returning(FuturesOutcome.id)
 

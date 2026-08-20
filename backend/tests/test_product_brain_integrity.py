@@ -623,11 +623,16 @@ def test_ruling_numbers_are_unique() -> None:
 #: above — three rulings in one push, so the delta anyone would have GUESSED is wrong twice over.
 #: COUNTED: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 101.
 #:
-#: Raised to **102** by the INT-095 merge of `program/calibration-75` (CAL-P078), which
-#: banks **103** ("a price captured after the answer is not a price"). COUNTED with
-#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 102 — never a delta off 101, because
-#: two more lanes are mid-merge in this same push and a guessed delta is wrong twice over.
-MINIMUM_BANKED_RULINGS = 103
+#: Raised to **106** by the INT-095 three-lane merge, in ONE push: calibration-75 banks **103**
+#: ("a price captured after the answer is not a price"), latency-69 banks **104** ("hold the TTL
+#: at 65"), and ux-94 banks **105**, **106** and **107**. Five rulings across three lanes, and
+#: every lane arrived carrying a floor that was correct about ITSELF and wrong about the merge:
+#: latency wrote 99, calibration wrote 100, ux wrote 101, master already held 101. No two of
+#: those agree and none of them is the answer. COUNTED, three times — once after each merge —
+#: with `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'`: 102 -> 103 -> 106. The index runs
+#: 102..109 with no gap and no duplicate; 108 and 109 were INT-094's, which is why the numbers
+#: are not contiguous with the lanes' own. Ruling 088 — count, never add, never take a side.
+MINIMUM_BANKED_RULINGS = 106
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

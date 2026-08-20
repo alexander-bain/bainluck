@@ -248,13 +248,19 @@ def test_the_playoff_grid_really_does_drop_a_stale_outcome() -> None:
     assert "continue" in window, "the grid's stale gate no longer DROPS the outcome"
 
 
-def test_futures_outcome_has_no_column_that_answers_price_freshness() -> None:
+def test_futures_outcome_timestamp_columns() -> None:
     """#2024's central claim, held to the schema rather than to memory.
 
-    `FuturesOutcome` carries no timestamp except `opening_captured_at` and the
-    touch-stamp itself, so there is nothing correct for a consumer to switch to.
-    That is why the fix is a new column and not a reader change — and when the
-    column lands, this test is the one that should red.
+    ── THIS TEST RED WHEN THE COLUMN LANDED, WHICH IS WHAT IT WAS FOR ─────────
+
+    UX-P106 wrote it asserting `FuturesOutcome` had NOTHING that answers price
+    freshness — no timestamp but `opening_captured_at` and the touch-stamp — and
+    said in its own docstring: *"when the column lands, this test is the one
+    that should red."* UX-P107 landed it and it did.
+
+    So it flips rather than being deleted. The claim it now pins is the one that
+    replaced it: `price_changed_at` exists, and `last_updated` is still there
+    beside it, unnarrowed, because `routes/playoffs.py` gates the grid on it.
     """
     from app.models.models import FuturesOutcome
 
@@ -263,8 +269,158 @@ def test_futures_outcome_has_no_column_that_answers_price_freshness() -> None:
         for c in FuturesOutcome.__table__.columns
         if str(c.type).startswith("TIMESTAMP") or "DateTime" in str(type(c.type))
     }
-    assert timestamps == {"opening_captured_at", "last_updated"}, (
-        "FuturesOutcome's timestamp columns changed. If a `price_changed_at` "
-        "landed, #2024's option 2 is available and the poll writers should stop "
-        f"overloading `last_updated`. found={sorted(timestamps)}"
+    assert timestamps == {
+        "opening_captured_at",
+        "last_updated",
+        "price_changed_at",
+    }, f"FuturesOutcome's timestamp columns changed. found={sorted(timestamps)}"
+
+    # NULLABLE, and it must stay so. The column is populated forward by the
+    # polls; a NOT NULL with a server_default would stamp every historical row
+    # with the deploy time — a fabricated answer to "when did this price last
+    # move", which is gotcha #53 written into a schema.
+    assert FuturesOutcome.__table__.c.price_changed_at.nullable is True
+    assert FuturesOutcome.__table__.c.price_changed_at.server_default is None
+
+
+#: Every price-writing site that must maintain `price_changed_at`, MEASURED.
+#: A census rather than a boolean for the same reason as `POLL_STAMP_COUNTS`:
+#: a new price writer that forgets the stamp is a provider whose column quietly
+#: goes stale while the other two look healthy.
+PRICE_CHANGE_STAMPERS = {
+    "app/tasks/kalshi.py": 2,
+    "app/tasks/polymarket.py": 3,
+    "app/tasks/futures.py": 1,
+}
+
+
+def test_every_price_writer_maintains_price_changed_at() -> None:
+    """The writer half of #2024's option 2.
+
+    Pairs with `test_write_side_is_exactly_the_known_poll_stampers`: that census
+    counts the UNCONDITIONAL touch-stamps (which are correct and must stay),
+    this one counts the CONDITIONAL price-change stamps beside them. The two
+    together are the statement that the columns now mean different things.
+    """
+    found = {}
+    for f in _src_files("app/tasks"):
+        n = _read(f).count("price_changed_at_value(")
+        if n:
+            found[f] = n
+    assert found == PRICE_CHANGE_STAMPERS, {
+        "writer_missing_the_stamp": sorted(set(PRICE_CHANGE_STAMPERS) - set(found)),
+        "unexpected_new_writer": sorted(set(found) - set(PRICE_CHANGE_STAMPERS)),
+        "count_drift": {
+            k: (PRICE_CHANGE_STAMPERS.get(k), found.get(k))
+            for k in set(found) | set(PRICE_CHANGE_STAMPERS)
+            if PRICE_CHANGE_STAMPERS.get(k) != found.get(k)
+        },
+        "why": "#2024 — a price writer without the change-stamp leaves the column stale for that provider only",
+    }
+
+
+def test_there_is_exactly_one_change_stamp_predicate() -> None:
+    """#1951's rule, applied before the second copy exists rather than after.
+
+    Five call sites across three poll tasks. A second inlined `case(...)`
+    comparing a price would be a predicate free to drift — and a drifted
+    change-detector does not throw, it just stops stamping.
+    """
+    import re
+
+    inline = [
+        f
+        for f in _src_files("app/tasks")
+        if re.search(r"price_changed_at[\"']?\s*[:=]\s*case\(", _read(f))
+    ]
+    assert inline == [], f"inline change-stamp predicate in {inline}; use price_change_stamp"
+
+
+def test_the_index_is_not_in_the_migration_chain() -> None:
+    """Gotcha #31, as a predicate.
+
+    UX-P106 measured `Seq Scan on futures_outcomes, total cost 156,591` on the
+    sampler's own price-age predicate — the column has no index. The fix is a
+    manual `CREATE INDEX CONCURRENTLY` run by the Integrator, NOT a migration:
+    concurrent index builds hang Heroku's ~5-minute release phase (the May 22
+    `odds_snapshots` outage) and a non-concurrent one locks the table against
+    the live pollers.
+
+    The pull to "just add it to the migration while we're here" is exactly what
+    caused that outage, so it is checked rather than trusted. The DDL is
+    recorded in the migration's docstring for whoever runs it.
+    """
+    import re
+    from pathlib import Path
+
+    #: ── A RATCHET, NOT A CLEAN GATE, AND THE REASON IS A REAL FINDING ────────
+    #:
+    #: Writing this guard turned up TWO MIGRATIONS ALREADY IN THE CHAIN that do
+    #: exactly what gotcha #31 forbids — `op.execute("COMMIT")` to escape the
+    #: transaction, then `CREATE INDEX CONCURRENTLY` — on `futures_markets` and
+    #: `events`, two of the largest tables in the database.
+    #:
+    #: They are grandfathered rather than fixed. Gotcha #8: a migration that has
+    #: already run on Heroku must never be altered, and these have. The risk they
+    #: carry now is not a re-run, it is PRECEDENT — they are what the next person
+    #: greps for and copies, which is one of the ways #31 keeps recurring. So
+    #: they are named here with the reason, and a THIRD one reds.
+    #:
+    #: (`4623658a2704` is deliberately absent: its body is `pass` and the DDL
+    #: lives in a comment for manual application — the pattern this queue
+    #: followed, and the one that is correct.)
+    GRANDFATHERED = {"add_market_tags.py", "add_taxonomy_tags.py"}
+
+    def _executed(src: str) -> str:
+        """Source with docstrings and comments removed — what actually runs.
+
+        A first draft split on `\"\"\"` and took the tail, which flagged
+        `4623658a2704` for RECORDING the DDL in a comment. A guard that cannot
+        tell an executed statement from a written-down one teaches the next
+        reader to stop writing the deploy step down.
+        """
+        src = re.sub(r'"""(?:.|\n)*?"""', "", src)
+        src = re.sub(r"'''(?:.|\n)*?'''", "", src)
+        return "\n".join(re.sub(r"#.*$", "", line) for line in src.split("\n"))
+
+    versions = Path(BACKEND / "alembic/versions")
+    offenders = sorted(
+        p.name
+        for p in versions.glob("*.py")
+        if p.name not in GRANDFATHERED and re.search(r"CONCURRENTLY", _executed(p.read_text(encoding="utf-8")), re.I)
     )
+    assert offenders == [], (
+        f"CONCURRENTLY index build inside a migration: {offenders}. Gotcha #31 — "
+        "this hangs Heroku's release phase and takes the app down (May 22, "
+        "odds_snapshots). Record the DDL in the docstring and apply it manually."
+    )
+
+    migration = _read("alembic/versions/add_outcome_price_changed_at.py")
+    assert "ix_futures_outcomes_last_updated" in migration, (
+        "the manual index DDL left the migration's docstring — it is the only "
+        "place the deploy step is written down"
+    )
+    body = migration.split('"""')[-1]
+    assert "create_index" not in body, "the index was moved into the migration body"
+
+
+def test_the_reader_switch_is_still_OWED() -> None:
+    """What #2024 has NOT finished, asserted so it cannot be forgotten.
+
+    The column and its writers landed in UX-P107. `admin_judgments.py` — the
+    sampler #2024 was found through, and the consumer that is WRONG today — is
+    still reading `last_updated`. It cannot simply be repointed: the new column
+    is populated forward, so every row not yet re-polled reads NULL, and a bare
+    `price_changed_at >= cutoff` would silently empty the sampler.
+
+    That switch needs its own decision about what NULL means, and this test is
+    the reminder. When it lands, this test reds and gets deleted — deliberately
+    the same shape as the test above it, which is the one UX-P106 left for
+    UX-P107 and which worked.
+    """
+    assert "last_updated" in _read("app/routes/admin_judgments.py"), (
+        "admin_judgments.py stopped reading `last_updated` — if it moved to "
+        "`price_changed_at`, check it handles NULL for never-re-polled rows, "
+        "then delete this test."
+    )
+    assert "price_changed_at" not in _read("app/routes/admin_judgments.py")
