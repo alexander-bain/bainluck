@@ -508,12 +508,22 @@ def auto_create_commence_time(market, fallback):
     2026-08-20: ``KXLOLGAME-26AUG210500GAMTSW`` carries ticker time
     ``2026-08-21 05:00Z`` and ``market.commence_time`` ``2026-08-23 09:00Z`` —
     **two days apart**, and every event auto-created from it was stamped with the
-    close time. Prefer the ticker; fall back only when there is no parseable one
+    close time. Prefer the ticker; fall back when there is no parseable one
     (Polymarket has no ticker at all, so it always falls back).
+
+    Deliberately NARROW: the ticker time is used **only when the fallback
+    actually disagrees with it**, i.e. only where the loop exists. A market whose
+    `commence_time` already agrees with its ticker is the healthy majority and is
+    left exactly as it was — a fix for a runaway must not quietly re-time every
+    event it passes on the way. (Date-only tickers resolve to midnight, which is
+    coarser than a close time that happens to be right; that trade is only worth
+    taking on rows that would otherwise re-create themselves forever.)
     """
     ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if ticker_time is None:
         return fallback, None
+    if not auto_create_self_refutes(market, fallback):
+        return fallback, None  # already coherent — change nothing
     return ticker_time, "kalshi_ticker"
 
 

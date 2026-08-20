@@ -73,6 +73,22 @@ def test_the_created_row_no_longer_self_refutes():
     assert auto_create_self_refutes(market, commence) is False
 
 
+def test_a_coherent_kalshi_market_is_left_completely_alone():
+    """The blast radius, asserted: a fix for a runaway must not re-time everything.
+
+    When `market.commence_time` already agrees with the ticker there is no loop
+    to break, so the row keeps its own (often more precise) time and reports no
+    special provenance. Only markets that would otherwise re-create themselves
+    forever get re-timed.
+    """
+    coherent = _SPECIMEN_TICKER_TIME + timedelta(minutes=30)  # inside the window
+    market = _Market(_SPECIMEN_TICKER, commence_time=coherent)
+
+    commence, source = auto_create_commence_time(market, coherent)
+    assert commence == coherent
+    assert source is None
+
+
 def test_a_market_with_no_parseable_ticker_keeps_the_fallback():
     """Polymarket has no ticker at all — it must not be broken by the Kalshi fix."""
     fallback = datetime(2026, 8, 23, 9, 0, tzinfo=timezone.utc)
