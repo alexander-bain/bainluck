@@ -141,12 +141,23 @@ def beat_row(record: dict, served: dict | None = None) -> dict:
             k: v for k, v in (payload.get("stage_counts") or {}).items()
             if str(k).startswith("staged:")
         },
-        # CAL-P081's carry guard announces itself HERE and nowhere else: when a
-        # rolling re-stage is part-way through, ``build_checkpoint`` refuses to
-        # bank the futures phase and records the refusal under its own name,
-        # ``rebuild_in_flight``, rather than leaving a silent absence. Without
-        # this, "the beat advanced" and "the guard fired" are indistinguishable
-        # from outside, and only the first of those is what the fix claims.
+        # CAL-P081's carry guard announces itself in ``banked`` — the top-level
+        # map ``build_checkpoint`` returns — as ``{"futures": "rebuild_in_flight"}``.
+        #
+        # 🔴 IT IS NOT IN ``phases[].checkpoint_write``, and reading it there is
+        # a mistake this file made first. ``precompute_calibration`` sets that
+        # per-phase field to ``checkpoint_write if banked[phase] == "stored"
+        # else "not_attempted"``, so it collapses to two values and can NEVER
+        # carry a refusal reason. Both are kept: ``banked`` is the guard's
+        # verdict, ``phase_checkpoint`` is what actually reached the checkpoint.
+        #
+        # The distinction matters more than it looks. ``build_checkpoint`` is
+        # only called when the terminal is NOT ``complete`` — a completing beat
+        # CLEARS the checkpoint instead — so the guard can only ever fire on a
+        # beat that died AFTER the futures phase finished. A run of healthy
+        # completing beats therefore proves the rebuild is advancing and proves
+        # nothing at all about the guard.
+        "banked": payload.get("banked"),
         "phase_checkpoint": {
             str(p.get("name")): p.get("checkpoint_write")
             for p in (payload.get("phases") or [])

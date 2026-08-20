@@ -260,26 +260,51 @@ def test_beat_row_keeps_the_carry_and_the_gauges_the_grader_reads():
     assert row["served"]["rebuild_units_banked"] == 20
 
 
-def test_beat_row_carries_the_carry_guards_own_verdict():
-    """CAL-P081's guard writes ``rebuild_in_flight`` as the futures phase's
-    ``checkpoint_write``. Dropping it would leave "the beat advanced" and "the
-    guard fired" indistinguishable from outside — and only the first of those is
-    what `4dc4fa21` claims. A silent absence would read as the comfortable one."""
+def test_the_carry_guards_verdict_is_read_from_banked_not_from_the_phases_block():
+    """CAL-P081's guard writes ``{"futures": "rebuild_in_flight"}`` into the
+    ledger's top-level ``banked`` map.
+
+    It is NOT in ``phases[].checkpoint_write``, and this reducer read it there
+    first. ``precompute_calibration`` sets that per-phase field to
+    ``checkpoint_write if banked[phase] == "stored" else "not_attempted"`` — two
+    values, neither of which can be a refusal reason. Reading the guard off it
+    would have reported "the guard never fired" on every beat forever, which is
+    the comfortable answer and a false one.
+    """
     record = {
         "generation": 1, "generated_at": _HOURS[21], "complete": True,
-        "payload": {"phases": [
-            {"name": "futures", "checkpoint_write": "rebuild_in_flight"},
-            {"name": "sports", "checkpoint_write": "not_attempted"},
-            {"name": "diagnostics"},
-        ]},
+        "payload": {
+            "banked": {"futures": "rebuild_in_flight", "sports": "stored"},
+            "phases": [
+                {"name": "futures", "checkpoint_write": "not_attempted"},
+                {"name": "sports", "checkpoint_write": "ok"},
+                {"name": "diagnostics"},
+            ],
+        },
     }
     row = beat_row(record)
-    assert row["phase_checkpoint"]["futures"] == "rebuild_in_flight"
-    assert row["phase_checkpoint"]["sports"] == "not_attempted"
+    assert row["banked"]["futures"] == "rebuild_in_flight", "the guard's own verdict"
+    assert row["phase_checkpoint"]["futures"] == "not_attempted", (
+        "and the per-phase field really does read not_attempted on the same beat "
+        "— which is exactly why it cannot be the source"
+    )
+    assert row["phase_checkpoint"]["sports"] == "ok"
     assert row["phase_checkpoint"]["diagnostics"] is None, (
         "a phase with no checkpoint_write reports None, not a missing key — "
         "absence of the field and absence of the phase are different facts"
     )
+
+
+def test_an_empty_banked_map_is_kept_as_empty_and_not_as_missing():
+    """A completing beat CLEARS the checkpoint instead of building one, so
+    ``banked`` is ``{}`` — the guard was never consulted. That is a different
+    fact from a ledger too old to have the key at all, and flattening the two
+    would let "not exercised" read as "exercised and did not fire"."""
+    present = beat_row({"generation": 1, "generated_at": _HOURS[21],
+                        "payload": {"banked": {}}})
+    absent = beat_row({"generation": 2, "generated_at": _HOURS[22], "payload": {}})
+    assert present["banked"] == {}
+    assert absent["banked"] is None
 
 
 def test_beat_row_survives_a_ledger_with_no_phases_block():

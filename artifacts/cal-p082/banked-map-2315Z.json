@@ -1,0 +1,12 @@
+{
+  "generation": 1787268887906,
+  "generated_at": "2026-08-20 23:34:47.906233+00:00",
+  "banked": {},
+  "carried": [],
+  "checkpoint_action": "fresh",
+  "checkpoint_write": "ok",
+  "terminal": "complete",
+  "captured_at": "2026-08-20T23:40:04.323116+00:00",
+  "note": "Read raw because the sampler that produced beats.jsonl for this beat was still reading the guard verdict off phases[].checkpoint_write. Corrected in the same window; from the 00:15Z beat onward beats.jsonl carries `banked` itself.",
+  "what_it_means": "banked == {} on a `complete` terminal is EXPECTED and is NOT the guard declining to fire. precompute_calibration only calls build_checkpoint() when the terminal is not `complete` \u2014 a completing beat calls clear_main_checkpoint() instead \u2014 so the carry guard was never consulted on this beat and cannot have been."
+}

@@ -87,5 +87,56 @@
     "Every deploy that lands between :15 and :35 kills the in-flight beat mid-loop. Six releases landed between 16:16Z and 20:07Z on 2026-08-20; each one truncates a beat, and a truncated beat banks fewer units (the cursor checkpoints per unit, so nothing banked is lost \u2014 but nothing further is gained either).",
     "staged:window_stop:unit_too_large fired on the 21:15Z beat with 400,151 ms of window left: the admission gate refused the 8th unit because the evidence said it would not fit. Unit cost is uneven (mean 131,140 ms vs worst 341,668 ms), so the tail of the partition may bank more slowly than the mean predicts."
   ],
-  "how_it_will_be_reported": "The promotion beat itself, quoted from the ledger: staged:units_banked reaching 128, served_at re-stamped, staged:units_drifted resetting to 0, and tolerance_pp on /api/calibration reading BELOW 100.0. The bound's first descent is the number Fable asked for, and it is a single reading on a single beat."
+  "how_it_will_be_reported": "The promotion beat itself, quoted from the ledger: staged:units_banked reaching 128, served_at re-stamped, staged:units_drifted resetting to 0, and tolerance_pp on /api/calibration reading BELOW 100.0. The bound's first descent is the number Fable asked for, and it is a single reading on a single beat.",
+  "REFRESHED_ON_THE_2315Z_BEAT": {
+    "captured_at": "2026-08-20T23:41:07.610930+00:00",
+    "state": {
+      "rebuild_units_banked": 32,
+      "planned": 128,
+      "remaining": 96,
+      "staged:beats_to_publish": 11,
+      "staged:unit_ms_mean": 125315,
+      "staged:unit_ms_worst": 311422,
+      "staged:window_left_ms": 290446,
+      "staged:units_drifted": 18,
+      "staged:units_drift_checkable": 24
+    },
+    "observed_units_per_beat": [
+      7,
+      5,
+      8
+    ],
+    "scenarios": [
+      {
+        "label": "the BUILD's own projection (staged:beats_to_publish = 11)",
+        "rate": 8.73,
+        "beats": 11,
+        "eta_utc": "2026-08-21T10:15:00+00:00",
+        "eta_pdt": "2026-08-21 03:15 PDT"
+      },
+      {
+        "label": "last beat alone (8 units)",
+        "rate": 8,
+        "beats": 12,
+        "eta_utc": "2026-08-21T11:15:00+00:00",
+        "eta_pdt": "2026-08-21 04:15 PDT"
+      },
+      {
+        "label": "mean of the 3 graded beats (7, 5, 8)",
+        "rate": 6.67,
+        "beats": 15,
+        "eta_utc": "2026-08-21T14:15:00+00:00",
+        "eta_pdt": "2026-08-21 07:15 PDT"
+      },
+      {
+        "label": "worst observed beat (5 units \u2014 the one a deploy killed)",
+        "rate": 5,
+        "beats": 20,
+        "eta_utc": "2026-08-21T19:15:00+00:00",
+        "eta_pdt": "2026-08-21 12:15 PDT"
+      }
+    ],
+    "headline": "Between ~10:15Z and ~19:15Z Thu 2026-08-21 (03:15\u201312:15 PDT). CENTRAL ESTIMATE ~14:15Z / 07:15 PDT \u2014 15 beats at the 6.67-per-beat mean the three graded beats actually achieved. Unchanged in substance from the pre-merge estimate (06:15 PDT) despite 12 more units banked, because the realised rate came in at 6.67 rather than the build's optimistic 9.",
+    "note": "staged:beats_to_publish moved 12 -> 6 -> 11 across the three beats. It is recomputed from THAT beat's own unit_ms_mean, so it swings with unit size (131,140 -> 64,354 -> 125,315 ms). Read it as one beat's opinion, not a trend."
+  }
 }

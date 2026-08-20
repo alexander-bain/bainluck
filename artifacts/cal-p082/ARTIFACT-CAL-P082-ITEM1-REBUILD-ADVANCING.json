@@ -1,0 +1,76 @@
+{
+  "queue": "CAL-P082",
+  "item": 1,
+  "issues": [
+    2007,
+    2052
+  ],
+  "captured_at": "2026-08-20T23:41:07.610085+00:00",
+  "bar": ">= 1 unit banked per unit-loop beat, verified across >= 3 consecutive beats from the ledger \u2014 not one.",
+  "VERDICT": "PASS",
+  "instrument": "backend/scripts/sample_calibration_beats.py --grade  (exit code 0)",
+  "evidence_file": "artifacts/cal-p082/beats.jsonl",
+  "grade": {
+    "pass": true,
+    "reason": "advancing",
+    "detail": "units_this_beat across 3 adjacent beats: [7, 5, 8]",
+    "graded_window": [
+      1787261587576,
+      1787264491343,
+      1787268887906
+    ],
+    "carried_in_window": [
+      [],
+      [],
+      []
+    ],
+    "beats_observed": 3,
+    "minimum": 3,
+    "beats": [
+      {
+        "generation": 1787261587576,
+        "generated_at": "2026-08-20 21:33:07.576173+00:00",
+        "units_this_beat": 7,
+        "units_banked": 20,
+        "carried": [],
+        "terminal": "complete"
+      },
+      {
+        "generation": 1787264491343,
+        "generated_at": "2026-08-20 22:21:31.343433+00:00",
+        "units_this_beat": 5,
+        "units_banked": 24,
+        "carried": [],
+        "terminal": "cancelled"
+      },
+      {
+        "generation": 1787268887906,
+        "generated_at": "2026-08-20 23:34:47.906233+00:00",
+        "units_this_beat": 8,
+        "units_banked": 32,
+        "carried": [],
+        "terminal": "complete"
+      }
+    ]
+  },
+  "deploy": {
+    "release": "v3881",
+    "commit": "ec636bae",
+    "merge": "INT-102 program/calibration-78",
+    "created_at": "2026-08-20T22:20:56Z"
+  },
+  "beats_are_ADJACENT_not_merely_three_rows": "21:33:07Z -> 22:21:31Z = 2,904 s and 22:21:31Z -> 23:34:47Z = 4,396 s, both within 1,500 s of the 3,600 s cadence. Keyed on the ledger's own `generation`, so no beat is counted twice and an unsampled beat would have read GAP -> unmeasurable rather than closing up.",
+  "PARTIAL_AND_STATED": {
+    "what_is_proved": "The rebuild advances every beat: 7, 5, 8 units, banked 20 -> 24 -> 32 of 128, no beat carried the futures phase, and the middle beat banked 5 units even though a deploy killed it 391 s in. That is item 1's bar, met on the ledger.",
+    "what_is_NOT_proved": "THE CARRY GUARD ITSELF HAS NOT FIRED, AND COULD NOT HAVE. `4dc4fa21`'s withhold lives in `build_checkpoint()`, and `precompute_calibration` only calls that when the terminal is NOT `complete` \u2014 a completing beat calls `clear_main_checkpoint()` instead. So the guard is reachable only on a beat that dies AFTER the futures phase reaches a DONE status. Beat 21:15Z completed (checkpoint cleared). Beat 22:15Z died at 391 s, before futures finished, so `checkpoint_write` was `nothing_to_bank`. Beat 23:15Z completed. `banked` is {} on all three \u2014 measured, see banked-map-2315Z.json.",
+    "so_what_would_prove_it": "One beat with terminal `partial`/`cancelled`/timeout whose futures phase COMPLETED. Its ledger will then read banked['futures'] == 'rebuild_in_flight', and the NEXT beat's `carried` will not contain 'futures'. On the pre-fix code that pair reads banked ['futures']=='stored' then carried==['futures',...] with units_this_beat 0 \u2014 which is exactly the 20:15Z specimen CAL-P081 found.",
+    "why_this_is_not_a_worry": "The guard is a NO-REGRESSION change on the completing path: it cannot alter a beat whose code path never reaches it. Three completing/cancelled beats post-deploy show no cost."
+  },
+  "deploy_checks_from_READY_calibration_78": {
+    "1 first post-deploy beat rebuild_units_this_beat > 0": "PASS \u2014 8 on the 23:15Z beat (first beat fully on v3881).",
+    "2 rebuild_units_banked moves off 13": "PASS \u2014 13 -> 20 -> 24 -> 32.",
+    "3 no input_fingerprint invalidation on the first beat": "PASS \u2014 staged:cursor_reason:resumable, and input_fingerprint is b65faaacdc240b3b256934fcad528db1 on every beat before and after the deploy. Independently re-measured on the branch: identical.",
+    "4 a cancelled unit -> staged:units_cancelled + terminal partial": "NOT EXERCISED \u2014 no unit was cancelled on any post-deploy beat. staged:units_cancelled absent, incompletes_24h still 0.",
+    "5 a teardown -> terminal interrupted with release_age_s": "NOT EXERCISED \u2014 see ARTIFACT-CAL-P082-ITEM3-SPECIMEN.json. The 22:21:31Z teardown was recorded by the v3880 worker, because the dying worker is always the pre-release one."
+  }
+}
