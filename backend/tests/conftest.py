@@ -20,19 +20,73 @@ def _reset_request_cache_state():
     publishes a candidate base from the request path on a cold build, which stores
     it in ``candidate_base._l0``. Without a reset, one seeded feed test's base
     (its market IDs) would be served to the next test's differently-seeded DB.
+
+    CAL-P076 adds ``calibration._staged_cache`` (#2007), which is the same class
+    of hazard one file over: it is a process-global memo of the staged bank's
+    as-of, it decides whether ``/api/calibration`` may say ``fresh``, and its TTL
+    outlives a test. Leaked, one test's healthy bank makes the next test's frozen
+    one invisible — and that direction is the reassuring one.
     """
     from app.utils import request_cache as _rc
     from app.utils import candidate_base as _cb
+
+    def _reset_staged():
+        from app.routes import calibration as _cal
+
+        _cal._staged_cache["data"] = None
+        _cal._staged_cache["timestamp"] = 0.0
 
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
+    _reset_staged()
     yield
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
+    _reset_staged()
+
+
+@pytest.fixture
+def healthy_staged_bank():
+    """#2007 / CAL-P076 — declare that the staged futures bank is fine.
+
+    ``/api/calibration`` may not answer ``fresh`` unless the payload discloses
+    when its futures bank was last staged and how far the roster has drifted
+    under it (ruling (b): *"'fresh' may not render while drift is undisclosed"*).
+    A route test that mocks the database with one row therefore gets an
+    UNMEASURED disclosure and a ``stale`` answer — correct behaviour, and nothing
+    to do with what most of those tests are about.
+
+    So a test asserting ``fresh`` for some other reason declares this. It seeds
+    the memo rather than the rows, deliberately: the read is exercised by
+    ``test_calibration_staged_disclosure_p076.py`` and re-mocking it in every
+    sibling suite would spread the disclosure's shape across files that do not
+    care about it.
+    """
+    import time as _time
+
+    from app.routes import calibration as _cal
+
+    _cal._staged_cache["data"] = {
+        "measured": True,
+        "staged_at": datetime.now(timezone.utc).isoformat(),
+        "staged_age_s": 120,
+        "units_banked": 128,
+        "units_this_beat": 9,
+        "units_drifted": 0,
+        "units_drift_checkable": 128,
+        "units_drift_unknown": 0,
+        "units_drifted_as_of": datetime.now(timezone.utc).isoformat(),
+        "bank_advanced_this_beat": True,
+        "frozen_over_drift": False,
+    }
+    _cal._staged_cache["timestamp"] = _time.time()
+    yield
+    _cal._staged_cache["data"] = None
+    _cal._staged_cache["timestamp"] = 0.0
 
 
 @pytest.fixture

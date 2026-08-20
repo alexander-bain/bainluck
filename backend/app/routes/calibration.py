@@ -34,6 +34,16 @@ router = APIRouter()
 _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
+#: #2007 / CAL-P076. The staged bank's as-of + drift, memoised per dyno. The two
+#: durable rows behind it are primary-key reads of bounded payloads, but tier 1
+#: of ``/api/calibration`` answers from process memory with NO database work at
+#: all, and the disclosure must appear on that answer too — so it is cached
+#: rather than paid per request. 120 s against an artifact that moves hourly is a
+#: lag nothing can observe; it is not a freshness claim, and the block carries its
+#: own ``staged_at`` so a stale read cannot make the disclosure look current.
+_staged_cache: dict = {"data": None, "timestamp": 0.0}
+STAGED_DISCLOSURE_TTL_S = 120.0
+
 
 @router.get("/calibration/outcome-timeline")
 async def calibration_outcome_timeline(
@@ -774,6 +784,73 @@ async def calibration_rescue(
     return {"rescued": result.rowcount, "limit": limit}
 
 
+async def _read_staged_disclosure(db: AsyncSession, *, now: float) -> dict:
+    """#2007 — the ``staged`` block, read once per dyno per TTL.
+
+    Two primary-key reads of ``durable_state_snapshots``: the staged futures
+    cursor (for ``staged_at`` — the instant the futures bank last advanced) and
+    the phase ledger (for the drift gauges). Both are bounded by
+    ``read_snapshot``'s own ``statement_timeout``.
+
+    **Every failure path returns a disclosure, never an exception and never an
+    absence.** :func:`availability_floor` refuses ``fresh`` on an unmeasured
+    block, so a read that breaks costs the page a word, not a number — which is
+    the correct direction and the whole point of ruling (b).
+
+    ``max_age_s`` is deliberately enormous. This is not a servability check: an
+    ANCIENT bank is exactly the fact being disclosed, and refusing to read it
+    past an age bound would hide the only case that matters.
+    """
+    from app.utils.calibration_staged_disclosure import build_disclosure, unmeasured
+
+    cached = _staged_cache.get("data")
+    if isinstance(cached, dict) and (now - _staged_cache["timestamp"]) < STAGED_DISCLOSURE_TTL_S:
+        return cached
+
+    try:
+        from app.services.durable_snapshots import read_snapshot
+        from app.tasks.calibration_main_build import (
+            LEDGER_IDENTITY,
+            STAGED_FUTURES_IDENTITY,
+        )
+        from app.utils.calibration_phase_ledger import PHASE_LEDGER_SCHEMA
+        from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
+
+        _forever = 3650 * 86400
+        bank = await read_snapshot(
+            db,
+            STAGED_FUTURES_IDENTITY,
+            expected_version=STAGED_FUTURES_SCHEMA,
+            max_age_s=_forever,
+        )
+        ledger = await read_snapshot(
+            db, LEDGER_IDENTITY, expected_version=PHASE_LEDGER_SCHEMA, max_age_s=_forever
+        )
+        # ``ok``, not ``envelope is not None``. A ``wrong_version`` read still
+        # carries an envelope (tier 3 below relies on exactly that), and taking
+        # its ``generated_at`` would date this bank from some other artifact's
+        # row. Version, checksum and completeness must all hold or the honest
+        # answer is that the bank could not be read.
+        if not bank.ok or bank.envelope is None:
+            disclosure = unmeasured(f"staged_cursor_unreadable: {bank.status}")
+        elif not ledger.ok or ledger.envelope is None or not isinstance(
+            ledger.envelope.payload, dict
+        ):
+            disclosure = unmeasured(f"phase_ledger_unreadable: {ledger.status}")
+        else:
+            disclosure = build_disclosure(
+                ledger_stages=ledger.envelope.payload.get("stages"),
+                staged_generated_at=bank.envelope.generated_at,
+            )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed (Q297)
+        logger.warning("calibration: staged disclosure read failed", exc_info=True)
+        disclosure = unmeasured(f"read_raised: {type(exc).__name__}")
+
+    _staged_cache["data"] = disclosure
+    _staged_cache["timestamp"] = now
+    return disclosure
+
+
 @router.get("/calibration")
 async def public_calibration(
     db: AsyncSession = Depends(get_db),
@@ -825,8 +902,19 @@ async def public_calibration(
         producer_stall,
         snapshot_verdict,
     )
+    from app.utils.calibration_staged_disclosure import (
+        STAGED_FIELD,
+        availability_floor as _staged_floor,
+        unmeasured as _staged_unmeasured,
+    )
 
     _lg_key = "calibration:main"
+
+    # #2007. Populated below, before any tier can answer. Until then it is an
+    # explicit "not read", never an empty dict — an absent disclosure and a
+    # healthy one must not look alike, and this value can reach ``_serve`` if a
+    # tier is ever inserted above the read.
+    staged_block: dict = _staged_unmeasured("not_read")
 
     # Queue 297 Item 1: ONE absolute budget for the whole handler. Each tier below
     # already had its own bound, but the reported failure was ~18s of opaque
@@ -873,7 +961,7 @@ async def public_calibration(
     def _serve(payload: dict, availability: str) -> dict:
         """The ONE exit for every payload this endpoint returns (#1680).
 
-        Two things happen here and nowhere else, so no tier can forget either:
+        Three things happen here and nowhere else, so no tier can forget any:
 
         1. **The producer declares itself.** ``producer`` carries the artifact's
            age, the beat cadence, how many publishes were missed and the named
@@ -899,6 +987,20 @@ async def public_calibration(
         out["producer"] = stall
         if stall["stalled"]:
             availability = _never_stronger(availability, AVAILABILITY_STALE)
+        # 3. **The ARTIFACT dates its own inputs** (#2007, CAL-P076). ``producer``
+        #    above answers "is the publisher running"; it cannot answer "are the
+        #    numbers it published re-read". Measured 2026-08-19: a curve whose
+        #    futures bank had not advanced in six hours served ``fresh`` /
+        #    ``beats_missed: 0`` / ``stalled: false`` on a two-minute-old
+        #    ``generated_at``, because the staged bank is complete-forever and
+        #    every beat re-serialises it. Publishing is not freshness. The
+        #    ``staged`` block carries ``staged_at`` and ``units_drifted``, and a
+        #    bank frozen over drift — or a disclosure that could not be read at
+        #    all — cannot be called ``fresh``. Downgrade only: ``never_stronger``.
+        out[STAGED_FIELD] = staged_block
+        floor = _staged_floor(staged_block)
+        if floor is not None:
+            availability = _never_stronger(availability, floor)
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(
@@ -1018,12 +1120,20 @@ async def public_calibration(
             headers={"Retry-After": "30"},
         )
 
+    now = time.time()
+
+    # 0. #2007 — read the staged bank's as-of BEFORE any tier answers, because
+    #    every tier ends in ``_serve`` and every answer must carry it. Memoised
+    #    for STAGED_DISCLOSURE_TTL_S so tier 1 (process memory, no database work)
+    #    keeps that property. Cannot raise; a failed read becomes an unmeasured
+    #    disclosure, which refuses ``fresh``.
+    staged_block = await _read_staged_disclosure(db, now=now)
+
     # 1. In-process cache (survives between requests on same dyno). A
     #    stale-marked copy (Tier 2b, main key absent) is deliberately NOT served
     #    from here: it stays honestly marked on every response, but each request
     #    re-attempts Redis main so a later fresh-main read replaces it promptly
     #    (Queue #284 Item 3). TTL and compute behavior are unchanged.
-    now = time.time()
     if (
         isinstance(_cache["data"], dict)
         and (now - _cache["timestamp"]) < CACHE_TTL

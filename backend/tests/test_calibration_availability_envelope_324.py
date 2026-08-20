@@ -198,7 +198,7 @@ class TestVocabulary:
 
 
 class TestEveryTierDeclares:
-    async def test_fresh_main_declares_fresh(self, monkeypatch):
+    async def test_fresh_main_declares_fresh(self, monkeypatch, healthy_staged_bank):
         from app.routes import calibration
 
         _use(monkeypatch, _FakeRedis(main=json.dumps(_payload())))
@@ -210,7 +210,9 @@ class TestEveryTierDeclares:
         # Honesty runs both ways: a current copy carries no stale marker.
         assert out.get("cache", {}).get("status") != "stale"
 
-    async def test_in_process_memo_declares_from_the_content_it_serves(self, monkeypatch):
+    async def test_in_process_memo_declares_from_the_content_it_serves(
+        self, monkeypatch, healthy_staged_bank
+    ):
         """Tier 1 re-derives rather than replaying the stamp it stored.
 
         "It was fresh when I memoized it" is a claim about the past, and the memo
@@ -510,7 +512,7 @@ class TestARewrapNeverHeals:
         assert second["cache"]["status"] == "stale"
 
     async def test_a_complete_old_copy_is_still_stale_through_the_same_tier(
-        self, monkeypatch
+        self, monkeypatch, healthy_staged_bank
     ):
         """The clamp must not over-fire: B1 confirmed this path was correct, and
         a fix that drags every fallback down to ``degraded`` would be a second
@@ -615,7 +617,9 @@ class TestOneWirePath:
     """Synchronous on purpose: ``TestClient`` drives the app through its own
     portal, so these read the bytes the route actually puts on the socket."""
 
-    def test_the_503_declares_at_the_same_top_level_path_as_a_200(self, monkeypatch):
+    def test_the_503_declares_at_the_same_top_level_path_as_a_200(
+        self, monkeypatch, healthy_staged_bank
+    ):
         """B1 defect 2, reproduced and closed.
 
         Read with the SAME expression — ``body["availability"]`` — on both a

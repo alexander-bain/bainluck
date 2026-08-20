@@ -310,7 +310,7 @@ class TestTheSignalFires:
 
 class TestTheSignalStaysQuietWhenItShould:
     async def test_a_healthy_producer_declares_fresh_and_not_stalled(
-        self, monkeypatch
+        self, monkeypatch, healthy_staged_bank
     ):
         """Honesty runs both ways. A one-beat-old copy is exactly what a working
         hourly producer looks like, and calling it stalled would train every
@@ -326,7 +326,7 @@ class TestTheSignalStaysQuietWhenItShould:
         assert out["availability"] == AVAILABILITY_FRESH
 
     async def test_a_two_hour_old_copy_is_healthy_because_the_ttl_allows_it(
-        self, monkeypatch
+        self, monkeypatch, healthy_staged_bank
     ):
         """``_MAIN_CACHE_TTL`` is 7200s, so a HEALTHY producer can serve a copy
         two beats old. The threshold is derived from that fact rather than
