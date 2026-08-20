@@ -53,6 +53,11 @@ import {
   decideCalibrationContract,
   CONTRACT_REFUSAL_MESSAGE,
 } from "@/lib/calibrationContract";
+import {
+  decideCalibrationStaleness,
+  stalenessDriftClause,
+  stalenessHeadline,
+} from "@/lib/calibrationStaleness";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 // UX-P075 item (e): the category vocabulary moved to its own module so the
 // raw-key guard can be TESTED — this page is a "use client" component behind
@@ -408,6 +413,15 @@ export default function CalibrationPage() {
   // JSX conditionals happen to sit in. Last hook before the conditional returns.
   const contract = useMemo(() => decideCalibrationContract(data), [data]);
 
+  // #2007 item 1b (CAL-P077). What must the reader be TOLD about this payload?
+  // A different question from the contract's "may we label it at all", with a
+  // different state set, so it is decided in its own pure module — and the
+  // ordering between them stays in the JSX below, where a refusal returns
+  // before this is ever rendered.
+  //
+  // Hook, and here, because every hook has to sit above the conditional returns.
+  const staleness = useMemo(() => decideCalibrationStaleness(data), [data]);
+
   // CAL-P043 (#1643): the complete cross-surface parity record, built by the
   // same module the figures above come from and published below as `data-parity`
   // in native's grammar. Before this, web published these facts as a dozen
@@ -474,6 +488,11 @@ export default function CalibrationPage() {
       />
     );
   }
+
+  // Built once, after the refusal gate, because it is only ever rendered inside
+  // the banner. `null` when there is nothing honest to say about drift — which
+  // is not the same as "no drift", and is why this returns null rather than "0".
+  const driftClause = staleness ? stalenessDriftClause(staleness) : null;
 
   const topCats = categories.slice(0, 3).map(c =>
     `${categoryLabel(c)} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
@@ -614,27 +633,68 @@ export default function CalibrationPage() {
           L2-232: gated on the contract decision, not on `cache.status` read
           again here — one place decides, so "degraded" can never outrank a
           refusal by virtue of being checked first. */}
-      {contract.degraded && (
+      {staleness && (
         <div
           role="status"
           data-testid="calibration-stale-banner"
+          data-staleness-kind={staleness.kind}
           data-cache-reason={data.cache?.reason ?? ""}
           data-generated-at={data.cache?.generated_at ?? ""}
           /* An undated last-good still banners — dropping it would lose the
              honesty signal entirely — but it cannot say WHEN, and the rail
              should be able to tell those two apart. */
           data-degraded-dated={contract.degradedDated ? "true" : "false"}
+          /* #2007 item 1b: the input as-of and the drift, as DATA. A rail that
+             had to parse the sentence to check them would break on a comma. */
+          data-staged-at={staleness.stagedAt ?? ""}
+          data-units-drifted={
+            staleness.unitsDrifted === null ? "" : String(staleness.unitsDrifted)
+          }
+          data-units-banked={
+            staleness.unitsBanked === null ? "" : String(staleness.unitsBanked)
+          }
+          data-availability={data.availability ?? ""}
           className="rounded-lg border border-surface-border bg-surface-card px-4 py-3 text-sm text-text-secondary"
         >
-          <strong className="text-text-primary">Showing the last complete snapshot.</strong>{" "}
-          These numbers were built{" "}
-          {data.cache?.generated_at
-            ? new Date(data.cache.generated_at).toLocaleString("en-US", {
-                month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-              })
-            : "earlier"}
-          {typeof data.cache?.age_s === "number" && ` (${formatAge(data.cache.age_s)} ago)`}
-          {" "}and are not being refreshed right now. The curve rebuilds hourly.
+          <strong className="text-text-primary">{stalenessHeadline(staleness)}</strong>{" "}
+          {staleness.kind === "last-good" && (
+            <>
+              These numbers were built{" "}
+              {staleness.generatedAt
+                ? new Date(staleness.generatedAt).toLocaleString("en-US", {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                  })
+                : "earlier"}
+              {staleness.ageS !== null && ` (${formatAge(staleness.ageS)} ago)`}
+              {" "}and are not being refreshed right now. The curve rebuilds hourly.
+            </>
+          )}
+          {/* #2007 item 1b, Fable ruling (c). The old sentence — "not being
+              refreshed right now" — is FALSE here and pointed a reader at a
+              problem that would appear to fix itself on the next beat. The
+              curve is rebuilt every hour, on time. What is dated is the market
+              census underneath it. */}
+          {staleness.kind === "frozen-inputs" && (
+            <>
+              The curve was rebuilt on schedule, but the market data behind it was last
+              staged{" "}
+              {staleness.stagedAt
+                ? new Date(staleness.stagedAt).toLocaleString("en-US", {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                  })
+                : "earlier"}
+              {staleness.stagedAgeS !== null && ` (${formatAge(staleness.stagedAgeS)} ago)`}
+              {driftClause ? `, and ${driftClause}` : ""}. It catches up as the backlog
+              re-stages.
+            </>
+          )}
+          {staleness.kind === "undisclosed" && (
+            <>
+              The curve rebuilds hourly, but we couldn&rsquo;t read when the market data
+              behind it was last staged. We&rsquo;d rather say so than call these numbers
+              current.
+            </>
+          )}
         </div>
       )}
 

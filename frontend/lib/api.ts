@@ -1918,8 +1918,47 @@ export interface CalibrationCacheState {
   age_s?: number; // how old it is, in seconds
 }
 
+/**
+ * #2007 (CAL-P076/P077): the payload dates its own INPUTS, not just itself.
+ *
+ * `generated_at` says when the curve was serialised. It said "two minutes ago"
+ * over a futures bank that had not been re-read in six hours, because the bank
+ * is complete-forever and every hourly beat re-serialises it under a fresh
+ * timestamp. This block is the other half of the sentence: `staged_at` is when
+ * the bank last actually advanced, and `units_drifted` is how much of it has
+ * moved underneath since.
+ *
+ * `measured: false` is a real state and carries a `reason`. An unreadable
+ * disclosure is undisclosed drift, and the server refuses `fresh` on it — so a
+ * consumer must never read a missing count as zero. See
+ * `lib/calibrationStaleness.ts` for the rendering decision.
+ */
+export interface CalibrationStagedState {
+  measured: boolean;
+  reason?: string;
+  staged_at?: string;
+  staged_age_s?: number;
+  units_banked?: number;
+  units_this_beat?: number | null;
+  units_drifted?: number | null;
+  units_drift_checkable?: number | null;
+  units_drift_unknown?: number | null;
+  units_drifted_as_of?: string;
+  bank_advanced_this_beat?: boolean | null;
+  frozen_over_drift?: boolean;
+}
+
 export interface CalibrationData {
   cache?: CalibrationCacheState | null;
+  /**
+   * Ruling 025's envelope: `fresh` | `stale` | `degraded` | `empty`.
+   *
+   * Optional because an older cached payload predates it — and absent is NOT
+   * `fresh`. The page treats absence as "this artifact carries no envelope" and
+   * falls back to `cache.status`, which is the pre-#2007 behaviour.
+   */
+  availability?: string;
+  staged?: CalibrationStagedState | null;
   buckets: CalibrationBucket[];
   total_markets: number;
   total_outcomes: number;
