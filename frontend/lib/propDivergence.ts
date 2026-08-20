@@ -195,6 +195,82 @@ export const PROP_SCRIPT_CONVICTION = 0.43;
  */
 export const PROP_SCRIPT_FOLD = 0.94;
 
+/**
+ * ── STRUCTURAL RUNGS: THE ONE LINE THAT REMOVES RATHER THAN ESCALATES ────────
+ *
+ * UX-P107. Alex ruled this off the UX-P106 capture — the screenshot won the
+ * call, not the suite: four of the five rows THE SCRIPT led with on the real
+ * Phillies card were "Kyle Stowers: 5+ hits + runs + rbis — market says NO,
+ * 95%". That is not a view the market is expressing. It is arithmetic. A
+ * ladder that already prices 3+ at 10% cannot price 5+ anywhere but the floor,
+ * so the 5+ rung's certainty is a fact about **its own position in its own
+ * ladder**, and a rail that leads with it is quoting a subtraction.
+ *
+ * THE RULING: near-certain rungs whose certainty is explained by ladder
+ * position are filtered out of the five-row script rail. Conviction ranking is
+ * unchanged among what remains, and every suppressed rung stays reachable
+ * through the same "See all N questions" expand — this is rail capacity, in the
+ * exact sense `notSelected` already means it, never a taxonomy loss.
+ *
+ * ── THE BAR ALEX SET, AND WHY THE PREDICATE IS SHAPED THE WAY IT IS ──────────
+ *
+ * "'Structural' needs a real predicate — rung position within its own ladder
+ * family plus threshold — never a bare probability cutoff; a genuine standalone
+ * 94% market view must survive the filter."
+ *
+ * So the certainty line NEVER acts alone. A row is structural only when it is
+ * BOTH near-certain AND sitting at the end of its own ladder that its certainty
+ * points towards:
+ *
+ *   near-certain NO  + a LOWER rung exists  -> structural (the ladder's ceiling)
+ *   near-certain YES + a HIGHER rung exists -> structural (the ladder's floor)
+ *   family of one                           -> NEVER structural
+ *
+ * ** THE POPULATION HANDED US THE PROOF, ON ONE CARD, AT ONE PRICE. ** Event
+ * `15199902` carries three questions reading "3+ hits", all priced at exactly
+ * **6.0%**:
+ *
+ *   Jordan Beck: 3+ hits       family [3]      -> SURVIVES   (a standalone market)
+ *   Kyle Tucker: 3+ hits       family [2,3]    -> suppressed (2+ is priced 15%)
+ *   Braxton Fulford: 3+ hits   family [2,3]    -> suppressed (2+ is priced 11%)
+ *
+ * Same card, same stat, same threshold, same price, opposite dispositions. A
+ * bare probability cutoff cannot tell them apart and would delete all three;
+ * this predicate keeps the one where the market actually chose to say something.
+ * That pair is asserted in the suite, and it is the test that reds if anyone
+ * ever "simplifies" this back into a price comparison.
+ *
+ * ── THE CERTAINTY LINE IS MEASURED, ON THE DISTRIBUTION ALREADY RECORDED ─────
+ *
+ * Same 183 questions, same four production payloads, same shipped candidate
+ * builder as `PROP_SCRIPT_CONVICTION`: p50 0.2725 · p75 0.380 · **p90 0.430** ·
+ * **p95 0.440** · max 0.450.
+ *
+ * `PROP_SCRIPT_CONVICTION` takes p90. This takes **p95 of the same
+ * distribution**, and the one-step gap is the whole argument:
+ *
+ *   ** THE THREE EXISTING LINES ESCALATE. THIS ONE REMOVES. ** A wrongly
+ *   escalated row is a loud row on a page the user is already reading. A
+ *   wrongly suppressed row is a market that is not on the rail at all. The
+ *   costs are not symmetric, so the percentiles are not either — suppression
+ *   sits one step TIGHTER than escalation on the very same distribution, rather
+ *   than being tuned to a number that happened to clear Alex's four rows.
+ *
+ * It also means something without a percentile. Conviction 0.44 is a market
+ * priced at 94% or 6%, and the measured floor of this whole eligible population
+ * is 5.0% — no provider on it quotes below that. So the band is the bottom two
+ * quoted points a market can occupy: the cheapest thing the book is able to say.
+ *
+ * Selects 13 of 183 (7.1%) as structural, sparing 1 lone near-certain row
+ * (Beck). Every one of the 13 has a lower rung; **the upward arm has ZERO
+ * specimens in this population** — the highest ladder rung carrying a higher
+ * sibling is 92.5%, below the line. It is implemented because the asymmetry
+ * would be arbitrary, not because it was observed, and it is exercised
+ * synthetically and labelled as such. Same discipline as its four neighbours: a
+ * future population that moves this is a new measurement to record.
+ */
+export const PROP_STRUCTURAL_CERTAINTY = 0.44;
+
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
 
@@ -296,6 +372,22 @@ export interface DivergenceRow {
    */
   scriptSide: "will" | "wont" | "toss_up";
   /**
+   * A near-certain rung whose certainty is explained by its position in its own
+   * ladder — see `PROP_STRUCTURAL_CERTAINTY`. Alex's ruling filters these out of
+   * the pregame rail; they remain in `eligible` and in the detail view.
+   *
+   * Computed in EVERY state, like `conviction`, because it is a fact about the
+   * ladder rather than about the clock — and because a flag only computed where
+   * it is consumed cannot be checked anywhere else. Only the pregame rail acts
+   * on it.
+   *
+   * Derived from the same basis `conviction` is derived from (pregame `current`,
+   * otherwise `pregameMark`) rather than from `scriptSide`, which is always typed
+   * off `current`. Post-game those two disagree, and a flag that silently means
+   * a different thing in a state nobody reads it in is the shape of the next bug.
+   */
+  structural: boolean;
+  /**
    * POST-GAME ONLY (#2011). Where the question actually landed, on the same
    * over axis `current` and `pregameMark` are quoted on: 1 the over resolved
    * YES, 0 it resolved NO, `null` nothing may be stated.
@@ -350,6 +442,19 @@ export interface DivergenceResult {
    */
   ungraded: number;
   /**
+   * PREGAME ONLY (UX-P107). Near-certain ladder rungs the rail set aside
+   * because their certainty is arithmetic — see `PROP_STRUCTURAL_CERTAINTY`.
+   *
+   * Counted over EVERY candidate, not just the ones the selection loop happened
+   * to walk past before filling five slots. "How many did the rule remove" is a
+   * fact about the card; a number that also depended on where the loop stopped
+   * would be neither, and would move when an unrelated row changed rank.
+   *
+   * They are inside `eligible` and inside `notSelected`, exactly like a row that
+   * merely ranked sixth — rail capacity, never a taxonomy loss.
+   */
+  structuralSuppressed: number;
+  /**
    * Whether the game is over. On the result rather than inferred from the rows,
    * because an EMPTY rail still has to know — `rows.some(r => r.settled)` reads
    * "not settled" for a settled page with nothing to show, which is how the
@@ -365,8 +470,16 @@ export interface DivergenceResult {
    * the data we were shown) nor `unreadable` (no guard caught anything) — it is
    * a page with real questions and no published outcomes, and saying so is the
    * honest-empty ruling 027 asks for.
+   *
+   * `structural` is the fifth, added by UX-P107, and it is `ungraded`'s pregame
+   * twin: a card whose every high-conviction question turned out to be a ladder
+   * rung. The rule is applied WITHOUT an escape hatch — a filter that quietly
+   * un-applies itself when it would empty a surface is two behaviours with one
+   * name, and the second one only ever runs where nobody is looking. So the
+   * rail empties, and the page says which rule emptied it and where the
+   * questions went (ruling 027).
    */
-  emptyReason: "none" | "clean" | "unreadable" | "ungraded" | null;
+  emptyReason: "none" | "clean" | "unreadable" | "ungraded" | "structural" | null;
 }
 
 export interface DivergenceInput {
@@ -531,6 +644,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     notSelected: 0,
     eligible: 0,
     ungraded: 0,
+    structuralSuppressed: 0,
     settled,
     pregame,
     emptyReason,
@@ -552,6 +666,9 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
   }
 
   const ungraded = settled ? candidates.filter((r) => r.surprise == null).length : 0;
+  const structuralSuppressed = pregame
+    ? candidates.filter((r) => r.structural).length
+    : 0;
 
   const perPlayer = new Map<string, number>();
   const selected: DivergenceRow[] = [];
@@ -569,6 +686,20 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // sort's null-handling passed the whole suite while the filter quietly
     // covered for it. One rule, load-bearing, and now mutation-visible.
     if (settled && row.surprise == null) break;
+    // UX-P107, and `continue` rather than `break` ON PURPOSE, which is the
+    // opposite call from the line above it. `bySurprise` sorts every ungraded
+    // row to the end, so the first one IS the end of the list; structural rungs
+    // are scattered through the conviction order by construction — they are the
+    // MOST convinced rows on the card, so they cluster at the TOP — and a
+    // `break` here would truncate the rail at its first ladder rung and throw
+    // away everything the rule was supposed to promote.
+    //
+    // Placed BEFORE the per-player cap so a suppressed rung does not spend one
+    // of its player's two slots on the way out. Brady Singer alone carries SIX
+    // structural rungs on `14788546`; charged against the cap, he would silence
+    // his own 2+ strikeouts — the one rung in that ladder the market has a view
+    // about — and the rule would have made the page worse in his name.
+    if (pregame && row.structural) continue;
     const n = perPlayer.get(row.player) ?? 0;
     if (n >= RAIL_MAX_PER_PLAYER) continue;
     perPlayer.set(row.player, n + 1);
@@ -576,15 +707,24 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
   }
 
   if (selected.length === 0) {
-    // A settled page with real questions and not one published outcome. Neither
-    // `clean` nor `unreadable`: honest-empty needs its own word (ruling 027).
+    // A settled page with real questions and not one published outcome, or a
+    // pregame page whose every question turned out to be a ladder rung. Neither
+    // is `clean` and neither is `unreadable`: honest-empty needs its own word
+    // (ruling 027), and each of these has one.
     return {
-      ...empty(settled && ungraded > 0 ? "ungraded" : "clean"),
+      ...empty(
+        settled && ungraded > 0
+          ? "ungraded"
+          : pregame && structuralSuppressed > 0
+            ? "structural"
+            : "clean",
+      ),
       dropped,
       nonBenignCount,
       notSelected: candidates.length,
       eligible: candidates.length,
       ungraded,
+      structuralSuppressed,
       settled,
       pregame,
     };
@@ -597,6 +737,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     notSelected: candidates.length - selected.length,
     eligible: candidates.length,
     ungraded,
+    structuralSuppressed,
     settled,
     pregame,
     emptyReason: null,
@@ -776,6 +917,10 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       // price (`over_probability`'s pregame twin), so this cannot pick up the
       // leg's own polarity — which is the inversion ruling (a) is about.
       scriptSide: current > 0.5 ? "will" : current < 0.5 ? "wont" : "toss_up",
+      // Set in a second pass — a rung cannot be classified until its whole
+      // ladder family has been read, and the family is only complete once the
+      // payload has been walked.
+      structural: false,
       resolution: null,
       surprise: null,
       grade: null,
@@ -818,6 +963,53 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   //
   // Travel-only is therefore also unchanged from before this queue, which is
   // why V1/V2's ruled escalation needed no exception written for it.
+
+  // ── STRUCTURAL RUNGS (UX-P107) ───────────────────────────────────────────
+  //
+  // A SECOND PASS, and it has to be: "is this rung near-certain because of
+  // where it sits in its own ladder" is not answerable while the ladder is
+  // still being built. The family key is `player|stat`, which is the dedupe key
+  // minus its threshold — the same identity, one level up, so the two cannot
+  // drift apart into two different ideas of what a ladder is.
+  const byFamily = new Map<string, DivergenceRow[]>();
+  for (const row of candidates) {
+    const familyKey = `${row.player}|${row.stat}`;
+    const bucket = byFamily.get(familyKey);
+    if (bucket) bucket.push(row);
+    else byFamily.set(familyKey, [row]);
+  }
+  for (const family of byFamily.values()) {
+    // ALEX'S BAR, FIRST AND UNCONDITIONALLY: a standalone market is never
+    // structural, however certain it is. There is no ladder to explain it, so
+    // its price is its own claim and the rail may lead with it.
+    //
+    // AN EQUIVALENT MUTANT LIVES HERE, and it is recorded rather than hidden:
+    // deleting this line changes no behaviour, because the position test below
+    // already implies it — a family of one contains only the row itself, and
+    // `row.threshold < row.threshold` is false on both arms. A mutation that
+    // removed it survived the suite, and that is the correct outcome, not a
+    // test hole.
+    //
+    // It stays for two reasons. It states the clause where a reader looks for
+    // it, and it stops being redundant the moment anyone widens the position
+    // test — which is exactly when Alex's bar would otherwise be silently lost.
+    if (family.length < 2) continue;
+    for (const row of family) {
+      if (row.conviction < PROP_STRUCTURAL_CERTAINTY - TRAVEL_EPSILON) continue;
+      // Same epsilon discipline as `travelAtOrAbove`, and for the same reason:
+      // conviction is a float subtraction, `0.94 - 0.5` is 0.44000000000000006
+      // and `0.06 - 0.5` is -0.44000000000000006 — either could have landed on
+      // the wrong side of a naive comparison on a different pair of prices.
+      const basis = pregame ? row.current : row.pregameMark;
+      row.structural =
+        basis < 0.5
+          ? // Near-certain NO at a rung the ladder has already anchored BELOW.
+            family.some((sibling) => sibling.threshold < row.threshold)
+          : // Near-certain YES at a rung the ladder still asks ABOVE. Zero
+            // specimens in the measured population; synthetic coverage only.
+            family.some((sibling) => sibling.threshold > row.threshold);
+    }
+  }
 
   // POST-GAME: restate every row on the resolution axis. Nothing here runs on a
   // live game — the in-game treatment is the travelled bar, and only there.

@@ -80,6 +80,7 @@ import {
 import type { DivergenceRow } from "@/lib/propDivergence";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
+import { vocabularyDelta } from "../helpers/renderedTokens";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 
@@ -88,66 +89,15 @@ const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 // ---------------------------------------------------------------------------
 
 /**
- * Attribute values a reader can actually receive. `aria-label` and `title` are
- * rendered surfaces even though no screenshot shows them.
+ * ── THE CENSUS MACHINERY NOW LIVES IN ONE PLACE (extracted UX-P107) ──────────
+ *
+ * `__tests__/helpers/renderedTokens.ts`. UX-P107 minted a SECOND vocabulary
+ * class — the pregame direction one — and built its guard from this same shape
+ * on a different axis (flip the PRICE across the coin flip rather than the
+ * VERDICT). Two copies of a differential census would be free to drift on
+ * exactly the thing both of them exist to pin: what counts as a token a reader
+ * receives. So there is one, and both suites import it.
  */
-const SPOKEN_ATTRS = /\s(?:aria-label|title|alt)="([^"]*)"/g;
-
-const ENTITIES: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#x27;": "'",
-  "&#39;": "'",
-  "&rarr;": "→",
-  "&middot;": "·",
-  "&nbsp;": " ",
-  "&mdash;": "—",
-  "&ndash;": "–",
-};
-
-function decode(s: string): string {
-  return s.replace(/&[#a-zA-Z0-9]+;/g, (m) => ENTITIES[m] ?? " ");
-}
-
-/**
- * Every token a reader receives from this markup — visible text plus spoken
- * attribute values. Style and class attributes are deliberately dropped: a
- * colour is not a vocabulary, and `text-accent-danger` differing between hit
- * and miss is the design system working.
- */
-export function renderedTokens(html: string): string[] {
-  const spoken: string[] = [];
-  for (const m of html.matchAll(SPOKEN_ATTRS)) spoken.push(m[1]);
-  const visible = html.replace(/<[^>]*>/g, " ");
-  return decode([...spoken, visible].join(" "))
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
-
-/**
- * A token that carries no vocabulary: numbers, percentages, punctuation, the
- * em-dash placeholder. These may differ freely between the two renders — an
- * `actual` of 2 and an `actual` of 0 are data, not language.
- */
-const DATA_ONLY = /^[\d.,%+\-–—:;()/[\]{}·•→←↑↓×°$#'"’“”…!?*|=<>~^_&]+$/u;
-
-/** Multiset difference, both directions, of the tokens two renders produce. */
-export function vocabularyDelta(hitHtml: string, missHtml: string): string[] {
-  const count = (tokens: string[]) => {
-    const m = new Map<string, number>();
-    for (const t of tokens) m.set(t, (m.get(t) ?? 0) + 1);
-    return m;
-  };
-  const a = count(renderedTokens(hitHtml));
-  const b = count(renderedTokens(missHtml));
-  const out = new Set<string>();
-  for (const [t, n] of a) if ((b.get(t) ?? 0) !== n) out.add(t);
-  for (const [t, n] of b) if ((a.get(t) ?? 0) !== n) out.add(t);
-  return [...out].filter((t) => !DATA_ONLY.test(t)).sort();
-}
 
 /**
  * The assertion itself. Returns the offending tokens so a failure NAMES the new
@@ -186,6 +136,10 @@ function divergenceRow(hit: boolean): DivergenceRow {
     pregame: false,
     conviction: 0,
     scriptSide: "toss_up",
+    // UX-P107. A settled fixture is never structural — the flag is a fact about
+    // ladder position, this row is a family of one, and the settled rail does
+    // not consult it in any case.
+    structural: false,
     resolution,
     surprise: 0.5,
     grade: { state: hit ? "HIT" : "MISS", reason: "explicit_hit", hit, actual: null } as DivergenceRow["grade"],

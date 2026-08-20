@@ -47,7 +47,8 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
   if (
     result.rows.length === 0 &&
     result.nonBenignCount === 0 &&
-    result.emptyReason !== "ungraded"
+    result.emptyReason !== "ungraded" &&
+    result.emptyReason !== "structural"
   ) {
     return null;
   }
@@ -75,7 +76,12 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
         </h3>
         {result.pregame && result.rows.length > 0 && (
           <span className="sr-only">
-            What the market expects before the game, strongest expectation first.
+            {/* UX-P107: this said "What the market expects before the game" and
+                the direction census caught it — the ruling's "no market
+                attribution" clause is not only about the row labels, and a
+                header is exactly where a banned attribution hides from a
+                capture. Our one number is not a market's opinion we relay. */}
+            The chance of each question before the game, strongest call first.
           </span>
         )}
         {result.eligible > result.rows.length && (
@@ -94,6 +100,20 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
             {result.ungraded} {result.ungraded === 1 ? "question" : "questions"} settled
             here, and none has a published outcome yet — so there is nothing to
             rank. They are all listed below.
+          </p>
+        )}
+
+        {/* HONEST-EMPTY, THE PREGAME TWIN (UX-P107). Every confident question
+            on this card was a ladder rung whose certainty is arithmetic, so the
+            rail has no view to lead with. It says which rule emptied it and
+            where the questions went, rather than vanishing — a filter that
+            leaves a silent gap is indistinguishable from missing data, which is
+            the complaint V3 exists to answer. */}
+        {result.emptyReason === "structural" && (
+          <p className="text-[12px] leading-snug text-text-secondary">
+            The only near-certain questions here are rungs of a bigger ladder —
+            &ldquo;5+&rdquo; when &ldquo;3+&rdquo; is already priced — so the market
+            isn&rsquo;t really making a call. All {result.eligible} are listed below.
           </p>
         )}
 
