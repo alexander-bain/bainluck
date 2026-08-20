@@ -467,3 +467,49 @@ cells distinguish "we removed corruption" from "we removed difficulty".
 minimum after the drop becomes an **ABSENCE WITH A REASON, never a fixed cell**
 (ruling 075's second clause, on the scoreboard). A metric that improves because
 a cell VANISHED has not improved.
+
+---
+
+### 19. A per-row predicate cannot fix a defect whose unit is a group.
+
+Wherever the thing that is wrong is a property of a **set** — repetition,
+over-representation, imbalance, near-duplication — every rule whose subject is a
+single member is a treadmill. Each member the rule removes is replaced by the
+next member of the same set. Tuning it harder does not converge; it relocates.
+
+**The diagnostic is a sweep that does not move the outcome.** A threshold whose
+whole range produces one shape is not mistuned, it is aimed at the wrong unit.
+That is cheap to test — sweep it end to end and look at the result, not the
+count — and it is worth doing before spending a cycle tuning a constant.
+
+*Charter case (ruling 111, #195).* UX-P107 shipped ruling 105's structural-rung
+filter on the pregame prop rail and swept its constant `PROP_STRUCTURAL_CERTAINTY`
+from `0.44` to `0.35`. The rail kept **the same shape at every value**. The rung
+population is a continuum with no gap (5.0, 6.0, 7.0, 7.2, 8.5, 8.8, 9.0 …) and
+conviction ranking selects a ladder's extreme rungs *by construction*, so the
+slots freed at each step refilled from one rung up the same ladder. The fix had
+to be the first rule on that surface whose subject was a GROUP — one row per
+player-ladder family.
+
+*Second specimen, pre-existing and on another surface.* UX-P098's #1958 finding
+recorded that Discover's `boring-rate@20` target is an **aggregate** while its
+only control is a **per-family cap of 1**, and called the pair "structurally
+inconsistent" — the same shape, filed weeks earlier, still open. Neither case was
+derived from the other.
+
+*The corollary that keeps this from being read as "always cap".* A group rule is
+the answer when the defect's unit is the group; it is not a licence to cap
+things. Ruling 112 is the counterweight from the very next cycle: the same
+ladder cap that fixed the repetition also made it safe to **readmit** a rung an
+unconditional per-row filter had deleted, because a cap bounds a group without
+having to be wrong about any individual member of it.
+
+**⚠️ Numbering note (ruling 066's receipt, discharged).** This clause was
+claimed as **19** by UX-P108 and its FILE deliberately withheld: the numbering
+guard asserts clauses are contiguous from 1, that branch's base carried 16, and
+17/18 were calibration's — claimed and unmerged. Writing it then would have
+shipped the `[1..16, 19]` gap the guard exists to catch. The recorded exit
+condition was *"`program/calibration-75` merges, master's highest clause reads 18,
+and the UX lane writes `### 19.` unchanged"*. Both halves are now true
+(`origin/master` = `724fd22c`, highest clause **18**), and it is written here
+unchanged, at the number it was claimed at, **without a fifth renumber**.
