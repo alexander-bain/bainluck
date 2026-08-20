@@ -1,0 +1,7416 @@
+{
+  "queue": "CAL-P078",
+  "issue": 2007,
+  "gate": "Gate 0 \u2014 bounded agreement, published curve vs DB-direct",
+  "fold_duration_s": 0.0,
+  "fold_error": "OSError: Multiple exceptions: [Errno 61] Connect call failed ('::1', 5432, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 5432)",
+  "payload_error": null,
+  "published_generated_at": "2026-08-20T03:16:56.595504+00:00",
+  "published_availability": "stale",
+  "staged": {
+    "measured": true,
+    "staged_at": "2026-08-19T17:16:31.866144+00:00",
+    "staged_age_s": 40695,
+    "units_banked": 128,
+    "units_this_beat": 0,
+    "units_drifted": 115,
+    "units_drift_checkable": 127,
+    "units_drift_unknown": 1,
+    "units_drifted_as_of": "2026-08-19T17:16:31.866144+00:00",
+    "bank_advanced_this_beat": false,
+    "frozen_over_drift": true
+  },
+  "db_cells": 0,
+  "db_rows": 0,
+  "verdict": "unmeasurable",
+  "tolerance_pp": 90.625,
+  "compared": 0,
+  "outside": [],
+  "worst_delta_pp": null,
+  "db_only": [],
+  "published_only": [
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "ai_safety",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "athletics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "aussierules",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "auto_industry",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "auto_industry",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "auto_industry",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "auto_industry",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "auto_industry",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "baseball",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "basketball",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "boxing",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "chess",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "climbing",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "climbing",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "commodities",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "cricket",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "crypto",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "culture",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "cycling",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "economics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "energy",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "entertainment",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "esports",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "football",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "geopolitics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "golf",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "health",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "hockey",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "lacrosse",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "legal",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "mma",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "motorsports",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "olympics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "olympics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "olympics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "politics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "rugby",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "sailing",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "sailing",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "sailing",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "sailing",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "sailing",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "soccer",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "softball",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "squash",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "squash",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "squash",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "squash",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "sumo",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "tech",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "tennis",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "weather",
+      "bucket_idx": 9
+    },
+    {
+      "source": "kalshi",
+      "category": "wrestling",
+      "bucket_idx": 0
+    },
+    {
+      "source": "kalshi",
+      "category": "wrestling",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "wrestling",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "wrestling",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "wrestling",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "baseball",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "basketball",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "bmx",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "bmx",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "bmx",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "bull_riding",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "bull_riding",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "bull_riding",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "bull_riding",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "bull_riding",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "chess",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "cricket",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "cycling",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "economics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "entertainment",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "esports",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "football",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "geopolitics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "golf",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "hockey",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "mma",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "motorsports",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "olympics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "pickleball",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "politics",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "rodeo",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "rodeo",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "rodeo",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "rodeo",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "rodeo",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "rugby",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "skateboarding",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "skateboarding",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "skateboarding",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "skateboarding",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "soccer",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "table_tennis",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "tech",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "tennis",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "weather",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "weightlifting",
+      "bucket_idx": 0
+    },
+    {
+      "source": "polymarket",
+      "category": "weightlifting",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "weightlifting",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "weightlifting",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "weightlifting",
+      "bucket_idx": 6
+    },
+    {
+      "source": "kalshi",
+      "category": "darts",
+      "bucket_idx": 1
+    },
+    {
+      "source": "kalshi",
+      "category": "darts",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 2
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "culture",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "horse_racing",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "horse_racing",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "horse_racing",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "xgames",
+      "bucket_idx": 1
+    },
+    {
+      "source": "polymarket",
+      "category": "xgames",
+      "bucket_idx": 3
+    },
+    {
+      "source": "kalshi",
+      "category": "poker",
+      "bucket_idx": 2
+    },
+    {
+      "source": "kalshi",
+      "category": "poker",
+      "bucket_idx": 4
+    },
+    {
+      "source": "kalshi",
+      "category": "poker",
+      "bucket_idx": 8
+    },
+    {
+      "source": "kalshi",
+      "category": "poker",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 3
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 5
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "boxing",
+      "bucket_idx": 9
+    },
+    {
+      "source": "datagolf",
+      "category": "golf",
+      "bucket_idx": 4
+    },
+    {
+      "source": "datagolf",
+      "category": "golf",
+      "bucket_idx": 5
+    },
+    {
+      "source": "datagolf",
+      "category": "golf",
+      "bucket_idx": 6
+    },
+    {
+      "source": "datagolf",
+      "category": "golf",
+      "bucket_idx": 7
+    },
+    {
+      "source": "datagolf",
+      "category": "golf",
+      "bucket_idx": 8
+    },
+    {
+      "source": "polymarket",
+      "category": "lacrosse",
+      "bucket_idx": 4
+    },
+    {
+      "source": "polymarket",
+      "category": "lacrosse",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "softball",
+      "bucket_idx": 5
+    },
+    {
+      "source": "kalshi",
+      "category": "track_and_field",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "health",
+      "bucket_idx": 6
+    },
+    {
+      "source": "polymarket",
+      "category": "health",
+      "bucket_idx": 7
+    },
+    {
+      "source": "polymarket",
+      "category": "legal",
+      "bucket_idx": 7
+    },
+    {
+      "source": "kalshi",
+      "category": "figure_skating",
+      "bucket_idx": 9
+    },
+    {
+      "source": "polymarket",
+      "category": "crypto",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "aussierules_afl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_ncaa",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_euroleague",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nbl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_ncaab",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wnba",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_wncaab",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "icehockey_nhl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_pll",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_pll",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_pll",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api",
+      "category": "lacrosse_pll",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_ncaa",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_nhl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_epl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_epl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_epl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "aussierules_afl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "aussierules_afl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_euroleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_euroleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nbl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_nbl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_ncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_ncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_ncaab",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_wnba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_wnba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_wncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "basketball_wncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "lacrosse_pll",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "lacrosse_pll",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_australia_aleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_australia_aleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_austria_bundesliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_austria_bundesliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_belgium_first_div",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_belgium_first_div",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_brazil_serie_b",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_brazil_serie_b",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_chile_campeonato",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_chile_campeonato",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_china_superleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_china_superleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_denmark_superliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_denmark_superliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_efl_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_efl_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_league1",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_league1",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_league2",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_england_league2",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fa_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fa_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup_qualifiers_europe",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_fifa_world_cup_qualifiers_europe",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_finland_veikkausliiga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_finland_veikkausliiga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_france_ligue_two",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_france_ligue_two",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_bundesliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_bundesliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_bundesliga2",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_bundesliga2",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_liga3",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_germany_liga3",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_greece_super_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_greece_super_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_italy_serie_b",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_italy_serie_b",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_korea_kleague1",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_korea_kleague1",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_league_of_ireland",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_league_of_ireland",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_norway_eliteserien",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_norway_eliteserien",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_poland_ekstraklasa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_poland_ekstraklasa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_russia_premier_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_russia_premier_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_spl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_sweden_superettan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_sweden_superettan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_switzerland_superleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_switzerland_superleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_turkey_super_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_turkey_super_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league_qualification",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league_qualification",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league_women",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_champs_league_women",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_europa_conference_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_europa_conference_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_spreads",
+      "category": "soccer_uefa_nations_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_argentina_primera_division",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fa_cup",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fa_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fa_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_a",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_mexico_ligamx",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_la_liga",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_ncaa",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_one",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_norway_eliteserien",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_norway_eliteserien",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_norway_eliteserien",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_portugal_primeira_liga",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_sudamericana",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup_qualifiers_europe",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup_qualifiers_europe",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup_qualifiers_europe",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_netherlands_eredivisie",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_campeonato",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_serie_b",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_serie_b",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_brazil_serie_b",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_conmebol_copa_libertadores",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_efl_champ",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_efl_cup",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_efl_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_efl_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league1",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league1",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league1",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league1",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league2",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league2",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_england_league2",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_fifa_world_cup",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_japan_j_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_korea_kleague1",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_korea_kleague1",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_korea_kleague1",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_segunda_division",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_usa_mls",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "aussierules_afl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "aussierules_afl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_euroleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_euroleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nbl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_nbl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_ncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_ncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_wnba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_wnba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_wncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "basketball_wncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_nhl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "icehockey_nhl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "lacrosse_pll",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "lacrosse_pll",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_australia_aleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_australia_aleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_austria_bundesliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_austria_bundesliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_belgium_first_div",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_belgium_first_div",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_chile_campeonato",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_chile_campeonato",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_china_superleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_china_superleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_denmark_superliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_denmark_superliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_epl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_epl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_epl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_finland_veikkausliiga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_finland_veikkausliiga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_two",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_france_ligue_two",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_bundesliga",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_bundesliga",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_bundesliga",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_bundesliga2",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_bundesliga2",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_dfb_pokal",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_dfb_pokal",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_liga3",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_liga3",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_germany_liga3",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_greece_super_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_greece_super_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_coppa_italia",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_b",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_italy_serie_b",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_league_of_ireland",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_league_of_ireland",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_poland_ekstraklasa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_poland_ekstraklasa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_poland_ekstraklasa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_russia_premier_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_russia_premier_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_sweden_allsvenskan",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_sweden_superettan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_sweden_superettan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_switzerland_superleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_switzerland_superleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_turkey_super_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_turkey_super_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_turkey_super_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league_qualification",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league_qualification",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league_women",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league_women",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_champs_league_women",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_conference_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_europa_conference_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_nations_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_uefa_nations_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_totals",
+      "category": "soccer_spain_copa_del_rey",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "aussierules_afl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_ncaa",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nbl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_ncaab",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wncaab",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_ncaa",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "mma_mixed_martial_arts",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_canadian_open",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 0
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_cincinnati_open",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_euroleague",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_wnba",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_allsvenskan",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_sweden_hockey_league",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "rugbyleague_nrl",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_canadian_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_cincinnati_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 1
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_wta_washington_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_cfl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl_preseason",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_ufl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "basketball_nba_summer_league",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "icehockey_nhl",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 2
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 8
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "tennis_atp_washington_open",
+      "bucket_idx": 9
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "americanfootball_nfl",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 6
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "baseball_mlb_preseason",
+      "bucket_idx": 7
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_pll",
+      "bucket_idx": 3
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_pll",
+      "bucket_idx": 4
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_pll",
+      "bucket_idx": 5
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "category": "lacrosse_pll",
+      "bucket_idx": 6
+    }
+  ],
+  "cells_db": 0,
+  "cells_published": 284,
+  "unmeasurable_reason": "OSError: Multiple exceptions: [Errno 61] Connect call failed ('::1', 5432, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 5432)"
+}
