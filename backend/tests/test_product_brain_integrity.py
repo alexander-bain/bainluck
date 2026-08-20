@@ -584,7 +584,16 @@ def test_ruling_numbers_are_unique() -> None:
 #: Two collisions in one Integrator session is the argument for #2009's LEDGER half rather than
 #: its test half: the test caught both, but it caught them at MERGE time, after the number had
 #: already been minted twice. A number claimed at AUTHORING time cannot collide.
-MINIMUM_BANKED_RULINGS = 98
+#:
+#: Raised to **101** by UX-P107 (cycle 104) banking THREE rulings in one window — 105 (suppress
+#: structural rungs), 106 (one direction, and the number is ours) and 107 (an unlabelled unit
+#: invites its own misread). ** COUNTED, not added: ** `ls docs/rulings/[0-9][0-9][0-9]-*.md`
+#: reads 98 on this branch's base and 101 after, while `origin/master` holds only 101 as its
+#: highest FILE and 102/103 (calibration) and 104 (latency) are all claimed-and-unmerged. Adding
+#: a delta to any of those three numbers would produce a floor no tree has ever held. Thirteenth
+#: consecutive cycle in which the branch, HEAD and the merged tree disagree, and the thirteenth in
+#: which counting the tree is the only thing that has been right (#1910, ruling 088).
+MINIMUM_BANKED_RULINGS = 101
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
