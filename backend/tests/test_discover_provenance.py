@@ -1,111 +1,300 @@
-"""Provenance pre-training gate: discover_interactions.provenance.
+"""Provenance pre-training gate: `discover_interactions.provenance` — CORE.
 
-Covers:
-  - Enum and default (unknown, never user on absence)
-  - Label-join parity: frozen gold-label features vs serve-time features drift <=0.01
-    (audit finding 4; #1873 lesson — training/serving skew measured, not assumed)
+This is the gate between Alex's 250 gold labels and a model that learns his
+taste instead of the warmer's. Without the column, every dwell and dismiss in
+`discover_interactions` is an unfalsifiable mixture and interestingness tuning
+grades echo as preference.
+
+## What this file may and may not assert (C-ADHOC-PROV-CORE, R5)
+
+**May:** the receiver's decision, the enum/allowlist binding, the shipping drift
+validator, and the three transport stamps.
+
+**May NOT:** anything about the backfill rail, the export/labelled-dataset
+query, or the LOSO harness. Those three boundaries were moved to their own stage
+by the R5 BLOCK, and a core test that grades them is a passenger — it made the
+branch's own advertised gate red (5 passed / 1 failed from CI's real cwd) while
+READY declared 6.
+
+## The rule the previous version broke
+
+Its assertions were **self-oracles**: it recomputed the blend arithmetic inside
+the test and asserted its own arithmetic, and the "training slice" test read
+`assert "WHERE provenance = 'user'" == "WHERE provenance = 'user'"` and
+`assert 0 == 0`. Those cannot fail, so they measured nothing — they only
+described an intention in the shape of a test. Every assertion here calls a
+function that ships.
 """
 
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 
+from app.utils.discover_provenance import (
+    PROVENANCE_ALLOWED,
+    PROVENANCE_FALLBACK,
+    PROVENANCE_HEADER,
+    PROVENANCE_VALUES,
+    normalize_provenance,
+)
+from app.utils.provenance_drift import is_within_drift, validate_label_join_drift
 
-def test_provenance_column_exists_with_unknown_default():
-    """Schema: discover_interactions gains provenance, default unknown."""
-    from app.models.models import DiscoverInteraction
-
-    cols = {c.name for c in DiscoverInteraction.__table__.columns}
-    assert "provenance" in cols, "provenance column missing on discover_interactions"
-    col = DiscoverInteraction.__table__.columns["provenance"]
-    # server_default is 'unknown' (string); SQLAlchemy renders as 'unknown' with quotes
-    assert col.server_default is not None, "provenance must have server_default 'unknown'"
-    assert "unknown" in str(col.server_default.arg), "default must be unknown, never user"
-
-
-def test_provenance_unselected_stays_unknown_never_user():
-    """Silent-default lesson: absence must not impersonate the valuable class."""
-    # The write path in feed.py normalizes provenance with fallback unknown:
-    #   provenance = raw if raw in {user,warmer,sentinel,gold_session,admin,unknown} else "unknown"
-    # A caller that omits X-Discover-Provenance and omits body.provenance must write unknown.
-    from fastapi import Request  # noqa: F401 — documents the header path
-
-    allowed = {"user", "warmer", "sentinel", "gold_session", "admin", "unknown"}
-    assert "user" in allowed
-    assert "unknown" in allowed
-
-    # Simulate absent provenance → unknown (never user)
-    raw = ""
-    provenance = raw.strip().lower() if raw.strip().lower() in allowed else "unknown"
-    assert provenance == "unknown"
-    assert provenance != "user"
+REPO = pathlib.Path(__file__).resolve().parents[2]
+VERSIONS = REPO / "backend/alembic/versions"
+MIGRATION = VERSIONS / "add_disc_interactions_provenance.py"
+PLAY_MIGRATION = VERSIONS / "add_prov_play_enum_value.py"
 
 
-def test_label_join_provenance_stamped_at_source():
-    """Write-time tagging: gold_session labeling surfaces stamp provenance at source."""
-    # Admin label-pass proposals that become gold labels must carry provenance=gold_session
-    # so that discover_interactions rows produced during labeling are not counted as user taste.
-    # The header/body provenance field is trusted at source; downstream rollups must
-    # filter WHERE provenance='user' for user taste.
-    from app.models.models import DiscoverInteraction
+def _load(path, name):
+    """Import a migration by path — they are not on sys.path as modules."""
+    import importlib.util
 
-    # The column exists and is string(20) nullable with server_default unknown — validated above.
-    # Stamp: frontend/lib/discoverInteractions.ts sends X-Discover-Provenance: user and body.provenance="user"
-    # for real user interactions; labeling surfaces send gold_session. Check the allowlist includes gold_session.
-    assert "provenance" in {c.name for c in DiscoverInteraction.__table__.columns}
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def test_label_join_parity_features_within_drift_bound():
-    """Audit finding 4: frozen label features vs serve-time features drift <=0.01.
+# ---------------------------------------------------------------------------
+# The enum, and the split that caused all of this
+# ---------------------------------------------------------------------------
 
-    The card Alex grades is derived from LIVE state (#1873/#1874) — snapshot_at_write
-    is metadata only. At train time the sampler must see the same features serve
-    will see; otherwise training/serving skew is built in. This test measures that
-    skew for the blended Discover ranking: frozen rank_score / interestingness
-    score vs live Redis+blend-weight recompute must agree within 0.01.
 
-    The live recompute is what feed.py does:
-      rank_score = base_score * (1 - blend_weight) + interestingness_score * blend_weight
-    A drift >0.01 means the gold label was graded on a different objective than
-    the one it will tune.
+class TestEnumAndAllowlistAgree:
+    def test_the_base_revision_declares_only_what_it_applied(self):
+        """Six values — the ones production's `pg_enum` actually holds.
+
+        This is the assertion that looks backwards and is not. `play` belongs in
+        the enum; it does not belong in THIS revision, because this revision has
+        already run (`alembic_version = add_disc_int_provenance`, verified
+        2026-08-19) and Alembic runs a revision once. Adding `play` here changes
+        what a fresh database gets and changes nothing about the database with
+        the bug — while making every reader believe it was fixed.
+        """
+        mod = _load(MIGRATION, "_prov_mig")
+        assert mod.PROVENANCE_VALUES_AS_APPLIED == (
+            "user", "warmer", "sentinel", "gold_session", "admin", "unknown",
+        )
+        assert "play" not in mod.PROVENANCE_VALUES_AS_APPLIED, (
+            "`play` was added back into an already-applied revision — it can "
+            "never reach production from there; use add_prov_play_value"
+        )
+
+    def test_the_next_revision_adds_play_and_chains_linearly(self):
+        """The seventh value lives in a revision that has NOT run."""
+        play = _load(PLAY_MIGRATION, "_prov_play")
+        base = _load(MIGRATION, "_prov_mig_b")
+        assert play.PLAY_VALUE == "play"
+        assert play.down_revision == base.revision, (
+            "the play revision must chain directly off the base revision — a "
+            "second head fails the Heroku release phase and the site does not "
+            "deploy at all"
+        )
+        assert len(play.revision) <= 32  # gotcha #1
+
+    def test_the_runtime_allowlist_equals_the_migration_CHAIN(self):
+        """The binding that replaces an import — held against the chain.
+
+        Two frozen lists drift; this is the thing that fails when they do. The
+        receiver accepting a value the enum cannot store is the exact defect
+        C-ADHOC-PROV-CORE found.
+
+        Held against `base + play` rather than against one file, and
+        order-sensitively, because that is the enum both databases converge on:
+        a fresh DB creates the six then appends `play`; production already has
+        the six and appends `play`. Same labels, same ordinals. An assertion
+        against a single migration file is what stayed green while the shipped
+        enum matched neither it nor the allowlist.
+        """
+        base = _load(MIGRATION, "_prov_mig2")
+        play = _load(PLAY_MIGRATION, "_prov_play2")
+        assert PROVENANCE_VALUES == base.PROVENANCE_VALUES_AS_APPLIED + (
+            play.PLAY_VALUE,
+        )
+
+    def test_upgrade_and_downgrade_name_the_same_six(self):
+        """A downgrade that drops a differently-spelled type leaves the enum behind."""
+        src = MIGRATION.read_text()
+        # Both halves must build the enum from the shared constant, not a literal.
+        assert src.count(
+            "*PROVENANCE_VALUES_AS_APPLIED, name=\"discover_provenance\""
+        ) == 2
+
+    def test_the_play_revision_uses_add_value_not_a_type_rebuild(self):
+        """A table rewrite in the release phase is gotcha #31 with an UPDATE.
+
+        `ALTER TYPE … ADD VALUE` is a catalog insert. The alternative — new type,
+        `ALTER TABLE … TYPE … USING`, drop, rename — rewrites the whole table
+        inside Heroku's ~5-minute release window, and a release that times out
+        is a site that does not deploy.
+        """
+        src = PLAY_MIGRATION.read_text()
+        assert "ADD VALUE IF NOT EXISTS" in src, (
+            "must be idempotent: autocommit_block() means this statement is NOT "
+            "rolled back if a later one in the same revision fails"
+        )
+        assert "autocommit_block" in src, (
+            "ALTER TYPE ADD VALUE needs the autocommit block — required outright "
+            "before PG12, and the block costs nothing on 17"
+        )
+        assert not re.search(r"ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN", src, re.I), (
+            "the play revision performs a table rewrite — use ADD VALUE"
+        )
+
+    def test_the_play_revision_is_postgres_guarded(self):
+        """`ALTER TYPE` is PostgreSQL-only; a sqlite replay must not raise."""
+        src = PLAY_MIGRATION.read_text()
+        assert 'dialect.name != "postgresql"' in src
+
+    def test_the_migration_performs_no_data_update(self):
+        """A whole-table UPDATE in the release migration is a deploy hazard AND
+        destroys the NULL-vs-unknown distinction the backfill needs."""
+        src = MIGRATION.read_text()
+        assert not re.search(r"op\.execute\(\s*[\"']\s*UPDATE", src, re.I), (
+            "the release migration performs a data UPDATE — it was removed in R3 "
+            "and must not come back"
+        )
+
+    def test_the_column_defaults_to_unknown_never_user(self):
+        from app.models.models import DiscoverInteraction
+
+        col = DiscoverInteraction.__table__.columns["provenance"]
+        assert col.server_default is not None
+        assert "unknown" in str(col.server_default.arg)
+        assert "user" not in str(col.server_default.arg)
+
+
+# ---------------------------------------------------------------------------
+# The receiver — the shipping decision, exercised
+# ---------------------------------------------------------------------------
+
+
+class TestReceiver:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("user", "user"),
+            ("play", "play"),
+            ("warmer", "warmer"),
+            ("sentinel", "sentinel"),
+            ("gold_session", "gold_session"),
+            ("admin", "admin"),
+            ("unknown", "unknown"),
+            ("  Play  ", "play"),        # trimmed + case-folded
+            ("PLAY", "play"),
+        ],
+    )
+    def test_recognised_values_are_kept(self, raw, expected):
+        assert normalize_provenance(raw) == expected
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", "\t", "bogus", "USERR", "player"])
+    def test_absence_and_invalidity_become_unknown_never_user(self, raw):
+        """The whole safety property. Anything defaulting INTO `user` poisons
+        the training slice with whatever produced it."""
+        assert normalize_provenance(raw) == PROVENANCE_FALLBACK
+        assert normalize_provenance(raw) != "user"
+
+    def test_play_is_allowed_and_is_not_user(self):
+        assert "play" in PROVENANCE_ALLOWED
+        assert normalize_provenance("play") == "play"
+
+    def test_the_route_uses_the_shared_normalizer(self):
+        """Delegation, not a re-implementation.
+
+        The literal set inlined in the route is how the allowlist and the enum
+        came apart in the first place.
+        """
+        import inspect
+
+        from app.routes.feed import record_discover_interactions
+
+        src = inspect.getsource(record_discover_interactions)
+        assert "normalize_provenance(" in src
+        assert "_PROVENANCE_VALUES" not in src, (
+            "the route re-inlined its own allowlist literal"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The three transport stamps
+# ---------------------------------------------------------------------------
+
+
+class TestTransportsStampAtSource:
+    """Three real writers, three stamps. Trust the writer, not the log — the
+    surface a row arrives on is not evidence of who produced it, because
+    warmers and sentinels arrive on the same routes as people.
     """
-    # Use the same math the serve path uses (feed.py:6638) and the replay guard tests.
-    # Real drift would require a DB + Redis harness; here we pin the *contract*:
-    # the measurement exists and the bound is 0.01, and a concrete drift scenario fails.
 
-    blend_weight = 0.2
-    base_score = 72.5
-    interestingness_score = 85.0
+    def test_web_discover_stamps_user(self):
+        src = (REPO / "frontend/lib/discoverInteractions.ts").read_text()
+        assert f'"{PROVENANCE_HEADER}": "user"' in src
 
-    # Frozen snapshot (at label time) — what the label joined
-    frozen_rank = base_score * (1 - blend_weight) + interestingness_score * blend_weight  # 75.0
-    # Simulate serve-time recompute where interestingness drifted by 0.015 (stale TTL)
-    live_rank_drifted = frozen_rank + 0.015
-    drift = abs(frozen_rank - live_rank_drifted)
+    def test_play_stamps_play_on_both_of_its_writers(self):
+        """`sendKidInteraction` AND `sendKidPrediction`. One stamped writer and
+        one unstamped writer is a half-labelled surface, which is worse than an
+        unlabelled one — it looks done."""
+        src = (REPO / "frontend/lib/play/session.ts").read_text()
+        assert src.count(f'"{PROVENANCE_HEADER}": "play"') == 2
 
-    # The bound is 0.01 — a drift of 0.015 must FAIL (so skew is measured, not assumed)
-    assert drift > 0.01, "test fixture drift should exceed bound"
-    assert drift == pytest.approx(0.015)
+    def test_native_ios_stamps_user(self):
+        src = (REPO / "ios/Bain Luck/Bain Luck/Services/APIClient.swift").read_text()
+        assert f'forHTTPHeaderField: "{PROVENANCE_HEADER}"' in src
+        assert 'provenance: "user"' in src
 
-    # The good case: drift 0.005 passes
-    live_rank_ok = frozen_rank + 0.005
-    drift_ok = abs(frozen_rank - live_rank_ok)
-    assert drift_ok <= 0.01
-    assert drift_ok == pytest.approx(0.005)
+    def test_play_is_never_inferred_from_the_source_field(self):
+        """Deriving `play` after receipt from `source == "play"` would re-create
+        the mixture the column exists to end."""
+        import inspect
 
-    # Component-level checks the audit names: interestingness, blend weight, rank_score
-    # each measured independently so a pass on rank does not hide a component drift
-    frozen_i, live_i = 85.0, 85.009  # within bound
-    assert abs(frozen_i - live_i) <= 0.01
-    frozen_i2, live_i2 = 85.0, 85.02
-    assert abs(frozen_i2 - live_i2) > 0.01  # this would be flagged
+        from app.routes.feed import record_discover_interactions
+
+        src = inspect.getsource(record_discover_interactions)
+        assert not re.search(r'provenance\s*=\s*["\']play["\']', src)
 
 
-def test_provenance_training_slice_is_user_only():
-    """Training must filter to provenance=user — unknown/warmer/sentinel are not taste."""
-    served_sql_excerpt = "WHERE provenance = 'user'"  # what export_engagement must do
-    # This is the contract the 250-label trainer will enforce; the test names it.
-    assert served_sql_excerpt == "WHERE provenance = 'user'"
-    # And unknown rows are not promoted to user by the backfill heuristic
-    unknown_rewrite_to_user = 0
-    assert unknown_rewrite_to_user == 0, "backfill must never rewrite unknown → user"
+# ---------------------------------------------------------------------------
+# The drift validator — the SHIPPING one
+# ---------------------------------------------------------------------------
+
+
+class TestLabelJoinDrift:
+    """Audit finding 4 / #1873: the card Alex grades is derived from LIVE state,
+    so at train time the sampler must see the features serve will see.
+
+    These call `app/utils/provenance_drift.py` — the function the label/training
+    join calls. A validator that lived only inside its own test file guarded
+    nothing, which is what the previous version did.
+    """
+
+    def test_drift_above_the_bound_refuses(self):
+        assert is_within_drift(75.0, 75.015) is False
+
+    def test_drift_within_the_bound_passes(self):
+        assert is_within_drift(75.0, 75.005) is True
+
+    def test_a_component_drift_is_not_hidden_by_a_passing_rank(self):
+        """A pass on the blended rank must not mask a drifted component."""
+        assert validate_label_join_drift(
+            frozen_rank=75.0, live_rank=75.005,      # rank OK
+            frozen_i=85.0, live_i=85.020,            # component NOT OK
+        ) is False
+
+    def test_both_within_bound_passes(self):
+        assert validate_label_join_drift(
+            frozen_rank=75.0, live_rank=75.005,
+            frozen_i=85.0, live_i=85.009,
+        ) is True
+
+    def test_killing_the_delegation_fails_this_suite(self):
+        """Mutation check: if the production function stopped deciding, would
+        anything here notice? A stub that returns True on a real 0.015 drift
+        must make the assertions above wrong."""
+        def _broken(*_a, **_k):
+            return True
+
+        assert _broken(75.0, 75.015) is True          # the stub is permissive
+        assert is_within_drift(75.0, 75.015) is False  # the shipping one is not

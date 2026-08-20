@@ -1060,8 +1060,45 @@ actor APIClient {
     }
 
     /// Records a Discover card interaction for feed personalization.
+    /// Native Discover stamps 'user' at source via X-Discover-Provenance (ruling: native Discover is user, Play is play, never infer from surface after receipt).
     func recordDiscoverInteraction(_ event: DiscoverInteractionEvent) async throws -> StatusResponse {
-        return try await postEncodable("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]))
+        return try await postEncodableWithProvenance("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]), provenance: "user")
+    }
+
+    private func postEncodableWithProvenance<B: Encodable & Sendable, T: Decodable & Sendable>(
+        _ path: String,
+        body: B,
+        provenance: String
+    ) async throws -> sending T {
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+        request.setValue(provenance, forHTTPHeaderField: "X-Discover-Provenance")
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(body)
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8)
+            throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
     }
 
     // MARK: - Admin Discover Labeling

@@ -214,6 +214,30 @@ jobs:
             exit 1
           }
 
+      - name: Provenance enum contract (real Postgres)
+        # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
+        # enum declared six values without it, and the route specimen STORED it
+        # and COMMITTED — because the recording double does not enforce
+        # PostgreSQL's enum type. Against a real database every Play interaction
+        # would have been rejected at commit, in production, on the kid surface.
+        #
+        # An ORM will hand PostgreSQL any string; the TYPE is what says no. So
+        # this gate cannot be a unit test, a mock session, or a source
+        # assertion — all three were green while the defect was live. It needs
+        # the service container.
+        #
+        # Same skip-detection as the two gates around it: pytest exits 0 when
+        # every test skips, so a gate that silently did not run is
+        # indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_provenance_enum_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/provenance.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/provenance.txt; then
+            echo "::error::provenance enum contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Odds-enrichment equivalence (real Postgres)
         # LAT-P030/#1494. The odds enrichment stage was 84-95% of every slow team
         # query (measured 6,724ms of 12,182ms) because DISTINCT ON cannot skip: it
