@@ -60,7 +60,49 @@ _SOURCE_PRIORITY = {
     "odds_api": 1,
     "statpal": 2,
     "espn": 3,
+    # MLB's OWN published schedule, reached only by the attended repair rail and
+    # only after matching a Final on both teams AND the final score. It outranks
+    # every poller because it is not a poll — it is the league saying when the
+    # game started. Ranked above `espn` deliberately: ESPN is an excellent
+    # secondary, and #1947 holds three `espn_id` values shared by genuinely
+    # different games, so it is not the last word on MLB timing.
+    "mlb_schedule_repair": 4,
 }
+
+
+def commence_time_write_authorized(
+    current_source: Optional[str],
+    incoming_source: Optional[str],
+) -> tuple[bool, str]:
+    """May ``incoming_source`` overwrite a ``commence_time`` written by
+    ``current_source``? Returns ``(authorized, reason)``.
+
+    Extracted as a named predicate for #2018 so that **every** rail writing
+    `events.commence_time` shares one authority rule instead of each deciding
+    locally. `repair_inverted_mlb_events` previously stamped its own source
+    unconditionally — fine while it had one well-behaved caller, and the #1980
+    manufacturer shape one table over the moment it had two.
+
+    Two asymmetries, both deliberate:
+
+    * **A tie loses.** Two readings from the same authority disagreeing is a data
+      question, not a licence for whichever poll ran last. Strict ``>``, matching
+      what ``_update_fields_by_priority`` has always done.
+    * **Unknown ranks 0 on BOTH sides, which is not symmetric in effect.** An
+      unknown *current* source confers no immunity — otherwise the rows with the
+      worst provenance become the only unfixable ones. An unknown *incoming*
+      source has no established authority and loses to everything known. So
+      provenance we cannot vouch for may be corrected, and may not correct.
+    """
+    incoming = _SOURCE_PRIORITY.get(incoming_source or "", 0)
+    current = _SOURCE_PRIORITY.get(current_source or "", 0)
+    if incoming > current:
+        return (True, "ok")
+    return (
+        False,
+        f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "
+        f"{current_source or '<none>'}({current})",
+    )
 
 # Time window for structured matching (±28 hours covers Kalshi settlement
 # dates that are 24h off from game start, and UTC/local date boundary issues)
