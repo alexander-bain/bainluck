@@ -35,6 +35,7 @@ import path from "node:path";
 
 import PropDivergenceRail from "@/components/PropDivergenceRail";
 import PropDivergenceDetail from "@/components/PropDivergenceDetail";
+import { selectDivergenceRows } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 
 import phillies from "../fixtures/eventPlayerProps.15199886.json";
@@ -174,5 +175,191 @@ describe("the rendered capture rig", () => {
     // CSS looks broken in ways the code is not, and reviewing it wastes the one
     // thing the capture is for.
     expect(css.length).toBeGreaterThan(10_000);
+  });
+});
+
+/**
+ * ── RULING 112'S DEFERRED COST: THE PIXEL PAIR, ON DEMAND FROM REALITY ───────
+ *
+ * Alex deferred the layout question to pixels and said the day a real payload
+ * asks it, he wants the card BOTH ways. `ladderPivotContests` is the detector;
+ * this is the half that turns a fired detector into two pictures and a routing
+ * note, without anyone having to remember to look.
+ *
+ * ** THE COUNTERFACTUAL IS RENDERED, NOT DRAWN. ** The second picture has to come
+ * out of the same component and the same payload, or it is an illustration of the
+ * alternative rather than the alternative. So it is produced by removing the one
+ * rung that took the ladder's slot and re-rendering — and the harness then
+ * ASSERTS the resulting rail equals the detector's own `counterfactualRows`. If
+ * those disagree, the pair is wrong in a way a reader could not see, so the
+ * harness reds instead of shipping it. That assertion is the only reason this is
+ * trustworthy enough to put in front of a ruling.
+ *
+ * Finding the raw row is done by trying each removal rather than by re-parsing
+ * `market_name`/`outcome_name` — the payloads carry the player in DIFFERENT
+ * fields per provider (Kalshi in the outcome, Polymarket in the market), and a
+ * parser here would be a fourth implementation of an identity this file has no
+ * business knowing. Removal-and-compare needs no such knowledge and is exact.
+ *
+ * ** A SWEEP THAT FOUND NOTHING WRITES THAT DOWN. ** Zero contests is the
+ * expected reading today and it must not be indistinguishable from a sweep that
+ * never ran (gotcha #53). The manifest records the payloads examined either way.
+ */
+type ContestArtifact = {
+  event: string;
+  ladder: string;
+  mover: string;
+  pivot: string;
+  moverTravelPt: number;
+  pivotTravelPt: number;
+};
+
+function counterfactualPayload(
+  rows: PlayerPropRow[],
+  status: string,
+  wantLabels: string[],
+): PlayerPropRow[] | null {
+  for (let i = 0; i < rows.length; i += 1) {
+    const without = [...rows.slice(0, i), ...rows.slice(i + 1)];
+    const got = selectDivergenceRows({ playerProps: without, status }).rows.map((r) => r.label);
+    if (got.length === wantLabels.length && got.every((l, j) => l === wantLabels[j])) {
+      return without;
+    }
+  }
+  return null;
+}
+
+describe("ruling 112's deferred cost — routed to Alex the day a payload asks", () => {
+  const css = appStylesheet();
+  const PREGAME = STATES.filter((s) => s.status === "scheduled" && s.surface !== "detail");
+  const found: ContestArtifact[] = [];
+
+  it.each(PREGAME.map((s) => [s.slug, s] as const))(
+    "%s: sweep for a contested ladder",
+    (slug, state) => {
+      const result = selectDivergenceRows({ playerProps: state.rows, status: state.status });
+
+      for (const contest of result.ladderPivotContests) {
+        const want = contest.counterfactualRows.map((r) => r.label);
+        const without = counterfactualPayload(state.rows, state.status, want);
+        // The pair must be two renders of one payload. If a single removal cannot
+        // reproduce the detector's counterfactual, the two disagree about what the
+        // alternative IS, and a picture of that would mislead the ruling.
+        expect(without).not.toBeNull();
+
+        found.push({
+          event: slug,
+          ladder: contest.ladder,
+          mover: `${contest.mover.label} (${(contest.mover.travel * 100).toFixed(1)} pt, structural)`,
+          pivot: `${contest.pivot.label} (${(contest.pivot.travel * 100).toFixed(1)} pt, market-live)`,
+          moverTravelPt: Number((contest.mover.travel * 100).toFixed(1)),
+          pivotTravelPt: Number((contest.pivot.travel * 100).toFixed(1)),
+        });
+
+        if (OUT_DIR) {
+          fs.mkdirSync(OUT_DIR, { recursive: true });
+          const stem = `contest-${slug}-${contest.ladder.replace(/[^a-z0-9]+/gi, "-")}`;
+          const shot = (suffix: string, title: string, props: PlayerPropRow[]) =>
+            fs.writeFileSync(
+              path.join(OUT_DIR, `${stem}-${suffix}.html`),
+              page(
+                title,
+                renderToStaticMarkup(
+                  React.createElement(PropDivergenceRail, {
+                    playerProps: props,
+                    status: state.status,
+                  }),
+                ),
+                css,
+              ),
+            );
+          shot("a-mover", `SHIPPED (ruling 112) — ${contest.mover.label}`, state.rows);
+          shot("b-pivot", `ALTERNATIVE — ${contest.pivot.label}`, without as PlayerPropRow[]);
+        }
+      }
+    },
+  );
+
+  afterAll(() => {
+    if (!OUT_DIR) return;
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(OUT_DIR, "ladder-pivot-contests.json"),
+      JSON.stringify(
+        {
+          swept: PREGAME.map((s) => s.slug),
+          contests: found.length,
+          detail: found,
+          note:
+            found.length === 0
+              ? "SWEEP RAN, ZERO CONTESTS. Ruling 112's reported cost is not being paid on any payload in the harness — the question is still not ripe. Nothing to route."
+              : "CONTESTS FOUND — the *-a-mover.html / *-b-pivot.html pairs are for Alex. Ruling 112 shipped the mover; the pivot half is the alternative he deferred to pixels.",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  });
+});
+
+/**
+ * NON-VACUITY FOR THE SWEEP ABOVE.
+ *
+ * Every production payload reports zero contests today, which is the expected
+ * reading — and it means the sweep's render-and-assert path never executes. A
+ * green run therefore proves the detector is quiet, not that the rig can produce
+ * a pair. Those are different claims, and the day one is needed is the day it is
+ * too late to find out.
+ *
+ * So the contested shape from `propLadderPivotContest.test.tsx` is driven through
+ * the SAME helper the sweep uses. If a single removal cannot reproduce the
+ * detector's counterfactual, the rig would have shipped Alex a mismatched pair,
+ * and this reds instead.
+ */
+describe("the contest rig can actually produce a pair", () => {
+  function rung(player: string, stat: string, line: number, mark: number, current = mark) {
+    return {
+      market_name: `St. Louis vs Cincinnati: ${stat}`,
+      outcome_name: `${player}: ${line}+`,
+      threshold: line,
+      over_probability: current,
+      pregame_mark: mark,
+      source: "kalshi",
+    } as unknown as PlayerPropRow;
+  }
+
+  const CONTESTED: PlayerPropRow[] = [
+    rung("Brady Singer", "strikeouts", 5, 0.39, 0.05),
+    rung("Brady Singer", "strikeouts", 2, 0.46, 0.3),
+    rung("Brycen Mautz", "strikeouts", 5, 0.6, 0.2),
+    rung("Ivan Herrera", "hits + runs + rbis", 1, 0.75, 0.463),
+    rung("Victor Scott", "hits + runs + rbis", 1, 0.74, 0.455),
+    rung("Bryan Torres", "hits + runs + rbis", 1, 0.73, 0.45),
+  ];
+
+  it("renders both halves, and the alternative matches the detector's own counterfactual", () => {
+    const result = selectDivergenceRows({ playerProps: CONTESTED, status: "scheduled" });
+    expect(result.ladderPivotContests).toHaveLength(1);
+    const [contest] = result.ladderPivotContests;
+
+    const want = contest.counterfactualRows.map((r) => r.label);
+    const without = counterfactualPayload(CONTESTED, "scheduled", want);
+    expect(without).not.toBeNull();
+
+    // Both halves render a real card, and they are genuinely different pictures.
+    const shot = (props: PlayerPropRow[]) =>
+      renderToStaticMarkup(
+        React.createElement(PropDivergenceRail, { playerProps: props, status: "scheduled" }),
+      );
+    const a = shot(CONTESTED);
+    const b = shot(without as PlayerPropRow[]);
+    expect(a).toContain("rounded-card");
+    expect(b).toContain("rounded-card");
+    expect(a).not.toEqual(b);
+    // Named, so a pair that differed for some unrelated reason would not pass.
+    expect(a).toContain(contest.mover.label);
+    expect(a).not.toContain(contest.pivot.label);
+    expect(b).toContain(contest.pivot.label);
+    expect(b).not.toContain(contest.mover.label);
   });
 });
