@@ -596,7 +596,8 @@ def test_ruling_numbers_are_unique() -> None:
 #: local and remote refs for `docs/rulings/102-*`, holders_found 0 — which is #2009's ledger half
 #: doing exactly what the note above asks for. The claim held through this rebase: ux took 100
 #: and 101, not 102, so no renumber was owed and the index reads 099 -> 100 -> 101 -> 102 with no
-#: gap.#:
+#: gap.
+#:
 #: Raised to **100** by the INT-094 combined merge — CAL-P077's **102** (above) and lane1
 #: q380's **108** ("a dry run gates only what it executes", Fable, #1947/#1796) in one push.
 #: FOURTEENTH consecutive cycle, and the first one where the collision was CALLED IN ADVANCE:
@@ -621,7 +622,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: contains a never-merge ancestor", Fable's INT-094 directive) on top of the 102 + 108 pair
 #: above — three rulings in one push, so the delta anyone would have GUESSED is wrong twice over.
 #: COUNTED: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 101.
-MINIMUM_BANKED_RULINGS = 101
+#:
+#: Raised to **102** by the INT-095 merge of `program/calibration-75` (CAL-P078), which
+#: banks **103** ("a price captured after the answer is not a price"). COUNTED with
+#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 102 — never a delta off 101, because
+#: two more lanes are mid-merge in this same push and a guessed delta is wrong twice over.
+MINIMUM_BANKED_RULINGS = 102
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

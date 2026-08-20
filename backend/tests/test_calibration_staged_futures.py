@@ -1320,10 +1320,19 @@ def test_late_arrival_is_enforced_per_unit_not_per_generation():
     # is therefore unmeasurable for exactly one beat after banking, and reads 0
     # as UNKNOWN rather than as "nothing moved" — pinned in
     # ``test_calibration_staged_convergence_p028.py``. This is that first beat.
+    #
+    # CAL-P078: this bank is COMPLETE, so that same retention promotes it to the
+    # serving slot. The units and their digests are on the served side from here
+    # on; the builder is empty and starts the next census. The invariant under
+    # test — a late arrival is counted per unit, never dropped — is unchanged and
+    # is now read off the bank that is actually being published.
     warm, dropped_warm = retain_planned_units(cursor, planned_before)
     assert dropped_warm == ()
     assert warm.roster_drift_units == 0
-    assert warm.unit_digests, "the warm-up beat must leave the digests stamped"
+    assert warm.served_digests, "the warm-up beat must leave the digests stamped"
+    assert set(warm.served_units) == {c.key for c in planned_before}
+    assert warm.committed_units == (), "the promoted bank leaves the builder empty"
+    assert warm.served_accumulator is not None, "the census being served must survive"
 
     kept, dropped = retain_planned_units(warm, planned_after)
 
@@ -1336,11 +1345,11 @@ def test_late_arrival_is_enforced_per_unit_not_per_generation():
     touched = [c for c in planned_before if "e:1" in c.vm_ids]
     assert len(touched) == 1
     assert dropped == ()
-    assert len(kept.committed_units) == len(planned_before)
-    assert kept.roster_drift_units == 1, "the moved unit must be reported, not silently kept"
+    assert len(kept.served_units) == len(planned_before)
+    assert kept.served_drift_units == 1, "the moved unit must be reported, not silently kept"
     # Every surviving unit is one the new plan still asks for.
     planned_keys = {c.key for c in planned_after}
-    assert set(kept.committed_units) <= planned_keys
+    assert set(kept.served_units) <= planned_keys
     # The generation IS finished, and honestly so: its rows are a census taken
     # ~one arrival ago, and the payload says how many units that describes.
     assert is_complete(kept, planned_after)

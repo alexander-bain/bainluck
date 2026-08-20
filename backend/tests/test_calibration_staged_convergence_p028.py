@@ -34,6 +34,7 @@ from app.utils.calibration_staged_futures import (
     plan_units,
     retain_planned_units,
     roster_drift,
+    served_drift,
     unit_key,
 )
 
@@ -172,17 +173,74 @@ class TestDriftIsMeasuredNotObeyed:
         assert cursor.unit_digests == {}, "the absence itself must remain visible"
 
     def test_drift_is_measured_before_digests_are_restamped(self):
-        """Order is the whole point: re-stamp first and drift is zero forever."""
+        """Order is the whole point: re-stamp first and drift is zero forever.
+
+        CAL-P078 moved WHERE the answer lands without weakening the rule. The
+        bank in this fixture is COMPLETE, so ``retain_planned_units`` promotes it
+        to the serving slot — and the drift it inherited is reported against the
+        bank that now holds those units, which is the one a reader of
+        ``/api/calibration`` is looking at. Measure-then-re-stamp is unchanged;
+        promotion happens after both measurements for exactly this reason.
+        """
         before = plan_units(_roster(200), buckets=8)
         cursor = _banked(before, [unit_key(c) for c in before])
 
         after = plan_units(_roster(200, extra=[_row(6_001, "e:5", source="polymarket")]), buckets=8)
         updated, _dropped = retain_planned_units(cursor, after)
 
-        assert updated.roster_drift_units == 1, "the beat must report the drift it inherited"
+        # The complete bank was promoted, so the units — and their drift — are
+        # on the serving side now.
+        assert set(updated.served_units) == {unit_key(c) for c in before}
+        assert updated.committed_units == (), "a promoted bank leaves the builder empty"
+        assert updated.served_drift_units == 1, "the beat must report the drift it inherited"
         # And having reported it, the cursor now tracks the CURRENT membership,
         # so the same drift is not re-reported on every subsequent beat.
+        assert served_drift(updated, after) == 0
         assert roster_drift(updated, after) == 0
+
+    def test_a_promoted_bank_does_not_re_report_its_drift_forever(self):
+        """The measure-then-re-stamp rule, asserted across TWO beats.
+
+        The failure it forbids is the one #2007 is: a number that is correct once
+        and then repeats, so a reader cannot tell a fresh census from a stale one.
+        """
+        before = plan_units(_roster(200), buckets=8)
+        cursor = _banked(before, [unit_key(c) for c in before])
+        after = plan_units(_roster(200, extra=[_row(6_002, "e:9", source="polymarket")]), buckets=8)
+
+        first, _ = retain_planned_units(cursor, after)
+        assert first.served_drift_units == 1
+        # Same plan, next beat: nothing has moved SINCE, so it reports zero —
+        # rather than re-reporting the arrival it already accounted for.
+        second, _ = retain_planned_units(first, after)
+        assert second.served_drift_units == 0
+        assert set(second.served_units) == set(first.served_units), "the bank still serves"
+
+    def test_a_unit_banked_without_a_digest_is_topped_up_not_invented(self):
+        """``advance`` banks by key and never sees a chunk, so it stamps nothing.
+
+        Those units would otherwise be UNCHECKABLE for the whole life of the
+        serving bank. The top-up gives them a baseline from the next beat's plan
+        — and must never overwrite one that already exists, which would
+        re-baseline every unit every beat and make drift read zero forever.
+        """
+        chunks = plan_units(_roster(200), buckets=8)
+        keys = [unit_key(c) for c in chunks]
+        cursor = _banked(chunks, keys)
+        # A serving bank whose digests are missing for one unit.
+        promoted, _ = retain_planned_units(cursor, chunks)
+        assert promoted.served_digests, "the retention path stamps what it can"
+        stripped = replace(
+            promoted, served_digests={k: v for k, v in promoted.served_digests.items()
+                                      if k != keys[0]}
+        )
+        assert keys[0] not in stripped.served_digests
+
+        topped, _ = retain_planned_units(stripped, chunks)
+        assert keys[0] in topped.served_digests, "the gap closes on the next beat"
+        # The units that already HAD a baseline keep the one they had.
+        for key in keys[1:]:
+            assert topped.served_digests[key] == stripped.served_digests[key]
 
     def test_drift_does_not_count_a_dropped_unit(self):
         """A slot the plan no longer has is a drop, not drift. Not both."""
