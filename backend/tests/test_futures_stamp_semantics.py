@@ -1,0 +1,270 @@
+"""#2024 — the futures touch-stamps, and the coupling that decides whether they
+may be changed.
+
+UX-P106 item 2. `futures_markets.updated_at` and `futures_outcomes.last_updated`
+are written `func.now()` UNCONDITIONALLY inside the ON CONFLICT update set of
+the routine polls, so every row the poller *sees* gets a fresh timestamp whether
+or not anything about it changed. Measured on production 2026-08-19/20 UTC:
+**2,005 outcomes stamped fresh inside one minute, not one of which had moved.**
+The stamp records that the poller ran.
+
+#2024 offers two fixes and asks for a consumer audit before either is chosen:
+
+    1. stamp on change (a `WHERE` / `IS DISTINCT FROM` on the upsert), or
+    2. add an explicit `price_changed_at` and leave the touch-stamps alone.
+
+** THE AUDIT REFUSES OPTION 1, AND THE EVIDENCE IS IN THIS FILE. **
+
+`app/routes/playoffs.py` uses `outcome.last_updated` as a HARD STALENESS GATE on
+the playoff grid: an outcome whose stamp predates the cutoff is `continue`d — it
+does not render. Under option 1 that stamp stops advancing on any price that is
+merely STABLE, so a team parked at 3% for a week would drop out of the grid.
+That is not a subtle regression; it is grid blanking, on the surface the Grid
+Sentinel exists to protect, caused by a change made three files away.
+
+So this file is not a unit test of behaviour. It is the predicate that #2024's
+warning could not be: *"which downstream consumers read these two columns has
+not been audited"* is prose, and three separate recovery rails in this repo have
+been written by people who cited a prose gotcha and still walked into it
+(gotcha #35). A predicate cannot be skim-read.
+
+WHAT IT ASSERTS, in both directions:
+
+  * the WRITE side — the exact set of task files that stamp unconditionally. A
+    new unconditional stamper reds this, so it gets considered rather than
+    absorbed.
+  * the READ side — the exact set of call sites that gate on `last_updated` as
+    a freshness/staleness filter. A new gate reds this, because it becomes one
+    more thing option 1 would break.
+
+Either list changing is the signal to re-run the audit, not to update the list.
+
+NOT ASSERTED HERE: that the current behaviour is correct. It is the defect
+#2024 is open on. This file pins the COUPLING, so that whoever fixes the write
+cannot do it without seeing the reads.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+BACKEND = Path(__file__).resolve().parents[1]
+
+
+def _read(rel: str) -> str:
+    return (BACKEND / rel).read_text(encoding="utf-8")
+
+
+def _src_files(*dirs: str) -> list[str]:
+    out: list[str] = []
+    for d in dirs:
+        for p in sorted((BACKEND / d).rglob("*.py")):
+            out.append(str(p.relative_to(BACKEND)))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# WRITE side
+# ---------------------------------------------------------------------------
+
+#: Task files that stamp a futures touch-column with an unconditional ``now()``
+#: inside a routine POLL path. Measured, not guessed — see ``test_write_side``.
+#:
+#: ``backfill_winners.py`` and ``repair_kalshi_fabricated_loss.py`` are
+#: deliberately absent: their ``last_updated = NOW()`` writes accompany a
+#: RESOLUTION write (``is_winner``, ``resolution_source``,
+#: ``calibration_probability``), so the row genuinely changed and the stamp is
+#: honest. #2024 is about the POLLS.
+POLL_STAMPERS = {
+    "app/tasks/kalshi.py",
+    "app/tasks/polymarket.py",
+    "app/tasks/futures.py",
+}
+
+_STAMP = re.compile(
+    r"""["']?(?:last_updated|updated_at|volume_updated_at)["']?\s*[:=]\s*func\.now\(\)"""
+)
+
+#: The number of unconditional touch-stamp sites per poll file, MEASURED.
+#: A census rather than a boolean, so the tripwire moves when a stamp is added
+#: OR removed — "is there at least one" would sit green through half a fix.
+POLL_STAMP_COUNTS = {
+    "app/tasks/kalshi.py": 5,
+    "app/tasks/polymarket.py": 7,
+    "app/tasks/futures.py": 2,
+}
+
+
+#: Fields that mark a write as a PRICE write — the poll path #2024 is about.
+_PRICE_FIELDS = (
+    "current_probability",
+    "current_yes_bid",
+    "current_yes_ask",
+    "probability_change_24h",
+    "volume_24h",
+    "current_american_odds",
+)
+
+#: Where an update's field block starts. The stamp is classified by the company
+#: it keeps INSIDE its own block, not by whatever is nearby in the file.
+_BLOCK_START = re.compile(r"set_=\{|\.values\(|update_set(?:\s*:\s*dict)?\s*=\s*\{")
+
+
+def _poll_stamp_sites(src: str) -> list[int]:
+    """Touch-stamp sites on a PRICE write, i.e. #2024's surface.
+
+    `backfill_winners.py` and `repair_kalshi_fabricated_loss.py` stamp
+    `last_updated` too, but always alongside `is_winner` / `resolution_source`
+    in a block that writes no price — the row genuinely changed, so the stamp is
+    honest and they are not this issue's surface.
+
+    The discriminator is deliberately block-scoped. A crude ±400-character
+    window got this wrong in both directions on the first draft: it excluded
+    `kalshi.py`'s MAIN poll upsert (a conditional `is_winner` is appended a few
+    lines below the block) and would have let a resolution write through
+    wherever a price happened to be mentioned nearby.
+    """
+    starts = [m.end() for m in _BLOCK_START.finditer(src)]
+    sites: list[int] = []
+    for m in _STAMP.finditer(src):
+        prior = [s for s in starts if s <= m.start()]
+        block = src[prior[-1] : m.end()] if prior else src[max(0, m.start() - 400) : m.end()]
+        if "resolution_source" in block and not any(f in block for f in _PRICE_FIELDS):
+            continue
+        sites.append(src[: m.start()].count("\n") + 1)
+    return sites
+
+
+def test_write_side_is_exactly_the_known_poll_stampers() -> None:
+    """Every file that stamps a futures touch-column on a POLL path.
+
+    A file arriving here is a file #2024's fix has to cover. A file leaving it
+    means the fix landed — at which point the audit's conclusion below has to be
+    re-checked, not deleted.
+    """
+    found = {}
+    for f in _src_files("app/tasks"):
+        src = _read(f)
+        # Scope to the futures tables; `events`/`teams` stamps are a different
+        # column family with different consumers.
+        if "FuturesOutcome" not in src and "futures_outcomes" not in src:
+            continue
+        sites = _poll_stamp_sites(src)
+        if sites:
+            found[f] = len(sites)
+
+    assert found == POLL_STAMP_COUNTS, {
+        "unexpected_new_stamper": sorted(set(found) - set(POLL_STAMP_COUNTS)),
+        "stamper_that_disappeared": sorted(set(POLL_STAMP_COUNTS) - set(found)),
+        "count_drift": {
+            k: (POLL_STAMP_COUNTS.get(k), found.get(k))
+            for k in set(found) | set(POLL_STAMP_COUNTS)
+            if POLL_STAMP_COUNTS.get(k) != found.get(k)
+        },
+        "why": (
+            "#2024 — this census moving means the poll touch-stamps changed. "
+            "Before updating it, re-read READ_SIDE_CONSUMERS below: "
+            "`routes/playoffs.py` DROPS an outcome from the playoff grid on a "
+            "stale stamp, so a change-stamp blanks every merely-STABLE price."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# READ side — the reason option 1 is refused
+# ---------------------------------------------------------------------------
+
+#: Call sites that gate on ``last_updated`` as a FRESHNESS filter, i.e. that
+#: read it as "the poller is alive" rather than "this price is fresh". These are
+#: what option 1 would break.
+#:
+#: The severe one is ``routes/playoffs.py``: a stamp older than the cutoff drops
+#: the outcome from the playoff grid entirely.
+#:
+#: The reading recorded against each is the deliverable #2024's acceptance lists
+#: FIRST ("each one's intended reading recorded"), and it is what decides the
+#: design: the set is MIXED, so no single meaning for the column can serve it.
+READ_SIDE_CONSUMERS = {
+    "app/routes/playoffs.py": (
+        "POLLER ALIVE — grid staleness gate. An outcome whose stamp predates the "
+        "cutoff is `continue`d and does NOT render. This is the veto on option 1: "
+        "a change-stamp blanks every stable price out of the playoff grid."
+    ),
+    "app/routes/admin_judgments.py": (
+        "PRICE FRESH — the #2019 labeling sampler's price-age floor. The consumer "
+        "#2024 was found through, and the one that is WRONG today: it is filtering "
+        "on a stamp that says the poller ran."
+    ),
+    "app/routes/oscars.py": (
+        "NEITHER — `outcome.last_updated > existing_ts` is a max() fold over "
+        "nominees to display 'last updated'. Insensitive to the change either way, "
+        "but it is a comparison site and is recorded so the set is complete."
+    ),
+}
+
+_GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")
+
+
+def test_read_side_consumers_are_exactly_the_audited_set() -> None:
+    """Every place a stamp COMPARISON is made against the futures columns.
+
+    A new entry here widens the blast radius of #2024's option 1. It is not a
+    list to keep current; it is a list whose growth is the finding.
+    """
+    found = {f for f in _src_files("app/routes", "app/utils") if _GATE.search(_read(f))}
+    assert found == set(READ_SIDE_CONSUMERS), {
+        "unaudited_new_consumer": sorted(found - set(READ_SIDE_CONSUMERS)),
+        "consumer_that_disappeared": sorted(set(READ_SIDE_CONSUMERS) - found),
+        "why": "#2024 — each of these is a consumer whose reading option 1 could invert",
+    }
+
+
+def test_the_audited_readings_disagree_with_each_other() -> None:
+    """The audit's conclusion, as an assertion rather than a paragraph.
+
+    Both readings — "the poller is alive" and "this price is fresh" — are live
+    on the SAME column. That is the whole finding: there is no value the column
+    can take that satisfies both, which is why #2024's option 2 (a separate
+    `price_changed_at`) is the fix and option 1 is refused.
+    """
+    readings = {v.split(" —")[0] for v in READ_SIDE_CONSUMERS.values()}
+    assert {"POLLER ALIVE", "PRICE FRESH"} <= readings, (
+        "One of the two conflicting readings left the audit. If only one "
+        "reading survives, option 1 (stamp on change) may now be safe — re-run "
+        f"the audit rather than assuming. readings={sorted(readings)}"
+    )
+
+
+def test_the_playoff_grid_really_does_drop_a_stale_outcome() -> None:
+    """The specimen behind the refusal, asserted rather than described.
+
+    If this stops being true the refusal weakens and #2024's option 1 gets
+    cheaper — so it is checked, not trusted.
+    """
+    src = _read("app/routes/playoffs.py")
+    window = src[src.index("_stale_skipped += 1") - 400 : src.index("_stale_skipped += 1") + 60]
+    assert "last_updated" in window, "the grid's stale gate no longer reads last_updated"
+    assert "continue" in window, "the grid's stale gate no longer DROPS the outcome"
+
+
+def test_futures_outcome_has_no_column_that_answers_price_freshness() -> None:
+    """#2024's central claim, held to the schema rather than to memory.
+
+    `FuturesOutcome` carries no timestamp except `opening_captured_at` and the
+    touch-stamp itself, so there is nothing correct for a consumer to switch to.
+    That is why the fix is a new column and not a reader change — and when the
+    column lands, this test is the one that should red.
+    """
+    from app.models.models import FuturesOutcome
+
+    timestamps = {
+        c.name
+        for c in FuturesOutcome.__table__.columns
+        if str(c.type).startswith("TIMESTAMP") or "DateTime" in str(type(c.type))
+    }
+    assert timestamps == {"opening_captured_at", "last_updated"}, (
+        "FuturesOutcome's timestamp columns changed. If a `price_changed_at` "
+        "landed, #2024's option 2 is available and the poll writers should stop "
+        f"overloading `last_updated`. found={sorted(timestamps)}"
+    )
