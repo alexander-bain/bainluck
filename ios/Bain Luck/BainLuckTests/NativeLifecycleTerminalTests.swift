@@ -27,7 +27,34 @@ final class NativeLifecycleTerminalTests: XCTestCase {
     private let now = ISO8601DateFormatter().date(from: "2026-07-27T12:00:00Z")!
     private let past = "2026-07-20T00:00:00Z"      // a week before `now`
     private let recentPast = "2026-07-27T06:00:00Z" // 6h before `now`
-    private let future = "2026-08-20T00:00:00Z"    // a month after `now`
+
+    /// ── THIS ONE IS WALL-CLOCK RELATIVE, AND IT HAD TO BECOME SO (gotcha #44).
+    ///
+    /// It was the literal `"2026-08-20T00:00:00Z"`, commented "a month after
+    /// `now`", and on **2026-08-20** it stopped being a future date and
+    /// `testZeroOutcomeOpenFuturesIsStillAnEmptyEnvelope` went red — 24 days
+    /// after it was written, in a suite whose own docstring says `now` is
+    /// injected everywhere so nothing straddles a real-world date boundary.
+    ///
+    /// That claim was true of every assertion except one.
+    /// `DiscoverViewModel.suppressionReason` takes no `now` and reads the real
+    /// clock through `futuresIsSettled`, so the single un-injected call site is
+    /// exactly the one the fixed date could kill — and the literal hid it for
+    /// three and a half weeks. A calendar literal is not a duration; a date
+    /// written as "a month from now" becomes "yesterday" without anyone editing
+    /// it.
+    ///
+    /// `past` and `recentPast` stay literal on purpose: a past instant stays
+    /// past forever, so they cannot expire. Only the FUTURE direction rots.
+    private let future: String = {
+        let ahead = Date().addingTimeInterval(365 * 24 * 60 * 60)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let midnight = calendar.startOfDay(for: ahead)
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "UTC")!
+        return formatter.string(from: midnight)
+    }()
 
     private func decoder() -> JSONDecoder {
         let dec = JSONDecoder()
