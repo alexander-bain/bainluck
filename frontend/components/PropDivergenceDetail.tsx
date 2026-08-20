@@ -54,7 +54,10 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
   // signed price move, post-game it is the distance from the mark to the
   // OUTCOME (#2011). `PropTravelBar` already carries the resolution and its
   // points, so the pill is suppressed post-game rather than duplicated.
-  const pill = settled ? null : signedTravelPoints(row);
+  // Pregame joins settled in suppressing the movement pill: a "+0" beside every
+  // row is a movement claim on a page where nothing has moved yet, and it is
+  // the same noise the settled bar was carrying before #2011.
+  const pill = settled || row.pregame ? null : signedTravelPoints(row);
   const moveTone =
     row.direction === "over"
       ? "text-accent-live"
@@ -87,7 +90,18 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
           ? `Script said ${pct(row.pregameMark)}; it ${
               row.resolution === 1 ? "hit" : "missed"
             }${points ? ` — ${points} from the mark` : ""}.`
-          : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
+          : row.pregame
+            ? // "Script said 92%, now 92%" is a non-statement pregame. The
+              // direction is the information, and it is the half a screen
+              // reader cannot get from the bar.
+              row.scriptSide === "toss_up"
+              ? `The market has no view: ${pct(row.pregameMark)}.`
+              : `The market says this ${
+                  row.scriptSide === "will" ? "will" : "will not"
+                } happen: ${pct(
+                  row.scriptSide === "will" ? row.pregameMark : 1 - row.pregameMark,
+                )}.`
+            : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
       </p>
     </div>
   );
@@ -111,7 +125,10 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
         <>
           <div className="flex items-baseline justify-between gap-3 pb-1">
             <h4 className="text-[12px] font-semibold text-text-primary">
-              Off script
+              {/* UX-P106: pregame nothing has LEFT the script yet — the script
+                  is all there is. "Off script" over a list of pregame marks
+                  claims a departure that has not happened. */}
+              {result.pregame ? "The strongest calls" : "Off script"}
             </h4>
             <span className="text-[11px] text-text-muted tabular-nums">
               {result.offScriptCount} of {result.eligible}
@@ -129,7 +146,11 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
         <>
           <div className="flex items-baseline justify-between gap-3 pb-1 pt-4 mt-4 border-t border-surface-border/30">
             <h4 className="text-[12px] font-semibold text-text-primary">
-              {result.settled ? "Went to script" : "Still on script"}
+              {result.settled
+                ? "Went to script"
+                : result.pregame
+                  ? "No strong view"
+                  : "Still on script"}
             </h4>
             <span className="text-[11px] text-text-muted tabular-nums">
               {result.onScript.length}
@@ -184,7 +205,9 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
       <p className="text-[11px] text-text-muted pt-3 mt-3 border-t border-surface-border/30">
         {result.settled
           ? "Ordered by how far the outcome landed from the pregame mark."
-          : "Ordered by distance from the pregame mark — the grey tick is what the script said, the marker is where it is now."}
+          : result.pregame
+            ? "Ordered by how far the market is from a coin flip — the centre line is 50%, and a bar growing left is the market saying it will NOT happen."
+            : "Ordered by distance from the pregame mark — the grey tick is what the script said, the marker is where it is now."}
       </p>
 
       {/* V3: a non-benign loss must reach the screen. We do not claim "no

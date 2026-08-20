@@ -85,7 +85,20 @@ function StatBox({
           </div>
           <div className="flex items-baseline gap-2 mb-1">
             <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
-              {gradeActual != null ? gradeActual : (didHit ? "✓" : "—")}
+              {/*
+                UX-P106. This slot was `didHit ? "✓" : "—"` — a GLYPH pair
+                stating the verdict a second time, two lines above the badge
+                that states it in words. That is a settled vocabulary too, and
+                the worse half of it is the miss branch: an em dash means "no
+                number" everywhere else on this page, and here it meant MISSED.
+                Reading a placeholder as a verdict is #1638's exact class.
+
+                This slot's job is the ACTUAL number. When there isn't one it
+                says so, in both directions; the verdict is stated once, below,
+                in the site's one settled vocabulary. Nothing is lost — the tile
+                still colours by `accentColor` and still carries the badge.
+              */}
+              {gradeActual != null ? gradeActual : "—"}
             </div>
             {firstLine != null && (
               <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>

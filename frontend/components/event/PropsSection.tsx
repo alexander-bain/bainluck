@@ -41,7 +41,7 @@ import { probabilityHeat } from "@/lib/probabilityColors";
 import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
 import { groupByPropFamily, type PropFamilyGroup } from "@/lib/propFamily";
-import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -454,7 +454,18 @@ function GradedValue({ item }: { item: PropMark }) {
             : "text-accent-danger bg-accent-danger/15",
       ].join(" ")}
     >
-      {item.graded_label ?? (isHit ? "Hit" : isPush ? "Push" : "Miss")}
+      {/*
+        UX-P106. This was `isHit ? "Hit" : isPush ? "Push" : "Miss"` — three
+        settled words typed as literals, in title case, in the WHAT HIT section
+        that stacks directly under THE DIVERGENCE rail (`HIT`) and the Player
+        Props cards (`HIT`) on the same event page. A fourth vocabulary, already
+        shipped, and invisible to the UX-P105 guard because that guard carried a
+        hard-coded list of three files and this is not one of them.
+
+        `graded_label` still wins when the backend publishes one — it is prose
+        about the number ("31 pts — hit"), not the verdict slot.
+      */}
+      {item.graded_label ?? propResultLabel(item.graded_result)}
     </span>
   );
 }

@@ -73,9 +73,106 @@ export const SETTLED_NO_GRADE_LABEL = "Resolved · grading unavailable";
 export const PROP_HIT_LABEL = "HIT";
 export const PROP_MISS_LABEL = "MISS";
 
+/**
+ * The third settled verdict, and the reason this constant exists at all.
+ *
+ * UX-P106. `readPropGrade` deliberately does not MODEL a push — it never
+ * manufactures one — but the backend types `graded_result: "push"` and
+ * `PropsSection` has been rendering it as a bare `"Push"` literal, alongside
+ * `"Hit"` / `"Miss"` literals, in a file the UX-P105 guard's hard-coded
+ * three-file list did not cover. So the site was already carrying a fourth
+ * settled vocabulary — title case, on the WHAT HIT section, on the same screen
+ * as the rail's `HIT` and the cards' `HIT`. Not modelling a verdict is not a
+ * reason to leave its WORD un-owned.
+ */
+export const PROP_PUSH_LABEL = "PUSH";
+
 /** The verdict word for a typed `hit`. */
 export function propVerdictLabel(hit: boolean): string {
   return hit ? PROP_HIT_LABEL : PROP_MISS_LABEL;
+}
+
+/**
+ * The verdict word for a backend `graded_result`, including the push this
+ * module does not adjudicate but must still SPELL consistently.
+ */
+export function propResultLabel(result: "hit" | "miss" | "push"): string {
+  if (result === "push") return PROP_PUSH_LABEL;
+  return propVerdictLabel(result === "hit");
+}
+
+/**
+ * ── THE SETTLED VOCABULARY REGISTRY ──────────────────────────────────────────
+ *
+ * Every word or phrase this site is permitted to use to state the settled state
+ * of a prop. Nothing else may appear in the verdict slot on any surface.
+ *
+ * WHY A REGISTRY AND NOT MORE REVIEW. The near-miss that produced it: THE
+ * DIVERGENCE rail's first draft returned "HAPPENED" / "DIDN'T HAPPEN", a third
+ * pair on a screen that already stacks three settled surfaces. It was caught in
+ * a rendered screenshot and by NO test — and the guard that shipped with the fix
+ * could not have caught it either, because it banned the words it already knew
+ * (`HIT`, `MISS`) in the three files it already knew. A guard shaped like a
+ * denylist of known-good words is structurally unable to see a NEW pair; that is
+ * the whole failure mode.
+ *
+ * So the guard inverts: `__tests__/lib/settledVocabulary.test.tsx` renders each
+ * settled surface twice with the verdict discriminant flipped and nothing else
+ * changed, and asserts that every token which DIFFERS between the two renders is
+ * in this list. A fourth vocabulary is, by construction, a pair of strings that
+ * differ between hit and miss — so it lands in that difference set and reds the
+ * suite without anyone having predicted the word.
+ *
+ * Verb forms are here because aria-labels and THE DIVERGENCE's prose state the
+ * same verdict in a sentence ("… and it missed."). A screen reader is a rendered
+ * surface; inventing a fourth vocabulary there is the same defect, unscreenshot-
+ * able.
+ */
+export const SETTLED_VOCABULARY: readonly string[] = Object.freeze([
+  PROP_HIT_LABEL,
+  PROP_MISS_LABEL,
+  PROP_PUSH_LABEL,
+  SETTLED_NO_GRADE_LABEL,
+  // Verb / sentence forms of the SAME three verdicts.
+  "hit",
+  "hits",
+  "missed",
+  "miss",
+  "push",
+  "pushed",
+]);
+
+const SETTLED_VOCABULARY_WORDS: ReadonlySet<string> = new Set(
+  SETTLED_VOCABULARY.flatMap((phrase) =>
+    // A multi-word phrase is admissible whole AND word-by-word, because the
+    // census tokenises rendered text and `SETTLED_NO_GRADE_LABEL` arrives as
+    // "Resolved", "·", "grading", "unavailable".
+    [phrase, ...phrase.split(/[^A-Za-z0-9'’+-]+/)],
+  ).filter(Boolean),
+);
+
+/**
+ * Is this rendered token part of the one settled vocabulary?
+ *
+ * CASE-SENSITIVE, and that is the point rather than an oversight. The registry
+ * lists `HIT` and `hit` as separate admissible entries — the badge form and the
+ * sentence form — so a surface that renders a title-case `"Hit"` is caught. That
+ * is not pedantry: title-case `"Hit"` / `"Push"` / `"Miss"` is precisely the
+ * fourth vocabulary UX-P106 found already shipped in the WHAT HIT section, on
+ * the same screen as the rail's `HIT`. A guard that folded case would have
+ * looked at it and seen nothing.
+ *
+ * Edge punctuation is stripped first: the sentence form arrives as `missed.`
+ * with the full stop attached, and a full stop is not a word.
+ */
+export function isSettledVocabularyToken(token: string): boolean {
+  const word = token.trim().replace(/^[^A-Za-z0-9]+/, "").replace(/[^A-Za-z0-9'’+]+$/, "");
+  // A token that is ENTIRELY symbol is not admissible here. `✓` versus `✗` is a
+  // settled vocabulary with no letters in it, and answering "no letters, so
+  // nothing to check" is how the glyph pair survived in
+  // `PlayerPropsDashboard`. Punctuation that genuinely carries no verdict never
+  // reaches this function — the census discards it as data first.
+  return SETTLED_VOCABULARY_WORDS.has(word);
 }
 
 export type PropGradeReason =

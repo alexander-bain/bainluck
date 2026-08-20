@@ -58,11 +58,26 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
     <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
       <div className="px-4 sm:px-5 py-3 border-b border-surface-border/30 flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-text-primary">
-          {/* #2011: post-game the rail is ranked by how far the OUTCOME landed
-              from the mark, not by how far the price moved — so it stops
-              promising a story about movement. */}
-          {result.rows.some((r) => r.settled) ? "How the props landed" : "What's moving"}
+          {/* THREE STATES, THREE HEADERS, AND THE HEADER IS A PROMISE.
+              #2011: post-game the rail ranks by how far the OUTCOME landed from
+              the mark, not by how far the price moved — so it stopped promising
+              a story about movement.
+              UX-P106: pregame it had the SAME defect on the other clock. Before
+              first pitch nothing has travelled, so "What's moving" sat over five
+              flat bars ranked by a key that is zero for every row. THE SCRIPT
+              ranks by conviction and promises what it can deliver — what the
+              market expects. */}
+          {result.settled
+            ? "How the props landed"
+            : result.pregame
+              ? "The script"
+              : "What's moving"}
         </h3>
+        {result.pregame && result.rows.length > 0 && (
+          <span className="sr-only">
+            What the market expects before the game, strongest expectation first.
+          </span>
+        )}
         {result.eligible > result.rows.length && (
           <span className="text-[11px] text-text-muted">
             {result.rows.length} of {result.eligible}

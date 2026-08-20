@@ -244,11 +244,41 @@ describe("both directions, per gotcha #43", () => {
     // Marlins @ Phillies: 40 questions, almost none of which moved. The detail
     // view must render the whole set with a nearly empty off-script section
     // rather than lowering the fold to manufacture drama.
-    const d = selectDivergenceDetail({ playerProps: PHILLIES, status: "scheduled" });
+    //
+    // UX-P106 MOVED THIS FROM "scheduled" TO "live", AND THAT IS A STATE
+    // CORRECTION, NOT A WEAKENED ASSERTION. Every number here is unchanged.
+    // When this was written the selector had two states and `scheduled` was how
+    // you asked for the non-settled one. There are three now — script, moving,
+    // landed — and the thing being asserted, the TRAVEL fold on a quiet game,
+    // is the moving state's contract. Its pregame twin is the test below.
+    const d = selectDivergenceDetail({ playerProps: PHILLIES, status: "live" });
     expect(d.eligible).toBe(40);
     expect(d.offScriptCount).toBe(3);
     expect(d.onScript.length).toBe(37);
     expect(d.emptyReason).toBeNull();
+    expect(d.pregame).toBe(false);
+  });
+
+  it("PREGAME the same quiet game still does not lower its fold to fill a section", () => {
+    // The twin, and the guard that matters for THE SCRIPT: a favourite-heavy
+    // card must not put half its questions above the fold just because the
+    // market has opinions about all of them.
+    //
+    // 8 of 40 = 20%, against the salience fold's measured 25.1% pooled. A first
+    // draft folded on bare conviction and put **20 of 40** here — 50% — because
+    // this card is favourite-heavy; that is the exact "lowering the fold to
+    // manufacture drama" failure this describe block exists to catch, and it
+    // caught it.
+    const d = selectDivergenceDetail({ playerProps: PHILLIES, status: "scheduled" });
+    expect(d.pregame).toBe(true);
+    expect(d.eligible).toBe(40);
+    expect(d.offScriptCount).toBe(8);
+    expect(d.onScript.length).toBe(32);
+    expect(d.emptyReason).toBeNull();
+    // Non-vacuity in the other direction (gotcha #43): the section is neither
+    // empty nor a majority of the page.
+    expect(d.offScriptCount / d.eligible).toBeLessThan(0.35);
+    expect(d.offScriptCount).toBeGreaterThan(0);
   });
 
   it("carries BOTH provider shapes — the Kalshi one must not collapse", () => {
