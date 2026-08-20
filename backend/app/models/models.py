@@ -852,8 +852,30 @@ class FuturesOutcome(Base):
     # NULL = not yet fetched, 0 = confirmed zero trading
     volume: Mapped[Optional[int]] = mapped_column(Integer)
 
+    # TOUCH-STAMP. Written unconditionally by every poll, so it answers "when
+    # did the poller last SEE this row", NOT "when did this price move".
+    # `app/routes/playoffs.py` depends on exactly that reading as a liveness
+    # gate — see `price_changed_at` below and #2024. Do not narrow it.
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+    # #2024. When the stored price last actually CHANGED, maintained by
+    # `app/utils/price_change_stamp.py` on every price-writing poll path.
+    #
+    # A SEPARATE COLUMN RATHER THAN A NARROWED `last_updated`, and the UX-P106
+    # consumer audit is what decided that: the two live readings of that column
+    # CONFLICT (`playoffs.py` = poller alive, `admin_judgments.py` = price
+    # fresh), so no single value can serve both, and making the touch-stamp
+    # conditional would drop stable prices out of the playoff grid.
+    #
+    # NULLABLE, and it stays that way: the column is populated forward by the
+    # polls, so every pre-existing row reads NULL until its market is next
+    # polled. A consumer switching to it must decide what NULL means for its own
+    # question rather than inheriting a fabricated value — gotcha #53's rule,
+    # applied at the schema.
+    price_changed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
     )
 
     __table_args__ = (

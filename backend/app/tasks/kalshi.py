@@ -28,6 +28,7 @@ from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
 from app.utils.kalshi_market_status import all_terminal  # noqa: E402
+from app.utils.price_change_stamp import price_changed_at_value  # #2024
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -966,6 +967,13 @@ async def _poll_kalshi_markets():
                                 current_yes_bid=None,
                                 current_yes_ask=None,
                                 last_updated=func.now(),
+                                # #2024. A price GOING AWAY is a price change,
+                                # and the only one this write can make.
+                                price_changed_at=price_changed_at_value(
+                                    FuturesOutcome.current_probability,
+                                    FuturesOutcome.price_changed_at,
+                                    None,
+                                ),
                             )
                         )
 
@@ -1011,6 +1019,14 @@ async def _poll_kalshi_markets():
                             - FuturesOutcome.current_probability,
                             "rank_change_24h": FuturesOutcome.rank - rank,
                             "last_updated": func.now(),
+                            # #2024. `last_updated` still records that the poll
+                            # RAN — `routes/playoffs.py` gates liveness on it.
+                            # This records that the price MOVED.
+                            "price_changed_at": price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                prob,
+                            ),
                         }
                         if is_winner_value is not None:
                             update_set["is_winner"] = is_winner_value
