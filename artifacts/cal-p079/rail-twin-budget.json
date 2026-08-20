@@ -1,0 +1,72 @@
+{
+  "queue": "CAL-P079",
+  "item": "3 — the twin's DB half through the deployed rail",
+  "issue": 2007,
+  "measured_at_utc": "2026-08-20T16:4x",
+  "premise_under_test": "Fable, CAL-P079 item 3: the twin's DB half is 'now runnable through the deployed rail'. CAL-P078 reported it unmeasurable on blocked TCP 5432 and was told the rail is the sanctioned path.",
+  "verdict": "FALSIFIED — the rail executes the statement but cannot afford it",
+
+  "what_is_NOT_the_blocker": {
+    "guard": "PASSES on every attempt. `assert_read_only` admits a leading WITH on the row path (`_READ_PREFIXES = ('SELECT','WITH')`); the refusal of leading WITH applies only to `analyze`.",
+    "semicolons": "The fold carries 15 `;`, ALL inside `--` comments. `assert_read_only` scans raw text with no comment-awareness, so they must be stripped — done with a quote-state-aware left-to-right scanner, not a regex, because apostrophes in the prose comments (\"can't\", \"Alex's\") desynchronise any naive quote tracker. 0 semicolons in code; verified independently.",
+    "bind_params": "`[[:space:]]` does NOT become a SQLAlchemy bind param. text()'s regex is `(?<![:\\w$])(:\\w+)(?!:)` and the trailing `:` of the POSIX class fails the negative lookahead. No escaping needed.",
+    "operational_functions": "None present; `assert_no_operational_functions` passes."
+  },
+
+  "the_blocker": {
+    "mechanism": "The row path hardcodes `SET LOCAL statement_timeout = '10s'` (app/routes/admin_data_quality.py, row path) and explicitly REFUSES `timeout_ms` unless `explain: true` ('`timeout_ms` is only supported with `explain: true`').",
+    "why_that_can_never_fit": "The twin's own DEFAULT_TIMEOUT_MS is 240000 (240 s), and CAL-P077's comparable 49-cell sweep took 364.4 s. A 10 s budget is not a tight fit that better SQL would clear — it is two orders of magnitude short of what the instrument was built expecting.",
+    "why_the_explain_path_is_not_a_substitute": "It caps at 25 s (still short), `assert_executable_for_analyze` refuses a leading WITH, and it returns a PLAN, not the fold's result rows. The bound needs rates, not costs."
+  },
+
+  "attempts": [
+    {
+      "scope": "full population (unpartitioned fold)",
+      "sql_fingerprint": "9ad73da5a88cdf8e",
+      "result": "HTTP 400 query_failed",
+      "reason": "statement_timeout",
+      "correlation_id": "550f8f6729bd",
+      "client_duration_s": 29.58
+    },
+    {
+      "scope": "source = 'odds_api'",
+      "sql_fingerprint": "403fbd5700ceafb5",
+      "result": "SUCCESS",
+      "row_count": 0,
+      "truncated": false,
+      "server_duration_ms": 523.9,
+      "client_duration_s": 0.82,
+      "note": "A real datum, not a failure: there are no resolved futures_markets rows with source='odds_api'. The sportsbook curve reaches the payload under other source labels (see the two-moneyline-sources finding). It also proves the partitioned statement is mechanically well-formed and fast when the population is empty."
+    },
+    {
+      "scope": "source = 'kalshi'",
+      "sql_fingerprint": "0afe3f18d028f16b",
+      "result": "HTTP 400 query_failed",
+      "reason": "statement_timeout",
+      "correlation_id": "5d22beb54843",
+      "client_duration_s": 28.04
+    },
+    {
+      "scope": "source = 'kalshi' AND category = 'hockey'",
+      "sql_fingerprint": "ba99d482428ac4fd",
+      "result": "HTTP 400 query_failed",
+      "reason": "statement_timeout",
+      "correlation_id": "3ff1fe001c9c",
+      "client_duration_s": 10.54,
+      "note": "The decisive one. Partitioning by (source, category) is fold-preserving — every CTE derives from market_info and every join is source- or market-keyed, and vm_stats already groups by category — so this is the SMALLEST honest chunk. It still does not fit. Chunking is therefore not a workaround; there is no chunk size that both fits 10 s and remains a cell of the published fold."
+    }
+  ],
+
+  "timing_anomaly_recorded_not_explained": "The full-population and kalshi attempts elapsed ~28-30 s against a declared 10 s budget, while the (source, category) chunk elapsed 10.5 s. Recorded rather than theorised: `SET LOCAL` outside an explicit transaction block applies only to the statement it accompanies and is otherwise discarded, so the effective budget on the heavier statements may be a server default rather than the 10 s the code asks for. Either way both are far below 240 s and the conclusion does not turn on which.",
+
+  "what_this_does_and_does_not_block": {
+    "does_NOT_block_the_bound": "`tolerance_pp()` reads ONLY the payload's `staged` block (units_banked, units_drifted, units_drift_unknown). It needs no database. Gate 0's BOUND is therefore fully measurable from the published payload alone, and is reported in bound-timeline.json.",
+    "does_block_the_verdict": "`reconcile()` needs db_cells to classify buckets into compared / outside / db_only / published_only. With zero db_cells the instrument correctly refuses to say 'agrees' and returns `unmeasurable` — which is the designed behaviour, not a defect, and is exactly what CAL-P078's first run recorded."
+  },
+
+  "fix_shapes_for_routing_not_applied_here": [
+    "Allow `timeout_ms` on the ROW path with the same 500 ms-25 s bound the explain path already carries. One-line, still bounded — but 25 s is very likely still short of this fold, so it fixes the API asymmetry without fixing this measurement.",
+    "Run the twin IN-DYNO where its own 240 s budget applies. This is the shape that actually fits, and `program/calibration-75` already ships the module and the script; it needs a task or admin entry point to be reachable from outside a shell.",
+    "Neither is applied on this branch. The measurement is the deliverable; the fix is a decision."
+  ]
+}
