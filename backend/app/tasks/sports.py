@@ -14,6 +14,7 @@ from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.espn_candidate_selection import select_espn_candidate
 from app.utils.espn_id_stamp import (
     REFUSED as ESPN_STAMP_REFUSED,
     stamp_espn_id_if_unheld,
@@ -366,27 +367,23 @@ async def _discover_events():
                                 espn_events_by_date.get(date_str, [])
                                 + espn_events_by_date.get(prev_date, [])
                             )
-                            for ee in espn_candidates:
-                                if not ee.home_team or not ee.away_team:
-                                    continue
-                                espn_home = (
-                                    ee.home_team.display_name
-                                    or ee.home_team.name
-                                    or ""
+                            # #1980: this pool spans TWO days on purpose (ESPN
+                            # buckets by ET), so for an MLB series or a
+                            # back-to-back it contains the SAME two clubs twice.
+                            # Selecting on names alone and taking the first hit
+                            # stamped the neighbouring day's game — the ±15/±30
+                            # espn_id offsets against a correct commence_time
+                            # that #1980's rail has been repairing. The selector
+                            # breaks that tie on time, which is the only signal
+                            # that tells the two games apart.
+                            espn_commence_time, espn_event_id = (
+                                select_espn_candidate(
+                                    espn_candidates,
+                                    event_data["home_team"],
+                                    event_data["away_team"],
+                                    commence_time,
                                 )
-                                espn_away = (
-                                    ee.away_team.display_name
-                                    or ee.away_team.name
-                                    or ""
-                                )
-                                if _canonical_names_match(
-                                    event_data["home_team"], espn_home
-                                ) and _canonical_names_match(
-                                    event_data["away_team"], espn_away
-                                ):
-                                    espn_commence_time = ee.date
-                                    espn_event_id = ee.espn_id
-                                    break
+                            )
 
                             if espn_commence_time:
                                 time_diff = abs(
