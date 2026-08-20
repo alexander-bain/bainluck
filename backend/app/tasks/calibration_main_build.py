@@ -985,9 +985,19 @@ async def save_staged_cursor(cursor, *, terminal: str) -> bool:
     this boolean being honest.
     """
     from app.services.durable_snapshots import publish_snapshot_standalone
-    from app.utils.calibration_staged_futures import STAGED_FUTURES_SCHEMA
+    from app.utils.calibration_staged_futures import (
+        STAGED_FUTURES_SCHEMA,
+        stamp_served_at,
+    )
     from app.utils.durable_state import DurableEnvelope
 
+    # CAL-P078. The pure module promotes a completed bank but owns no clock, so
+    # it leaves ``served_at`` at 0.0 and this — the first impure hand the cursor
+    # passes through, microseconds later in the same beat — dates it. Only ever
+    # fills a 0.0: a bank that already carries a date keeps it, so re-persisting
+    # cannot make an old census read as a new one, which is #2007's exact
+    # failure mode and would be an embarrassing way to reintroduce it.
+    cursor = stamp_served_at(cursor, now=time.time())
     payload = cursor.as_payload()
     payload["terminal"] = terminal
     try:
@@ -1075,6 +1085,7 @@ async def _record_staged_convergence(runner: PhaseRunner) -> None:
         if isinstance(drift, int) and not isinstance(drift, bool) and drift >= 0:
             runner.ledger.record_gauge("staged:units_drifted", drift)
         _record_drift_coverage(runner, payload, committed)
+        _record_served_bank(runner, payload)
         _record_staged_rate(runner, banked=len(committed))
     except Exception as exc:  # noqa: BLE001 — an unreadable cursor is not a lost ledger
         logger.warning("calibration staged convergence read failed: %s", exc)
@@ -1127,6 +1138,61 @@ def _record_drift_coverage(
     uncheckable = sum(1 for name in committed if name not in digests)
     runner.ledger.record_gauge("staged:units_drift_checkable", len(committed) - uncheckable)
     runner.ledger.record_gauge("staged:units_drift_uncheckable", uncheckable)
+
+
+def _record_served_bank(runner: PhaseRunner, payload: dict[str, Any]) -> None:
+    """What the reader is actually looking at — the SERVING bank, dated.
+
+    CAL-P078, #2007. Every gauge above this one describes the bank being BUILT.
+    After the rolling re-stage those are two different censuses, and the one a
+    consumer of ``/api/calibration`` is reading is the served one. Publishing
+    only the builder's numbers beside a served curve answers a question nobody
+    asked with a figure that looks like the answer to the one they did — which
+    is how ``availability: fresh`` came to sit on top of a six-hour-old census
+    in the first place.
+
+    Four gauges, and the fourth is the one #2007 asked for:
+
+    * ``staged:served_units`` — how many units the published census covers.
+    * ``staged:served_drifted`` — how many of them the roster has moved under.
+      Counted only over units carrying a digest, so it is paired below.
+    * ``staged:served_drift_uncheckable`` — units whose drift could NOT be
+      determined. CAL-P069's find was six such units publishing as
+      ``units_drifted: 0``; an unmeasurable remainder is named beside a real
+      count, never folded into it.
+    * ``staged:served_at`` — epoch seconds the census was taken. **Absent, not
+      zero, when the bank is unstamped**: 0.0 means "promoted but not yet
+      dated", and emitting it as a timestamp would date the census to 1970 and
+      make every consumer's age arithmetic enormous-but-confident. A reader
+      cannot recover a distinction the writer discarded (ruling 075 clause 2).
+
+    Read-only, best-effort, and inside the caller's ``try`` for the same reason
+    every gauge here is: this runs on the failure path and must never be why a
+    ledger write is lost.
+    """
+    served = payload.get("served_units")
+    if not isinstance(served, list):
+        # No serving bank in the payload at all — a pre-CAL-P078 cursor, or one
+        # whose bank was refused on read. Typed, because an absent gauge reads
+        # as "fine" and this is the difference between "nothing is served" and
+        # "we could not tell what is served".
+        runner.ledger.record_gauge("staged:served_reason:no_served_units", 1)
+        return
+    runner.ledger.record_gauge("staged:served_units", len(served))
+    moved = payload.get("served_drift_units")
+    if isinstance(moved, int) and not isinstance(moved, bool) and moved >= 0:
+        runner.ledger.record_gauge("staged:served_drifted", moved)
+    digests = payload.get("served_digests")
+    if not isinstance(digests, dict):
+        runner.ledger.record_gauge("staged:served_reason:no_digest_map", 1)
+    else:
+        uncheckable = sum(1 for name in served if name not in digests)
+        runner.ledger.record_gauge("staged:served_drift_uncheckable", uncheckable)
+    served_at = payload.get("served_at")
+    if isinstance(served_at, (int, float)) and not isinstance(served_at, bool) and served_at > 0:
+        runner.ledger.record_gauge("staged:served_at", int(served_at))
+    elif served:
+        runner.ledger.record_gauge("staged:served_reason:unstamped", 1)
 
 
 #: The stage ``_run_staged_futures`` times once per unit. Named here because

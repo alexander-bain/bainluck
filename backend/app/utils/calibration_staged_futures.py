@@ -113,8 +113,12 @@ __all__ = [
     "split_unit_rows",
     "new_staged_cursor",
     "plan_units",
+    "promote_if_complete",
     "retain_planned_units",
     "roster_drift",
+    "served_drift",
+    "stamp_served_at",
+    "top_up_served_digests",
     "unit_key",
 ]
 
@@ -1309,6 +1313,47 @@ class StagedFuturesCursor:
     #: (gotcha #53) — 181 consecutive beats did.
     roster_drift_units: int = 0
 
+    # -- CAL-P078: the SERVING bank (#2007 item 2) ----------------------------
+    # Everything above describes the bank being BUILT. The four fields below
+    # describe the bank being SERVED. See :func:`promote_if_complete` for why
+    # there are two.
+    #
+    #: The last COMPLETE fold, retained so a rebuild never takes the curve dark.
+    #: An :func:`encode_accumulator` envelope, or ``None`` before the first
+    #: promotion. ~134 KB, the same order as the building fold — two banks cost
+    #: ~268 KB, against the ~18.7 MB that retaining per-unit rows would cost
+    #: (CAL-P034 measured both).
+    served_accumulator: Optional[dict[str, Any]] = None
+    #: The unit keys :attr:`served_accumulator` is the fold OF. Compared against
+    #: the plan by :func:`is_complete`; a serving bank that does not cover the
+    #: current plan is not publishable.
+    served_units: tuple[str, ...] = ()
+    #: The member digests those units were banked against, so the SERVING bank's
+    #: drift is measurable — which is the number #2007 asks the payload to
+    #: disclose. Distinct from :attr:`unit_digests`, which describes the bank
+    #: still being built and therefore says nothing about what is being served.
+    served_digests: dict[str, str] = field(default_factory=dict)
+    #: Epoch seconds when this fold was promoted, or ``0.0`` for **not yet
+    #: stamped**. This module is I/O-free and owns no clock, so promotion leaves
+    #: it at 0.0 and :func:`stamp_served_at` fills it in from the caller's clock
+    #: on the next persist — moments later, in the same beat. ``0.0`` is an
+    #: honest THIRD state and must render as "unknown", never as "now" and never
+    #: as the epoch (ruling 075 clause 2).
+    served_at: float = 0.0
+    #: The plan's unit keys, stamped by :func:`retain_planned_units` at the top
+    #: of every beat. :func:`advance` needs to know whether the bank it just
+    #: completed is complete *for the current plan*, and it is handed one chunk
+    #: key at a time — it never sees the plan. Carrying it on the cursor is what
+    #: lets promotion happen the moment the last unit lands, in the beat that
+    #: earned it, rather than one beat later.
+    planned_units: tuple[str, ...] = ()
+    #: :func:`served_drift`, measured at the START of the beat that wrote this
+    #: cursor. Carried for the same reason :attr:`roster_drift_units` is — the
+    #: run that would report it is the run most likely to die before reporting
+    #: anything — and read back by the ledger, which sees the payload and never
+    #: the plan.
+    served_drift_units: int = 0
+
     def has(self, key: Any) -> bool:
         """Whether this unit is banked.
 
@@ -1323,6 +1368,18 @@ class StagedFuturesCursor:
     def folded(self) -> tuple[list[SimpleNamespace], list[SimpleNamespace]]:
         """The running fold as ``(buckets, carriers)``, decoded."""
         return decode_accumulator(self.accumulator)
+
+    def served_folded(self) -> tuple[list[SimpleNamespace], list[SimpleNamespace]]:
+        """The SERVING fold as ``(buckets, carriers)``, decoded."""
+        return decode_accumulator(self.served_accumulator)
+
+    def covers(self, planned: Iterable[Any]) -> bool:
+        """Whether the bank being BUILT is a complete census of ``planned``."""
+        return {unit_key(p) for p in planned} == set(self.committed_units)
+
+    def served_covers(self, planned: Iterable[Any]) -> bool:
+        """Whether the bank being SERVED is a complete census of ``planned``."""
+        return {unit_key(p) for p in planned} == set(self.served_units)
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -1340,6 +1397,17 @@ class StagedFuturesCursor:
             "terminal": self.terminal,
             "unit_digests": dict(self.unit_digests),
             "roster_drift_units": self.roster_drift_units,
+            # CAL-P078. Additive and OPTIONAL: a cursor written before this
+            # change decodes with every one of them at its default, and
+            # retain_planned_units promotes its complete bank on the first beat.
+            # That is why no schema bump is owed — and why the deploy does NOT
+            # take the curve dark, which a bump would have done for ~5 beats.
+            "served_accumulator": self.served_accumulator,
+            "served_units": list(self.served_units),
+            "served_digests": dict(self.served_digests),
+            "served_at": self.served_at,
+            "planned_units": list(self.planned_units),
+            "served_drift_units": self.served_drift_units,
         }
 
 
@@ -1544,6 +1612,52 @@ def decode_staged_cursor_detailed(
         # what these units were banked against", which is unknown drift — the
         # empty mapping makes roster_drift report 0 measured, never 0 actual.
         stored_digests = {}
+
+    # -- CAL-P078: the serving bank --------------------------------------------
+    # Every field is OPTIONAL and absent on a pre-CAL-P078 cursor, which is what
+    # makes this deploy free of a dark window: the old cursor's 128 banked units
+    # decode into the BUILDING slot exactly as before, and the first
+    # retain_planned_units promotes them. A serving accumulator that does not
+    # decode is dropped WITH its unit list rather than kept apart from it —
+    # units claimed with no fold behind them is the bookkeeping error the
+    # building bank refuses two checks above, and it is no better one bank over.
+    stored_served = raw.get("served_accumulator")
+    raw_served_units = raw.get("served_units")
+    served_units: tuple[str, ...] = (
+        tuple(name for name in raw_served_units if isinstance(name, str))
+        if isinstance(raw_served_units, list) and is_encoded_accumulator(stored_served)
+        else ()
+    )
+    if not served_units:
+        stored_served = None
+    raw_served_digests = raw.get("served_digests")
+    served_digests = (
+        {
+            name: str(digest)
+            for name, digest in raw_served_digests.items()
+            if name in set(served_units) and isinstance(digest, str)
+        }
+        if isinstance(raw_served_digests, dict)
+        else {}
+    )
+    raw_served_at = raw.get("served_at")
+    served_at = (
+        float(raw_served_at)
+        if isinstance(raw_served_at, (int, float)) and not isinstance(raw_served_at, bool)
+        else 0.0
+    )
+    raw_served_drift = raw.get("served_drift_units")
+    served_drift_units = (
+        int(raw_served_drift)
+        if isinstance(raw_served_drift, int)
+        and not isinstance(raw_served_drift, bool)
+        and raw_served_drift >= 0
+        else 0
+    )
+    # Not carried across the read. The plan is re-derived and re-stamped by
+    # retain_planned_units at the top of every beat, and a stale plan is the one
+    # input that could make promote_if_complete promote a bank against a
+    # population nobody asked for.
     return (
         StagedFuturesCursor(
             population_version=expected_population_version,
@@ -1568,9 +1682,181 @@ def decode_staged_cursor_detailed(
                 for name, digest in (stored_digests or {}).items()
                 if name in set(resumable) and isinstance(digest, str)
             },
+            served_accumulator=stored_served,
+            served_units=served_units,
+            served_digests=served_digests,
+            served_at=served_at,
+            served_drift_units=served_drift_units,
         ),
         RESUME if resumable else FRESH,
+        # CAL-P078: the action still describes the BUILDING bank, deliberately.
+        # A cursor carrying a serving bank and no building units is FRESH — it
+        # has nothing to resume — and calling it RESUME would tell an operator
+        # the rebuild is further along than it is. The serving bank's own state
+        # is reported by its own gauges, not smuggled into this word.
         REASON_RESUMABLE if resumable else REASON_NOTHING_BANKED,
+    )
+
+
+def promote_if_complete(
+    cursor: StagedFuturesCursor, digests: Optional[Mapping[str, str]] = None
+) -> StagedFuturesCursor:
+    """Move a COMPLETE building bank into the serving slot, and start a new one.
+
+    **CAL-P078 — this is the whole of #2007 item 2.** Returns the cursor
+    unchanged unless the bank being built covers :attr:`planned_units`.
+
+    The bug it ends: ``is_complete`` was ``planned == committed`` over SLOT keys,
+    every slot is planned every beat, so **once 128 slots were banked it was True
+    forever**. The loop in the frozen caller skips any unit the cursor already
+    ``has()``, so ``units_this_beat`` went to 0 and stayed there. The build then
+    republished the same census every hour with a brand-new ``generated_at`` and
+    ``availability: fresh``, over a population moving underneath it — 115 of 128
+    units drifted, 6 h and counting, and nothing in the payload said so.
+
+    Why there are TWO banks rather than a re-run of the drifted units in place.
+    CAL-P034 made the cursor hold a running FOLD instead of per-unit rows, and
+    that is not a detail to route around — it is what made the build finish at
+    all (18,753,197 B → 134,191 B, 139.8x; ~1,210 MB → ~9 MB of ``json.dumps``
+    across a walk). **A fold cannot be inverted**, so one unit's contribution
+    cannot be subtracted and replaced; ``retain_planned_units`` has always failed
+    CLOSED for exactly this reason. The three ways out and why two are shut:
+
+    * **Re-run a drifted unit in place** — needs subtraction. Needs per-unit
+      rows. Reinstates the 117 KB/unit wall CAL-P034 measured and removed.
+    * **Invalidate the bank and rebuild** — CAL-P016 proved this never
+      converges, and it is explicitly ruled out ("never a full-bank
+      invalidation").
+    * **Keep the complete one while building its successor** — two folds,
+      ~268 KB. Nothing is subtracted, nothing is invalidated, and the curve is
+      never served from a partial census.
+
+    So the serving bank is **only ever replaced by a complete successor**, and
+    the rolling rebuild re-stages every unit — which with 115 of 128 drifted is
+    a superset of "the drifted ones" and needs no separate selection pass. The
+    per-beat bound is the phase window the caller already enforces
+    (``_unit_fits_in_window``), so the budget stays derived rather than invented
+    (ruling 075).
+
+    ``served_at`` is deliberately left at ``0.0`` — UNSTAMPED. This module owns
+    no clock; :func:`stamp_served_at` fills it from the caller's, on the persist
+    that follows within the same beat.
+
+    Idempotent: a second call promotes nothing, because the building bank is
+    empty and an empty bank covers only an empty plan.
+
+    ``digests`` is the CURRENT plan's membership digests, supplied by
+    :func:`retain_planned_units`, which has the chunks. Without it the promoted
+    bank inherits whatever :attr:`unit_digests` the building bank had — which
+    for a unit banked by :func:`advance` in this same beat is nothing at all,
+    since ``advance`` is handed a key and never a chunk. Those units are then
+    UNCHECKABLE for drift rather than reported as undrifted, and
+    :func:`top_up_served_digests` closes the gap on the next beat.
+    """
+    if not cursor.planned_units:
+        # Nothing has told this cursor what the plan is yet, so "complete" is
+        # not a question it can answer. Silence beats a guess.
+        return cursor
+    if not cursor.committed_units or not cursor.covers(cursor.planned_units):
+        return cursor
+    inherited = dict(cursor.unit_digests)
+    if digests:
+        # Not a guess: every unit in this bank either survived a retention step
+        # that re-stamped it to a plan, or was banked THIS beat against THIS
+        # plan. Both readings make the current plan the right thing to measure
+        # the next beat's drift against.
+        inherited = {
+            name: digests[name] for name in cursor.committed_units if name in digests
+        } or inherited
+    return replace(
+        cursor,
+        served_accumulator=cursor.accumulator,
+        served_units=cursor.committed_units,
+        served_digests=inherited,
+        served_at=0.0,
+        served_drift_units=0,
+        committed_units=(),
+        accumulator=None,
+        unit_digests={},
+    )
+
+
+def top_up_served_digests(
+    cursor: StagedFuturesCursor, digests: Mapping[str, str]
+) -> StagedFuturesCursor:
+    """Give a drift-unmeasurable served unit a baseline, without inventing one.
+
+    A bank promoted by :func:`advance` mid-beat carries no digest for the units
+    that beat banked, because ``advance`` never sees a chunk. Left alone those
+    units stay UNCHECKABLE for the whole life of the serving bank — roughly a
+    fifth of it, permanently reported as "we cannot tell". That is honest and
+    useless.
+
+    So the next beat's retention stamps the missing ones from ITS plan. The
+    approximation is named rather than hidden: a unit stamped here is measured
+    for drift **from this beat**, not from the moment it was banked, so at most
+    one beat of arrivals into that unit go uncounted. That is bounded, it is one
+    beat on a multi-beat cycle, and it is strictly better than an unmeasurable
+    remainder that never resolves.
+
+    **It only ever ADDS.** An existing digest is never overwritten — doing so
+    would re-baseline a unit every beat and make drift read zero forever, which
+    is precisely the "re-stamp before you measure" mistake CAL-P016 wrote the
+    ordering rule about, arriving one bank over.
+    """
+    if not cursor.served_units:
+        return cursor
+    missing = {
+        name: digests[name]
+        for name in cursor.served_units
+        if name not in cursor.served_digests and name in digests
+    }
+    if not missing:
+        return cursor
+    return replace(cursor, served_digests={**cursor.served_digests, **missing})
+
+
+def stamp_served_at(cursor: StagedFuturesCursor, *, now: float) -> StagedFuturesCursor:
+    """Date an unstamped serving bank, from a clock this module does not have.
+
+    Called by the persister (``calibration_main_build.save_staged_cursor``),
+    which is impure and has one. Only ever fills a ``0.0`` — a bank that already
+    carries a date keeps it, so re-persisting a cursor cannot make an old census
+    look fresh, which is #2007's entire failure mode arriving through the fix.
+
+    An empty serving bank is left alone: dating nothing produces a timestamp
+    with no census behind it, and a reader cannot recover a distinction the
+    writer discarded (ruling 075 clause 2).
+    """
+    if not cursor.served_units or cursor.served_at:
+        return cursor
+    return replace(cursor, served_at=float(now))
+
+
+def served_drift(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> int:
+    """How many units of the SERVING bank the roster has moved under.
+
+    :func:`roster_drift`'s twin, and the one a consumer of ``/api/calibration``
+    actually wants: ``roster_drift`` describes the bank being built, which is
+    not the bank the reader is looking at. Publishing the builder's drift beside
+    a served census would answer a question nobody asked with a number that
+    looks like the answer to the one they did.
+
+    Same refusal as its twin: a unit with no stored digest is NOT counted,
+    because "we cannot tell" must never be published as "it did not drift".
+    Pair it with a checkable/uncheckable count before rendering a zero.
+    """
+    current = {
+        unit_key(chunk): chunk.member_digest
+        for chunk in chunks
+        if isinstance(chunk, UnitChunk)
+    }
+    return sum(
+        1
+        for name in cursor.served_units
+        if name in cursor.served_digests
+        and name in current
+        and current[name] != cursor.served_digests[name]
     )
 
 
@@ -1607,12 +1893,38 @@ def retain_planned_units(
     """
     chunk_list = list(chunks)
     planned = {unit_key(chunk) for chunk in chunk_list}
-    drift = roster_drift(cursor, chunk_list)
+    planned_keys = tuple(unit_key(chunk) for chunk in chunk_list)
+    # CAL-P078. Stamp the plan FIRST, then promote — promotion asks whether the
+    # building bank covers the plan, and last beat's plan is not this beat's.
+    # Then measure drift, then re-stamp digests: the CAL-P016 ordering, which is
+    # the whole point of this function and now has one more step in front of it.
     digests = {
         unit_key(chunk): chunk.member_digest
         for chunk in chunk_list
         if isinstance(chunk, UnitChunk)
     }
+    cursor = replace(cursor, planned_units=planned_keys)
+    # MEASURE BOTH BANKS FIRST. Computing ``digests`` above mutates nothing, but
+    # promotion and the top-up both do, and either one running ahead of a
+    # measurement is CAL-P016's "re-stamp first and drift reads zero forever"
+    # with a new bank attached to it.
+    drift = roster_drift(cursor, chunk_list)
+    served_moved = served_drift(cursor, chunk_list)
+    # Promotion is repeated HERE as well as in :func:`advance` on purpose. advance
+    # catches the bank that completes mid-beat, so the beat that earns a fresh
+    # census also publishes it; this catches the one that completed on a beat
+    # which then died before persisting, AND — the case that matters on the
+    # deploy — a pre-CAL-P078 cursor, whose 128 banked units are a complete
+    # census sitting in the building slot with no serving bank behind them. One
+    # rule covers the migration and the steady state, so there is no
+    # special-cased upgrade path to get wrong.
+    promoted = promote_if_complete(cursor, digests)
+    if promoted is not cursor:
+        # The bank promoted on THIS call was measured a moment ago as the
+        # building bank; that measurement now describes the census being served,
+        # and the empty bank behind it has no drift of its own to report.
+        cursor, served_moved, drift = promoted, drift, 0
+    cursor = top_up_served_digests(cursor, digests)
     kept = tuple(name for name in cursor.committed_units if name in planned)
     dropped = tuple(name for name in cursor.committed_units if name not in planned)
     if dropped:
@@ -1628,6 +1940,15 @@ def retain_planned_units(
         # beat, and CAL-P033 settled from source that nothing is ever dropped.
         # It is written because "cannot happen today" and "is safe if it
         # happens" are different claims, and only the second one is checkable.
+        #
+        # CAL-P078: the SERVING bank goes too, and that is not over-reach. A
+        # slot leaving the plan means the serving fold's mass includes questions
+        # the plan no longer asks about, which is ``LATE_ARRIVAL_NOT_
+        # INVALIDATED`` — the precise thing this branch exists to prevent —
+        # merely one bank further from the writer. Keeping a serving bank
+        # *because* it is the one being published is how a fail-closed branch
+        # becomes a fail-open one. The cost is honest darkness until a rebuild
+        # completes, which is the correct price for not knowing what we hold.
         return (
             replace(
                 cursor,
@@ -1635,6 +1956,11 @@ def retain_planned_units(
                 accumulator=None,
                 unit_digests={},
                 roster_drift_units=drift,
+                served_drift_units=0,
+                served_accumulator=None,
+                served_units=(),
+                served_digests={},
+                served_at=0.0,
             ),
             dropped,
         )
@@ -1644,6 +1970,7 @@ def retain_planned_units(
             committed_units=kept,
             unit_digests={name: digests[name] for name in kept if name in digests},
             roster_drift_units=drift,
+            served_drift_units=served_moved,
         ),
         dropped,
     )
@@ -1728,7 +2055,7 @@ def advance(
     buckets, carriers = fold_unit_rows(
         accumulated, carried, rows, census_columns=census_columns
     )
-    return replace(
+    advanced = replace(
         cursor,
         owner=owner,
         lease_expires_at=lease_expires_at,
@@ -1737,6 +2064,12 @@ def advance(
         # depends on whether the process that computed it is still alive.
         accumulator=encode_accumulator(buckets, carriers),
     )
+    # CAL-P078: if that was the last unit, the bank is complete NOW — promote it
+    # here rather than at the top of the next beat, so the beat that finishes a
+    # census is the beat that publishes it. The caller persists immediately
+    # after every advance, so the promotion is durable on the same write that
+    # banks the unit which earned it. A no-op unless the plan is covered.
+    return promote_if_complete(advanced)
 
 
 def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
@@ -1758,9 +2091,22 @@ def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
     belt-and-braces check rather than relaxed to a subset test: "every planned
     unit is banked" and "nothing unplanned is banked" are both required, and the
     second is what catches a retention step that was skipped.
+
+    **CAL-P078 — EITHER BANK may satisfy it, and the equality is unweakened on
+    both.** The question this predicate answers is "is there a complete census
+    to publish", and after #2007 there are two places one can be: the bank being
+    built, and the bank being served while its successor is built. Each is
+    tested for the same exact coverage; neither is a subset test. Publishing a
+    partial generation is still ``PARTIAL_GENERATION_PUBLISHED`` and still
+    cannot happen.
+
+    The building bank is checked FIRST so a mid-beat completion publishes
+    immediately, and in practice :func:`promote_if_complete` has already moved
+    it — the ordering matters only for a caller that advances without ever
+    stamping a plan, which every existing test does.
     """
     planned = {unit_key(chunk) for chunk in chunks}
-    return planned == set(cursor.committed_units)
+    return planned == set(cursor.committed_units) or planned == set(cursor.served_units)
 
 
 def collect_unit_results(
@@ -1780,6 +2126,17 @@ def collect_unit_results(
     impose is already baked into the fold. It stays in the signature because the
     caller passes it and this lane cannot change that call.
 
+    **CAL-P078: it is now load-bearing again, as the SELECTOR between the two
+    banks.** The building bank is returned when it covers the plan; otherwise
+    the serving one. That order is the freshness rule — a census finished this
+    beat beats the census finished five beats ago — and it is why the argument
+    could not stay decorative. It is never a blend: whichever bank answers is
+    returned whole, because half of one generation and half of another is not a
+    population (``GLOBAL_FINALIZATION_MISSING``'s sibling). Reaching here with
+    neither covering the plan is unreachable via the caller, which gates on
+    :func:`is_complete` first; it returns the empty fold rather than a partial
+    one, because a partial census published as a whole one is the worse failure.
+
     **Re-merging an already-folded set must be a no-op**, and that is the
     property this whole change rests on: each group appears once, so the sums
     pass through; ``avg_prob`` is recomputed from those sums either way; the
@@ -1788,5 +2145,11 @@ def collect_unit_results(
     output is re-sorted by the same key. Asserted directly by
     ``test_refolding_a_folded_set_changes_nothing``, not assumed.
     """
-    buckets, carriers = cursor.folded()
+    chunk_list = list(chunks)
+    if cursor.covers(chunk_list):
+        buckets, carriers = cursor.folded()
+    elif cursor.served_covers(chunk_list):
+        buckets, carriers = cursor.served_folded()
+    else:
+        buckets, carriers = [], []
     return [list(buckets) + list(carriers)]
