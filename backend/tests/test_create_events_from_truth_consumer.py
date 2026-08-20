@@ -274,9 +274,46 @@ def test_the_existence_check_lives_inside_the_insert_statement():
     sql = " ".join(str(rail._INSERT_SQL).split())
     assert "INSERT INTO events" in sql
     assert "WHERE NOT EXISTS" in sql
-    assert "FROM events" in sql and "espn_id = :truth_id" in sql
+    assert "FROM events" in sql and "espn_id = CAST(:truth_id AS varchar)" in sql
     # `:param::cast` silently drops the bind under asyncpg's text() parser.
     assert "::" not in sql
+
+
+def test_every_repeated_bind_param_is_cast_at_every_occurrence():
+    """A bind param used in TWO positions must be pinned in BOTH.
+
+    THE FAILURE THIS EXISTS FOR, measured in production on 2026-08-19 (queue 376):
+    ``:truth_id`` appeared bare in the SELECT list and again compared against
+    ``events.espn_id``. asyncpg deduces ``text`` from the first and
+    ``character varying`` from the second and refuses the whole statement with
+    ``AmbiguousParameterError: inconsistent types deduced for parameter $2``.
+
+    Every gate upstream was GREEN — the plan re-derived to an identical
+    ``plan_hash``, ``still_missing`` was 328, ``already_present`` 0, the set gate
+    passed — and ``apply=true`` then died without writing a row. So no behavioural
+    test on a mocked session could have caught it: the mock never type-checks a
+    bind. It is asserted on the SQL TEXT for the same reason the compare-half
+    assertion above is.
+
+    This is deliberately a rule about SHAPE, not a spelling check for
+    ``:truth_id``. A param used ONCE is inferred from its single context and needs
+    no help; casting one side of a two-context param only relocates the
+    disagreement.
+    """
+    import re
+
+    sql = " ".join(str(rail._INSERT_SQL).split())
+    params = set(re.findall(r"(?<!:):([a-zA-Z_]\w*)", sql))
+    repeated = {p for p in params if len(re.findall(r"(?<!:):%s\b" % p, sql)) > 1}
+    assert repeated, "expected at least one repeated bind param — the compare half reuses one"
+    for prm in sorted(repeated):
+        occurrences = len(re.findall(r"(?<!:):%s\b" % prm, sql))
+        casts = len(re.findall(r"CAST\(\s*:%s\b" % prm, sql, re.I))
+        assert casts == occurrences, (
+            f":{prm} appears {occurrences}x but is CAST {casts}x. asyncpg deduces a "
+            f"type per position and refuses the statement when they disagree "
+            f"(AmbiguousParameterError). Wrap EVERY occurrence in CAST(... AS <type>)."
+        )
 
 
 # ── the four read/bind refusals, each distinct ─────────────────────────────

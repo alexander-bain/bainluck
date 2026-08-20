@@ -168,19 +168,32 @@ _PRESENT_IDS_SQL = text(
 # is INSIDE the writing statement — see the module docstring. `CAST(:p AS …)` rather
 # than `:p::…` because asyncpg's text() parser drops a bind param followed by a `::`
 # cast (memory: asyncpg :param::jsonb bind gotcha).
+#
+# EVERY occurrence of `:truth_id` is cast, and that is the whole point rather than
+# tidiness. It appears TWICE, in two positions that infer different types: bare in
+# the SELECT list asyncpg deduces `text`, and compared against `events.espn_id` it
+# deduces `character varying`. asyncpg then refuses the whole statement with
+# `AmbiguousParameterError: inconsistent types deduced for parameter $2`. Measured
+# in production, queue 376: the dry-run was GREEN on every gate — plan_hash
+# re-derived identical, `still_missing 328`, `already_present 0` — and `apply=true`
+# died before writing a single row. A bind param used ONCE is inferred from its one
+# context and needs no help; a param used in TWO contexts must be pinned in BOTH, or
+# the cast on one side simply relocates the disagreement.
 _INSERT_SQL = text(
     """
     INSERT INTO events (sport_id, espn_id, home_team_id, away_team_id,
                         home_team_name, away_team_name, commence_time, status)
     SELECT CAST(:sport_id AS integer),
-           :truth_id,
+           CAST(:truth_id AS varchar),
            CAST(:home_team_id AS integer),
            CAST(:away_team_id AS integer),
-           :home_name,
-           :away_name,
+           CAST(:home_name AS varchar),
+           CAST(:away_name AS varchar),
            CAST(:commence_time AS timestamptz),
            'scheduled'
-     WHERE NOT EXISTS (SELECT 1 FROM events WHERE espn_id = :truth_id)
+     WHERE NOT EXISTS (
+         SELECT 1 FROM events WHERE espn_id = CAST(:truth_id AS varchar)
+     )
     """
 )
 
