@@ -92,6 +92,43 @@ publishing ~40 % of its messages into a prefetch buffer that will discard them
 unexecuted, which is queue occupancy spent on nothing. The registered prediction in
 the plan doc is written against those numbers, not the stale ones.
 
+## ⚠️⚠️ LAT-P075 — STILL NOT WIRED, AND THE PAYOFF ABOVE IS NOW STALE TOO
+
+Fable's LAT-P075 directive said to wire this gate **if** the pass-result endpoint had
+been deployed. It has been (`6e314028`, via INT-092). It was **still not wired**, for
+three reasons, and the first two are new facts rather than caution:
+
+1. **Step 2 of the forced ordering — "count publishes" — is UNREACHABLE, and deployment
+   was never what was blocking it.** No instrument in the fleet counts publishes.
+   `deliveries` is wired to celery's `task_prerun` (`tasks/redis_state.py`, and see
+   LAT-P043/#1802 in the same file), so it counts **executions**; `queue_depths` is an
+   `LLEN` and is blind to messages that are consumed as fast as they arrive; and
+   `/api/admin/celery-debug` is refused by standing guidance. The endpoint shipping did
+   not change this, because the endpoint reports **passes and skips** — also executions.
+
+2. **The payoff quantity above was DELETED by a change in the same window.**
+   `_EXPIRING_WARMER_BEATS["warm-typeahead"]` went 10 -> 120 (LAT-P075, see
+   `typeahead_beat_budget.derive_message_expiry_s`). Nothing is discarded unexecuted any
+   more. So "~40 % of publishes thrown away in the prefetch buffer" is no longer a cost
+   this gate can remove — those messages now **execute**, as lock skips measured at
+   <= 71 ms. The gate's remaining payoff is ~3 suppressed no-op executions per period,
+   about **90 ms of worker-slot time per period, ~0.2 % of one slot.**
+
+   That is a very small return for what this module's own docstring calls the hazard:
+   `is_due()` runs inside the beat process's scheduling loop, so a fault there freezes
+   **every beat in the system**. It is the highest-blast-radius change in the program.
+
+3. **It does not address the headline.** This module says so at the top, by construction:
+   a publish-side gate leaves the firing opportunity, and therefore the period, exactly
+   as it is. The period regression's cause is `--concurrency=2` on `worker-background`
+   shared by 57 beats — see `typeahead_beat_budget.background_slot_occupancy()`.
+
+**What would make wiring it worth doing:** a re-derivation of the payoff against
+post-deploy data, on the regime that actually exists after the expiry fix. If the
+answer stays around 0.2 % of a slot, the correct outcome is to **delete this module
+rather than wire it** — a certified artifact whose payoff has evaporated is not an asset,
+and leaving it here invites a future window to wire it on the numbers above.
+
 ## What is deliberately NOT decided here
 
 Reading Redis, choosing a client, bounding a socket, the kill-switch transport, and
