@@ -1,20 +1,23 @@
-"""#2020 — the bounded delete rail, and the five properties that make it usable.
+"""#2020 — the bounded delete rail, its five properties, and the six defects that
+``C-DELETE-RAIL-PRE`` found in the first version of them.
 
 Queue 382 was authorized to delete ~61,000 rows attended, *"with a per-batch dry-run
 whose census must match the plan exactly, stop-on-mismatch."* It stopped, because no
-rail in production could do that: the only capable endpoint took a comma-separated id
-list with no ``apply=false``, no census and no cap, so the authorized shape reduced to
-~500 unverifiable destructive calls.
+rail in production could do that. This module was that missing device — and then a
+hostile audit returned **BLOCK** on it and Alex voided all 31 applies.
 
-Every test here asserts a property whose absence is why that stop happened. They are
-written against a fake session rather than a database because the properties under
-test are about **what the rail refuses to do**, and a refusal is provable without
-Postgres — the SQL correctness is a separate, weaker claim, covered by running the
-census predicate against production and comparing it to the authorized plan.
+So the tests come in two halves, and the second half is the more important one:
 
-The load-bearing one is ``TestStopOnMismatch``: a human promising to check the census
-and a rail refusing on the census are not the same object, and only the second one
-survives being run 31 times in a row at 2am.
+* ``TestDryRunIsTheDefault`` … ``TestOnlyTrancheAIsPrunable`` — the five original
+  properties. Still true, still asserted.
+* ``TestTheHostileSpecimens`` — **codex's own constructions, re-run against the
+  rebuilt rail.** Each one deleted something it should not have, or passed a guard it
+  should have failed. They are written from the audit's specimen data rather than
+  paraphrased, because a regression test whose specimen has been "tidied" is a
+  regression test for a different bug.
+
+The sentence that organises all of it: **a band bounds CARDINALITY; every finding was
+about IDENTITY.** Tests that only vary counts cannot see any of these.
 """
 
 import pytest
@@ -24,6 +27,7 @@ from app.tasks.prune_unanchored_duplicates import (
     MAX_DELETE_CEILING,
     PruneRefused,
     census,
+    compute_plan_hash,
     prune,
 )
 
@@ -44,26 +48,47 @@ class _Result:
 
 
 class _Session:
-    """Answers census / batch / verify by SQL shape, and records every write.
+    """Answers each query by SQL shape, and records every write.
 
-    ``verify_overrides`` lets a test make one candidate row fail re-verification —
-    the concurrent-writer case, which is the only way a correct batch query can still
-    hand back a row that must not be deleted.
+    ``verify_overrides`` makes one candidate row fail re-verification — the
+    concurrent-writer case, the only way a correct batch query can still hand back a
+    row that must not be deleted. ``vanish`` removes a row from the lock result.
+    ``batch_ids_on_apply`` is the R2 specimen: the batch query answers differently the
+    second time it is asked, which is what READ COMMITTED permits.
     """
 
     def __init__(
-        self, *, fixtures=0, total_rows=0, keepers=0, deletable=0,
+        self, *, fixtures=0, total_rows=0, keepers=0, surplus=None, deletable=0,
+        withheld_anchored=0, withheld_substantive=0,
         batch_ids=None, verify_overrides=None, delete_rowcount=None,
+        keeper_ids=None, vanish=(), batch_ids_on_apply=None,
     ):
         self._census = {
-            "fixtures": fixtures, "total_rows": total_rows,
-            "keepers": keepers, "deletable": deletable,
+            "fixtures": fixtures,
+            "total_rows": total_rows,
+            "keepers": keepers,
+            "surplus": deletable if surplus is None else surplus,
+            "withheld_anchored": withheld_anchored,
+            "withheld_substantive": withheld_substantive,
+            "deletable": deletable,
         }
-        self._batch = batch_ids if batch_ids is not None else []
+        self._batch = list(batch_ids) if batch_ids is not None else []
+        self._batch_on_apply = batch_ids_on_apply
+        self._batch_calls = 0
         self._verify_overrides = verify_overrides or {}
         self._delete_rowcount = delete_rowcount
+        self._keeper_ids = list(keeper_ids) if keeper_ids is not None else []
+        self._vanish = set(vanish)
         self.writes: list[tuple[str, dict]] = []
         self.locked = False
+        self.lock_order: list[int] = []
+
+    def batch_for(self, cap=DEFAULT_MAX_DELETE, *, live=False):
+        """``live=False`` is what the dry run published and the operator reviewed;
+        ``live=True`` is what the database would hand back now. They differ only in
+        the R2 specimen, which is the whole point of that specimen."""
+        src = self._batch_on_apply if (live and self._batch_on_apply) else self._batch
+        return list(src)[:cap]
 
     async def execute(self, stmt, params=None):
         sql = " ".join(str(stmt).split())
@@ -79,25 +104,38 @@ class _Session:
             )
             return _Result([], rowcount=count)
 
+        if "AS fixtures" in sql:
+            return _Result([self._census])
+
+        if "LIMIT :cap" in sql:
+            self._batch_calls += 1
+            cap = int(params.get("cap", DEFAULT_MAX_DELETE))
+            return _Result([(i,) for i in self.batch_for(cap, live=True)])
+
+        if "SELECT DISTINCT k.id" in sql:
+            return _Result([(i,) for i in self._keeper_ids])
+
         if "FOR UPDATE" in sql:
             self.locked = True
+            ids = [i for i in params.get("ids", []) if i not in self._vanish]
+            self.lock_order = ids
+            return _Result([(i,) for i in ids])
+
+        if "AS right_sport" in sql:
             rows = []
             for i in params.get("ids", []):
+                if i in self._vanish:
+                    continue
                 row = {
                     "id": i, "right_sport": True, "tagged": True,
-                    "unlinked": True, "keeper_exists": True,
+                    "unlinked": True, "anchor_free": True,
+                    "empty_of_substance": True, "keeper_exists": True,
                 }
                 row.update(self._verify_overrides.get(i, {}))
-                if self._verify_overrides.get(i) == "VANISH":
-                    continue
                 rows.append(row)
             return _Result(rows)
 
-        if "COUNT(*) AS fixtures" in sql or "AS deletable" in sql:
-            return _Result([self._census])
-
-        # the batch query
-        return _Result([(i,) for i in self._batch])
+        raise AssertionError(f"unrecognised statement in the fake session: {sql[:200]}")
 
     async def rollback(self):
         pass
@@ -108,6 +146,22 @@ def _deleted_event_ids(session):
         if sql.strip() == "DELETE FROM events":
             return params["ids"]
     return None
+
+
+def _plan(session, *, sport_id=37871, linked_copies=1, cap=DEFAULT_MAX_DELETE):
+    """The plan hash an operator would have read off the dry run."""
+    return compute_plan_hash(
+        sport_id=sport_id,
+        linked_copies=linked_copies,
+        ids=session.batch_for(cap),
+    )
+
+
+async def _apply(session, *, sport_id=37871, cap=DEFAULT_MAX_DELETE, **kwargs):
+    """Apply with a correct plan hash, so tests about OTHER properties are not all
+    also tests about the plan hash."""
+    kwargs.setdefault("plan_hash", _plan(session, sport_id=sport_id, cap=cap))
+    return await prune(session, sport_id=sport_id, apply=True, max_delete=cap, **kwargs)
 
 
 # ── property 1: dry-run is the default ─────────────────────────────────────
@@ -129,23 +183,25 @@ class TestDryRunIsTheDefault:
 
     @pytest.mark.asyncio
     async def test_the_dry_run_exercises_the_apply_paths_guard_query(self):
-        """A rehearsal that skips a statement is not a rehearsal.
-
-        ``_VERIFY_SQL`` is the only query the apply path runs that the census and
-        batch queries do not, and it is the most intricate of the three (a
-        ``FOR UPDATE`` with two correlated EXISTS). If the dry run skipped it, the
-        first thing an operator would learn about a defect in it is a 500 on the
-        first destructive call of a 31-call run. So the dry run runs it — the locks
-        are released by the caller's rollback.
-        """
+        """A rehearsal that skips a statement is not a rehearsal."""
         session = _Session(deletable=7, batch_ids=[101, 102])
 
         out = await prune(session, sport_id=37871)
 
-        assert session.locked is True, "the dry run must exercise the FOR UPDATE query"
+        assert session.locked is True, "the dry run must exercise the lock query"
         assert out["verified"] is True
         assert out["deleted"] == 0
         assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_the_dry_run_publishes_a_plan_hash(self):
+        """R2 — the dry run's output is what makes an apply bindable at all."""
+        session = _Session(deletable=7, batch_ids=[101, 102])
+        out = await prune(session, sport_id=37871)
+        assert out["plan_hash"] == compute_plan_hash(
+            sport_id=37871, linked_copies=1, ids=[101, 102]
+        )
+        assert out["plan_hash"] in out["reason"]
 
     @pytest.mark.asyncio
     async def test_a_dry_run_whose_guard_would_refuse_says_so_instead_of_dry_run(self):
@@ -178,21 +234,40 @@ class TestDryRunIsTheDefault:
 class TestTheCensusIsInTheResponse:
     @pytest.mark.asyncio
     async def test_every_path_returns_the_census(self):
-        for apply_flag, kwargs in (
-            (False, {}),
-            (True, {"expected_min": 0, "expected_max": 10**9}),
-        ):
+        for apply_flag in (False, True):
             session = _Session(fixtures=1, total_rows=5, keepers=1, deletable=4,
                                batch_ids=[7, 8, 9, 10])
-            out = await prune(session, sport_id=37871, apply=apply_flag, **kwargs)
-            assert out["census"] == {
-                "fixtures": 1, "total_rows": 5, "keepers": 1, "deletable": 4,
-            }, out
+            if apply_flag:
+                out = await _apply(session, expected_min=0, expected_max=10**9)
+            else:
+                out = await prune(session, sport_id=37871)
+            assert out["census"]["fixtures"] == 1
+            assert out["census"]["deletable"] == 4
+            assert out["census"]["total_rows"] == 5
 
     @pytest.mark.asyncio
     async def test_census_is_callable_on_its_own(self):
         session = _Session(fixtures=35, total_rows=7596, keepers=0, deletable=7596)
         assert (await census(session, sport_id=37871, linked_copies=0))["fixtures"] == 35
+
+    @pytest.mark.asyncio
+    async def test_the_census_separates_deletable_from_merely_surplus(self):
+        """#2057's recut, made readable.
+
+        ``surplus`` is how many extra copies exist; ``deletable`` is how many of them
+        carry nothing. The gap is the population that needs a ruling, and a response
+        that reported only one number would hide it — which is what the first version
+        did, and why 1,230 rows of real history sat inside an "authorized" 60,889.
+        """
+        session = _Session(fixtures=2565, total_rows=63454, keepers=2565,
+                           surplus=60889, deletable=59659,
+                           withheld_substantive=1230, batch_ids=[1])
+
+        out = await prune(session, sport_id=37871)
+
+        assert out["census"]["surplus"] == 60889
+        assert out["census"]["deletable"] == 59659
+        assert out["census"]["withheld_substantive"] == 1230
 
 
 # ── property 3: the per-call cap ───────────────────────────────────────────
@@ -239,12 +314,10 @@ class TestThePerCallCap:
 class TestTheDeleteIsBoundToAnIdList:
     @pytest.mark.asyncio
     async def test_the_destructive_statement_carries_the_exact_batch(self):
-        """No predicate on the DELETE that could match a row nobody counted."""
         session = _Session(fixtures=2, total_rows=9, keepers=2, deletable=7,
                            batch_ids=[101, 102, 103])
 
-        out = await prune(session, sport_id=37871, apply=True,
-                          expected_min=7, expected_max=7)
+        out = await _apply(session, expected_min=7, expected_max=7)
 
         assert out["terminal"] == "complete"
         assert _deleted_event_ids(session) == [101, 102, 103]
@@ -253,24 +326,17 @@ class TestTheDeleteIsBoundToAnIdList:
     @pytest.mark.asyncio
     async def test_rows_are_locked_and_re_verified_before_the_delete(self):
         session = _Session(deletable=7, batch_ids=[101])
-        await prune(session, sport_id=37871, apply=True,
-                    expected_min=7, expected_max=7)
+        await _apply(session, expected_min=7, expected_max=7)
         assert session.locked is True
 
     @pytest.mark.asyncio
     async def test_a_row_that_gained_a_futures_link_refuses_the_whole_batch(self):
-        """The concurrent-writer case: the batch was right when it was chosen.
-
-        Refusing the BATCH rather than skipping the row is deliberate — a partition
-        that changed under the census is a partition whose census is stale, and the
-        next call re-reads it.
-        """
+        """The concurrent-writer case: the batch was right when it was chosen."""
         session = _Session(deletable=7, batch_ids=[101, 102],
                            verify_overrides={102: {"unlinked": False}})
 
         with pytest.raises(PruneRefused, match="unlinked"):
-            await prune(session, sport_id=37871, apply=True,
-                        expected_min=7, expected_max=7)
+            await _apply(session, expected_min=7, expected_max=7)
 
         assert _deleted_event_ids(session) is None
 
@@ -281,8 +347,7 @@ class TestTheDeleteIsBoundToAnIdList:
                            verify_overrides={101: {"keeper_exists": False}})
 
         with pytest.raises(PruneRefused, match="keeper_exists"):
-            await prune(session, sport_id=37871, apply=True,
-                        expected_min=7, expected_max=7)
+            await _apply(session, expected_min=7, expected_max=7)
         assert _deleted_event_ids(session) is None
 
     @pytest.mark.asyncio
@@ -290,24 +355,20 @@ class TestTheDeleteIsBoundToAnIdList:
         session = _Session(deletable=7, batch_ids=[101],
                            verify_overrides={101: {"right_sport": False}})
         with pytest.raises(PruneRefused, match="right_sport"):
-            await prune(session, sport_id=37871, apply=True,
-                        expected_min=7, expected_max=7)
+            await _apply(session, expected_min=7, expected_max=7)
 
     @pytest.mark.asyncio
     async def test_an_untagged_row_refuses_the_whole_batch(self):
         session = _Session(deletable=7, batch_ids=[101],
                            verify_overrides={101: {"tagged": False}})
         with pytest.raises(PruneRefused, match="'tagged'"):
-            await prune(session, sport_id=37871, apply=True,
-                        expected_min=7, expected_max=7)
+            await _apply(session, expected_min=7, expected_max=7)
 
     @pytest.mark.asyncio
     async def test_a_rowcount_that_disagrees_with_the_batch_refuses(self):
-        """Bound to an id list, so a mismatch means something else deleted them."""
         session = _Session(deletable=7, batch_ids=[101, 102], delete_rowcount=1)
         with pytest.raises(PruneRefused, match="batch held"):
-            await prune(session, sport_id=37871, apply=True,
-                        expected_min=7, expected_max=7)
+            await _apply(session, expected_min=7, expected_max=7)
 
 
 # ── property 5: stop-on-mismatch, mechanically ─────────────────────────────
@@ -334,8 +395,7 @@ class TestStopOnMismatch:
     async def test_a_count_above_the_band_refuses_and_says_both_numbers(self):
         session = _Session(deletable=61501, batch_ids=[1, 2])
 
-        out = await prune(session, sport_id=37871, apply=True,
-                          expected_min=60500, expected_max=61500)
+        out = await _apply(session, expected_min=60500, expected_max=61500)
 
         assert out["terminal"] == "refused"
         assert "CENSUS MISMATCH" in out["reason"]
@@ -347,23 +407,17 @@ class TestStopOnMismatch:
         """Both directions. A population that SHRANK unexpectedly is also drift —
         and it is the direction a reader forgives, which is why it is asserted."""
         session = _Session(deletable=60499, batch_ids=[1])
-        out = await prune(session, sport_id=37871, apply=True,
-                          expected_min=60500, expected_max=61500)
+        out = await _apply(session, expected_min=60500, expected_max=61500)
         assert out["terminal"] == "refused"
         assert session.writes == []
 
     @pytest.mark.asyncio
     async def test_the_authorized_band_admits_todays_live_number(self):
-        """Alex's band, and the census measured 2026-08-20T18:38:20Z.
-
-        Pinned as a literal so that a future change to the band's meaning has to
-        walk past this test rather than around it.
-        """
+        """Alex's band, and the census measured 2026-08-20T18:38:20Z."""
         session = _Session(fixtures=2565, total_rows=63454, keepers=2565,
                            deletable=60889, batch_ids=[1, 2, 3])
 
-        out = await prune(session, sport_id=37871, apply=True,
-                          expected_min=60500, expected_max=61500, max_delete=3)
+        out = await _apply(session, expected_min=60500, expected_max=61500, cap=3)
 
         assert out["terminal"] == "complete"
         assert out["deleted"] == 3
@@ -376,9 +430,6 @@ class TestStopOnMismatch:
 class TestOnlyTrancheAIsPrunable:
     @pytest.mark.asyncio
     async def test_tranche_b_zero_linked_copies_is_refused_by_construction(self):
-        """No linked copy means no keeper rule — and 35 fixtures of esports with
-        every provider id NULL is precisely the population where guessing a keeper
-        would be the whole mistake."""
         session = _Session(fixtures=35, total_rows=7596, keepers=0, deletable=7596,
                            batch_ids=list(range(100)))
 
@@ -391,7 +442,7 @@ class TestOnlyTrancheAIsPrunable:
 
     @pytest.mark.asyncio
     async def test_tranche_c_two_or_more_linked_copies_is_refused(self):
-        """Deleting here would orphan real futures links."""
+        """Deleting here would orphan real futures links — 161 of them, measured."""
         session = _Session(fixtures=103, total_rows=1429, keepers=206, deletable=1223,
                            batch_ids=list(range(100)))
 
@@ -405,50 +456,11 @@ class TestOnlyTrancheAIsPrunable:
     async def test_the_keeper_rule_is_stated_in_the_response(self):
         session = _Session(deletable=4, batch_ids=[1])
         out = await prune(session, sport_id=37871)
-        assert out["keeper_rule"] == "the futures-linked copy"
-
-
-class TestTheRailNeverAbsorbs:
-    """The claim the ruling-048 census allowlist is standing on, made checkable.
-
-    `DELETE_WITHOUT_MERGE_ALLOWLIST` in ``test_event_merge_invariant_r6.py`` exempts
-    this rail from the invariant on ONE ground: it establishes a pairing but performs
-    no absorption. Ruling 048's harm requires a **transfer** — every merging rail
-    repoints ``SET event_id = :keep`` before deleting, and that is how 5,142 / 540 /
-    2,097 rows of one game's data ended up on another's (#1779/#1798).
-
-    An allowlist reason nobody executes is the thing the allowlist docstring warns
-    about ("the reason is what a reviewer checks"). So the reason is executed here.
-    If someone later adds a repoint to this rail — a reasonable-looking change, since
-    every neighbouring rail does exactly that — this goes red before the allowlist
-    entry silently becomes a lie.
-    """
-
-    def test_the_rail_never_repoints_an_fk_onto_a_keeper(self):
-        import inspect
-
-        from app.tasks import prune_unanchored_duplicates as rail
-
-        source = inspect.getsource(rail)
-        # the merging spelling, in every casing the codebase actually uses
-        for forbidden in ("SET event_id =", "set event_id ="):
-            assert forbidden not in source, (
-                f"this rail now repoints an FK ({forbidden!r}) — that is absorption, "
-                "and its ruling-048 allowlist entry is no longer true. Either remove "
-                "the repoint or route the rail through event_merge_invariant."
-            )
-
-    @pytest.mark.asyncio
-    async def test_no_write_it_issues_mentions_a_keeper_id(self):
-        """The behavioural half: every write is bound to the batch, never the keeper."""
-        session = _Session(deletable=7, batch_ids=[101, 102])
-        await prune(session, sport_id=37871, apply=True,
-                    expected_min=7, expected_max=7)
-
-        assert session.writes, "expected the apply path to write"
-        for sql, params in session.writes:
-            assert "keep" not in (params or {}), (sql, params)
-            assert set(params.get("ids", [])) <= {101, 102}, (sql, params)
+        assert "futures-linked copy" in out["keeper_rule"]
+        assert "zero child rows" in out["keeper_rule"], (
+            "#2057's recut must be visible to the operator reading the response, not "
+            "only to someone reading the SQL"
+        )
 
 
 class TestTheEmptyCase:
@@ -458,6 +470,397 @@ class TestTheEmptyCase:
         session = _Session(fixtures=0, total_rows=0, keepers=0, deletable=0,
                            batch_ids=[])
         out = await prune(session, sport_id=37871, apply=True,
-                          expected_min=0, expected_max=0)
+                          expected_min=0, expected_max=0, plan_hash="unused")
         assert out["terminal"] == "no_work"
-        assert out["deleted"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_work_distinguishes_exhausted_from_all_withheld(self):
+        """The two zero-batch cases are different facts and must not read alike.
+
+        gotcha #53 again, one level in: "nothing left to delete" and "everything left
+        is too valuable to delete" both produce an empty batch. Only the second one
+        means somebody owes a ruling.
+        """
+        session = _Session(fixtures=40, total_rows=90, keepers=40,
+                           surplus=50, deletable=0, withheld_substantive=50,
+                           batch_ids=[])
+        out = await prune(session, sport_id=37871)
+        assert out["terminal"] == "no_work"
+        assert "50 surplus" in out["reason"]
+        assert "hold child data" in out["reason"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# C-DELETE-RAIL-PRE — codex's own specimens, re-run against the rebuilt rail
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTheHostileSpecimens:
+    """Every one of these deleted something, or passed a guard, on the voided rail.
+
+    They are kept together rather than filed under the property each one violates,
+    because what they have in common is the point: **not one of them changes a
+    count.** The band was the whole authorization and the band sees none of this.
+    """
+
+    # ── R1: two real games, same key, and the linked one wins ──────────────
+
+    @pytest.mark.asyncio
+    async def test_r1_a_surplus_row_carrying_a_provider_anchor_is_never_deleted(self):
+        """Codex built keeper 9001 / surplus 9002 with the required one-linked shape
+        and distinct ``espn_id`` values, and the real ``prune()`` returned
+        ``terminal=complete`` and deleted 9002 — two halves of a doubleheader, and
+        ``ARTIFACT-Q378-2018-MC.md`` says BOTH must survive.
+
+        ``provenance:unanchored`` is a creation-history tag: ``_attach_claim`` can
+        stamp a provider id later without removing it. So the tag is not the invariant
+        — the columns are, and they are re-derived from the locked row.
+        """
+        session = _Session(deletable=1, batch_ids=[9002],
+                           verify_overrides={9002: {"anchor_free": False}})
+
+        with pytest.raises(PruneRefused, match="anchor_free"):
+            await _apply(session, expected_min=1, expected_max=1)
+
+        assert _deleted_event_ids(session) is None
+
+    @pytest.mark.asyncio
+    async def test_r1_the_batch_query_refuses_anchored_rows_at_selection_too(self):
+        """Belt and braces, and they fail differently: the predicate keeps anchored
+        rows out of the batch, the re-verification catches one that acquired an anchor
+        after selection. Only the second is a race; the first is the population."""
+        from app.tasks.prune_unanchored_duplicates import _batch_sql
+
+        sql = " ".join(str(_batch_sql()).split())
+        assert "t.anchor_free = true" in sql
+        assert "p.anchored_copies = 0" in sql, (
+            "a fixture with ANY anchored copy is an identity question, not a "
+            "duplicate — the whole fixture is withheld, not just that row"
+        )
+
+    # ── #2057 / R3: the linked copy can be the wrong keeper ────────────────
+
+    @pytest.mark.asyncio
+    async def test_2057_a_surplus_row_holding_child_data_is_never_deleted(self):
+        """#2018's surplus row carried **101** ``win_prob_snapshots``. #2057 found
+        17/17 duplicate games carrying markets on ONE copy only, so the linked copy is
+        not automatically the substantive one.
+
+        The rebuilt rail does not transfer those 101 rows to the keeper — transfer is
+        ruling 048's harm. It declines to delete the row.
+        """
+        session = _Session(deletable=1, batch_ids=[15198473],
+                           verify_overrides={15198473: {"empty_of_substance": False}})
+
+        with pytest.raises(PruneRefused, match="empty_of_substance"):
+            await _apply(session, expected_min=1, expected_max=1)
+
+        assert _deleted_event_ids(session) is None
+
+    @pytest.mark.asyncio
+    async def test_r3_the_apply_path_issues_no_child_table_deletes_at_all(self):
+        """The strongest form of "unique history is not destroyed": there is no
+        statement that could destroy it.
+
+        The old rail looped ``DELETE FROM <table> WHERE event_id = ANY(:ids)`` over
+        eight tables. That loop is gone — every row reaching the delete has been
+        proved childless twice, so the loop was ten statements that would silently
+        start doing something the moment that proof weakened.
+        """
+        session = _Session(deletable=3, batch_ids=[101, 102, 103])
+
+        await _apply(session, expected_min=3, expected_max=3)
+
+        deletes = [sql for sql, _ in session.writes if sql.startswith("DELETE FROM")]
+        assert deletes == ["DELETE FROM events"], (
+            f"the rail issued child deletes it no longer needs: {deletes}"
+        )
+
+    # ── R2: same count, different set ──────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_r2_same_count_different_set_is_refused(self):
+        """Codex's two-session specimen, verbatim: ``dry_batch=[101,102]`` then
+        ``apply_batch=[99,102]`` — *same exact band count, different set*.
+
+        Under READ COMMITTED the census and the batch share no MVCC snapshot, so
+        ``ORDER BY commence_time, id`` — total for ONE database state — cannot bind
+        two transactions. Only a content address can.
+        """
+        session = _Session(deletable=2, batch_ids=[101, 102],
+                           batch_ids_on_apply=[99, 102])
+
+        reviewed = compute_plan_hash(sport_id=37871, linked_copies=1, ids=[101, 102])
+        out = await prune(session, sport_id=37871, apply=True,
+                          expected_min=2, expected_max=2, plan_hash=reviewed)
+
+        assert out["terminal"] == "refused"
+        assert "PLAN MISMATCH" in out["reason"]
+        assert _deleted_event_ids(session) is None
+        assert session.writes == []
+
+    @pytest.mark.asyncio
+    async def test_r2_apply_without_a_plan_hash_refuses_even_with_a_perfect_band(self):
+        """The band can be exactly right and the authorization still absent."""
+        session = _Session(deletable=60889, batch_ids=[1, 2])
+        out = await prune(session, sport_id=37871, apply=True,
+                          expected_min=60889, expected_max=60889)
+        assert out["terminal"] == "refused"
+        assert "plan_hash" in out["reason"]
+        assert session.writes == []
+
+    def test_r2_the_hash_is_order_sensitive_and_partition_scoped(self):
+        """Reordering means the LIMIT cut somewhere else; a different partition that
+        happens to yield the same ids is a different plan."""
+        a = compute_plan_hash(sport_id=1, linked_copies=1, ids=[1, 2, 3])
+        assert a != compute_plan_hash(sport_id=1, linked_copies=1, ids=[3, 2, 1])
+        assert a != compute_plan_hash(sport_id=2, linked_copies=1, ids=[1, 2, 3])
+        assert a != compute_plan_hash(sport_id=1, linked_copies=2, ids=[1, 2, 3])
+        assert a == compute_plan_hash(sport_id=1, linked_copies=1, ids=[1, 2, 3])
+
+    # ── R4: the FK inventory ───────────────────────────────────────────────
+
+    def test_r4_the_inventory_is_derived_from_metadata_not_restated(self):
+        from app.utils.event_fk_inventory import (
+            EVENT_CHILD_DISPOSITIONS,
+            derive_event_child_tables,
+            unclassified_event_children,
+        )
+
+        derived = derive_event_child_tables()
+
+        # Both enumerations run 2026-08-20 — codex's C-EVENT-CHILD-CENSUS from
+        # information_schema, and lane1's independent one (fingerprint
+        # 31ae6a56ff829aa5). They agreed on the SET. This pins it.
+        assert set(derived) == {
+            "espn_snapshots", "futures_markets", "game_moments",
+            "line_movement_analyses", "odds_aggregated", "odds_snapshots",
+            "ranking_judgments", "score_snapshots", "scoring_plays",
+            "win_prob_snapshots",
+        }
+        assert len(derived) == 10
+        assert unclassified_event_children() == ()
+        assert set(EVENT_CHILD_DISPOSITIONS) == set(derived)
+
+    def test_r4_the_merge_rails_fk_list_is_still_short_and_that_is_a_LIVE_defect(self):
+        """CHARACTERIZATION, not an endorsement. Read the whole docstring.
+
+        R4 was written about *this* rail, which imported ``_EVENT_FK_TABLES`` from
+        ``app.tasks.sports``. This rail no longer needs the list at all — it deletes
+        only childless rows. **But the list did not get shorter by being unused: the
+        MERGE rail still consumes it, and the merge rail transfers-then-DELETEs the
+        loser event.** So on the deployed tree:
+
+        * ``game_moments`` is repointed by nobody and is ``ON DELETE CASCADE`` — the
+          loser's moments are **silently destroyed** by every merge, named in no
+          response and counted in no total.
+        * ``ranking_judgments`` is repointed by nobody and has **no** ``ON DELETE``
+          action — a merge whose loser holds a judgment **fails** with an FK
+          violation.
+
+        That is a live defect in a different rail, owned by #1798/#2020's merge half,
+        and fixing it here would be an unreviewed behaviour change to a destructive
+        rail this queue was told not to merge. So it is pinned instead: the numbers
+        are asserted so the day someone fixes it, this test goes red and points at the
+        paragraph explaining what they just fixed.
+
+        If you are here because this test failed: good. Delete it and say so.
+        """
+        from app.tasks.sports import _EVENT_FK_TABLES
+        from app.utils.event_fk_inventory import derive_event_child_tables
+
+        derived = set(derive_event_child_tables())
+        missing = derived - set(_EVENT_FK_TABLES)
+
+        assert missing == {"game_moments", "ranking_judgments"}, (
+            "the merge rail's FK drift changed. If it SHRANK, someone fixed the live "
+            "defect this test documents — delete the test. If it GREW, a new child "
+            f"table is being silently cascaded or blocking merges: {missing}"
+        )
+
+    def test_r4_the_two_tables_the_old_list_missed_are_present(self):
+        """Named individually, because they failed in opposite directions and a
+        set-equality assertion above would still pass if someone re-broke one."""
+        from app.utils.event_fk_inventory import (
+            CASCADING_CHILD_TABLES,
+            derive_event_child_tables,
+        )
+
+        derived = derive_event_child_tables()
+        # vanished silently under the old rail (ON DELETE CASCADE, unnamed)
+        assert "game_moments" in derived
+        assert "game_moments" in CASCADING_CHILD_TABLES
+        # made the parent DELETE fail with an FK violation (no ON DELETE action)
+        assert "ranking_judgments" in derived
+        assert "ranking_judgments" not in CASCADING_CHILD_TABLES
+
+    @pytest.mark.asyncio
+    async def test_r4_an_unclassified_child_table_stops_the_rail_on_every_path(self):
+        """Including the read-only one. A census that silently ignores a new child
+        table is how the operator learns about it from a 500 on call 1 of 31."""
+        import app.tasks.prune_unanchored_duplicates as rail
+
+        session = _Session(deletable=5, batch_ids=[1])
+        original = rail.unclassified_event_children
+        rail.unclassified_event_children = lambda: ("newly_added_child_table",)
+        try:
+            with pytest.raises(PruneRefused, match="newly_added_child_table"):
+                await prune(session, sport_id=37871)
+        finally:
+            rail.unclassified_event_children = original
+
+    @pytest.mark.asyncio
+    async def test_r4_the_response_names_the_cascading_tables(self):
+        """An effect no response mentions is an effect nobody reviews."""
+        session = _Session(deletable=5, batch_ids=[1])
+        out = await prune(session, sport_id=37871)
+        assert "game_moments" in out["cascading_tables"]
+        assert len(out["substance_tables"]) == 10
+
+    # ── R5: the never-absorbs guard, read semantically ─────────────────────
+
+    @pytest.mark.asyncio
+    async def test_r5_no_executed_statement_repoints_an_fk(self):
+        """**This is the R5 fix, and the change is where it looks.**
+
+        The old guard read ``inspect.getsource`` for the literal spellings
+        ``SET event_id =`` / ``set event_id =``. Codex composed
+
+            UPDATE odds_snapshots SET {"event_" + "id"} = :destination
+             WHERE event_id = ANY(:ids)
+
+        which **passed both predicates** — the source contains no such substring, and
+        the parameter is not named ``keep``. Substring absence is not an invariant.
+
+        A composed string is only invisible in the SOURCE. By the time it reaches the
+        session it has rendered to ``SET event_id = :destination`` like any other. So
+        the guard now reads the statements the rail actually executed, which catches
+        every spelling that produces SQL — composed, concatenated, or f-string.
+        """
+        import re
+
+        from app.utils.event_fk_inventory import derive_event_child_tables
+
+        session = _Session(deletable=3, batch_ids=[101, 102, 103])
+        recorded: list[str] = []
+        original = session.execute
+
+        async def recorder(stmt, params=None):
+            recorded.append(" ".join(str(stmt).split()))
+            return await original(stmt, params)
+
+        session.execute = recorder
+        await _apply(session, expected_min=3, expected_max=3)
+
+        assert recorded, "expected the apply path to execute statements"
+        children = set(derive_event_child_tables())
+        repoint = re.compile(
+            r"update\s+(\w+)\s+set\s+event_id\s*=", re.IGNORECASE
+        )
+        for sql in recorded:
+            match = repoint.search(sql)
+            assert match is None or match.group(1) not in children, (
+                f"this rail repoints an FK onto another event: {sql!r}. That is "
+                "absorption, and its ruling-048 allowlist entry is no longer true."
+            )
+
+    def test_r5_the_guard_itself_goes_red_on_the_hostile_composed_form(self):
+        """A mutation test on the guard, not on the rail.
+
+        The point of R5 was that the guard stayed green while its reason became
+        false. So the guard is fed codex's exact hostile statement and must reject it
+        — otherwise the test above proves only that the rail happens to be clean
+        today, which is what the old one proved.
+        """
+        import re
+
+        from app.utils.event_fk_inventory import derive_event_child_tables
+
+        hostile = (
+            'UPDATE odds_snapshots SET {} = :destination '
+            'WHERE event_id = ANY(:ids)'
+        ).format("event_" + "id")
+
+        children = set(derive_event_child_tables())
+        repoint = re.compile(r"update\s+(\w+)\s+set\s+event_id\s*=", re.IGNORECASE)
+        match = repoint.search(" ".join(hostile.split()))
+        assert match is not None and match.group(1) in children, (
+            "the guard must reject the composed form that defeated the substring "
+            "check — if this assertion fails the guard is decorative again"
+        )
+
+    def test_r5_no_orm_attribute_assignment_to_event_id(self):
+        """The one form that produces no SQL text, so the runtime guard cannot see it.
+
+        ORM assignment (``row.event_id = keeper``) is invisible to a statement
+        recorder for the same reason a composed string is invisible to a source
+        grep — each check has a blind spot and they are different blind spots. AST,
+        not grep: a comment or a string containing ``.event_id =`` is not an
+        assignment, and this must not be satisfiable by re-wording a docstring.
+        """
+        import ast
+        import inspect
+
+        from app.tasks import prune_unanchored_duplicates as rail
+
+        tree = ast.parse(inspect.getsource(rail))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AugAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                assert not (
+                    isinstance(target, ast.Attribute) and target.attr == "event_id"
+                ), (
+                    "this rail assigns to .event_id via the ORM — that is a transfer "
+                    f"the statement recorder cannot see (line {node.lineno})"
+                )
+
+    @pytest.mark.asyncio
+    async def test_r5_no_write_it_issues_mentions_a_keeper_id(self):
+        """The original behavioural half, kept: every write is bound to the batch."""
+        session = _Session(deletable=7, batch_ids=[101, 102])
+        await _apply(session, expected_min=7, expected_max=7)
+
+        assert session.writes, "expected the apply path to write"
+        for sql, params in session.writes:
+            assert "keep" not in (params or {}), (sql, params)
+            assert set(params.get("ids", [])) <= {101, 102}, (sql, params)
+
+    # ── R6: the keeper is locked, in a deterministic order ─────────────────
+
+    @pytest.mark.asyncio
+    async def test_r6_the_keeper_is_locked_not_merely_read(self):
+        """A concurrent delete/merge could remove the keeper after the ``EXISTS``
+        check while this transaction still owned the surplus — **both copies gone**,
+        which is unrecoverable fixture loss."""
+        session = _Session(deletable=2, batch_ids=[101, 102], keeper_ids=[500])
+
+        await _apply(session, expected_min=2, expected_max=2)
+
+        assert 500 in session.lock_order, (
+            "the keeper was read through a correlated EXISTS and never locked"
+        )
+
+    @pytest.mark.asyncio
+    async def test_r6_candidates_and_keepers_are_locked_in_one_ascending_pass(self):
+        """gotcha #13 — with no ``ORDER BY`` on 2,000 candidate locks, two overlapping
+        callers acquire in planner order and deadlock. One statement, ascending id."""
+        session = _Session(deletable=4, batch_ids=[900, 102, 400],
+                           keeper_ids=[700, 101])
+
+        await _apply(session, expected_min=4, expected_max=4)
+
+        assert session.lock_order == sorted(session.lock_order)
+        assert set(session.lock_order) == {101, 102, 400, 700, 900}
+
+    @pytest.mark.asyncio
+    async def test_r6_a_keeper_that_vanished_before_the_lock_refuses(self):
+        """The failure the lock exists to prevent, asserted rather than argued."""
+        session = _Session(deletable=2, batch_ids=[101], keeper_ids=[500],
+                           vanish={500})
+
+        with pytest.raises(PruneRefused, match="KEEPER"):
+            await _apply(session, expected_min=2, expected_max=2)
+
+        assert _deleted_event_ids(session) is None
