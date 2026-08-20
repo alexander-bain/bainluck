@@ -479,7 +479,7 @@ class TestNotLoadBearing:
         # the queries itself and writes. Nothing about it is conditional on a
         # warmer having run.
         assert "_cache_key = f\"bainluck:typeahead:" in src
-        assert "setex(_cache_key, 45" in src
+        assert "setex(_cache_key, 65" in src
 
     async def test_the_task_never_raises_out_of_a_failing_run(self):
         async def _route(**kw):
@@ -668,7 +668,7 @@ class TestRefreshAheadActuallyRefreshes:
 
         src = inspect.getsource(events.typeahead_search)
         read_at = src.index("_cached = _rc.get(_cache_key)")
-        write_at = src.index("setex(_cache_key, 45")
+        write_at = src.index("setex(_cache_key, 65")
         assert read_at < write_at
         assert "return _json.loads(_cached)" in src[read_at:write_at], (
             "the cache READ no longer returns early, so a hit may now reach the "

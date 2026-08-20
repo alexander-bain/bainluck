@@ -30,6 +30,7 @@ from app.utils.typeahead_beat_budget import (
     MIN_PASS_PERIOD_S,
     PROPOSED_W_MOVE_BEAT_S,
     RESPONSE_CACHE_TTL_S,
+    SAFETY_MARGIN_S,
     BeatVerdict,
     background_arrivals_per_min,
     grade_beat_interval,
@@ -136,55 +137,137 @@ def test_live_beat_interval_is_not_unsafe():
     )
 
 
-def test_the_proposed_60s_w_move_is_unsafe():
-    """Fable's LAT-P072 item 2 proposal, graded. Pinned so the refusal is durable.
+def test_the_proposed_60s_w_move_is_still_refused_on_the_newest_measurement():
+    """🔴 A HOLE THE TTL RAISE OPENED, closed here deliberately.
 
-    Not an opinion about the directive: it is the arithmetic. At 60 s the
-    quantiser is coarser than the entire measured wall distribution, so the
-    period is 60 s for every reachable wall and there is no branch under 45 s.
+    ⚠️ **REWRITTEN, LAT-P075, and the rewrite is the point — read it before
+    touching it.** This test used to be one line: `grade_beat_interval(60.0)`
+    against the defaults, asserting UNSAFE. Raising the TTL 45 -> 65 made that
+    assertion FALSE, and the reason is uncomfortable: at the swapped worst wall
+    (53.920 s) a 60 s beat quantises to a 60 s period, which now fits under a
+    65 s TTL with zero margin, so **the grader began calling Fable's refused
+    LAT-P072 W-move SAFE.**
+
+    That is the TTL purchasing a beat move nobody ruled, through a constant that
+    was already known to be a lower bound.
+
+    🔴 **AND IT IS WORSE THAN ONE STALE CONSTANT, WHICH IS WHY THIS TEST IS LONG.**
+    On the ring measurement taken the same day the 60 s beat quantises to **120 s**
+    at the worst wall — but its MEDIAN wall (45.687 s) quantises to 60 s, which is
+    under 65. `grade_beat_interval` reserves UNSAFE for crossing on the MEDIAN, so
+    the honest verdict on the newest data is **MARGINAL**, not UNSAFE.
+
+    That matters because `test_live_beat_interval_is_not_unsafe` — described in
+    this module's own docstring as "the load-bearing test", the one written so
+    that "a constant whose only defence is a paragraph" could not be changed by
+    someone who did not read the paragraph — **fails only on UNSAFE**. Raising the
+    TTL therefore moved the 60 s W-move out of the range that guard can see, on
+    every wall triple in the module. The guard did not break; it stopped covering
+    the case it was built for.
+
+    Per Fable's standing rule of 2026-08-19, a green gate is evidence only if you
+    can say what it would have to see to go red. `test_live_beat_interval_is_not_unsafe`
+    would now go red only on a beat >= 70 s. **It would NOT go red on the 60 s move
+    it was written to catch.** This test is that coverage, restored explicitly: it
+    asserts the refusal on the quantity that actually refuses — the worst-wall
+    period doubling to 120 s — rather than on a verdict label that no longer
+    carries it.
     """
-    grade = grade_beat_interval(PROPOSED_W_MOVE_BEAT_S)
-
-    assert grade.verdict == BeatVerdict.UNSAFE
-    assert grade.is_shippable is False
-    assert grade.period_at_median_s == 60.0
-    assert grade.period_at_worst_s == 60.0
-    assert grade.period_at_best_s == 60.0, (
-        "even the FASTEST measured pass quantises to 60s — that is what makes "
-        "this unconditional rather than a tail risk"
+    from app.tasks import celery_app
+    from app.utils.typeahead_beat_budget import (
+        RING_WALL_MAX_S,
+        RING_WALL_MEDIAN_S,
+        RING_WALL_MIN_S,
     )
-    assert grade.crosses_cliff_on_median is True
+
+    on_ring = grade_beat_interval(
+        PROPOSED_W_MOVE_BEAT_S,
+        wall_median_s=RING_WALL_MEDIAN_S,
+        wall_max_s=RING_WALL_MAX_S,
+        wall_min_s=RING_WALL_MIN_S,
+    )
+    # THE REFUSAL, on the quantity rather than the label: at the newest measured
+    # worst wall a 60 s beat puts the period at nearly twice the TTL.
+    assert on_ring.period_at_worst_s == 120.0
+    assert on_ring.crosses_cliff_on_worst is True
+    assert on_ring.is_shippable is False
+    assert on_ring.verdict == BeatVerdict.MARGINAL, (
+        "if this ever reads UNSAFE again the median wall has crossed the TTL too, "
+        "and the live-beat guard has regained coverage of the 60s move"
+    )
+
+    # The documented gap, asserted so it cannot be forgotten: the load-bearing
+    # guard's own trigger does not fire on this beat.
+    assert on_ring.verdict != BeatVerdict.UNSAFE
+
+    # And on the stale wall it is worse still — SAFE, by exactly zero headroom.
+    on_stale = grade_beat_interval(PROPOSED_W_MOVE_BEAT_S)
+    assert on_stale.period_at_worst_s == 60.0
+    assert on_stale.period_at_worst_s == float(RESPONSE_CACHE_TTL_S) - SAFETY_MARGIN_S, (
+        "the 60s move sits exactly on the safety margin against the stale wall — "
+        "one measurement from being called shippable"
+    )
+
+    # The live beat must remain nowhere near it.
+    assert float(celery_app.conf.beat_schedule["warm-typeahead"]["schedule"]) == 10.0
 
 
-def test_todays_10s_beat_is_marginal_not_safe():
-    """Honesty pin: the status quo is not clean either, and must not read as clean.
+def test_todays_10s_beat_is_safe_at_the_ruled_ttl_and_marginal_on_the_ring():
+    """What the TTL bought, and what it did not — both, in one place.
 
-    At the worst measured wall (42.6 s) a 10 s beat quantises to 50 s, over the
-    45 s TTL — and production has measured the live period at 42.5-51.7 s, so the
-    upper tail is already crossing. Asserting SAFE here would be the comfortable
-    lie; asserting MARGINAL keeps #1866's residual visible.
+    ⚠️ **REWRITTEN, LAT-P075.** This was `test_todays_10s_beat_is_marginal_not_safe`
+    and it asserted MARGINAL as an "honesty pin" against the 45 s TTL. The TTL is
+    now 65 and the walls are the pass-only triple, so on the defaults the live
+    beat grades SAFE — that flip is precisely what Fable ratified.
+
+    The honesty the old name protected still has somewhere to live, and it is the
+    second half below: on the ring wall measured the day the TTL shipped, the same
+    beat is **MARGINAL**, because P(10) = 70 s against a 65 s TTL. The status quo
+    is better than it was and it is still not clean, and both halves are asserted
+    rather than whichever one reads better.
     """
-    grade = grade_beat_interval(CURRENT_BEAT_INTERVAL_S)
+    from app.utils.typeahead_beat_budget import (
+        RING_WALL_MAX_S,
+        RING_WALL_MEDIAN_S,
+        RING_WALL_MIN_S,
+    )
 
-    assert grade.verdict == BeatVerdict.MARGINAL
-    assert grade.is_shippable is False
-    assert grade.period_at_median_s == 40.0
-    assert grade.period_at_worst_s == 50.0
-    assert grade.crosses_cliff_on_median is False
-    assert grade.crosses_cliff_on_worst is True
+    ruled = grade_beat_interval(CURRENT_BEAT_INTERVAL_S)
+    assert ruled.verdict == BeatVerdict.SAFE
+    assert ruled.is_shippable is True
+    assert ruled.period_at_median_s == 50.0
+    assert ruled.period_at_worst_s == 60.0
+    assert ruled.crosses_cliff_on_worst is False
+
+    on_ring = grade_beat_interval(
+        CURRENT_BEAT_INTERVAL_S,
+        wall_median_s=RING_WALL_MEDIAN_S,
+        wall_max_s=RING_WALL_MAX_S,
+        wall_min_s=RING_WALL_MIN_S,
+    )
+    assert on_ring.verdict == BeatVerdict.MARGINAL, (
+        "the residual #1866 keeps: at the newest measured worst wall the live "
+        "beat still quantises over the ruled TTL"
+    )
+    assert on_ring.period_at_worst_s == 70.0
 
 
 def test_the_arithmetically_fitting_22s_is_still_refused_as_marginal():
-    """B=22 lands the period at 44 s across the whole measured range — and is not SAFE.
+    """B=22 still does not reach SAFE — the numbers moved, the verdict did not.
 
-    1.4 s of headroom against a maximum drawn from 20 passes is a coincidence of
-    arithmetic, not a margin. If `SAFETY_MARGIN_S` were ever lowered to make this
-    pass, this test is where that decision becomes visible.
+    ⚠️ LAT-P075: the period figures here are wall-dependent and both inputs
+    changed (TTL 45 -> 65, worst wall 42.6 -> 53.920). At the swapped wall,
+    22 s quantises to 66 s, which is over the 65 s TTL — so this is now MARGINAL
+    by *crossing* rather than by *insufficient headroom*. Either way it is not
+    shippable, and the reason this test exists is unchanged: if `SAFETY_MARGIN_S`
+    is ever lowered to make an arithmetically-tidy beat pass, this is where that
+    decision becomes visible.
     """
     grade = grade_beat_interval(22.0)
 
-    assert grade.period_at_worst_s == 44.0
-    assert grade.crosses_cliff_on_worst is False
+    assert grade.period_at_worst_s == 66.0
+    assert grade.crosses_cliff_on_worst is True
+    assert grade.crosses_cliff_on_median is False
     assert grade.verdict == BeatVerdict.MARGINAL
     assert grade.is_shippable is False
 
@@ -273,10 +356,15 @@ def test_refused_is_distinct_from_unsafe():
     reports to a human must not. The two must never collapse to one value.
     """
     refused = grade_beat_interval(-1.0)
-    unsafe = grade_beat_interval(60.0)
+    # LAT-P075: 60.0 no longer reaches UNSAFE on the defaults (TTL 45 -> 65 put a
+    # 60 s quantised period back under the cliff — see the W-move test above for
+    # why that is a hole rather than good news). 70 s is unambiguously unsafe on
+    # any of the three wall triples: it crosses on the MEDIAN, not just the tail.
+    unsafe = grade_beat_interval(70.0)
 
     assert refused.verdict == BeatVerdict.REFUSED
     assert unsafe.verdict == BeatVerdict.UNSAFE
+    assert unsafe.crosses_cliff_on_median is True
     assert refused.verdict != unsafe.verdict
     assert refused.is_shippable is False and unsafe.is_shippable is False
 
@@ -290,4 +378,236 @@ def test_measured_wall_range_is_internally_coherent():
     assert MEASURED_WALL_MAX_S < RESPONSE_CACHE_TTL_S, (
         "if a single pass wall exceeds the response TTL, no beat interval can "
         "help and the cliff must be addressed on the TTL or the pass, not here"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P075 — the message-expiry derivation, and the model behind it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_expires_derivation_returns_the_lock_ttl():
+    """`expires` derives from a CONSTANT, not from a sampled maximum.
+
+    The whole point of deriving from `_LOCK_TTL_SECONDS` rather than from the
+    worst observed wall is that the wall keeps moving and the lock TTL does not.
+    This program has read a sampled maximum as a bound twice and been wrong both
+    times — 42.6 s by 11.3 s, then 53.920 s by 7.36 s. A value derived from the
+    sample would have to be revised on each of those reads; this one does not.
+    """
+    from app.utils.typeahead_beat_budget import LOCK_TTL_S, derive_message_expiry_s
+
+    assert derive_message_expiry_s() == float(LOCK_TTL_S) == 120.0
+
+    # It does not move when the wall measurement moves — which is the property.
+    assert derive_message_expiry_s(worst_wall_s=61.282) == 120.0
+    assert derive_message_expiry_s(worst_wall_s=42.6) == 120.0
+
+
+def test_the_expires_derivation_refuses_a_lock_ttl_under_the_measured_wall():
+    """A REFUSAL, never a smaller number — ruling 075's shape.
+
+    If `_LOCK_TTL_SECONDS` were ever lowered under the measured worst wall plus
+    margin, the lock could expire under a live pass and a second pass could start
+    on top of the first. No message-expiry value derived from that is safe, so
+    the derivation raises rather than quietly returning the smaller figure.
+
+    **What this would have to see to go red:** `LOCK_TTL_S` dropped to 60 while
+    the ring's worst wall stands at 61.282 s — i.e. someone "tidying" the lock
+    TTL toward the beat period without reading the wall.
+    """
+    from app.utils.typeahead_beat_budget import derive_message_expiry_s
+
+    with pytest.raises(ValueError, match="lock TTL"):
+        derive_message_expiry_s(lock_ttl_s=60.0, worst_wall_s=61.282)
+
+    for bad in ({"beat_s": 0}, {"worst_wall_s": 0}, {"lock_ttl_s": 0}, {"margin_s": -1}):
+        with pytest.raises(ValueError):
+            derive_message_expiry_s(**bad)
+
+
+def test_the_executable_fire_fraction_reproduces_the_measured_loss():
+    """The model is graded against production, not believed.
+
+    This is the arithmetic that identified `expires: 10` as the period
+    regression's mechanism. At the values the deployed pass ring reported on
+    2026-08-20T02:5xZ — expires 10 s, wall p50 45.687 s, period p50 53.521 s —
+    it predicts 32.7 % of beat fires can execute at all.
+
+    Production's own counters, read from the same endpoint in the same window,
+    said 30.5 %: 26 ringed passes plus 41 counted skips = 67 executions against
+    ~220 fires over 2,196 s. A 2.2-point gap on a two-thirds loss is the model
+    being right about the mechanism, and it is the reason the fix targets
+    `expires` rather than the TTL.
+    """
+    from app.utils.typeahead_beat_budget import executable_fire_fraction
+
+    predicted = executable_fire_fraction(expires_s=10, wall_s=45.687, period_s=53.521)
+    assert 0.32 <= predicted <= 0.34, predicted
+
+    measured = 67 / 220
+    assert abs(predicted - measured) < 0.05, (
+        f"model {predicted:.3f} vs production {measured:.3f} — if these have "
+        f"diverged, the mechanism attribution behind the expires fix is stale"
+    )
+
+    # And the repair takes it to full coverage: once a message outlives the pass,
+    # every fire executes — as a pass, or as a <=71ms lock skip.
+    repaired = executable_fire_fraction(expires_s=120, wall_s=45.687, period_s=53.521)
+    assert repaired == 1.0
+
+
+def test_the_wired_expires_matches_the_derivation():
+    """The mirror that makes the derivation load-bearing rather than decorative.
+
+    A derivation nothing consults is a comment. This asserts the beat schedule
+    actually carries the derived number, so the two cannot drift.
+    """
+    from app.tasks import _EXPIRING_WARMER_BEATS, celery_app
+    from app.utils.typeahead_beat_budget import derive_message_expiry_s
+
+    assert _EXPIRING_WARMER_BEATS["warm-typeahead"] == derive_message_expiry_s()
+    effective = celery_app.conf.beat_schedule["warm-typeahead"]["options"]["expires"]
+    assert effective == derive_message_expiry_s()
+
+
+def test_ring_wall_range_is_internally_coherent():
+    """min <= median <= p95 <= max, on the newer measurement too."""
+    from app.utils.typeahead_beat_budget import (
+        RING_WALL_MAX_S,
+        RING_WALL_MEDIAN_S,
+        RING_WALL_MIN_S,
+        RING_WALL_P95_S,
+        RING_WALL_SAMPLE_PASSES,
+    )
+
+    assert RING_WALL_MIN_S <= RING_WALL_MEDIAN_S <= RING_WALL_P95_S <= RING_WALL_MAX_S
+    assert RING_WALL_SAMPLE_PASSES > 0
+
+
+# ---------------------------------------------------------------------------
+# LAT-P075 — the period regression's cause, pinned to its real inputs.
+# ---------------------------------------------------------------------------
+
+
+def test_background_concurrency_mirror_matches_the_procfile():
+    """The capacity number is mirrored, so the finding cannot rot silently.
+
+    `background_slot_occupancy()` argues that the period tail is a capacity fact
+    about `worker-background`. That argument is only as good as its input, and
+    the input lives in a file this module cannot import. So it is pinned to the
+    Procfile text — if someone raises the concurrency (which is one of the
+    proposed remedies), this goes red and forces the finding to be re-derived
+    rather than left standing on a number that changed underneath it.
+    """
+    import pathlib
+
+    from app.utils.typeahead_beat_budget import BACKGROUND_WORKER_CONCURRENCY
+
+    procfile = pathlib.Path(__file__).resolve().parents[1] / "Procfile"
+    assert procfile.is_file(), f"Procfile not found at {procfile}"
+    line = next(
+        (
+            ln
+            for ln in procfile.read_text().splitlines()
+            if ln.startswith("worker-background:")
+        ),
+        None,
+    )
+    assert line, "no worker-background entry in the Procfile"
+
+    found = re.search(r"--concurrency=(\d+)", line)
+    assert found, f"worker-background has no --concurrency: {line}"
+    assert int(found.group(1)) == BACKGROUND_WORKER_CONCURRENCY, (
+        f"worker-background runs --concurrency={found.group(1)} but "
+        f"typeahead_beat_budget mirrors {BACKGROUND_WORKER_CONCURRENCY}. If the "
+        f"concurrency was raised, re-derive background_slot_occupancy() — that "
+        f"change IS the proposed period remedy and its effect must be graded."
+    )
+
+
+def test_the_warmer_now_owns_most_of_one_background_slot():
+    """The period regression, stated as the arithmetic that produces it.
+
+    At LAT-P062 the warmer held 32.0/50 = 64 % of one of `worker-background`'s
+    two slots. At the ring median it holds ~91 %. The beat never changed; the
+    wall did. That is why raising the beat, the TTL, or the message expiry cannot
+    fix the period — none of them gives the queue back a slot.
+
+    **What this would have to see to go red:** the pass wall coming back down
+    (a `WARM_CONCURRENCY` raise, a smaller head), or the concurrency going up.
+    Both are the remedy, so a red here is good news that must be graded, not a
+    number to re-baseline.
+    """
+    from app.utils.typeahead_beat_budget import (
+        BACKGROUND_WORKER_CONCURRENCY,
+        RING_WALL_MEDIAN_S,
+        background_slot_occupancy,
+        free_background_slots,
+    )
+
+    now = background_slot_occupancy()
+    then = background_slot_occupancy(wall_s=32.0, period_s=50.0)
+
+    assert 0.88 <= now <= 0.95, now
+    assert 0.60 <= then <= 0.70, then
+    assert now > then
+
+    # The load-bearing consequence, stated as what it actually is. An earlier
+    # draft asserted `free_background_slots() < 1.0` and that is simply FALSE —
+    # 2 - 0.91 = 1.09. The starvation is not a shortage of slot COUNT; it is
+    # FIFO POSITION. `background` is one shared queue with no priority, so when
+    # the warmer's pass ends and releases its slot, that slot goes to whichever
+    # of the other 56 beats' messages is at the head of the list — not back to
+    # the warmer. Behind one 150 s `rebuild_typeahead_index` the warmer waits
+    # 150 s, with 1.09 slots "free" the whole time.
+    #
+    # So the number that matters is how little slack there is: the warmer alone
+    # consumes MORE THAN HALF of a two-slot pool, which is what makes ordinary
+    # co-tenant bursts (the :00/:15/:30/:45 backfill clusters) able to push it
+    # into a multi-minute wait.
+    assert free_background_slots() < 1.1
+    assert BACKGROUND_WORKER_CONCURRENCY == 2
+    assert now > 0.5, (
+        "the warmer holds more than half of one slot; below that the co-tenancy "
+        "argument weakens and the tail needs another explanation"
+    )
+    assert free_background_slots(concurrency=3) > free_background_slots(), (
+        "one more slot is the smallest capacity remedy — stated here so the "
+        "proposal has a number attached to it"
+    )
+    assert RING_WALL_MEDIAN_S > 32.0
+
+
+def test_the_expires_fix_does_not_claim_a_period_repair():
+    """🔴 A CORRECTION, pinned so it cannot be un-learned.
+
+    An earlier draft of this cycle shipped `expires: 10 -> 120` described as
+    "THE PERIOD-REGRESSION REPAIR", on #2014's 4/4 correlation plus a real
+    two-thirds discard. Continued sampling separated the two claims: during a
+    stall the broker pile drains on the first free slot whether the older
+    messages were discarded or executed, so the next pass starts at the same
+    instant either way. The discard is real; the period repair was not.
+
+    This test pins the honest boundary. The expiry change buys full delivery, and
+    at most one beat interval off the period — not the 192.9 s p95 tail.
+    """
+    from app.utils.typeahead_beat_budget import (
+        CURRENT_BEAT_INTERVAL_S,
+        executable_fire_fraction,
+    )
+
+    before = executable_fire_fraction(expires_s=10, wall_s=45.687, period_s=53.521)
+    after = executable_fire_fraction(expires_s=120, wall_s=45.687, period_s=53.521)
+
+    # What it DOES buy: delivery goes from two-thirds lost to none lost.
+    assert before < 0.35 and after == 1.0
+
+    # What it does NOT buy: the tail. The most the expiry can remove from a
+    # period is one beat interval — the wait for the next fire after the lock
+    # releases — which is nowhere near the 192.9s p95 or the 326.3s max.
+    measured_p95_period_s = 192.905
+    assert CURRENT_BEAT_INTERVAL_S < 0.1 * measured_p95_period_s, (
+        "if one beat interval ever approached the period tail, the expiry change "
+        "could plausibly explain it and this correction would need revisiting"
     )

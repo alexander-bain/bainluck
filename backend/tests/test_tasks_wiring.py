@@ -494,31 +494,94 @@ class TestHeavyQueueRouting:
         }
         assert not unbounded, f"warmer beats missing their expires bound: {unbounded}"
 
+    #: Beats whose task WALL exceeds their beat period, so the flat
+    #: `expires <= period` rule does not apply to them. See the derivation in
+    #: `app/utils/typeahead_beat_budget.derive_message_expiry_s`. Membership is
+    #: declared rather than inferred, so adding a beat here is a visible act.
+    _WALL_EXCEEDS_PERIOD_BEATS = {"warm-typeahead"}
+
     def test_1609_expires_never_exceeds_the_beat_period(self):
         """`expires` longer than the period cannot discard a superseded message.
 
-        This is the arithmetic the bound rests on, asserted rather than trusted:
-        if expires > period, the next message is published while the stale one
-        is still valid, and the queue laps exactly as before.
+        ⚠️ **AMENDED, LAT-P075 — the flat rule was right about the wrong task.**
+        The original assertion was `expires <= period` for every listed beat, and
+        the reasoning behind it is still correct *for a task whose wall is shorter
+        than its beat period*: there, the next fire always executes, so a message
+        outliving its own replacement is pure lapping.
+
+        `warm_typeahead` is the case that reasoning does not cover. Its wall is
+        39.3-61.3 s against a **10 s** beat, so the fires landing during a pass
+        are not superseded messages — they are the only start opportunities that
+        exist, all of them held off by the run lock until the pass ends. The flat
+        rule expired them at one beat period and destroyed every one except those
+        published in the pass's final 10 s: a measured **30.5 %** of fires
+        executing at all, against **32.7 %** predicted by the arithmetic.
+
+        So the rule is now derived per beat, and the two arms are asserted
+        separately below.
+
+        **What this gate would have to SEE to go red** (Fable's standing rule of
+        2026-08-19 — naming the failing input, not just claiming coverage):
+
+        * a short-wall beat given an `expires` above its period — e.g.
+          `warm-event-concepts` moved 300 -> 400 against a 300 s schedule. That is
+          the original lapping defect and arm 1 fires on it.
+        * `warm-typeahead` returned to an `expires` at or below its 10 s beat, or
+          otherwise below the measured worst wall plus margin — i.e. the exact
+          regression this cycle repaired. Arm 2 fires on it, and it is the input
+          that matters, because reinstating 10 here is a one-character edit that
+          would look like tidying.
+        * `_LOCK_TTL_SECONDS` lowered under the measured worst wall, which would
+          make the lock expire under a live pass. `derive_message_expiry_s` raises
+          rather than returning a smaller number, and arm 2 propagates that raise.
         """
         from app.tasks import _EXPIRING_WARMER_BEATS, celery_app as app
+        from app.utils.typeahead_beat_budget import (
+            RING_WALL_MAX_S,
+            SAFETY_MARGIN_S,
+            derive_message_expiry_s,
+        )
 
-        too_long = {}
-        for name, expires_s in _EXPIRING_WARMER_BEATS.items():
+        def _period_s(name):
             schedule = app.conf.beat_schedule[name]["schedule"]
             if isinstance(schedule, (int, float)):
-                period_s = float(schedule)
-            else:
-                # crontab(minute="*/N") -> N minutes. Derive it; do not hardcode.
-                minutes = sorted(schedule.minute)
-                period_s = (
-                    (minutes[1] - minutes[0]) * 60.0 if len(minutes) > 1 else 3600.0
-                )
+                return float(schedule)
+            # crontab(minute="*/N") -> N minutes. Derive it; do not hardcode.
+            minutes = sorted(schedule.minute)
+            return (minutes[1] - minutes[0]) * 60.0 if len(minutes) > 1 else 3600.0
+
+        # --- arm 1: the flat rule, still in force for every short-wall beat ---
+        too_long = {}
+        for name, expires_s in _EXPIRING_WARMER_BEATS.items():
+            if name in self._WALL_EXCEEDS_PERIOD_BEATS:
+                continue
+            period_s = _period_s(name)
             if expires_s > period_s:
                 too_long[name] = (expires_s, period_s)
         assert not too_long, (
             f"expires exceeds beat period (cannot discard a superseded message): {too_long}"
         )
+
+        # --- arm 2: the derived rule, for beats whose wall outlasts the period ---
+        assert self._WALL_EXCEEDS_PERIOD_BEATS <= set(_EXPIRING_WARMER_BEATS), (
+            "a beat declared long-walled is no longer in _EXPIRING_WARMER_BEATS"
+        )
+        wired = _EXPIRING_WARMER_BEATS["warm-typeahead"]
+        derived = derive_message_expiry_s()
+        assert wired == derived, (
+            f"warm-typeahead expires is {wired}s but derives to {derived}s — the "
+            f"period regression this value repairs is #1866/#2014; do not restore "
+            f"the flat rule here without reading derive_message_expiry_s"
+        )
+        # The bound must actually clear the thing it exists to survive.
+        assert wired >= RING_WALL_MAX_S + SAFETY_MARGIN_S, (
+            f"expires {wired}s does not outlive the measured worst pass wall "
+            f"({RING_WALL_MAX_S}s) plus margin ({SAFETY_MARGIN_S}s), so a message "
+            f"published during a pass still cannot survive to the lock release"
+        )
+        # And it must be strictly above the beat period, or arm 1 covered it and
+        # this beat does not belong in the declared set.
+        assert wired > _period_s("warm-typeahead")
 
     def test_heavy_beat_literals_match_their_effective_queue(self):
         """Every HEAVY beat entry must SAY heavy in the source, not just dispatch there.

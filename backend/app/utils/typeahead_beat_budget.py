@@ -1,5 +1,26 @@
 """Derive which `warm-typeahead` beat intervals are reachable, and refuse the rest.
 
+⚠️⚠️ **READ THIS AMENDMENT FIRST — LAT-P075 (2026-08-19) moved two of the numbers
+this docstring argues from, and left the argument itself intact.**
+
+* **The cliff is 65 s, not 45 s.** Fable ratified the TTL raise (GO ruling 4).
+  Every "45 s" below is historical. The quantiser table is still correct as
+  arithmetic; its verdict column is not.
+* **The worst pass wall is 61.282 s, not 42.6 s** (`RING_WALL_MAX_S`, n=26, the
+  first read of the deployed pass-ring instrument). This is the THIRD time a
+  sampled maximum in this program turned out to be a lower bound.
+* **Consequence, and it is the uncomfortable one:** the 60 s W-move this module
+  was written to refuse no longer grades UNSAFE at the new TTL, so
+  `test_live_beat_interval_is_not_unsafe` — described below as the load-bearing
+  test — **no longer covers the case it was built for.** The refusal was moved
+  into `test_the_proposed_60s_w_move_is_still_refused_on_the_newest_measurement`,
+  which grades on the quantity (a 120 s period at the worst wall) rather than on
+  a verdict label that stopped carrying it. Do not read the paragraph below
+  about "the load-bearing test" without reading that one too.
+* **And the period regression is NOT a beat-interval problem at all.** It is
+  `--concurrency=2` on `worker-background` shared by 57 beats, with this warmer
+  now holding ~91 % of one of the two slots. See `background_slot_occupancy()`.
+
 LAT-P072 (#1609, #1866). Fable's LAT-P072 item 2 rules the first W-move:
 **`warm_typeahead`'s beat from 10 s to 60 s** — it is 72.0 % of everything published
 into the `background` queue and ~82 % of its fires are 10-millisecond no-ops, so the
@@ -119,8 +140,22 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 #: `/api/events/typeahead`'s response-cache TTL, in seconds. The cliff itself.
-#: Mirrored from `routes/events.py`'s `setex(_cache_key, 45, ...)`.
-RESPONSE_CACHE_TTL_S = 45
+#: Mirrored from `routes/events.py`'s `setex(_cache_key, 65, ...)`.
+#:
+#: ⚠️ 45 -> 65, LAT-P075, on Fable's RATIFICATION of 2026-08-19 (GO ruling 4).
+#: 65 is derived and not chosen: `derive_response_ttl_s()` returns it from the
+#: LAT-P074 pass-only worst wall, and it is the first TTL the live 10 s beat has
+#: ever graded SAFE against this module's own `SAFETY_MARGIN_S` — 59 and 60 both
+#: return MARGINAL with zero headroom over the 60 s quantised period.
+#:
+#: 🔴 **AND THE TTL IS A FLOOR UNDER THE DAMAGE, NOT THE REPAIR.** Fable's ruling
+#: states the limit of this number in the same breath as ratifying it: the TTL
+#: buys 5.7 percentage points of the head's cold time, because the 196-547 s
+#: period stalls lose all 40 entries regardless of any TTL, and zeroing that loss
+#: needs TTL >= 553 s — a decision to serve stale data instead of fixing the
+#: regression. The repair is a CAPACITY change on `worker-background`; see
+#: `background_slot_occupancy()` at the foot of this module.
+RESPONSE_CACHE_TTL_S = 65
 
 #: The warmer's floor on how often a pass may START. Mirrored from
 #: `tasks/typeahead_warmer.MIN_PASS_PERIOD_SECONDS`.
@@ -141,14 +176,22 @@ CURRENT_BEAT_INTERVAL_S = 10.0
 # are admitted here.
 # ---------------------------------------------------------------------------
 
-MEASURED_WALL_MEDIAN_S = 32.0
-MEASURED_WALL_MIN_S = 29.4
-MEASURED_WALL_MAX_S = 42.6
+#
+# ⚠️ **SWAPPED TO THE PASS-ONLY TRIPLE, LAT-P075.** These were 32.0 / 29.4 / 42.6
+# from LAT-P062/P063's mixed sweep. LAT-P074 measured the clean pass-only
+# distribution and deliberately did NOT substitute it, because doing so flips the
+# live beat's verdict and that flip required the TTL decision Fable held. He ruled
+# on 2026-08-19 (GO ruling 4) and the TTL is now 65, so the halt is discharged and
+# the honest numbers become the grader's inputs. This is the swap
+# `test_the_pass_only_measurement_grades_the_live_beat_unsafe` existed to force.
+MEASURED_WALL_MEDIAN_S = 40.991
+MEASURED_WALL_MIN_S = 32.852
+MEASURED_WALL_MAX_S = 53.920
 
 #: How many production passes stand behind the range above. Recorded because a
 #: maximum drawn from a finite sample is a lower bound on the true maximum, and
 #: every margin computed against it inherits that.
-MEASURED_WALL_SAMPLE_PASSES = 20
+MEASURED_WALL_SAMPLE_PASSES = 17
 
 # ---------------------------------------------------------------------------
 # LAT-P074 — THE PASS-ONLY WALL, MEASURED. And why it is NOT substituted above.
@@ -206,6 +249,147 @@ PASS_ONLY_NOOP_MAX_S = 0.071
 #: worst measured wall from the TTL — deliberately larger than the gap it is
 #: judging, so that "SAFE" cannot be reached by a coincidence of arithmetic.
 SAFETY_MARGIN_S = 5.0
+
+# ---------------------------------------------------------------------------
+# LAT-P075 — THE FIRST READ OF THE DEPLOYED INSTRUMENT, and the input it moved.
+#
+# `GET /api/admin/typeahead-warmer/last` shipped on `program/latency-67` and
+# deployed in `6e314028`. LAT-P075 took its first production read at
+# 2026-08-20T02:5xZ: 26 real passes over a 2,196 s span, off the pass ring, which
+# is pass-only BY CONSTRUCTION (skips are counted into `skips:<reason>`, never
+# ringed) rather than by a bimodality argument over a mixed duration list.
+#
+#     ring wall   min 39.316 s   p50 45.687 s   p95 55.722 s   max 61.282 s   (n=26)
+#
+# 🔴 **THE WORST WALL MOVED AGAIN: 53.920 -> 61.282 s, +7.36 s.** This is the
+# third time this program has watched a sampled maximum turn out to be a lower
+# bound — 42.6 was wrong by 11.3 s, and 53.920 is now wrong by 7.36 s — and it is
+# recorded here because the TTL that ships in this same commit was ratified
+# against 53.920.
+#
+# ⚠️ **CONSEQUENCE, STATED AND PINNED RATHER THAN QUIETLY RE-DERIVED.** At the ring
+# maximum the same `grade_beat_interval` returns **MARGINAL, not SAFE**, for the
+# TTL that shipped: P(10) = 10 * ceil(61.282/10) = 70 s, which is over 65. The
+# TTL that would return SAFE on these inputs is 75 s.
+#
+# **65 SHIPS ANYWAY, AND THAT IS THE RULING RATHER THAN AN OVERSIGHT.** Fable's
+# GO ruling 4 closes TTL derivation explicitly — "do not spend another cycle
+# deriving a TTL" — and forecloses exactly this move: a TTL raised to survive the
+# regressed period is a decision to serve stale data instead of fixing the
+# regression. Chasing 65 -> 75 on a moved maximum is that move. The repair is
+# `derive_message_expiry_s()`; this block is the disclosure that the ratified
+# number now stands on a thinner margin than the one it was ratified on.
+#
+# Pinned by `test_the_ring_wall_grades_the_ratified_ttl_marginal`.
+RING_WALL_MIN_S = 39.316
+RING_WALL_MEDIAN_S = 45.687
+RING_WALL_P95_S = 55.722
+RING_WALL_MAX_S = 61.282
+
+#: Real passes behind the ring triple. Larger than `PASS_ONLY_WALL_SAMPLE_PASSES`
+#: and cleaner in kind — but still a finite sample, so still a lower bound.
+RING_WALL_SAMPLE_PASSES = 26
+
+# ---------------------------------------------------------------------------
+# THE MESSAGE-EXPIRY DERIVATION — LAT-P075.
+#
+# 🔴 NOT the period repair, though it was drafted as one and #2014 names it as the
+# period's mechanism. It stops a measured two-thirds message discard and makes
+# background saturation readable; the period's cause is `--concurrency=2` on
+# `worker-background` shared by 57 beats. See `derive_message_expiry_s` below and
+# `background_slot_occupancy()` at the bottom of this module.
+#
+# Mirrored from `tasks/typeahead_warmer._LOCK_TTL_SECONDS`.
+LOCK_TTL_S = 120
+
+
+def derive_message_expiry_s(
+    *,
+    beat_s: float = CURRENT_BEAT_INTERVAL_S,
+    worst_wall_s: float = RING_WALL_MAX_S,
+    lock_ttl_s: float = LOCK_TTL_S,
+    margin_s: float = SAFETY_MARGIN_S,
+) -> float:
+    """How long a `warm-typeahead` message must be allowed to live. Derived.
+
+    ## The defect this repairs, measured rather than argued
+
+    `_EXPIRING_WARMER_BEATS["warm-typeahead"]` was **10**, equal to the beat
+    period, on the reasoning that `expires` must never exceed the period or a
+    superseded message survives its own replacement. That reasoning is sound for
+    a task whose wall is SHORTER than its beat period. `warm_typeahead`'s is not:
+    it runs 39.3-61.3 s against a 10 s beat.
+
+    When the wall exceeds the period, the fires that land DURING a pass are not
+    superseded messages — they are the only start opportunities that exist, and
+    they are all held off by the run lock until the pass ends. Expiring them at
+    one beat period destroys every one of them except those published in the
+    final `expires` seconds of the pass.
+
+    **The arithmetic is exact and production matches it.** Of the fires in one
+    pass period, the fraction that can execute at all is::
+
+        (expires + max(0, period - wall)) / period
+
+    At the values measured 2026-08-20T02:5xZ — expires 10 s, wall p50 45.7 s,
+    period p50 53.5 s — that predicts **32.7 %**. The deployed instrument's own
+    counters said **30.5 %**: 26 ringed passes plus 41 counted skips = 67
+    executions against ~220 beat fires over 2,196 s. Two thirds of the warmer's
+    firing opportunities were being discarded unexecuted, by a bound whose stated
+    purpose they did not fall under.
+
+    ## The derived value
+
+    The only thing that can legitimately delay a `warm_typeahead` message is the
+    run lock, so the message must outlive the longest possible lock hold. That is
+    **not** the sampled worst wall — this program has now been wrong twice by
+    reading a finite maximum as a bound (42.6 by 11.3 s, 53.920 by 7.36 s). It is
+    `_LOCK_TTL_SECONDS`, a CONSTANT: the lock cannot be held past its own TTL, so
+    a message older than that is provably not waiting on the lock and is
+    genuinely superseded. Deriving from the constant rather than the sample is
+    what makes this value immune to the next wall measurement moving again.
+
+    The sampled wall is retained as a corroboration, not as the input: the
+    derived value must also clear `worst_wall_s + margin_s`, and a run where it
+    does not is a REFUSAL rather than a smaller number.
+
+    ## What it costs, stated
+
+    Every fire now executes. The ones that cannot start a pass take the lock-skip
+    path, measured at **<= 71 ms** (`PASS_ONLY_NOOP_MAX_S`). At 6 fires/min that
+    is ~0.4 s of worker-slot time per minute, ~0.7 % of one slot. Publishes are
+    unchanged — this bound touches delivery, never the publish rate — so #1609's
+    background-queue arrival share is untouched in both directions.
+    """
+    if beat_s <= 0 or worst_wall_s <= 0 or lock_ttl_s <= 0:
+        raise ValueError("beat, wall and lock TTL must all be positive")
+    if margin_s < 0:
+        raise ValueError("margin must not be negative")
+
+    corroboration = worst_wall_s + margin_s
+    if lock_ttl_s < corroboration:
+        raise ValueError(
+            f"lock TTL {lock_ttl_s}s is below the measured worst wall plus margin "
+            f"({corroboration:.3f}s) — the lock can expire under a live pass, and "
+            f"no message expiry derived from it would be safe"
+        )
+    return float(lock_ttl_s)
+
+
+def executable_fire_fraction(
+    *, expires_s: float, wall_s: float, period_s: float, beat_s: float = CURRENT_BEAT_INTERVAL_S
+) -> float:
+    """The share of beat fires that can execute at all, given an `expires` bound.
+
+    The model `derive_message_expiry_s` rests on, exposed so it can be graded
+    against production rather than believed. Returns a fraction of fires, not of
+    publishes — a discarded message was published and then thrown away, which is
+    precisely the loss this quantity exists to make visible.
+    """
+    if period_s <= 0 or beat_s <= 0 or wall_s <= 0 or expires_s <= 0:
+        raise ValueError("expires, wall, period and beat must all be positive")
+    live_s = min(float(expires_s), float(period_s)) + max(0.0, float(period_s) - float(wall_s))
+    return min(1.0, live_s / float(period_s))
 
 
 class BeatVerdict:
@@ -612,3 +796,79 @@ def derive_response_ttl_s(
         measured_period_s=measured_period_s,
         **common,
     )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P075 — THE PERIOD REGRESSION'S ACTUAL CAUSE, made checkable.
+#
+# This module exists because "a constant whose only defence is a paragraph will
+# eventually be changed by someone who did not read the paragraph". The same is
+# true of a finding: a cause that lives only in a report is a cause the next
+# window re-derives. So the arithmetic behind the period tail goes here, next to
+# the arithmetic behind the cliff, and its guard goes in the test suite.
+# ---------------------------------------------------------------------------
+
+#: `worker-background`'s celery `--concurrency`, from `backend/Procfile`.
+#: Mirrored, and pinned against the Procfile by
+#: `test_background_concurrency_mirror_matches_the_procfile`.
+BACKGROUND_WORKER_CONCURRENCY = 2
+
+
+def background_slot_occupancy(
+    *, wall_s: float = RING_WALL_MEDIAN_S, period_s: float = 50.072
+) -> float:
+    """The share of ONE background worker slot that `warm_typeahead` holds.
+
+    ## Why this number is the period regression
+
+    The period was 42.5-51.7 s at LAT-P062 and is 40.1-547.2 s now, and nothing
+    about the beat changed: it was 10 s then and it is 10 s now. What changed is
+    the pass wall, 32.0 s -> 45.7 s median, against a period that barely moved.
+
+    `worker-background` runs `--concurrency=2`. **57 beat entries route to that
+    queue** and one of them is this warmer. At LAT-P062's numbers the warmer held
+    32.0/50 = 64 % of one of the two slots, leaving comfortably more than one slot
+    for the other 56 tasks. At today's it holds **91 %** — effectively a permanent
+    resident of one slot.
+
+    So the pool went from "one and a bit slots free" to "one slot free, minus
+    change". Any SINGLE long co-tenant in the remaining slot now saturates the
+    queue, and while it is saturated the warmer cannot start no matter what the
+    beat does. The background co-tenants include multi-minute work
+    (`rebuild_typeahead_index` p95 150 s, `warm_event_concepts` p95 77 s, and a
+    long tail of `backfill_*` and `precompute_*` entries clustered on :00/:15/
+    :30/:45), which is the shape of a 300 s stall.
+
+    That is the whole regression, and it is a CAPACITY fact rather than a policy
+    one. It is why neither of this cycle's two shipped changes claims to fix it:
+
+    * the TTL is a floor under the damage (Fable's GO ruling 4 says so in the
+      sentence that ratifies it), and
+    * the `expires` bound governs delivery, not scheduling — during a stall the
+      broker pile drains on the first free slot either way.
+
+    The levers are all capacity or isolation — raise `--concurrency`, move the
+    warmer to its own queue, or move the long backfills off `background` — and
+    every one of them is a dyno-memory decision (`--max-memory-per-child=200000`
+    against the dyno size) rather than a code change this lane can derive. So the
+    number is brought, not spent, exactly as the TTL was.
+
+    Returns a fraction of one slot; > 1.0 would mean the warmer alone cannot fit.
+    """
+    if wall_s <= 0 or period_s <= 0:
+        raise ValueError("wall and period must both be positive")
+    return wall_s / period_s
+
+
+def free_background_slots(
+    *,
+    concurrency: int = BACKGROUND_WORKER_CONCURRENCY,
+    wall_s: float = RING_WALL_MEDIAN_S,
+    period_s: float = 50.072,
+) -> float:
+    """Slots left for the other 56 background beats once the warmer has its share.
+
+    Below 1.0 means a single long co-tenant can starve the warmer completely,
+    which is the state that produces the 192.9 s p95 / 326.3 s max period tail.
+    """
+    return float(concurrency) - background_slot_occupancy(wall_s=wall_s, period_s=period_s)

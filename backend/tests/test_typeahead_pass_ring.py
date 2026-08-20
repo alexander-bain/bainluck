@@ -399,30 +399,111 @@ def test_the_prediction_holds_in_the_healthy_period_regime():
     )
 
 
-def test_the_pass_only_measurement_grades_the_live_beat_unsafe():
-    """🔴 PINNED CONSEQUENCE: why the measured triple is not substituted above.
+def test_the_pass_only_measurement_graded_the_live_beat_unsafe_at_the_old_ttl():
+    """🔴 THE HALT, NOW DISCHARGED — kept as the record of what forced the swap.
 
-    `MEASURED_WALL_MEDIAN_S` is 32.0 s from LAT-P063. The pass-only median is
-    40.991 s. Substituting it flips the LIVE 10 s beat from `MARGINAL` to
-    `UNSAFE`, because P(10) = 10 * ceil(40.991/10) = 50 s — over the 45 s TTL on
-    a TYPICAL pass, not merely on the tail.
+    ⚠️ **REWRITTEN, LAT-P075**, exactly as the queue warned it would have to be.
+    This test used to call `grade_beat_interval` with the module DEFAULTS and
+    assert UNSAFE: `MEASURED_WALL_*` still held LAT-P063's mixed 32.0/29.4/42.6,
+    the pass-only triple sat beside it unused, and substituting the 40.991 s
+    median flipped the live 10 s beat to UNSAFE against the **45 s** TTL —
+    P(10) = 10 * ceil(40.991/10) = 50 s, over the cliff on a TYPICAL pass.
 
-    That is a production finding requiring the TTL decision, not a constant edit
-    smuggled in on a measurement commit. This test is the halt made readable: it
-    is green today, it states the number, and it is what forces the swap once the
-    TTL is ruled.
+    Both halves of that sentence have now moved: `MEASURED_WALL_*` **is** the
+    pass-only triple, and the TTL **is** 65. So the assertion is pinned to the
+    old TTL explicitly rather than to the defaults, because what it records is a
+    historical fact about 45 s — that the live beat was unsafe there — and that
+    fact is the entire reason 45 s is gone. Written against the defaults it would
+    now silently assert something else.
     """
     grade = grade_beat_interval(
         10.0,
         wall_median_s=PASS_ONLY_WALL_MEDIAN_S,
         wall_max_s=PASS_ONLY_WALL_MAX_S,
         wall_min_s=PASS_ONLY_WALL_MIN_S,
+        ttl_s=45,
     )
 
     assert grade.verdict == BeatVerdict.UNSAFE
     assert grade.crosses_cliff_on_median is True
     assert grade.period_at_median_s == 50.0
     assert grade.is_shippable is False
+
+
+def test_the_swapped_defaults_now_grade_the_live_beat_safe():
+    """And the same call on the DEFAULTS is what shipping the TTL bought.
+
+    With `MEASURED_WALL_*` swapped to the pass-only triple and the TTL at 65, the
+    grader's default answer for the live 10 s beat is SAFE for the first time in
+    this program's history. This is the positive half of the halt's discharge,
+    and it is asserted through the defaults deliberately — if either constant
+    drifts back, this goes red without anyone having to remember why.
+    """
+    grade = grade_beat_interval(10.0)
+
+    assert grade.verdict == BeatVerdict.SAFE
+    assert grade.period_at_worst_s == 60.0
+    assert grade.is_shippable is True
+
+
+def test_the_ring_wall_grades_the_ratified_ttl_marginal():
+    """🔴 DISCLOSURE: the ratified TTL's own input moved before it shipped.
+
+    65 s was derived from `PASS_ONLY_WALL_MAX_S = 53.920` (n=17) and ratified on
+    that basis — Fable's GO ruling 4 calls it "the first value the live beat has
+    ever graded SAFE". LAT-P075 then took the FIRST production read of the pass
+    ring that shipped on `program/latency-67`, and the worst wall came back at
+    **61.282 s** over 26 passes: +7.36 s.
+
+    At that number the same grader returns **MARGINAL, not SAFE** — P(10) =
+    10 * ceil(61.282/10) = 70 s, over 65 — and the TTL that would return SAFE is
+    75 s.
+
+    **65 ships anyway and this test does not object to it.** Ruling 4 closes TTL
+    derivation and forecloses precisely this move: a TTL raised to survive the
+    regressed period is a decision to serve stale data instead of fixing the
+    regression. The repair shipped in the same commit is the `expires` bound.
+
+    So what this test IS: the third instance of one specific failure, made
+    unmissable. A maximum drawn from a finite sample is a LOWER BOUND, and this
+    program has now read one as a bound and been wrong at 42.6 (by 11.3 s) and
+    again at 53.920 (by 7.36 s). It goes red if anyone edits `RING_WALL_MAX_S`
+    down to make the margin look better, or quietly re-derives the TTL upward to
+    reach SAFE — the two ways this disclosure could be made to disappear.
+    """
+    from app.utils.typeahead_beat_budget import (
+        RESPONSE_CACHE_TTL_S,
+        RING_WALL_MAX_S,
+        RING_WALL_MEDIAN_S,
+        RING_WALL_MIN_S,
+    )
+
+    assert RING_WALL_MAX_S > PASS_ONLY_WALL_MAX_S, (
+        "the ring read is the disclosure; if it no longer exceeds the ratified "
+        "input there is nothing to disclose and this test should be deleted"
+    )
+
+    at_ratified = grade_beat_interval(
+        10.0,
+        wall_median_s=RING_WALL_MEDIAN_S,
+        wall_max_s=RING_WALL_MAX_S,
+        wall_min_s=RING_WALL_MIN_S,
+        ttl_s=RESPONSE_CACHE_TTL_S,
+    )
+    assert at_ratified.verdict == BeatVerdict.MARGINAL
+    assert at_ratified.period_at_worst_s == 70.0
+    assert at_ratified.is_shippable is False
+
+    # The number that WOULD be safe here, stated so nobody has to recompute it
+    # to know the size of the gap — and deliberately not shipped.
+    at_75 = grade_beat_interval(
+        10.0,
+        wall_median_s=RING_WALL_MEDIAN_S,
+        wall_max_s=RING_WALL_MAX_S,
+        wall_min_s=RING_WALL_MIN_S,
+        ttl_s=75,
+    )
+    assert at_75.verdict == BeatVerdict.SAFE
 
 
 def test_the_ttl_that_returns_the_live_beat_to_safe():
@@ -461,12 +542,20 @@ def test_the_ttl_that_returns_the_live_beat_to_safe():
 
 
 def test_the_current_ttl_is_still_the_live_one():
-    """The derivation reports a candidate; it does not change anything.
+    """The TTL that is actually live, pinned so it cannot drift unremarked.
 
-    Fable ruled a HALT on the TTL: bring the number, do not ship it. If this ever
-    fails, someone shipped the intervention without the ruling.
+    ⚠️ **45 -> 65, LAT-P075.** This test previously asserted 45 and read "Fable
+    ruled a HALT on the TTL: bring the number, do not ship it." **The halt is
+    discharged** — Fable ratified 65 on 2026-08-19 (GO ruling 4), so the number
+    shipped and this assertion moved with it.
+
+    It keeps its job in the new position: 65 is now the ruled value, and a change
+    away from it without a fresh ruling should turn this red. In particular it
+    goes red on the move ruling 4 explicitly forecloses — raising the TTL again
+    to survive the period regression (553 s zeroes the loss, and is a decision to
+    serve stale data rather than fix the regression).
     """
-    assert RESPONSE_CACHE_TTL_S == 45
+    assert RESPONSE_CACHE_TTL_S == 65
 
 
 # ---------------------------------------------------------------------------
