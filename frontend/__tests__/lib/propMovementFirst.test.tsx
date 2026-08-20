@@ -268,31 +268,49 @@ describe("one rung per ladder, anywhere in the rail", () => {
 // The floor underneath (ruling 105), and what it costs
 // ---------------------------------------------------------------------------
 
-describe("ruling 105's filter stays underneath as a floor", () => {
-  it("a structural rung is still suppressed even when it MOVED", () => {
-    // Alex's wording is "stays underneath as a floor" — unconditional, per
-    // ruling 105's own no-escape-hatch clause. So the floor outranks the tier:
-    // a rung can move and still be removed.
+describe("ruling 105's filter stays underneath as a floor — for the rows that DID NOT MOVE (ruling 112)", () => {
+  it("a FLAT structural rung is still suppressed", () => {
+    // Ruling 105's predicate is untouched and still unconditional for a rung
+    // whose price never left its opening. This is the arm ruling 112 did not
+    // move, asserted separately from the arm it did, so a future change cannot
+    // take both out with one edit.
     const rows = [
-      rung("Ladder", "Strikeouts", 5, 0.4, 0.04),
-      rung("Ladder", "Strikeouts", 3, 0.5, 0.45),
-      rung("Real", "Hits", 1, 0.5, 0.56),
+      rung("Ladder", "Strikeouts", 5, 0.04),
+      rung("Ladder", "Strikeouts", 3, 0.45),
+      rung("Real", "Hits", 1, 0.56),
     ];
     const r = rail(rows);
     expect(r.structuralSuppressed).toBe(1);
     expect(labels(r.rows)).not.toContain("Ladder: 5+ strikeouts");
   });
 
-  it("THE COST OF THE FLOOR, MEASURED AND REPORTED: five moved rungs on 14788546", () => {
-    // ** THE HIGHEST-COST SPECIMEN THIS QUEUE FOUND, recorded rather than argued
-    // away. ** On `14788546` five of Brady Singer's strikeout rungs are both
-    // structural AND moved — one of them by 34.0 points, which under
-    // movement-first would otherwise have been at or near the top of the rail.
-    // The floor removes all five.
-    //
-    // This is implemented as ruled and flagged back to Alex, not re-litigated
-    // here. If the answer is "a rung that travelled far enough is a view again",
-    // that is a ruling, and it changes this test.
+  it("A STRUCTURAL RUNG THAT MOVED IS RAIL-ELIGIBLE — ruling 112, the arm that changed", () => {
+    // ** THIS TEST IS THE PREVIOUS CYCLE'S, INVERTED IN PLACE. ** UX-P108 shipped
+    // the floor as unconditional, measured that it deleted a 34-point move, and
+    // flagged the residual back rather than re-litigating it. Alex ruled:
+    // movement overrides the structural floor. The same three rows, the same
+    // ladder, the opposite expectation — and the cap still holds the ladder to
+    // one row.
+    const rows = [
+      rung("Ladder", "Strikeouts", 5, 0.4, 0.04),
+      rung("Ladder", "Strikeouts", 3, 0.5, 0.45),
+      rung("Real", "Hits", 1, 0.5, 0.56),
+    ];
+    const r = rail(rows);
+    // Both ladder rungs moved AND are structural; neither is counted suppressed.
+    expect(r.structuralSuppressed).toBe(0);
+    expect(labels(r.rows)).toContain("Ladder: 5+ strikeouts");
+    // ONE rung of the ladder, not two — ruling 111's cap is what makes 112 safe.
+    expect(labels(r.rows).filter((l) => l.startsWith("Ladder:"))).toHaveLength(1);
+  });
+
+  it("THE 34-POINT SINGER RUNG IS ON THE RAIL: ruling 112 measured on 14788546", () => {
+    // ** THE HIGHEST-COST SPECIMEN UX-P108 FOUND, now the proof subject. ** Brady
+    // Singer's whole strikeout ladder collapsed onto the 5% floor before first
+    // pitch — 5+ went 39.0% -> 5.0%, a 34.0-point move, the second biggest on a
+    // 100-question card. It is structural BECAUSE of where it landed, and it
+    // landed there by travelling. Under UX-P108's unconditional floor the rail
+    // deleted it and led with rows that had moved less.
     const moved = candidates(REDS).filter(
       (r) => r.structural && r.direction !== "flat",
     );
@@ -300,7 +318,68 @@ describe("ruling 105's filter stays underneath as a floor", () => {
     expect(moved.every((r) => r.player === "Brady Singer")).toBe(true);
     const biggest = Math.max(...moved.map((r) => r.travel));
     expect(Math.round(biggest * 1000) / 1000).toBe(0.34);
-    expect(labels(rail(REDS).rows).some((l) => l.startsWith("Brady Singer"))).toBe(false);
+
+    const rows = rail(REDS).rows;
+    // Position 2, behind Mautz's 40.0-pt rung and ahead of the 28.7 that used
+    // to sit there. Pinned by INDEX, because "somewhere on the rail" would pass
+    // for a 34-point move ranked fifth.
+    expect(rows[1].label).toBe("Brady Singer: 5+ strikeouts");
+    expect(Math.round(rows[1].travel * 1000) / 1000).toBe(0.34);
+    // ** THE CAP IS DOING THE WORK: five Singer rungs moved, ONE is on the rail. **
+    // Without it the 18.0-pt and 9.0-pt rungs take slots 3 and 5 and the card is
+    // three quotes of one ladder — ruling 111's defect, re-created by 112.
+    expect(labels(rows).filter((l) => l.startsWith("Brady Singer"))).toHaveLength(1);
+  });
+
+  it("the three rungs that did NOT move are still suppressed: 8 structural, 3 counted", () => {
+    // The floor did not stop mattering. On the same card three structural rungs
+    // are flat — Singer's 3+, Liberatore's 10+, Mautz's 8+ — and all three stay
+    // off the rail. `structuralSuppressed` counts what the loop SKIPS, so it
+    // reads 3, not the 8 that carry the flag.
+    const all = candidates(REDS);
+    expect(all.filter((r) => r.structural)).toHaveLength(8);
+    const r = rail(REDS);
+    expect(r.structuralSuppressed).toBe(3);
+    for (const gone of [
+      "Brady Singer: 3+ strikeouts",
+      "Matthew Liberatore: 10+ strikeouts",
+      "Brycen Mautz: 8+ strikeouts",
+    ]) {
+      expect(labels(r.rows)).not.toContain(gone);
+    }
+  });
+
+  it("THE COST OF RULING 112, MEASURED NOT ASSUMED: a moved rung spends its ladder's slot", () => {
+    // ** REPORTED RATHER THAN DISCOVERED LATER. ** Because a moved structural
+    // rung now reaches `push`, it consumes its ladder's one slot — so a ladder
+    // whose biggest mover is a collapsed rung cannot ALSO show the rung the
+    // market has a live view about. Synthetic, because the specimen does not
+    // exhibit it: Singer's 2+ is 46.0% and flat, conviction 0.040, so it was
+    // never reaching a five-row rail from tier 2 anyway.
+    const singerLive = candidates(REDS).find(
+      (r) => r.label === "Brady Singer: 2+ strikeouts",
+    )!;
+    expect(singerLive.structural).toBe(false);
+    expect(singerLive.direction).toBe("flat");
+    expect(singerLive.conviction).toBeCloseTo(0.04, 6);
+
+    // The shape that WOULD cost something: a collapsed rung that moved further
+    // than its own ladder's live question.
+    const rows = [
+      rung("Pitcher", "Strikeouts", 9, 0.45, 0.05), // structural, moved 40 pt
+      rung("Pitcher", "Strikeouts", 4, 0.6, 0.72), // the real view, moved 12 pt
+      rung("Filler", "Hits", 1, 0.5, 0.58),
+    ];
+    const r = rail(rows);
+    expect(labels(r.rows)).toContain("Pitcher: 9+ strikeouts");
+    expect(labels(r.rows)).not.toContain("Pitcher: 4+ strikeouts");
+    // Accepted, not a bug: movement-first says the biggest mover is the story,
+    // and the 4+ rung remains in the expand. If Alex wants the pivot rung
+    // preferred inside a ladder, that is a ruling and it changes this test.
+    const detail = selectDivergenceDetail({ playerProps: rows, status: "scheduled" });
+    expect(
+      [...detail.offScript, ...detail.onScript].map((x) => x.label),
+    ).toContain("Pitcher: 4+ strikeouts");
   });
 });
 

@@ -593,7 +593,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: a delta to any of those three numbers would produce a floor no tree has ever held. Thirteenth
 #: consecutive cycle in which the branch, HEAD and the merged tree disagree, and the thirteenth in
 #: which counting the tree is the only thing that has been right (#1910, ruling 088).
-MINIMUM_BANKED_RULINGS = 102
+MINIMUM_BANKED_RULINGS = 103
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

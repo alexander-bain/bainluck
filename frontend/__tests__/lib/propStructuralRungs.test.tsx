@@ -459,15 +459,21 @@ describe("the filter runs pregame and nowhere else", () => {
     expect(live.rows[0].travel).toBeCloseTo(0.58, 6);
   });
 
-  it("a rung suppressed pregame still leads the in-game rail once it moves", () => {
-    // Same question, same ladder. Pregame it is arithmetic; in-game a 30-point
-    // move is the entire story and the rail must not still be hiding it.
+  it("a rung suppressed pregame still leads the in-game rail — and the FLAT rung is the specimen (ruling 112)", () => {
+    // ** REWRITTEN, NOT DELETED, BY RULING 112. ** This test's subject is the
+    // SCOPE of the filter: pregame it applies, in-game it must not. Its original
+    // specimen was a rung that had moved 30 points, and ruling 112 makes that
+    // rung rail-eligible pregame too — so the specimen, not the claim, was what
+    // expired. A FLAT structural rung isolates the scope question cleanly: the
+    // only thing that can put it on the in-game rail is the filter having been
+    // scoped correctly.
     const ladder = [
       rung("Mover", "Hits", 3, 0.35),
-      rung("Mover", "Hits", 5, 0.05, 0.35),
+      rung("Mover", "Hits", 5, 0.05),
     ];
     const script = selectDivergenceRows({ playerProps: ladder, status: "scheduled" });
     expect(labels(script.rows)).not.toContain("Mover: 5+ hits");
+    expect(script.structuralSuppressed).toBe(1);
 
     const live = selectDivergenceRows({ playerProps: ladder, status: "live" });
     expect(labels(live.rows)).toContain("Mover: 5+ hits");

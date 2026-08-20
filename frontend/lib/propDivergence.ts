@@ -377,6 +377,51 @@ function hasTravelled(row: DivergenceRow): boolean {
 }
 
 /**
+ * ── MOVEMENT OVERRIDES THE STRUCTURAL FLOOR (ruling 112, Alex) ───────────────
+ *
+ * Ruling 105 removes rungs whose near-certainty is arithmetic — a 5% "8+
+ * strikeouts" under a 5% "7+" is the ladder restating itself, not a claim. That
+ * predicate is CORRECT and is untouched here for the third time. What ruling 112
+ * changes is where it is allowed to be unconditional.
+ *
+ * ** THE FLOOR ASKS WHERE THE RUNG SITS NOW AND CANNOT SEE HOW IT GOT THERE. **
+ * `14788546` is the specimen and UX-P108 reported it against itself. Brady
+ * Singer's whole strikeout ladder collapsed onto the 5% floor before first pitch:
+ *
+ *     2+   46.0% -> 46.0%    0.0 pt   not structural
+ *     3+    5.0% ->  5.0%    0.0 pt   structural
+ *     4+    6.0% ->  5.0%    1.0 pt   structural
+ *     5+   39.0% ->  5.0%   34.0 pt   structural
+ *     6+   23.0% ->  5.0%   18.0 pt   structural
+ *     7+   14.0% ->  5.0%    9.0 pt   structural
+ *     8+    6.0% ->  5.0%    1.0 pt   structural
+ *
+ * The 5+ rung is structural **because of where it landed**, and it landed there
+ * by travelling 34.0 points — the second-biggest pregame move on a 100-question
+ * card. Under 105-as-a-floor the rail deleted it and led with rows that moved
+ * less. An arithmetic certainty that BROKE is not the ladder restating itself;
+ * it is the single loudest thing the market said about this game, and the rail's
+ * whole job is to say it.
+ *
+ * ── WHY THIS IS SAFE, AND IT IS NOT A NEW GUARD ──────────────────────────────
+ *
+ * `RAIL_MAX_PER_LADDER` already exists and already does the work. Five of
+ * Singer's rungs are structural AND moved; readmitting all five un-capped puts
+ * three of them on a five-row rail. The cap admits ONE, and because the movement
+ * tier ranks by travel it is the 34.0-pt rung — the pivot — not an arbitrary
+ * sibling. Ruling 111's group-subject rule is what makes ruling 112 affordable.
+ *
+ * ── ONE PREDICATE, TWO CALLERS (doctrine clause 5) ───────────────────────────
+ *
+ * `structuralSuppressed` counts what the selection loop skips. Expressing that
+ * twice is how a reported count comes to disagree with the screen it describes;
+ * both read this function.
+ */
+function suppressedByStructuralFloor(row: DivergenceRow): boolean {
+  return row.structural && !hasTravelled(row);
+}
+
+/**
  * V3's disappearance taxonomy. Only the first two are benign; the rest are
  * Alex's "that sounds very bad" cases and must reach the screen.
  *
@@ -466,8 +511,10 @@ export interface DivergenceRow {
   scriptSide: "will" | "wont" | "toss_up";
   /**
    * A near-certain rung whose certainty is explained by its position in its own
-   * ladder — see `PROP_STRUCTURAL_CERTAINTY`. Alex's ruling filters these out of
-   * the pregame rail; they remain in `eligible` and in the detail view.
+   * ladder — see `PROP_STRUCTURAL_CERTAINTY`. Ruling 105 keeps these off the
+   * pregame rail; since ruling 112 that removal is conditional on the rung not
+   * having MOVED (`suppressedByStructuralFloor`). They remain in `eligible` and
+   * in the detail view either way.
    *
    * Computed in EVERY state, like `conviction`, because it is a fact about the
    * ladder rather than about the clock — and because a flag only computed where
@@ -759,8 +806,13 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
   }
 
   const ungraded = settled ? candidates.filter((r) => r.surprise == null).length : 0;
+  // Ruling 112: the count is of rows the loop below actually SKIPS, not of rows
+  // carrying the flag. A moved structural rung is on the rail, so counting it as
+  // "suppressed" would report a suppression the reader can see did not happen —
+  // and `emptyReason: "structural"` would then be reachable on a page that has
+  // rows. Same predicate as the skip, deliberately (doctrine clause 5).
   const structuralSuppressed = pregame
-    ? candidates.filter((r) => r.structural).length
+    ? candidates.filter(suppressedByStructuralFloor).length
     : 0;
 
   const perPlayer = new Map<string, number>();
@@ -788,12 +840,24 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // `break` here would truncate the rail at its first ladder rung and throw
     // away everything the rule was supposed to promote.
     //
+    // ** RULING 112 NARROWED THIS TO THE ROWS THAT DID NOT MOVE. ** A structural
+    // rung that travelled is rail-eligible: `suppressedByStructuralFloor` is
+    // where that clause lives and where the argument for it is written.
+    //
     // Placed BEFORE the per-player cap so a suppressed rung does not spend one
-    // of its player's two slots on the way out. Brady Singer alone carries SIX
-    // structural rungs on `14788546`; charged against the cap, he would silence
-    // his own 2+ strikeouts — the one rung in that ladder the market has a view
-    // about — and the rule would have made the page worse in his name.
-    if (pregame && row.structural) continue;
+    // of its player's two slots on the way out. That ordering survives ruling
+    // 112 unchanged and still matters — on `14788546` three structural rungs are
+    // still flat and still skipped here, two of them belonging to players who
+    // hold other rows.
+    //
+    // ⚠️ WHAT RULING 112 DOES COST, MEASURED RATHER THAN ASSUMED: a moved
+    // structural rung now DOES spend its ladder's one slot, so a ladder whose
+    // biggest mover is a collapsed rung cannot also show the rung the market has
+    // a live view about. On the specimen that cost is zero — Singer's 2+ (46.0%)
+    // never moved and sits at conviction 0.040, so it was never reaching a
+    // five-row rail from tier 2 — but the shape is real and is covered
+    // synthetically in the suite rather than left to be discovered.
+    if (pregame && suppressedByStructuralFloor(row)) continue;
     // UX-P108, Alex: AT MOST ONE RUNG PER LADDER, ANYWHERE IN THE RAIL.
     //
     // ** WHAT PROTECTS THE LADDER IS THAT THE SLOT IS CONSUMED AT PUSH, NOT
@@ -805,12 +869,20 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // have spent anything. Moving the RECORDING up instead is the real defect
     // shape, and that mutant is killed by four tests.
     //
-    // The distinction matters because the danger is concrete. Brady Singer
-    // carries SIX structural strikeout rungs on `14788546`; if any of them
-    // consumed the slot, the entire ladder would go silent — including
-    // whichever rung the market has a real view about — and the rule would have
-    // made the page worse in his name. That is guarded by the write position,
-    // so do not "tidy" the `perLadder.set` upward to sit beside its check.
+    // The distinction matters because the danger is concrete, and RULING 112
+    // sharpened it rather than retiring it. Brady Singer carries SIX structural
+    // strikeout rungs on `14788546`. Three are still flat and still skipped by
+    // the floor above, and they must not consume the slot on the way out —
+    // otherwise the ladder goes silent before its 34.0-pt rung is ever reached,
+    // and the two rulings would cancel each other. That is guarded by the write
+    // position, so do not "tidy" the `perLadder.set` upward to sit beside its
+    // check: the mutant that does is now load-bearing in BOTH directions.
+    //
+    // ** AND THIS CAP IS WHAT MAKES RULING 112 AFFORDABLE. ** Readmitting moved
+    // structural rungs un-capped puts THREE Singer rungs (34.0, 18.0, 9.0 pt) on
+    // a five-row rail — one ladder, three quotes, the exact defect ruling 111
+    // was written to end. The cap admits one, and the travel sort makes it the
+    // pivot. Deleting either rule alone re-creates the other's bug.
     //
     // The ordering that IS deliberate is cap-before-player-cap: a ladder
     // rejected here must not also consume one of its player's two slots. A

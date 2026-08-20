@@ -39,6 +39,7 @@ import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 
 import phillies from "../fixtures/eventPlayerProps.15199886.json";
 import dodgers from "../fixtures/eventPlayerProps.15199902.settled.json";
+import reds from "../fixtures/eventPlayerProps.14788546.json";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 const OUT_DIR = process.env.UX_CAPTURE_DIR;
@@ -77,6 +78,25 @@ const STATES: Array<{
     slug: "pregame-expanded",
     title: "SEE ALL 40 — pregame expand · event 15199886 (the suppressed rungs live here)",
     rows: phillies as unknown as PlayerPropRow[],
+    status: "scheduled",
+    surface: "detail",
+  },
+  {
+    // UX-P109 / ruling 112 — THE PROOF SUBJECT. Brady Singer's strikeout ladder
+    // collapsed onto the 5% floor before first pitch, so his 5+ rung is both
+    // structural AND the second-biggest mover on the card (39.0% -> 5.0%,
+    // 34.0 pt). UX-P108's unconditional floor deleted it; this is where that
+    // shows up on a screen. `15199886` stays in the set as the CONTROL — ruling
+    // 112 must not move Alex's own card, whose three structural rungs are flat.
+    slug: "pregame-singer",
+    title: "THE SCRIPT — pregame · event 14788546 (Cardinals @ Reds; the Singer rung)",
+    rows: reds as unknown as PlayerPropRow[],
+    status: "scheduled",
+  },
+  {
+    slug: "singer-expanded",
+    title: "SEE ALL 100 — pregame expand · event 14788546 (membership is a control)",
+    rows: reds as unknown as PlayerPropRow[],
     status: "scheduled",
     surface: "detail",
   },
