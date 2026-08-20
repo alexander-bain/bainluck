@@ -254,6 +254,34 @@ jobs:
             exit 1
           fi
 
+      - name: CREATE-wave INSERT bind contract (real Postgres)
+        # Queue 380 / Fable's ruling 2026-08-20: "a dry run gates only what it
+        # executes." The 328-game CREATE wave (#1947/#1796) died at FOUR depths
+        # behind FOUR green gates — #2003 (statpal absorber), #2013
+        # (AmbiguousParameterError: :truth_id inferred as two different types and
+        # cast in neither), #2023 (espn_id minting writer), #2026 (DataError:
+        # commence_time bound as an ISO string; CAST(... AS timestamptz) does not
+        # help, because asyncpg type-checks the PYTHON argument before the
+        # statement reaches the server).
+        #
+        # Two of those four are pure bind-type defects, and NOTHING upstream
+        # could see either: the dry run is green because the dry run never
+        # executes the INSERT, and the unit suite's session double reads the bind
+        # dict as plain Python, which accepts both. Only a real driver enforces a
+        # bind type, so this gate lives here beside the cliff-drain one.
+        #
+        # The file is two-armed on purpose — it reverts each fix and asserts the
+        # driver RAISES — so a green run means red-first was proved rather than
+        # that nothing objected. Same skip-detection as the gates above.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_create_wave_insert_bind_contract.py \
+            -v -s -rs 2>&1 | tee /tmp/createbind.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/createbind.txt; then
+            echo "::error::CREATE-wave INSERT bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
