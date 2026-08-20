@@ -825,19 +825,33 @@ def background_slot_occupancy(
     about the beat changed: it was 10 s then and it is 10 s now. What changed is
     the pass wall, 32.0 s -> 45.7 s median, against a period that barely moved.
 
-    `worker-background` runs `--concurrency=2`. **57 beat entries route to that
+    `worker-background` runs `--concurrency=2`. **102 beat entries route to that
     queue** and one of them is this warmer. At LAT-P062's numbers the warmer held
-    32.0/50 = 64 % of one of the two slots, leaving comfortably more than one slot
-    for the other 56 tasks. At today's it holds **91 %** — effectively a permanent
-    resident of one slot.
+    32.0/50 = 64 % of one of the two slots; at today's it holds **91 %** —
+    effectively a permanent resident of one slot.
 
-    So the pool went from "one and a bit slots free" to "one slot free, minus
-    change". Any SINGLE long co-tenant in the remaining slot now saturates the
-    queue, and while it is saturated the warmer cannot start no matter what the
-    beat does. The background co-tenants include multi-minute work
-    (`rebuild_typeahead_index` p95 150 s, `warm_event_concepts` p95 77 s, and a
-    long tail of `backfill_*` and `precompute_*` entries clustered on :00/:15/
-    :30/:45), which is the shape of a 300 s stall.
+    🔴 **LAT-P076 corrects two facts LAT-P075 stated here.** Both were wrong in
+    the direction that makes the queue look emptier than it is, and both are
+    pinned by tests now rather than left as prose:
+
+    1. **It is 102 beats, not 57.** 57 is the count with an EXPLICIT
+       ``options={"queue": "background"}``. A further **45** carry no queue at
+       all and land here through ``task_default_queue = "background"`` — among
+       them ``turbo_collapse_futures`` (mean **1,859 s**), ``backfill_winners``
+       (868 s) and ``poll_polymarket_markets`` (304 s). The heaviest co-tenants
+       on this queue are here BY DEFAULT, not by decision, which is the part
+       that matters for the remedy: this is not a queue somebody sized, it is
+       the fall-through.
+    2. **``rebuild_typeahead_index`` is NOT a co-tenant.** It routes to
+       ``heavy`` (``task_routes``, and its own beat ``options``). LAT-P075 named
+       its p95 150 s as the thing that starves this warmer; it cannot, because
+       it never contends for these two slots. The real observed starvers are
+       ``discover_events`` and ``warm_event_concepts`` — and ``discover_events``
+       is one of the 45 default-queue fall-throughs.
+
+    The corrected mechanism is stronger than the one it replaces. It is not that
+    a single unlucky long co-tenant occasionally lands in the free slot; it is
+    that **demand exceeds capacity outright** — see `background_utilisation`.
 
     That is the whole regression, and it is a CAPACITY fact rather than a policy
     one. It is why neither of this cycle's two shipped changes claims to fix it:
@@ -866,9 +880,87 @@ def free_background_slots(
     wall_s: float = RING_WALL_MEDIAN_S,
     period_s: float = 50.072,
 ) -> float:
-    """Slots left for the other 56 background beats once the warmer has its share.
+    """Slots left for the other 101 background beats once the warmer has its share.
 
-    Below 1.0 means a single long co-tenant can starve the warmer completely,
-    which is the state that produces the 192.9 s p95 / 326.3 s max period tail.
+    Below 1.0 means a single long co-tenant can starve the warmer completely.
+    **This function answers the weaker question**, and LAT-P076 kept it only so
+    the comparison with LAT-P062 stays readable. It measures the warmer against
+    the pool at one instant; it cannot see that the pool is oversubscribed on
+    average, which is what `background_utilisation` measures and what actually
+    produces the 176.5 s p95 / 326.3 s max period tail.
     """
     return float(concurrency) - background_slot_occupancy(wall_s=wall_s, period_s=period_s)
+
+
+# ---------------------------------------------------------------------------
+# LAT-P076: the queue is oversubscribed, which is a stronger claim than "the
+# warmer is unlucky in a FIFO". Measured 2026-08-20T04:0xZ from the live beat
+# schedule (exact intervals) joined to `/api/admin/celery/schedule-adherence`
+# and `/api/admin/task-metrics` durations. See
+# `docs/audits/latency/lat-p076-background-capacity.md` for the derivation.
+# ---------------------------------------------------------------------------
+
+#: Beat entries whose EFFECTIVE queue is `background`. 57 name it explicitly;
+#: 45 more fall through `task_default_queue`. Pinned by
+#: `test_the_background_queue_carries_102_beats_not_57`.
+BACKGROUND_BEAT_COUNT = 102
+
+#: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
+#: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).
+#: Bracketed by the duration estimator, because a p95-weighted sum is an upper
+#: bound and a mean-weighted sum is the lower one. **Both are reported and
+#: neither is presented as the number** — the conclusion below survives the
+#: whole bracket, which is the only reason it is safe to act on.
+BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H = 4538.0
+BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H = 7546.0
+
+#: The warmer's own measured draw: 91 % of one slot, continuously.
+WARMER_DEMAND_S_PER_H = 3276.0
+
+
+def background_utilisation(
+    *,
+    concurrency: int = BACKGROUND_WORKER_CONCURRENCY,
+    demand_s_per_h: float = BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
+    include_warmer: bool = True,
+) -> float:
+    """Offered load / capacity on the `background` queue. >= 1.0 has NO steady state.
+
+    ## Why this, and not "the warmer sits behind a long task"
+
+    A FIFO-position story implies the wait is a fluctuation: sometimes the
+    warmer is behind something long, sometimes it is not, and the p50 is fine
+    because usually it is not. That story is consistent with the p50 (46.5 s)
+    and it is what LAT-P075 wrote. It does not explain a 326 s max, and it
+    quietly predicts that adding one slot fixes everything.
+
+    The utilisation says something different and worse. With the warmer
+    included, offered load is **1.09x capacity on the mean estimator and 1.50x
+    on the p95 estimator**. A queue at rho >= 1 does not have a long tail; it
+    has no steady state at all — the backlog grows until something sheds it,
+    and on this queue the thing that sheds it is `expires` discarding warmer
+    messages. **The tail is a deficit, not a fluctuation.**
+
+    That both estimators land above 1.0 is what makes this actionable. If the
+    mean estimator had come in at 0.8 the honest report would have been "we
+    cannot tell", because the two brackets would disagree about whether a
+    steady state exists at all.
+
+    ## What it says about adding a slot
+
+    At `concurrency=3` the bracket is **0.72 .. 1.00** — it straddles 1.0. So
+    LAT-P075's R4 ("period p95 < 90 s at concurrency 3") is **NOT SUPPORTED by
+    this measurement**: on the upper estimator, three slots leave the queue
+    exactly at capacity, which is still no steady state. At `concurrency=4` the
+    bracket is 0.54 .. 0.75 and clears under both.
+
+    This is reported as a refusal to predict, not as a prediction of failure.
+    R4 may still hold — the mean estimator may be the right one. What cannot be
+    said is that measurement supports it.
+    """
+    if concurrency <= 0:
+        raise ValueError("concurrency must be positive")
+    demand = float(demand_s_per_h)
+    if include_warmer:
+        demand += WARMER_DEMAND_S_PER_H
+    return demand / (concurrency * 3600.0)

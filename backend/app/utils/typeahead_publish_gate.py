@@ -121,13 +121,51 @@ three reasons, and the first two are new facts rather than caution:
 3. **It does not address the headline.** This module says so at the top, by construction:
    a publish-side gate leaves the firing opportunity, and therefore the period, exactly
    as it is. The period regression's cause is `--concurrency=2` on `worker-background`
-   shared by 57 beats — see `typeahead_beat_budget.background_slot_occupancy()`.
+   shared by **102** beats — see `typeahead_beat_budget.background_utilisation()`.
+   (LAT-P075 wrote 57 here; that is the explicitly-routed count. 45 more arrive through
+   `task_default_queue`.)
 
 **What would make wiring it worth doing:** a re-derivation of the payoff against
 post-deploy data, on the regime that actually exists after the expiry fix. If the
 answer stays around 0.2 % of a slot, the correct outcome is to **delete this module
 rather than wire it** — a certified artifact whose payoff has evaporated is not an asset,
 and leaving it here invites a future window to wire it on the numbers above.
+
+## 🔴 LAT-P076: the DELETE recommendation no longer depends on that re-derivation
+
+Fable's 2026-08-20 directive accepted the recommendation above and asked for the payoff to
+be re-derived post-deploy. `-68` is still unmerged, so the re-derivation is not taken here.
+**But LAT-P076 measured the denominator, and the denominator settles it without the
+post-deploy number.**
+
+`background` is not merely busy; it is **oversubscribed**: offered load is 1.09x capacity on
+the mean duration estimator and 1.50x on the p95 estimator. The queue is short by
+
+* **614 slot-seconds per hour** on the mean estimator, and
+* **3,622 slot-seconds per hour** on the p95 estimator.
+
+The gate's derived payoff is ~90 ms per period at ~72 periods/hour = **6.5 slot-seconds per
+hour**. So wiring it closes:
+
+| estimator | deficit | gate closes |
+|---|---|---|
+| mean | 614 s/h | **1.1 %** |
+| p95 | 3,622 s/h | **0.18 %** |
+
+For the gate to close even half the *smallest* version of the gap it would have to save
+**47x** its derived payoff. A post-deploy re-derivation cannot plausibly move it that far,
+and it can only move DOWN — the payoff was derived under `expires: 10`, and `expires: 120`
+converts the discards it was counting into executions.
+
+**Recommendation, restated with the denominator attached: DELETE this module.** It is a
+certified, unwired, highest-blast-radius change (`is_due()` runs inside the beat loop; a
+fault there freezes every beat in the system) whose measured return is a rounding error
+against a deficit three orders of magnitude larger.
+
+**What would have to be true to change this:** the post-deploy read showing the payoff is
+not ~0.2 % of a slot but ~10 % of one — a 47x miss in the derivation. That is the number to
+look for; anything smaller does not rescue the module. Recorded so the decision is a
+lookup rather than an argument to be had again.
 
 ## What is deliberately NOT decided here
 

@@ -363,3 +363,56 @@ def test_cut_is_never_reported_as_an_execution_cut():
     """
     for period in (30.0, 40.0, 42.5, 50.0, 51.7, 60.0):
         assert predicted_publish_cut(period) <= 2.0 / 3.0, period
+
+
+def test_the_gate_payoff_is_a_rounding_error_against_the_measured_deficit():
+    """LAT-P076: the DELETE recommendation, pinned to the denominator.
+
+    LAT-P075 recommended deleting this module if its payoff held near 0.2 % of a
+    slot, and Fable's 2026-08-20 directive accepted that, gated on a post-deploy
+    re-derivation. LAT-P076 measured what the payoff is a fraction OF, and the
+    denominator settles it without the post-deploy number.
+
+    `background` is oversubscribed — rho 1.09 (mean estimator) to 1.50 (p95).
+    The gate's ~6.5 slot-seconds/hour closes 1.1 % of the smaller deficit and
+    0.18 % of the larger. It would need a **47x** miss in its own derivation to
+    close even half the smaller one.
+
+    **What this would have to see to go red:** the measured deficit shrinking to
+    where the gate is material (i.e. the capacity fix landing, at which point
+    there is no starvation left for the gate to help with either), or someone
+    revising the payoff constant upward by more than an order of magnitude —
+    which is precisely the claim that would need to be re-certified before this
+    module is wired rather than deleted.
+    """
+    from app.utils.typeahead_beat_budget import (
+        BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H,
+        BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
+        BACKGROUND_WORKER_CONCURRENCY,
+        WARMER_DEMAND_S_PER_H,
+    )
+
+    capacity = BACKGROUND_WORKER_CONCURRENCY * 3600.0
+    gate_saving_s_per_h = 0.090 * 72  # ~90 ms per period, ~72 periods/hour
+
+    deficits = {
+        "mean": BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+        + WARMER_DEMAND_S_PER_H
+        - capacity,
+        "p95": BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+        + WARMER_DEMAND_S_PER_H
+        - capacity,
+    }
+
+    for name, deficit in deficits.items():
+        assert deficit > 0, f"{name} estimator no longer shows a deficit ({deficit:.0f})"
+        share = gate_saving_s_per_h / deficit
+        assert share < 0.02, (
+            f"on the {name} estimator the gate would close {share:.1%} of the "
+            f"deficit — above 2 % it stops being a rounding error and the "
+            "delete-vs-wire decision must be re-argued, not looked up"
+        )
+
+    # And the headline reason it cannot be the repair: the gate is publish-side,
+    # so it removes no work from the queue that is short of capacity.
+    assert gate_saving_s_per_h < 10.0
