@@ -102,6 +102,7 @@ import logging
 import pathlib
 import time
 import zlib
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -218,6 +219,42 @@ _INSERT_SQL = text(
      )
     """
 )
+
+def _as_datetime(value):
+    """Bind ``commence_time`` as a real ``datetime``, never as its ISO string.
+
+    Queue 379: the wave fired with every gate green and died inside the write, nine
+    calls in a row, writing nothing::
+
+        asyncpg.exceptions.DataError: invalid input for query argument $7:
+        '2026-06-21T02:10:00+00:00' (expected a datetime.date or datetime.datetime
+        instance, got 'str')
+
+    ``CAST(:commence_time AS timestamptz)`` does not save it. asyncpg type-checks the
+    PYTHON argument before the statement ever reaches the server, so a server-side cast
+    is applied to a value that was already rejected client-side. This is the same class
+    as #2013's ``AmbiguousParameterError`` one parameter over, and it has the same
+    tell: the dry-run is green because the dry-run never executes the INSERT.
+
+    The coercion lives HERE, at the bind, and deliberately not on ``PlannedCreate``.
+    ``commence_time`` is a string on the plan row because it is inside the plan's
+    CONTENT ADDRESS — it is how a reviewer knows which game a row is. Retyping the
+    field would change ``plan_hash`` and so invalidate the artifact Alex approved,
+    turning a one-line bind fix into a re-review. The string is the reviewed object;
+    the datetime is an implementation detail of talking to the driver.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    text_value = str(value).strip()
+    # ``fromisoformat`` accepts "+00:00" but not the "Z" that JSON artifacts carry.
+    if text_value.endswith(("Z", "z")):
+        text_value = text_value[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text_value)
+    # A naive stamp would be read as the server's local zone; the truth set is UTC.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
 
 _LOCK_SQL = text("SELECT pg_advisory_xact_lock(CAST(:ns AS integer), CAST(:key AS integer))")
 
@@ -466,7 +503,10 @@ async def _apply_reviewed_plan(
                     "away_team_id": row.away_team_id,
                     "home_name": row.home_name,
                     "away_name": row.away_name,
-                    "commence_time": row.commence_time,
+                    # asyncpg type-checks the Python argument before the server sees
+                    # `CAST(... AS timestamptz)`, so the ISO string on the plan row must
+                    # become a datetime HERE. See `_as_datetime`.
+                    "commence_time": _as_datetime(row.commence_time),
                 },
             )
         except Exception as exc:  # noqa: BLE001 — re-raised unless it is 55P03

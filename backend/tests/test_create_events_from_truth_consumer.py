@@ -31,6 +31,7 @@ which during a store outage is the one action that destroys the evidence.
 """
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -730,3 +731,96 @@ def test_the_rail_is_registered_on_the_dispatcher_and_declares_population():
     assert '("population", population)' in dispatcher
     assert "population" in inspect.signature(admin_repairs.run_repair).parameters
     assert "population" in inspect.signature(rail.repair).parameters
+
+
+# ── queue 379: the bind must hand asyncpg a datetime, not its ISO string ──────
+
+
+def test_commence_time_is_bound_as_a_datetime_not_an_iso_string():
+    """asyncpg type-checks the PYTHON argument before the server sees the CAST.
+
+    THE FAILURE THIS EXISTS FOR, measured in production 2026-08-20T03:12Z (queue
+    379). The wave fired with every gate green — #2023 deployed and ancestry
+    proved, plan re-derived to an identical ``plan_hash``, ``still_missing`` 328,
+    ``already_present`` 0, set gate passing — and died inside the write, nine calls
+    in a row, writing ZERO rows::
+
+        asyncpg.exceptions.DataError: invalid input for query argument $7:
+        '2026-06-21T02:10:00+00:00' (expected a datetime.date or datetime.datetime
+        instance, got 'str')
+
+    ``CAST(:commence_time AS timestamptz)`` is already in the statement and does not
+    help: the driver rejects the argument client-side, so a server-side cast is
+    applied to a value the server never receives. This is #2013's
+    ``AmbiguousParameterError`` one parameter over, and it has the SAME tell —
+    ``test_the_dry_run_cannot_create_a_row`` passes precisely because the dry run
+    never executes the INSERT, so no amount of dry-run greenness can reach it.
+
+    Asserted on the BOUND VALUE rather than on the SQL text, because the SQL text
+    was already correct. The type of the argument is the whole defect.
+    """
+    assert isinstance(
+        rail._as_datetime("2026-06-21T02:10:00+00:00"), datetime
+    ), "the ISO string from the plan artifact must be coerced before binding"
+
+
+@pytest.mark.asyncio
+async def test_the_insert_receives_a_datetime_for_commence_time(monkeypatch):
+    """End-to-end at the bind: what reaches the driver is a datetime.
+
+    The unit test above can be satisfied by a helper nobody calls. This one fails
+    if the helper is not wired into the actual INSERT bind — which is the state
+    production was in.
+    """
+    plan = build_create_plan([_planned("E1", commence="2026-06-21T02:10:00+00:00")])
+    _stage(monkeypatch, _Read(plan.as_payload()))
+    _no_feed_cache(monkeypatch)
+
+    session = _Session()
+    out = await repair(session, apply=True, plan_hash=plan.plan_hash, population="2")
+
+    assert out["census"]["created"] == 1
+    bound = session.inserted[0]["commence_time"]
+    assert isinstance(bound, datetime), (
+        f"commence_time reached the driver as {type(bound).__name__}; asyncpg "
+        f"rejects a str for a timestamptz argument before the CAST is ever applied"
+    )
+    assert bound.tzinfo is not None, "a naive stamp would be read as the server's zone"
+    assert bound == datetime(2026, 6, 21, 2, 10, tzinfo=timezone.utc)
+
+
+def test_the_plan_row_keeps_commence_time_as_a_string_so_the_address_is_stable():
+    """The coercion must NOT migrate onto ``PlannedCreate``.
+
+    ``commence_time`` is a string on the plan row because it is inside the plan's
+    CONTENT ADDRESS — it is how a reviewer knows which game a row is. Retyping the
+    field would change every ``plan_hash`` and invalidate the artifact Alex
+    approved, converting a one-line bind fix into a re-review. The string is the
+    reviewed object; the datetime is an implementation detail of the driver.
+    """
+    row = _planned("E1", commence="2026-06-21T02:10:00+00:00")
+    assert isinstance(row.commence_time, str)
+    # And the address is unchanged by this queue's fix.
+    assert build_create_plan([row]).plan_hash == build_create_plan([row]).plan_hash
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2026-06-21T02:10:00+00:00", datetime(2026, 6, 21, 2, 10, tzinfo=timezone.utc)),
+        # JSON artifacts carry "Z", which `fromisoformat` refuses on older Pythons.
+        ("2026-06-21T02:10:00Z", datetime(2026, 6, 21, 2, 10, tzinfo=timezone.utc)),
+        # A naive stamp is UTC — the truth set is UTC, and defaulting to the
+        # server's local zone would silently shift every created game.
+        ("2026-06-21T02:10:00", datetime(2026, 6, 21, 2, 10, tzinfo=timezone.utc)),
+    ],
+)
+def test_as_datetime_accepts_the_shapes_the_truth_set_actually_carries(raw, expected):
+    assert rail._as_datetime(raw) == expected
+
+
+def test_as_datetime_passes_through_none_and_datetimes_unchanged():
+    """Idempotent: a value already correct must not be re-parsed or re-zoned."""
+    already = datetime(2026, 6, 21, 2, 10, tzinfo=timezone.utc)
+    assert rail._as_datetime(already) is already
+    assert rail._as_datetime(None) is None
