@@ -115,7 +115,13 @@ export interface CalibrationStalenessNotice {
 export interface CalibrationStalenessInput {
   availability?: unknown;
   staged?: CalibrationStagedDisclosure | null;
-  cache?: { status?: unknown; generated_at?: unknown; age_s?: unknown } | null;
+  cache?: {
+    status?: unknown;
+    /** The server's machine-readable why, republished as the notice's `reason`. */
+    reason?: unknown;
+    generated_at?: unknown;
+    age_s?: unknown;
+  } | null;
 }
 
 function asString(value: unknown): string | null {
