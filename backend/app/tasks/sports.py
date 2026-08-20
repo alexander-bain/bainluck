@@ -14,6 +14,10 @@ from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.espn_id_stamp import (
+    REFUSED as ESPN_STAMP_REFUSED,
+    stamp_espn_id_if_unheld,
+)
 from app.tasks.config import (
     DISCOVER_TIER1_INTERVAL,
     DISCOVER_TIER2_INTERVAL,
@@ -216,6 +220,12 @@ async def _discover_events():
         total_new_events = 0
         total_new_teams = 0
         total_espn_corrected = 0
+        # #2017: espn_id stamps refused because another row already held the id.
+        # A refusal is the guard WORKING and a duplicate existing — it must be
+        # visible in the task summary, or the guard is indistinguishable from a
+        # guard that never fired.
+        total_espn_id_refused = 0
+        claimed_espn_ids: set[str] = set()
         sports_polled = 0
         sports_skipped = 0
 
@@ -428,9 +438,27 @@ async def _discover_events():
                         )
                         event_id = event.id
 
-                        # Set ESPN ID if matched and not already set
-                        if espn_event_id and not event.espn_id:
-                            event.espn_id = espn_event_id
+                        # Set ESPN ID if matched — but never onto a row when
+                        # ANOTHER row already holds that id (#2017).
+                        #
+                        # This assignment used to be a raw column write that
+                        # asked only "does THIS row have an espn_id?". Running
+                        # in the same transaction as the CREATE above, it
+                        # stamped the keeper's espn_id onto a freshly created
+                        # duplicate — so the duplicate was BORN carrying a
+                        # collision that a non-UNIQUE ix_events_espn_id accepts
+                        # in silence. The id here came from a NAME match against
+                        # the ESPN scoreboard, not a dereference (ruling 042);
+                        # refusing is not an identity decision, it is a refusal
+                        # to fabricate one.
+                        if espn_event_id:
+                            verdict, _holder = await stamp_espn_id_if_unheld(
+                                session, event, espn_event_id,
+                                context=f"discover_events[{sport_key}]",
+                                claimed=claimed_espn_ids,
+                            )
+                            if verdict == ESPN_STAMP_REFUSED:
+                                total_espn_id_refused += 1
 
                         if was_created:
                             total_new_events += 1
@@ -595,6 +623,7 @@ async def _discover_events():
             "new_events": total_new_events,
             "new_teams": total_new_teams,
             "espn_corrected": total_espn_corrected,
+            "espn_id_stamps_refused": total_espn_id_refused,
         }
     finally:
         await service.close()
