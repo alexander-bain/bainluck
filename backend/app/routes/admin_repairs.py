@@ -20,7 +20,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
-             | event-create-from-truth | team-identity-mapping-repair }
+             | event-create-from-truth | team-identity-mapping-repair
+             | event-espn-id }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -30,12 +31,21 @@ transactional session and RETURNS its own before/after census in the response bo
      adding the two pm-never-graded entries in the commit that registered them.
      Re-synced again 2026-08-18, queue 369, adding event-create-from-truth in the
      commit that registered it. Re-synced again 2026-08-19, queue 373, adding
-     team-identity-mapping-repair in the commit that registered it.)
+     team-identity-mapping-repair in the commit that registered it. Re-synced
+     again 2026-08-19, queue 375, adding event-espn-id in the commit that
+     registered it — and the two guard tests caught the omission before the
+     push, which answers whether this comment is decoration.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
-``population`` also accept those as query params; the dispatcher passes through
-only what a given repair's signature actually names.
+``population`` / ``probe`` also accept those as query params; the dispatcher
+passes through only what a given repair's signature actually names.
+
+``probe`` (queue 375) records ONE identity observation of a reviewed population
+and returns, for rails that must PROVE stillness before they may census — ruling
+095, a census of a moving population is fiction, and it fails invisibly because
+such a census returns rows and digests stably. Separate from the derive because
+the proof needs reads spanning >300s, and a 300s request is a rail nobody can run.
 
 ``after_id`` + ``after_date`` are a KEYSET cursor, added in CAL-P058 because a
 repair that removes rows from its own population cannot be paged with an offset
@@ -287,6 +297,36 @@ _REPAIRS = {
         "app.tasks.repair_team_identity_mapping",
         "repair",
     ),
+    # #1947 queue 375 (SPEC-Q370): the attended `events.espn_id` CORRECTION
+    # consumer. Window 368 found the gap and READY-lane1-369 named it — "population
+    # 1 has NO APPLY PATH; no attended consumer writes events.espn_id" — which is
+    # the same shape as the CREATE gap window 369 closed, one table over. A rail
+    # with no address is a rail nobody can run, so it is registered here in the
+    # same commit that builds it.
+    #
+    # What differs from event-create-from-truth: the BEFORE state EXISTS, so this
+    # is an ordinary UPDATE and the compare is the WHERE clause of the writing
+    # statement (`AND espn_id = :wrong_espn_id`) rather than a `WHERE NOT EXISTS`
+    # inside an INSERT. rowcount 0 is a named finding, and `FOR UPDATE` is what
+    # makes it legible — without it, "the id moved" and "the row is gone" are the
+    # same zero.
+    #
+    # ONE COLUMN: espn_id. Not status, not the scores, not completed_at, not
+    # commence_time — ruling (a) withdrew those and #1981's writer owns them.
+    # commence_time IS inside the plan's content address (it is how a reviewer
+    # knows which game a row is) and is never written. No branch deletes a row
+    # (ruling 079).
+    #
+    # RULING 095 IS ENFORCED HERE, not documented: `apply=false` REFUSES with
+    # POPULATION_NOT_STILL until `probe=true` has recorded >= 3 identity reads
+    # spanning > 300s with nothing moving. #1947's rows are that ruling's charter
+    # case — they flap on a ~2-minute cycle. Probe is a separate call rather than
+    # a sleep inside the derive, because a 300s request is a rail nobody can run.
+    # Accepts ?population=&plan_hash=&probe=. ATTENDED ONLY: never wire to a beat.
+    "event-espn-id": (
+        "app.tasks.repair_event_espn_id",
+        "repair",
+    ),
 }
 
 
@@ -334,6 +374,16 @@ async def run_repair(
         description="Exact-match census gate, for repairs that require one "
                     "(statpal-blank-ids). Omit to use the repair's measured default.",
     ),
+    probe: bool = Query(
+        None,
+        description="Record ONE identity observation of a reviewed population and "
+                    "return, for repairs that must prove stillness before they may "
+                    "census (ruling 095 — a census of a moving population is fiction, "
+                    "and it fails invisibly, because such a census returns rows and "
+                    "digests stably). Separate from the derive on purpose: the proof "
+                    "needs reads spanning >300s, and a 300s request is a rail nobody "
+                    "can run.",
+    ),
     population: str = Query(
         None,
         description="Which reviewed population a plan-bound repair acts on "
@@ -375,6 +425,7 @@ async def run_repair(
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),
+            ("probe", probe),
         )
         if v is not None and k in accepted
     }

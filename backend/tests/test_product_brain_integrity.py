@@ -561,7 +561,20 @@ def test_ruling_numbers_are_unique() -> None:
 #: own branch, per Fable's INT-090 ruling (b): 096 was already burned into filed issue #1994,
 #: and the cited number stays while the uncited one moves. Counted on the merged tree again
 #: rather than incremented: 94 files match `docs/rulings/[0-9][0-9][0-9]-*.md` here.
-MINIMUM_BANKED_RULINGS = 95
+#:
+#: Raised 95 -> **96** by the INT-092 merge of queue 375 banking **099** (measure the baseline
+#: before judging the read) — authored as 096, renumbered to 098 on the branch, and landing as
+#: **099** because 098 was taken by `program/ux-90` while 375 waited. ELEVENTH consecutive cycle
+#: where neither side of this line was the merged truth: master said 95 and the branch said 95,
+#: and the merged tree holds 96 — two branches each raising 94 -> 95 against different bases sum
+#: to 96, never 95. COUNT, never add, never take a side (#1910, ruling 088).
+#:
+#: Also corrected here: master's prose tail stopped at "94 files match" while its constant
+#: already read 95, because ux-90's 098 bumped the number without banking a paragraph. The
+#: uncommented bump is what made this conflict unreadable — both sides showed 95 and neither
+#: said why — so the rule earns a corollary: the paragraph IS the audit trail, and a constant
+#: raised silently leaves the next resolver counting files to find out what happened.
+MINIMUM_BANKED_RULINGS = 96
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -1089,6 +1089,412 @@ def mapping_repair_gate(
 
 
 # ---------------------------------------------------------------------------
+# The events.espn_id correction rail (SPEC-Q370, #1947 population 1)
+# ---------------------------------------------------------------------------
+#
+# The FIFTH rail on this pattern. Same reasoning as every other one for the
+# distinct schema and namespace: an espn_id correction and a team re-point must
+# never be interchangeable at an apply, and two plans holding the same integers
+# must never share an address.
+#
+# What makes this rail different from its four siblings, in one line: **the
+# BEFORE state exists here.** The CREATE rail's compare had to live inside the
+# INSERT because there was no row yet; this is an ordinary UPDATE, so the compare
+# is the WHERE clause of the writing statement and `rowcount == 0` is a named
+# finding rather than a silent success.
+ESPN_ID_PLAN_SCHEMA = "event-espn-id-correction-plan/v1"
+_ESPN_ID_PLAN_NS = "event-espn-id-correction-plan"
+
+#: Per-row findings. Each retires ONE row and never its siblings.
+#:
+#: This list is longer than the other rails' and that is deliberate, not
+#: over-engineering: SPEC-Q370 §3's rule is that a refusal collapsing two causes
+#: into one word sends the operator at the wrong next action (gotcha #53). On
+#: THIS population that is not hypothetical — the five reviewed rows have
+#: already produced four of these five states between review and this writing.
+REASON_ESPN_ID_ALREADY_CORRECT = "ESPN_ID_ALREADY_CORRECT"
+REASON_ESPN_ID_MOVED = "ESPN_ID_MOVED"
+REASON_EVENT_ROW_ABSENT = "EVENT_ROW_ABSENT"
+REASON_COMMENCE_DRIFTED = "COMMENCE_DRIFTED"
+REASON_TRUE_ID_ALREADY_HELD = "TRUE_ESPN_ID_ALREADY_HELD"
+
+#: Ruling 095's gate, as a refusal. A census over a population that is still
+#: being written is fiction, and the failure is invisible because such a census
+#: SUCCEEDS — it returns rows, mints an artifact, and digests stably, because a
+#: digest over fiction is a perfectly good digest. #1947's own rows flapped on a
+#: ~2-minute cycle, and `15199901` moved its commence_time sixteen hours between
+#: two reads fifty minutes apart.
+REASON_POPULATION_NOT_STILL = "POPULATION_NOT_STILL"
+
+
+@dataclass(frozen=True)
+class PlannedEspnIdCorrection:
+    """One event whose ``espn_id`` points at a different game, and the state read.
+
+    ``wrong_espn_id`` is the compare half of the compare-and-set. It is CARRIED,
+    not re-read — an apply that re-read it would be asking the question the
+    review already answered, from a world that has moved. That is #1798's defect
+    restated in the UPDATE direction.
+    """
+
+    event_id: int
+    wrong_espn_id: str
+    true_espn_id: str
+    our_commence_time: str
+    matchup: str | None = None
+
+    @property
+    def row_key(self) -> str:
+        """One event is one work item, so its id IS its key."""
+        return f"event:{int(self.event_id)}"
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "event_id": int(self.event_id),
+            "wrong_espn_id": str(self.wrong_espn_id),
+            "true_espn_id": str(self.true_espn_id),
+            "our_commence_time": str(self.our_commence_time),
+            "matchup": self.matchup,
+        }
+
+    def digest_line(self) -> str:
+        """The four addressed fields.
+
+        ``our_commence_time`` is INSIDE, and it is the field this rail exists to
+        get right. Queue 368's ``sport_id`` finding is the precedent: a field the
+        apply depends on that sits outside the digest lets an artifact be edited
+        while keeping its approved address and decoding clean. Here the
+        dependency is not that the apply *writes* the timestamp — it does not,
+        and must not — it is that **commence_time is how a reviewer knows WHICH
+        GAME a row is**. #1947's whole history is rows whose commence_time moved,
+        so a plan that did not address it could be approved for one game and
+        applied to another wearing the same id.
+
+        ``matchup`` stays OUT. It is prose assembled for the reviewer from the
+        clubs, and re-wording it must not mint a new address — the same call the
+        create rail makes for ``label``.
+        """
+        return digest_fields(
+            int(self.event_id),
+            str(self.wrong_espn_id),
+            str(self.true_espn_id),
+            str(self.our_commence_time),
+        )
+
+
+@dataclass(frozen=True)
+class EspnIdCorrectionPlan:
+    """The reviewed correction set, as a content-addressed object."""
+
+    rows: tuple[PlannedEspnIdCorrection, ...] = ()
+    context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return self.rows
+
+    @property
+    def row_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(r.row_key for r in self.rows))
+
+    @property
+    def event_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({int(r.event_id) for r in self.rows}))
+
+    @property
+    def plan_hash(self) -> str:
+        lines = sorted(r.digest_line() for r in self.rows)
+        return input_fingerprint(_ESPN_ID_PLAN_NS, str(len(lines)), *lines)
+
+    def duplicate_event_ids(self) -> list[int]:
+        """Event ids named twice. Must be empty: whichever ran second would
+        silently win, an outcome no reviewer chose because the artifact shows both."""
+        seen: dict[int, int] = {}
+        for r in self.rows:
+            seen[int(r.event_id)] = seen.get(int(r.event_id), 0) + 1
+        return sorted(k for k, n in seen.items() if n > 1)
+
+    def self_pointing_rows(self) -> list[int]:
+        """Rows whose ``true`` equals their ``wrong``. Must be empty.
+
+        A no-op WRITE is worse than useless on a CAS rail: ``rowcount`` would be
+        1, so the row reports APPLIED while nothing changed — the exact
+        false-comfort class ``miswired_after=0`` produced on the binding rail.
+        """
+        return sorted(
+            int(r.event_id) for r in self.rows
+            if str(r.wrong_espn_id) == str(r.true_espn_id)
+        )
+
+    def colliding_true_ids(self) -> list[str]:
+        """True ids the plan itself assigns to more than one event. Must be empty.
+
+        ``ix_events_espn_id`` is **NOT unique** (verified, and stated in #1979's
+        docstring rather than implied away), so the database will happily accept
+        two events carrying one ESPN id. The plan is therefore the only place
+        this can be caught, and catching it here is not paranoia: the population
+        was produced by rows being dragged onto each OTHER's ids.
+        """
+        seen: dict[str, int] = {}
+        for r in self.rows:
+            seen[str(r.true_espn_id)] = seen.get(str(r.true_espn_id), 0) + 1
+        return sorted(k for k, n in seen.items() if n > 1)
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "schema": ESPN_ID_PLAN_SCHEMA,
+            "plan_hash": self.plan_hash,
+            "row_count": len(self.rows),
+            "event_id_count": len(self.event_ids),
+            "duplicate_event_ids": self.duplicate_event_ids(),
+            "self_pointing_event_ids": self.self_pointing_rows(),
+            "colliding_true_espn_ids": self.colliding_true_ids(),
+            "rows": [r.as_payload() for r in self.rows],
+            "context": dict(self.context),
+        }
+
+
+def build_espn_id_correction_plan(
+    rows: Iterable[PlannedEspnIdCorrection],
+    *,
+    context: Mapping[str, Any] | None = None,
+) -> EspnIdCorrectionPlan:
+    return EspnIdCorrectionPlan(rows=tuple(rows), context=dict(context or {}))
+
+
+def decode_espn_id_correction_plan(raw: Any) -> tuple[EspnIdCorrectionPlan | None, str]:
+    """``(plan, reason)``. The stored address is RE-DERIVED, never believed."""
+    if not isinstance(raw, Mapping):
+        return None, REASON_PLAN_MISSING
+    if raw.get("schema") != ESPN_ID_PLAN_SCHEMA:
+        return None, REASON_PLAN_CORRUPT
+    raw_rows = raw.get("rows")
+    if not isinstance(raw_rows, list):
+        return None, REASON_PLAN_CORRUPT
+    rows: list[PlannedEspnIdCorrection] = []
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        try:
+            # Subscript + coerce, never `.get()`: a missing field must land in the
+            # `except` and become PLAN_ARTIFACT_CORRUPT, not decode as None and
+            # sail past the digest (the queue-368 sport_id lesson).
+            rows.append(
+                PlannedEspnIdCorrection(
+                    event_id=int(row["event_id"]),
+                    wrong_espn_id=str(row["wrong_espn_id"]),
+                    true_espn_id=str(row["true_espn_id"]),
+                    our_commence_time=str(row["our_commence_time"]),
+                    matchup=(
+                        str(row["matchup"]) if row.get("matchup") is not None else None
+                    ),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, REASON_PLAN_CORRUPT
+    ctx = raw.get("context")
+    plan = EspnIdCorrectionPlan(
+        rows=tuple(rows), context=dict(ctx) if isinstance(ctx, Mapping) else {}
+    )
+    if plan.plan_hash != raw.get("plan_hash"):
+        return None, REASON_PLAN_CORRUPT
+    if plan.duplicate_event_ids():
+        return None, REASON_PLAN_CORRUPT
+    if plan.self_pointing_rows():
+        return None, REASON_PLAN_CORRUPT
+    if plan.colliding_true_ids():
+        return None, REASON_PLAN_CORRUPT
+    return plan, "ok"
+
+
+def espn_id_correction_gate(
+    plan: EspnIdCorrectionPlan,
+    observed: Mapping[int, Mapping[str, Any] | None],
+    *,
+    true_id_holders: Mapping[str, Sequence[int]] | None = None,
+) -> tuple[list[PlannedEspnIdCorrection], list[dict[str, Any]]]:
+    """The live half of the CAS, asked as a SET before any write.
+
+    Returns ``(actionable, retired)``. **A retirement is never fatal to the
+    run** — one upstream repair must not cancel four approved siblings. That is
+    the count-vs-set rule applied to the failure path, and it is the rule
+    ``create_gate``'s docstring records paying for on the other rail.
+
+    ``observed`` maps ``event_id -> {"espn_id": ..., "commence_time": ...}``, or
+    ``None`` for an event id with no row. ``true_id_holders`` maps a true id to
+    the event ids currently carrying it, so ``TRUE_ESPN_ID_ALREADY_HELD`` can
+    fire before a write that a **non-unique** index would otherwise accept.
+
+    The order of the checks is load-bearing and is not alphabetical:
+
+    1. **absent** — nothing else can be asked of a row that is gone.
+    2. **already correct** — before ``ESPN_ID_MOVED``, because "the ordinary
+       pipeline got there first" and "it rotated somewhere unexpected" are
+       different facts and the first is *success*. Collapsing them would report
+       a self-healed population as drift and send an operator to re-derive a
+       plan that has nothing left to do.
+    3. **moved** — neither the wrong id nor the true one.
+    4. **commence drifted** — the row still holds the wrong id, but it is no
+       longer the game the reviewer read. Checked AFTER the id checks so a
+       self-healed row is not reported as drift on a field the apply never writes.
+    5. **true id already held** — last, because it is a fact about a *different*
+       row and only matters for one this rail would otherwise write.
+    """
+    holders = {str(k): list(v) for k, v in (true_id_holders or {}).items()}
+    actionable: list[PlannedEspnIdCorrection] = []
+    retired: list[dict[str, Any]] = []
+
+    def _retire(row: PlannedEspnIdCorrection, code: str, **extra: Any) -> None:
+        entry = {
+            "event_id": int(row.event_id),
+            "expected_wrong_espn_id": str(row.wrong_espn_id),
+            "true_espn_id": str(row.true_espn_id),
+            "reason_code": code,
+        }
+        entry.update(extra)
+        retired.append(entry)
+
+    for row in plan.rows:
+        state = observed.get(int(row.event_id))
+        if state is None:
+            _retire(row, REASON_EVENT_ROW_ABSENT, observed_espn_id=None)
+            continue
+
+        seen_id = state.get("espn_id")
+        seen_id = None if seen_id is None else str(seen_id)
+
+        if seen_id == str(row.true_espn_id):
+            _retire(
+                row, REASON_ESPN_ID_ALREADY_CORRECT, observed_espn_id=seen_id
+            )
+            continue
+        if seen_id != str(row.wrong_espn_id):
+            _retire(row, REASON_ESPN_ID_MOVED, observed_espn_id=seen_id)
+            continue
+
+        seen_commence = state.get("commence_time")
+        if _normalize_instant(seen_commence) != _normalize_instant(row.our_commence_time):
+            _retire(
+                row,
+                REASON_COMMENCE_DRIFTED,
+                observed_espn_id=seen_id,
+                expected_commence_time=str(row.our_commence_time),
+                observed_commence_time=(
+                    None if seen_commence is None else str(seen_commence)
+                ),
+            )
+            continue
+
+        others = [
+            int(e) for e in holders.get(str(row.true_espn_id), [])
+            if int(e) != int(row.event_id)
+        ]
+        if others:
+            _retire(
+                row,
+                REASON_TRUE_ID_ALREADY_HELD,
+                observed_espn_id=seen_id,
+                held_by_event_ids=sorted(others),
+            )
+            continue
+
+        actionable.append(row)
+
+    return actionable, retired
+
+
+def _normalize_instant(value: Any) -> str | None:
+    """Compare two spellings of one instant without pretending they differ.
+
+    The plan carries ``"2026-08-18T22:40:00Z"`` (JSON) and PostgreSQL hands back
+    ``"2026-08-18 22:40:00+00:00"`` (``datetime`` str). Those are the same moment,
+    and a naive string compare would retire every single row as
+    ``COMMENCE_DRIFTED`` — a gate that refuses everything is indistinguishable
+    from a gate that works, right up until someone notices the rail has never
+    written anything.
+
+    Deliberately narrow: it normalizes SPELLING, never VALUE. A different instant
+    is still a drift, which is the whole point of the check.
+    """
+    if value is None:
+        return None
+    from datetime import datetime, timezone
+
+    text = str(value).strip()
+    if not text:
+        return None
+    candidate = text.replace(" ", "T")
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        # Unparseable is NOT "equal to everything". Return the raw text so an
+        # unrecognised spelling drifts loudly instead of matching by accident.
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def stillness_verdict(
+    probes: Sequence[Mapping[str, Any]],
+    *,
+    min_reads: int = 3,
+    min_span_s: int = 300,
+) -> tuple[bool, dict[str, Any]]:
+    """Ruling 095's precondition, as a verdict. Pure.
+
+    *Before a repair censuses, it must FREEZE the population or PROVE stillness —
+    N >= 3 reads spanning > 300 s with identity fields unchanged.*
+
+    Each probe is ``{"at": <epoch seconds>, "rows": {event_id: {"espn_id":…,
+    "commence_time":…}}}``. Stillness means every probed event presented the same
+    identity in every probe. A row that MOVED is named individually, because
+    "the population is not still" and "these two rows are not still" send an
+    operator at different next actions.
+
+    Returns ``(still, detail)``. ``detail`` always carries ``reads``, ``span_s``
+    and ``moved`` so a REFUSAL says which of the three conditions failed rather
+    than just declining.
+
+    Note what this deliberately does NOT do: it does not narrow the census to the
+    rows that held still. Ruling 095 is explicit that narrowing selects for rows
+    *between writes* — a sample biased toward looking calm — so an unstill
+    population produces a refusal, not a smaller plan.
+    """
+    reads = len(probes)
+    times = sorted(float(p.get("at", 0)) for p in probes)
+    span = (times[-1] - times[0]) if times else 0.0
+
+    identities: dict[int, set[tuple[Any, Any]]] = {}
+    for probe in probes:
+        rows = probe.get("rows") or {}
+        for raw_id, state in rows.items():
+            state = state or {}
+            identities.setdefault(int(raw_id), set()).add(
+                (
+                    None if state.get("espn_id") is None else str(state["espn_id"]),
+                    _normalize_instant(state.get("commence_time")),
+                )
+            )
+    moved = sorted(eid for eid, seen in identities.items() if len(seen) > 1)
+
+    detail = {
+        "reads": reads,
+        "min_reads": int(min_reads),
+        "span_s": round(span, 3),
+        "min_span_s": int(min_span_s),
+        "moved_event_ids": moved,
+        "probed_event_ids": sorted(identities),
+    }
+    still = reads >= int(min_reads) and span > float(min_span_s) and not moved
+    if not still:
+        detail["reason_code"] = REASON_POPULATION_NOT_STILL
+    return still, detail
+
+
+# ---------------------------------------------------------------------------
 # The cursor
 # ---------------------------------------------------------------------------
 
