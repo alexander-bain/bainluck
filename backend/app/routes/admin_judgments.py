@@ -23,7 +23,7 @@ from app.routes.admin_utils import (
     _resolve_admin_email,
 )
 from app.services import get_db, get_db_rw
-from app.utils.card_integrity import field_coherence
+from app.utils.card_integrity import display_scale, field_coherence, is_unlabelable
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
 from app.utils.labeling_queue import load_reviewed_ranking_keys
@@ -110,6 +110,26 @@ def _parse_candidate_strata(value: str | None) -> list[str]:
     return [stratum for stratum in requested if stratum in allowed] or list(
         DEFAULT_LABELING_STRATA
     )
+
+
+#: How old a market's newest PRICE may be and still be worth judging for taste.
+#: Seven days: long enough to keep genuinely slow-moving long-horizon markets
+#: (2028 election, World Cup) in the pool, short enough to exclude the 14 rows
+#: in the measured draw that were 30+ days cold.
+_MAX_TASTE_PRICE_AGE = timedelta(days=7)
+
+#: The strata that ask "is this an interesting card?". `stale_fixable` is
+#: deliberately absent — staleness is its subject, not its defect.
+_PRICE_FRESH_STRATA = frozenset(
+    {
+        "top_feed_like",
+        "fresh_public_story",
+        "weather",
+        "finance_ladder",
+        "low_confidence",
+        "movement_boundary",
+    }
+)
 
 
 def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
@@ -247,6 +267,35 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
             FuturesMarket.created_at.desc().nulls_last(),
         ]
 
+    # #2012 — A PRICE-FRESHNESS FLOOR ON THE TASTE STRATA.
+    #
+    # Measured 2026-08-19 on a live 40-card draw (all of it `top_feed_like`):
+    # **19 of 40 carried prices 7+ days old, 14 of them 30+ days**, topping out
+    # at 119 days. Both cards Alex labelled `bad` that session were 111 and 63
+    # days stale. Judging "is this interesting" against a three-month-old price
+    # is not taste, it is archaeology.
+    #
+    # The trap this avoids: `FuturesMarket.updated_at` LOOKS like the freshness
+    # signal and is not one. It read `5h ago` on all three refused specimens —
+    # identical to the microsecond across unrelated markets, i.e. a bulk write —
+    # while their outcomes had not moved since May and June. Several of these
+    # strata already ORDER BY it, which is why a stale card can sort to the top
+    # of a "recently updated" list. Freshness therefore keys on the OUTCOME.
+    #
+    # Scoped to the taste strata on purpose. `stale_fixable` exists to surface
+    # stale cards SO THEY CAN BE FIXED — applying the floor there would delete
+    # the stratum's entire reason for existing.
+    if stratum in _PRICE_FRESH_STRATA:
+        filters = [
+            *filters,
+            select(FuturesOutcome.id)
+            .where(
+                FuturesOutcome.market_id == FuturesMarket.id,
+                FuturesOutcome.last_updated >= now - _MAX_TASTE_PRICE_AGE,
+            )
+            .exists(),
+        ]
+
     return (
         select(FuturesMarket)
         .options(
@@ -263,6 +312,19 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
         .order_by(*ordering)
         .limit(limit)
     )
+
+
+def _scaled(prob, scale: float):
+    """Apply the card's single display scale to one probability (or None).
+
+    Mirrors `_scale_display_probability` in `app/routes/feed.py`; the shared
+    POLICY lives in `card_integrity.display_scale`, and
+    `test_labeling_sampler_serves_renderable_2012.py` asserts the two agree
+    band-for-band so they cannot drift apart again.
+    """
+    if prob is None or scale == 1.0:
+        return prob
+    return round(float(prob) / scale, 4)
 
 
 def _serialize_labeling_candidate(
@@ -309,14 +371,42 @@ def _serialize_labeling_candidate(
     # The gate is the SAME `field_coherence` the web pass uses. That is the
     # point — the two surfaces diverged because the fix was scoped to the
     # endpoint that carried the bug report rather than to the class.
-    coherence = field_coherence(
-        [
-            float(outcome.current_probability)
-            if outcome.current_probability is not None
-            else None
-            for outcome in outcomes
-        ]
+    all_probs = [
+        float(outcome.current_probability)
+        if outcome.current_probability is not None
+        else None
+        for outcome in outcomes
+    ]
+    coherence = field_coherence(all_probs)
+
+    # THE SAMPLER NOW RENDERS THE WAY THE SERVED FEED RENDERS (#2012).
+    #
+    # Withholding on `coherence["coherent"]` alone blanked the probability on
+    # 21 of 40 sampled cards — measured 2026-08-19, ranks #1/#2/#3 among them,
+    # which is exactly the "first three cards had no probabilities" Alex hit.
+    # Every one of the 21 sat in the sum > 2.0 band, which is the band the feed
+    # renders RAW because those outcomes are cumulative thresholds meaningful on
+    # their own ("Ballon d'Or Winner 2026", sum 59.0, is 59 independent "will X
+    # win?" binaries and Discover shows it fine).
+    #
+    # So the field is scaled the way the card would be scaled on the page, and
+    # the probability is withheld only when NOTHING honest can be shown.
+    scale = display_scale(all_probs, displayed_count=len(top_outcomes))
+    unlabelable = is_unlabelable(
+        outcome_names=[o.name for o in outcomes],
+        outcome_probabilities=all_probs,
+        market_name=market.name,
     )
+    if unlabelable:
+        display_outcomes = None
+        withheld_reason = unlabelable
+    else:
+        display_outcomes = [
+            {**o, "probability": _scaled(o.get("probability"), scale)}
+            for o in top_outcomes
+        ]
+        withheld_reason = None
+
     category = (
         market.llm_sport_category
         or (market.sport.name if market.sport else None)
@@ -361,15 +451,22 @@ def _serialize_labeling_candidate(
         "story_key": quality.story_key,
         "ladder": quality.is_ladder_or_bucket,
         "reasons": quality.reasons,
-        "top_outcomes": top_outcomes if coherence["coherent"] else None,
+        "top_outcomes": display_outcomes,
         "rendered_probability": (
-            top_outcomes[0]["probability"]
-            if coherence["coherent"] and top_outcomes
-            else None
+            display_outcomes[0]["probability"] if display_outcomes else None
         ),
         "field_coherent": coherence["coherent"],
         "field_sum": coherence["sum"],
-        "field_withheld_reason": None if coherence["coherent"] else coherence["reason"],
+        # `field_coherent` still reports whether this is a DISTRIBUTION; that is
+        # a true and useful fact. It is no longer the admission test — see the
+        # display-scale block above for why withholding on it emptied half the
+        # queue of the cards Discover renders best.
+        "field_withheld_reason": withheld_reason,
+        "display_scale": scale,
+        # Set when the card cannot be rendered honestly at all. The sampler
+        # drops these; it is carried on the row so a debug read can see WHAT
+        # was dropped and why rather than just a smaller list (no silent caps).
+        "unrenderable_reason": unlabelable,
         "resolution_date": (
             market.resolution_date.isoformat() if market.resolution_date else None
         ),
@@ -900,17 +997,29 @@ async def list_labeling_candidates(
 
     candidates: list[dict[str, Any]] = []
     filtered_reviewed = 0
+    filtered_unrenderable: dict[str, int] = {}
     for stratum, market in sampled:
         if ("futures", market.id) in reviewed_keys:
             filtered_reviewed += 1
             continue
-        candidates.append(
-            _serialize_labeling_candidate(
-                market,
-                rank=len(candidates) + 1,
-                stratum=stratum,
-            )
+        row = _serialize_labeling_candidate(
+            market,
+            rank=len(candidates) + 1,
+            stratum=stratum,
         )
+        # #2012 — a card nobody can read is not a label, it is a coin flip
+        # recorded as taste. Labels train ranking on what users can SEE, so the
+        # sampler serves the renderable population (ruling 098's logic applied
+        # to the labeling window: name the window, and make it the served one).
+        #
+        # This is a REFUSAL, not a blank: the previous behaviour served the card
+        # with an empty probability, so Alex spent three cards discovering there
+        # was nothing to judge.
+        if row.get("unrenderable_reason"):
+            reason = row["unrenderable_reason"]
+            filtered_unrenderable[reason] = filtered_unrenderable.get(reason, 0) + 1
+            continue
+        candidates.append(row)
 
     return {
         "items": candidates[:limit],
@@ -927,6 +1036,13 @@ async def list_labeling_candidates(
             "surface": reviewed_surface,
             "reviewed_key_count": len(reviewed_keys),
             "filtered_count": filtered_reviewed,
+        },
+        # #2012. Named rather than silent — a smaller list with no explanation
+        # reads as "there wasn't much today".
+        "renderable_filter": {
+            "enabled": True,
+            "filtered_count": sum(filtered_unrenderable.values()),
+            "by_reason": filtered_unrenderable,
         },
     }
 

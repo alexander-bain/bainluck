@@ -56,6 +56,68 @@ INCOHERENT_FIELD_SUM = 1.5
 #: Below this, the field is missing rather than merely wide.
 MIN_COHERENT_FIELD_SUM = 0.5
 
+#: Above this, the options are NOT mutually exclusive and must not be
+#: normalized: "rank 3+", "rank 4+", "market cap above $1T / $1.2T / …" are
+#: cumulative thresholds whose probabilities are each meaningful on their own.
+#: Dividing by their sum flattens an 81% leader to ~33%. Mirrors the served
+#: feed's `_feed_display_scale` cutoff exactly (`app/routes/feed.py`).
+INDEPENDENT_BINARY_MAX_SUM = 2.0
+
+#: An unfilled template blank in a market NAME — Polymarket's group-parent
+#: shells arrive as "SpaceX IPO closing market cap above ___ ?" while the real
+#: thresholds live in the sub-markets sharing their `group_id`. A title with a
+#: blank in it cannot be read, ranked, or labelled no matter how good its
+#: prices are, so this is a defect of the CARD, not of its field.
+UNFILLED_TEMPLATE_RE = re.compile(r"_{2,}")
+
+
+def has_unfilled_template(name: Optional[str]) -> bool:
+    """True for a market name still carrying its template blank (`___`)."""
+    if not name:
+        return False
+    return bool(UNFILLED_TEMPLATE_RE.search(str(name)))
+
+
+def display_scale(probabilities: Iterable[Any], displayed_count: int = 3) -> float:
+    """The divisor every visible probability on a card must share.
+
+    THE POINT OF THIS FUNCTION IS THAT IT IS THE SAME ANSWER THE FEED GIVES.
+
+    `field_coherence` answers *"can these be shown as a distribution?"* and
+    calls a sum over 1.5 incoherent — which is true and, taken alone, wrong
+    about what to do next. The served feed's answer to "these are not a
+    distribution" is not to withhold; it is to stop treating them AS one:
+
+      sum <= threshold            -> raw, already sane
+      threshold < sum <= 2.0      -> independent binaries, divide by the sum
+      sum > 2.0                   -> cumulative thresholds, show RAW, each
+                                     probability is meaningful on its own
+
+    Measured 2026-08-19: the labeling sampler withheld a probability on **21 of
+    40** sampled cards, ranks #1/#2/#3 among them, and **all 21 sat in the
+    sum > 2.0 band** — the band the feed renders raw. `Ballon d'Or Winner 2026`
+    (sum 59.0) is fifty-nine independent "will X win?" binaries, each perfectly
+    readable; Discover shows it and the labeling queue showed a blank.
+
+    So the two surfaces held two different renderability rules, which is the
+    precise failure this module's docstring was written to prevent — reproduced
+    inside the module written to prevent it.
+
+    Returns 1.0 when nothing should be scaled.
+    """
+    probs = [p for p in (_as_prob(v) for v in probabilities) if p is not None]
+    if not probs:
+        return 1.0
+    shown = probs[:displayed_count]
+    if not shown:
+        return 1.0
+    # Two-outcome markets get the stricter threshold (a true binary).
+    threshold = 1.01 if len(shown) == 2 else 1.05
+    total = sum(probs)
+    if total <= threshold or total > INDEPENDENT_BINARY_MAX_SUM:
+        return 1.0
+    return total
+
 
 def is_anonymized_outcome_name(name: Optional[str]) -> bool:
     """True for an at-source placeholder like ``Person K`` / ``Candidate 3``."""
@@ -137,17 +199,57 @@ def card_defects(
     *,
     outcome_names: Sequence[Optional[str]],
     outcome_probabilities: Sequence[Any],
+    market_name: Optional[str] = None,
 ) -> list[str]:
     """Every reason this market cannot currently be rendered honestly.
 
     A list rather than a first-match, because "which defect" is the question an
     operator asks after "is it defective", and re-deriving it costs a second
     pass over the same rows.
+
+    `market_name` is optional so every existing caller keeps working unchanged;
+    supplied, it adds the unfilled-template check.
     """
     defects: list[str] = []
+    if has_unfilled_template(market_name):
+        defects.append("unfilled_template")
     if is_anonymized_market(outcome_names):
         defects.append("anonymized_outcomes")
     coherence = field_coherence(outcome_probabilities)
     if not coherence["coherent"]:
         defects.append(f"incoherent_field:{coherence['reason']}")
     return defects
+
+
+def is_unlabelable(
+    *,
+    outcome_names: Sequence[Optional[str]],
+    outcome_probabilities: Sequence[Any],
+    market_name: Optional[str] = None,
+) -> Optional[str]:
+    """Should the LABELING SAMPLER refuse to serve this card? Reason, or None.
+
+    Narrower than `card_defects` on purpose, and the difference is the whole
+    fix. A card is refused only when **no honest number can be shown for it**:
+
+      * `unfilled_template`   — the title has a blank in it. Unreadable at any
+                                price (Polymarket group-parent shells).
+      * `anonymized_outcomes` — "Person B / Person K". Nothing to rank.
+      * `no_priced_outcomes`  — there is no probability anywhere.
+      * `all_outcomes_certain`— every leg pinned at ~1.0 (#1874's shape).
+
+    A merely WIDE field is NOT refused. `sum_exceeds_one` was silently emptying
+    half the labeling queue — including `Presidential Election Winner 2028` and
+    `Ballon d'Or Winner 2026` — for markets Discover renders perfectly well via
+    `display_scale`. Dropping those would have been culling the most valuable
+    cards in the pool and biasing the training slice toward simple binaries; the
+    fix is to show them the way the feed does, not to hide them.
+    """
+    if has_unfilled_template(market_name):
+        return "unfilled_template"
+    if is_anonymized_market(outcome_names):
+        return "anonymized_outcomes"
+    coherence = field_coherence(outcome_probabilities)
+    if coherence["reason"] in ("no_priced_outcomes", "all_outcomes_certain"):
+        return coherence["reason"]
+    return None
