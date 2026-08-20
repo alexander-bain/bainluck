@@ -673,7 +673,27 @@ export default function CalibrationPage() {
               refreshed right now" — is FALSE here and pointed a reader at a
               problem that would appear to fix itself on the next beat. The
               curve is rebuilt every hour, on time. What is dated is the market
-              census underneath it. */}
+              census underneath it.
+
+              CAL-P080: and the REPLACEMENT sentence made the same mistake one
+              clause later. "It catches up as the backlog re-stages" was
+              forward-looking, and this banner renders in exactly the state
+              where that promise is unkeepable — a bank frozen over drift.
+              Pre-`program/calibration-75` the backlog never re-staged at all,
+              so the sentence was false for the entire 24 hours it was on
+              screen. Even with the rolling re-stage deployed the page cannot
+              honour it: nothing in this payload says the bank ADVANCED (that
+              needs two samples — see `scripts/verify_rolling_restage.py`), so
+              a promise here would be a claim the renderer has no evidence for.
+
+              The rule this settles, and it is the same one as the last two
+              times: THE BANNER MAY DESCRIBE, IT MAY NOT PREDICT. The closing
+              clause now states the consequence of what the sentence already
+              measured — the census is dated, therefore so is the curve — which
+              is true whether the backlog drains in a minute, an hour or never,
+              and true in every branch above it (drift known or not, staged_at
+              dated or "earlier"). Guarded by
+              `__tests__/lib/calibrationBannerCopy.test.tsx`. */}
           {staleness.kind === "frozen-inputs" && (
             <>
               The curve was rebuilt on schedule, but the market data behind it was last
@@ -684,8 +704,8 @@ export default function CalibrationPage() {
                   })
                 : "earlier"}
               {staleness.stagedAgeS !== null && ` (${formatAge(staleness.stagedAgeS)} ago)`}
-              {driftClause ? `, and ${driftClause}` : ""}. It catches up as the backlog
-              re-stages.
+              {driftClause ? `, and ${driftClause}` : ""}. So it describes the market as of
+              then, not now.
             </>
           )}
           {staleness.kind === "undisclosed" && (
