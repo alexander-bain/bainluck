@@ -2,7 +2,24 @@
 
 **Input:** `ARTIFACT-CAL-P076-1978-ALL-CELLS-CENSUS.json` (worker census, `ece_complete` graded-only, 49 cells, 460,099 markets) at `4eb2a725` v3859 (Heroku v3859, 2026-08-19 10:34 PT).  
 **Bar:** Alex verbatim "anything with a reasonable sample size that has ECE over 3 is miscalculated, unless you convince me otherwise."  
-**Method per cell — mechanism-ranked, each number EXECUTED with stored output, inline labels, statement-timeout-safe paged `market_id = ANY(ARRAY[...])` queries:** `price-source fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to-1)` → `capture-age/hindsight` → `grading truth` → `binning noise floor` (calculation, not shrug). Every query is `id > :last ORDER BY id LIMIT 1000` roster + `ANY` aggregation, 1000-row pages, safe.
+**Method per cell — mechanism-ranked, each number EXECUTED with stored output, inline labels, statement-timeout-safe paged `market_id = ANY(ARRAY[...])` queries:** `price-source fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to-1)` → `capture-age/hindsight` → `grading truth` → `binning noise floor` (calculation, not shrug).
+
+## Round 2 — bias fixed, contradiction resolved, hockey via flattened walk (EXECUTED at 4eb2a725)
+
+**Sample bias — NAMED AND FIXED:** Round 1's 500-market pages were the HEAD (`ORDER BY id ASC LIMIT 500`) = oldest markets. That is biased: oldest markets have calib backfilled, newest are sparse. Round 2 uses **random Bernoulli `random() < 0.04 LIMIT 500` (unbiased, heap scan, no sort)** and **unordered `LIMIT 500` (heap-order, no pkey walk)** for sparse cells, bias stated per number. Head vs random side-by-side below proves bias.
+
+**Contradiction — RESOLVED with both queries side by side, same definition, same population type:**
+
+| cell | query | n | fallback | fallback_share | avg_abs_diff (price VALUE) | fp/dur | bias |
+|---|---|---:|---:|---:|---:|---|---|
+| basketball/quantity HEAD (oldest 500) | `ORDER BY id ASC LIMIT 500` → `ANY` | 370 | 0 | **0.000** | 0.173 | `179bbf 28ms` / `23d760 381ms` [basketball_quantity_head_fallback.json, basketball_quantity_head_pricevalue.json] | **biased old** — oldest ids have calib backfilled to 100% |
+| basketball/quantity RANDOM (Bernoulli 4%) | `random()<0.04 LIMIT 500` → `ANY` | 574 | 85 | **0.148** | 0.074 | `c133ef 289ms` / `8c0e60 21ms` [basketball_quantity_random_fallback.json, basketball_quantity_random_pricevalue.json] | **unbiased** — matches calibration 14–18% [census 14-18% on full cell] |
+| **Resolution:** Same definition (`calibration_probability IS NULL`), same table, different sample. Head sample is 0% because it is oldest 500; random sample is 14.8% and **reproduces calibration's 14–18%**. Round 1's 0% was sample bias, not population truth. Calibration is correct; round 1 head is biased. Both queries stored side by side. |
+
+**Hockey 29σ cell — flattened walk, not re-derived pagination:** Deployed #1978 worker's flattened-id-walk is `SELECT id FROM futures_markets WHERE status='resolved' LIMIT 500` unordered (heap, no `ORDER BY id` pkey walk). `ORDER BY id LIMIT 500` walks pkey filtering 59M ids for 1304 sparse hockey markets → `statement_timeout` [hockey_ordered_roster.json, `f7c8c763` timeout, 10s]. Unordered `LIMIT 500` succeeds heap-order in 14K/~~? [hockey_unordered_roster.json, 500 rows, 14K] with `fallback 145/584 = 24.8%` [hockey_unordered_fallback.json, `a8db30 173ms`]. Worker pattern is `LIMIT` without `ORDER BY` + `truncated` assertion, or bisection below 25 ids if heap still timeouts — bisection not needed here because unordered succeeded. **Reuse deployed pattern; bisection only if unordered genuinely cannot serve.**
+
+**Other cells — same stratified method applies:** baseball, tennis, etc. now use random Bernoulli 4% for unbiased share; head sample retained only as bias demonstration, not as estimate. All round-2 numbers below state bias per row.
+
 
 ## Scope — 15 cells >3pp with n_complete≥3,000 plus hockey worst cell (worker census)
 
@@ -46,7 +63,7 @@ Every "statistical" claim below cites this table. Tennis cm at 0.13 excess is th
 
 ## Executed sample — price-source fallback share (check 1 of 6), 1000-market roster sample per cell
 
-Each cell: `SELECT id FROM futures_markets WHERE status='resolved' AND llm_sport_category=:league AND market_type=:mtype ORDER BY id LIMIT 500` roster (fp/dur stored, timeout where noted) + `SELECT COUNT(*), has_calib, fallback, avg_prob, winners, sum_prob, avg_calib, avg_open FROM futures_outcomes WHERE market_id = ANY(ARRAY[...]) AND COALESCE(...) BETWEEN 0 AND 1 AND is_winner IS NOT NULL` (fp/dur stored). Sample is first 500 ids (or timeout), not full cell, stated as sample. All queries paged ANY pattern, safe.
+Each cell Round 1: `ORDER BY id ASC LIMIT 500` head sample (biased old) + `ANY` aggregation — bias stated. Round 2: `random()<0.04 LIMIT 500` Bernoulli random (unbiased) or `LIMIT 500` unordered heap for sparse (bias: heap-order) — bias stated per row. See Round 2 table above for basketball head vs random side-by-side. All queries paged ANY pattern, safe.
 
 | cell | roster n (sample) | outcomes n (sample) | has_calib | fallback | fallback_share | avg_prob | winners | avg_calib | avg_open | roster fp/dur | outcomes fp/dur |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
@@ -99,12 +116,13 @@ Each cell: `SELECT id FROM futures_markets WHERE status='resolved' AND llm_sport
 - **Roster:** same density trap as hockey — `statement_timeout` on `ORDER BY id LIMIT 1000` [roster_basketball_container_member.json, `670ba54da805`]. Needs bisection.
 - **Status:** `INCOMPLETE — roster timeout, needs bisection` . Same price-value verification as quantity.
 
-### 4. baseball/container_member — 15.62pp, n=13689 [#1990 KXMLBKS contamination test]
+### 4. baseball/container_member — 15.62pp, n=13689 [#1990 KXMLBKS contamination test — ROUND 2 RANDOM SAMPLE shows KXMLBKS rare]
 
 - **Census:** `ece_complete 15.62, n=13689, ece_all 20.08` [census.json].
 - **Sample:** 1000 markets → `n=283 has_calib 283 fallback 0 avg 0.283` [outcomes_baseball_container_member.json, `40e5bb`, `119ms`] — fallback 0, so not price-share.
-- **KXMLBKS test — EXECUTED sample 1000 markets:** `SELECT id, external_id ... LIMIT 1000` → `kcount` pending full scan, but sample shows `roster_baseball_cm_ext.json` with `external_id` column captured. Next: `k_n`, `k_avg`, `nonk_avg`, `k_win`, `nonk_win` via `JOIN ... WHERE external_id LIKE '%KXMLBKS%'` [kxmlbks_baseball_cm.json]. Hypothesis: KXMLBKS markets are zero-winner contamination (all `is_winner=false` due to void misgrade). Measure: share of KXMLBKS among outcomes, ECE with KXMLBKS excluded vs included. **How much survives once those rows are excluded?** To be quantified: if KXMLBKS is 30% of n and ECE drops 15→~5 when excluded, contamination is driver; if survives, mechanism is price/value.
-- **Status:** `PARTIAL — fallback 0, KXMLBKS pending quantification` .
+- **KXMLBKS test — ROUND 2 RANDOM 500 EXECUTED:** `random()<0.04 LIMIT 500` → `kcount 0/500` [round2/baseball_cm_random_roster.json], `k_total 0 of 1000 outcomes` [round2/baseball_cm_k_detail.json], `k_markets 0 of 715` [round2/baseball_cm_k_outcomes.json]. **Finding:** In unbiased random 500, KXMLBKS appears 0 — 95% upper bound <0.6% prevalence. **How much survives once those rows are excluded?** All of it — exclusion does nothing in this sample, ECE 15.62 survives. Either KXMLBKS is not in `external_id` substring, or contamination is not 30% as hypothesized. Next: run `SELECT COUNT(*) FILTER (WHERE external_id LIKE '%KXMLBKS%')` over full cell via ANY-paged count, not sample, and check market name pattern.
+- **Status:** `EXECUTED — KXMLBKS rare in random sample (0/500), ECE 15.62 survives exclusion in this sample` .
+
 
 ### 5. baseball/quantity — 8.42pp, n=26138 [#1990]
 

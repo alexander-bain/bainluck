@@ -1,0 +1,20 @@
+{
+  "columns": [
+    "n",
+    "fallback",
+    "has_calib",
+    "avg_abs_diff"
+  ],
+  "rows": [
+    [
+      16,
+      0,
+      16,
+      "0.17312500000000000000"
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 381.7,
+  "sql_fingerprint": "23d760a0b2c306d2"
+}
