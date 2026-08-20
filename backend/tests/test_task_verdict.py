@@ -290,6 +290,27 @@ class TestEnforcementScope:
             # Terminals come from `app.tasks.typeahead_index`.
             "rebuild_typeahead_index",
             "typeahead_index_sentinel",
+            # #2007 (CAL-P080): Gate 0's in-dyno DB-direct twin — the fourth
+            # member enrolled at BIRTH. It belongs here on the strongest version
+            # of the argument, because its single failure mode IS the false
+            # GREEN this set exists for and there is no other one worth naming:
+            # the gate's pass value is `agrees`, and a fold that read NOTHING
+            # agrees with everything. A run that errored, a run whose published
+            # payload was unreadable, and a run whose SELECT returned zero rows
+            # against a population of hundreds of thousands all reach that same
+            # comfortable answer unless something stops them.
+            #
+            # So `terminal` is `complete` only for a real `agrees`/`disagrees`
+            # and `failed` for every `unmeasurable`. `disagrees` terminating
+            # complete is deliberate and is the distinction the whole set turns
+            # on: the gate finding a problem is the gate WORKING, and only "I
+            # could not measure" is a failed run.
+            #
+            # Terminal comes from `build_artifact` in
+            # `app/tasks/calibration_published_twin_worker.py`, in this same
+            # change — per the trap documented at `polymarket_winners` above,
+            # adding the name alone would have been a no-op.
+            "calibration_published_twin",
         }
 
     def test_enforced_task_partial_blocks_success(self):
