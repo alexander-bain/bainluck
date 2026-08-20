@@ -126,6 +126,14 @@ MIN_STILLNESS_SPAN_S = 300
 #: does not exist and reporting it as a missing file.
 REVIEWED_SET_REGISTRY: dict[str, str] = {
     "1": "app/data/event_espn_id_reviewed_pop1.json",
+    # Population 2 — #1980, queue 380. The `frozen_final_scores` flow's OTHER
+    # class, and the one its printed remedy could never fix: 17 settled MLB rows
+    # whose `espn_id` names a neighbouring game of the same series (offset ±15 or
+    # ±30 in ESPN id space — one or two slate-days) while `commence_time` matches
+    # the true start TO THE MINUTE. **9 of the 17 already hold the correct final
+    # score**, so the score remedy the flow printed on every one of these lines
+    # would have overwritten a correct score with another game's.
+    "2": "app/data/event_espn_id_reviewed_pop2.json",
 }
 
 REASON_UNKNOWN_POPULATION = "UNKNOWN_POPULATION"

@@ -1,0 +1,192 @@
+{
+  "schema": "event-espn-id-reviewed-set/v1",
+  "issue": "#1980",
+  "population": 2,
+  "source_artifact": ".claude/handoff/ARTIFACT-Q380-FROZEN-EVIDENCE.md",
+  "source_section": "espn_id_drifted \u2014 the 17 rows verdicted AGREE",
+  "reviewed_at": "2026-08-20",
+  "committed_by": "lane1 queue 380, item 2(c), under the queue-379 attended protocol",
+  "operation": "UPDATE events.espn_id ONLY \u2014 correction, never deletion (ruling 079)",
+  "explicitly_not_written": [
+    "home_score / away_score \u2014 9 of these 17 rows ALREADY hold the correct final. The flow that found them printed a SCORE remedy on every line, and on those 9 it would have overwritten a correct score with another game's. That is the whole reason this population is a linkage repair.",
+    "commence_time \u2014 it is the ADDRESSED field here, never a written one. It matches the true game's start TO THE MINUTE on all 17, which is precisely what proves espn_id is the drifted field and not the time.",
+    "status / completed_at \u2014 #1981's writer owns these",
+    "no deletion of any row, under any branch (ruling 079)"
+  ],
+  "why_this_file_is_committed": [
+    "The reviewed object is a SET OF TRIPLES, not a count. An approval given over a number",
+    "does not transfer to whatever a later re-derivation finds under that number, so the",
+    "ids a reviewer actually read are what the apply must be bound to.",
+    "",
+    "Every row here was cross-checked TWICE against ESPN, independently of the repair",
+    "rail's own computation and independently of the stored espn_id: once by the deriving",
+    "pass (scoreboard over 36 ET dates / 481 games, plus summary on all 40 ids named), and",
+    "again by the attending operator before this file was written (summary on all 17",
+    "targets). The second pass asserted, per row: the true game's start equals our",
+    "commence_time TO THE MINUTE, both team nicknames match in the correct home/away",
+    "orientation, ESPN state is FINAL, and the stored espn_id had not moved since the",
+    "table was built. Result: 17 AGREE, 0 REJECT.",
+    "",
+    "Four further rows were examined and are deliberately ABSENT. Three are doubleheaders",
+    "whose espn_id and score are internally consistent with the OTHER game of the pair, so",
+    "commence_time may be the drifted field instead; one (15185681) has both a drifted id",
+    "and a commence_time 240 minutes off, with a stored score matching no game within",
+    "three days. A target that is not proven is not written \u2014 that is the rule this",
+    "population exists to honour, not an omission from it."
+  ],
+  "rows": [
+    {
+      "event_id": 15197641,
+      "matchup": "Milwaukee Brewers @ Los Angeles Dodgers",
+      "our_commence_time": "2026-08-15T02:10Z",
+      "wrong_espn_id": "401816545",
+      "wrong_id_is": "2026-08-15T23:15Z FINAL Milwaukee Brewers 4 @ Los Angeles Dodgers 1",
+      "true_espn_id": "401816530",
+      "true_id_is": "2026-08-15T02:10Z FINAL Milwaukee Brewers 1 @ Los Angeles Dodgers 3"
+    },
+    {
+      "event_id": 15191772,
+      "matchup": "Texas Rangers @ Athletics",
+      "our_commence_time": "2026-08-15T01:40Z",
+      "wrong_espn_id": "401816546",
+      "wrong_id_is": "2026-08-16T01:40Z FINAL Texas Rangers 5 @ Athletics 3",
+      "true_espn_id": "401816531",
+      "true_id_is": "2026-08-15T01:40Z FINAL Texas Rangers 3 @ Athletics 8"
+    },
+    {
+      "event_id": 15191123,
+      "matchup": "Atlanta Braves @ New York Yankees",
+      "our_commence_time": "2026-08-09T17:35Z",
+      "wrong_espn_id": "401816441",
+      "wrong_id_is": "2026-08-08T19:05Z FINAL Atlanta Braves 4 @ New York Yankees 5",
+      "true_espn_id": "401816456",
+      "true_id_is": "2026-08-09T17:35Z FINAL Atlanta Braves 2 @ New York Yankees 1"
+    },
+    {
+      "event_id": 15191055,
+      "matchup": "Baltimore Orioles @ Texas Rangers",
+      "our_commence_time": "2026-08-08T00:15Z",
+      "wrong_espn_id": "401816445",
+      "wrong_id_is": "2026-08-08T23:15Z FINAL Baltimore Orioles 1 @ Texas Rangers 5",
+      "true_espn_id": "401816430",
+      "true_id_is": "2026-08-08T00:15Z FINAL Baltimore Orioles 1 @ Texas Rangers 2"
+    },
+    {
+      "event_id": 15181100,
+      "matchup": "New York Yankees @ Chicago Cubs",
+      "our_commence_time": "2026-08-02T18:20Z",
+      "wrong_espn_id": "401816354",
+      "wrong_id_is": "2026-08-01T23:15Z FINAL New York Yankees 2 @ Chicago Cubs 5",
+      "true_espn_id": "401816369",
+      "true_id_is": "2026-08-02T18:20Z FINAL New York Yankees 2 @ Chicago Cubs 1"
+    },
+    {
+      "event_id": 15180863,
+      "matchup": "Boston Red Sox @ Los Angeles Dodgers",
+      "our_commence_time": "2026-08-01T02:10Z",
+      "wrong_espn_id": "401816357",
+      "wrong_id_is": "2026-08-02T01:10Z FINAL Boston Red Sox 3 @ Los Angeles Dodgers 2",
+      "true_espn_id": "401816342",
+      "true_id_is": "2026-08-01T02:10Z FINAL Boston Red Sox 9 @ Los Angeles Dodgers 4"
+    },
+    {
+      "event_id": 15184896,
+      "matchup": "San Francisco Giants @ San Diego Padres",
+      "our_commence_time": "2026-08-01T01:45Z",
+      "wrong_espn_id": "401816361",
+      "wrong_id_is": "2026-08-02T00:40Z FINAL San Francisco Giants 5 @ San Diego Padres 6",
+      "true_espn_id": "401816346",
+      "true_id_is": "2026-08-01T01:45Z FINAL San Francisco Giants 0 @ San Diego Padres 7"
+    },
+    {
+      "event_id": 15184892,
+      "matchup": "Miami Marlins @ New York Mets",
+      "our_commence_time": "2026-07-31T23:10Z",
+      "wrong_espn_id": "401816349",
+      "wrong_id_is": "2026-08-01T20:10Z FINAL Miami Marlins 6 @ New York Mets 2",
+      "true_espn_id": "401816334",
+      "true_id_is": "2026-07-31T23:10Z FINAL Miami Marlins 5 @ New York Mets 2"
+    },
+    {
+      "event_id": 15176244,
+      "matchup": "Milwaukee Brewers @ San Francisco Giants",
+      "our_commence_time": "2026-07-28T01:45Z",
+      "wrong_espn_id": "401816305",
+      "wrong_id_is": "2026-07-29T01:45Z FINAL Milwaukee Brewers 8 @ San Francisco Giants 2",
+      "true_espn_id": "401816291",
+      "true_id_is": "2026-07-28T01:45Z FINAL Milwaukee Brewers 0 @ San Francisco Giants 3"
+    },
+    {
+      "event_id": 15176242,
+      "matchup": "Houston Astros @ Los Angeles Angels",
+      "our_commence_time": "2026-07-28T01:38Z",
+      "wrong_espn_id": "401816304",
+      "wrong_id_is": "2026-07-29T01:38Z FINAL Houston Astros 3 @ Los Angeles Angels 2",
+      "true_espn_id": "401816290",
+      "true_id_is": "2026-07-28T01:38Z FINAL Houston Astros 6 @ Los Angeles Angels 4"
+    },
+    {
+      "event_id": 15179128,
+      "matchup": "Toronto Blue Jays @ Boston Red Sox",
+      "our_commence_time": "2026-07-26T17:35Z",
+      "wrong_espn_id": "401816243",
+      "wrong_id_is": "2026-07-24T23:15Z FINAL Toronto Blue Jays 4 @ Boston Red Sox 6",
+      "true_espn_id": "401816273",
+      "true_id_is": "2026-07-26T17:35Z FINAL Toronto Blue Jays 1 @ Boston Red Sox 6"
+    },
+    {
+      "event_id": 15179114,
+      "matchup": "Seattle Mariners @ Texas Rangers",
+      "our_commence_time": "2026-07-25T23:15Z",
+      "wrong_espn_id": "401816278",
+      "wrong_id_is": "2026-07-26T18:35Z FINAL Seattle Mariners 6 @ Texas Rangers 4",
+      "true_espn_id": "401816263",
+      "true_id_is": "2026-07-25T23:15Z FINAL Seattle Mariners 1 @ Texas Rangers 7"
+    },
+    {
+      "event_id": 15173316,
+      "matchup": "Los Angeles Dodgers @ New York Mets",
+      "our_commence_time": "2026-07-24T23:10Z",
+      "wrong_espn_id": "401816142",
+      "wrong_id_is": "2026-07-17T23:05Z FINAL Los Angeles Dodgers 2 @ New York Yankees 1",
+      "true_espn_id": "401816240",
+      "true_id_is": "2026-07-24T23:10Z FINAL Los Angeles Dodgers 4 @ New York Mets 2"
+    },
+    {
+      "event_id": 15175876,
+      "matchup": "San Diego Padres @ Atlanta Braves",
+      "our_commence_time": "2026-07-21T23:15Z",
+      "wrong_espn_id": "401816190",
+      "wrong_id_is": "2026-07-20T23:15Z FINAL San Diego Padres 2 @ Atlanta Braves 3",
+      "true_espn_id": "401816205",
+      "true_id_is": "2026-07-21T23:15Z FINAL San Diego Padres 8 @ Atlanta Braves 3"
+    },
+    {
+      "event_id": 15175873,
+      "matchup": "Tampa Bay Rays @ Toronto Blue Jays",
+      "our_commence_time": "2026-07-21T23:07Z",
+      "wrong_espn_id": "401816191",
+      "wrong_id_is": "2026-07-20T23:07Z FINAL Tampa Bay Rays 7 @ Toronto Blue Jays 1",
+      "true_espn_id": "401816206",
+      "true_id_is": "2026-07-21T23:07Z FINAL Tampa Bay Rays 12 @ Toronto Blue Jays 2"
+    },
+    {
+      "event_id": 15175874,
+      "matchup": "Los Angeles Dodgers @ Philadelphia Phillies",
+      "our_commence_time": "2026-07-21T22:40Z",
+      "wrong_espn_id": "401816187",
+      "wrong_id_is": "2026-07-20T23:00Z FINAL Los Angeles Dodgers 7 @ Philadelphia Phillies 10",
+      "true_espn_id": "401816202",
+      "true_id_is": "2026-07-21T22:40Z FINAL Los Angeles Dodgers 2 @ Philadelphia Phillies 1"
+    },
+    {
+      "event_id": 15168206,
+      "matchup": "Los Angeles Dodgers @ New York Yankees",
+      "our_commence_time": "2026-07-19T16:35Z",
+      "wrong_espn_id": "401816142",
+      "wrong_id_is": "2026-07-17T23:05Z FINAL Los Angeles Dodgers 2 @ New York Yankees 1",
+      "true_espn_id": "401897386",
+      "true_id_is": "2026-07-19T16:35Z FINAL Los Angeles Dodgers 8 @ New York Yankees 2"
+    }
+  ]
+}

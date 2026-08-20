@@ -38,6 +38,7 @@ from app.utils.repair_apply_plan import (
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 REVIEWED = REPO / "backend/app/data/event_espn_id_reviewed_pop1.json"
+REVIEWED_POP2 = REPO / "backend/app/data/event_espn_id_reviewed_pop2.json"
 
 
 def _row(event_id=1, wrong="100", true="200", commence="2026-08-18T22:40:00Z"):
@@ -88,6 +89,64 @@ class TestTheReviewedSet:
         assert len(rows) == 5
         assert all(isinstance(r.event_id, int) for r in rows)
         assert all(isinstance(r.wrong_espn_id, str) for r in rows)
+
+
+class TestTheReviewedSetPopulation2:
+    """#1980, queue 380 — the `frozen_final_scores` flow's LINKAGE class.
+
+    17 settled MLB rows whose `espn_id` names a neighbouring game of the same
+    series while `commence_time` matches the true start to the minute. **9 of
+    them already hold the correct final score**, which is why this population
+    exists at all: the score remedy the flow printed on every one of these lines
+    would have overwritten a correct score with another game's.
+    """
+
+    def test_it_is_committed_and_holds_the_seventeen_reviewed_triples(self):
+        data = json.loads(REVIEWED_POP2.read_text())
+        assert len(data["rows"]) == 17
+        assert data["population"] == 2
+        assert data["issue"] == "#1980"
+
+    def test_every_reviewed_row_carries_all_four_addressed_fields(self):
+        for row in json.loads(REVIEWED_POP2.read_text())["rows"]:
+            for key in ("event_id", "wrong_espn_id", "true_espn_id", "our_commence_time"):
+                assert row.get(key) not in (None, ""), f"{row.get('event_id')}: {key}"
+
+    def test_no_reviewed_row_is_self_pointing(self):
+        for row in json.loads(REVIEWED_POP2.read_text())["rows"]:
+            assert row["wrong_espn_id"] != row["true_espn_id"]
+
+    def test_every_event_id_appears_once(self):
+        """Two rows for one event would apply twice and the second finds nothing."""
+        ids = [r["event_id"] for r in json.loads(REVIEWED_POP2.read_text())["rows"]]
+        assert len(ids) == len(set(ids))
+
+    def test_no_two_rows_claim_the_same_true_id(self):
+        """`ix_events_espn_id` is NOT unique, so nothing downstream would object.
+
+        Note the INVERSE is legitimate and present here: `401816142` is the WRONG
+        id on two different rows, because one drifted id can be stamped on two
+        events. That is the defect, not a flaw in the plan.
+        """
+        rows = json.loads(REVIEWED_POP2.read_text())["rows"]
+        true_ids = [r["true_espn_id"] for r in rows]
+        assert len(true_ids) == len(set(true_ids))
+        assert len({r["wrong_espn_id"] for r in rows}) == 16
+
+    def test_the_registry_resolves_population_2(self):
+        rows = rail.rows_from_reviewed(json.loads(REVIEWED_POP2.read_text()))
+        assert len(rows) == 17
+        assert rail._load_reviewed_set("2")[1] == "ok"
+
+    def test_the_score_columns_are_named_as_explicitly_not_written(self):
+        """The whole point of splitting this class out, asserted on the artifact.
+
+        If a later edit lets this population write scores, 9 correct finals get
+        overwritten — so the refusal is pinned here and not only in prose.
+        """
+        blob = " ".join(json.loads(REVIEWED_POP2.read_text())["explicitly_not_written"])
+        assert "home_score" in blob and "away_score" in blob
+        assert "commence_time" in blob
 
 
 # ---------------------------------------------------------------------------
