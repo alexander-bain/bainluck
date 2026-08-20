@@ -13,6 +13,8 @@ import {
   navigate,
   sessionTotals,
   progressLabel,
+  verdictRefusal,
+  refusalMessage,
   type SessionState,
   type VerdictEntry,
 } from "@/lib/labelPassSession";
@@ -171,5 +173,60 @@ describe("progressLabel — strip format", () => {
   it("appends skipped only when non-zero", () => {
     let s = recordVerdict(INITIAL_SESSION, entry({ uid: 1, verdict: "skip" }));
     expect(progressLabel(s, 354)).toBe("1 of 354 · 0 applied · 0 rejected · 1 skipped");
+  });
+});
+
+// ── #1542/#1873: the refusal reader ────────────────────────────────────────
+// `adminFetchJSON` throws `Admin API error <status>: <body slice>`, so the typed
+// 409 reason has to be recovered from a string. These pin the two ways that goes
+// wrong: reading a reason out of a NON-409 (a 500 mentioning a market is not a
+// refusal), and reaching for JSON.parse on a body the helper already truncated.
+describe("verdictRefusal", () => {
+  const body = (reason: string) =>
+    new Error(
+      `Admin API error 409: {"detail":{"status":"conflict","reason":"${reason}","applied":false,"writes":0,"expected":"ab12`
+    );
+
+  it("reads the typed reason out of a truncated 409 body", () => {
+    expect(verdictRefusal(body("card_drifted"))).toBe("card_drifted");
+    expect(verdictRefusal(body("card_fingerprint_missing"))).toBe("card_fingerprint_missing");
+    expect(verdictRefusal(body("lifecycle_terminal"))).toBe("lifecycle_terminal");
+    expect(verdictRefusal(body("duplicate_verdict"))).toBe("duplicate_verdict");
+  });
+
+  it("does not parse the body as JSON", () => {
+    // The truncation above cuts mid-object; JSON.parse would throw and a
+    // catch-all would return null in exactly the case this exists for.
+    expect(() => JSON.parse(body("card_drifted").message.split(": ").slice(1).join(": "))).toThrow();
+    expect(verdictRefusal(body("card_drifted"))).toBe("card_drifted");
+  });
+
+  it("is not fooled by a non-409 that happens to mention a reason", () => {
+    expect(verdictRefusal(new Error("Admin API error 500: market_missing in log line"))).toBeNull();
+    expect(verdictRefusal(new Error("NetworkError when attempting to fetch"))).toBeNull();
+    expect(verdictRefusal(null)).toBeNull();
+    expect(verdictRefusal(undefined)).toBeNull();
+  });
+
+  it("returns null for a 409 whose reason is not one we know", () => {
+    expect(verdictRefusal(new Error('Admin API error 409: {"reason":"something_new"}'))).toBeNull();
+  });
+});
+
+describe("refusalMessage", () => {
+  it("tells the reader nothing was recorded, in every branch", () => {
+    for (const r of [
+      "card_drifted",
+      "card_fingerprint_missing",
+      "duplicate_verdict",
+      "lifecycle_terminal",
+      "market_missing",
+    ] as const) {
+      expect(refusalMessage(r).toLowerCase()).toContain("nothing was recorded");
+    }
+  });
+
+  it("names the re-price for the drift case, since that is the one Alex can act on", () => {
+    expect(refusalMessage("card_drifted")).toMatch(/re-priced/i);
   });
 });

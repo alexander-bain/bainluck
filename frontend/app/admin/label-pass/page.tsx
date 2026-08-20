@@ -17,7 +17,10 @@ import {
   navigate,
   sessionTotals,
   progressLabel,
+  verdictRefusal,
+  refusalMessage,
   type Verdict,
+  type VerdictRefusal,
 } from "@/lib/labelPassSession";
 
 export default function LabelPassPage() {
@@ -27,10 +30,15 @@ export default function LabelPassPage() {
 
   const { secret } = useAdminAuth();
 
-  const { data, error } = useSWR(
+  const { data, error, mutate } = useSWR(
     secret ? ["label-pass-pending", secret] : null,
     () => adminFetchJSON("/api/admin/label-pass/pending", secret)
   );
+
+  // #1542/#1873: a verdict the server refused. The session already rolls the
+  // optimistic tap back; this is so Alex is told WHY rather than watching the
+  // same card silently return.
+  const [refusal, setRefusal] = useState<VerdictRefusal | null>(null);
 
   // L2-168: the whole session is a pure state machine (labelPassSession.ts) so
   // the velocity logic is node-testable; this component is a thin wiring shell.
@@ -93,14 +101,21 @@ export default function LabelPassPage() {
             surface: "label_pass",
           });
           setSession((s) => reconcileVerdict(s, uid, { newId: res?.new_id, applied }));
+          setRefusal(null);
         } catch (e) {
           console.error(e);
           // POST failed — drop the phantom verdict and step back so it can be retried.
           setSession((s) => rollbackVerdict(s, uid));
+          const reason = verdictRefusal(e);
+          setRefusal(reason);
+          // A drift refusal means our copy of the card is out of date, so the
+          // retry must be against a fresh one — otherwise the next keystroke
+          // posts the same stale fingerprint and bounces again.
+          if (reason === "card_drifted") void mutate();
         }
       })();
     },
-    [current, secret, session.history]
+    [current, secret, session.history, mutate]
   );
 
   const handleUndo = useCallback(() => {
@@ -153,6 +168,16 @@ export default function LabelPassPage() {
   if (!secret) return <div className="p-8 text-text-muted">Enter admin secret to access label pass.</div>;
   if (error) return <div className="p-8 text-red-500">Error loading proposals.</div>;
   if (!data) return <div className="p-8 text-text-muted">Loading...</div>;
+
+  const refusalBanner = refusal ? (
+    <div
+      data-testid="verdict-refusal"
+      className="mb-4 rounded-lg border border-accent-danger bg-surface-elevated px-3 py-2 text-xs text-accent-danger leading-relaxed"
+    >
+      <span className="font-semibold">Verdict not recorded:</span>{" "}
+      {refusalMessage(refusal)}
+    </div>
+  ) : null;
 
   const lifecycleBanner = (retiredCount > 0 || quarantinedCount > 0 || staleAppliedCount > 0) ? (
     <div
@@ -216,6 +241,7 @@ export default function LabelPassPage() {
         <span className="text-sm text-text-muted font-mono">{session.index + 1} / {total}</span>
       </div>
 
+      {refusalBanner}
       {lifecycleBanner}
 
       {/* L2-168 session progress strip — live counts reflect accepts in real time */}

@@ -551,6 +551,51 @@ export interface DivergenceRow {
   grade: PropGrade | null;
 }
 
+/**
+ * ── THE DEFERRED-TO-PIXELS DETECTOR (ruling 112's reported cost, Alex) ───────
+ *
+ * Ruling 112 shipped with a cost stated against itself: *a moved structural rung
+ * now spends its ladder's one slot, so a ladder whose biggest mover is a
+ * collapsed rung cannot also show the rung the market has a live view about.* On
+ * the specimen that cost was measured at zero, and the shape was covered
+ * synthetically because no real payload had ever produced it.
+ *
+ * Alex's disposition (2026-08-20): **DEFERRED TO PIXELS.** Layout calls go
+ * through visual mocks, never a word-argument — and with zero specimens the
+ * question is not ripe. Keep the shipped biggest-mover behaviour; **do not change
+ * the test.** But make sure the question is answered the DAY a real card asks it,
+ * rather than the day someone happens to look.
+ *
+ * So this is a detector, not a rule. It fires when a real payload first puts a
+ * 112-readmitted structural mover and a market-live rung of the SAME ladder in
+ * competition for that ladder's single slot, and it carries the counterfactual
+ * rail so the capture rig can shoot the card BOTH ways and route the pair to
+ * Alex. Nothing it computes reaches the screen: `rows` is what it always was.
+ *
+ * ── WHY "MARKET-LIVE" IS `!structural` ──────────────────────────────────────
+ *
+ * `structural` means a rung's near-certainty is explained by its position in its
+ * own ladder — arithmetic, not a claim. Its negation is therefore exactly "a rung
+ * the market has a live view about", which is the phrase in the cost. And it must
+ * also have TRAVELLED, or it was never rail-eligible and there was no contest to
+ * report — a flat rung losing to a mover is the movement tier working, not a cost.
+ */
+export interface LadderPivotContest {
+  /** `player|stat`, the ladder whose one slot was contested. */
+  ladder: string;
+  /** The rung that took the slot: structural, and readmitted because it moved. */
+  mover: DivergenceRow;
+  /** The displaced rung the market has a live view about, biggest-travel first. */
+  pivot: DivergenceRow;
+  /**
+   * The rail as it would read if the slot went to the pivot instead. A 1-for-1
+   * swap inside one ladder — hence one player — so every cap counter is
+   * unchanged by construction and no third row can enter or leave. That is what
+   * makes this a faithful counterfactual rather than a re-run with a knob.
+   */
+  counterfactualRows: DivergenceRow[];
+}
+
 export interface DivergenceDrop {
   reason: PropDropReason;
   benign: boolean;
@@ -594,6 +639,13 @@ export interface DivergenceResult {
    * merely ranked sixth — rail capacity, never a taxonomy loss.
    */
   structuralSuppressed: number;
+  /**
+   * PREGAME ONLY. Ladders where ruling 112's reported cost is actually being
+   * paid on this payload — see `LadderPivotContest`. Empty on every card
+   * measured so far; a non-empty one is the specimen Alex asked to be shown, and
+   * the capture rig routes it to him. Reporting only: it steers nothing.
+   */
+  ladderPivotContests: LadderPivotContest[];
   /**
    * Whether the game is over. On the result rather than inferred from the rows,
    * because an EMPTY rail still has to know — `rows.some(r => r.settled)` reads
@@ -785,6 +837,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     eligible: 0,
     ungraded: 0,
     structuralSuppressed: 0,
+    ladderPivotContests: [],
     settled,
     pregame,
     emptyReason,
@@ -817,6 +870,10 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
 
   const perPlayer = new Map<string, number>();
   const perLadder = new Map<string, number>();
+  // Which rung actually took each ladder's slot. Recorded at PUSH, beside the
+  // `perLadder.set` and for the same reason the write position is load-bearing
+  // there: a rung skipped by the floor or by the player cap took nothing.
+  const ladderWinner = new Map<string, DivergenceRow>();
   const selected: DivergenceRow[] = [];
   for (const row of candidates) {
     if (selected.length >= RAIL_MAX_ROWS) break;
@@ -916,8 +973,13 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     if (n >= RAIL_MAX_PER_PLAYER) continue;
     perLadder.set(ladder, (perLadder.get(ladder) ?? 0) + 1);
     perPlayer.set(row.player, n + 1);
+    if (!ladderWinner.has(ladder)) ladderWinner.set(ladder, row);
     selected.push(withSentence(row, settled));
   }
+
+  const ladderPivotContests = pregame
+    ? findLadderPivotContests(candidates, selected, ladderWinner, settled)
+    : [];
 
   if (selected.length === 0) {
     // A settled page with real questions and not one published outcome, or a
@@ -951,10 +1013,63 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     eligible: candidates.length,
     ungraded,
     structuralSuppressed,
+    ladderPivotContests,
     settled,
     pregame,
     emptyReason: null,
   };
+}
+
+/**
+ * Ruling 112's cost, detected on a real payload rather than argued about.
+ *
+ * Fires for a ladder when BOTH are true:
+ *   * the rung holding its slot is `structural` AND travelled — i.e. it is on
+ *     the rail only because ruling 112 readmitted it; and
+ *   * some other rung of that same ladder is NOT structural and DID travel —
+ *     a rung the market has a live view about, which would have been
+ *     rail-eligible on its own and which `RAIL_MAX_PER_LADDER` displaced.
+ *
+ * Both conditions are necessary and neither is sufficient. Without the first,
+ * the slot went to an ordinary mover and ruling 112 is not implicated at all.
+ * Without the second there was nothing to displace — a ladder whose other rungs
+ * are flat, or equally structural, has no live view being crowded out, and
+ * reporting it would route Alex a pair of pictures with no question in them.
+ */
+function findLadderPivotContests(
+  candidates: DivergenceRow[],
+  selected: DivergenceRow[],
+  ladderWinner: Map<string, DivergenceRow>,
+  settled: boolean,
+): LadderPivotContest[] {
+  const order = new Map(candidates.map((r, i) => [r.key, i]));
+  const contests: LadderPivotContest[] = [];
+
+  for (const [ladder, mover] of ladderWinner) {
+    if (!mover.structural || !hasTravelled(mover)) continue;
+
+    let pivot: DivergenceRow | null = null;
+    for (const row of candidates) {
+      if (row.key === mover.key) continue;
+      if (ladderFamilyKey(row) !== ladder) continue;
+      if (row.structural || !hasTravelled(row)) continue;
+      // Biggest travel first: under a pivot-preferring rule this is the rung
+      // that would take the slot, so it is the one worth photographing.
+      if (pivot === null || row.travel > pivot.travel) pivot = row;
+    }
+    if (pivot === null) continue;
+
+    // The swap is 1-for-1 inside one ladder, so it is also inside one player:
+    // no cap counter moves and no third row can be pulled in or pushed out.
+    // Re-sorted into candidate order because the rail is presented in ranking
+    // order, and the pivot does not necessarily rank where the mover did.
+    const swapped = selected
+      .map((r) => (r.key === mover.key ? withSentence(pivot as DivergenceRow, settled) : r))
+      .sort((a, b) => (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
+
+    contests.push({ ladder, mover, pivot, counterfactualRows: swapped });
+  }
+  return contests;
 }
 
 /** V2's escalation, applied identically by all three views. */
