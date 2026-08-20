@@ -1,0 +1,82 @@
+{
+  "queue": "CAL-P079",
+  "issue": 2007,
+  "gate": "the rolling re-stage is alive (program/calibration-75 post-deploy)",
+  "api": "https://api.bainluck.com",
+  "interval_s": 900,
+  "observations": [
+    {
+      "http_status": 200,
+      "elapsed_s": 0.0,
+      "generated_at": "2026-08-20T15:17:44.653129+00:00",
+      "availability": "stale",
+      "bucket_count": 1935,
+      "total_outcomes": 856990,
+      "staged_at": "2026-08-19T17:16:31.866144+00:00",
+      "staged_age_s": 83264,
+      "units_banked": 128,
+      "units_drifted": 115,
+      "units_drift_unknown": 1,
+      "frozen_over_drift": true,
+      "rolling_restage": null,
+      "rebuild_units_this_beat": null,
+      "rebuild_units_banked": null,
+      "bank_advanced_this_beat": false,
+      "units_this_beat": 0,
+      "tolerance_pp": 90.625
+    },
+    {
+      "http_status": 200,
+      "elapsed_s": 0.0,
+      "generated_at": "2026-08-20T15:17:44.653129+00:00",
+      "availability": "stale",
+      "bucket_count": 1935,
+      "total_outcomes": 856990,
+      "staged_at": "2026-08-19T17:16:31.866144+00:00",
+      "staged_age_s": 85275,
+      "units_banked": 128,
+      "units_drifted": 115,
+      "units_drift_unknown": 1,
+      "frozen_over_drift": true,
+      "rolling_restage": null,
+      "rebuild_units_this_beat": null,
+      "rebuild_units_banked": null,
+      "bank_advanced_this_beat": false,
+      "units_this_beat": 0,
+      "tolerance_pp": 90.625
+    }
+  ],
+  "checks": {
+    "samples": {
+      "pass": true,
+      "detail": "2 readable samples"
+    },
+    "rolling_restage_present": {
+      "pass": false,
+      "detail": "rolling_restage across samples: [None, None]"
+    },
+    "builder_alive": {
+      "pass": false,
+      "detail": "rebuild_units_this_beat: [None, None]"
+    },
+    "served_census_advanced": {
+      "pass": false,
+      "detail": "1 distinct staged_at value(s): ['2026-08-19T17:16:31.866144+00:00']"
+    },
+    "drift_falling": {
+      "pass": false,
+      "detail": "units_drifted first=115 last=115"
+    },
+    "served_200_and_coherent_throughout": {
+      "pass": true,
+      "detail": "statuses=[200, 200] bucket_counts=[1935, 1935]"
+    },
+    "bound": {
+      "pass": null,
+      "detail": "tolerance_pp across samples: [90.625, 90.625]",
+      "first": 90.625,
+      "last": 90.625
+    }
+  },
+  "verdict": "fail"
+}
