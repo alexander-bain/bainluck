@@ -457,6 +457,98 @@ async def cohort_cell_census_last(request: Request):
     return payload
 
 
+@router.post("/admin/calibration-twin/run")
+async def calibration_twin_run(
+    request: Request,
+    timeout_ms: int = None,
+    inline: bool = False,
+):
+    """CAL-P080 (#2007): run Gate 0's DB-direct twin ON THE WORKER.
+
+    This is the reachability fix, and it is worth stating why an endpoint was
+    the answer to a *budget* problem. The twin's fold has an instrument budget
+    of **240 s**. It could not be run:
+
+    * from an agent sandbox — TCP 5432 egress is blocked, so there is no
+      session to open; or
+    * through ``POST /admin/db-query`` — whose row path **hardcodes a 10 s
+      ``statement_timeout``**, twenty-four times short, as CAL-P079 measured.
+
+    Widening the db-query cap was rejected rather than untried: a general read
+    rail that will hold a connection for four minutes is a worse problem than
+    the one being solved. So the reader moved next to the database instead, onto
+    a worker with a 1500 s soft limit of its own.
+
+    ``inline=true`` runs it in-request and **will H12** on the real population —
+    the router's hard limit is 30 s and the fold's budget is 240 s, so inline
+    exists only for a smoke test with a small ``timeout_ms``, never for a real
+    gate run. The default enqueues; read the result from
+    ``GET /admin/calibration-twin/last``.
+    """
+    _check_admin_secret(request=request)
+
+    from app.tasks.calibration_published_twin_worker import (
+        DEFAULT_TIMEOUT_MS,
+        clamp_timeout_ms,
+    )
+
+    budget = clamp_timeout_ms(
+        DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms
+    )
+
+    if inline:
+        from app.tasks.calibration_published_twin_worker import run_published_twin
+
+        return await run_published_twin(timeout_ms=budget)
+
+    from app.routes.admin_utils import _safe_send_task
+
+    result = _safe_send_task(
+        "app.tasks.calibration_published_twin",
+        kwargs={"timeout_ms": budget},
+    )
+    return {
+        "status": "enqueued",
+        "task_id": getattr(result, "id", None),
+        "timeout_ms": budget,
+    }
+
+
+@router.get("/admin/calibration-twin/last")
+async def calibration_twin_last(request: Request):
+    """CAL-P080 (#2007): the last Gate 0 twin artifact.
+
+    ``measured: false`` is a first-class answer and is never rendered as a clean
+    zero (gotcha #53). The artifact distinguishes, by name, a fold that errored,
+    a published payload that could not be read, and a fold that "succeeded" over
+    zero rows — the last being the one that would otherwise present as perfect
+    agreement.
+    """
+    _check_admin_secret(request=request)
+
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.tasks.calibration_published_twin_worker import (
+        TWIN_IDENTITY,
+        TWIN_SCHEMA,
+    )
+
+    try:
+        read = await read_snapshot_standalone(
+            TWIN_IDENTITY, expected_version=TWIN_SCHEMA, max_age_s=30 * 86400
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "measured": False,
+            "reason": f"artifact_read_raised: {type(exc).__name__}",
+        }
+    if not read.ok or read.envelope is None:
+        return {"measured": False, "reason": f"artifact_unreadable: {read.status}"}
+
+    payload = dict(read.envelope.payload or {})
+    payload["artifact_generated_at"] = read.envelope.generated_at.isoformat()
+    return payload
+
+
 @router.get("/admin/cohort-sums-histogram")
 async def cohort_sums_histogram(
     request: Request,

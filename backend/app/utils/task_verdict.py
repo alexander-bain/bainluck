@@ -267,6 +267,15 @@ ENFORCED_TASKS = frozenset({
     # as a non-authoritative unknown and still read GREEN. Both return one.
     "rebuild_typeahead_index",         # terminal + stopped_at + cursor_persisted
     "typeahead_index_sentinel",        # terminal + errors + overall.drift_rate
+    # #2007 (CAL-P080): Gate 0's in-dyno twin, enrolled AT BIRTH and — per the
+    # trap this file spends thirty lines on — in the same change that gives it a
+    # terminal. It is the shape that most needs it: the instrument's ONLY way to
+    # lie is to read nothing and report agreement over zero rows, so `terminal`
+    # is `complete` for a real `agrees`/`disagrees` and `failed` for every
+    # `unmeasurable` — a fold error, an unreadable published payload, or a fold
+    # that "succeeded" with zero rows against a population of hundreds of
+    # thousands. A gate that cannot measure must not read GREEN.
+    "calibration_published_twin",      # terminal + measured + verdict + db_rows
 })
 
 
