@@ -548,3 +548,121 @@ def test_every_status_is_reachable_and_distinct(status):
         STATUS_UNREADABLE: unreadable("x", now=10.0, ring_max=32, ttl_s=45)["status"],
     }
     assert produced[status] == status
+
+
+# ---------------------------------------------------------------------------
+# The handler end to end, over a stubbed Redis
+#
+# The tests above prove the parts: the reduction, the decode, the mounting, the
+# absence of a broadcast. None of them prove the WIRING — that the handler reads
+# the keys the warmer writes, passes the real TTL through, and turns a raising
+# client into `unreadable` rather than a 500. A suite that tests every part and
+# no assembly is how a correctly-implemented endpoint ships reading the wrong key.
+# ---------------------------------------------------------------------------
+
+
+class _StubPipeline:
+    def __init__(self, ring, state, boom=False):
+        self._ring, self._state, self._boom = ring, state, boom
+        self.calls = []
+
+    def lrange(self, key, start, end):
+        self.calls.append(("lrange", key, start, end))
+        return self
+
+    def hgetall(self, key):
+        self.calls.append(("hgetall", key))
+        return self
+
+    def execute(self):
+        if self._boom:
+            raise RuntimeError("redis is gone")
+        return [self._ring, self._state]
+
+
+class _StubRedis:
+    def __init__(self, ring, state, boom=False):
+        self.pipe = _StubPipeline(ring, state, boom)
+
+    def pipeline(self):
+        return self.pipe
+
+
+def _call_endpoint(ring, state, boom=False):
+    import asyncio
+
+    import app.tasks.redis_state as redis_state
+    from app.routes import admin_celery
+    from app.routes import admin_utils
+
+    stub = _StubRedis(ring, state, boom)
+    orig_client = redis_state.get_redis_client
+    orig_check = admin_utils._check_admin_secret
+    redis_state.get_redis_client = lambda *a, **k: stub
+    admin_celery._check_admin_secret = lambda *a, **k: None
+    try:
+        return asyncio.run(admin_celery.typeahead_warmer_last(request=None, secret="x")), stub
+    finally:
+        redis_state.get_redis_client = orig_client
+        admin_celery._check_admin_secret = orig_check
+
+
+def test_the_handler_reads_the_keys_the_warmer_actually_writes():
+    """The assembly test. A handler reading the wrong key returns a clean
+    `no_data` about a warmer that is working perfectly."""
+    from app.tasks.typeahead_warmer import _PASS_RING_KEY, _WARMER_STATE_KEY
+
+    payload, stub = _call_endpoint([json.dumps(_pass(1.0, 47.776, 275.923, expired=40))], {})
+
+    reads = {c[1] for c in stub.pipe.calls}
+    assert reads == {_PASS_RING_KEY, _WARMER_STATE_KEY}
+    assert payload["status"] == STATUS_OK
+    assert payload["passes"]["n"] == 1
+    assert payload["passes"]["seconds_wall"]["max"] == 47.776
+    assert payload["passes"]["expired"]["worst"] == 40
+
+
+def test_the_handler_passes_the_real_response_ttl_through():
+    """The threshold has to travel with the measurement, and it has to be the
+    LIVE one — a payload carrying a hardcoded 45 would keep reading correct
+    right up until the day the TTL is ruled to 65, and then be silently wrong.
+
+    🔴 The value assertion below is a TAUTOLOGY while the constant equals 45,
+    and a mutation replacing `RESPONSE_CACHE_TTL_S` with the literal `45`
+    SURVIVED it on the first pass. Reported in the LAT-P074 report rather than
+    quietly tightened (doctrine clause 16, banked this window and paying out
+    inside it for the second time). The source assertion is the tightening: it
+    bites today, and the value assertion becomes real the moment the TTL moves.
+    """
+    import inspect
+
+    from app.routes import admin_celery
+
+    body = inspect.getsource(admin_celery.typeahead_warmer_last).split('"""', 2)[-1]
+    # COUNT, not `in`. The handler has TWO call sites that take the TTL — the
+    # `summarise` path and the `unreadable` path — and a substring check is
+    # satisfied by either one surviving. The mutation that hardcoded `45` in the
+    # `summarise` call survived a bare `in` twice, for exactly that reason.
+    assert body.count("ttl_s=RESPONSE_CACHE_TTL_S") == 2, (
+        "BOTH the ok path and the unreadable path must pass the live constant, "
+        "not a literal that happens to equal it today"
+    )
+
+    payload, _ = _call_endpoint([json.dumps(_pass(1.0, 47.776, 50.0))], {})
+    assert payload["response_cache_ttl_s"] == RESPONSE_CACHE_TTL_S
+
+
+def test_a_raising_redis_returns_unreadable_not_a_500_and_not_a_zero():
+    payload, _ = _call_endpoint([], {}, boom=True)
+
+    assert payload["status"] == STATUS_UNREADABLE
+    assert payload["passes"]["n"] is None
+    assert "redis is gone" in payload["reason"]
+
+
+def test_the_handler_reports_a_firing_but_skipping_warmer():
+    payload, _ = _call_endpoint([], {"skips:lock": "9"})
+
+    assert payload["status"] == STATUS_OK
+    assert payload["passes"]["n"] == 0
+    assert payload["skips"]["by_reason"] == {"lock": 9}

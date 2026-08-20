@@ -17,7 +17,7 @@ Fable, 2026-08-19:
 
 | quantity | value | where it came from |
 |---|---|---|
-| worst measured pass wall | **53.920 s** | pass-only, n=17+6, §2 |
+| worst measured pass wall | **53.920 s** | pass-only, n=30, §2 |
 | quantised period at the live 10 s beat | **60 s** | `10 × ceil(53.920/10)` |
 | margin | **5 s** | `SAFETY_MARGIN_S`, the module's OWN existing constant |
 | **derived TTL** | **65 s** | 60 + 5 |
@@ -65,8 +65,8 @@ saturated 50-sample ring, 1,261 s window
   passes (n=17):   32,852 .. 48,939 ms
 ```
 
-Six further passes were sampled directly off `last_result_summary` over
-00:15–00:31Z, one of which reached **53.920 s**.
+Thirteen further passes were sampled directly off `last_result_summary` over
+00:15–01:05Z (walls 35.114–53.920 s), one of which reached **53.920 s**.
 
 ```
 PASS-ONLY WALL     min 32.852 s   p50 40.991 s   p95 47.862 s   max 53.920 s
@@ -98,36 +98,53 @@ Swapping the constants is the first thing to do once the TTL is ruled.
 Fable asked for the prediction "cache-entry loss goes to zero". **Registered
 honestly, it splits in two, and the second half is the finding of this window.**
 
-### The dose-response curve, measured, six passes
+### The dose-response curve, measured, THIRTEEN passes — and the knee is located to 0.4 s
 
 `expired` is the warmer counting entries whose cache key was **already gone**
 when the pass reached them — i.e. cache-entry loss a user typing that prefix
-paid for. Against the measured pass period:
+paid for. Against the measured pass period, thirteen passes, 2026-08-20T00:15–01:05Z:
 
-| pass period | `expired` (of 40) |
-|---|---|
-| 40.102 s | **0** |
-| 49.897 s | **1** |
-| 196.240 s | **40** |
-| 236.937 s | **40** |
-| 275.923 s | **40** |
-| 294.663 s | **40** |
+| pass period | wall | `expired` (of 40) |
+|---|---|---|
+| 40.102 s | 46.195 s | **0** |
+| 40.714 s | 35.460 s | **0** |
+| 43.825 s | 36.035 s | **0** |
+| 49.897 s | 40.546 s | **1** |
+| — | | ← **the knee, inside a 0.4 s window** |
+| 50.314 s | 50.647 s | **40** |
+| 55.429 s | 40.620 s | **40** |
+| 196.240 s | 39.266 s | **40** |
+| 215.515 s | 35.114 s | **40** |
+| 236.937 s | 46.871 s | **40** |
+| 275.923 s | 47.776 s | **40** |
+| 294.663 s | 53.920 s | **40** |
+| 502.487 s | 42.622 s | **40** |
+| 547.187 s | 36.596 s | **40** |
 
-Monotone, and a step rather than a gradient — LAT-P063's 20-for-20 result
-reproducing exactly. **Four of six passes find the ENTIRE 40-entry head dead.**
+Monotone in the period, flat in the wall, and a **step rather than a gradient** —
+LAT-P063's 20-for-20 result reproducing exactly, and now with the step's location
+pinned rather than inferred. **Nine of thirteen passes find the ENTIRE 40-entry head
+dead.**
+
+**The effective cliff is ~50 s, not 45 s.** The step sits about 5 s above the
+nominal TTL, because an entry's 45 s clock starts when the route *rewrites* it
+part-way through a pass, not when the pass begins. That grace is real, measured,
+and small — it does not rescue anything, since the failing periods are 4–11×
+over it.
 
 ### P1 — holds. Loss goes to zero in the healthy period regime.
 
-At 65 s, every pass with a period ≤ 60 s loses nothing. Measured: the 40.1 s and
-49.9 s passes, `expired` 0 and 1. `derive_response_ttl_s` returns `SUFFICIENT`
-for both.
+At 65 s the effective cliff moves to ~70 s, and every pass under it loses
+nothing. Measured across the thirteen: 40.1, 40.7, 43.8, 49.9, 50.3 and 55.4 s — **six of
+thirteen**, against **four of thirteen** today. `derive_response_ttl_s` returns
+`SUFFICIENT` for each.
 
 ### P2 — DOES NOT HOLD. The TTL cannot touch the stalled regime.
 
-At 65 s, a pass arriving 196–295 s after the last one still finds all 40 entries
-dead. Driving loss to zero across the **observed** distribution needs
-`TTL ≥ 300 s` — a five-minute-stale typeahead, which is a different
-conversation and is **not** recommended here.
+At 65 s, a pass arriving 196–547 s after the last one still finds all 40 entries
+dead — **seven of thirteen**, unchanged. Driving loss to zero across the **observed**
+distribution needs `TTL ≥ 553 s`: a nine-minute-stale typeahead, which is a
+different conversation and is **not** recommended here.
 
 `derive_response_ttl_s(measured_period_s=294.663)` returns
 `INSUFFICIENT_FOR_PREDICTION`, by design: the number is real, the claim attached
@@ -147,13 +164,23 @@ the database. Rollback is the same one-line change in reverse.
 
 ### Honest payoff, since P2 fails
 
-At the observed 2-of-6 healthy-regime rate, a 65 s TTL removes cache-entry loss
-on roughly **a third** of passes. It is cheap, it is reversible, and it is the
-first change that makes the live beat grade SAFE — but it is not the fix.
+Two ways of counting, both stated, because they differ and the smaller one is
+the one a user feels:
+
+| measure | today (TTL 45) | at TTL 65 |
+|---|---|---|
+| passes losing the ENTIRE head | 9 of 13 | **7 of 13** |
+| **time-weighted: head COLD** | **75.5 %** | **69.8 %** |
+
+The per-pass count improves by 22 %; the **time-weighted** number improves by
+**5.7 percentage points**, because the cold time is dominated by the seven
+stalls of 196–547 s that no reachable TTL covers. The TTL is cheap, reversible,
+and the first change that makes the live beat grade SAFE. **It is not the fix,
+and the honest headline is 5.7 points, not a third.**
 
 ---
 
-## 4. 🔴 What the derivation found instead: the PERIOD has regressed 4–6×
+## 4. 🔴 What the derivation found instead: the PERIOD has regressed 3.8–10.6×
 
 The binding quantity is the period, and it is no longer what this program
 believes it to be.
@@ -161,12 +188,15 @@ believes it to be.
 | | period |
 |---|---|
 | LAT-P062, two production reads | 42.5 – 51.7 s |
-| **LAT-P074, six production passes, 2026-08-20T00:15–00:31Z** | **40.1 – 294.7 s, p50 216.6 s** |
+| **LAT-P074, thirteen production passes, 2026-08-20T00:15–01:05Z** | **40.1 – 547.2 s, p50 196.2 s** |
 
-A 216 s median against a 45 s TTL means the warmed head is cold for roughly
-**80 % of every cycle**, and #1866's own number for what a user then pays is
-**1.16 – 2.29 s p50** against a `<150 ms` budget. This is the user-felt cliff
-Fable promoted #1866 for, and it is deeper than the 0.4 s margin suggested.
+Time-weighted over the thirteen measured cycles — `sum(min(effective_cliff, period)) /
+sum(period)`, which is the probability a randomly-timed user hits a cold head —
+**the warmed head is COLD 75.5 % of the time**. #1866's own number for what that
+user then pays is **1.16 – 2.29 s p50** against a `<150 ms` budget.
+
+This is the user-felt cliff Fable promoted #1866 for, and it is not 0.4 s away.
+It has already been crossed, and it is crossed most of the time.
 
 ### The mechanism is already filed, and it is bigger than its issue says
 
@@ -216,8 +246,11 @@ ships neither.
 
 * Pass-only wall + no-op ceiling: `GET /api/admin/celery/task-metrics/warm_typeahead`,
   2026-08-20T00:15Z, saturated 50-sample ring / 1,261 s window.
-* Six pass summaries with `period_s` and `expired`: `last_result_summary`
-  sampled at 20 s, deduped on `last_success_at`, 2026-08-20T00:19–00:31Z.
+* Thirteen pass summaries with `period_s` and `expired`: `last_result_summary`
+  sampled at 20 s, deduped on `last_success_at`, 2026-08-20T00:19–01:05Z. The
+  dedupe key makes this a PASS-ONLY sampler by construction: a skip returns
+  `terminal: skipped`, which `verdict_for` classifies non-authoritative-unknown,
+  so it never moves `last_success_at`. Verified: 0 skip summaries in 16 samples.
   Series: `docs/audits/latency/lat-p074-warmer-passes.jsonl`.
 * Adherence correlation: `GET /api/admin/celery/schedule-adherence`,
   2026-08-20T00:3xZ, 106 graded entries.
@@ -226,7 +259,7 @@ ships neither.
 * Tests: `backend/tests/test_typeahead_pass_ring.py` (30), 12 mutations.
 
 **Sample-size caveat, stated because every margin here inherits it:** the wall
-maximum stands on 23 passes and the period distribution on 6. A maximum drawn
+maximum stands on 30 passes and the period distribution on 13. A maximum drawn
 from a finite sample is a LOWER bound on the true maximum — which is exactly how
 42.6 s came to be wrong by 11.3 s. The endpoint shipped this window exists so
 that the next derivation reads a live distribution instead of a constant.
