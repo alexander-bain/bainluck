@@ -190,6 +190,99 @@ ABSENT_REFUSE = "refuse"
 ABSENT_UNBOUND = "unbound"
 
 
+# ── WHEN THE NATIVE ARM MAY FLIP TO FAIL-CLOSED (#1933, UX-P112) ─────────────────
+#
+# The constant above promises the flip happens "when the gated build is the only
+# one in the field". That sentence is not checkable, and an uncheckable condition
+# is settled by whoever argues hardest on the day. These three numbers make it a
+# query.
+#
+# ** THE LEG THAT IS NOT OBVIOUS IS THE TRAFFIC FLOOR, AND IT IS THE LOAD-BEARING
+# ONE. ** "unbound = 0 over N days" is satisfied perfectly by N days in which
+# nobody labelled anything — and this exact table contains a 77-day silence
+# (2026-05-25 → 2026-08-10). A criterion with only the zero-leg would have been
+# passable for eleven straight weeks on no evidence whatsoever. Same class as
+# gotcha #53: an empty result is a response shape, not a fact, and the remedy is
+# a second signal that says the instrument was pointed at something.
+#
+#: N. Measured from Alex's real cadence: `ranking_judgments` distinct labelling
+#: days run 2026-08-10 → 08-14 → 08-17 → 08-20, i.e. a gap of **3–4 days**. A
+#: 14-day window therefore spans three to four separate labelling sessions, so a
+#: clean window is a claim about several independent app launches rather than one
+#: good night. It is also comfortably longer than the longest recent gap, so a
+#: single skipped week cannot satisfy it.
+FLIP_WINDOW_DAYS = 14
+#: The window must contain real gated traffic. One session is dozens of cards (52
+#: rows landed in a single ten-day stretch), so 20 is well inside one session's
+#: output while being far above incidental noise.
+FLIP_MIN_BOUND = 20
+#: …spread across at least three distinct days. One long session cannot retire a
+#: build: the old binary is retired by not being *launched*, and a single day
+#: observes a single launch.
+FLIP_MIN_DAYS = 3
+
+
+def flip_readiness(
+    *,
+    bound: int,
+    unbound: int,
+    distinct_days: int,
+    window_days: int = FLIP_WINDOW_DAYS,
+) -> dict:
+    """Is it safe to flip the native arm from ``unbound`` to ``refuse``?
+
+    Every leg is reported with its own verdict, never folded into one boolean —
+    a criterion that answers only "no" tells nobody which leg to go work on, and
+    the interesting failure (a quiet window) looks identical to the dangerous one
+    (an old build still writing) unless they are named apart.
+
+    Pure. The flip is a decision about a policy constant, so the thing that
+    decides it must be provable without a database.
+    """
+    legs = [
+        {
+            "leg": "no_unbound_writes",
+            "requirement": f"unbound == 0 over the last {window_days}d",
+            "observed": unbound,
+            "pass": unbound == 0,
+            "why": (
+                "an unbound write is a client that does not declare the gate — "
+                "flipping while one is still writing refuses its labels outright"
+            ),
+        },
+        {
+            "leg": "window_had_traffic",
+            "requirement": f"bound >= {FLIP_MIN_BOUND}",
+            "observed": bound,
+            "pass": bound >= FLIP_MIN_BOUND,
+            "why": (
+                "zero unbound over a silent window is not evidence; this table "
+                "has already gone 77 days without a single write"
+            ),
+        },
+        {
+            "leg": "traffic_spanned_sessions",
+            "requirement": f"distinct labelling days >= {FLIP_MIN_DAYS}",
+            "observed": distinct_days,
+            "pass": distinct_days >= FLIP_MIN_DAYS,
+            "why": (
+                "an old build is retired by not being launched, and one day "
+                "observes one launch"
+            ),
+        },
+    ]
+    return {
+        "ready": all(leg["pass"] for leg in legs),
+        "window_days": window_days,
+        "legs": legs,
+        "blocked_on": [leg["leg"] for leg in legs if not leg["pass"]],
+        "on_flip": (
+            "set on_absent=ABSENT_REFUSE in admin_judgments.create_judgment and "
+            "record the date here; the three legs are the evidence it was safe."
+        ),
+    }
+
+
 def drift_outcome(
     posted: Any,
     live_fingerprint: str | None,

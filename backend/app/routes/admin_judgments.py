@@ -27,14 +27,23 @@ from app.utils.card_integrity import display_scale, field_coherence, is_unlabela
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.graded_card import (
     ABSENT_UNBOUND,
+    FLIP_WINDOW_DAYS,
     NATIVE_SERVED_OUTCOMES,
     OMITTED,
     card_fingerprint,
     drift_outcome,
+    flip_readiness,
 )
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
+from app.utils.gold_label_store import (
+    ORIGIN_KEY,
+    gold_label_row,
+    label_origin,
+    normalize_card_snapshot as _normalize_card_snapshot,
+    structured_label_metadata as _structured_label_metadata,
+)
 from app.utils.labeling_queue import load_reviewed_ranking_keys
-from app.utils.reviewer_tier import TIER_ALEX, with_tier
+from app.utils.reviewer_tier import TIER_ALEX
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
@@ -829,135 +838,6 @@ def _build_fixable_clusters(rows: list[RankingJudgment]) -> list[dict[str, Any]]
     return clusters
 
 
-def _structured_label_metadata(
-    body: dict[str, Any],
-    explicit_metadata: Any,
-    *,
-    gate: dict[str, Any] | None = None,
-    live_card: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    metadata = dict(explicit_metadata) if isinstance(explicit_metadata, dict) else {}
-    card_snapshot = body.get("card_snapshot")
-    if card_snapshot is None:
-        card_snapshot = metadata.pop("card_snapshot", None)
-    if isinstance(card_snapshot, dict):
-        metadata["card_snapshot"] = _normalize_card_snapshot(card_snapshot)
-
-    # ── THE CARD FIELDS ARE DERIVED, THE CONTEXT FIELDS ARE ACCEPTED ─────────
-    #
-    # UX-P110's finding on the web side, applied here: the snapshot on a stored
-    # judgment used to be whatever the phone posted, unvalidated, and it is read
-    # back as the record of what Alex saw. So the fields the server can verify
-    # are overwritten from the card this transaction actually re-derived, and the
-    # ones only the client knows — which sampling batch, which feed request,
-    # what rank it sat at — are kept as sent. Which half is which is written on
-    # the row rather than left for a reader to guess.
-    if live_card is not None:
-        snapshot = dict(metadata.get("card_snapshot") or {})
-        # Keep the posted copy beside the derived one when they differ, never
-        # instead of it. Queue 355's `snapshot_at_write` reasoning: a fix that
-        # silently swaps the stale value for the fresh one destroys the evidence
-        # for its own necessity.
-        posted_name = snapshot.get("name")
-        if posted_name and posted_name != live_card.get("name"):
-            snapshot["name_at_post"] = posted_name
-        for key in ("name", "top_outcomes", "rendered_probability"):
-            value = live_card.get(key)
-            if value is not None:
-                snapshot[key] = value
-        snapshot["field_coherent"] = live_card.get("field_coherent")
-        snapshot["resolution_date"] = live_card.get("resolution_date")
-        snapshot["card_fields_source"] = "server_derived"
-        metadata["card_snapshot"] = snapshot
-
-    if gate is not None:
-        # Never absent, never implied. A store that cannot say which of its rows
-        # were gated cannot report its own coverage, and "no drift_gate key"
-        # would read as "fine" to every future reader (ruling 086).
-        metadata["drift_gate"] = {
-            "bound": gate["status"] == "bound",
-            "reason": gate.get("reason"),
-            "fingerprint": gate.get("fingerprint") or gate.get("expected"),
-            "surface": "native_ranking_judgment",
-        }
-
-    fixable_keys = [
-        "would_be_interesting_if",
-        "fixable_interest_score",
-        "fix_type",
-        "desired_entity_or_variant",
-        "current_entity_or_variant",
-        "create_issue_candidate",
-    ]
-    top_level_fixable = {
-        key: metadata.pop(key)
-        for key in list(metadata.keys())
-        if key in fixable_keys and metadata[key] not in (None, "")
-    }
-    fixable = {
-        key: body[key]
-        for key in fixable_keys
-        if key in body and body[key] not in (None, "")
-    }
-    if top_level_fixable:
-        fixable = {**top_level_fixable, **fixable}
-    if fixable:
-        existing = metadata.get("fixable_interest")
-        if isinstance(existing, dict):
-            fixable = {**existing, **fixable}
-        metadata["fixable_interest"] = fixable
-    return metadata or None
-
-
-def _normalize_card_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Keep a compact, stable copy of the card state the reviewer saw."""
-
-    allowed_keys = [
-        "batch_id",
-        "feed_request_id",
-        "rank",
-        "item_type",
-        "item_id",
-        "market_id",
-        "event_id",
-        "name",
-        "source",
-        "category",
-        "archetype",
-        "quality_class",
-        "headline",
-        "reason",
-        "context",
-        "hook_description",
-        "image_url",
-        "story_key",
-        "family_key",
-        "group_id",
-        "score",
-        "rendered_probability",
-        "top_outcomes",
-        "reasons",
-        "has_hook",
-        "has_image",
-        "explanation_ok",
-        "stratum",
-        "selection_reason",
-    ]
-    normalized: dict[str, Any] = {}
-    for key in allowed_keys:
-        value = snapshot.get(key)
-        if value in (None, ""):
-            continue
-        if isinstance(value, (str, int, float, bool)):
-            normalized[key] = value
-        elif key in {"top_outcomes", "reasons"} and isinstance(value, list):
-            normalized[key] = value[:5] if key == "top_outcomes" else value[:12]
-        elif isinstance(value, dict):
-            normalized[key] = value
-    normalized["schema_version"] = snapshot.get("schema_version") or "discover-card-v1"
-    return normalized
-
-
 @router.post("")
 async def create_judgment(
     request: Request,
@@ -1095,8 +975,10 @@ async def create_judgment(
         if admin_email:
             reviewer_value = admin_email
 
-    judgment = RankingJudgment(
-        surface=_merged_value(body, "surface", surface, "discover"),
+    surface_value = _merged_value(body, "surface", surface, "discover")
+
+    judgment = gold_label_row(
+        surface=surface_value,
         rank_seen=_merged_value(body, "rank_seen", rank_seen),
         item_type=_merged_value(body, "item_type", item_type, "futures"),
         market_id=_merged_value(body, "market_id", market_id),
@@ -1131,15 +1013,17 @@ async def create_judgment(
         # is Alex's, so it writes `alex` — the kid surface gets its own route
         # with no code path that can write anything but `kid`, rather than a
         # flag on this one that a caller has to remember to set.
-        label_metadata=with_tier(
-            _structured_label_metadata(
-                body,
-                _merged_value(body, "label_metadata", None),
-                gate=gate,
-                live_card=live_row,
-            ),
-            TIER_ALEX,
+        tier=TIER_ALEX,
+        metadata=_structured_label_metadata(
+            body,
+            _merged_value(body, "label_metadata", None),
+            gate=gate,
+            live_card=live_row,
         ),
+        # This surface elicits the gold label itself — Alex taps love/fine/bad/
+        # kill on the card. Nothing is inferred, and the row says so, because the
+        # label pass's converged rows sit in the same table and theirs is.
+        origin=label_origin(surface=surface_value, mapping="direct"),
         fixable_interesting=bool(
             _merged_value(body, "fixable_interesting", fixable_interesting, False)
         ),
@@ -1390,6 +1274,11 @@ async def labeling_coverage(
     # rather than a silence.
     drift_gate_tally: dict[str, int] = {"bound": 0, "unbound": 0, "unrecorded": 0}
     unbound_reasons: dict[str, int] = {}
+    # #1933 bullet 2. The converged store holds labels the human picked directly
+    # and labels inferred from a verdict on someone else's proposal. Both belong
+    # here; a reader who cannot tell them apart does not have a gold set, so the
+    # count is reported next to the total rather than hidden inside it.
+    by_origin: dict[str, dict[str, int]] = {}
     total_reviewed = 0
     today_str = now.strftime("%Y-%m-%d")
     week_ago = now - timedelta(days=7)
@@ -1423,6 +1312,21 @@ async def labeling_coverage(
             drift_gate_tally["unbound"] += 1
             reason = gate_row.get("reason") or "unspecified"
             unbound_reasons[reason] = unbound_reasons.get(reason, 0) + 1
+
+        origin = metadata.get(ORIGIN_KEY)
+        if not isinstance(origin, dict):
+            # Written before the store converged. `direct` is the correct
+            # reading — every pre-convergence row in this table came from a
+            # surface where Alex picked the label himself — but it is stated as
+            # a legacy reading rather than silently merged into the new one.
+            origin_surface, origin_mapping = (j.surface or "unknown"), "legacy_direct"
+        else:
+            origin_surface = origin.get("surface") or (j.surface or "unknown")
+            origin_mapping = origin.get("mapping") or "unspecified"
+        by_origin.setdefault(origin_surface, {})
+        by_origin[origin_surface][origin_mapping] = (
+            by_origin[origin_surface].get(origin_mapping, 0) + 1
+        )
 
         by_stratum.setdefault(stratum, {})
         by_stratum[stratum][label] = by_stratum[stratum].get(label, 0) + 1
@@ -1490,6 +1394,46 @@ async def labeling_coverage(
         s["stratum"] for s in stratum_heatmap if not s["sufficient"]
     ]
 
+    # ── THE FAIL-CLOSED FLIP CRITERION, COMPUTED (#1933, UX-P112) ────────────
+    #
+    # Over its OWN fixed window, deliberately not the caller's `window` param.
+    # A criterion whose window is a query string is a criterion anyone can pass
+    # by asking for a shorter one, and the point of writing it down was to stop
+    # the flip being a debate.
+    flip_cutoff = now - timedelta(days=FLIP_WINDOW_DAYS)
+    flip_rows = (
+        (
+            await db.execute(
+                select(RankingJudgment).where(RankingJudgment.created_at >= flip_cutoff)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    flip_bound = 0
+    flip_unbound = 0
+    flip_unbound_reasons: dict[str, int] = {}
+    flip_days: set[str] = set()
+    for j in flip_rows:
+        meta = j.label_metadata if isinstance(j.label_metadata, dict) else {}
+        gate_row = meta.get("drift_gate")
+        if not isinstance(gate_row, dict):
+            continue
+        if gate_row.get("bound"):
+            flip_bound += 1
+            if j.created_at:
+                flip_days.add(j.created_at.strftime("%Y-%m-%d"))
+        else:
+            flip_unbound += 1
+            reason = gate_row.get("reason") or "unspecified"
+            flip_unbound_reasons[reason] = flip_unbound_reasons.get(reason, 0) + 1
+    flip = flip_readiness(
+        bound=flip_bound,
+        unbound=flip_unbound,
+        distinct_days=len(flip_days),
+    )
+    flip["unbound_reasons"] = flip_unbound_reasons
+
     return {
         "window": window,
         "total_reviewed": total_reviewed,
@@ -1510,6 +1454,10 @@ async def labeling_coverage(
                 "existed; nothing was asked of those rows, so they are neither."
             ),
         },
+        # #1933 bullet 2 — one store, and it can say where each label came from.
+        "by_origin": by_origin,
+        # #1933 item 3 — the flip from capability-bind to fail-closed is a check.
+        "flip_readiness": flip,
         "generated_at": now.isoformat(),
     }
 

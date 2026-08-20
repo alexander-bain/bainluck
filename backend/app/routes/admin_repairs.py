@@ -21,7 +21,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
              | event-create-from-truth | team-identity-mapping-repair
-             | event-espn-id }
+             | event-espn-id | label-store-converge }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -34,7 +34,9 @@ transactional session and RETURNS its own before/after census in the response bo
      team-identity-mapping-repair in the commit that registered it. Re-synced
      again 2026-08-19, queue 375, adding event-espn-id in the commit that
      registered it — and the two guard tests caught the omission before the
-     push, which answers whether this comment is decoration.)
+     push, which answers whether this comment is decoration. Re-synced again
+     2026-08-20, UX-P112, adding label-store-converge in the commit that
+     registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -325,6 +327,20 @@ _REPAIRS = {
     # Accepts ?population=&plan_hash=&probe=. ATTENDED ONLY: never wire to a beat.
     "event-espn-id": (
         "app.tasks.repair_event_espn_id",
+        "repair",
+    ),
+    # UX-P112 (#1933 bullet 2): the BACKWARD half of the label-store
+    # convergence. The forward half is in `label_pass_verdict`, which now writes
+    # its gold label as the verdict is given; this converges the 198 gradeable
+    # futures verdicts already in `discover_review_decisions` and invisible to
+    # every consumer of the gold set since June. Idempotent by
+    # `label_metadata -> 'label_origin' ->> 'source_decision_id'`, which both
+    # halves stamp, so it is safe to re-invoke after the deploy. Preserves each
+    # verdict's original `created_at` (a backdated corpus that all lands today
+    # would move every row inside the trailing window the fail-closed flip
+    # criterion is measured over). Accepts ?limit=.
+    "label-store-converge": (
+        "app.tasks.converge_label_stores",
         "repair",
     ),
 }

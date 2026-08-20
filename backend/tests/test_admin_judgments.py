@@ -209,6 +209,11 @@ def test_create_judgment_accepts_json_body(monkeypatch):
             "fingerprint": None,
             "surface": "native_ranking_judgment",
         },
+        # #1933 bullet 2. The gold store is now shared with the label pass,
+        # whose rows carry a label INFERRED from a verdict on someone else's
+        # proposal. This surface elicits the label directly, and the row says so
+        # — without it the two are indistinguishable once they are in one table.
+        "label_origin": {"surface": "discover", "mapping": "direct"},
     }
 
 
@@ -285,6 +290,10 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
             "fingerprint": None,
             "surface": "native_ranking_judgment",
         },
+        # #1933 bullet 2: one store now, so every row states how its label was
+        # obtained. `direct` = the human picked it; the converged label-pass
+        # rows carry `affirmed`/`negated` instead.
+        "label_origin": {"surface": "discover", "mapping": "direct"},
     }
 
 
@@ -591,6 +600,10 @@ def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
             "fingerprint": None,
             "surface": "native_ranking_judgment",
         },
+        # #1933 bullet 2: one store now, so every row states how its label was
+        # obtained. `direct` = the human picked it; the converged label-pass
+        # rows carry `affirmed`/`negated` instead.
+        "label_origin": {"surface": "discover", "mapping": "direct"},
     }
 
 
