@@ -1111,9 +1111,13 @@ async def _backfill_espn_ids(limit: int = 1000):
     """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport
+    from app.utils.espn_candidate_selection import select_authorized_espn_candidate
     import asyncio as _asyncio
 
-    stats = {"dates_checked": 0, "events_matched": 0, "already_had_id": 0, "errors": 0}
+    stats = {
+        "dates_checked": 0, "events_matched": 0, "already_had_id": 0,
+        "errors": 0, "events_refused": 0,
+    }
 
     espn_sports = list(ESPN_SPORT_MAPPING.keys())
 
@@ -1171,19 +1175,32 @@ async def _backfill_espn_ids(limit: int = 1000):
 
                     for event in date_events:
                         home_names, away_names = get_event_name_variations(event)
-                        for ee in espn_events:
-                            if not ee.home_team or not ee.away_team:
-                                continue
-                            if (espn_team_matches(home_names, ee.home_team)
-                                    and espn_team_matches(away_names, ee.away_team)):
-                                event.espn_id = ee.espn_id
-                                stats["events_matched"] += 1
-                                logger.info(
-                                    f"ESPN ID backfill: matched event {event.id} "
-                                    f"({event.home_team_name} vs {event.away_team_name}) "
-                                    f"→ ESPN {ee.espn_id}"
-                                )
-                                break
+                        # #2049: was "first team-name match in the date
+                        # scoreboard, raw ORM stamp, no time gate at all" — one
+                        # of the five sibling manufacturers codex censused.
+                        matched, reason = select_authorized_espn_candidate(
+                            espn_events,
+                            event.commence_time,
+                            is_name_match=lambda ee: (
+                                espn_team_matches(home_names, ee.home_team)
+                                and espn_team_matches(away_names, ee.away_team)
+                            ),
+                        )
+                        if matched is not None:
+                            event.espn_id = matched.espn_id
+                            stats["events_matched"] += 1
+                            logger.info(
+                                f"ESPN ID backfill: matched event {event.id} "
+                                f"({event.home_team_name} vs {event.away_team_name}) "
+                                f"→ ESPN {matched.espn_id}"
+                            )
+                        elif reason != "no-name-match":
+                            stats["events_refused"] = stats.get("events_refused", 0) + 1
+                            logger.info(
+                                f"ESPN ID backfill REFUSED event {event.id} "
+                                f"({event.home_team_name} vs {event.away_team_name}): "
+                                f"{reason}"
+                            )
 
                     await _asyncio.sleep(0.5)
 

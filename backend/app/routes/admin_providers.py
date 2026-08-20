@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, get_db_rw
 from app.utils import probability_to_american
+from app.utils.espn_candidate_selection import select_authorized_espn_candidate
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
 router = APIRouter()
@@ -927,6 +928,10 @@ async def sync_espn_live_events(
     matched = []
     updated = []
     llm_matched = []
+    #: #2049 / gotcha #53 — a name hit the same-game gate REFUSED is a different
+    #: fact from no name hit at all, and an operator reading only "matched: 0"
+    #: cannot tell a coverage gap from a suppressed manufacture.
+    refused: list[dict] = []
 
     def names_match(our_names: list, espn_name: str) -> bool:
         """Check if any of our name variations match the ESPN name."""
@@ -954,49 +959,64 @@ async def sync_espn_live_events(
         if event.away_team_alt_names:
             away_names.extend(event.away_team_alt_names)
 
-        # Try to match by team names
+        # Try to match by team names.
+        # #2049: this rail took the first substring/LLM name hit among ALL
+        # scheduled/live rows and then OVERWROTE an existing espn_id, with no
+        # time gate whatsoever — the most permissive of the five siblings codex
+        # censused. Both arms now select the nearest candidate and stamp only
+        # if the same-game gate authorizes it.
         espn_event = None
         match_method = None
 
-        for ee in espn_events:
-            if not ee.home_team or not ee.away_team:
-                continue
-
-            espn_home = ee.home_team.display_name or ee.home_team.name or ""
-            espn_away = ee.away_team.display_name or ee.away_team.name or ""
-
-            # Check if team names match using all variations
-            home_match = names_match(home_names, espn_home)
-            away_match = names_match(away_names, espn_away)
-
-            if home_match and away_match:
-                espn_event = ee
-                match_method = "name_match"
-                break
+        espn_event, _name_reason = select_authorized_espn_candidate(
+            espn_events,
+            event.commence_time,
+            is_name_match=lambda ee: (
+                names_match(home_names, ee.home_team.display_name or ee.home_team.name or "")
+                and names_match(away_names, ee.away_team.display_name or ee.away_team.name or "")
+            ),
+        )
+        if espn_event is not None:
+            match_method = "name_match"
+        elif _name_reason != "no-name-match":
+            refused.append({
+                "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                "reason": _name_reason,
+                "arm": "name_match",
+            })
 
         # LLM fallback for unmatched events (skip if skip_llm=true to avoid timeout)
         if not espn_event and not skip_llm and llm.is_available():
-            for ee in espn_events:
-                if not ee.home_team or not ee.away_team:
-                    continue
-
+            def _llm_match(ee) -> bool:
                 espn_home = ee.home_team.display_name or ee.home_team.name or ""
                 espn_away = ee.away_team.display_name or ee.away_team.name or ""
-
-                # Use LLM to compare team names
                 home_conf = llm.match_team_names_cached(event.home_team_name, espn_home, sport_key)
                 away_conf = llm.match_team_names_cached(event.away_team_name, espn_away, sport_key)
+                return home_conf >= 0.8 and away_conf >= 0.8
 
-                if home_conf >= 0.8 and away_conf >= 0.8:
-                    espn_event = ee
-                    match_method = "llm"
-                    llm_matched.append({
-                        "our_event": f"{event.away_team_name} @ {event.home_team_name}",
-                        "espn_event": f"{espn_away} @ {espn_home}",
-                        "home_confidence": home_conf,
-                        "away_confidence": away_conf,
-                    })
-                    break
+            espn_event, _llm_reason = select_authorized_espn_candidate(
+                espn_events, event.commence_time, is_name_match=_llm_match,
+            )
+            if espn_event is not None:
+                match_method = "llm"
+                _espn_home = espn_event.home_team.display_name or espn_event.home_team.name or ""
+                _espn_away = espn_event.away_team.display_name or espn_event.away_team.name or ""
+                llm_matched.append({
+                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                    "espn_event": f"{_espn_away} @ {_espn_home}",
+                    "home_confidence": llm.match_team_names_cached(
+                        event.home_team_name, _espn_home, sport_key
+                    ),
+                    "away_confidence": llm.match_team_names_cached(
+                        event.away_team_name, _espn_away, sport_key
+                    ),
+                })
+            elif _llm_reason != "no-name-match":
+                refused.append({
+                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                    "reason": _llm_reason,
+                    "arm": "llm",
+                })
 
         if espn_event:
             matched.append({
@@ -1095,6 +1115,8 @@ async def sync_espn_live_events(
         "updated": len(updated) if not dry_run else 0,
         "matches": matched[:15],
         "llm_matches": llm_matched[:10] if llm_matched else [],
+        "refused_count": len(refused),
+        "refused": refused[:10],
     }
 
 
@@ -1347,6 +1369,9 @@ async def backfill_espn_ids(
     matched = 0
     scanned = 0
     matches = []
+    #: #2049 / gotcha #53 — see the sibling rail above: a refused stamp must be
+    #: reported, not folded into "unmatched".
+    refused: list[dict] = []
 
     try:
         for (sport_key, date_str), group_events in groups.items():
@@ -1360,51 +1385,68 @@ async def backfill_espn_ids(
 
             for event in group_events:
                 scanned += 1
-                for ee in espn_events:
-                    if not ee.home_team or not ee.away_team:
-                        continue
+
+                def _orientation(ee) -> str | None:
                     espn_home = ee.home_team.display_name or ee.home_team.name or ""
                     espn_away = ee.away_team.display_name or ee.away_team.name or ""
+                    if (names_match(event.home_team_name, espn_home)
+                            and names_match(event.away_team_name, espn_away)):
+                        return "normal"
+                    if (names_match(event.home_team_name, espn_away)
+                            and names_match(event.away_team_name, espn_home)):
+                        return "swapped"
+                    return None
 
-                    # Match both teams (either orientation)
-                    normal = (
-                        names_match(event.home_team_name, espn_home) and
-                        names_match(event.away_team_name, espn_away)
-                    )
-                    swapped = (
-                        names_match(event.home_team_name, espn_away) and
-                        names_match(event.away_team_name, espn_home)
-                    )
-
-                    if normal or swapped:
-                        matches.append({
+                # #2049: each (sport, date) group previously took its FIRST name
+                # hit and raw-stamped it. Because every event is filed under BOTH
+                # its UTC date and the previous day, one event is scanned against
+                # two slates — so "first hit" was very often the neighbouring
+                # day's game. Nearest candidate, then the same-game gate.
+                ee, _reason = select_authorized_espn_candidate(
+                    espn_events,
+                    event.commence_time,
+                    is_name_match=lambda c: _orientation(c) is not None,
+                )
+                if ee is None:
+                    if _reason != "no-name-match":
+                        refused.append({
                             "event_id": event.id,
                             "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
-                            "espn_teams": f"{espn_home} vs {espn_away}",
-                            "espn_id": ee.espn_id,
                             "date": date_str,
                             "sport": sport_key,
-                            "orientation": "normal" if normal else "swapped",
+                            "reason": _reason,
                         })
+                    continue
 
-                        if not dry_run:
-                            event.espn_id = ee.espn_id
-                            # Also update win prob if ESPN has it
-                            if ee.home_win_probability is not None:
-                                event.espn_win_prob_home = ee.home_win_probability
-                                # #1829: stamped (same gotcha #4 caveat as the
-                                # sibling writer above).
-                                from app.utils.aggregation import (
-                                    stamp_source_reading as _stamp_espn,
-                                )
-                                event.win_probability_sources = _stamp_espn(
-                                    event.win_probability_sources,
-                                    "espn",
-                                    ee.home_win_probability,
-                                )
+                espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                espn_away = ee.away_team.display_name or ee.away_team.name or ""
+                matches.append({
+                    "event_id": event.id,
+                    "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                    "espn_teams": f"{espn_home} vs {espn_away}",
+                    "espn_id": ee.espn_id,
+                    "date": date_str,
+                    "sport": sport_key,
+                    "orientation": _orientation(ee),
+                })
 
-                        matched += 1
-                        break
+                if not dry_run:
+                    event.espn_id = ee.espn_id
+                    # Also update win prob if ESPN has it
+                    if ee.home_win_probability is not None:
+                        event.espn_win_prob_home = ee.home_win_probability
+                        # #1829: stamped (same gotcha #4 caveat as the
+                        # sibling writer above).
+                        from app.utils.aggregation import (
+                            stamp_source_reading as _stamp_espn,
+                        )
+                        event.win_probability_sources = _stamp_espn(
+                            event.win_probability_sources,
+                            "espn",
+                            ee.home_win_probability,
+                        )
+
+                matched += 1
 
         if not dry_run:
             await db.commit()
@@ -1436,6 +1478,8 @@ async def backfill_espn_ids(
         "match_rate": f"{matched*100/scanned:.1f}%" if scanned else "N/A",
         "matches": matches[:50],
         "unmatched": unmatched[:30],
+        "refused_count": len(refused),
+        "refused": refused[:20],
     }
 
 

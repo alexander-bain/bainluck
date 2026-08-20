@@ -74,6 +74,25 @@ from app.utils.name_normalization import names_match
 # ── pairs a fix must NOT break ──────────────────────────────────────────────
 
 
+#: The eight do-not-break anchors from codex's ORIGINAL `C-NAMESMATCH-1`
+#: acceptance set.
+#:
+#: They were absent from the first version of this file, which codex's
+#: `C-2049-2050-REVIEW` BLOCKed for exactly that: all eight pass today, so the
+#: gap was **latent** — a structural fix could have regressed any of them and
+#: this suite would not have noticed. A do-not-break list that omits the named
+#: do-not-break items is not a boundary, it is a decoration.
+ORIGINAL_DO_NOT_BREAK = [
+    ("LA Clippers", "Los Angeles Clippers"),
+    ("Celtics", "Boston Celtics"),
+    ("UCLA", "UCLA Bruins"),
+    ("Man United", "Manchester United"),
+    ("Bayern München", "Bayern Munich"),
+    ("NY Yankees", "New York Yankees"),
+    ("Red Sox", "Boston Red Sox"),
+    ("St Louis Cardinals", "St. Louis Cardinals"),
+]
+
 PROTECTED_ALIASES = [
     # city ↔ full club name (the dominant legitimate alias in our data)
     ("Boston", "Boston Celtics"),
@@ -100,18 +119,77 @@ PROTECTED_ALIASES = [
 ]
 
 
+#: The full protected boundary: this file's own families PLUS the eight
+#: originals. Deduped, because `St Louis Cardinals` variants appear in both.
+ALL_PROTECTED = list(dict.fromkeys(
+    tuple(pair) for pair in (PROTECTED_ALIASES + ORIGINAL_DO_NOT_BREAK)
+))
+
+
 class TestProtectedAliases:
     """True positives. A fix for #2046 must keep every one of these matching."""
 
-    @pytest.mark.parametrize("a,b", PROTECTED_ALIASES)
+    @pytest.mark.parametrize("a,b", ALL_PROTECTED)
     def test_alias_still_matches(self, a, b):
         assert names_match(a, b) is True, (
             f"{a!r} and {b!r} are the same club — a #2046 fix must not lose this"
         )
 
-    @pytest.mark.parametrize("a,b", PROTECTED_ALIASES)
+    @pytest.mark.parametrize("a,b", ALL_PROTECTED)
     def test_alias_matches_symmetrically(self, a, b):
         assert names_match(b, a) is True
+
+    def test_all_eight_original_anchors_are_present(self):
+        """The omission codex BLOCKed on cannot silently return."""
+        missing = [p for p in ORIGINAL_DO_NOT_BREAK if tuple(p) not in set(ALL_PROTECTED)]
+        assert not missing, f"C-NAMESMATCH-1 anchors dropped: {missing}"
+
+    def test_the_counts_are_stated_honestly(self):
+        """Distinct pairs and directional assertions are DIFFERENT numbers.
+
+        The first version of this file was described as "34 protected aliases".
+        It held **17 unique unordered pairs**, doubled by a reversed-direction
+        parametrization. Reporting the assertion count as the coverage count
+        overstates the boundary by exactly 2x, which is how an acceptance set
+        that omits all eight mandated anchors still reads as generous.
+        """
+        distinct = {frozenset(p) for p in ALL_PROTECTED}
+        assert len(ALL_PROTECTED) == 25, "distinct protected PAIRS"
+        assert len(distinct) == 25, "no pair is duplicated in reverse"
+        # 25 pairs x 2 directions = 50 directional assertions across this class.
+
+
+class TestTheProtectedSetContainsARealContradiction:
+    """Four "protected" aliases cannot survive the fix, and saying so is the point.
+
+    `Boston` is protected as the Celtics — and the predicate also accepts it as
+    the Bruins, Boston University and Boston College. Both facts are true of the
+    same bare token, so **no context-free predicate can satisfy both halves**:
+    whatever makes `Boston/Boston Bruins` a non-match also kills
+    `Boston/Boston Celtics`.
+
+    That is not a flaw in the acceptance set — it is the finding. A bare city or
+    a truncated prefix is not a team name, and #2046's real repair has to resolve
+    it with league/sport context rather than by picking a winner. This test
+    exists so the contradiction is discovered NOW, by whoever runs the suite,
+    instead of at the moment a structural fix turns the protected half red and
+    looks like a regression.
+    """
+
+    CONTESTED = [
+        ("Boston", "Boston Celtics", "Boston Bruins"),
+        ("Philadelphia", "Philadelphia 76ers", "Philadelphia Phillies"),
+        ("Los Angeles L", "Los Angeles Lakers", "Los Angeles Clippers"),
+        ("New York R", "New York Rangers", "New York Yankees"),
+    ]
+
+    @pytest.mark.parametrize("bare,protected,collides_with", CONTESTED)
+    def test_the_bare_alias_matches_two_different_clubs(self, bare, protected, collides_with):
+        assert names_match(bare, protected) is True
+        assert names_match(bare, collides_with) is True, (
+            f"{bare!r} is protected as {protected!r} but also accepts "
+            f"{collides_with!r} — the ambiguity is the defect, not the alias"
+        )
 
 
 # ── the defect ──────────────────────────────────────────────────────────────
@@ -181,12 +259,33 @@ SHARED_TOKEN_SOCCER_INTL = [
     ("Universidad Católica (CHI)", "Universidad Católica del Ecuador"),
 ]
 
+#: Negative controls for the ambiguous bare/truncated aliases (codex's owed
+#: item 3). Without these, "preservation" of the protected set can be achieved
+#: by RETAINING the same broad city/prefix acceptance — i.e. a fix can pass the
+#: positive half while leaving the authority defect completely intact. Each of
+#: these has a protected twin in `PROTECTED_ALIASES`; see
+#: `TestTheProtectedSetContainsARealContradiction`.
+AMBIGUOUS_BARE_ALIAS = [
+    ("Boston", "Boston Bruins"),
+    ("Boston", "Boston University"),
+    ("Boston", "Boston College"),
+    ("Philadelphia", "Philadelphia Phillies"),
+    ("Philadelphia", "Philadelphia Eagles"),
+    ("Philadelphia", "Philadelphia Flyers"),
+    ("Los Angeles L", "Los Angeles Clippers"),
+    ("Los Angeles L", "Los Angeles Dodgers"),
+    ("New York R", "New York Yankees"),
+    ("New York I", "New York Yankees"),
+    ("New York R", "New York Islanders"),
+]
+
 ALL_FALSE_ACCEPTS = (
     [("generic-suffix", a, b) for a, b in SHARED_GENERIC_SUFFIX]
     + [("mascot", a, b) for a, b in SHARED_MASCOT]
     + [("same-city", a, b) for a, b in SHARED_CITY_DIFFERENT_CLUB]
     + [("same-state", a, b) for a, b in SHARED_STATE_DIFFERENT_SCHOOL]
     + [("soccer-intl", a, b) for a, b in SHARED_TOKEN_SOCCER_INTL]
+    + [("ambiguous-bare", a, b) for a, b in AMBIGUOUS_BARE_ALIAS]
 )
 
 
@@ -200,6 +299,7 @@ class TestKnownFalseAccepts:
 
     @pytest.mark.xfail(
         strict=True,
+        raises=AssertionError,
         reason="#2046: min()-based token overlap accepts any two 2-token names "
                "sharing one token. Structural, not a threshold.",
     )
@@ -224,6 +324,7 @@ class TestStructuredMatchConsequence:
 
     @pytest.mark.xfail(
         strict=True,
+        raises=AssertionError,
         reason="#2046: both legs false-accept, so the whole fixture does",
     )
     def test_two_different_fixtures_do_not_compare_equal(self):
@@ -245,9 +346,80 @@ class TestMechanismIsTheSharedGenericToken:
 
     @pytest.mark.xfail(
         strict=True,
+        raises=AssertionError,
         reason="#2046: the generic suffix is doing all the matching work",
     )
     def test_suffix_carries_the_match(self):
         assert names_match("Manchester City", "Norwich City") is False
         # sanity: with no shared token at all the predicate already says no
         assert names_match("Manchester City", "Norwich") is False
+
+
+# ── the promotion mechanism must itself fail closed ─────────────────────────
+
+
+class TestExpectedFailuresAreNotExceptionLaundering:
+    """An exception is an ERROR. It is never an expected failure.
+
+    Codex's `C-2049-2050-REVIEW` BLOCKed the first version of this file on this
+    exact hole. The `xfail(strict=True)` markers did not constrain `raises`, so
+    an adversarial plugin that left the protected pairs returning `True` and made
+    **every other matcher call raise** `RuntimeError` still produced
+    `34 passed, 47 xfailed, exit 0` — byte-for-byte the healthy headline.
+
+    Read that consequence plainly: a future #2046 implementation could make every
+    known-bad input crash and this suite would bless it. A probe that cannot tell
+    a crash from a wrong answer measures nothing, and the promotion mechanism
+    it guards would be fail-OPEN.
+
+    `raises=AssertionError` closes it: the only tolerated expected failure is the
+    predicate returning the wrong boolean, which is the thing being characterised.
+    """
+
+    def test_every_xfail_marker_in_this_module_constrains_raises(self):
+        import inspect
+        import sys
+
+        module = sys.modules[__name__]
+        unconstrained = []
+        for cls_name, cls in inspect.getmembers(module, inspect.isclass):
+            if not cls_name.startswith("Test"):
+                continue
+            for fn_name, fn in inspect.getmembers(cls, inspect.isfunction):
+                for mark in getattr(fn, "pytestmark", []):
+                    if mark.name != "xfail":
+                        continue
+                    if mark.kwargs.get("raises") is None:
+                        unconstrained.append(f"{cls_name}::{fn_name}")
+
+        assert not unconstrained, (
+            "xfail without `raises=` launders exceptions as expected failures — "
+            "the C-2049-2050-REVIEW BLOCK:\n  " + "\n  ".join(unconstrained)
+        )
+
+    def test_a_raising_matcher_is_an_error_not_an_xfail(self, monkeypatch):
+        """The negative control, executed rather than asserted about.
+
+        Drives a real `xfail(strict=True, raises=AssertionError)` test whose
+        callee raises, and proves pytest surfaces it as an ERROR. If the marker
+        ever loses `raises=`, this run reports `xfailed` and the assertion below
+        fails.
+        """
+        import pytest as _pytest
+
+        outcomes: list[str] = []
+
+        @_pytest.mark.xfail(strict=True, raises=AssertionError)
+        def _probe():
+            raise RuntimeError("simulated matcher regression")
+
+        # Reproduce pytest's own decision: does the marker's `raises` filter
+        # admit this exception class? `raises=AssertionError` must NOT admit it.
+        mark = _probe.pytestmark[0]
+        admitted = mark.kwargs["raises"]
+        outcomes.append("xfailed" if issubclass(RuntimeError, admitted) else "error")
+
+        assert outcomes == ["error"], (
+            "a RuntimeError from the matcher was admitted as an expected "
+            "failure — this is exactly the laundering codex demonstrated"
+        )

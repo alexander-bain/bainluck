@@ -11,6 +11,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update as _sql_update
 
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.espn_candidate_selection import (
+    select_authorized_espn_candidate as _select_authorized_espn_candidate,
+)
 from app.utils.espn_id_stamp import (
     REFUSED as _ESPN_STAMP_REFUSED,
     STAMPED as _ESPN_STAMP_STAMPED,
@@ -244,24 +247,49 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
     Returns (matched_espn_event, match_method) or (None, None).
     Uses a two-signal cascade:
       1. ESPN ID (most reliable — set during scheduled sync)
-      2. Name matching (all ESPN name variants)
+      2. Name matching (all ESPN name variants), TIME-AUTHORIZED
+
+    #2049 / C-2049-2050-REVIEW: arm 2 used to take the **first unclaimed name
+    hit** with no distance comparison and no same-game check. Codex executed
+    this helper on a pool ordered ``[next-day, correct-day]`` and it selected
+    the next-day sibling at **24.0h** error; the row then flowed into
+    ``write_espn_win_probability`` and compiled a Core update carrying the wrong
+    ``espn_id``. This is the LIVE path (``espn_sync.process_sport_events``), not
+    a dormant helper, so closing only ``discover_events`` closed nothing.
+
+    Arm 1 is untouched: an id-anchored hit already carries ESPN's own identity.
     """
     from app.tasks.espn_sync import get_event_name_variations
+    from app.utils.espn_candidate_selection import select_authorized_espn_candidate
 
     # 1. Match by ESPN ID (most reliable — set during scheduled sync)
     if event.espn_id and event.espn_id in espn_by_id:
         return espn_by_id[event.espn_id], "espn_id"
 
-    # 2. Fall back to name matching
+    # 2. Fall back to name matching — nearest candidate, and only if the
+    #    same-game gate authorizes it. An unverifiable match stamps nothing.
     home_names, away_names = get_event_name_variations(event)
-    for ee in espn_events:
-        if not ee.home_team or not ee.away_team:
-            continue
-        # Skip ESPN games already claimed by another event
-        if ee.espn_id and ee.espn_id in claimed_espn_ids:
-            continue
-        if espn_names_match(home_names, ee.home_team) and espn_names_match(away_names, ee.away_team):
-            return ee, "name"
+    matched, reason = select_authorized_espn_candidate(
+        espn_events,
+        getattr(event, "commence_time", None),
+        is_name_match=lambda ee: (
+            espn_names_match(home_names, ee.home_team)
+            and espn_names_match(away_names, ee.away_team)
+        ),
+        exclude_ids=claimed_espn_ids,
+    )
+    if matched is not None:
+        return matched, "name"
+    if reason not in ("no-name-match",):
+        # gotcha #53: "nothing matched" and "matched but refused" are different
+        # facts. Log the refusal so a suppressed stamp is visible, not silent.
+        logger.info(
+            "ESPN name match REFUSED for event %s (%s vs %s): %s",
+            getattr(event, "id", "?"),
+            getattr(event, "away_team_name", "?"),
+            getattr(event, "home_team_name", "?"),
+            reason,
+        )
 
     # 3. Commence_time proximity fallback REMOVED
     # Previously matched by time proximity when exactly 1 ESPN
@@ -490,9 +518,23 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
         "win_probability_sources": _wps,
         "espn_win_prob_home": ee.home_win_probability,
     }
-    if ee.espn_id and ee.espn_id not in claimed_espn_ids:
+    # #2049 defence in depth: the caller is supposed to have selected through
+    # the authorization gate, but codex demonstrated the manufacture by passing
+    # a hand-picked 24.0h sibling STRAIGHT into this writer. A writer that will
+    # compile any id it is handed is a manufacturer regardless of who calls it,
+    # so the gate runs again at the point of the write.
+    from app.utils.espn_candidate_selection import authorize_espn_pair
+    _id_authorized, _id_reason = authorize_espn_pair(
+        getattr(ee, "date", None), getattr(event, "commence_time", None)
+    )
+    if ee.espn_id and ee.espn_id not in claimed_espn_ids and _id_authorized:
         _update_vals["espn_id"] = ee.espn_id
         claimed_espn_ids.add(ee.espn_id)
+    elif ee.espn_id and not _id_authorized:
+        logger.warning(
+            "ESPN id stamp REFUSED at write for event %s -> %s: %s",
+            getattr(event, "id", "?"), ee.espn_id, _id_reason,
+        )
     await session.execute(
         _sql_update(Event)
         .where(Event.id == event.id)
@@ -1188,33 +1230,53 @@ async def backfill_missing_scores(session, stats):
                         if ev.home_score is not None:
                             continue  # Already got scores
                         home_names, away_names = get_event_name_variations(ev)
-                        for ee in espn_events:
-                            if not ee.home_team or not ee.away_team:
-                                continue
-                            espn_home = ee.home_team.display_name or ee.home_team.name or ""
-                            espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                            if names_match(home_names, espn_home) and names_match(away_names, espn_away):
-                                if ee.home_score is not None:
-                                    ev.home_score = ee.home_score
-                                    ev.away_score = ee.away_score
-                                    if ee.status_detail:
-                                        ev.period = ee.status_detail
-                                    if ee.espn_id and not ev.espn_id:
-                                        ev.espn_id = ee.espn_id
-                                    # Upsert teams for colors/logos
-                                    home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id, backfill_team_cache, stats)
-                                    away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id, backfill_team_cache, stats)
-                                    if home_team and ev.home_team_id != home_team.id:
-                                        ev.home_team_id = home_team.id
-                                    if away_team and ev.away_team_id != away_team.id:
-                                        ev.away_team_id = away_team.id
-                                    stats["scores_backfilled"] = stats.get("scores_backfilled", 0) + 1
-                                    logger.info(
-                                        f"ESPN: Backfilled scores for event {ev.id} "
-                                        f"({ev.away_team_name} @ {ev.home_team_name}): "
-                                        f"{ee.away_score}-{ee.home_score}"
-                                    )
-                                break
+                        # #2049: this rail had date-STRING equality only (above)
+                        # and no within-day discrimination, then a raw stamp. A
+                        # shared UTC date is not a shared game — a doubleheader
+                        # and a same-day series pair both live inside one bucket.
+                        _matched, _reason = _select_authorized_espn_candidate(
+                            espn_events,
+                            ev.commence_time,
+                            is_name_match=lambda ee: (
+                                names_match(
+                                    home_names,
+                                    ee.home_team.display_name or ee.home_team.name or "",
+                                )
+                                and names_match(
+                                    away_names,
+                                    ee.away_team.display_name or ee.away_team.name or "",
+                                )
+                            ),
+                        )
+                        if _matched is None:
+                            if _reason != "no-name-match":
+                                logger.info(
+                                    f"ESPN score backfill REFUSED event {ev.id} "
+                                    f"({ev.away_team_name} @ {ev.home_team_name}): "
+                                    f"{_reason}"
+                                )
+                            continue
+                        ee = _matched
+                        if ee.home_score is not None:
+                            ev.home_score = ee.home_score
+                            ev.away_score = ee.away_score
+                            if ee.status_detail:
+                                ev.period = ee.status_detail
+                            if ee.espn_id and not ev.espn_id:
+                                ev.espn_id = ee.espn_id
+                            # Upsert teams for colors/logos
+                            home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id, backfill_team_cache, stats)
+                            away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id, backfill_team_cache, stats)
+                            if home_team and ev.home_team_id != home_team.id:
+                                ev.home_team_id = home_team.id
+                            if away_team and ev.away_team_id != away_team.id:
+                                ev.away_team_id = away_team.id
+                            stats["scores_backfilled"] = stats.get("scores_backfilled", 0) + 1
+                            logger.info(
+                                f"ESPN: Backfilled scores for event {ev.id} "
+                                f"({ev.away_team_name} @ {ev.home_team_name}): "
+                                f"{ee.away_score}-{ee.home_score}"
+                            )
             except Exception as e:
                 stats["errors"].append(f"score_backfill_{sport_key}: {str(e)}")
     finally:

@@ -129,6 +129,7 @@ async def run_mlb_schedule_coverage(date: Optional[str] = None) -> dict:
 _INVERTED_CANDIDATE_SQL = """
     SELECT e.id, e.status, e.commence_time, e.completed_at,
            e.home_score AS hs, e.away_score AS aws,
+           e.commence_time_source AS commence_source,
            ht.name AS home_team, at.name AS away_team
     FROM events e
     JOIN sports s ON s.id = e.sport_id
@@ -136,12 +137,51 @@ _INVERTED_CANDIDATE_SQL = """
     LEFT JOIN teams at ON at.id = e.away_team_id
     WHERE s.key IN ('baseball_mlb', 'baseball_mlb_preseason')
       AND e.status IN ('completed', 'closed')
-      AND (
-          e.commence_time > (now() at time zone 'utc')
-          OR (e.completed_at IS NOT NULL AND e.completed_at < e.commence_time)
-      )
+      AND ({selector})
     ORDER BY e.commence_time
 """
+
+#: The standing self-heal population: settled but commencing in the future, or
+#: completed before it started (the #46 invariant violation).
+_INVARIANT_ARM = """
+          e.commence_time > (now() at time zone 'utc')
+          OR (e.completed_at IS NOT NULL AND e.completed_at < e.commence_time)
+"""
+
+#: #2018: a row can be on the WRONG first pitch without being inverted.
+#: Game 1 (`14788546`) commences 08-17 17:40Z and completed 08-18 01:37Z — a
+#: perfectly ordinary ordering, so the invariant arm cannot see it, yet 17:40Z is
+#: the OTHER half of a doubleheader (ESPN: `401873710` 17:40Z STL 2 @ CIN 1;
+#: `401816567` 22:40Z STL 5 @ CIN 6/10). Widening the invariant arm to catch it
+#: would pull in every correctly-ordered settled MLB row in the table, so the
+#: reach is an explicit id list instead — a UNION with the invariant arm, never a
+#: replacement of it. A rail that only does what it is told stops self-healing.
+_EXPLICIT_ARM = "          e.id = ANY(:explicit_ids)"
+
+
+def build_candidate_sql(explicit_ids: bool = False) -> str:
+    """The candidate SQL, with the explicit-id arm unioned in on request."""
+    selector = _INVARIANT_ARM
+    if explicit_ids:
+        selector = f"{_INVARIANT_ARM}          OR\n{_EXPLICIT_ARM}\n"
+    return _INVERTED_CANDIDATE_SQL.format(selector=selector)
+
+
+def authorize_redate(current_source, incoming_source) -> tuple[bool, str]:
+    """May this rail move `commence_time` off `current_source`?
+
+    Thin wrapper so the rail states its authority question in its own vocabulary
+    while the RULE lives in exactly one place (`event_registry`). #2018: this
+    write used to be unconditional — correct only because there was one caller.
+    """
+    from app.services.event_registry import commence_time_write_authorized
+
+    return commence_time_write_authorized(current_source, incoming_source)
+
+
+#: What this rail writes into `commence_time_source`, and therefore the authority
+#: it claims. Named rather than inlined so the gate and the stamp cannot drift.
+REPAIR_SOURCE = "mlb_schedule_repair"
 
 
 def _repair_tokens(s) -> set:
@@ -213,10 +253,19 @@ async def _mlb_final_for(service, home, away, hs, aws, around_date):
     return None
 
 
-async def repair_inverted_mlb_events(apply: bool = True) -> dict:
+async def repair_inverted_mlb_events(
+    apply: bool = True,
+    explicit_ids: list[int] | None = None,
+) -> dict:
     """Heal (re-date / fix-completed_at / void) the standing inverted / future-
     settled MLB rows. Every write is gated on an MLB ground-truth Final matching
     the row's teams AND final score — never a blind write.
+
+    ``explicit_ids`` (#2018) adds named rows to the candidate set that the
+    invariant predicate cannot reach — a row on the WRONG first pitch is not
+    necessarily an INVERTED row. **Naming a row selects it for consideration,
+    never for a write:** the MLB ground-truth gate and the source-priority gate
+    both still apply, unchanged, or "attended" would degrade into "typed an id".
 
     * SCORED, commence wrong -> re-date. completed_at + score belong to a REAL
       finished game; commence_time points at the wrong (future) sibling. The MLB
@@ -249,7 +298,11 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
 
     try:
         async with get_task_session() as s:
-            rows = (await s.execute(text(_INVERTED_CANDIDATE_SQL))).all()
+            _ids = [int(i) for i in (explicit_ids or [])]
+            rows = (await s.execute(
+                text(build_candidate_sql(explicit_ids=bool(_ids))),
+                {"explicit_ids": _ids} if _ids else {},
+            )).all()
             candidates = len(rows)
             logger.info(
                 "repair_inverted_mlb: %d resolved_state-failing MLB rows", candidates
@@ -285,6 +338,15 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
 
                 action = _classify_scored_inverted(completed_utc, commence_utc, new_start)
                 if action == "redate":
+                    # #2018: the SOURCE-PRIORITY gate. This write used to be
+                    # unconditional, which was correct only because there was one
+                    # caller — the #1980 manufacturer shape one table over.
+                    _auth, _why = authorize_redate(
+                        getattr(r, "commence_source", None), REPAIR_SOURCE
+                    )
+                    if not _auth:
+                        review.append((r.id, f"redate REFUSED by source priority: {_why}"))
+                        continue
                     # commence was the wrong (future) field; completed_at is a real
                     # post-game timestamp. Re-date commence to the confirmed start.
                     redate.append((r.id, r.commence_time.isoformat(), new_start_iso, ev))
@@ -313,8 +375,9 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
                 for eid, _old, new_iso, _ev in redate:
                     await s.execute(
                         text("UPDATE events SET commence_time = :c, "
-                             "commence_time_source = 'mlb_schedule_repair' WHERE id = :id"),
-                        {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")), "id": eid},
+                             "commence_time_source = :src WHERE id = :id"),
+                        {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")),
+                         "id": eid, "src": REPAIR_SOURCE},
                     )
                 for eid, _old, new_iso, _ev in fix_end:
                     await s.execute(
