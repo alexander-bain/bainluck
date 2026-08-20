@@ -513,6 +513,16 @@ class _FakeRunner:
     async def apply_statement_timeout(self, _db, _phase):
         return None
 
+    # CAL-P081 (#2052): the loop's runner protocol grew a unit-scoped timeout and
+    # a carried unit cost. A fake must implement the protocol its subject uses
+    # (CAL-P076's banked lesson); ``None`` here means "no carried measurement",
+    # which leaves every re-stage assertion in this file measuring what it did.
+    def measured_unit_ms(self, _phase):
+        return None
+
+    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None):
+        return None
+
 
 class TestTheFrozenLoopActuallyReStages:
     """RULING 102. The unedited coroutine, started, over stubs.

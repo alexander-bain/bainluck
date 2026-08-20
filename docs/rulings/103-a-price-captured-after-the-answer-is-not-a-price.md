@@ -5,6 +5,47 @@ author: Alex
 via: Fable, on CAL-P077
 issues: #1145 · #1978 · #2007 · #1912 · #1544
 
+## AMENDMENT — 2026-08-20 (Alex, via Fable, on CAL-P081): EXCLUDE NOW, RE-PRICE AS FOLLOW-UP
+
+`C-APPLY-PRE-WHICHPRICE` returned **BLOCK** against the premise below, and it was right to. The
+premise said re-pricing "was measured to be unavailable over the whole population". That is true
+of 99.3% of the population and **false of one cell**: **258 of 4,354 `baseball/quantity`
+hindsight rows (5.93%) carry a `futures_odds_snapshots` row before their own `resolution_date`,
+and those 258 are 53.6% of all 481 re-priceable hindsight rows in the corpus.** A policy
+described as impossible is executable for a majority of the rows where it is executable at all.
+
+**The ruling's DECISION is unchanged; its PREMISE is corrected, and the gap is filed rather than
+closed by wording.** The uniform exclusion ships exactly as ruled, because 481 of 35,976 rows
+cannot be re-priced into a curve and a per-row re-price of 258 of them is a different piece of
+work with its own evidence bar. Those 258 are **KNOWINGLY EXCLUDED for now** — named, counted,
+and owed — not swept in behind a claim that nothing could be done for them.
+
+The correct premise line, replacing the sentence marked below:
+
+> Re-pricing was not declined. It is **unavailable for 99.3% of hindsight rows** — of **35,976**
+> across 49 cells, only **481 (1.34%)** have any `futures_odds_snapshots` row before their own
+> `resolution_date` and **27 (0.075%)** have one before `commence_time`;
+> `hockey/container_member` is **0 of 1,259** and `basketball/quantity` is **0 of 8,387**. For
+> the remaining 0.7% it IS available, and **258 `baseball/quantity` rows with verifiable
+> pre-resolution snapshots are KNOWINGLY EXCLUDED for now**, tracked as a follow-up with the
+> snapshot evidence attached.
+
+Two things this amendment deliberately does not do. It does not weaken the exclusion — a
+hindsight price is still not a price, and a row we could re-price is still not a row we have
+re-priced. And it does not claim a new ruling number: the decision is the one Alex already made,
+and re-banking it as ruling 112 would put two authorities on one question.
+
+**The cert re-runs against THIS text.** `C-APPLY-PRE-WHICHPRICE` certifies the measurement as now
+stated, not the old claim; the BLOCK it returned was against a premise that no longer exists.
+
+## The general clause the amendment adds
+
+**A measurement that holds for 99% of a population is not a measurement about the population —
+name the residual and file it.** "Unavailable" and "unavailable except for 258 rows we can point
+at" support the same decision and describe different worlds, and only the second one leaves a
+successor able to find the rows. The failure mode is not the decision; it is that the strong
+phrasing removes the follow-up from existence.
+
 ## The ruling
 
 **The hindsight-capture exclusion — `MC-PACK-CAL-P077-HINDSIGHT-CAPTURE.md` policy C — is

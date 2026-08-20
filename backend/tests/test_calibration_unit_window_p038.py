@@ -150,6 +150,21 @@ class _FakeRunner:
         self.timeouts_applied.append(left)
         return left
 
+    # -- CAL-P081 (#2052) -----------------------------------------------------
+    # The loop now asks the runner for the PREVIOUS beat's measured unit cost and
+    # arms a UNIT-scoped timeout rather than the phase's. This fake answers "no
+    # carried measurement", which is the state these tests were written in and
+    # keeps every assertion below about the within-beat fence, unchanged.
+    # See ``test_calibration_unit_admission_p081.py`` for the carried-cost cases.
+
+    def measured_unit_ms(self, _phase):
+        return None
+
+    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None) -> int:
+        left = self.ledger.remaining_ms(elapsed_ms=self._elapsed)
+        self.timeouts_applied.append(left)
+        return left
+
 
 class _FakeDb:
     """A database that cancels a statement it cannot finish inside its timeout.
@@ -283,18 +298,36 @@ async def test_the_convergence_projection_survives_the_stop(staged_env):
 
 @pytest.mark.asyncio
 async def test_the_old_gate_would_have_thrown_on_the_same_beat(staged_env, monkeypatch):
-    """MUTATION PROOF — restore ``deadline_exceeded()`` and the beat fails.
+    """MUTATION PROOF — restore ``deadline_exceeded()`` and the beat burns a unit.
 
     Without this the tests above would pass over a loop that never learned
     anything: any guard that stops early satisfies them. This one pins that the
     guard is load-bearing by putting the OLD predicate back and asserting the
     production failure returns.
+
+    **AMENDED BY CAL-P081 (#2052), and the amendment is the point.** This test
+    used to assert ``pytest.raises(_StatementCancelled)`` — the cancellation
+    escaping the phase, which is what made the beat terminate ``failed``. CAL-P081
+    catches a cancellation at the unit boundary and skips the unit, so the same
+    defective gate now produces a WASTED UNIT instead of a RED BEAT. Both halves
+    are asserted: the waste still happens (the gate is still load-bearing) and it
+    no longer costs the beat its verdict.
     """
     runner, db = staged_env(window_ms=250, unit_cost_ms=100)
-    monkeypatch.setattr(pc, "_unit_fits_in_window", lambda remaining, worst: remaining > 0)
+    monkeypatch.setattr(
+        pc, "_unit_fits_in_window", lambda remaining, worst, prior=0.0: remaining > 0
+    )
 
-    with pytest.raises(_StatementCancelled):
-        await _run(runner, db)
+    await _run(runner, db)
+    assert runner.ledger.stages.get("staged:units_cancelled", 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_the_real_gate_burns_no_units_on_that_same_beat(staged_env):
+    """The control for the mutation above — same beat, real predicate, no waste."""
+    runner, db = staged_env(window_ms=250, unit_cost_ms=100)
+    await _run(runner, db)
+    assert "staged:units_cancelled" not in runner.ledger.stages
 
 
 @pytest.mark.asyncio

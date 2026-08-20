@@ -242,6 +242,24 @@ _STATEMENT_TIMEOUT_MARKERS = (
 )
 
 
+def is_statement_timeout(exc: BaseException) -> bool:
+    """Is this exception Postgres cancelling a statement at its own backstop?
+
+    Hoisted out of :meth:`PhaseRunner.classify_failure` by CAL-P081 (#2052) so
+    the unit loop can ask the SAME question the terminal classifier asks. Two
+    copies of this predicate would drift, and the drift would be silent in the
+    worst direction: a cancellation the loop failed to recognise propagates and
+    the beat terminates ``failed`` — which is precisely the false RED #2052 is.
+
+    Matched on the rendered class name plus message rather than on a driver
+    exception type, deliberately: SQLAlchemy wraps ``asyncpg`` cancellations in
+    ``DBAPIError``, the wrapping has changed shape across versions, and the
+    message has not.
+    """
+    text_form = f"{exc.__class__.__name__} {exc}".lower()
+    return any(marker in text_form for marker in _STATEMENT_TIMEOUT_MARKERS)
+
+
 class StagedFuturesIncomplete(RuntimeError):
     """The staged futures generation made progress but is not finished.
 
@@ -527,8 +545,7 @@ class PhaseRunner:
 
         if isinstance(exc, (asyncio.CancelledError, StagedFuturesIncomplete)):
             return CANCELLED
-        text_form = f"{exc.__class__.__name__} {exc}".lower()
-        if any(marker in text_form for marker in _STATEMENT_TIMEOUT_MARKERS):
+        if is_statement_timeout(exc):
             return TIMEOUT
         return FAILED
 
@@ -606,6 +623,30 @@ class PhaseRunner:
         from the phase that eventually wedges.
         """
         timeout_ms = self.ledger.statement_timeout_for(phase, elapsed_ms=self.elapsed_ms())
+        await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        await self.tag_session(db)
+        return timeout_ms
+
+    def measured_unit_ms(self, phase: str):
+        """The carried, measured cost of one completed unit of ``phase``.
+
+        Exposed on the runner rather than reached for through ``.ledger`` by the
+        caller, because the caller is the frozen module (ruling 009) and every
+        line of judgment that can live on this side of the boundary should.
+        """
+        return self.ledger.measured_unit_ms(phase)
+
+    async def apply_unit_statement_timeout(self, db, phase: str, *, unit_ms=None) -> int:
+        """Set the backstop for ONE unit of a unit-staged phase — CAL-P081 (#2052).
+
+        Same contract as :meth:`apply_statement_timeout` and strictly tighter:
+        the unit gets the smaller of the phase's remaining window and a multiple
+        of its own measured cost. With no measured cost the two are identical, so
+        this is never the reason a build stops making progress.
+        """
+        timeout_ms = self.ledger.statement_timeout_for_unit(
+            phase, elapsed_ms=self.elapsed_ms(), unit_ms=unit_ms
+        )
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
         await self.tag_session(db)
         return timeout_ms
@@ -760,6 +801,12 @@ class NullPhaseRunner:
         return dict(self.session_identity)
 
     async def apply_statement_timeout(self, db, phase: str) -> int:  # noqa: D102
+        return 0
+
+    def measured_unit_ms(self, phase: str):  # noqa: D102
+        return None
+
+    async def apply_unit_statement_timeout(self, db, phase: str, *, unit_ms=None) -> int:  # noqa: D102, E501
         return 0
 
     async def commit(self, db) -> None:  # noqa: D102
