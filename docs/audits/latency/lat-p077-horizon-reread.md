@@ -270,6 +270,20 @@ verified not throttled.
 t2 is twelve rounds rather than three, because a 15-read window is exactly the thin evidence
 this document criticises elsewhere.
 
+⚠️ **Neither t1 nor t2 is a ≥6 h read, and one could not be taken.** `worker-background`
+restarted **twice inside this window** — v3873 at 09:16 PT and **v3874 at 10:46 PT**, 90 minutes
+apart. Each reset the clock. §6.3's finding does not depend on the horizon (head membership is
+driven by 24 h trending traffic, not by time-since-restart), but **the aggregate cold-rate
+comparison against LAT-P076 does**, and it is therefore reported as same-horizon-band
+(30–60 min) rather than as a horizon read.
+
+**The user-felt horizon read cannot be recovered the way R2's was.** §0's trick works because
+the ring is a *server-side* record sitting in Redis; a client-side latency probe leaves no such
+trace. It can only be taken live, which means it can only be taken **in the overnight quiet
+window** — the v3872 → v3873 gap of 11 h 38 m was the only ≥6 h gap in the last 20 releases.
+That is the scheduling constraint the successor needs, and it is not a matter of trying harder
+during the day.
+
 **No warmer-path code changed between v3872 and v3873** (27 files; the only task files touched
 are `flow_sentinel`, `prediction_market_matching`, `repair_event_espn_id`). This is not a code
 regression.
