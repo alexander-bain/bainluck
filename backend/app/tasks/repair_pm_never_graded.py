@@ -157,6 +157,15 @@ _OWNER = "repair:pm-never-graded"
 #: Progress kept only in a response body is progress one closed terminal
 #: destroys.
 PROGRESS_IDENTITY = "calibration:repair:pm_never_graded:wave_progress"
+
+#: The DURABLE wave halt (CAL-P076). A refusal that lives only in one response
+#: stops one call; each page is a separate process, so page 302 would never know
+#: page 301 tripped. Cleared only by an explicit operator write of
+#: ``state: cleared`` — never by time, and never by a successful later read.
+WAVE_HALT_IDENTITY = "calibration:repair:pm_never_graded:wave_halt"
+WAVE_HALT_SCHEMA = "pm-never-graded-wave-halt/v1"
+WAVE_HALT_RAISED = "halted"
+WAVE_HALT_CLEARED = "cleared"
 WAVE_PROGRESS_SCHEMA = "calibration-repair-wave-progress/v1"
 
 #: Categories measured at ZERO never-graded markets. They are a tripwire on the
@@ -431,6 +440,186 @@ async def _read_canaries(session) -> dict[str, Any]:
     return evaluate_canaries({r.category: int(r.markets) for r in rows}, note="ok")
 
 
+async def _wave_halt_state() -> tuple[dict[str, Any] | None, str]:
+    """The durable wave halt. ``(record, note)``; ``record`` is ``None`` when clear.
+
+    CAL-P076 / C-APPLY-PRE-1912-R2 re-cert input 1: *"with a durable halt that
+    blocks subsequent pages"*. A per-call refusal is not enough — each page is a
+    separate HTTP call in a separate process, so a trip on page 301 is invisible
+    to page 302 unless it is written down.
+
+    **Fail-closed on an unreadable ledger, and open-closed on an absent one.** A
+    read that fails means the halt state is UNKNOWN, and an unknown halt is
+    treated as halted: the cost of a false halt is one operator command, the cost
+    of a false clear is walking a wave whose authorising measurement no longer
+    describes the population. Genuinely missing is the normal, clear state — that
+    one is an absence with a known meaning, not an unreadable answer.
+    """
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            WAVE_HALT_IDENTITY,
+            expected_version=WAVE_HALT_SCHEMA,
+            max_age_s=_OBLIGATION_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return (
+            {"state": "unknown", "reason": f"halt_read_raised: {type(exc).__name__}"},
+            "the halt ledger could not be read, which is not the same as clear",
+        )
+    if read.status == "missing":
+        return None, "no halt recorded"
+    if not read.ok or read.envelope is None or not isinstance(read.envelope.payload, dict):
+        return (
+            {"state": "unknown", "reason": f"halt_unreadable: {read.status}"},
+            "the halt ledger could not be read, which is not the same as clear",
+        )
+    record = read.envelope.payload
+    if record.get("state") == WAVE_HALT_CLEARED:
+        return None, "halt explicitly cleared"
+    return record, f"halted: {record.get('reason')}"
+
+
+async def _raise_wave_halt(reason: str, evidence: Any) -> tuple[bool, str]:
+    """Write the durable halt. Best-effort in the sense that it always REPORTS.
+
+    A failure to persist the halt is itself reported to the operator on the
+    halting response, because a halt nobody can read is the state this function
+    exists to prevent.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    record = {
+        "schema": WAVE_HALT_SCHEMA,
+        "state": WAVE_HALT_RAISED,
+        "owner": _OWNER,
+        "reason": reason,
+        "evidence": evidence,
+        "note": (
+            "No page of this wave may be planned or applied until this record is "
+            "explicitly cleared. Re-census first: the trip means the cohort "
+            "predicate moved, so the measurement that authorised the wave no "
+            "longer describes the population being drained."
+        ),
+    }
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=WAVE_HALT_IDENTITY,
+                schema_version=WAVE_HALT_SCHEMA,
+                payload=record,
+                complete=True,
+                source=_OWNER,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"halt persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"halt persist rejected: {result.get('status')}"
+
+
+async def _is_our_prior_write(session, leg_id: int, leg) -> bool:
+    """Did an EARLIER attempt at this same plan already write this leg?
+
+    CAL-P076. The compare-and-set guard (``resolution_source IS NULL AND
+    is_winner IS NOT TRUE``) makes a re-applied leg indistinguishable from a
+    drifted one at the rowcount: both are zero. They are opposite facts. A
+    drifted leg means somebody else moved the row and the plan's premise is
+    stale; an already-written leg means THIS plan wrote it before the process
+    died, which is the resume succeeding.
+
+    The distinction is load-bearing twice over: ``legs_drifted`` is reported to
+    the operator as an interference count, and it feeds ``invalidation_
+    discharged``'s ``drift_count`` — so a clean kill-and-resume used to report
+    itself as a wave-wide conflict AND fail its own discharge rule.
+
+    Both halves must match. Same source AND same verdict: a row carrying this
+    rail's source with the OTHER verdict is a genuine anomaly (two plans
+    disagreeing about one leg) and is deliberately left to fall through to
+    ``drifted``, where a human will see it.
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT resolution_source, is_winner FROM futures_outcomes "
+                "WHERE id = :leg_id"
+            ),
+            {"leg_id": leg_id},
+        )
+    ).first()
+    if row is None:
+        return False
+    return bool(
+        row[0] == WRITE_SOURCE and bool(row[1]) is (leg.verdict == "winner")
+    )
+
+
+async def _revert_written_legs(session, approved, leg_ids: list[int]) -> tuple[list[int], int]:
+    """Undo exactly what this rail wrote. Returns ``(reverted, failed_count)``.
+
+    CAL-P076, the compensating half of the halt. Per-leg commits (gotcha #13)
+    mean there is no transaction to abort by the time a mid-apply canary trips,
+    so "roll back" has to be a write of its own.
+
+    Two properties make it safe to run at all:
+
+    * **The target is restored to the plan's own recorded prior state**, not to
+      a guess. ``PlannedLeg.expected_is_winner`` / ``expected_source`` are the
+      values the DRY-RUN READ, carried on the content-addressed artifact for
+      exactly this compare-and-set purpose. Writing ``NULL`` instead would have
+      been a plausible-looking third state: ``is_winner`` carries a column
+      DEFAULT of ``False`` and CAL-P054 measured zero NULLs in 11,059 outcomes,
+      so a "revert" to NULL would have left every touched row in a state the
+      population has never contained.
+    * **It is bounded by this rail's own ``resolution_source``.** A row some
+      other writer graded in the meantime does not match and is not touched.
+
+    A leg that fails to revert is COUNTED, never swallowed. A partial revert
+    leaves the population in neither state, and that is a fact an operator has
+    to be told rather than a number to round down to zero.
+    """
+    reverted: list[int] = []
+    failed = 0
+    for leg_id in leg_ids:
+        leg = approved.get(leg_id)
+        if leg is None:
+            failed += 1
+            continue
+        try:
+            result = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET is_winner = :prior_wins,
+                        resolution_source = :prior_src,
+                        last_updated = now()
+                    WHERE id = :leg_id
+                      AND resolution_source = :src
+                """),
+                {
+                    "leg_id": leg_id,
+                    "prior_wins": bool(leg.expected_is_winner),
+                    "prior_src": leg.expected_source,
+                    "src": WRITE_SOURCE,
+                },
+            )
+        except Exception:  # noqa: BLE001 — counted, never swallowed
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            failed += 1
+            continue
+        if result.rowcount:
+            await session.commit()
+            reverted.append(leg_id)
+        else:
+            await session.rollback()
+            failed += 1
+    return reverted, failed
+
+
 async def _load_progress() -> tuple[dict[str, Any] | None, str]:
     """``(record, note)``. A missing record is a wave that has not started."""
     from app.services.durable_snapshots import read_snapshot_standalone
@@ -470,7 +659,40 @@ async def _save_progress(record: dict[str, Any]) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001
         return False, f"progress persist raised: {type(exc).__name__}"
     ok = result.get("status") in ("ok", "superseded")
-    return ok, "ok" if ok else f"progress persist rejected: {result.get('status')}"
+    if not ok:
+        return False, f"progress persist rejected: {result.get('status')}"
+
+    # AFTER-READ, NOT ACKNOWLEDGEMENT (CAL-P076, C-APPLY-PRE-1912-R2 P1 #2).
+    # ``ok``/``superseded`` is the PUBLISHER's opinion of its own write. Codex's
+    # no-op specimen: a publisher that stored nothing and answered ``superseded``
+    # produced two consecutive responses both saying ``durable: true`` /
+    # ``calls: 1`` / "READABLE — re-derivable from the durable identity by any
+    # operator in any session" — while the identity held nothing at all. A
+    # terminal could close and take the whole wave's progress with it, with every
+    # response having promised otherwise. This is the acknowledgement-not-proof
+    # class already removed from the calibration invalidation; the same discipline
+    # belongs here, because ``attendance`` is a claim about a row existing.
+    #
+    # ``superseded`` passes only when the WINNING record subsumes this fold: a
+    # concurrent writer with a higher call count is fine (it saw ours or a later
+    # one), a lower one means our counters were lost.
+    stored, read_note = await _load_progress()
+    if not isinstance(stored, dict):
+        return False, f"progress not readable after write: {read_note}"
+    if stored.get("schema") != WAVE_PROGRESS_SCHEMA:
+        return False, f"progress after-read has schema {stored.get('schema')!r}"
+
+    def _calls(rec: Any) -> int:
+        v = rec.get("calls") if isinstance(rec, dict) else None
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else -1
+
+    if _calls(stored) < _calls(record):
+        return False, (
+            f"progress after-read is behind this fold "
+            f"(stored calls={_calls(stored)}, attempted={_calls(record)}) — a "
+            "concurrent write lost this call's counters"
+        )
+    return True, "ok (after-read proved)"
 
 
 def fold_progress(
@@ -594,14 +816,56 @@ async def repair(
     on every call.
     """
     started = time.monotonic()
+
+    # THE WAVE HALT IS DURABLE AND IT BLOCKS THE NEXT PAGE (CAL-P076).
+    # A halt that only stops the call that noticed is a speed bump: page 301
+    # trips, page 302 is a fresh process with a fresh panel read, and the wave
+    # walks on. Once anything trips, the wave is STOPPED until an operator
+    # clears it — because the thing that tripped is "the cohort predicate moved",
+    # and a re-census, not a retry, is the response.
+    halted, halt_note = await _wave_halt_state()
+    # An UNREADABLE ledger and a RAISED halt are different facts and get
+    # different answers, on the same principle the obligation ledger already
+    # uses. A raised halt stops everything — planning included, because a plan
+    # minted after a trip is an appliable artifact describing a population that
+    # has moved. An unreadable ledger stops only the WRITE: refusing a read-only
+    # dry-run because a durable store blipped would brick the wave's only way of
+    # looking at itself, while the apply's own check still fails closed a moment
+    # later, so nothing can be written on an unknown halt state either way.
+    unreadable = bool(halted) and halted.get("state") == "unknown"
+    if halted is not None and (apply or not unreadable):
+        return {
+            "mode": "apply" if apply else "dry_run",
+            "wrote": False,
+            "success": False,
+            "halted": True,
+            "refused": ["WAVE_HALTED" if not unreadable else "WAVE_HALT_UNREADABLE"],
+            "wave_halt": halted,
+            "note": (
+                "The wave is halted and no page may be planned or applied. "
+                f"({halt_note}) Re-census, then clear the halt deliberately — "
+                "this state is durable precisely so a fresh process cannot walk "
+                "past it."
+                if not unreadable else
+                f"{halt_note} — an unknown halt state is not a clear one, and "
+                "this call writes rows. The dry-run remains available."
+            ),
+        }
+
     if apply:
         return await _apply_reviewed_plan(session, plan_hash, started)
-    return await _dry_run(
+    out = await _dry_run(
         session,
         min(limit or APPLY_MARKET_CAP, APPLY_MARKET_CAP),
         started,
         after_id=after_id,
     )
+    if unreadable:
+        # Declared, not silent: the operator reading this page must know the
+        # apply that follows it will refuse until the ledger is readable.
+        out["wave_halt"] = halted
+        out["wave_halt_note"] = halt_note
+    return out
 
 
 async def _dry_run(
@@ -793,9 +1057,72 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
         }
 
     approved = approved_leg_index(plan)
+
+    # ── THE HALT IS A PRE-FLIGHT GATE (CAL-P076, Fable catch 1) ──────────────
+    # A halt that commits is not a halt. The canary panel says, in its own
+    # words, "the cohort predicate moved, so the measurement the MC authorised
+    # no longer describes what is being drained — HALT and re-census". Until
+    # this queue it was evaluated only inside ``progress_read``, which the apply
+    # calls in its RETURN STATEMENT: every leg was already committed, per-leg,
+    # by the time the tripwire was read. The instruction to halt arrived on a
+    # receipt for the writes it was meant to prevent.
+    #
+    # ``unmeasured`` refuses too, and that is ``evaluate_canaries``'s own rule
+    # rather than an extra one invented here: "a tripwire that could not be read
+    # has NOT been read. This is not a clean canary panel and must not be
+    # attended as one." An apply is the call that changes the population; it is
+    # the last place to accept an unread tripwire as a clean one.
+    preflight = await _read_canaries(session)
+    if preflight.get("verdict") != CANARY_CLEAN:
+        halt_ok, halt_note = await _raise_wave_halt(
+            f"canary_{preflight.get('verdict')}_preflight", preflight
+        )
+        return {
+            "mode": "apply",
+            "wrote": False,
+            "success": False,
+            "halted": True,
+            "refused": ["CANARY_NOT_CLEAN"],
+            "plan_hash": plan.plan_hash,
+            "legs_written": 0,
+            "wave_halt_persisted": halt_ok,
+            "wave_halt_note": halt_note,
+            "canaries_preflight": preflight,
+            "note": (
+                f"Canary verdict {preflight.get('verdict')!r} BEFORE any write. "
+                "Nothing was written and nothing needs reverting. Re-census, "
+                "re-plan, and present the new plan_hash — do not re-present this "
+                "one, because the population it describes is not the population "
+                "on disk."
+            ),
+            "progress": await progress_read(session, mode="halt_preflight"),
+        }
+
     written: list[int] = []
     drifted: list[int] = []
     attempted: list[int] = []
+    already_ours: list[int] = []
+
+    # ── THE DEBT IS OPENED BEFORE THE FIRST WRITE (CAL-P076, Fable catch 2) ──
+    # Rows commit per leg (gotcha #13: a single transaction deadlocks against
+    # the live polling task), so the loop has no rollback of its own and a
+    # process death mid-loop leaves committed rows behind. The obligation used
+    # to be written only AFTER the loop — so a kill at leg 30 of 200 left 30
+    # rows whose calibration debt no record anywhere named, and the next apply
+    # of the same plan would see ``prior is None`` and believe nothing was owed.
+    # An INTENT record makes the debt exist from before the first row does. It
+    # names the whole approved set, which is deliberately an over-statement:
+    # invalidating markets that were never written costs a rebuild, believing a
+    # written market was not written costs a wrong curve.
+    intent = new_obligation(
+        plan_hash=plan.plan_hash,
+        market_ids=sorted({leg.market_id for leg in approved.values()})
+        + (obligation_market_ids(prior) if prior_open else []),
+        leg_ids=sorted(approved) + (obligation_leg_ids(prior) if prior_open else []),
+        owner=_OWNER,
+    )
+    intent["state_note"] = "intent — opened before the first write, not after the last"
+    intent_ok, intent_note = await _save_obligation(intent)
 
     for leg_id, leg in approved.items():
         if time.monotonic() - started > _MAX_SECONDS:
@@ -821,7 +1148,18 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
             written.append(leg_id)
         else:
             await session.rollback()
-            drifted.append(leg_id)
+            # CAL-P076: a rowcount of zero has TWO causes and they are opposite.
+            # Someone else moved the row (drift — report and skip), or a PRIOR
+            # ATTEMPT AT THIS SAME PLAN already wrote it (resume — this is the
+            # work being retried, not a conflict). Before this, a killed apply's
+            # own rows came back on the retry as ``legs_drifted``, so the resume
+            # that worked perfectly reported itself as an interference event and
+            # its ``drift_count`` defeated the discharge rule. Distinguish by
+            # reading who owns the row.
+            if await _is_our_prior_write(session, leg_id, leg):
+                already_ours.append(leg_id)
+            else:
+                drifted.append(leg_id)
 
     outside = mutations_outside_approved(plan, attempted)
     contract = evaluate_repair_contract(
@@ -836,18 +1174,77 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
     # THE DEBT IS PERSISTED BEFORE THE INVALIDATION IS ATTEMPTED. Rows are
     # already committed; if the process dies during the invalidation, the only
     # record of what must be discarded is this one.
-    market_ids = sorted({approved[i].market_id for i in written})
+    #
+    # CAL-P076: ``already_ours`` joins ``written``. Those legs carry this plan's
+    # write and this plan's verdict — they were committed by an earlier attempt
+    # that died — so their markets owe exactly the same invalidation. Omitting
+    # them is how a resumed apply discharged a debt smaller than the one it
+    # actually held.
+    banked = sorted(set(written) | set(already_ours))
+    market_ids = sorted({approved[i].market_id for i in banked})
     if prior_open:
         market_ids = sorted(set(market_ids) | set(obligation_market_ids(prior)))
-        leg_union = sorted(set(written) | set(obligation_leg_ids(prior)))
+        leg_union = sorted(set(banked) | set(obligation_leg_ids(prior)))
     else:
-        leg_union = sorted(written)
+        leg_union = sorted(banked)
+
+    # ── THE HALT, SECOND HALF: A TRIP AFTER THE WRITES ROLLS THEM BACK ──────
+    # The pre-flight gate above stops an apply that should never start. This
+    # catches the population moving DURING the walk — the pre-flight panel is a
+    # read at one instant, and an apply is 25 seconds of committed writes after
+    # it. With per-leg commits there is no transaction left to abort, so the
+    # rollback is compensating: undo exactly the rows this rail wrote, matched
+    # on its OWN ``resolution_source`` so it can never revert a row that was
+    # someone else's to begin with.
+    postflight = await _read_canaries(session)
+    if postflight.get("verdict") != CANARY_CLEAN and banked:
+        reverted, revert_failed = await _revert_written_legs(session, approved, banked)
+        halt_ok, halt_note = await _raise_wave_halt(
+            f"canary_{postflight.get('verdict')}_mid_apply",
+            {"postflight": postflight, "legs_reverted": len(reverted),
+             "legs_revert_failed": revert_failed},
+        )
+        return {
+            "mode": "apply",
+            "wrote": True,
+            "success": False,
+            "halted": True,
+            "refused": ["CANARY_TRIPPED_MID_APPLY"],
+            "plan_hash": plan.plan_hash,
+            "legs_written": len(written),
+            "legs_reverted": len(reverted),
+            "legs_revert_failed": revert_failed,
+            "canaries_preflight": preflight,
+            "canaries_postflight": postflight,
+            "wave_halt_persisted": halt_ok,
+            "wave_halt_note": halt_note,
+            "intent_obligation_persisted": intent_ok,
+            "intent_obligation_note": intent_note,
+            "note": (
+                "The canary panel moved between the pre-flight read and the end "
+                "of the write loop. Every leg this apply banked has been reverted "
+                "to its pre-apply state by compare-and-set on this rail's own "
+                f"resolution_source ({WRITE_SOURCE!r}). "
+                + (
+                    "The obligation stays OPEN: some legs could not be reverted, "
+                    "so the population is neither pre-apply nor post-apply and a "
+                    "human must reconcile it."
+                    if revert_failed
+                    else "All banked legs were reverted, so no calibration "
+                    "invalidation is owed for this call — but re-census before "
+                    "planning again."
+                )
+            ),
+            "progress": await progress_read(session, mode="halt_reverted"),
+            "elapsed_s": round(time.monotonic() - started, 2),
+        }
 
     obligation = new_obligation(
         plan_hash=plan.plan_hash, market_ids=market_ids,
         leg_ids=leg_union, owner=_OWNER,
     )
     ob_ok, ob_note = await _save_obligation(obligation)
+    ob_ok = bool(ob_ok and intent_ok)
 
     inv: dict[str, Any] = {"status": "not_attempted"}
     if market_ids:
@@ -864,7 +1261,7 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
 
     discharged, why = invalidation_discharged(
         status=str(inv.get("status")),
-        wrote_rows=bool(written),
+        wrote_rows=bool(banked),
         drift_count=len(drifted),
         prior_obligation_open=prior_open,
     )
@@ -878,9 +1275,17 @@ async def _apply_reviewed_plan(session, plan_hash, started) -> dict[str, Any]:
         "mode": "apply",
         "wrote": bool(written),
         "success": bool(discharged and ob_ok and not outside),
+        "halted": False,
         "plan_hash": plan.plan_hash,
         "legs_written": len(written),
         "legs_drifted": len(drifted),
+        # CAL-P076: legs this plan had ALREADY written on an earlier attempt.
+        # Reported separately from ``legs_drifted`` because they mean the
+        # opposite thing — this is the resume working, not interference.
+        "legs_already_ours": len(already_ours),
+        "canaries_preflight": preflight,
+        "canaries_postflight": postflight,
+        "intent_obligation_persisted": intent_ok,
         "markets_touched": len(market_ids),
         "mutations_outside_approved": outside,
         "drift_reason": REASON_CONCURRENT_DRIFT if drifted else None,

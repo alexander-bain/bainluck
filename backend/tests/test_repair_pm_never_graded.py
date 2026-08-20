@@ -130,6 +130,13 @@ class _Result:
     def all(self):
         return self._rows
 
+    def first(self):
+        # CAL-P076: the apply now re-reads a leg whose compare-and-set matched
+        # nothing, to tell "this plan already wrote it" (a resume) from "someone
+        # else moved it" (drift). No row here means not-ours, which keeps this
+        # file's drift specimen a drift specimen.
+        return self._rows[0] if self._rows else None
+
 
 class _Row:
     def __init__(self, category, markets):
