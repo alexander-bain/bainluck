@@ -616,7 +616,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: claim caught it at ADJUDICATION time, so the renumber was a rename and one index line rather
 #: than a cycle of archaeology. That is #2009's ledger half paying out on the first collision
 #: after it was approved.
-MINIMUM_BANKED_RULINGS = 100
+#:
+#: Raised to **101** by INT-094 banking ruling **109** ("a READY token is void while its branch
+#: contains a never-merge ancestor", Fable's INT-094 directive) on top of the 102 + 108 pair
+#: above — three rulings in one push, so the delta anyone would have GUESSED is wrong twice over.
+#: COUNTED: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 101.
+MINIMUM_BANKED_RULINGS = 101
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
