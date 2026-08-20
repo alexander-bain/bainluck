@@ -3958,18 +3958,71 @@ for _beat_entry in celery_app.conf.beat_schedule.values():
 # superseded WARM is free; dropping a superseded WRITE loses data.
 # =============================================================================
 _EXPIRING_WARMER_BEATS = {
-    # beat name -> expires seconds (== one beat period)
-    # ⚠️ 10, NOT the 30 LAT-P064 registered — and the deviation is deliberate.
-    # That 30 was reasoned from MIN_PASS_PERIOD_SECONDS (the task's own floor on
-    # REAL passes). But `expires` bounds the MESSAGE, not the pass, and the beat
-    # publishes every 10 s: at 30 s, three messages are alive at once and the
-    # lapping this is meant to stop is re-admitted at 1/3 scale. The guard test
-    # `test_1609_expires_never_exceeds_the_beat_period` is what caught it.
-    # Cost of 10, stated: when a slot frees, the warmer waits up to 10 s for the
-    # next beat instead of picking up a queued backlog instantly. LAT-P064
-    # measured that resumption at 13 s with a backlog present, so this is inside
-    # the noise — and it is one more reason E3 predicts no visible improvement.
-    "warm-typeahead": 10,
+    # beat name -> expires seconds.
+    #
+    # ⚠️⚠️ **10 -> 120, LAT-P075.** The rule "expires == one beat period" is now
+    # DERIVED per beat rather than applied flat — see `derive_message_expiry_s()`
+    # in `app/utils/typeahead_beat_budget.py` for the full derivation.
+    #
+    # 🔴 **THIS IS NOT THE PERIOD REPAIR, AND AN EARLIER DRAFT OF THIS COMMENT
+    # SAID IT WAS.** The correction is recorded rather than quietly edited out,
+    # because the reasoning that produced it is the reasoning a reader will
+    # repeat. `expires: 10` was named as the period regression's mechanism
+    # (#2014) on a 4/4 both-directions correlation, and the arithmetic below does
+    # show it discarding two thirds of the warmer's messages. But discarding a
+    # message and lengthening the PERIOD are different claims, and continuing to
+    # sample separated them: during the long stalls the broker pile drains on the
+    # first free slot either way, so the next pass starts at the same instant
+    # whether the older messages were discarded or executed as no-ops.
+    #
+    # What this change buys is stated honestly at the bottom of this comment. The
+    # period's actual cause is `--concurrency=2` on `worker-background` against
+    # 57 beats, one of which is this one; see `docs/audits/latency/`.
+    #
+    # The old value and its reasoning are kept here because the reasoning was
+    # right about a different task. It ran: `expires` bounds the MESSAGE, the beat
+    # publishes every 10 s, so anything above 10 leaves several messages alive at
+    # once and re-admits lapping. **That holds when a task's wall is SHORTER than
+    # its beat period. `warm_typeahead`'s is 4-6x LONGER** — 39.3-61.3 s against a
+    # 10 s beat — and in that regime the fires landing during a pass are not
+    # superseded messages at all. They are the only start opportunities there are,
+    # every one of them held off by the run lock until the pass ends, and a 10 s
+    # expiry kills all of them except those published in the pass's final 10 s.
+    #
+    # 🔴 MEASURED, not argued. The share of fires that can execute at all is
+    # `(expires + max(0, period - wall)) / period`. At expires 10, wall p50 45.7 s,
+    # period p50 53.5 s that predicts **32.7 %** — and the deployed pass-ring
+    # instrument's own counters read **30.5 %** (26 ringed passes + 41 counted
+    # skips = 67 executions against ~220 fires over 2,196 s, 2026-08-20T02:5xZ).
+    # Two thirds of the warmer's firing opportunities were discarded unexecuted.
+    #
+    # 120 is `_LOCK_TTL_SECONDS`, deliberately a CONSTANT and not the sampled
+    # worst wall: the lock cannot be held past its own TTL, so a message older
+    # than that is provably not waiting on the lock and IS genuinely superseded —
+    # the discard the bound was always meant to make. A sampled maximum would not
+    # do, because this program has now read one as a bound and been wrong twice
+    # (42.6 by 11.3 s, then 53.920 by 7.36 s).
+    #
+    # WHAT IT BUYS, claimed no wider than it was measured:
+    #   1. The discard stops. Two thirds of fires became executions rather than
+    #      silent drops, which is a correctness fix on its own terms — a bound is
+    #      not entitled to throw away messages it was never aimed at.
+    #   2. Saturation becomes READABLE. Today a wedged background pool and a quiet
+    #      one produce the same evidence: no pass, no skip, nothing. With a message
+    #      that outlives the pile, the backlog drains as a burst of counted
+    #      `skips:lock` on the first free slot, so `skips` finally discriminates
+    #      "the pool was blocked" from "nothing was published" (gotcha #53's shape:
+    #      an absence that two different causes produce is not evidence).
+    #   3. Up to one beat interval off each period, since a queued message can
+    #      start a pass the instant the lock releases instead of waiting for the
+    #      next fire. ~4 s against a p50 of 50.1 s. Small, and it is the only
+    #      period effect claimed.
+    #
+    # COST, stated: every fire now executes, and the ones that cannot start a pass
+    # take the lock-skip path at <= 71 ms measured. ~0.4 s of slot time per minute,
+    # ~0.7 % of one slot. **Publishes do not change** — this bound is delivery-side
+    # only — so #1609's background arrival share moves in neither direction.
+    "warm-typeahead": 120,
 
     "precompute-discover-candidate-base": 120,   # */2 min — #1609 saw 6 enqueued
     "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only

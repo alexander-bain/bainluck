@@ -4780,7 +4780,10 @@ async def typeahead_search(
     if not _ta_degraded and not debug_evidence and not debug_timing:
         try:
             from app.tasks.redis_state import get_redis_client as _get_rc
-            _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))
+            # 45 -> 65, LAT-P075, on Fable's ratification (GO ruling 4, 2026-08-19).
+            # Mirrored by `typeahead_beat_budget.RESPONSE_CACHE_TTL_S`; a drift
+            # between the two is a RED TEST, never a silently wrong derivation.
+            _get_rc().setex(_cache_key, 65, _json.dumps(result, default=str))
         except Exception:
             pass
 
