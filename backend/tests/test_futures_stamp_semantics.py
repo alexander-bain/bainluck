@@ -404,23 +404,37 @@ def test_the_index_is_not_in_the_migration_chain() -> None:
     assert "create_index" not in body, "the index was moved into the migration body"
 
 
-def test_the_reader_switch_is_still_OWED() -> None:
-    """What #2024 has NOT finished, asserted so it cannot be forgotten.
+def test_the_reader_switch_is_DISCHARGED() -> None:
+    """** THE DEBT IS PAID, AND THE REMINDER IS INVERTED RATHER THAN DELETED. **
 
-    The column and its writers landed in UX-P107. `admin_judgments.py` — the
-    sampler #2024 was found through, and the consumer that is WRONG today — is
-    still reading `last_updated`. It cannot simply be repointed: the new column
-    is populated forward, so every row not yet re-polled reads NULL, and a bare
-    `price_changed_at >= cutoff` would silently empty the sampler.
+    UX-P107 wrote this as `test_the_reader_switch_is_still_OWED` and said in its
+    own body: "When it lands, this test reds and gets deleted." It landed in
+    UX-P108 and it did red. It is inverted in place instead, so #2024's whole
+    life — writer, named residual, reader — stays legible in one file rather
+    than ending in a deletion nobody can find later.
 
-    That switch needs its own decision about what NULL means, and this test is
-    the reminder. When it lands, this test reds and gets deleted — deliberately
-    the same shape as the test above it, which is the one UX-P106 left for
-    UX-P107 and which worked.
+    ** AND P107 CALLED THE HAZARD CORRECTLY: ** "the new column is populated
+    forward, so every row not yet re-polled reads NULL, and a bare
+    `price_changed_at >= cutoff` would silently empty the sampler." That is
+    exactly what the shipped policy avoids — NULL is UNKNOWN, never STALE
+    (gotcha #53), so an unstamped row falls back to `last_updated` and the
+    deploy is a no-op on day one.
+
+    The BEHAVIOUR of that policy is asserted in
+    `tests/test_taste_price_freshness_null_policy.py`, which compiles the real
+    query and kills the two mutants that matter. This test only holds the two
+    structural facts that make it true: the new column is read, and the old one
+    is still present as the fallback.
     """
-    assert "last_updated" in _read("app/routes/admin_judgments.py"), (
-        "admin_judgments.py stopped reading `last_updated` — if it moved to "
-        "`price_changed_at`, check it handles NULL for never-re-polled rows, "
-        "then delete this test."
+    source = _read("app/routes/admin_judgments.py")
+    assert "price_changed_at" in source, (
+        "admin_judgments.py stopped reading `price_changed_at` — the #2024 "
+        "reader switch has been reverted. `last_updated` alone cannot see an "
+        "actively-polled market whose price has not moved in three months."
     )
-    assert "price_changed_at" not in _read("app/routes/admin_judgments.py")
+    assert "last_updated" in source, (
+        "the `last_updated` FALLBACK is gone from admin_judgments.py. It is "
+        "what keeps a never-re-polled row (price_changed_at IS NULL) in the "
+        "sampler — without it the taste strata empty on deploy, which is the "
+        "failure UX-P107 named when it left this reminder."
+    )

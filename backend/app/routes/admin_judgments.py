@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -285,13 +285,49 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
     # Scoped to the taste strata on purpose. `stale_fixable` exists to surface
     # stale cards SO THEY CAN BE FIXED — applying the floor there would delete
     # the stratum's entire reason for existing.
+    # ── #2024: THE FLOOR NOW KEYS ON `price_changed_at`, WITH A NULL POLICY ──
+    #
+    # `last_updated` is bumped on EVERY poll whether or not the price moved, so
+    # as a freshness signal it separates ABANDONED markets (nothing writes them
+    # any more, so the stamp goes stale) from everything else — but NOT an
+    # actively-polled market whose price has sat still for three months, which
+    # is precisely the specimen #2019 was opened on. `price_changed_at` answers
+    # the question the floor is actually asking: when did this price last MOVE.
+    #
+    # ** THE NULL POLICY IS THE WHOLE RISK, AND IT IS FAIL-OPEN ON PURPOSE. **
+    #
+    # `price_changed_at` is new. Every row in production is NULL until its next
+    # price change, and a row whose price never moves again stays NULL forever.
+    # Read as `price_changed_at >= cutoff`, the floor would exclude every one of
+    # them and empty the taste strata on the day it deployed — a labeling queue
+    # that silently serves nothing, which is worse than the staleness it fixes.
+    #
+    # So NULL means UNKNOWN, never STALE (gotcha #53: an empty is not an
+    # absence). A row with no stamp falls back to `last_updated`, i.e. to
+    # exactly today's behaviour, and a row WITH a stamp is judged on it. The
+    # floor can therefore only get sharper as the column fills; it cannot get
+    # emptier. That also makes the deploy a no-op on day one, which is the
+    # property that lets the reader ship before the writer's backfill exists.
+    #
+    # ** THIS IS AN INTERIM AND CARRIES ITS EXPIRY (ruling 061). ** The fallback
+    # arm is deleted — not loosened — once `price_changed_at` coverage on
+    # actively-polled outcomes is high enough that NULL means "genuinely never
+    # observed to move" rather than "not stamped yet". Until then, deleting it
+    # is the change that empties the queue.
     if stratum in _PRICE_FRESH_STRATA:
+        cutoff = now - _MAX_TASTE_PRICE_AGE
         filters = [
             *filters,
             select(FuturesOutcome.id)
             .where(
                 FuturesOutcome.market_id == FuturesMarket.id,
-                FuturesOutcome.last_updated >= now - _MAX_TASTE_PRICE_AGE,
+                or_(
+                    FuturesOutcome.price_changed_at >= cutoff,
+                    and_(
+                        FuturesOutcome.price_changed_at.is_(None),
+                        FuturesOutcome.last_updated >= cutoff,
+                    ),
+                ),
             )
             .exists(),
         ]

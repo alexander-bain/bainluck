@@ -271,6 +271,27 @@ export const PROP_SCRIPT_FOLD = 0.94;
  */
 export const PROP_STRUCTURAL_CERTAINTY = 0.44;
 
+/**
+ * ── THE MOVEMENT FLOOR: WHERE "IT MOVED" STOPS BEING A JUDGEMENT CALL ────────
+ *
+ * UX-P108. Extracted, not introduced: this is the literal `0.005` that has
+ * always typed `DivergenceRow.direction`, given a name so that the pregame
+ * ranking and the rendered bar cannot hold two different opinions about which
+ * rows moved.
+ *
+ * That matters more here than it reads. `hasTravelled` below is defined as
+ * `direction !== "flat"`, so **a row is in the movement tier exactly when its
+ * own bar draws a journey.** Alex verifies this rail from a screenshot; a
+ * ranking whose top tier is not the set of rows that visibly moved would be
+ * unreviewable at the only bar that has ever been applied to it. A second
+ * constant here — even one set to the same 0.005 — would be free to drift.
+ *
+ * Half a point is also the resolution the surface actually has: `pct()` renders
+ * whole percent, so below this line "opened at 27% — it's 27% now" is the
+ * sentence the reader gets.
+ */
+export const PROP_TRAVEL_FLOOR = 0.005;
+
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
 
@@ -282,6 +303,78 @@ export const RAIL_MAX_ROWS = 5;
  * happens to rank five distinct players.
  */
 export const RAIL_MAX_PER_PLAYER = 2;
+
+/**
+ * ── ONE ROW PER LADDER, ANYWHERE IN THE RAIL (UX-P108, Alex) ─────────────────
+ *
+ * A "ladder family" is one player's one stat — `Trea Turner | Hits` — across
+ * every threshold the book offers on it. At most one rung of it reaches the
+ * rail.
+ *
+ * ** THIS EXISTS BECAUSE THE FILTER ALONE COULD NOT MAKE A STORY. ** UX-P107
+ * shipped ruling 105's structural filter and reported, against itself, that
+ * three rungs one point less extreme stepped into the freed slots — the rung
+ * population is a continuum with no gap (5.0, 6.0, 7.0, 7.2, 8.5 …), so a
+ * certainty threshold is a treadmill. The measured rail on Alex's own card
+ * `15199886`, WITH the filter already applied, was:
+ *
+ *     3. Justin Crawford: 5+ hits + runs + rbis   7.0%   0.0 pt
+ *     4. Trea Turner: 4+ hits                     7.0%   0.0 pt
+ *     5. Trea Turner: 3+ hits                     8.0%   0.0 pt
+ *
+ * Rows 4 and 5 are **the same ladder**, one point apart, neither having moved.
+ * That is not two claims; it is one claim quoted twice at slightly different
+ * resolutions, and it is the exact shape this cap removes.
+ *
+ * ── WHY A CAP AND NOT A TIGHTER THRESHOLD ────────────────────────────────────
+ *
+ * The two remedies UX-P107 named were a per-ladder cap and pivot-rung ranking.
+ * Alex took the cap, and the sweep is why: swept 0.44 → 0.35 the Phillies rail
+ * keeps the same shape at every value, because conviction ranking selects a
+ * ladder's extreme rungs BY CONSTRUCTION. Nothing done to a per-ROW predicate
+ * reaches a defect whose unit is the LADDER. This is the first rule on the rail
+ * whose subject is a group, which is why no amount of tuning the others got
+ * near it.
+ *
+ * ── ITS RELATIONSHIP TO `RAIL_MAX_PER_PLAYER`, WHICH IS NOT SUBSUMPTION ──────
+ *
+ * Both stand, and neither implies the other. `RAIL_MAX_PER_PLAYER` caps a
+ * player ACROSS stats at two — Turner's hits and Turner's home runs are two
+ * different claims and may both appear. This caps one player's one STAT at one.
+ * A card can hit either limit first.
+ *
+ * ── SCOPE: PREGAME ONLY, DELIBERATELY ────────────────────────────────────────
+ *
+ * Alex ruled on THE SCRIPT. In-game the rail ranks by travel, where two rungs
+ * of one ladder moving together is corroboration rather than repetition, and
+ * ruling 035's blast-radius discipline says a rail nobody ruled on does not get
+ * quietly re-ranked on the way past. The in-game and settled question is
+ * REPORTED back, not taken here.
+ */
+export const RAIL_MAX_PER_LADDER = 1;
+
+/**
+ * ONE definition of a ladder family, used by the structural pass AND the rail
+ * cap (doctrine clause 5). It is the dedupe key `player|stat|threshold` minus
+ * its threshold — the same identity one level up — so "which rungs are siblings"
+ * cannot come to mean two different things in two places.
+ */
+function ladderFamilyKey(row: Pick<DivergenceRow, "player" | "stat">): string {
+  return `${row.player}|${row.stat}`;
+}
+
+/**
+ * Did this question actually move before first pitch?
+ *
+ * Defined off `direction`, NOT off a second comparison against
+ * `PROP_TRAVEL_FLOOR`, and that is the whole point: the movement tier is then
+ * the set of rows whose own bar renders a journey, by construction rather than
+ * by agreement. A screenshot is the bar this rail is judged at, so the ranking
+ * and the picture must not be able to disagree.
+ */
+function hasTravelled(row: DivergenceRow): boolean {
+  return row.direction !== "flat";
+}
 
 /**
  * V3's disappearance taxonomy. Only the first two are benign; the rest are
@@ -671,6 +764,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     : 0;
 
   const perPlayer = new Map<string, number>();
+  const perLadder = new Map<string, number>();
   const selected: DivergenceRow[] = [];
   for (const row of candidates) {
     if (selected.length >= RAIL_MAX_ROWS) break;
@@ -700,8 +794,39 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // his own 2+ strikeouts — the one rung in that ladder the market has a view
     // about — and the rule would have made the page worse in his name.
     if (pregame && row.structural) continue;
+    // UX-P108, Alex: AT MOST ONE RUNG PER LADDER, ANYWHERE IN THE RAIL.
+    //
+    // ** WHAT PROTECTS THE LADDER IS THAT THE SLOT IS CONSUMED AT PUSH, NOT
+    // WHERE THIS CHECK SITS — and the first draft of this comment said the
+    // opposite. ** A mutation that moved the whole cap ABOVE the structural
+    // floor SURVIVED the entire suite, correctly: the check only READS
+    // `perLadder`, and nothing is recorded until a row actually reaches
+    // `push`, so a rung skipped by the floor (or by the player cap) cannot
+    // have spent anything. Moving the RECORDING up instead is the real defect
+    // shape, and that mutant is killed by four tests.
+    //
+    // The distinction matters because the danger is concrete. Brady Singer
+    // carries SIX structural strikeout rungs on `14788546`; if any of them
+    // consumed the slot, the entire ladder would go silent — including
+    // whichever rung the market has a real view about — and the rule would have
+    // made the page worse in his name. That is guarded by the write position,
+    // so do not "tidy" the `perLadder.set` upward to sit beside its check.
+    //
+    // The ordering that IS deliberate is cap-before-player-cap: a ladder
+    // rejected here must not also consume one of its player's two slots. A
+    // player with two rungs of one stat and one of another should reach the
+    // rail with two DIFFERENT stats, not one stat and an empty slot.
+    //
+    // `continue`, never `break`: the sort interleaves ladders, so the next row
+    // is very often a different family.
+    const ladder = ladderFamilyKey(row);
+    if (pregame) {
+      const rungs = perLadder.get(ladder) ?? 0;
+      if (rungs >= RAIL_MAX_PER_LADDER) continue;
+    }
     const n = perPlayer.get(row.player) ?? 0;
     if (n >= RAIL_MAX_PER_PLAYER) continue;
+    perLadder.set(ladder, (perLadder.get(ladder) ?? 0) + 1);
     perPlayer.set(row.player, n + 1);
     selected.push(withSentence(row, settled));
   }
@@ -891,7 +1016,8 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       pregameMark,
       current,
       travel,
-      direction: travel < 0.005 ? "flat" : current > pregameMark ? "over" : "under",
+      direction:
+        travel < PROP_TRAVEL_FLOOR ? "flat" : current > pregameMark ? "over" : "under",
       surprising: travelAtOrAbove(travel, PROP_SURPRISE_TRAVEL),
       sentence: null,
       settled,
@@ -968,12 +1094,13 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   //
   // A SECOND PASS, and it has to be: "is this rung near-certain because of
   // where it sits in its own ladder" is not answerable while the ladder is
-  // still being built. The family key is `player|stat`, which is the dedupe key
-  // minus its threshold — the same identity, one level up, so the two cannot
-  // drift apart into two different ideas of what a ladder is.
+  // still being built. The family key comes from `ladderFamilyKey`, which is
+  // the dedupe key minus its threshold — the same identity, one level up. Since
+  // UX-P108 the rail's per-ladder cap reads the SAME helper, so "which rungs are
+  // siblings" cannot come to mean two different things in two places.
   const byFamily = new Map<string, DivergenceRow[]>();
   for (const row of candidates) {
-    const familyKey = `${row.player}|${row.stat}`;
+    const familyKey = ladderFamilyKey(row);
     const bucket = byFamily.get(familyKey);
     if (bucket) bucket.push(row);
     else byFamily.set(familyKey, [row]);
@@ -1044,7 +1171,7 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // has any data for. Pregame ranks by conviction (nothing has travelled),
   // in-game by travel (nothing has resolved), post-game by surprise (the last
   // traded price is not where it ended).
-  candidates.sort(settled ? bySurprise : pregame ? byConviction : byTravel);
+  candidates.sort(settled ? bySurprise : pregame ? byScript : byTravel);
 
   return { candidates, dropped, nonBenignCount, settled, pregame, noRows: false };
 }
@@ -1082,7 +1209,50 @@ function scriptSalience(row: DivergenceRow): number {
   );
 }
 
-function byConviction(a: DivergenceRow, b: DivergenceRow): number {
+/**
+ * PREGAME ORDER: ** MOVEMENT FIRST, THEN CONVICTION ** — Alex, UX-P108, ruled
+ * off the UX-P107 before/after capture.
+ *
+ * Two TIERS, not a blend, and the difference is the ruling:
+ *
+ *   1. every question that has actually moved since it opened, biggest move
+ *      first;
+ *   2. everything else, by conviction, filling whatever slots remain.
+ *
+ * ── WHY THE PREVIOUS BLEND HAD TO GO ─────────────────────────────────────────
+ *
+ * `scriptSalience` — `max(travel/p90, conviction/p90)` — is a good FOLD and was
+ * a bad RANK. It let a 0.0-point row at 93% outrank a row that had moved, so
+ * the rail's top five on Alex's card carried three questions that had not moved
+ * at all, two of them rungs of one Turner ladder. A rail headed THE SCRIPT is
+ * answering "what is tonight's market actually saying"; a question the market
+ * CHANGED ITS MIND ABOUT says more than one it has merely been confident about
+ * since the board opened.
+ *
+ * It also has a property the blend could not have: **the tier is visible.** A
+ * reader can see which rows moved, because their bars are the ones that draw a
+ * journey. A max() over two normalised units is not checkable from a screenshot,
+ * and a screenshot is how this surface is ruled on.
+ *
+ * ── WITHIN THE MOVEMENT TIER THE KEY IS TRAVEL, NOT SALIENCE ─────────────────
+ *
+ * Deliberate. Ranking movers by salience would let a one-point move at 94%
+ * outrank a twenty-point move at 60% — re-admitting the extreme-hunting this
+ * ruling exists to end, inside the tier meant to be free of it.
+ *
+ * ── AND IN TIER 2, SALIENCE *IS* CONVICTION ──────────────────────────────────
+ *
+ * `scriptSalience` is kept there rather than replaced by raw conviction so the
+ * rail and the detail fold keep sharing one function. It costs nothing: every
+ * row in tier 2 has travel below `PROP_TRAVEL_FLOOR`, so its travel term is at
+ * most 0.005/0.20 = 0.025 and the conviction term decides. Asserted in the
+ * suite rather than left as a comment.
+ */
+function byScript(a: DivergenceRow, b: DivergenceRow): number {
+  const aMoved = hasTravelled(a);
+  const bMoved = hasTravelled(b);
+  if (aMoved !== bMoved) return aMoved ? -1 : 1;
+  if (aMoved) return byTravel(a, b);
   return scriptSalience(b) - scriptSalience(a) || byTravel(a, b);
 }
 
