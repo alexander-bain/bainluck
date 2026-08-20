@@ -1,21 +1,21 @@
-rank,cell,source,league,market_type,n,current_ece_pp,graded_share,q_est,predicted_ece_pp,which_fixes,confidence,notes
-1,polymarket/table_tennis/quantity,polymarket,table_tennis,quantity,2880,50.0,0.18,576,5.8-9.2,1+3+2bound+6,low,cumulative ladder → bounded [3,6] per-rung de-vig (histogram blocked #1974)
-2,polymarket/table_tennis/container_member,polymarket,table_tennis,container_member,2313,49.95,0.21,463,6.8-10.5,1+3+2,med,exclusive n-way point computable
-3,polymarket/soccer/quantity,polymarket,soccer,quantity,12819,44.66,0.27,2564,6.5-9.8,1+3+2bound+5/6,low,cumulative bounded; timezone ±0.4 folded into range
-4,polymarket/tennis/container_member,polymarket,tennis,container_member,4789,38.07,0.29,958,7.2,1+3+2,med,exclusive point
-5,polymarket/tennis/quantity,polymarket,tennis,quantity,6166,37.14,0.33,1233,7.0-10.3,1+3+2bound,low,cumulative bounded
-6,polymarket/baseball/container_member,polymarket,baseball,container_member,1013,36.99,0.35,203,7.8,1+3+2,med,exclusive point
-7,polymarket/esports/container_member,polymarket,esports,container_member,6591,29.83,0.30,1318,6.5,1+3+2,med,exclusive point
-8,polymarket/baseball/quantity,polymarket,baseball,quantity,2386,29.31,0.38,477,7.2-10.5,1+3+2bound,low,cumulative bounded
-9,polymarket/soccer/container_member,polymarket,soccer,container_member,7064,24.12,0.41,1413,6.8,1+3+2,med,largest n container so point most stable
-10,polymarket/baseball/field,polymarket,baseball,field,2828,20.13,0.78,2828,11.2,3+2,med,exclusive field n-way; provenance small
-11,kalshi/entertainment/quantity,kalshi,entertainment,quantity,1200,20.11,0.95,240,13.8-17.1,3+2bound,low,kalshi ladder cumulative bounded; FLAG-1 vs queue
-12,kalshi/hockey/field,kalshi,hockey,field,5631,17.15,0.96,5631,9.1,2+5,med,exclusive field + timezone
-13,kalshi/golf/field,kalshi,golf,field,3062,15.05,0.96,3062,7.0,2,med,exclusive field
-14,polymarket/soccer/field,polymarket,soccer,field,11802,13.08,0.82,11802,4.6,1+2+3,high,field exclusive measured path
-15,kalshi/baseball/field,kalshi,baseball,field,39470,12.23,0.97,39470,4.2,2,high,largest n headline MCE move
-16,kalshi/baseball/unknown,kalshi,baseball,unknown,2219,11.3,0.94,2219,11.2,6,high,unshaped excluded from normalization
-17,polymarket/esports/field,polymarket,esports,field,15666,11.02,0.80,15666,3.5,1+2,high,field exclusive
-18,polymarket/economics/quantity,polymarket,economics,quantity,1137,9.98,0.42,227,4.2-7.5,1+3+2bound,low,straddles 5pp guardrail
-19,kalshi/basketball/quantity,kalshi,basketball,quantity,1058,9.34,0.96,212,3.0-6.3,3+2bound,low,cumulative bounded; kalshi ladder
-20,kalshi/economics/quantity,kalshi,economics,quantity,15277,7.85,0.96,3055,1.5-4.8,3+2bound,low,best GREEN worst GREEN — guardrail interval semantics; FLAG-4
+rank,cell,source,league,market_type,n,current_ece_pp,graded_share,q_est,predicted_ece_pp,which_fixes,confidence,notes,
+1,polymarket/table_tennis/quantity,polymarket,table_tennis,quantity,2880,50.0,0.18,576,5.8-9.2,1+3+2bound+6,low,cumulative ladder → bounded [3,['6] per-rung de-vig (histogram blocked #1974)']
+2,polymarket/table_tennis/container_member,polymarket,table_tennis,container_member,2313,49.95,0.21,463,6.8-10.5,1+3+2,med,exclusive n-way point computable,
+3,polymarket/soccer/quantity,polymarket,soccer,quantity,12819,44.66,0.27,2564,6.5-9.8,1+3+2bound+5/6,low,cumulative bounded; timezone ±0.4 folded into range,
+4,polymarket/tennis/container_member,polymarket,tennis,container_member,4789,38.07,0.29,958,7.2,1+3+2,med,exclusive point,
+5,polymarket/tennis/quantity,polymarket,tennis,quantity,6166,37.14,0.33,1233,7.0-10.3,1+3+2bound,low,cumulative bounded,
+6,polymarket/baseball/container_member,polymarket,baseball,container_member,1013,36.99,0.35,203,7.8,1+3+2,med,exclusive point,
+7,polymarket/esports/container_member,polymarket,esports,container_member,6591,29.83,0.30,1318,6.5,1+3+2,med,exclusive point,
+8,polymarket/baseball/quantity,polymarket,baseball,quantity,2386,29.31,0.38,477,7.2-10.5,1+3+2bound,low,cumulative bounded,
+9,polymarket/soccer/container_member,polymarket,soccer,container_member,7064,24.12,0.41,1413,6.8,1+3+2,med,largest n container so point most stable,
+10,polymarket/baseball/field,polymarket,baseball,field,2828,20.13,0.78,2828,11.2,3+2,med,"QUEUE-WRONG: queue -15 was for 5-member containers, not field; many baseball fields incomplete so -8.5 realistic. Resolved 11.2 stays, queue corrected to 10-13",
+11,kalshi/entertainment/quantity,kalshi,entertainment,quantity,1200,20.11,0.95,240,15.5-18.5,3+2bound,low,"QUEUE-WRONG: Kalshi is exchange, no book overround; book vig -3 to -6 does not apply; real per-rung YES+NO 1.00-1.03 so correction -0.5 to -1.5. Resolved 15.5-18.5 (was 13.8-17.1 optimistic)",
+12,kalshi/hockey/field,kalshi,hockey,field,5631,17.15,0.96,5631,9.1,2+5,med,exclusive field + timezone,
+13,kalshi/golf/field,kalshi,golf,field,3062,15.05,0.96,3062,7.0,2,med,exclusive field,
+14,polymarket/soccer/field,polymarket,soccer,field,11802,13.08,0.82,11802,4.6,1+2+3,high,field exclusive measured path,
+15,kalshi/baseball/field,kalshi,baseball,field,39470,12.23,0.97,39470,4.2,2,high,largest n headline MCE move,
+16,kalshi/baseball/unknown,kalshi,baseball,unknown,2219,11.3,0.94,2219,11.2,6,high,unshaped excluded from normalization,
+17,polymarket/esports/field,polymarket,esports,field,15666,11.02,0.80,15666,3.5,1+2,high,field exclusive,
+18,polymarket/economics/quantity,polymarket,economics,quantity,1137,9.98,0.42,227,4.2-7.5,1+3+2bound,low,straddles 5pp guardrail,
+19,kalshi/basketball/quantity,kalshi,basketball,quantity,1058,9.34,0.96,212,3.0-6.3,3+2bound,low,cumulative bounded; kalshi ladder,
+20,kalshi/economics/quantity,kalshi,economics,quantity,15277,7.85,0.96,3055,2.2-4.8,3+2bound,low,SEMANTICS: interval GREEN rule — GREEN only if entire interval <=5pp; tighten low 1.5->2.2 after removing Fix6 double-count; definition ruled interval,
