@@ -502,10 +502,15 @@ def test_the_endpoint_takes_no_celery_broadcast():
     body = src.split('"""', 2)[-1]  # the docstring NAMES both; the body must not call them
     assert "control.inspect" not in body
     assert "_inspect_snapshot" not in body
-    assert "run_in_threadpool" in body, (
+    # 🔴 The CALL, not the import. This assertion read `"run_in_threadpool" in
+    # body` on its first pass and a mutation that deleted the `await` while
+    # leaving the import line SURVIVED it — the substring was still there and
+    # the endpoint was blocking the event loop. Reported in the LAT-P074 report
+    # rather than quietly tightened; the tightening is here.
+    assert "await run_in_threadpool(_read)" in body, (
         "the bounded Redis client still blocks for up to 5s (gotcha #39), and "
         "5s of a blocked event loop under a refreshing dashboard tab is #1994 "
-        "at a smaller scale"
+        "at a smaller scale. An import of run_in_threadpool is not a use of it"
     )
 
 

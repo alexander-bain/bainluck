@@ -354,6 +354,33 @@ above the 42.6s "maximum" the margin had been computed from.
 disguise) — both are cases where the number being reasoned about and the number
 that actually decides are different quantities.
 
+### 16. A verification suite reports the score of its FIRST pass, not of its last.
+
+Where a suite is graded by adversarial trials — mutations, fuzz cases, injected
+faults, red-team probes — the number that goes in the report is what the first
+honest run produced. Tightening afterwards is not merely allowed, it is the
+point; **presenting the tightened number as the original result is what is
+forbidden**, and it is forbidden because the tightened number is a tautology. Any
+suite reaches "all caught" if you keep patching until it does. The only figure
+carrying information is the one measured before the suite knew what was coming.
+
+The tell is a perfect score with no story attached. A first pass that catches
+everything either faced trials chosen to be caught, or is genuinely good — and a
+reader cannot tell those apart from the score alone, so the score has to arrive
+with its history.
+
+*Named failures, both from the lane that banked this:* LAT-P073's **M4** (a
+kill-switch mutation survived; both branches published, so nothing failed, and
+the only casualty was a reason label an operator would then go hunting a phantom
+Redis fault over). LAT-P074's **M10** — an assertion reading `"run_in_threadpool"
+in body` survived a mutation that deleted the `await` and left the import line,
+so the endpoint was blocking the event loop while the test read green. Both were
+reported as first-pass survivals and *then* patched, in that order.
+
+*Sibling of clause 1* and of ruling **074** (a green pass names the work it did):
+all three refuse a summary statistic that has been separated from the conditions
+that produced it. A suite score with its provenance removed is an empty `200`.
+
 ---
 
 ## Related
