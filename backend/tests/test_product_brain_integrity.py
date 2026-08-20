@@ -596,8 +596,27 @@ def test_ruling_numbers_are_unique() -> None:
 #: local and remote refs for `docs/rulings/102-*`, holders_found 0 — which is #2009's ledger half
 #: doing exactly what the note above asks for. The claim held through this rebase: ux took 100
 #: and 101, not 102, so no renumber was owed and the index reads 099 -> 100 -> 101 -> 102 with no
-#: gap.
-MINIMUM_BANKED_RULINGS = 99
+#: gap.#:
+#: Raised to **100** by the INT-094 combined merge — CAL-P077's **102** (above) and lane1
+#: q380's **108** ("a dry run gates only what it executes", Fable, #1947/#1796) in one push.
+#: FOURTEENTH consecutive cycle, and the first one where the collision was CALLED IN ADVANCE:
+#: Fable's directive named the double-claim on 102 and adjudicated it before the merge — the
+#: ledger's claim (`RULING-CLAIMS.md`, digest `b6471e51`, claims=74) wins, so calibration KEEPS
+#: 102 and q380's dry-run ruling renumbered. It went to **108**, NOT to 103: the directive said
+#: "the next free number", and 103-107 are all claimed-and-unmerged (103 calibration/CAL-P078,
+#: 104 latency, 105-107 ux) with the FILES already written on those branches. Measured, not
+#: assumed — 489 local and remote refs swept for `docs/rulings/1[0-9][0-9]-`, and the integrity
+#: gate below refused 103 by name before the sweep did. Both sides wrote 99 and both were right
+#: about themselves; the merged tree holds **100**. COUNTED with
+#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 100 (ruling 088 — count, never add,
+#: never take a side, never eyeball).
+#:
+#: Note what the ledger bought here that the test could not. The test still catches a repeat, but
+#: it catches it at MERGE time with the number already minted twice and two files on disk. The
+#: claim caught it at ADJUDICATION time, so the renumber was a rename and one index line rather
+#: than a cycle of archaeology. That is #2009's ledger half paying out on the first collision
+#: after it was approved.
+MINIMUM_BANKED_RULINGS = 100
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

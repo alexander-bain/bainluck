@@ -1287,6 +1287,138 @@ async def _sample_events(client: httpx.AsyncClient, status: str, limit: int) -> 
         return []
 
 
+#: Rows/hour of NEW unanchored events above which ruling 048's "bounded cost" is
+#: not bounded. DERIVED from the #2020 incident rather than chosen to taste:
+#:
+#:   * healthy regime, measured — 2026-08-18 added **6 rows in a day** (0.25/h),
+#:     and the tag's introduction day (08-17) burst to 500 rows over 7 hours
+#:     (71/h) as it first populated;
+#:   * incident regime, measured — 2026-08-19/20 sustained **900-2,400 rows/hour**
+#:     for three days, 500 -> 51,673 total.
+#:
+#: 100/h sits in the empty band between them: 400x the healthy daily rate, above
+#: the one legitimate onset burst on record, and 24x below the incident. A rate
+#: this high has never been benign here.
+UNANCHORED_GROWTH_PER_HOUR_CEILING = 100.0
+
+#: Redis key holding the PRIOR provenance-meter reading, so the growth gate
+#: compares against a value we actually took rather than one it inferred.
+_PROVENANCE_METER_PRIOR_KEY = "bainluck:flow_sentinel:provenance_meter_prior"
+#: 14 days — long enough that a few skipped nightly runs still leave a prior to
+#: compare against, short enough that a months-old reading never becomes the
+#: baseline for a rate.
+_PROVENANCE_METER_PRIOR_TTL_S = 14 * 24 * 3600
+
+
+def _utcnow():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def _load_prior_provenance_meter():
+    """The previous run's reading, or None. Never raises."""
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(_PROVENANCE_METER_PRIOR_KEY)
+        if not raw:
+            return None
+        return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        logger.info("flow sentinel: no prior provenance meter (%s)", exc)
+        return None
+
+
+def _store_provenance_meter(meter: dict, now) -> None:
+    """Persist this run's reading for the next run to compare against."""
+    try:
+        import json
+
+        from app.tasks.redis_state import get_redis_client
+
+        payload = json.dumps({
+            "read_at": now.isoformat(),
+            "created_unanchored": meter.get("created_unanchored"),
+            "reconciled": meter.get("reconciled"),
+            "unreconciled": meter.get("unreconciled"),
+        })
+        get_redis_client().setex(
+            _PROVENANCE_METER_PRIOR_KEY, _PROVENANCE_METER_PRIOR_TTL_S, payload,
+        )
+    except Exception as exc:
+        logger.info("flow sentinel: could not persist provenance meter (%s)", exc)
+
+
+def provenance_growth(prior, meter: dict, now) -> dict:
+    """Growth of the unanchored population between two REAL readings. Pure.
+
+    Returns a dict that always carries ``measured``; ``rate_per_hour`` is None
+    whenever a rate cannot honestly be computed (no prior, unparseable prior, a
+    non-positive interval, or missing counts). **A rate of None never fails the
+    gate** — an absent comparison is not evidence of health, and it must not be
+    dressed up as one either (gotcha #53).
+
+    ``reconciled_delta`` may be NEGATIVE and that is not a bug in the reader:
+    the meter's `reconciled` was observed moving 180 -> 173 between two live
+    reads during #2020, so it is not monotone and cannot be read as drain
+    progress. It is reported for context and never used as a denominator.
+    """
+    from datetime import datetime, timezone
+
+    out = {
+        "measured": False,
+        "rate_per_hour": None,
+        "created_delta": None,
+        "reconciled_delta": None,
+        "hours": None,
+        "prior_read_at": None,
+    }
+    created = meter.get("created_unanchored")
+    if not isinstance(created, (int, float)):
+        out["reason"] = "current reading has no created_unanchored"
+        return out
+    if not isinstance(prior, dict):
+        out["reason"] = "no prior reading persisted yet — first run, or TTL expired"
+        return out
+    prior_created = prior.get("created_unanchored")
+    if not isinstance(prior_created, (int, float)):
+        out["reason"] = "prior reading has no created_unanchored"
+        return out
+    try:
+        prior_at = datetime.fromisoformat(str(prior.get("read_at")))
+    except (TypeError, ValueError):
+        out["reason"] = "prior reading has an unparseable read_at"
+        return out
+    if prior_at.tzinfo is None:
+        prior_at = prior_at.replace(tzinfo=timezone.utc)
+    hours = (now - prior_at).total_seconds() / 3600.0
+    out["prior_read_at"] = prior_at.isoformat()
+    if hours <= 0:
+        # A prior stamped in the FUTURE would make the rate negative and the gate
+        # would fail OPEN forever — the ahead-drift failure the lane locks already
+        # learned the hard way. Refuse to compute rather than compute a lie.
+        out["reason"] = f"non-positive interval ({hours:.3f}h) — refusing to rate"
+        return out
+    prior_reconciled = prior.get("reconciled")
+    reconciled = meter.get("reconciled")
+    out.update({
+        "measured": True,
+        "hours": hours,
+        "created_delta": int(created - prior_created),
+        "reconciled_delta": (
+            int(reconciled - prior_reconciled)
+            if isinstance(reconciled, (int, float))
+            and isinstance(prior_reconciled, (int, float))
+            else None
+        ),
+        "rate_per_hour": (created - prior_created) / hours,
+    })
+    return out
+
+
 async def _run_provenance_meter(client: httpx.AsyncClient) -> dict:
     """Ruling 048's declared cost, read as a number rather than assumed bounded.
 
@@ -1338,12 +1470,6 @@ async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
                       f"{meter.get('reason') or 'no reason given'}"
         })
     else:
-        # A SINGLE-READ invariant, deliberately, not a trend. The meter emits no
-        # prior value, so a `unreconciled > previous` comparison here would be
-        # dead code wearing the costume of a gate — which is the defect this
-        # whole check is being repaired for. If a trend is wanted later, persist
-        # the prior reading first and compare that; do not infer one.
-        #
         # What one read CAN establish: 048 accepts duplicates because id-keyed
         # reconciliation drains them. If rows were created unanchored and NOT
         # ONE has ever reconciled, the draining half of the bargain is absent,
@@ -1359,6 +1485,39 @@ async def _run_duplicate_events(client: httpx.AsyncClient) -> dict:
                               "048's accepted cost is only bounded by the "
                               "reconciliation that is not happening"
                 })
+
+        # #2020: THE GROWTH GATE — and the reason it had to exist.
+        #
+        # The clause above was the whole meter check, and it PASSED throughout the
+        # #2020 incident: `reconciled` had drifted to 173 by incidental means, so
+        # `reconciled == 0` was false while the population grew 500 -> 51,673 in
+        # three days at ~2,400 rows/hour. **A gate that passes while the thing it
+        # guards grows 100x is the crying-wolf failure inverted** — and it is
+        # worse than a noisy alarm, because it is quoted as evidence of health.
+        #
+        # The previous comment here said a trend comparison would be "dead code
+        # wearing the costume of a gate ... if a trend is wanted later, persist
+        # the prior reading first and compare that; do not infer one." That was
+        # exactly right, and this is that: the prior reading is now PERSISTED, so
+        # the comparison is against a value we actually took, never an inferred
+        # one. When there is no prior reading we say so and gate nothing.
+        prior = _load_prior_provenance_meter()
+        growth = provenance_growth(prior, meter, _utcnow())
+        meter["growth"] = growth
+        if growth.get("rate_per_hour") is not None and growth["rate_per_hour"] > (
+            UNANCHORED_GROWTH_PER_HOUR_CEILING
+        ):
+            meter_failures.append({
+                "detail": (
+                    f"unanchored population GROWING at {growth['rate_per_hour']:.0f} "
+                    f"rows/hour (ceiling {UNANCHORED_GROWTH_PER_HOUR_CEILING:.0f}) — "
+                    f"{growth['created_delta']:+d} created and "
+                    f"{growth['reconciled_delta']} reconciled over "
+                    f"{growth['hours']:.2f}h. Ruling 048's cost is bounded by "
+                    "reconciliation draining it; at this rate nothing drains it"
+                )
+            })
+        _store_provenance_meter(meter, _utcnow())
 
     return {
         "flow": "duplicate_events",
