@@ -366,6 +366,12 @@ class TestCalibrationPublicEndpoint:
             # answered 200 and the only word for it was "stale", the same word a
             # forty-minute-old memo gets.
             "producer",
+            # CAL-P076 / #2007: the third serve-time declaration. ``producer``
+            # says whether the publisher is running; this says WHEN THE NUMBERS
+            # IT PUBLISHED WERE READ. A staged bank that never resets made those
+            # two come apart by six hours while every field read green —
+            # publishing is not freshness.
+            "staged",
         }
 
     async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):

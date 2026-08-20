@@ -477,7 +477,9 @@ async def test_a_predecessor_is_never_promoted_into_the_current_caches(monkeypat
     assert rc.recall_last_good("calibration:main", max_age_s=SERVE_MAX_AGE_S) is None
 
 
-async def test_the_first_current_build_immediately_displaces_the_predecessor(monkeypatch):
+async def test_the_first_current_build_immediately_displaces_the_predecessor(
+    monkeypatch, healthy_staged_bank
+):
     """Recovery: the rollover window closes by itself, on the first publish."""
     from app.routes import calibration
     from app.tasks import precompute_calibration as pc

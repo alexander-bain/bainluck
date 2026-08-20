@@ -427,6 +427,30 @@ async def cohort_cell_census_last(request: Request):
     if not read.ok or read.envelope is None:
         return {"measured": False, "reason": f"artifact_unreadable: {read.status}"}
     payload = dict(read.envelope.payload or {})
+
+    # CAL-P076: an IN-FLIGHT checkpoint is a cursor and a fold, not a report —
+    # only the final write carries ``cells``. Rendering the report here, from
+    # the bins already banked, is what makes the docstring above true; before
+    # this, a mid-walk read returned the raw cursor and the promise that partial
+    # cells "are still worth having" had no code behind it. Read-time only: the
+    # per-page write stays a cursor+fold, so nothing about the walk gets slower.
+    if "cells" not in payload and isinstance(payload.get("bins"), dict):
+        from app.utils.cohort_cell_census import build_report
+
+        partial = build_report(
+            accumulator=payload.get("bins") or {},
+            roster_totals=payload.get("roster_totals") or {},
+            paged_totals=payload.get("paged_totals") or {},
+            failed_ranges=payload.get("failed_ranges") or [],
+            complete=bool(payload.get("complete")),
+            elapsed_s=0.0,
+            pages_done=int(payload.get("pages_done") or 0),
+        )
+        partial["run_id"] = payload.get("run_id")
+        partial["resume_cursor"] = payload.get("cursor")
+        partial["rendered_from"] = "in_flight_checkpoint"
+        payload = partial
+
     # The raw bin accumulator is the checkpoint's business, not a reader's: it is
     # tens of thousands of keys and says nothing the per-cell rows do not.
     payload.pop("bins", None)

@@ -249,16 +249,41 @@ async def _read_checkpoint() -> dict[str, Any] | None:
 
 
 async def _write_checkpoint(payload: dict[str, Any], *, complete: bool) -> bool:
+    """Bank the walk's state. The RECORD is always whole; the JOB may not be.
+
+    CAL-P076 — the defect this repairs, and it broke both halves of "resumable":
+    ``complete`` was passed straight to the ENVELOPE, where it means something
+    else entirely. ``decode_envelope`` types an envelope with ``complete=False``
+    as **MALFORMED / IncompleteArtifact** and refuses it, so a mid-walk
+    checkpoint was unreadable by construction:
+
+    * :func:`_read_checkpoint` requires ``read.ok`` and therefore returned
+      ``None`` for every in-flight cursor — so ``resume=True`` restarted at
+      cursor 0 on every invocation and the walk could never span more than one
+      budget. A census the whole design calls resumable had no resume.
+    * ``GET /admin/cohort-cell-census/last`` answered ``artifact_unreadable:
+      malformed`` while a perfectly good partial census sat in the row, directly
+      contradicting its own docstring ("a partial read is a first-class answer
+      here"). Measured on production 2026-08-19T23:55Z, mid-run.
+
+    The sibling checkpoint got this right and says so in one line —
+    ``save_main_checkpoint``: *"The RECORD is whole; the build's own state is
+    `terminal` above."* Same discipline here. The envelope is complete because
+    the row is a whole, checksummed record of where the walk got to; whether the
+    WALK finished is the payload's own ``complete`` key, which
+    :func:`_read_checkpoint`'s caller and ``build_report`` already read.
+    """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
 
+    payload = {**payload, "complete": bool(complete)}
     try:
         result = await publish_snapshot_standalone(
             DurableEnvelope.build(
                 identity=CENSUS_IDENTITY,
                 schema_version=CENSUS_SCHEMA,
                 payload=payload,
-                complete=complete,
+                complete=True,
                 source="worker:cohort-cell-census",
             )
         )
@@ -306,9 +331,17 @@ async def run_cohort_cell_census(
     roster_totals: dict[str, int] = dict(state.get("roster_totals") or {})
 
     complete = False
-    session_gen = get_task_session()
-    session = await session_gen.__anext__()
-    try:
+    # CAL-P076: ``get_task_session`` is an ``@asynccontextmanager``, not a bare
+    # async generator. CAL-P075 drove it by hand — ``session_gen.__anext__()`` /
+    # ``session_gen.aclose()`` — and every production invocation died in 73 ms on
+    # ``'_AsyncGeneratorContextManager' object has no attribute '__anext__'``
+    # before opening a single connection. All 37 of that queue's tests are pure
+    # (SQL-string invariants and the pure fold), so nothing ever started the
+    # worker and the defect shipped green through a 17,093-test suite. Enter it
+    # the way every sibling task does; ``test_worker_enters_the_session_the_way_
+    # get_task_session_is_defined`` drives the real protocol so a hand-rolled
+    # form cannot come back.
+    async with get_task_session() as session:
         # The roster totals are re-read on a FRESH run only. On a resume they are
         # carried, because re-reading them mid-walk would compare a cursor that
         # has covered part of an OLD population against totals from a NEW one,
@@ -400,11 +433,6 @@ async def run_cohort_cell_census(
                 },
                 complete=False,
             )
-    finally:
-        try:
-            await session_gen.aclose()
-        except Exception:  # noqa: BLE001
-            pass
 
     report = build_report(
         accumulator=accumulator,

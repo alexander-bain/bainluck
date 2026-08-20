@@ -264,6 +264,11 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     # (gotcha #53), which is why this stub's producer verdict is `stalled`.
     producer = out.pop("producer")
     assert producer["age_s"] is None and producer["stalled"] is True
+    # CAL-P076 / #2007: the third serve-time declaration. No staged bank is
+    # mocked here, so the disclosure is honestly UNMEASURED — which is also
+    # why this stub cannot be called fresh.
+    staged = out.pop("staged")
+    assert staged["measured"] is False
     assert out == payload
 
 

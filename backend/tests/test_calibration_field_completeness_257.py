@@ -312,7 +312,7 @@ def _disable_sample_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_serves_the_shared_compute_payload_unaltered():
+async def test_route_serves_the_shared_compute_payload_unaltered(healthy_staged_bank):
     """One payload, one shape — the route is a serving tier, not a second builder.
 
     Queue 300B removed the route's in-request build, so the seam this guards
@@ -339,7 +339,11 @@ async def test_route_serves_the_shared_compute_payload_unaltered():
     """
     import time as _time
 
-    envelope_keys = {"availability", "producer"}
+    # CAL-P076 adds the THIRD and, on the same argument, the last of this
+    # kind: ``staged`` dates the artifact's own INPUTS (#2007). The builder
+    # cannot write it either — the bank's as-of is a fact about the durable
+    # cursor at serve time, not about the numbers in the payload.
+    envelope_keys = {"availability", "producer", "staged"}
 
     shared = await compute_calibration_payload(_FakeDB())
     calibration._cache = {"data": shared, "timestamp": _time.time()}
