@@ -652,7 +652,19 @@ def test_ruling_numbers_are_unique() -> None:
 #: merge-eligible PRs two cycles running). COUNTED:
 #: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 109. 110 remains claimed-and-unmerged on
 #: `program/latency-70`, so the index still reads ...109 -> 111 -> 112 -> 113 with one gap.
-MINIMUM_BANKED_RULINGS = 109
+#:
+#: Raised to **110** by LAT-P077 banking ruling **110** ("the `heavy` lane gets a scoped
+#: two-task exception, with its falsifier armed in code", Fable's LAT-P077 directive, #1609).
+#: SECOND rebase of this branch in one window: it first wrote 100 against a tree of 99, then
+#: 107 against master's 106, and master reached 109 (ux banking 111-113) before it could merge.
+#: Three different correct-about-themselves floors from ONE branch in ONE window, which is the
+#: cleanest demonstration yet that this constant cannot be authored — only counted.
+#: COUNTED on the rebased tree: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = **110**.
+#: Ruling 088 — count, never add, never take a side.
+#:
+#: No number collision: 110 was claimed in `RULING-CLAIMS.md` and verified free across 490 refs,
+#: and master went on to take 111, 112 and 113 — so the index reads 110..113 with no gap.
+MINIMUM_BANKED_RULINGS = 110
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
