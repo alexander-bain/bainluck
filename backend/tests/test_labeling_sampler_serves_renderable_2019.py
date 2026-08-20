@@ -1,4 +1,4 @@
-"""#2012 — the labeling sampler must serve the RENDERABLE population.
+"""#2019 — the labeling sampler must serve the RENDERABLE population.
 
 THE REPORT. Alex sat down to label and the first THREE cards had no
 probabilities. Specimen: `SpaceX IPO closing market cap above ___ ?` — an
@@ -222,7 +222,7 @@ def test_the_scale_agrees_with_the_feeds_own_bands():
 
     `card_integrity.display_scale` and `feed._feed_display_scale` are two
     functions holding one policy. This pins the policy so a change to either
-    without the other reds — which is the failure that produced #2012 in the
+    without the other reds — which is the failure that produced #2019 in the
     first place.
     """
     # already sane -> raw

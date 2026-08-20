@@ -1,6 +1,6 @@
 {
  "_provenance": {
-  "what": "GET /api/admin/ranking-judgments/candidates?limit=40 \u2014 the LIVE labeling sampler output, captured BEFORE the #2012 fix.",
+  "what": "GET /api/admin/ranking-judgments/candidates?limit=40 \u2014 the LIVE labeling sampler output, captured BEFORE the #2019 fix.",
   "read_at": "2026-08-19T17:5xZ",
   "endpoint_candidate_source": "labeling_sampler_v1",
   "strata": [

@@ -267,7 +267,7 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
             FuturesMarket.created_at.desc().nulls_last(),
         ]
 
-    # #2012 — A PRICE-FRESHNESS FLOOR ON THE TASTE STRATA.
+    # #2019 — A PRICE-FRESHNESS FLOOR ON THE TASTE STRATA.
     #
     # Measured 2026-08-19 on a live 40-card draw (all of it `top_feed_like`):
     # **19 of 40 carried prices 7+ days old, 14 of them 30+ days**, topping out
@@ -319,7 +319,7 @@ def _scaled(prob, scale: float):
 
     Mirrors `_scale_display_probability` in `app/routes/feed.py`; the shared
     POLICY lives in `card_integrity.display_scale`, and
-    `test_labeling_sampler_serves_renderable_2012.py` asserts the two agree
+    `test_labeling_sampler_serves_renderable_2019.py` asserts the two agree
     band-for-band so they cannot drift apart again.
     """
     if prob is None or scale == 1.0:
@@ -379,7 +379,7 @@ def _serialize_labeling_candidate(
     ]
     coherence = field_coherence(all_probs)
 
-    # THE SAMPLER NOW RENDERS THE WAY THE SERVED FEED RENDERS (#2012).
+    # THE SAMPLER NOW RENDERS THE WAY THE SERVED FEED RENDERS (#2019).
     #
     # Withholding on `coherence["coherent"]` alone blanked the probability on
     # 21 of 40 sampled cards — measured 2026-08-19, ranks #1/#2/#3 among them,
@@ -1007,7 +1007,7 @@ async def list_labeling_candidates(
             rank=len(candidates) + 1,
             stratum=stratum,
         )
-        # #2012 — a card nobody can read is not a label, it is a coin flip
+        # #2019 — a card nobody can read is not a label, it is a coin flip
         # recorded as taste. Labels train ranking on what users can SEE, so the
         # sampler serves the renderable population (ruling 098's logic applied
         # to the labeling window: name the window, and make it the served one).
@@ -1037,7 +1037,7 @@ async def list_labeling_candidates(
             "reviewed_key_count": len(reviewed_keys),
             "filtered_count": filtered_reviewed,
         },
-        # #2012. Named rather than silent — a smaller list with no explanation
+        # #2019. Named rather than silent — a smaller list with no explanation
         # reads as "there wasn't much today".
         "renderable_filter": {
             "enabled": True,
