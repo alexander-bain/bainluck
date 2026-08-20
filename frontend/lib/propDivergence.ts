@@ -115,6 +115,86 @@ export const PROP_SURPRISE_RESOLUTION = 0.5;
  */
 export const PROP_OFF_SCRIPT_RESOLUTION = 0.2;
 
+/**
+ * ── PREGAME: THE SCRIPT ──────────────────────────────────────────────────────
+ *
+ * UX-P106 item 3. Before first pitch there is no travel and no outcome, so both
+ * existing ranking keys are zero. Ranked by travel, a pregame rail is five
+ * arbitrary flat bars under a header reading "What's moving" — the header
+ * promising a story the data cannot carry, which is #2011's defect wearing the
+ * other clock.
+ *
+ * The pregame key is CONVICTION: `|pregameMark − 0.5|`. How far from a coin
+ * flip the market is willing to go. That is what THE SCRIPT *is* — the set of
+ * claims tonight's market is actually making — and it is what THE DIVERGENCE
+ * later diverges FROM.
+ *
+ * ── THE MEASUREMENT ──────────────────────────────────────────────────────────
+ *
+ * 183 eligible questions across FOUR production payloads (`15199886`,
+ * `14788546`, `15199902`, `15194472`), run through the shipped candidate
+ * builder rather than re-parsed: p50 0.272 · p75 0.380 · **p90 0.430** ·
+ * p95 0.440.
+ *
+ * `PROP_SCRIPT_CONVICTION = 0.430` takes p90, selecting 11.5% — the same
+ * escalation rate V2 produces in-game (11%) and post-game (10.5%). One rule,
+ * three states, three measured lines; the SHAPE is preserved across the whistle
+ * rather than re-tuned, which is the property #2011 established.
+ *
+ * It also means something without a percentile: conviction 0.430 is a market
+ * priced at 93% or 7% — a claim the market is roughly thirteen-to-one on.
+ *
+ * ── ITS JOB IS TO NORMALISE, NOT TO SELECT ───────────────────────────────────
+ *
+ * Nothing is gated on this constant directly. Pregame is the one state with TWO
+ * live signals, and `scriptSalience` divides each by its own p90 so they compete
+ * on one scale; this is conviction's half of that divisor. A raw cut here fired
+ * on 5 of 5 rows of a favourite-heavy card while sitting at 11.5% pooled — the
+ * pooled rate was right and the per-card rate was not.
+ *
+ * ── AND IT IS COHERENT WITH THE OTHER HALF, WHICH IS THE POINT ───────────────
+ *
+ * On `15199902` the three biggest post-game surprises were marked 93.0%, 92.5%
+ * and 92.0% — conviction 0.430 / 0.425 / 0.420, straddling this very line. The
+ * rows THE SCRIPT would have led with pregame are the rows THE DIVERGENCE
+ * ranked 1st, 2nd and 3rd afterwards. That is a coherence claim between the two
+ * halves and it is checked in the suite; it is NOT a claim that conviction
+ * predicts surprise, which n=41 cannot support (2 of 6 high-conviction rows
+ * surprised, against 2 of 35 below the line).
+ *
+ * Same discipline as its three neighbours: a future population that moves this
+ * is a new measurement to record, not a knob to turn.
+ */
+export const PROP_SCRIPT_CONVICTION = 0.43;
+
+/**
+ * The pregame fold — the third sibling of `PROP_OFF_SCRIPT_TRAVEL` and
+ * `PROP_OFF_SCRIPT_RESOLUTION`, keeping "the script says something" from
+ * collapsing into "the question exists".
+ *
+ * ── IT IS A SALIENCE RATIO, NOT A PROBABILITY, AND THAT IS THE POINT ─────────
+ *
+ * Pregame is the one state with TWO live signals: how far the market is from a
+ * coin flip (conviction) and how far it has moved since it opened (travel).
+ * `scriptSalience` puts them on one scale by dividing each by its OWN measured
+ * p90, so 1.0 means "at the p90 of its own distribution" for either — a 27-point
+ * pregame line move and a 92.5% favourite are then comparable, which they are
+ * not in raw units.
+ *
+ * MEASURED on the same 183 questions: salience p50 0.767 · **p75 0.936** ·
+ * p90 1.047. `0.94` selects **25.1%**, which lands beside the resolution fold's
+ * 26.3% and inside the travel fold's 34% — the three folds agree on how much of
+ * a page sits above the line, having been measured independently on three
+ * different distributions.
+ *
+ * A first draft used a bare conviction cut at p75 = 0.38. It selected 29%
+ * pooled but **20 of 40** on the Phillies payload, because that card is
+ * favourite-heavy — a fold that varies from 26% to 50% by card is not a fold.
+ * Salience is stabler precisely because a favourite-heavy card is also a
+ * quiet one, and the two terms trade off.
+ */
+export const PROP_SCRIPT_FOLD = 0.94;
+
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
 
@@ -187,6 +267,35 @@ export interface DivergenceRow {
   /** Settled games freeze: the bar shows the journey, it stops implying motion. */
   settled: boolean;
   /**
+   * PREGAME ONLY (UX-P106). The event has not started, so there is no travel to
+   * rank by and no outcome to be surprised by — the rail shows THE SCRIPT.
+   */
+  pregame: boolean;
+  /**
+   * How far from a coin flip the market is willing to go, `|pregameMark − 0.5|`,
+   * and the PREGAME RANKING KEY.
+   *
+   * Present in every state (it is a fact about the mark, not about the clock) so
+   * the settled surface can be checked for coherence against the pregame one.
+   */
+  conviction: number;
+  /**
+   * WHAT THE SCRIPT ACTUALLY SAYS — typed off the OVER-SIDE mark, and never off
+   * the row's own `outcome_name`.
+   *
+   * This is ruling (a) carried forward, and on this population it is not a
+   * corner case: **154 of 183 pregame marks (84.2%) sit BELOW 0.5**, so the
+   * script is overwhelmingly a set of confident NEGATIVE predictions. A surface
+   * that renders the mark as "how likely" without naming the direction reads as
+   * "nothing is going to happen tonight" on 84% of its rows, and a surface that
+   * types on the row's outcome inverts every Polymarket "Under" leg — the exact
+   * mechanism that made #2011's prescribed rule wrong on 9 of 57 rows.
+   *
+   * `toss_up` is its own value rather than a default, because a market at 50%
+   * is making no claim and must not be rendered as a weak one.
+   */
+  scriptSide: "will" | "wont" | "toss_up";
+  /**
    * POST-GAME ONLY (#2011). Where the question actually landed, on the same
    * over axis `current` and `pregameMark` are quoted on: 1 the over resolved
    * YES, 0 it resolved NO, `null` nothing may be stated.
@@ -224,6 +333,8 @@ export interface DivergenceResult {
   dropped: DivergenceDrop[];
   /** Total non-benign losses — the number V3 says must never be swallowed. */
   nonBenignCount: number;
+  /** UX-P106: the event has not started — the rail is THE SCRIPT. */
+  pregame: boolean;
   /**
    * Eligible props that simply ranked below the top five. NOT a taxonomy loss:
    * these are reachable through the expand, so they are not "lost markets".
@@ -274,6 +385,35 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set([
 
 export function isSettledStatus(status?: string | null): boolean {
   return SETTLED_STATUSES.has((status || "").toLowerCase());
+}
+
+const LIVE_STATUSES: ReadonlySet<string> = new Set([
+  "live",
+  "in_progress",
+  "inprogress",
+  "in progress",
+  "halftime",
+  "delayed",
+  "suspended",
+]);
+
+/**
+ * The event has not started.
+ *
+ * NOT `!settled` — that would put a live game on THE SCRIPT and hand it a
+ * ranking key of zero movement while the movement is the entire story. And NOT
+ * an allowlist of `scheduled`, either: the status vocabulary on this payload is
+ * provider-shaped and an unrecognised value must not silently become a pregame
+ * page for a game already in the third inning.
+ *
+ * So it is a triple: settled → landed, live → moving, anything else → script.
+ * An UNKNOWN status therefore lands on THE SCRIPT, which is the safe end — the
+ * script states pregame marks, which are true at every point in the game; the
+ * other two states make claims about a clock we would be guessing at.
+ */
+export function isPregameStatus(status?: string | null): boolean {
+  const s = (status || "").toLowerCase();
+  return !SETTLED_STATUSES.has(s) && !LIVE_STATUSES.has(s);
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -347,6 +487,13 @@ export function divergenceSentence(
 ): string {
   const question = label.includes(": ") ? label.split(": ").slice(1).join(": ") : label;
 
+  // NO PREGAME BRANCH, DELIBERATELY. A draft of UX-P106 added one — "The market
+  // says Stowers' 5+ hits+runs+rbis won't happen — 95%" — and the rendered
+  // capture showed it restating the bar directly beneath it, four times on a
+  // five-row rail. The direction the script states lives on the ROW (`scriptSide`)
+  // and is rendered by `ScriptMark` and its aria-label; a sentence that repeats
+  // its own bar is not V2's escalation.
+
   // #2011: post-game the sentence must state the OUTCOME, not the last traded
   // price. "finished at 58%" is a price wearing the grammar of a result, and it
   // is the sentence half of the same defect as the bar that ends there.
@@ -375,6 +522,7 @@ export function divergenceSentence(
 export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
   const built = buildCandidates(input);
   const settled = built.settled;
+  const pregame = built.pregame;
 
   const empty = (emptyReason: DivergenceResult["emptyReason"]): DivergenceResult => ({
     rows: [],
@@ -384,6 +532,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     eligible: 0,
     ungraded: 0,
     settled,
+    pregame,
     emptyReason,
   });
 
@@ -437,6 +586,7 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
       eligible: candidates.length,
       ungraded,
       settled,
+      pregame,
     };
   }
 
@@ -448,11 +598,12 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     eligible: candidates.length,
     ungraded,
     settled,
+    pregame,
     emptyReason: null,
   };
 }
 
-/** V2's escalation, applied identically by both views. */
+/** V2's escalation, applied identically by all three views. */
 function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
   if (!row.surprising) return row;
   return {
@@ -473,6 +624,7 @@ interface BuiltCandidates {
   dropped: DivergenceDrop[];
   nonBenignCount: number;
   settled: boolean;
+  pregame: boolean;
   /** No input rows at all — distinct from "rows existed, none survived". */
   noRows: boolean;
 }
@@ -490,9 +642,17 @@ interface BuiltCandidates {
 function buildCandidates(input: DivergenceInput): BuiltCandidates {
   const rows = input.playerProps ?? [];
   const settled = isSettledStatus(input.status);
+  const pregame = isPregameStatus(input.status);
 
   if (rows.length === 0) {
-    return { candidates: [], dropped: [], nonBenignCount: 0, settled, noRows: true };
+    return {
+      candidates: [],
+      dropped: [],
+      nonBenignCount: 0,
+      settled,
+      pregame,
+      noRows: true,
+    };
   }
 
   const dropCounts = new Map<PropDropReason, { count: number; examples: string[] }>();
@@ -594,11 +754,70 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       surprising: travelAtOrAbove(travel, PROP_SURPRISE_TRAVEL),
       sentence: null,
       settled,
+      pregame,
+      // ── WHICH NUMBER CONVICTION IS ABOUT, AND A SCREENSHOT SETTLED IT ──
+      //
+      // Pregame this is `current`, not `pregameMark`, and the first draft had
+      // it the other way round. The rendered capture showed the cost on the
+      // first row of the real Phillies payload: Schwarber's 1+ home runs
+      // OPENED at 27% and is 55% NOW, and the row printed the sentence
+      // "opened at 27% — it's 55% now" directly above a bar reading
+      // "market says NO, 73%". One row, two answers, and the bar was quoting
+      // last week.
+      //
+      // `pregame_mark` is the OPENING capture. Before first pitch the script as
+      // it STANDS is the current price — that is the number Alex's pre-game
+      // ritual is asking for — and the opening mark is the movement story,
+      // which the sentence already tells. Post-game `current` is the last
+      // traded price and worthless (#2011), so there conviction stays on the
+      // mark, which is also what the coherence check compares.
+      conviction: Math.abs((pregame ? current : pregameMark) - 0.5),
+      // Typed off the OVER-side mark. `pregameMark` is already the over-side
+      // price (`over_probability`'s pregame twin), so this cannot pick up the
+      // leg's own polarity — which is the inversion ruling (a) is about.
+      scriptSide: current > 0.5 ? "will" : current < 0.5 ? "wont" : "toss_up",
       resolution: null,
       surprise: null,
       grade: null,
     });
   }
+
+  // PREGAME: TWO SIGNALS, NOT ONE — AND THE FIRST DRAFT OF THIS GOT IT WRONG.
+  //
+  // The first attempt replaced travel with conviction outright, on the premise
+  // that "nothing has moved before first pitch". THREE RULED SLICE-1 TESTS
+  // CAUGHT IT, and they were right: `pregameMark` is the OPENING capture, not
+  // the price at first pitch, so pregame travel is the line move since the
+  // market opened — real, and on `15199886` as large as 27.7 points. V1/V2
+  // ruled that escalation and it is not this queue's to delete.
+  //
+  // So pregame carries both, because both are true statements about a question
+  // that has not started: what the market EXPECTS (conviction) and what it has
+  // CHANGED ITS MIND ABOUT (travel). A row clearing either line escalates.
+  //
+  // ── AND PREGAME KEEPS TRAVEL AS THE *ONLY* ESCALATION, WHICH TOOK THREE GOES ──
+  //
+  // Conviction ranks the rail and folds the detail view. It does NOT earn a
+  // sentence, and the rendered capture is what settled that: escalating on
+  // conviction put FIVE SENTENCES ON A FIVE-ROW RAIL, four of them
+  // near-identical — "Stowers' 5+ hits+runs+rbis won't happen — 95%",
+  // "Sosa's … — 94%", "Sanoja's … — 94%". V2 says the sentence is an
+  // ESCALATION; at 5 of 5 it is the default rendering.
+  //
+  // The threshold was the wrong thing to reach for. A pregame script sentence
+  // RESTATES ITS OWN BAR — the bar beneath it already reads "market says NO,
+  // 95%" — so there is nothing to escalate TO. The in-game sentence adds the
+  // journey (opened X, now Y) and the post-game one adds the outcome; the
+  // pregame one adds a second copy.
+  //
+  // Two tuned thresholds were tried and both were unsafe for the same reason:
+  // the 5%-mark rows on that card land at salience 1.0465 against a measured
+  // p90 of 1.047, so any cut in that region balances on 0.0005. #2011 called
+  // that out by name when it took the LOWER EDGE OF AN EMPTY PLATEAU instead.
+  // There is no plateau here, so the answer is not a better number.
+  //
+  // Travel-only is therefore also unchanged from before this queue, which is
+  // why V1/V2's ruled escalation needed no exception written for it.
 
   // POST-GAME: restate every row on the resolution axis. Nothing here runs on a
   // live game — the in-game treatment is the travelled bar, and only there.
@@ -629,9 +848,13 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     .filter((d) => !d.benign)
     .reduce((n, d) => n + d.count, 0);
 
-  candidates.sort(settled ? bySurprise : byTravel);
+  // Three states, three ranking keys — and each one is the only key its state
+  // has any data for. Pregame ranks by conviction (nothing has travelled),
+  // in-game by travel (nothing has resolved), post-game by surprise (the last
+  // traded price is not where it ended).
+  candidates.sort(settled ? bySurprise : pregame ? byConviction : byTravel);
 
-  return { candidates, dropped, nonBenignCount, settled, noRows: false };
+  return { candidates, dropped, nonBenignCount, settled, pregame, noRows: false };
 }
 
 /**
@@ -641,6 +864,34 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
  */
 function byTravel(a: DivergenceRow, b: DivergenceRow): number {
   return b.travel - a.travel || b.current - a.current || a.key.localeCompare(b.key);
+}
+
+/**
+ * Pregame order: by conviction, strongest claim first.
+ *
+ * SYMMETRIC BY CONSTRUCTION, and that is load-bearing rather than tidy. 84.2%
+ * of pregame marks on the measured population sit below 0.5, so any ordering
+ * that ranked on the mark itself — rather than on its distance from a coin flip
+ * — would put every confident "this will NOT happen" at the bottom of the rail
+ * and lead with the questions the market has no view on. Willi Castro's 2+ hits
+ * was marked 17.0% and produced an 83-point surprise; on a mark-ordered rail it
+ * is 39th.
+ *
+ * The tiebreak runs through `byTravel`, so a pregame page that has already seen
+ * some early movement still orders sensibly inside a conviction tie.
+ */
+function scriptSalience(row: DivergenceRow): number {
+  // Each signal normalised by its OWN measured p90, so "at the p90 of its own
+  // distribution" is 1.0 for both and the two compete on one scale instead of
+  // one silently dominating because its units are bigger.
+  return Math.max(
+    row.travel / PROP_SURPRISE_TRAVEL,
+    row.conviction / PROP_SCRIPT_CONVICTION,
+  );
+}
+
+function byConviction(a: DivergenceRow, b: DivergenceRow): number {
+  return scriptSalience(b) - scriptSalience(a) || byTravel(a, b);
 }
 
 /**
@@ -679,6 +930,8 @@ export interface DivergenceDetailResult {
   ungraded: DivergenceRow[];
   /** `offScript.length` — the mock's "N off script" badge. */
   offScriptCount: number;
+  /** UX-P106: the event has not started — this is THE SCRIPT, not a divergence. */
+  pregame: boolean;
   /** Every eligible question. The rail's `eligible` and this agree by construction. */
   eligible: number;
   dropped: DivergenceDrop[];
@@ -719,12 +972,13 @@ export interface DivergenceDetailResult {
  */
 export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetailResult {
   const built = buildCandidates(input);
-  const { candidates, dropped, nonBenignCount, settled } = built;
+  const { candidates, dropped, nonBenignCount, settled, pregame } = built;
 
   const base = {
     dropped,
     nonBenignCount,
     settled,
+    pregame,
   };
 
   if (built.noRows) {
@@ -759,8 +1013,20 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
       ungraded.push(row);
       continue;
     }
-    const distance = settled ? (row.surprise as number) : row.travel;
-    const fold = settled ? PROP_OFF_SCRIPT_RESOLUTION : PROP_OFF_SCRIPT_TRAVEL;
+    // One partition rule, three measured lines. Each state folds on the only
+    // distance it has: pregame on how far the market is from a coin flip,
+    // in-game on how far the price has moved, post-game on how far the outcome
+    // landed from the mark.
+    const distance = settled
+      ? (row.surprise as number)
+      : pregame
+        ? scriptSalience(row)
+        : row.travel;
+    const fold = settled
+      ? PROP_OFF_SCRIPT_RESOLUTION
+      : pregame
+        ? PROP_SCRIPT_FOLD
+        : PROP_OFF_SCRIPT_TRAVEL;
     if (travelAtOrAbove(distance, fold)) offScript.push(withSentence(row, settled));
     else onScript.push(row);
   }
