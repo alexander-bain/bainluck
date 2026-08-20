@@ -627,7 +627,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: banks **103** ("a price captured after the answer is not a price"). COUNTED with
 #: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 102 — never a delta off 101, because
 #: two more lanes are mid-merge in this same push and a guessed delta is wrong twice over.
-MINIMUM_BANKED_RULINGS = 102
+MINIMUM_BANKED_RULINGS = 103
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
