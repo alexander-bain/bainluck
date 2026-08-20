@@ -4,6 +4,35 @@ Invariant: a settled event's stored score IS the game's final score. A violation
 means the page shows a wrong final (we held ``BOS 3-1`` where the real final was
 ``6-3``) and every score-derived grade underneath it stands on a mid-game number.
 
+🔴 TWO DEFECT CLASSES WITH OPPOSITE REMEDIES SHARE THIS RAIL (#1980, queue 380).
+Read this before adding anything that writes.
+
+A settled row that disagrees with ESPN can be wrong in TWO different fields, and
+the fix for one is the corruption for the other:
+
+* ``score_drifted`` — the row's ``espn_id`` is PROVEN to be its own game and the
+  stored score is not that game's final. Remedy: this repair, ``apply=true``.
+* ``espn_id_drifted`` — the ``espn_id`` is ITSELF the wrong field; it names a
+  different game (usually the same series, one or two slate-days off — measured
+  offsets of exactly ±15 and ±30 in ESPN id space). **A score repair here writes
+  another game's final onto this row.** Measured 2026-08-19 over the 262 settled
+  MLB rows of the last 32 days: 21 rows carry a drifted ``espn_id``, and for
+  **8 of them the stored score is already CORRECT** — the score remedy would
+  have corrupted a currently-correct score. Remedy: ``event-espn-id`` (attended,
+  plan-hashed), never this rail.
+* ``espn_id_unresolvable`` — the ``espn_id`` is simply ABSENT from our own
+  slate and no single game on that slate is provably ours (a doubleheader, or a
+  postponement). Gotcha #53: an empty read is not a fact. No remedy is proven;
+  it is REPORTED, never guessed at, and never handed the score remedy.
+
+Until queue 380 the rail computed the linkage classes and then **discarded them
+silently**: ``espn_not_found`` was a bare counter with no ledger row at all, and
+the sentinel's detector filtered the ledger to ``fix_score``. So the two classes
+rendered identically — as nothing — while the failure text the sentinel prints
+on every line was the SCORE remedy. Every disposition now lands in the ledger
+with an explicit ``defect_class`` and its own ``remedy``, and no row that is not
+``proven`` can reach a write.
+
 WHY NOTHING ELSE FIXES THIS. Two rails write settled scores today and both have a
 hole this repair fills:
 
@@ -263,6 +292,253 @@ def espn_date_matches(our_game_date, espn_dt) -> bool:
     return dt.astimezone(et).date() == our_game_date
 
 
+# ---------------------------------------------------------------------------
+# THE SPLIT (#1980, queue 380) — one vocabulary, shared by this rail and the
+# Flow Sentinel, so the guard and the repair can never disagree about which
+# defect a row has or which remedy it is owed.
+# ---------------------------------------------------------------------------
+SCORE_DRIFTED = "score_drifted"
+ESPN_ID_DRIFTED = "espn_id_drifted"
+ESPN_ID_UNRESOLVABLE = "espn_id_unresolvable"
+LINK_PROVEN = "proven"
+
+#: class -> the ONLY remedy that class may be handed. Handing ``espn_id_drifted``
+#: the score remedy is the corruption this split exists to make unrepresentable.
+DEFECT_REMEDY = {
+    SCORE_DRIFTED: (
+        "POST /api/admin/repairs/event-final-scores?apply=true "
+        "(score repair — the espn_id is proven correct for this row)"
+    ),
+    ESPN_ID_DRIFTED: (
+        "LINKAGE repair, NOT a score repair: POST /api/admin/repairs/event-espn-id"
+        "?probe=true (x3, >300s) then ?apply=false then attended "
+        "?apply=true&plan_hash=... . Running the score repair on this row writes "
+        "ANOTHER GAME'S final onto it"
+    ),
+    ESPN_ID_UNRESOLVABLE: (
+        "NO remedy is proven — adjudicate by hand. The espn_id is absent from "
+        "this row's own slate and no single game on that slate is provably ours "
+        "(doubleheader / postponement). An empty read is not a fact (gotcha #53). "
+        "Explicitly NOT the score repair"
+    ),
+}
+
+
+def measurement_coverage(
+    *, groups_scanned: int, groups_total: int, events_scanned: int, population: int
+) -> dict:
+    """How much of the surface this run actually looked at — as data, not prose.
+
+    ``mode`` is ``"full"`` only when every group was scanned. Otherwise it is
+    ``"sampled"`` and carries the rate and the population, so a count derived
+    from it cannot be quoted as a population by accident. This is the shape the
+    Flow Sentinel renders into its title and its issue body.
+    """
+    full = groups_total > 0 and groups_scanned >= groups_total
+    rate = round(groups_scanned / groups_total, 4) if groups_total else None
+    return {
+        "mode": "full" if full else "sampled",
+        "groups_scanned": groups_scanned,
+        "groups_total": groups_total,
+        "group_sample_rate": rate,
+        "events_scanned": events_scanned,
+        "population": population,
+        "event_sample_rate": (
+            round(events_scanned / population, 4) if population else None
+        ),
+    }
+
+
+def _nearest_by_start(commence_time, games):
+    """The game of ``games`` whose start is closest to ``commence_time``.
+
+    ``None`` when there is nothing to compare — a missing time cannot elect a
+    winner, and pretending it can is how a doubleheader gets paired by luck.
+    """
+    if commence_time is None:
+        return None
+    dated = [g for g in games if getattr(g, "date", None) is not None]
+    if not dated:
+        return None
+    from datetime import timezone as _tz
+
+    def _delta(g):
+        d = g.date
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=_tz.utc)
+        ct = commence_time
+        if ct.tzinfo is None:
+            ct = ct.replace(tzinfo=_tz.utc)
+        return abs((d - ct).total_seconds())
+
+    return min(dated, key=_delta)
+
+
+def _names_match_strict(a: str, b: str) -> bool:
+    """Exact-or-suffix name equality — ``names_match`` WITHOUT its fuzzy stage.
+
+    WHY A SECOND, STRICTER PREDICATE EXISTS. ``names_match`` falls back to a
+    >= 0.5 token-overlap score, and two teams that share a city clear it:
+
+        names_match("New York Mets", "New York Yankees")        -> True
+        names_match("Los Angeles Dodgers", "Los Angeles Angels") -> True
+
+    So the rail's ``_identity_matches`` guard — the one whose whole job is to
+    stop a score being imported off the wrong game — passes on a Mets row
+    pointed at a Yankees game. ev15173316 is the live specimen (measured
+    2026-08-19): our row is Dodgers @ METS on 2026-07-24, its ``espn_id``
+    401816142 is Dodgers @ YANKEES on 2026-07-17. That is not a near miss, it is
+    a different fixture, and the loose predicate cannot see it.
+
+    ``_identity_matches`` is deliberately left alone — its tolerance is what lets
+    "Bruins" match "Boston Bruins" and it guards a write that already works. This
+    stricter predicate is used only to ELECT a target and to detect a
+    same-city impostor, never to widen what may be written.
+    """
+    from app.utils.name_normalization import normalize_name
+
+    na, nb = normalize_name(a or ""), normalize_name(b or "")
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
+    sw, lw = shorter.split(), longer.split()
+    return len(shorter) >= 4 and len(sw) < len(lw) and lw[-len(sw):] == sw
+
+
+def same_fixture_games(home_team_name, away_team_name, board, game_date=None) -> list:
+    """Every game on the slate WE ALREADY FETCHED that is OUR fixture, strictly.
+
+    This is the second signal gotcha #53 demands, and it costs nothing: the
+    scoreboard for our own game date is already in hand, so "our espn_id is not
+    on our slate" can be upgraded from an empty read into a PROVEN drift with a
+    named target whenever exactly one game on that slate is our fixture.
+
+    Strict on BOTH axes, because this elects a repair target:
+
+    * names — ``_names_match_strict``, so a same-city sibling (Mets/Yankees) is
+      never proposed as the game a row "actually is";
+    * date — the caller's own ET game date, so a board that happens to carry more
+      than one day cannot contribute a candidate from the wrong one.
+    """
+    out = []
+    for g in board or []:
+        if game_date is not None and not espn_date_matches(
+            game_date, getattr(g, "date", None)
+        ):
+            continue
+        if _names_match_strict(
+            home_team_name, _espn_team_name(getattr(g, "home_team", None))
+        ) and _names_match_strict(
+            away_team_name, _espn_team_name(getattr(g, "away_team", None))
+        ):
+            out.append(g)
+    return out
+
+
+def classify_espn_link(
+    *,
+    espn_id,
+    commence_time,
+    game_date,
+    home_team_name,
+    away_team_name,
+    board,
+) -> tuple[str, object, str]:
+    """Which FIELD is wrong — the score, or the ``espn_id`` that names the game?
+
+    Returns ``(verdict, target_game_or_None, reason)`` where ``verdict`` is
+    ``LINK_PROVEN`` / ``ESPN_ID_DRIFTED`` / ``ESPN_ID_UNRESOLVABLE``. Pure over an
+    already-fetched slate, so it is unit-testable and adds ZERO network cost.
+
+    Only ``LINK_PROVEN`` may proceed to a score comparison. Everything else is a
+    linkage finding and is reported with the linkage remedy.
+
+    THE DOUBLEHEADER ARM IS NOT DECORATION. Both games of a doubleheader sit on
+    the same slate with the same two teams, so ``espn_date_matches`` passes and
+    ``_identity_matches`` passes on the WRONG sibling — the two guards this rail
+    already had are structurally blind to it. Measured 2026-08-19: ev14788546 and
+    ev15200380 (Cardinals @ Reds, 2026-08-17) both store ``commence_time``
+    17:40Z while ev14788546's ``espn_id`` and score both belong to the 22:40Z
+    game. One of the two fields drifted and this rail cannot tell which, so it
+    says so instead of picking.
+    """
+    by_id = {str(g.espn_id): g for g in (board or []) if getattr(g, "espn_id", None) is not None}
+    held = by_id.get(str(espn_id))
+    sibs = same_fixture_games(home_team_name, away_team_name, board, game_date)
+
+    if held is None:
+        if len(sibs) == 1:
+            return (
+                ESPN_ID_DRIFTED,
+                sibs[0],
+                "espn_id is absent from this row's own slate while EXACTLY ONE "
+                "game on that slate is our fixture — the id names another day's game",
+            )
+        if len(sibs) > 1:
+            return (
+                ESPN_ID_UNRESOLVABLE,
+                None,
+                f"espn_id is absent from this row's own slate and {len(sibs)} games "
+                f"on it are our fixture (doubleheader) — no single target is proven",
+            )
+        return (
+            ESPN_ID_UNRESOLVABLE,
+            None,
+            "espn_id is absent from this row's own slate and NO game on that slate "
+            "is our fixture — a postponement or a slate gap reads exactly like a "
+            "drift here, so nothing is claimed",
+        )
+
+    if not espn_date_matches(game_date, getattr(held, "date", None)):
+        return (
+            ESPN_ID_DRIFTED,
+            sibs[0] if len(sibs) == 1 else None,
+            "espn_id resolves to a game on a DIFFERENT date than this row's own",
+        )
+
+    if not _identity_matches(
+        home_team_name,
+        away_team_name,
+        _espn_team_name(getattr(held, "home_team", None)),
+        _espn_team_name(getattr(held, "away_team", None)),
+    ):
+        return (
+            ESPN_ID_DRIFTED,
+            sibs[0] if len(sibs) == 1 else None,
+            "espn_id resolves to a DIFFERENT fixture on this row's own slate",
+        )
+
+    # THE SAME-CITY IMPOSTOR. ``_identity_matches`` just passed, but it accepts a
+    # >= 0.5 token overlap, so a Mets row pointed at a Yankees game clears it.
+    # Fires ONLY when the slate holds exactly one STRICT candidate and it is not
+    # the id we hold — i.e. only when there is a demonstrably better answer. With
+    # no strict alternative this stays silent and the loose match stands, so a
+    # source with unusual naming still gets its score repaired.
+    if len(sibs) == 1 and str(getattr(sibs[0], "espn_id", "")) != str(espn_id):
+        return (
+            ESPN_ID_DRIFTED,
+            sibs[0],
+            "espn_id resolves to a same-city IMPOSTOR fixture on this row's own "
+            "slate (it clears the fuzzy name guard but a strictly-matching game "
+            "on the same slate is a different id)",
+        )
+
+    if len(sibs) > 1:
+        nearest = _nearest_by_start(commence_time, sibs)
+        if nearest is not None and str(getattr(nearest, "espn_id", "")) != str(espn_id):
+            return (
+                ESPN_ID_UNRESOLVABLE,
+                nearest,
+                "doubleheader: this row's commence_time is nearest a DIFFERENT game "
+                "of the same fixture, so either espn_id or commence_time drifted and "
+                "this rail cannot tell which",
+            )
+
+    return (LINK_PROVEN, held, "")
+
+
 async def repair(
     session,
     apply: bool,
@@ -355,6 +631,13 @@ async def repair(
         "espn_not_final": 0,
         "date_blocked": 0,
         "identity_blocked": 0,
+        "doubleheader_ambiguous": 0,
+        # THE SPLIT (#1980). `score_defects` is the score class ONLY; the two
+        # linkage classes are counted separately because their remedies are
+        # opposite. Never sum them into one headline.
+        "espn_id_drifted": 0,
+        "espn_id_drifted_with_target": 0,
+        "espn_id_unresolvable": 0,
         "score_defects": 0,
         "completed_at_gaps": 0,
         "scores_repaired": 0,
@@ -387,39 +670,76 @@ async def repair(
         group_writes = 0
         for r in bucket:
             stats["events_scanned"] += 1
-            ee = by_id.get(str(r.espn_id))
-            if ee is None:
-                stats["espn_not_found"] += 1
+
+            # WHICH FIELD IS WRONG — asked BEFORE any score comparison, because a
+            # score comparison against an id that is not this row's game is not a
+            # measurement, it is the corruption. Nothing below `LINK_PROVEN` can
+            # reach a write; every branch lands in the ledger with its class and
+            # its own remedy, so the silent skip is structurally gone.
+            verdict, target, reason = classify_espn_link(
+                espn_id=r.espn_id,
+                commence_time=r.commence_time,
+                game_date=r.game_date,
+                home_team_name=r.home_team_name,
+                away_team_name=r.away_team_name,
+                board=board,
+            )
+            if verdict != LINK_PROVEN:
+                held = by_id.get(str(r.espn_id))
+                if held is None:
+                    stats["espn_not_found"] += 1
+                    action = "skip_espn_id_off_slate"
+                elif not espn_date_matches(r.game_date, held.date):
+                    stats["date_blocked"] += 1
+                    action = "skip_espn_id_wrong_date"
+                elif not _identity_matches(
+                    r.home_team_name, r.away_team_name,
+                    _espn_team_name(held.home_team), _espn_team_name(held.away_team),
+                ):
+                    stats["identity_blocked"] += 1
+                    action = "skip_identity_mismatch"
+                else:
+                    stats["doubleheader_ambiguous"] += 1
+                    action = "skip_doubleheader_ambiguous"
+                stats[verdict] += 1
+                entry = {
+                    "event_id": r.event_id, "sport_key": sport_key,
+                    "status": r.ev_status, "espn_id": r.espn_id,
+                    "matchup": f"{r.home_team_name} vs {r.away_team_name}",
+                    "commence_time": (
+                        r.commence_time.isoformat() if r.commence_time else None
+                    ),
+                    "our_date": r.game_date.isoformat() if r.game_date else None,
+                    "stored_score": f"{r.home_score}-{r.away_score}",
+                    "action": action,
+                    "defect_class": verdict,
+                    "reason": reason,
+                    "remedy": DEFECT_REMEDY[verdict],
+                }
+                if held is not None:
+                    entry["espn_for_stored_id"] = (
+                        f"{_espn_team_name(held.away_team)} @ "
+                        f"{_espn_team_name(held.home_team)} "
+                        f"{held.away_score}-{held.home_score}"
+                    )
+                    entry["espn_date"] = held.date.isoformat() if held.date else None
+                if target is not None:
+                    entry["proposed_espn_id"] = str(target.espn_id)
+                    entry["proposed_espn_final"] = (
+                        f"{target.home_score}-{target.away_score}"
+                    )
+                    entry["proposed_espn_start"] = (
+                        target.date.isoformat() if target.date else None
+                    )
+                    if verdict == ESPN_ID_DRIFTED:
+                        stats["espn_id_drifted_with_target"] += 1
+                ledger.append(entry)
                 continue
+
+            ee = target
             is_final = ee.status == "post"
             if not is_final:
                 stats["espn_not_final"] += 1
-                continue
-
-            # Series guard: same-teams is NOT same-game in a playoff series.
-            if not espn_date_matches(r.game_date, ee.date):
-                stats["date_blocked"] += 1
-                ledger.append({
-                    "event_id": r.event_id, "sport_key": sport_key,
-                    "espn_id": r.espn_id, "action": "skip_espn_id_wrong_date",
-                    "our_date": r.game_date.isoformat(),
-                    "espn_date": ee.date.isoformat() if ee.date else None,
-                })
-                continue
-
-            espn_home_name = _espn_team_name(ee.home_team)
-            espn_away_name = _espn_team_name(ee.away_team)
-            if not _identity_matches(
-                r.home_team_name, r.away_team_name, espn_home_name, espn_away_name
-            ):
-                # An espn_id linkage defect, NOT a score defect. Report, never write.
-                stats["identity_blocked"] += 1
-                ledger.append({
-                    "event_id": r.event_id, "sport_key": sport_key,
-                    "espn_id": r.espn_id, "action": "skip_identity_mismatch",
-                    "ours": f"{r.home_team_name} vs {r.away_team_name}",
-                    "espn": f"{espn_home_name} vs {espn_away_name}",
-                })
                 continue
 
             stale = score_is_stale(
@@ -461,6 +781,10 @@ async def repair(
                     "espn_final": f"{ee.home_score}-{ee.away_score}",
                     "winner_flip": old_res != new_res,
                     "action": "fix_score",
+                    # The espn_id was PROVEN this row's own game above, which is
+                    # the entire licence for the score remedy on this line.
+                    "defect_class": SCORE_DRIFTED,
+                    "remedy": DEFECT_REMEDY[SCORE_DRIFTED],
                 })
                 if old_res != new_res:
                     stats["winner_flips"] += 1
@@ -537,6 +861,18 @@ async def repair(
             round(stats["score_defects"] / stats["events_scanned"], 4)
             if stats["events_scanned"] else None
         ),
+        # COVERAGE, STATED (#1980, queue 380). Every count above is over
+        # `events_scanned`, which is a SAMPLE of `population` whenever
+        # `groups_remaining > 0`. A reader who cannot see the denominator reads
+        # the sample count as the population — the nightly guard reported a
+        # specific integer over 0.6% of its surface for weeks. Emitting the
+        # coverage next to the counts makes that misreading unavailable.
+        "coverage": measurement_coverage(
+            groups_scanned=groups_scanned,
+            groups_total=len(ordered),
+            events_scanned=stats["events_scanned"],
+            population=population,
+        ),
         "ledger": ledger,
     }
 
@@ -551,15 +887,37 @@ async def run(apply: bool, limit: int, sport: str | None, offset: int = 0) -> No
     print(f"population={res['population']} groups={res['groups_scanned']}"
           f"@offset {res['groups_offset']}/{res['groups_total']} "
           f"(remaining {res['groups_remaining']}, next_offset {res['next_offset']})")
+    cov = res["coverage"]
+    print(f"COVERAGE {cov['mode'].upper()}: {cov['events_scanned']} of "
+          f"{cov['population']} events ({cov['groups_scanned']}/{cov['groups_total']} "
+          f"groups) — every count below is over the SCANNED set, not the population")
     print(f"scanned={res['events_scanned']} score_defects={res['score_defects']} "
           f"winner_flips={res['winner_flips']} completed_at_gaps={res['completed_at_gaps']}")
-    print(f"identity_blocked={res['identity_blocked']} not_final={res['espn_not_final']} "
-          f"not_found={res['espn_not_found']}")
+    print(f"espn_id_drifted={res['espn_id_drifted']} "
+          f"(with a proven target: {res['espn_id_drifted_with_target']}) "
+          f"espn_id_unresolvable={res['espn_id_unresolvable']}")
+    print(f"identity_blocked={res['identity_blocked']} date_blocked={res['date_blocked']} "
+          f"doubleheader_ambiguous={res['doubleheader_ambiguous']} "
+          f"not_final={res['espn_not_final']} not_found={res['espn_not_found']}")
     for e in res["ledger"][:40]:
         if e.get("action") == "fix_score":
-            print(f"  ev{e['event_id']} [{e['sport_key']}] {e['matchup']}: "
+            print(f"  [score_drifted] ev{e['event_id']} [{e['sport_key']}] {e['matchup']}: "
                   f"{e['stored_score']} -> {e['espn_final']}"
                   + ("  *WINNER FLIP*" if e.get("winner_flip") else ""))
+    # The linkage class prints SEPARATELY and never under the score heading —
+    # two remedies, two lists. Printing them together is how the wrong one gets
+    # applied.
+    for e in res["ledger"][:200]:
+        if e.get("defect_class") in (ESPN_ID_DRIFTED, ESPN_ID_UNRESOLVABLE):
+            tgt = e.get("proposed_espn_id")
+            print(f"  [{e['defect_class']}] ev{e['event_id']} [{e['sport_key']}] "
+                  f"{e['matchup']} espn_id={e['espn_id']}"
+                  + (f" -> proposed {tgt}" if tgt else " -> NO PROVEN TARGET")
+                  + f"  ({e.get('reason')})")
+    if res["espn_id_drifted"] or res["espn_id_unresolvable"]:
+        print("\nNOTE: the linkage rows above are NOT repairable by this rail. "
+              "Use event-espn-id (attended). A score repair on them writes another "
+              "game's final onto the row.")
     if apply:
         print(f"\nCOMMITTED scores={res['scores_repaired']} "
               f"completed_at={res['completed_at_repaired']} blend={res['blend_repaired']}")
