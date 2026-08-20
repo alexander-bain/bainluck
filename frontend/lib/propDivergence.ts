@@ -866,8 +866,24 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // floor SURVIVED the entire suite, correctly: the check only READS
     // `perLadder`, and nothing is recorded until a row actually reaches
     // `push`, so a rung skipped by the floor (or by the player cap) cannot
-    // have spent anything. Moving the RECORDING up instead is the real defect
-    // shape, and that mutant is killed by four tests.
+    // have spent anything.
+    //
+    // ** UX-P109 CORRECTED THE NEXT SENTENCE, WHICH THIS COMMENT USED TO STATE
+    // TOO BROADLY. ** It said "moving the RECORDING up is the real defect
+    // shape", full stop. Mutation says: only in ONE direction.
+    //
+    //   * Recording ABOVE THE STRUCTURAL FLOOR — a suppressed rung spends its
+    //     ladder's slot on the way out — is a real defect, killed by 42 tests.
+    //   * Recording above THE PLAYER CAP is **EQUIVALENT**, and provably so:
+    //     `ladderFamilyKey` is `player|stat`, so every sibling of a rung the
+    //     PLAYER cap rejected carries that same rejected player and is refused
+    //     by the player cap too. A ladder slot wrongly consumed there can never
+    //     be the binding constraint. That mutant survived the whole suite, and
+    //     it is recorded as equivalent rather than patched into a red.
+    //
+    // Both facts point the same way for a maintainer — leave the `perLadder.set`
+    // where it is — but only one of them is a bug, and a comment that calls an
+    // equivalent mutant a defect teaches the next reader to distrust the file.
     //
     // The distinction matters because the danger is concrete, and RULING 112
     // sharpened it rather than retiring it. Brady Singer carries SIX structural
