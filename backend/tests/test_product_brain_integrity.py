@@ -641,7 +641,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: `program/latency-70`. A numeric gap is not a missing ruling and is never closed by
 #: renumbering; the invariant this file enforces is file-count == index-count in BOTH
 #: directions, which holds at 107/107.
-MINIMUM_BANKED_RULINGS = 107
+#:
+#: Raised to **108** by INT-100 merging `program/ux-96` ALONE (Fable's instruction; depth 0, ux-95
+#: already in), which banks ruling **112** ("movement overrides the structural floor"). COUNTED:
+#: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = 108. The index reads ...109 -> 111 -> 112;
+#: **110 is still missing on purpose**, claimed-and-unmerged on `program/latency-70`.
+MINIMUM_BANKED_RULINGS = 108
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
