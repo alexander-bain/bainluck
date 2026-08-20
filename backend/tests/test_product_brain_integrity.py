@@ -584,7 +584,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: Two collisions in one Integrator session is the argument for #2009's LEDGER half rather than
 #: its test half: the test caught both, but it caught them at MERGE time, after the number had
 #: already been minted twice. A number claimed at AUTHORING time cannot collide.
-MINIMUM_BANKED_RULINGS = 98
+MINIMUM_BANKED_RULINGS = 99
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
