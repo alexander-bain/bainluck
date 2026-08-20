@@ -369,3 +369,92 @@ def _classify(result: Any) -> TaskVerdict:
         return TaskVerdict(PARTIAL, "complete_without_publish", authoritative=True)
 
     return TaskVerdict(COMPLETE, f"terminal:{terminal or status}", authoritative=True)
+
+
+# =============================================================================
+# Worker shutdown — CAL-P081 (#2052, #2007)
+# =============================================================================
+#
+# A ``SystemExit`` reaching a task is never the task's fault. Nothing in
+# ``app/`` raises one (verified by grep across the package); it arrives from the
+# runtime, and in a Celery prefork worker on Heroku that means the child is
+# being torn down — a deploy, a dyno cycle, a manual restart.
+#
+# Recording it as a thrown FAILURE is the same defect as #2052's cancelled unit,
+# one layer up: ``consecutive_failures`` climbs against a build that was working
+# and was interrupted. On 2026-08-20 ``precompute_calibration_main`` carried
+# ``consecutive_failures: 2`` and ``last_error: "-241"`` — a bare ``str(exc)``,
+# ambiguous between ``KeyError(-241)``, ``Exception(-241)`` and an exit code, on
+# a task that had been killed by a deploy.
+#
+# NAMING IT COST A MANUAL CROSS-REFERENCE AGAINST ``heroku releases``, TWICE.
+# The correlation is unambiguous once you have both halves — the failure at
+# 19:35:48Z against release v3877 at 19:35:24Z (+24s), and the earlier one at
+# 16:16:18Z against v3873 at 16:16:02Z (+16s) — and neither half was in the
+# record. Heroku already exports ``HEROKU_RELEASE_VERSION`` and
+# ``HEROKU_RELEASE_CREATED_AT`` into the dyno's environment, so the second half
+# can simply be written down at the moment it is true. A release seconds old at
+# the instant of a shutdown IS the attribution.
+
+
+def _release_facts(now: float | None = None) -> dict[str, Any]:
+    """What release this dyno is running, and how old it was just now.
+
+    Every field is either read from the environment or omitted. ``None`` where a
+    variable is absent is deliberate: outside Heroku (CI, a laptop) there is no
+    release to name, and inventing "unknown" would let a local run look like a
+    dyno that failed to report.
+    """
+    import os
+    from datetime import datetime, timezone
+
+    facts: dict[str, Any] = {
+        "release_version": os.getenv("HEROKU_RELEASE_VERSION"),
+        "slug_commit": (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None,
+        "dyno": os.getenv("DYNO"),
+    }
+    created = os.getenv("HEROKU_RELEASE_CREATED_AT")
+    if created:
+        facts["release_created_at"] = created
+        try:
+            stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            reference = (
+                datetime.fromtimestamp(now, tz=timezone.utc)
+                if now is not None
+                else datetime.now(timezone.utc)
+            )
+            facts["release_age_s"] = int((reference - stamp).total_seconds())
+        except (ValueError, TypeError):
+            # A malformed stamp is reported as unparseable rather than dropped —
+            # "we could not read the release time" and "there is no release
+            # time" are different facts (ruling 075, second clause).
+            facts["release_age_reason"] = "unparseable"
+    return facts
+
+
+def describe_worker_shutdown(exc: BaseException, *, now: float | None = None) -> dict[str, Any]:
+    """The terminal for a task the runtime interrupted. Facts only.
+
+    Returns the ``result_summary`` for :func:`record_task_incomplete`. It states
+    the exception class, its code, and the release this dyno is running — and it
+    stops there. It does NOT conclude "a deploy killed this", because a dyno also
+    restarts for a manual bounce, a platform migration and a memory quota, and a
+    summary that names the cause it happens to expect is how the next unfamiliar
+    cause gets read as the familiar one. ``release_age_s`` is the number that
+    settles it, and a reader can settle it in one glance instead of two tools.
+    """
+    code = getattr(exc, "code", None)
+    return {
+        "terminal": "interrupted",
+        "reason": f"{type(exc).__name__}({code!r})",
+        "exception_class": type(exc).__name__,
+        "exit_code": code,
+        **_release_facts(now=now),
+        "note": (
+            "The worker was torn down mid-task. This is NOT a task failure and "
+            "does not advance consecutive_failures. A release_age_s in the low "
+            "tens of seconds means the teardown was this release; a large one "
+            "means it was not, and the cause is elsewhere (dyno cycle, quota, "
+            "manual restart)."
+        ),
+    }
