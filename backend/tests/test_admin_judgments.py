@@ -22,9 +22,22 @@ def _client_with_db(db) -> TestClient:
 
 
 class _WriteDB:
-    def __init__(self):
+    """A write session that also answers the drift gate's live re-read (#1933).
+
+    ``create_judgment`` now re-derives the graded card from live rows inside the
+    write transaction. ``market`` is what that lookup finds: ``None`` (the
+    default) models a target the server cannot re-derive, which is the UNBOUND
+    arm — every pre-existing test in this file goes down it, which is why they
+    still describe the same behaviour.
+    """
+
+    def __init__(self, market=None):
         self.added = None
         self.committed = False
+        self.market = market
+
+    async def execute(self, statement):
+        return SimpleNamespace(scalar_one_or_none=lambda: self.market)
 
     def add(self, row):
         self.added = row
@@ -145,7 +158,15 @@ def test_create_judgment_accepts_json_body(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "id": 42, "label": "love"}
+    # #1933: the drift verdict is reported on every write, never omitted. This
+    # target cannot be re-derived (the fake session finds no market), so it is
+    # honestly UNBOUND rather than quietly treated as gated.
+    assert response.json() == {
+        "status": "ok",
+        "id": 42,
+        "label": "love",
+        "drift_gate": {"bound": False, "reason": "market_missing"},
+    }
     assert db.committed is True
     assert db.added.surface == "discover"
     assert db.added.item_type == "futures"
@@ -179,6 +200,15 @@ def test_create_judgment_accepts_json_body(monkeypatch):
             "create_issue_candidate": True,
         },
         "reviewer_tier": "alex",
+        # #1933. `market_id: 123` was posted but the session finds no such row,
+        # so the card could not be re-derived — recorded as `market_missing`,
+        # which is a different fact from "the client never named a market".
+        "drift_gate": {
+            "bound": False,
+            "reason": "market_missing",
+            "fingerprint": None,
+            "surface": "native_ranking_judgment",
+        },
     }
 
 
@@ -194,7 +224,14 @@ def test_create_judgment_keeps_query_param_write_path(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "id": 42, "label": "bad"}
+    assert response.json() == {
+        "status": "ok",
+        "id": 42,
+        "label": "bad",
+        # No market_id in the query string at all — a different unbound reason
+        # from the one above, and the two must not be conflated.
+        "drift_gate": {"bound": False, "reason": "no_market_target"},
+    }
     assert db.added.label == "bad"
     assert db.added.reason_tags == ["boring", "duplicate"]
     assert db.added.reviewer == "sam"
@@ -240,6 +277,14 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
         # Queue 311 B1: every write through this admin surface is Alex's, and
         # is stamped as such by the route rather than by the caller.
         "reviewer_tier": "alex",
+        # #1933: present on every row, including the ones nothing could be
+        # asked of. A missing key would read as "gated" to every later reader.
+        "drift_gate": {
+            "bound": False,
+            "reason": "no_market_target",
+            "fingerprint": None,
+            "surface": "native_ranking_judgment",
+        },
     }
 
 
@@ -333,6 +378,7 @@ def test_labeling_candidates_low_confidence_stratum(monkeypatch):
     market = SimpleNamespace(
         id=456,
         name="Will Tesla stock close above $200 this week?",
+        status="open",  # #1933: the native card fingerprint covers status
         description="Boundary market",
         llm_sport_category="tech",
         sport=None,
@@ -380,6 +426,7 @@ def test_labeling_candidates_returns_stratified_items(monkeypatch):
     market = SimpleNamespace(
         id=123,
         name="Will it rain in New York?",
+        status="open",  # #1933: the native card fingerprint covers status
         description="Weather context",
         llm_sport_category="weather",
         sport=None,
@@ -430,6 +477,7 @@ def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
     market_reviewed = SimpleNamespace(
         id=100,
         name="Already reviewed market",
+        status="open",  # #1933: the native card fingerprint covers status
         description=None,
         llm_sport_category="weather",
         sport=None,
@@ -453,6 +501,7 @@ def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
     market_new = SimpleNamespace(
         id=200,
         name="Not yet reviewed market",
+        status="open",  # #1933: the native card fingerprint covers status
         description=None,
         llm_sport_category="weather",
         sport=None,
@@ -536,6 +585,12 @@ def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
             "reasons": ["compelling_topic"],
         },
         "reviewer_tier": "alex",
+        "drift_gate": {
+            "bound": False,
+            "reason": "no_market_target",
+            "fingerprint": None,
+            "surface": "native_ranking_judgment",
+        },
     }
 
 
@@ -1125,7 +1180,7 @@ def test_labeling_candidates_firebase_admin_not_shortcircuited(monkeypatch):
     from fastapi import HTTPException
 
     market = SimpleNamespace(
-        id=789, name="Will the Fed cut in September?", description=None,
+        id=789, name="Will the Fed cut in September?", status="open", description=None,
         llm_sport_category="economics", sport=None, source="kalshi",
         hook_description=None, image_url=None, group_id=None, resolution_date=None,
         created_at=datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),

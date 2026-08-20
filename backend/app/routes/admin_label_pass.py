@@ -22,7 +22,9 @@ compares the proposal's generation, which is stamped once at birth and (by
 #1542's own item-5 fix) never mutated again, so for the drift class it is
 structurally unable to fire. Every served card therefore carries a
 ``card_fingerprint`` taken at the resolution the surface renders, and ``/verdict``
-re-derives it inside the write transaction. See ``app.utils.label_pass_card``.
+re-derives it inside the write transaction. See ``app.utils.graded_card``, which
+is shared with the NATIVE judgment write path (#1933) — the gate is one decision,
+not one per surface.
 """
 
 from datetime import datetime, timezone
@@ -45,7 +47,14 @@ from app.utils.eval_promote import (
     is_enabled_value,
     ttl_cutoff,
 )
-from app.utils.label_pass_card import card_fingerprint, compare_snapshot
+from app.utils.graded_card import (
+    ABSENT_REFUSE,
+    LABEL_PASS_SERVED_OUTCOMES,
+    OMITTED,
+    card_fingerprint,
+    compare_snapshot,
+    drift_outcome,
+)
 from app.utils.label_pass_lifecycle import (
     classify_pending,
     classify_post,
@@ -263,32 +272,38 @@ def _partition_candidates(candidates, markets, now, outcomes_by_market=None):
     }
 
 
-def _drift_outcome(posted_features: dict | None, live_card: dict) -> dict | None:
-    """Pure drift gate: ``None`` when the posted card still matches live.
+def _drift_outcome(posted_features: dict | None, live_card: dict) -> dict:
+    """This surface's call into the SHARED drift gate (#1933).
 
     Separate from ``_verdict_outcome`` for the same reason ``_card_suppression``
     is separate from ``classify_pending`` — that one is byte-locked to the C143
-    lifecycle oracle, and card CONTENT is not a lifecycle question. Pure so the
-    refusal and the non-refusal are both provable without a database.
+    lifecycle oracle, and card CONTENT is not a lifecycle question.
+
+    The DECISION now lives in ``app.utils.graded_card`` because native writes
+    judgments too and had no gate at all; what stays here is only this surface's
+    two policy choices, stated rather than implied:
+
+    * the posted fingerprint travels inside ``features``, the dict this client
+      already round-trips verbatim;
+    * an absent fingerprint REFUSES, because a web page is re-served by this
+      server on every load (see ``ABSENT_REFUSE`` for why native cannot copy
+      that).
+
+    An absent ``features`` dict is ``OMITTED``, not ``None``: a POST that carries
+    no features at all is a pre-gate tab, and the gate's own docstring is about
+    telling those two apart.
     """
-    posted = (posted_features or {}).get("card_fingerprint")
-    live = live_card.get("card_fingerprint")
-    if posted == live:
-        return None
-    return {
-        "status": "conflict",
-        "reason": "card_fingerprint_missing" if not posted else "card_drifted",
-        "applied": False,
-        "writes": 0,
-        "expected": live,
-        "posted": posted,
-        "live_card": {
-            "title": live_card.get("title"),
-            "status": live_card.get("status"),
-            "probability": live_card.get("probability"),
-            "field_coherent": live_card.get("field_coherent"),
-        },
-    }
+    posted = (
+        (posted_features or {}).get("card_fingerprint", OMITTED)
+        if posted_features
+        else OMITTED
+    )
+    return drift_outcome(
+        posted,
+        live_card.get("card_fingerprint"),
+        live_card=live_card,
+        on_absent=ABSENT_REFUSE,
+    )
 
 
 def _verdict_outcome(proposal, market, now, *, verdict, kill_switch, duplicate, posted_gen):
@@ -395,7 +410,7 @@ def _live_features(proposal, market, outcomes) -> dict:
                     else None
                 ),
             }
-            for o in outcomes[:8]
+            for o in outcomes[:LABEL_PASS_SERVED_OUTCOMES]
         ]
     else:
         # Say why, rather than showing a number that cannot be true.
@@ -420,6 +435,7 @@ def _live_features(proposal, market, outcomes) -> dict:
         resolution_date=features.get("resolution_date"),
         field_coherent=features.get("field_coherent"),
         outcomes=features.get("outcomes"),
+        served_outcomes=LABEL_PASS_SERVED_OUTCOMES,
     )
     return features
 
@@ -751,7 +767,7 @@ async def label_pass_verdict(
     # without a second round trip, and so a human can see WHAT moved.
     live_fingerprint = live_card.get("card_fingerprint")
     drift = _drift_outcome(body.features, live_card)
-    if drift is not None:
+    if drift["status"] != "bound":
         await db.rollback()
         raise HTTPException(status_code=409, detail=drift)
 

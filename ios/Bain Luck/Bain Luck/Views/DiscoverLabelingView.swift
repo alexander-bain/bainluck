@@ -340,9 +340,14 @@ struct DiscoverLabelingView: View {
             .lineLimit(1)
     }
 
+    /// The percent shown on a labeling card. The arithmetic lives in
+    /// `renderedPercent` because the server fingerprints this card at exactly
+    /// this resolution to gate the judgment written against it — an inline copy
+    /// here is a second implementation of a cross-runtime rule
+    /// (`contracts/rendered_percent.json`, #1933).
     private func probabilityText(_ value: Double?) -> String {
-        guard let value else { return "--" }
-        return "\(Int((value * 100).rounded()))%"
+        guard let percent = renderedPercent(value) else { return "--" }
+        return "\(percent)%"
     }
 
     private func displayTag(_ raw: String) -> String {

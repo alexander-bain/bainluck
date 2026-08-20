@@ -4,7 +4,7 @@ that moved since it was read.
 The lifecycle suite next door (``test_admin_label_pass_lifecycle.py``) covers
 "is this proposal still current". This one covers "is this still the card he
 graded", which the lifecycle gate structurally cannot answer — see the module
-docstring of ``app.utils.label_pass_card`` for why the pre-existing
+docstring of ``app.utils.graded_card`` for why the pre-existing
 ``posted_generation`` check can never fire for a re-price.
 
 Duck-typed fakes throughout, no DB: every function under test is pure by
@@ -23,7 +23,8 @@ from app.routes.admin_label_pass import (
     _live_features,
     _live_title,
 )
-from app.utils.label_pass_card import (
+from app.utils.graded_card import (
+    LABEL_PASS_SERVED_OUTCOMES,
     card_fingerprint,
     compare_snapshot,
     rendered_percent,
@@ -151,7 +152,7 @@ def test_the_round_trip_verdicts_when_nothing_moved():
     served = _live_features(p, _market(), _outcomes(*FIELD))
     served["generation"] = "g1"  # what the route adds before serving
     live = _live_features(p, _market(), _outcomes(*FIELD))
-    assert _drift_outcome(served, live) is None
+    assert _drift_outcome(served, live)["status"] == "bound"
 
 
 def test_a_subpercent_reprice_does_not_refuse():
@@ -163,7 +164,7 @@ def test_a_subpercent_reprice_does_not_refuse():
     read = _live_features(p, _market(), _outcomes(("Democrat", 0.561), ("Republican", 0.439)))
     nudged = _live_features(p, _market(), _outcomes(("Democrat", 0.5614), ("Republican", 0.4386)))
     assert read["probability"] != nudged["probability"]  # the floats really did differ
-    assert _drift_outcome(read, nudged) is None
+    assert _drift_outcome(read, nudged)["status"] == "bound"
 
 
 def test_an_outcome_outside_the_served_slice_does_not_refuse():
@@ -177,7 +178,7 @@ def test_an_outcome_outside_the_served_slice_does_not_refuse():
     tail_moved[8] = ("Candidate 7", 0.079)
     moved = _live_features(p, _market(), _outcomes(*tail_moved))
     assert len(read["outcomes"] or []) == 8
-    assert _drift_outcome(read, moved) is None
+    assert _drift_outcome(read, moved)["status"] == "bound"
 
 
 # ── the instrument (#1873's measurement half) ────────────────────────────────
@@ -263,7 +264,10 @@ def test_rendered_percent_matches_javascript_math_round_not_python_round():
 
 
 def test_withheld_and_empty_fields_are_different_cards():
-    args = dict(title="T", status="open", resolution_date=None, field_coherent=False)
+    args = dict(
+        title="T", status="open", resolution_date=None, field_coherent=False,
+        served_outcomes=LABEL_PASS_SERVED_OUTCOMES,
+    )
     assert card_fingerprint(outcomes=None, **args) != card_fingerprint(outcomes=[], **args)
 
 
@@ -271,5 +275,6 @@ def test_the_fingerprint_is_stable_across_identical_reads():
     args = dict(
         title="T", status="open", resolution_date="2026-09-01T00:00:00+00:00",
         field_coherent=True, outcomes=[{"name": "A", "probability": 0.5}],
+        served_outcomes=LABEL_PASS_SERVED_OUTCOMES,
     )
     assert card_fingerprint(**args) == card_fingerprint(**args)
