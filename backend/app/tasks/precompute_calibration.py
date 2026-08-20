@@ -2902,23 +2902,42 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
 STAGED_UNIT_WINDOW_SAFETY = 1.25
 
 
-def _unit_fits_in_window(remaining_ms: int, worst_unit_ms: float) -> bool:
+def _unit_fits_in_window(
+    remaining_ms: int, worst_unit_ms: float, prior_unit_ms: float = 0.0
+) -> bool:
     """Whether another unit may be STARTED, not merely whether time remains.
 
-    ``worst_unit_ms <= 0`` means this beat has not completed a unit yet and so
-    has no measurement to reason from. The answer is then True — a beat must be
-    allowed to attempt one unit or the build can never progress, and refusing on
-    a number we do not have would be exactly the invented constant this module
-    keeps refusing to write. The residual is named rather than papered over: a
-    beat whose FIRST unit does not fit still ends in a cancellation. In
-    production that window is ~1,360s against a ~20s generation read, so it is
-    the last unit that was killing every beat, not the first.
+    ``worst_unit_ms <= 0`` means this beat has not completed a unit yet.
+    ``prior_unit_ms`` is CAL-P081's answer to that (#2052): the PREVIOUS beat's
+    measured ``unit_ms``, carried on the plan, which exists before this beat has
+    completed anything. It closes the residual the paragraph below used to end
+    on — "a beat whose FIRST unit does not fit still ends in a cancellation" —
+    without inventing a constant, because it is a measurement the build has been
+    taking all along and the loop simply never read.
+
+    Both are consulted and the LARGER wins. They are different evidence, not
+    rival estimates: ``worst_unit_ms`` is this beat's own worst observation and
+    ``prior_unit_ms`` is last beat's mean, so taking the max is the conservative
+    reading in every combination, and the fence never loosens because a good
+    beat followed a bad one.
+
+    With neither the answer is still True — a beat must be allowed to attempt one
+    unit or the build can never progress, and refusing on a number we do not have
+    would be exactly the invented constant this module keeps refusing to write.
+
+    **This predicate was NOT the hole #2052 fell through, and saying so is the
+    point.** On the 18:37:31Z beat it admitted the sixth unit correctly: ~914,000
+    ms remained against a worst-so-far of at most 361,010 ms. The unit then cost
+    901,266 ms. No admission rule reading past cost can refuse an admission that
+    past cost endorses; what was missing is a bound on the unit ONCE STARTED, and
+    that lives in ``statement_timeout_for_unit``, not here.
     """
     if remaining_ms <= 0:
         return False
-    if worst_unit_ms <= 0:
+    reference = max(float(worst_unit_ms or 0.0), float(prior_unit_ms or 0.0))
+    if reference <= 0:
         return True
-    return remaining_ms >= worst_unit_ms * STAGED_UNIT_WINDOW_SAFETY
+    return remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY
 
 
 def _record_convergence_projection(
@@ -3005,6 +3024,7 @@ async def _run_staged_futures(db, runner, sql_builder):
     """
     from app.tasks.calibration_main_build import (
         STAGED_FUTURES_BUCKETS,
+        is_statement_timeout,
         load_staged_cursor,
         save_staged_cursor,
         staged_lease,
@@ -3036,6 +3056,7 @@ async def _run_staged_futures(db, runner, sql_builder):
     from app.utils.calibration_phase_ledger import (
         PHASE_FUTURES,
         REFUSE,
+        STAGED_UNIT_MAX_CANCELLATIONS,
         TERMINAL_PARTIAL,
     )
 
@@ -3104,12 +3125,24 @@ async def _run_staged_futures(db, runner, sql_builder):
     ran_this_beat = 0
     unit_ms_this_beat = 0.0
     worst_unit_ms = 0.0
+    # CAL-P081 (#2052): the PREVIOUS beat's measured unit cost, carried on the
+    # plan. Read once, outside the loop, because it does not change within a
+    # beat — and read at all because until now the loop's only evidence was
+    # evidence this beat had generated, which on the first unit is none.
+    cancelled_this_beat = 0
+    prior_unit_ms = float(runner.measured_unit_ms(PHASE_FUTURES) or 0.0)
+    if prior_unit_ms > 0:
+        runner.ledger.record_gauge("staged:prior_unit_ms", int(prior_unit_ms))
+    else:
+        # Ruling 075, second clause: "we have no carried cost" must not render
+        # identically to "the carried cost is zero".
+        runner.ledger.record_gauge("staged:prior_unit_reason:unmeasured", 1)
     for chunk in chunks:
         if cursor.has(chunk.key):
             done += 1
             continue
         remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
-        if not _unit_fits_in_window(remaining_ms, worst_unit_ms):
+        if not _unit_fits_in_window(remaining_ms, worst_unit_ms, prior_unit_ms):
             # CAL-P038 (#1597): STOP BEFORE the window runs out, not after. The
             # two cases are recorded apart because they mean different things —
             # ``deadline`` is the window genuinely gone, ``unit_too_large`` is
@@ -3129,20 +3162,81 @@ async def _run_staged_futures(db, runner, sql_builder):
         # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
         # previous unit's commit ended, so without this the next unit would run
         # with no statement timeout and no session identity (Queue 300B).
-        await runner.apply_statement_timeout(db, PHASE_FUTURES)
+        #
+        # CAL-P081 (#2052): the UNIT bound, not the phase bound. Handed this
+        # beat's own worst observation when it has one, falling back inside the
+        # ledger to the carried mean. Strictly tighter than the phase bound in
+        # every case, so it can only stop a unit outliving its measured cost —
+        # never let one outlive the beat.
+        await runner.apply_unit_statement_timeout(
+            db, PHASE_FUTURES, unit_ms=worst_unit_ms or prior_unit_ms or None
+        )
         # Three PARALLEL arrays, one entry per market, unnest-ed back into the
         # (market_id, vm_id, is_grouped) roster the chunk statement joins to.
         market_ids = list(chunk.market_ids)
-        with runner.stage("read:futures_unit"):
-            result = await db.execute(
-                chunk_sql,
-                {
-                    VM_ROSTER_MARKET_IDS_PARAM: market_ids,
-                    VM_ROSTER_VM_IDS_PARAM: [assignment[m][0] for m in market_ids],
-                    VM_ROSTER_IS_GROUPED_PARAM: [assignment[m][1] for m in market_ids],
-                },
+        try:
+            with runner.stage("read:futures_unit"):
+                result = await db.execute(
+                    chunk_sql,
+                    {
+                        VM_ROSTER_MARKET_IDS_PARAM: market_ids,
+                        VM_ROSTER_VM_IDS_PARAM: [assignment[m][0] for m in market_ids],
+                        VM_ROSTER_IS_GROUPED_PARAM: [assignment[m][1] for m in market_ids],
+                    },
+                )
+                unit_rows = result.all()
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is OUR backstop
+            if not is_statement_timeout(exc):
+                raise
+            # CAL-P081 (#2052): a unit cancelled at its OWN backstop is a known
+            # outcome of this loop, not a fault of the build. Before this, the
+            # cancellation propagated out of the phase and the beat terminated
+            # ``thrown``/``DBAPIError`` = ``failed`` — a RED verdict on a beat
+            # that had just banked five units durably, with
+            # ``consecutive_failures`` climbing against a build that was working.
+            # That is the false-RED twin of the false-GREEN ``task_verdict.py``
+            # exists to prevent.
+            #
+            # SKIP THE UNIT, DO NOT END THE BEAT. Ending it is the intuitive
+            # response and the more dangerous one: the loop skips units the
+            # cursor already holds, so a unit that cancels reproducibly is the
+            # FIRST one every later beat attempts, and a beat that stops there
+            # banks nothing at all — worse than the failure being fixed. Skipping
+            # banks the other units and leaves the blocker named.
+            #
+            # Nothing is lost by skipping: the cursor checkpointed before this
+            # unit started, so the cancellation costs exactly this unit, and the
+            # generation stays incomplete until some beat banks it.
+            cancelled_this_beat += 1
+            cancelled_after_ms = int((time.monotonic() - unit_started) * 1000.0)
+            runner.ledger.record_stage("staged:units_cancelled", 1)
+            runner.ledger.record_gauge("staged:unit_cancelled_after_ms", cancelled_after_ms)
+            runner.ledger.record_gauge(f"staged:unit_cancelled:{chunk.key}", cancelled_after_ms)
+            # The session is poisoned by the cancelled statement; roll it back so
+            # the next unit's ``SET LOCAL`` runs on a clean transaction rather
+            # than raising ``InFailedSQLTransaction`` on top of a failure we have
+            # already classified (gotcha #6).
+            with contextlib.suppress(Exception):
+                await db.rollback()
+            if cancelled_this_beat >= STAGED_UNIT_MAX_CANCELLATIONS:
+                # The third one says the slowness belongs to the BEAT, not to a
+                # unit, and continuing cannot help. Recorded under its own name:
+                # "stopped because units keep cancelling" and "stopped because
+                # the window ran out" are different diagnoses (gotcha #53).
+                runner.ledger.record_stage("staged:window_stop:units_cancelling", 0)
+                logger.warning(
+                    "calibration staged futures: %d units cancelled at their own bound "
+                    "(last %s after %d ms) with %d/%d banked — ending the beat partial, "
+                    "not failed", cancelled_this_beat, chunk.key, cancelled_after_ms,
+                    done, len(chunks),
+                )
+                break
+            logger.warning(
+                "calibration staged futures: unit %s cancelled at its own bound after "
+                "%d ms with %d/%d units banked — skipping it, the beat continues",
+                chunk.key, cancelled_after_ms, done, len(chunks),
             )
-            unit_rows = result.all()
+            continue
         # COMMIT, then advance. The other order records a cursor for work the
         # database may still roll back (``CHECKPOINT_BEFORE_COMMIT``).
         await runner.commit(db)

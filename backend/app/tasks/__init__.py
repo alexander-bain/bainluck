@@ -118,7 +118,14 @@ def _tracked_run(task_name: str, async_fn):
         record_task_failure,
         touch_worker_liveness,
     )
-    from app.utils.task_verdict import COMPLETE, FAILED, PARTIAL, UNKNOWN, verdict_for
+    from app.utils.task_verdict import (
+        COMPLETE,
+        FAILED,
+        PARTIAL,
+        UNKNOWN,
+        describe_worker_shutdown,
+        verdict_for,
+    )
 
     # #1280 Item 3: every task run refreshes this worker generation's liveness so
     # the phase-heartbeat watchdog can tell a frozen marker owned by a live
@@ -231,6 +238,30 @@ def _tracked_run(task_name: str, async_fn):
             # signal; the counters above carry the whole truth, and the ledger
             # (already written by the build before it raised) carries the detail.
             return summary
+        if isinstance(exc, SystemExit):
+            # CAL-P081 (#2052, #2007). A ``SystemExit`` reaching a task is the
+            # RUNTIME tearing the worker down, never the task's own fault —
+            # nothing in ``app/`` raises one. Recording it as a thrown failure is
+            # #2052's false RED one layer up: ``consecutive_failures`` climbing
+            # against a build that was working and got interrupted.
+            #
+            # On 2026-08-20 this task read ``consecutive_failures: 2`` with
+            # ``last_error: "-241"`` — a bare ``str(exc)`` that names neither the
+            # class nor the cause. Attribution took a manual cross-reference
+            # against ``heroku releases``, twice; ``describe_worker_shutdown``
+            # writes the half that was missing (the release and its age at the
+            # instant of teardown) into the record, so the next one is
+            # attributable from the record alone.
+            #
+            # RE-RAISED, unconditionally. A ``SystemExit`` that a handler
+            # swallows is a worker that will not shut down, which is a far worse
+            # bug than the one being fixed.
+            record_task_incomplete(
+                task_name, duration_ms,
+                verdict=PARTIAL, verdict_reason=f"interrupted:{type(exc).__name__}",
+                result_summary=describe_worker_shutdown(exc),
+            )
+            raise
         record_task_failure(
             task_name, duration_ms,
             str(exc) or type(exc).__name__,

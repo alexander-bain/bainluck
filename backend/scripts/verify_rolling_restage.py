@@ -150,10 +150,65 @@ def evaluate(obs: list[dict]) -> dict:
     verdict("served_census_advanced", len(distinct) > 1,
             f"{len(distinct)} distinct staged_at value(s): {distinct}")
 
-    # 4 — the backlog is draining
+    # 4a — the REBUILD is advancing. CAL-P081 adds this because check 4 below
+    # cannot answer per beat and this one can: ``rebuild_units_banked`` is the
+    # count of units the successor bank holds, and it is the only number that
+    # moves every beat the loop runs. Measured 2026-08-20: it sat at 13/128
+    # across 18:22Z -> 20:25Z while every other field looked healthy.
+    banked = [
+        o.get("rebuild_units_banked") for o in good
+        if isinstance(o.get("rebuild_units_banked"), int)
+    ]
+    if len(banked) < 2:
+        verdict("rebuild_advancing", False,
+                f"rebuild_units_banked not readable across samples: {banked}")
+    else:
+        # CHANGED, not merely increased. The count resets toward zero when a
+        # complete bank is promoted, so a window that spans a promotion reads
+        # 120 -> 0 -> 8 and a strict `last > first` would grade the single best
+        # outcome in the system as a failure. Any change is a unit banked or a
+        # promotion; no change across samples is the frozen state.
+        verdict("rebuild_advancing", len(set(banked)) > 1,
+                f"rebuild_units_banked across samples: {banked}")
+
+    # 4 — the backlog is draining.
+    #
+    # CAL-P081 makes this THREE-VALUED, and the reason is a measurement rather
+    # than a preference. ``units_drifted`` is ``served_drift``: the count of
+    # SERVING-bank units whose membership digest no longer matches the plan. The
+    # served digests are frozen when a bank is promoted, and the population only
+    # grows, so the count is MONOTONE UP until ``promote_if_complete`` swaps in a
+    # successor. It cannot fall on an ordinary beat, and once it reaches the
+    # bank size it cannot move at all.
+    #
+    # So on 2026-08-20 this check reported ``fail`` for 128/128 — a state that is
+    # expected, correct, and fully disclosed. That is the false RED this whole
+    # queue has been removing, inside the instrument built to detect the false
+    # GREEN. The check is not weakened: a drift that CAN move and does not still
+    # fails. It is marked unanswerable only when it is saturated, which is a fact
+    # about the measurement and not about the build.
     drift = [o.get("units_drifted") for o in good if isinstance(o.get("units_drifted"), int)]
-    verdict("drift_falling", bool(drift) and drift[-1] < drift[0],
-            f"units_drifted first={drift[0] if drift else None} last={drift[-1] if drift else None}")
+    checkable = [
+        o.get("units_banked") for o in good if isinstance(o.get("units_banked"), int)
+    ]
+    saturated = bool(drift) and bool(checkable) and all(
+        d >= c > 0 for d, c in zip(drift, checkable)
+    )
+    if saturated:
+        checks["drift_falling"] = {
+            "pass": None,
+            "detail": (
+                f"units_drifted is SATURATED at {drift[0]}/{checkable[0]} across every "
+                "sample. The served bank's drift resets only when a complete "
+                "successor is promoted, so this cannot fall on an ordinary beat and "
+                "its not-falling is NOT evidence of a stall — read `rebuild_advancing` "
+                "for the per-beat answer."
+            ),
+        }
+    else:
+        verdict("drift_falling", bool(drift) and drift[-1] < drift[0],
+                f"units_drifted first={drift[0] if drift else None} "
+                f"last={drift[-1] if drift else None}")
 
     # 5 — the reader never sees a partial rebuild
     statuses = [o.get("http_status") for o in good]

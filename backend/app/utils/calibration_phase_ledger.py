@@ -219,6 +219,54 @@ STATEMENT_INNER_MARGIN_MS = 30_000
 #: result stays a measurement with headroom rather than an invented number.
 BUDGET_SAFETY = 1.5
 
+#: How far ONE unit of a unit-staged phase may overrun its own MEASURED cost
+#: before the database cancels it — CAL-P081 (#2052).
+#:
+#: The phase bound and the unit bound answer different questions and only one of
+#: them was ever asked. ``statement_timeout_for`` bounds the phase: *how much of
+#: the beat is left*. Nothing bounded the single statement inside it, so a unit
+#: was free to spend the entire remainder of the window — which is exactly what
+#: the 18:37:31Z beat did. Its ledger, banked in ``cde2c222``:
+#:
+#:   ``read:futures_unit`` 1,262,276 ms · ``units_this_beat`` 6 ·
+#:   ``units_completed_this_beat`` 5 · ``unit_ms_mean_completed`` 72,202 ms
+#:
+#: Five units cost 361,010 ms between them. The sixth cost **901,266 ms** — 12.5x
+#: the completed mean — and was admitted legitimately: ``_unit_fits_in_window``
+#: compared ~914,000 ms remaining against a worst-so-far of at most 361,010 ms
+#: and said yes, correctly, on the evidence it had. **Admission was never the
+#: hole.** The hole is that once admitted, a unit's own statement timeout was the
+#: whole rest of the beat, so a single pathological unit converts every remaining
+#: minute into one cancellation instead of into the ~12 further units that fit.
+#:
+#: 4.0 because the same ledger measures the spread it has to tolerate: 72,202 ms
+#: mean over completions against a 210,379 ms mean over attempts (2.9x), so a
+#: factor at or below 3 would start cancelling units that are merely slow. Four
+#: sits above the observed spread and an order of magnitude below the specimen it
+#: has to catch, and it is derived from that pair rather than chosen (ruling 075).
+#: The bound is a MULTIPLE OF A MEASUREMENT, never a pinned duration: with no
+#: measured unit cost there is nothing to multiply and the phase bound stands.
+STAGED_UNIT_OVERRUN_FACTOR = 4.0
+
+#: How many units one beat may lose to their own backstop before it stops trying
+#: — CAL-P081 (#2052).
+#:
+#: This exists because the obvious response to a cancelled unit is the wrong one.
+#: STOPPING the beat looks safe and is the more dangerous of the two: the loop
+#: skips units the cursor already holds, so the cancelled unit is the FIRST one
+#: every subsequent beat attempts. A unit that cancels reproducibly would then
+#: cancel at the head of every beat forever and the build would bank **zero**
+#: units an hour — strictly worse than the failure being fixed, which at least
+#: banked five. Skipping past it banks the other 127 and leaves the blocker named
+#: in the ledger instead of hidden behind a build that has simply stopped.
+#:
+#: Bounded at two because the cost is bounded and the diagnosis changes. Each
+#: cancellation costs at most :data:`STAGED_UNIT_OVERRUN_FACTOR` units of window,
+#: so two is at most eight units of an ~18-unit beat — under half, spent to keep
+#: the other ten moving. A third says the slowness is the BEAT's (a lock, a plan
+#: flip, a vacuum) and not one unit's, and no amount of continuing helps.
+STAGED_UNIT_MAX_CANCELLATIONS = 2
+
 #: One recorded observation of a phase is a measurement. Zero is a guess.
 MIN_OBSERVATIONS = 1
 
@@ -1159,6 +1207,56 @@ class PhaseLedger:
         deadline_bound = _statement_timeout_for(max(2, self.remaining_ms(elapsed_ms=elapsed_ms)))
         budget = self.records[name].statement_timeout_ms
         return max(1, min(deadline_bound, budget) if budget else deadline_bound)
+
+    def measured_unit_ms(self, name: str) -> Optional[int]:
+        """This phase's MEASURED cost for one completed unit, or ``None``.
+
+        Read off the plan, which carries it forward from the previous beat via
+        ``unit_costs`` — so it is available on the FIRST unit of a beat, before
+        this beat has completed anything of its own. That is the whole reason it
+        is worth reading: within-beat evidence starts empty every hour, and the
+        build has been measuring this number all along without the loop ever
+        consulting it.
+
+        ``units_done`` must be non-zero for the same reason
+        :meth:`unit_projection` requires it: ``unit_ms`` is a mean over completed
+        units, and a mean over zero of them is not a measurement. ``None`` here
+        means "no measured unit cost", which the callers must treat as *do not
+        bound*, never as *bound at zero*.
+        """
+        budget = self.plan.by_name(name)
+        if budget is None or not budget.unit_ms or not budget.units_done:
+            return None
+        return int(budget.unit_ms)
+
+    def statement_timeout_for_unit(
+        self, name: str, *, elapsed_ms: int, unit_ms: Optional[float] = None
+    ) -> int:
+        """The DB backstop for ONE unit of a unit-staged phase — CAL-P081 (#2052).
+
+        The phase bound (:meth:`statement_timeout_for`) is a ceiling on what is
+        left of the beat. This is a ceiling on what one statement inside it may
+        spend, and it is **always the tighter of the two** — it can only ever
+        take time away from a unit, never hand it more, so a unit can no more
+        outlive the beat than it could before.
+
+        ``unit_ms`` lets the caller supply THIS beat's own observation (the worst
+        completed unit so far), which is stronger evidence than the carried mean
+        the moment it exists. Absent both, there is nothing measured to multiply
+        and the phase bound stands unchanged — the build must never be bounded by
+        a number it did not measure (ruling 075).
+
+        What this buys, on the specimen it was written for: the sixth unit of the
+        18:37:31Z beat would have been cancelled at ~289 s instead of 901 s,
+        leaving ~610 s of window — about eight further units at the measured
+        cost — where the beat instead banked nothing more and terminated RED.
+        """
+        phase_bound = self.statement_timeout_for(name, elapsed_ms=elapsed_ms)
+        measured = unit_ms if unit_ms and unit_ms > 0 else self.measured_unit_ms(name)
+        if not measured or measured <= 0:
+            return phase_bound
+        unit_bound = _statement_timeout_for(max(2, int(measured * STAGED_UNIT_OVERRUN_FACTOR)))
+        return max(1, min(phase_bound, unit_bound))
 
     def as_payload(self) -> dict[str, Any]:
         return {

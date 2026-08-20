@@ -1,0 +1,86 @@
+{
+  "queue": "CAL-P079",
+  "issue": 2007,
+  "gate": "the rolling re-stage is alive (program/calibration-75 post-deploy)",
+  "api": "https://api.bainluck.com",
+  "interval_s": 60,
+  "observations": [
+    {
+      "http_status": 200,
+      "elapsed_s": 0.92,
+      "generated_at": "2026-08-20T20:17:19.661334+00:00",
+      "availability": "stale",
+      "bucket_count": 1935,
+      "total_outcomes": 856996,
+      "staged_at": "2026-08-20T18:22:29+00:00",
+      "staged_age_s": 7727,
+      "units_banked": 128,
+      "units_drifted": 128,
+      "units_drift_unknown": 0,
+      "frozen_over_drift": true,
+      "rolling_restage": true,
+      "rebuild_units_this_beat": 0,
+      "rebuild_units_banked": 13,
+      "bank_advanced_this_beat": false,
+      "units_this_beat": 0,
+      "tolerance_pp": 100.0
+    },
+    {
+      "http_status": 200,
+      "elapsed_s": 0.68,
+      "generated_at": "2026-08-20T20:17:19.661334+00:00",
+      "availability": "stale",
+      "bucket_count": 1935,
+      "total_outcomes": 856996,
+      "staged_at": "2026-08-20T18:22:29+00:00",
+      "staged_age_s": 7727,
+      "units_banked": 128,
+      "units_drifted": 128,
+      "units_drift_unknown": 0,
+      "frozen_over_drift": true,
+      "rolling_restage": true,
+      "rebuild_units_this_beat": 0,
+      "rebuild_units_banked": 13,
+      "bank_advanced_this_beat": false,
+      "units_this_beat": 0,
+      "tolerance_pp": 100.0
+    }
+  ],
+  "checks": {
+    "samples": {
+      "pass": true,
+      "detail": "2 readable samples"
+    },
+    "rolling_restage_present": {
+      "pass": true,
+      "detail": "rolling_restage across samples: [True, True]"
+    },
+    "builder_alive": {
+      "pass": false,
+      "detail": "rebuild_units_this_beat: [0, 0]"
+    },
+    "served_census_advanced": {
+      "pass": false,
+      "detail": "1 distinct staged_at value(s): ['2026-08-20T18:22:29+00:00']"
+    },
+    "rebuild_advancing": {
+      "pass": false,
+      "detail": "rebuild_units_banked across samples: [13, 13]"
+    },
+    "drift_falling": {
+      "pass": null,
+      "detail": "units_drifted is SATURATED at 128/128 across every sample. The served bank's drift resets only when a complete successor is promoted, so this cannot fall on an ordinary beat and its not-falling is NOT evidence of a stall \u2014 read `rebuild_advancing` for the per-beat answer."
+    },
+    "served_200_and_coherent_throughout": {
+      "pass": true,
+      "detail": "statuses=[200, 200] bucket_counts=[1935, 1935]"
+    },
+    "bound": {
+      "pass": null,
+      "detail": "tolerance_pp across samples: [100.0, 100.0]",
+      "first": 100.0,
+      "last": 100.0
+    }
+  },
+  "verdict": "fail"
+}

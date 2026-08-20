@@ -242,6 +242,24 @@ _STATEMENT_TIMEOUT_MARKERS = (
 )
 
 
+def is_statement_timeout(exc: BaseException) -> bool:
+    """Is this exception Postgres cancelling a statement at its own backstop?
+
+    Hoisted out of :meth:`PhaseRunner.classify_failure` by CAL-P081 (#2052) so
+    the unit loop can ask the SAME question the terminal classifier asks. Two
+    copies of this predicate would drift, and the drift would be silent in the
+    worst direction: a cancellation the loop failed to recognise propagates and
+    the beat terminates ``failed`` — which is precisely the false RED #2052 is.
+
+    Matched on the rendered class name plus message rather than on a driver
+    exception type, deliberately: SQLAlchemy wraps ``asyncpg`` cancellations in
+    ``DBAPIError``, the wrapping has changed shape across versions, and the
+    message has not.
+    """
+    text_form = f"{exc.__class__.__name__} {exc}".lower()
+    return any(marker in text_form for marker in _STATEMENT_TIMEOUT_MARKERS)
+
+
 class StagedFuturesIncomplete(RuntimeError):
     """The staged futures generation made progress but is not finished.
 
@@ -527,8 +545,7 @@ class PhaseRunner:
 
         if isinstance(exc, (asyncio.CancelledError, StagedFuturesIncomplete)):
             return CANCELLED
-        text_form = f"{exc.__class__.__name__} {exc}".lower()
-        if any(marker in text_form for marker in _STATEMENT_TIMEOUT_MARKERS):
+        if is_statement_timeout(exc):
             return TIMEOUT
         return FAILED
 
@@ -610,6 +627,30 @@ class PhaseRunner:
         await self.tag_session(db)
         return timeout_ms
 
+    def measured_unit_ms(self, phase: str):
+        """The carried, measured cost of one completed unit of ``phase``.
+
+        Exposed on the runner rather than reached for through ``.ledger`` by the
+        caller, because the caller is the frozen module (ruling 009) and every
+        line of judgment that can live on this side of the boundary should.
+        """
+        return self.ledger.measured_unit_ms(phase)
+
+    async def apply_unit_statement_timeout(self, db, phase: str, *, unit_ms=None) -> int:
+        """Set the backstop for ONE unit of a unit-staged phase — CAL-P081 (#2052).
+
+        Same contract as :meth:`apply_statement_timeout` and strictly tighter:
+        the unit gets the smaller of the phase's remaining window and a multiple
+        of its own measured cost. With no measured cost the two are identical, so
+        this is never the reason a build stops making progress.
+        """
+        timeout_ms = self.ledger.statement_timeout_for_unit(
+            phase, elapsed_ms=self.elapsed_ms(), unit_ms=unit_ms
+        )
+        await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        await self.tag_session(db)
+        return timeout_ms
+
     async def commit(self, db) -> None:
         """End the phase's read transaction so its output counts as committed.
 
@@ -646,6 +687,23 @@ class PhaseRunner:
         size = len(json.dumps(body, separators=(",", ":"), default=str))
         return body, size
 
+    def rebuild_in_flight(self) -> bool:
+        """Is a rolling re-stage part-way through its 128 units? — CAL-P081.
+
+        Read off the two stages ``_record_convergence_projection`` writes at the
+        end of the unit loop, so it is answerable on any beat where the loop ran
+        and honestly unanswerable (``False``) on any beat where it did not. That
+        asymmetry is the right way round: the beat that must not bank a carry is
+        the beat that just ran units and knows it did not finish.
+        """
+        planned = self.ledger.stages.get("staged:units_planned")
+        done = self.ledger.stages.get("staged:units_done")
+        if not isinstance(planned, int) or planned <= 0:
+            return False
+        if not isinstance(done, int):
+            return False
+        return done < planned
+
     def build_checkpoint(self) -> tuple[MainBuildCheckpoint, dict[str, str]]:
         """Fold this run's committed phase outputs into a checkpoint.
 
@@ -653,6 +711,25 @@ class PhaseRunner:
         re-encoding a decoded row list would be pure cost for no change).
         Oversize output is dropped rather than truncated, and the drop is
         recorded so the ledger can say which phases the next beat must redo.
+
+        **CAL-P081 (#2007): the futures phase is NOT banked while a rolling
+        re-stage is part-way through.** Measured, not reasoned: the 20:15Z beat
+        on 2026-08-20 published with ``carried: ['futures', 'sports']``,
+        ``staged:units_this_beat: 0`` and ``staged:rate_reason:no_unit_ran: 1``,
+        leaving ``rebuild_units_banked`` at 13/128 exactly where the 18:22Z beat
+        left it. Carrying the phase output skips ``_run_staged_futures``
+        entirely, and the unit loop is the ONLY thing that advances the rebuild
+        — so a carry is a whole beat of re-stage bought for one ~75 s generation
+        read, on a bank that needs ~15 more advances.
+
+        It compounds with the teardowns: an interrupted beat that had finished
+        futures banks the carry, the next beat spends itself carrying it, and two
+        beats of re-stage are gone per deploy. Six releases landed between 16:16Z
+        and 20:07Z.
+
+        Scoped to ``PHASE_FUTURES`` and to the in-flight case only. Every other
+        phase carries exactly as before, and so does futures once the rebuild has
+        no units outstanding.
         """
         checkpoint = new_main_checkpoint(
             version=self.population_version,
@@ -664,9 +741,22 @@ class PhaseRunner:
         outcomes: dict[str, str] = {}
         sized: list[tuple[str, dict[str, Any], int]] = []
 
+        rebuild_in_flight = self.rebuild_in_flight()
         for phase in RESUMABLE_PHASES:
             record = self.ledger.records.get(phase)
             if record is None or record.status not in DONE_STATUSES:
+                continue
+            if phase == PHASE_FUTURES and rebuild_in_flight:
+                # See the docstring. Recorded under its own outcome so "we chose
+                # not to bank this" never reads as "there was nothing to bank"
+                # (ruling 075, second clause).
+                outcomes[phase] = "rebuild_in_flight"
+                logger.info(
+                    "calibration phase ledger: not banking %s — a rolling "
+                    "re-stage is at %s/%s units and a carried beat runs none of "
+                    "them", phase, self.ledger.stages.get("staged:units_done"),
+                    self.ledger.stages.get("staged:units_planned"),
+                )
                 continue
             if phase in self.carried_phases and phase not in self._captured:
                 stored = self.checkpoint.output(phase)
@@ -760,6 +850,12 @@ class NullPhaseRunner:
         return dict(self.session_identity)
 
     async def apply_statement_timeout(self, db, phase: str) -> int:  # noqa: D102
+        return 0
+
+    def measured_unit_ms(self, phase: str):  # noqa: D102
+        return None
+
+    async def apply_unit_statement_timeout(self, db, phase: str, *, unit_ms=None) -> int:  # noqa: D102, E501
         return 0
 
     async def commit(self, db) -> None:  # noqa: D102
