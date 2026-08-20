@@ -584,7 +584,20 @@ def test_ruling_numbers_are_unique() -> None:
 #: Two collisions in one Integrator session is the argument for #2009's LEDGER half rather than
 #: its test half: the test caught both, but it caught them at MERGE time, after the number had
 #: already been minted twice. A number claimed at AUTHORING time cannot collide.
-MINIMUM_BANKED_RULINGS = 98
+#:
+#: Raised to **99** by CAL-P077, banking ruling **102** ("a worker ships with a test that starts
+#: it", Fable ruling (a), #1978). THIRTEENTH consecutive cycle. COUNTED against the rebased base
+#: `6e314028`, not inferred: `ls docs/rulings/ | grep -cE '^[0-9]{3}-.*\.md$'` = **98** before
+#: this ruling's file, **99** after. The branch first wrote 97 against base `62846ab8` (96 files);
+#: master then landed ux's 100 and 101 and moved to 98; the merged tree holds **99**. Neither
+#: side was wrong about itself and neither was the truth — count, never add, never take a side.
+#:
+#: 102 was claimed in `RULING-CLAIMS.md` at authoring time and verified free by sweeping **470**
+#: local and remote refs for `docs/rulings/102-*`, holders_found 0 — which is #2009's ledger half
+#: doing exactly what the note above asks for. The claim held through this rebase: ux took 100
+#: and 101, not 102, so no renumber was owed and the index reads 099 -> 100 -> 101 -> 102 with no
+#: gap.
+MINIMUM_BANKED_RULINGS = 99
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
