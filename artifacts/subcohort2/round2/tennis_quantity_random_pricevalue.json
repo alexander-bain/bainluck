@@ -1,0 +1,14 @@
+{
+  "columns": [
+    "avg_abs_diff"
+  ],
+  "rows": [
+    [
+      "0.02530655526992287918"
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 14.0,
+  "sql_fingerprint": "e13464aa1b71a52b"
+}

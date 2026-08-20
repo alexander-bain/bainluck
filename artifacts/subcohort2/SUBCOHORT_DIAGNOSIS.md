@@ -142,18 +142,22 @@ Each cell Round 1: `ORDER BY id ASC LIMIT 500` head sample (biased old) + `ANY` 
 - **Samples:** pending same ANY pattern. Economics 1000-sample already: `n=98 has_calib 98 fallback 0` — no fallback.
 - **Status:** `PENDING — samples scheduled` .
 
-### 13. tennis/quantity — 3.47pp, n=30221 [HIGHEST PRIORITY PER N]
+### 13. tennis/quantity — 3.47pp, n=30221 [HIGHEST PRIORITY PER N — RANDOM SAMPLE EXECUTED]
 
 - **Noise floor:** SE 0.29pp, excess 0.47 =1.6σ — borderline but n=30k makes it real per bar (presumed miscalculated). Need mechanism proof, not statistical shrug.
-- **Census:** `ece_complete 3.47` just over 3, but `ece_all 24.71` (all rows including never-graded) — huge gap between all and complete suggests grading (never-graded) contributed but ece_complete still over bar.
-- **Sample:** pending 1000-market roster (tennis/quantity is known sparse-density trap: first attempt roster `statement_timeout` in worker design, recovered at 93s with page 500). Will need bisection.
-- **Status:** `PENDING — density trap expected, needs bisection` .
+- **Census:** `ece_complete 3.47` just over 3, but `ece_all 24.71` — huge gap vs complete suggests grading contributed but ece_complete still over bar.
+- **Head 500 (biased old):** `n=58 has_calib 58 fallback 0` [outcomes_tennis_quantity.json, head 500] — head shows 0% fallback, but head is oldest 500 biased.
+- **Random 500 (Bernoulli 4% unbiased):** `n=855 fallback 26/855 = 3.0%` [round2/tennis_quantity_random_fallback.json `0d6627 282ms`], `avg|calib−opening| where both NOT NULL` pending but random fallback 3% vs head 0% shows head bias underestimates fallback, though still far below 14% basketball level. Random is unbiased estimate.
+- **Status:** `EXECUTED — random 3.0% fallback, head 0% shows bias, not yet 14% driver` .
 
-### 14. tennis/container_member — 3.13pp, n=27349 [HIGHEST PRIORITY PER N]
 
-- **Noise floor:** SE 0.30pp, excess 0.13 =0.43σ — **within 2σ**, so statistical alone could explain. But bar says presumed miscalculated at 27k, and `ece_all 24.04` vs `ece_complete 3.13` shows grading contributed heavily. Need to verify price-value and shape before clearing.
-- **Sample:** pending, same density trap as tennis/q (504s at 55/s in worker design).
-- **Status:** `PENDING — needs bisection, then shape check` .
+### 14. tennis/container_member — 3.13pp, n=27349 [HIGHEST PRIORITY PER N — RANDOM SAMPLE EXECUTED]
+
+- **Noise floor:** SE 0.30pp, excess 0.13 =0.43σ — **within 2σ**, so statistical alone could explain. But bar says presumed miscalculated at 27k, and `ece_all 24.04` vs `ece_complete 3.13` shows grading contributed.
+- **Head 500:** `n=86 has_calib 86 fallback 0` [outcomes_tennis_container_member.json] — head 0%.
+- **Random 500 (Bernoulli 4% unbiased):** `n=935 fallback 14/935 = 1.5%` [round2/tennis_cm_random_fallback.json `506faf 346ms`], `avg|calib−opening|` pending — random 1.5% vs head 0%, still low. At n=27349, 0.13pp excess is within noise, so **provisionally statistical** unless shape/price proves otherwise — per bar, need mechanism proof to convince otherwise, but noise calculation supports statistical for this cell.
+- **Status:** `EXECUTED — random 1.5% fallback, within noise, presumed statistical pending shape check` .
+
 
 ---
 
@@ -173,8 +177,8 @@ Each cell Round 1: `ORDER BY id ASC LIMIT 500` head sample (biased old) + `ANY` 
 | 10 | golf/container_member | 3276 | 7.46 | 24439 | pending — sample fallback 0, shape check next | sum-to-1 histogram | 10.4→? | outcomes_golf |
 | 11 | table_tennis/quantity | 7556 | 2.84 | 21459 | pending | — | 5.8→? | census |
 | 12 | politics/quantity | 3289 | 5.69 | 18714 | pending — sparse cell, needs unordered | — | 8.6→? | census |
-| 13 | tennis/quantity | 30221 | 0.47 | 14204 | **HIGHEST PER N** — density trap, needs bisection | roster bisection → price-value → shape | 3.47→3.0 if noise else ~? | census, worker 504s trap |
-| 14 | tennis/container_member | 27349 | 0.13 | 3555 | **HIGHEST PER N but within noise** — 0.43σ | verify shape before clearing per bar | 3.13→~3 if statistical | census |
+| 13 | tennis/quantity | 30221 | 0.47 | 14204 | **HIGHEST PER N** — random 3.0% fallback (unbiased) vs head 0%, density trap bisection not needed (random succeeded) | random Bernoulli 4% → price-VALUE → shape | 3.47→~3.0 if noise else price fix | round2/tennis_quantity_random_fallback.json `0d6627` |
+| 14 | tennis/container_member | 27349 | 0.13 | 3555 | **HIGHEST PER N but within noise** — random 1.5% fallback, 0.43σ | verify shape, presumed statistical | 3.13→~3.0 statistical | round2/tennis_cm_random_fallback.json `506faf` |
 
 *Every row will be updated with EXECUTED fix-Δ after price-value and KXMLBKS quantifications. Findings route to calibration; no DDL here.*
 
