@@ -642,6 +642,68 @@ class TestTheFrozenLoopActuallyReStages:
         assert len(store["cursor"]["served_units"]) == _plan_size(_roster(60))
 
     @pytest.mark.asyncio
+    async def test_a_full_multi_beat_cycle(self, wiring):
+        """THE END-TO-END SHAPE, on a window too small to finish in one beat —
+        which is production's shape (128 units, ~25 per beat).
+
+        Traced through the real frozen loop with a window that admits ~12 units:
+
+            beat 1  ran=12  published=False  served= 0  building=12
+            beat 2  ran=12  published=False  served= 0  building=24
+            beat 3  ran=12  published=False  served= 0  building=36
+            beat 4  ran=10  published=True   served=46  building= 0   <- promotion
+            beat 5  ran=12  published=True   served=46  building=12
+            beat 6  ran=12  published=True   served=46  building=24
+
+        Three properties, and the third is the one #2007 is about:
+
+        * a cold start publishes NOTHING until a census is complete — partial is
+          still not done;
+        * the beat that completes one PUBLISHES it, not the beat after;
+        * once serving, the curve keeps publishing through every subsequent
+          partial rebuild. It never goes dark and it never serves a blend.
+        """
+        pc, store, _saves = wiring
+        roster = _roster(60)
+        plan = _plan_size(roster)
+        seen = []
+        for _ in range(6):
+            db = _FakeDB(roster)
+            runner = _FakeRunner(window_ms=1300)
+            merged = await pc._run_staged_futures(db, runner, lambda frozen: "SELECT 2")
+            cursor = store["cursor"]
+            seen.append(
+                {
+                    "ran": db.unit_reads,
+                    "published": merged is not None,
+                    "served": len(cursor["served_units"]),
+                    "building": len(cursor["committed_units"]),
+                    "served_at": cursor["served_at"],
+                }
+            )
+
+        assert all(b["ran"] > 0 for b in seen), "every beat must re-stage something"
+        assert not seen[0]["published"], "a partial first census may not publish"
+
+        first_publish = next(i for i, b in enumerate(seen) if b["published"])
+        assert seen[first_publish]["served"] == plan, (
+            "the beat that COMPLETES a census is the beat that publishes it"
+        )
+        assert seen[first_publish]["served_at"] > 0, "and it is dated on that beat"
+
+        # From the promotion onward the curve never goes dark, however partial
+        # the rebuild behind it gets.
+        tail = seen[first_publish:]
+        assert all(b["published"] for b in tail)
+        assert all(b["served"] == plan for b in tail)
+        assert any(0 < b["building"] < plan for b in tail), (
+            "a rebuild must actually be in progress underneath a serving bank"
+        )
+        # The census ages until the NEXT promotion — it does not silently
+        # re-date itself every beat, which is the bug this queue closes.
+        assert len({b["served_at"] for b in tail}) == 1
+
+    @pytest.mark.asyncio
     async def test_an_empty_population_still_publishes_and_does_not_promote(self, wiring):
         """An empty roster is a real answer, and it must not mint a dated bank."""
         pc, store, _saves = wiring
