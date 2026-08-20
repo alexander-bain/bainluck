@@ -39,6 +39,12 @@ def _obs(**kw):
         "units_drifted": 115,
         "rolling_restage": True,
         "rebuild_units_this_beat": 12,
+        # CAL-P081 (#2007) added the `rebuild_advancing` check, so the fixture
+        # has to carry the field it grades. Constant by default, which is the
+        # frozen reading: the live 2026-08-20 bank sat at 13/128 from 18:22Z to
+        # 20:25Z while every other field looked healthy.
+        "rebuild_units_banked": 13,
+        "units_banked": 128,
         "tolerance_pp": 90.625,
     }
     base.update(kw)
@@ -85,11 +91,11 @@ class TestTheAdvancingBankPasses:
     def test_a_bank_that_moves_and_drains_passes(self):
         obs = [
             _obs(staged_at="2026-08-20T17:00:00+00:00", units_drifted=115,
-                 tolerance_pp=90.625),
+                 rebuild_units_banked=40, tolerance_pp=90.625),
             _obs(staged_at="2026-08-20T17:15:00+00:00", units_drifted=64,
-                 tolerance_pp=50.0),
+                 rebuild_units_banked=88, tolerance_pp=50.0),
             _obs(staged_at="2026-08-20T17:30:00+00:00", units_drifted=9,
-                 tolerance_pp=7.03),
+                 rebuild_units_banked=120, tolerance_pp=7.03),
         ]
         result = evaluate(obs)
         assert result["verdict"] == "pass"
@@ -129,3 +135,80 @@ class TestItRefusesToGuess:
         result = evaluate(obs)
         assert result["checks"]["served_200_and_coherent_throughout"]["pass"] is False
         assert result["verdict"] == "fail"
+
+
+# ---------------------------------------------------------------------------
+# CAL-P081 (#2007) — the two states the CAL-P079 checks could not tell apart
+# ---------------------------------------------------------------------------
+
+
+class TestSaturatedDriftIsNotAStall:
+    """The false RED found inside the false-GREEN detector.
+
+    ``units_drifted`` is ``served_drift``: SERVING-bank units whose membership
+    digest no longer matches the plan. Served digests are frozen at promotion and
+    the population only grows, so the count is MONOTONE UP until a complete
+    successor is promoted — and once it reaches the bank size it cannot move at
+    all. On 2026-08-20 the live reading was 128/128 and ``drift_falling``
+    reported ``fail`` for a state that is expected, correct, and disclosed.
+    """
+
+    def test_a_saturated_drift_is_unanswerable_rather_than_failed(self):
+        obs = [
+            _obs(units_drifted=128, units_banked=128, rebuild_units_banked=13,
+                 staged_at="2026-08-20T18:22:29+00:00"),
+            _obs(units_drifted=128, units_banked=128, rebuild_units_banked=21,
+                 staged_at="2026-08-20T19:22:29+00:00"),
+        ]
+        checks = evaluate(obs)["checks"]
+        assert checks["drift_falling"]["pass"] is None
+        assert "SATURATED" in checks["drift_falling"]["detail"]
+
+    def test_an_unsaturated_drift_that_does_not_fall_still_fails(self):
+        """The guard is not weakened. Drift that CAN move and does not is the
+        churn CAL-P079 wrote the check to catch."""
+        obs = [
+            _obs(units_drifted=64, units_banked=128, rebuild_units_banked=13),
+            _obs(units_drifted=64, units_banked=128, rebuild_units_banked=21),
+        ]
+        assert evaluate(obs)["checks"]["drift_falling"]["pass"] is False
+
+
+class TestTheRebuildAdvancingCheck:
+    """The per-beat answer ``drift_falling`` cannot give.
+
+    Measured 2026-08-20: ``rebuild_units_banked`` sat at 13/128 from 18:22Z to
+    20:25Z. Every other published field looked healthy — the curve served 200,
+    the disclosure was honest, ``rolling_restage`` was true — and the bank was
+    not moving, because the 20:15Z beat CARRIED the futures phase and so ran no
+    units at all.
+    """
+
+    def test_the_live_frozen_rebuild_is_caught(self):
+        obs = [
+            _obs(units_banked=128, units_drifted=128, rebuild_units_banked=13,
+                 rebuild_units_this_beat=0, staged_at="2026-08-20T18:22:29+00:00"),
+            _obs(units_banked=128, units_drifted=128, rebuild_units_banked=13,
+                 rebuild_units_this_beat=0, staged_at="2026-08-20T18:22:29+00:00"),
+        ]
+        result = evaluate(obs)
+        assert result["checks"]["rebuild_advancing"]["pass"] is False
+        assert result["verdict"] == "fail"
+
+    def test_a_promotion_reset_counts_as_advancing_not_as_regression(self):
+        """120 -> 0 -> 8 is the single best outcome in the system: a complete
+        bank was promoted and its successor started. A strict ``last > first``
+        would grade it a failure."""
+        obs = [
+            _obs(rebuild_units_banked=120, units_drifted=128, units_banked=128),
+            _obs(rebuild_units_banked=0, units_drifted=4, units_banked=128,
+                 staged_at="2026-08-20T19:22:29+00:00"),
+            _obs(rebuild_units_banked=8, units_drifted=9, units_banked=128,
+                 staged_at="2026-08-20T20:22:29+00:00"),
+        ]
+        assert evaluate(obs)["checks"]["rebuild_advancing"]["pass"] is True
+
+    def test_an_unreadable_rebuild_count_is_a_failure_not_a_pass(self):
+        """Gotcha #53: an absent field must not read as a healthy one."""
+        obs = [_obs(rebuild_units_banked=None), _obs(rebuild_units_banked=None)]
+        assert evaluate(obs)["checks"]["rebuild_advancing"]["pass"] is False

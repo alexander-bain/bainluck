@@ -687,6 +687,23 @@ class PhaseRunner:
         size = len(json.dumps(body, separators=(",", ":"), default=str))
         return body, size
 
+    def rebuild_in_flight(self) -> bool:
+        """Is a rolling re-stage part-way through its 128 units? — CAL-P081.
+
+        Read off the two stages ``_record_convergence_projection`` writes at the
+        end of the unit loop, so it is answerable on any beat where the loop ran
+        and honestly unanswerable (``False``) on any beat where it did not. That
+        asymmetry is the right way round: the beat that must not bank a carry is
+        the beat that just ran units and knows it did not finish.
+        """
+        planned = self.ledger.stages.get("staged:units_planned")
+        done = self.ledger.stages.get("staged:units_done")
+        if not isinstance(planned, int) or planned <= 0:
+            return False
+        if not isinstance(done, int):
+            return False
+        return done < planned
+
     def build_checkpoint(self) -> tuple[MainBuildCheckpoint, dict[str, str]]:
         """Fold this run's committed phase outputs into a checkpoint.
 
@@ -694,6 +711,25 @@ class PhaseRunner:
         re-encoding a decoded row list would be pure cost for no change).
         Oversize output is dropped rather than truncated, and the drop is
         recorded so the ledger can say which phases the next beat must redo.
+
+        **CAL-P081 (#2007): the futures phase is NOT banked while a rolling
+        re-stage is part-way through.** Measured, not reasoned: the 20:15Z beat
+        on 2026-08-20 published with ``carried: ['futures', 'sports']``,
+        ``staged:units_this_beat: 0`` and ``staged:rate_reason:no_unit_ran: 1``,
+        leaving ``rebuild_units_banked`` at 13/128 exactly where the 18:22Z beat
+        left it. Carrying the phase output skips ``_run_staged_futures``
+        entirely, and the unit loop is the ONLY thing that advances the rebuild
+        — so a carry is a whole beat of re-stage bought for one ~75 s generation
+        read, on a bank that needs ~15 more advances.
+
+        It compounds with the teardowns: an interrupted beat that had finished
+        futures banks the carry, the next beat spends itself carrying it, and two
+        beats of re-stage are gone per deploy. Six releases landed between 16:16Z
+        and 20:07Z.
+
+        Scoped to ``PHASE_FUTURES`` and to the in-flight case only. Every other
+        phase carries exactly as before, and so does futures once the rebuild has
+        no units outstanding.
         """
         checkpoint = new_main_checkpoint(
             version=self.population_version,
@@ -705,9 +741,22 @@ class PhaseRunner:
         outcomes: dict[str, str] = {}
         sized: list[tuple[str, dict[str, Any], int]] = []
 
+        rebuild_in_flight = self.rebuild_in_flight()
         for phase in RESUMABLE_PHASES:
             record = self.ledger.records.get(phase)
             if record is None or record.status not in DONE_STATUSES:
+                continue
+            if phase == PHASE_FUTURES and rebuild_in_flight:
+                # See the docstring. Recorded under its own outcome so "we chose
+                # not to bank this" never reads as "there was nothing to bank"
+                # (ruling 075, second clause).
+                outcomes[phase] = "rebuild_in_flight"
+                logger.info(
+                    "calibration phase ledger: not banking %s — a rolling "
+                    "re-stage is at %s/%s units and a carried beat runs none of "
+                    "them", phase, self.ledger.stages.get("staged:units_done"),
+                    self.ledger.stages.get("staged:units_planned"),
+                )
                 continue
             if phase in self.carried_phases and phase not in self._captured:
                 stored = self.checkpoint.output(phase)
