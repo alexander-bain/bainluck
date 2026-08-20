@@ -597,7 +597,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: doing exactly what the note above asks for. The claim held through this rebase: ux took 100
 #: and 101, not 102, so no renumber was owed and the index reads 099 -> 100 -> 101 -> 102 with no
 #: gap.
-MINIMUM_BANKED_RULINGS = 99
+MINIMUM_BANKED_RULINGS = 100
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
