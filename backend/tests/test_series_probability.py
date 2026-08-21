@@ -1,6 +1,8 @@
 """Tests for series win probability computation."""
 
 import pytest
+
+from tests.known_failure import KnownFailure, expect_raises_known_failure
 from app.utils.series_probability import compute_series_win_prob, series_state_label
 
 
@@ -222,6 +224,7 @@ class TestSeriesWinProbValidation:
     @pytest.mark.xfail(
         reason="compute_series_win_prob currently accepts impossible terminal scores",
         strict=True,
+        raises=KnownFailure,
     )
     @pytest.mark.parametrize(
         ("team_wins", "opponent_wins"),
@@ -232,10 +235,13 @@ class TestSeriesWinProbValidation:
         ],
     )
     def test_impossible_series_scores_raise(self, team_wins, opponent_wins):
-        with pytest.raises(ValueError, match="impossible|invalid"):
-            compute_series_win_prob(
-                0.5, team_wins, opponent_wins, games_to_win=4
-            )
+        # Not `pytest.raises`: when the expected raise does not happen it throws
+        # `Failed`, and a marker admitting `Failed` would admit a real crash too.
+        expect_raises_known_failure(
+            ValueError, "impossible|invalid",
+            compute_series_win_prob,
+            0.5, team_wins, opponent_wins, games_to_win=4,
+        )
 
 
 class TestSeriesWinProbSymmetry:

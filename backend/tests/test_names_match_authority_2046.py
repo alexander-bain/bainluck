@@ -66,9 +66,17 @@ Every pair below is a REAL production name taken from the sweep, not invented.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from app.utils.name_normalization import names_match
+from tests.known_failure import (  # noqa: E402
+    KnownFailure,
+    call_under_test,
+    expect_known_failure,
+)
 
 
 # ── pairs a fix must NOT break ──────────────────────────────────────────────
@@ -299,7 +307,7 @@ class TestKnownFalseAccepts:
 
     @pytest.mark.xfail(
         strict=True,
-        raises=AssertionError,
+        raises=KnownFailure,
         reason="#2046: min()-based token overlap accepts any two 2-token names "
                "sharing one token. Structural, not a threshold.",
     )
@@ -309,8 +317,10 @@ class TestKnownFalseAccepts:
         ids=[f"{fam}:{a}|{b}" for fam, a, b in ALL_FALSE_ACCEPTS],
     )
     def test_different_teams_must_not_match(self, family, a, b):
-        assert names_match(a, b) is False, (
-            f"[{family}] {a!r} and {b!r} are DIFFERENT teams"
+        matched = call_under_test(names_match, a, b)
+        expect_known_failure(
+            matched is False,
+            f"[{family}] {a!r} and {b!r} are DIFFERENT teams",
         )
 
 
@@ -324,15 +334,16 @@ class TestStructuredMatchConsequence:
 
     @pytest.mark.xfail(
         strict=True,
-        raises=AssertionError,
+        raises=KnownFailure,
         reason="#2046: both legs false-accept, so the whole fixture does",
     )
     def test_two_different_fixtures_do_not_compare_equal(self):
         # Mets @ Dodgers  vs  Yankees @ Angels — four different clubs.
-        home_ok = names_match("Los Angeles Dodgers", "Los Angeles Angels")
-        away_ok = names_match("New York Mets", "New York Yankees")
-        assert not (home_ok and away_ok), (
-            "a structured match would treat these as the same fixture"
+        home_ok = call_under_test(names_match, "Los Angeles Dodgers", "Los Angeles Angels")
+        away_ok = call_under_test(names_match, "New York Mets", "New York Yankees")
+        expect_known_failure(
+            not (home_ok and away_ok),
+            "a structured match would treat these as the same fixture",
         )
 
 
@@ -346,13 +357,19 @@ class TestMechanismIsTheSharedGenericToken:
 
     @pytest.mark.xfail(
         strict=True,
-        raises=AssertionError,
+        raises=KnownFailure,
         reason="#2046: the generic suffix is doing all the matching work",
     )
     def test_suffix_carries_the_match(self):
-        assert names_match("Manchester City", "Norwich City") is False
-        # sanity: with no shared token at all the predicate already says no
-        assert names_match("Manchester City", "Norwich") is False
+        with_suffix = call_under_test(names_match, "Manchester City", "Norwich City")
+        # sanity: with no shared token at all the predicate already says no. This
+        # is NOT the characterised defect, so it stays a plain assertion — if it
+        # ever fails, that is a genuine surprise and must not read as expected.
+        assert call_under_test(names_match, "Manchester City", "Norwich") is False
+        expect_known_failure(
+            with_suffix is False,
+            "the generic suffix is doing all the matching work",
+        )
 
 
 # ── the promotion mechanism must itself fail closed ─────────────────────────
@@ -361,65 +378,50 @@ class TestMechanismIsTheSharedGenericToken:
 class TestExpectedFailuresAreNotExceptionLaundering:
     """An exception is an ERROR. It is never an expected failure.
 
-    Codex's `C-2049-2050-REVIEW` BLOCKed the first version of this file on this
-    exact hole. The `xfail(strict=True)` markers did not constrain `raises`, so
-    an adversarial plugin that left the protected pairs returning `True` and made
-    **every other matcher call raise** `RuntimeError` still produced
-    `34 passed, 47 xfailed, exit 0` — byte-for-byte the healthy headline.
+    This has now been BLOCKed twice, and the second finding defeated the first fix:
 
-    Read that consequence plainly: a future #2046 implementation could make every
-    known-bad input crash and this suite would bless it. A probe that cannot tell
-    a crash from a wrong answer measures nothing, and the promotion mechanism
-    it guards would be fail-OPEN.
+    * ``C-2049-2050-REVIEW`` — bare ``xfail(strict=True)`` admitted a matcher
+      raising ``RuntimeError``: ``34 passed, 47 xfailed, exit 0``, byte-for-byte
+      the healthy headline. Fix written: ``raises=AssertionError``.
+    * ``C-2058-REVIEW`` — **that fix does not work.** This test's own assertion and
+      an ``AssertionError`` raised inside ``names_match`` are the SAME CLASS, so
+      codex's crashing matcher produced ``56 xfailed, exit 0`` regardless.
 
-    `raises=AssertionError` closes it: the only tolerated expected failure is the
-    predicate returning the wrong boolean, which is the thing being characterised.
+    Alex ruled the response structural (2026-08-21): *delete the capability, do not
+    write rule three.* Rule three would have been a narrower ``raises=``, and it
+    fails the moment production code can raise the narrower thing.
+
+    **So the markers above now admit only** :class:`~tests.known_failure.KnownFailure`,
+    **which no production code can construct**, and every call to ``names_match``
+    goes through :func:`~tests.known_failure.call_under_test`, which converts any
+    escaping exception into ``ProductionCodeRaised``. The distinction the marker
+    could never make is made by TYPE, before the marker is consulted.
+
+    The enforcement and the executed proofs live in
+    ``tests/test_xfail_cannot_launder_exceptions.py``: an AST census over the whole
+    test tree, plus real ``pytest`` subprocesses for the crashing-matcher,
+    wrong-answer, and XPASS cases.
+
+    **The control that used to live here has been deleted, deliberately.** It
+    computed ``issubclass(RuntimeError, admitted)`` — a MODEL of pytest's decision
+    rather than pytest's decision. It agreed with pytest on the class it modelled
+    and was silent on the class it did not, which is precisely how the
+    ``AssertionError`` hole survived it. A guard that reasons about the runner
+    cannot see the case where the runner disagrees with the reasoning.
     """
 
-    def test_every_xfail_marker_in_this_module_constrains_raises(self):
-        import inspect
-        import sys
+    def test_the_structural_guard_is_present_and_binding(self):
+        """This module's markers are subject to the repo-wide census."""
+        from tests.test_xfail_cannot_launder_exceptions import _xfail_violations
 
-        module = sys.modules[__name__]
-        unconstrained = []
-        for cls_name, cls in inspect.getmembers(module, inspect.isclass):
-            if not cls_name.startswith("Test"):
-                continue
-            for fn_name, fn in inspect.getmembers(cls, inspect.isfunction):
-                for mark in getattr(fn, "pytestmark", []):
-                    if mark.name != "xfail":
-                        continue
-                    if mark.kwargs.get("raises") is None:
-                        unconstrained.append(f"{cls_name}::{fn_name}")
+        assert _xfail_violations(Path(__file__)) == []
 
-        assert not unconstrained, (
-            "xfail without `raises=` launders exceptions as expected failures — "
-            "the C-2049-2050-REVIEW BLOCK:\n  " + "\n  ".join(unconstrained)
+    def test_this_module_still_declares_expected_failures(self):
+        """Non-vacuity: the census passing must not mean the markers were removed."""
+        from tests.test_xfail_cannot_launder_exceptions import (
+            _is_xfail_call,
+            _test_modules,  # noqa: F401 — imported to pin the shared detector
         )
 
-    def test_a_raising_matcher_is_an_error_not_an_xfail(self, monkeypatch):
-        """The negative control, executed rather than asserted about.
-
-        Drives a real `xfail(strict=True, raises=AssertionError)` test whose
-        callee raises, and proves pytest surfaces it as an ERROR. If the marker
-        ever loses `raises=`, this run reports `xfailed` and the assertion below
-        fails.
-        """
-        import pytest as _pytest
-
-        outcomes: list[str] = []
-
-        @_pytest.mark.xfail(strict=True, raises=AssertionError)
-        def _probe():
-            raise RuntimeError("simulated matcher regression")
-
-        # Reproduce pytest's own decision: does the marker's `raises` filter
-        # admit this exception class? `raises=AssertionError` must NOT admit it.
-        mark = _probe.pytestmark[0]
-        admitted = mark.kwargs["raises"]
-        outcomes.append("xfailed" if issubclass(RuntimeError, admitted) else "error")
-
-        assert outcomes == ["error"], (
-            "a RuntimeError from the matcher was admitted as an expected "
-            "failure — this is exactly the laundering codex demonstrated"
-        )
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        assert sum(1 for n in ast.walk(tree) if _is_xfail_call(n)) == 3
