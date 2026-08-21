@@ -68,7 +68,8 @@ apply_staging_touched: NO     # PROGRAM-CALIBRATION-QUEUE.md's CAL-P086 apply sp
         backfill_winners or clob or winner"          2203 passed, 4 skipped   EXIT 0
     tests/test_gotcha_numbering.py                      3 passed   EXIT 0
     tests/test_startup.py                               4 passed   EXIT 0
-    FULL SUITE                                        see PROGRAM-CALIBRATION-REPORT.md
+    FULL BACKEND SUITE     18,662 passed, 95 skipped, 61 xfailed, 0 FAILED   EXIT 0
+                           (748.32 s; run at the final head)
     git merge-tree --write-tree origin/master HEAD               EXIT 0, 0 conflicts
 
 Exit codes read for their VALUE, not merely for non-zero (gotcha #54's amendment): one run
