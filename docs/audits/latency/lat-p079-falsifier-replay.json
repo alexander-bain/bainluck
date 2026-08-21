@@ -1,0 +1,132 @@
+{
+  "captured_at": "2026-08-21T16:50:06Z",
+  "age_since_move_h": 0.691,
+  "read_set": [
+    "calibration_prices",
+    "compute_fair_fight_comparison",
+    "compute_time_horizon_calibration",
+    "coverage_metrics",
+    "market_shape_backfill",
+    "precompute_backfill_progress",
+    "precompute_backfill_winners_status",
+    "precompute_calibration_main",
+    "precompute_source_intelligence"
+  ],
+  "observations_present": {
+    "calibration_prices": true,
+    "compute_fair_fight_comparison": true,
+    "compute_time_horizon_calibration": true,
+    "coverage_metrics": true,
+    "market_shape_backfill": true,
+    "precompute_backfill_progress": true,
+    "precompute_backfill_winners_status": true,
+    "precompute_calibration_main": true,
+    "precompute_source_intelligence": true
+  },
+  "verdict_at_real_horizon": {
+    "verdict": "INCONCLUSIVE",
+    "reason": "4 of 7 watched beats are still PRE-HORIZON 0.7h after the routing change \u2014 their p50s are drawn mostly from pre-move samples, so grading them would compare the distribution against itself. This is NOT evidence the move is safe.",
+    "beats": [
+      {
+        "task": "app.tasks.precompute_calibration_main",
+        "verdict": "pre_horizon",
+        "share": 0.0
+      },
+      {
+        "task": "app.tasks.compute_calibration_prices",
+        "verdict": "censored",
+        "share": null
+      },
+      {
+        "task": "app.tasks.compute_time_horizon_calibration",
+        "verdict": "pre_horizon",
+        "share": 0.0
+      },
+      {
+        "task": "app.tasks.compute_fair_fight_comparison",
+        "verdict": "pre_horizon",
+        "share": 0.0
+      },
+      {
+        "task": "app.tasks.precompute_source_intelligence",
+        "verdict": "pre_horizon",
+        "share": 0.0
+      },
+      {
+        "task": "app.tasks.snapshot_coverage_metrics",
+        "verdict": "no_new_runs",
+        "share": null
+      },
+      {
+        "task": "app.tasks.precompute_backfill_winners_status",
+        "verdict": "censored",
+        "share": null
+      }
+    ]
+  },
+  "verdict_if_25h_had_elapsed": {
+    "verdict": "INCONCLUSIVE",
+    "reason": "4 of 7 watched beats are still PRE-HORIZON 25.0h after the routing change \u2014 their p50s are drawn mostly from pre-move samples, so grading them would compare the distribution against itself. This is NOT evidence the move is safe.",
+    "beats": [
+      {
+        "task": "app.tasks.precompute_calibration_main",
+        "verdict": "pre_horizon",
+        "share": 0.36
+      },
+      {
+        "task": "app.tasks.compute_calibration_prices",
+        "verdict": "censored",
+        "share": null
+      },
+      {
+        "task": "app.tasks.compute_time_horizon_calibration",
+        "verdict": "pre_horizon",
+        "share": 0.023
+      },
+      {
+        "task": "app.tasks.compute_fair_fight_comparison",
+        "verdict": "pre_horizon",
+        "share": 0.049
+      },
+      {
+        "task": "app.tasks.precompute_source_intelligence",
+        "verdict": "pre_horizon",
+        "share": 0.045
+      },
+      {
+        "task": "app.tasks.snapshot_coverage_metrics",
+        "verdict": "no_new_runs",
+        "share": null
+      },
+      {
+        "task": "app.tasks.precompute_backfill_winners_status",
+        "verdict": "censored",
+        "share": null
+      }
+    ]
+  },
+  "movers_repaired": {
+    "app.tasks.backfill_market_shapes": {
+      "metrics_name": "market_shape_backfill",
+      "observed": true,
+      "successes_24h": 30,
+      "failures_24h": 2,
+      "runs_24h": 32,
+      "samples": 50,
+      "pre_move_runs_24h": 31,
+      "scheduled_fires_24h": 72,
+      "p4": "pre_horizon"
+    },
+    "app.tasks.precompute_backfill_progress": {
+      "metrics_name": "precompute_backfill_progress",
+      "observed": true,
+      "successes_24h": 46,
+      "failures_24h": 0,
+      "runs_24h": 46,
+      "samples": 50,
+      "pre_move_runs_24h": 45,
+      "scheduled_fires_24h": 96,
+      "p4": "pre_horizon"
+    }
+  }
+}
