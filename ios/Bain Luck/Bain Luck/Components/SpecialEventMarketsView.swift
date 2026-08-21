@@ -68,19 +68,29 @@ struct SpecialEventMarketsView: View {
     }
 
     private var isGameFinished: Bool {
-        eventStatus == "completed" || eventStatus == "closed"
+        SettledQuote.isSettled(eventStatus)
     }
 
     private var categories: [MarketCategory] {
         let winProbNames = Self.isWinProbabilityMarket(markets)
-        var filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
-        // Hide resolved outcomes (100%/0%) for completed games
-        if isGameFinished {
-            filtered = filtered.filter { m in
-                guard let p = m.probability else { return false }
-                return p > 0.01 && p < 0.99
-            }
-        }
+        let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
+        // #2086. What used to sit here was a price-band DELETION on a finished
+        // game — `p > 0.01 && p < 0.99`, under a comment claiming it hid
+        // "100%/0%" — and it was wrong three ways at once.
+        //
+        //   1. It removed exactly the rows a human would notice were wrong (the
+        //      99% the issue was filed on) and KEPT exactly the rows a human
+        //      would believe. Measured 2026-08-21 over 40 settled events: 117
+        //      of 146 `other` rows survived that filter and rendered as live
+        //      bars, 53 of them in the 0.40–0.60 coin-flip band.
+        //   2. It DELETED rather than declared, so the reader was given a blank
+        //      where an honest statement belonged (#2019).
+        //   3. Its `guard let … else { return false }` silently dropped
+        //      null-priced rows on a finished game while keeping them on a live
+        //      one — a filter for prices quietly deciding a row's existence.
+        //
+        // Nothing is dropped now. A settled row keeps its place and says what
+        // its number is, in `outcomeRow` below.
         guard !filtered.isEmpty else { return [] }
 
         var catMap: [String: MarketCategory] = [:]
@@ -128,9 +138,13 @@ struct SpecialEventMarketsView: View {
                     Text("Additional Markets")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                    Text("\(totalItems) markets grouped by category")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        isGameFinished
+                            ? "\(totalItems) markets grouped by category · \(SettledQuote.sectionNote)"
+                            : "\(totalItems) markets grouped by category"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 let columns = [GridItem(.flexible())]
@@ -169,6 +183,39 @@ struct SpecialEventMarketsView: View {
         }
     }
 
+    /// The one row renderer, live and settled.
+    ///
+    /// A settled row loses the BAR, not just the caption — the same shape web's
+    /// `PropTravelBar.ResolvedMark` takes. A filled bar is a picture of a live
+    /// distribution, and re-wording the label while leaving it up keeps the lie
+    /// in the part of the row a reader actually looks at.
+    @ViewBuilder
+    private func outcomeRow(_ o: OutcomeEntry, rank i: Int) -> some View {
+        let percent = Int((o.prob * 100).rounded())
+        HStack(spacing: 6) {
+            Text(o.label)
+                .font(.system(size: 11))
+                .foregroundStyle(i == 0 ? .primary : .secondary)
+                .lineLimit(2)
+            Spacer()
+            if isGameFinished {
+                Text("\(SettledQuote.prefix) \(percent)%")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            } else {
+                GeometryReader { geo in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(i == 0 ? Color.purple.opacity(0.4) : Color.secondary.opacity(0.2))
+                        .frame(width: geo.size.width * o.prob)
+                }
+                .frame(width: 60, height: 6)
+                Text("\(percent)%")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .frame(width: 32, alignment: .trailing)
+            }
+        }
+    }
+
     private func propMiniCard(_ item: MarketItem) -> some View {
         let sorted = item.outcomes.sorted { $0.prob > $1.prob }
         let maxSources = sorted.map(\.sourceCount).max() ?? 1
@@ -187,23 +234,7 @@ struct SpecialEventMarketsView: View {
                 }
             }
             ForEach(sorted.indices, id: \.self) { i in
-                let o = sorted[i]
-                HStack(spacing: 6) {
-                    Text(o.label)
-                        .font(.system(size: 11))
-                        .foregroundStyle(i == 0 ? .primary : .secondary)
-                        .lineLimit(2)
-                    Spacer()
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(i == 0 ? Color.purple.opacity(0.4) : Color.secondary.opacity(0.2))
-                            .frame(width: geo.size.width * o.prob)
-                    }
-                    .frame(width: 60, height: 6)
-                    Text("\(Int((o.prob * 100).rounded()))%")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .frame(width: 32, alignment: .trailing)
-                }
+                outcomeRow(sorted[i], rank: i)
             }
         }
         .padding(8)

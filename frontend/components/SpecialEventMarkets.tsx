@@ -8,6 +8,11 @@ import {
   MAX_OUTCOMES_PER_CARD,
   type MarketCard,
 } from "@/lib/otherMarketGroups";
+import {
+  isSettledStatus,
+  SETTLED_QUOTE_PREFIX,
+  SETTLED_QUOTE_SECTION_NOTE,
+} from "@/lib/settledQuote";
 
 interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
@@ -17,10 +22,32 @@ interface SpecialEventMarketsProps {
 function OutcomeBar({
   outcome,
   rank,
+  settled,
 }: {
   outcome: MarketCard["outcomes"][0];
   rank: number;
+  /** #2086: the game is over, so this number is a frozen quote, not a chance. */
+  settled: boolean;
 }) {
+  const percent = Math.round(outcome.prob * 100);
+
+  // A settled row loses the bar, exactly as `PropTravelBar`'s `ResolvedMark`
+  // does. A filled bar is a picture of a live distribution; leaving it up and
+  // only re-wording the caption keeps the lie in the part of the row a reader
+  // actually looks at.
+  if (settled) {
+    return (
+      <div className="flex items-baseline gap-2 text-xs">
+        <div className={`flex-1 ${rank === 0 ? "font-semibold" : "text-text-secondary"}`}>
+          {outcome.label}
+        </div>
+        <span className="font-mono tabular-nums text-text-muted">
+          {SETTLED_QUOTE_PREFIX} {percent}%
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2">
       <div className={`text-xs flex-1 ${rank === 0 ? "font-semibold" : "text-text-secondary"}`}>
@@ -33,13 +60,13 @@ function OutcomeBar({
         />
       </div>
       <span className="font-mono tabular-nums text-xs font-semibold w-10 text-right">
-        {Math.round(outcome.prob * 100)}%
+        {percent}%
       </span>
     </div>
   );
 }
 
-function PropMiniCard({ item }: { item: MarketCard }) {
+function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean }) {
   const maxSourceCount = Math.max(...item.outcomes.map((o) => o.sourceCount ?? 1));
   const sourceCount =
     maxSourceCount > 1 ? maxSourceCount : new Set(item.outcomes.map((o) => o.source)).size;
@@ -59,7 +86,7 @@ function PropMiniCard({ item }: { item: MarketCard }) {
       </div>
       <div className="space-y-1.5">
         {shown.map((o, i) => (
-          <OutcomeBar key={o.label} outcome={o} rank={i} />
+          <OutcomeBar key={o.label} outcome={o} rank={i} settled={settled} />
         ))}
       </div>
       {rest.length > 0 && (
@@ -69,7 +96,7 @@ function PropMiniCard({ item }: { item: MarketCard }) {
           </summary>
           <div className="space-y-1.5 pt-1.5">
             {rest.map((o) => (
-              <OutcomeBar key={o.label} outcome={o} rank={1} />
+              <OutcomeBar key={o.label} outcome={o} rank={1} settled={settled} />
             ))}
           </div>
         </details>
@@ -78,8 +105,22 @@ function PropMiniCard({ item }: { item: MarketCard }) {
   );
 }
 
-export default function SpecialEventMarkets({ data }: SpecialEventMarketsProps) {
+export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventMarketsProps) {
   const section = useMemo(() => buildMarketSection(data.other), [data.other]);
+
+  // #2086. `eventStatus` has been DECLARED on this component's props and PASSED
+  // by the event page since the section shipped — and destructured by nobody, so
+  // every `other` row printed a live-looking chance on a game that had finished.
+  // A grep for `eventStatus` here finds the declaration and the call site and
+  // reads as handled; an optional prop that is never destructured is invisible
+  // to tsc. Measured 2026-08-21: of 158 priced rows on 40 settled events, the
+  // MODAL row sits in 0.40–0.60 — a coin-flip on a match that ended a week ago,
+  // which reads far more plausibly than the 99% the issue was filed on.
+  //
+  // The predicate is `isSettledStatus`, not a local `=== "completed"` pair: the
+  // page, `MarketMapSection` and `propDivergence` were already carrying three
+  // spellings of "settled" between them, and this is the widest owned one.
+  const settled = isSettledStatus(eventStatus);
 
   if (section.categories.length === 0) return null;
 
@@ -92,6 +133,20 @@ export default function SpecialEventMarkets({ data }: SpecialEventMarketsProps) 
           <h3 className="text-lg font-semibold tracking-tight">Additional Markets</h3>
           <p className="text-sm text-text-secondary mt-0.5">
             {renderedOutcomes} market{renderedOutcomes === 1 ? "" : "s"} grouped by category
+            {/* Said ONCE, at section level, following `PropDivergenceDetail`'s
+                "Not graded" group rather than `PropTravelBar`'s per-row label.
+                The rail labels each row because its rows differ — some HIT,
+                some MISS, some ungraded — so the label discriminates. Here
+                every row is in the same state, so repeating it ten times
+                discriminates nothing and just crowds the card. */}
+            {settled && (
+              <>
+                {" · "}
+                <span className="text-text-muted" data-testid="special-markets-settled-note">
+                  {SETTLED_QUOTE_SECTION_NOTE}
+                </span>
+              </>
+            )}
             {withheld > 0 && (
               <>
                 {" · "}
@@ -119,7 +174,7 @@ export default function SpecialEventMarkets({ data }: SpecialEventMarketsProps) 
               </div>
               <div className="space-y-3">
                 {shownCards.map((item) => (
-                  <PropMiniCard key={item.name} item={item} />
+                  <PropMiniCard key={item.name} item={item} settled={settled} />
                 ))}
                 {restCards.length > 0 && (
                   <details>
@@ -128,7 +183,7 @@ export default function SpecialEventMarkets({ data }: SpecialEventMarketsProps) 
                     </summary>
                     <div className="space-y-3 pt-3">
                       {restCards.map((item) => (
-                        <PropMiniCard key={item.name} item={item} />
+                        <PropMiniCard key={item.name} item={item} settled={settled} />
                       ))}
                     </div>
                   </details>

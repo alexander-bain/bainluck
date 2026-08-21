@@ -22,6 +22,7 @@ import { parsePlayerName } from "./playerPropsGrouping";
 import type { PlayerPropRow } from "./playerPropsGrouping";
 import type { PropGrade } from "./propGrade";
 import { readOverSideResolution } from "./propResolution";
+import { isSettledStatus } from "./settledQuote";
 
 /**
  * The surprise threshold — MEASURED, not tuned.
@@ -680,17 +681,26 @@ export interface DivergenceInput {
   status?: string | null;
 }
 
-const SETTLED_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "closed",
-  "settled",
-  "final",
-  "resolved",
-]);
-
-export function isSettledStatus(status?: string | null): boolean {
-  return SETTLED_STATUSES.has((status || "").toLowerCase());
-}
+/**
+ * Re-exported from `lib/settledQuote`, where the list now lives.
+ *
+ * UX-P115 moved it. It had sat here since the rail was written, and the cost
+ * surfaced when a surface that needed nothing but "is this game over?" imported
+ * it: `propDivergence` imports `propGrade`, so anything reaching for the
+ * lifecycle predicate was pulled into the settled-vocabulary CLOSURE and
+ * enrolled in a verdict census it could never satisfy — `settledVocabulary`'s
+ * two enrolment guards caught it from both ends at once.
+ *
+ * They were right. **Knowing a game is over is not knowing who won.** A
+ * lifecycle predicate sitting behind the verdict authority conflates the two,
+ * and the closure stops meaning "can state a verdict" — which is the only thing
+ * that makes the census's enrolment rule enforceable.
+ *
+ * Re-exported rather than relocated-and-updated at every call site: the name is
+ * part of this module's published surface and its existing consumers are asking
+ * `propDivergence` a question it should still answer.
+ */
+export { isSettledStatus };
 
 const LIVE_STATUSES: ReadonlySet<string> = new Set([
   "live",
@@ -718,7 +728,7 @@ const LIVE_STATUSES: ReadonlySet<string> = new Set([
  */
 export function isPregameStatus(status?: string | null): boolean {
   const s = (status || "").toLowerCase();
-  return !SETTLED_STATUSES.has(s) && !LIVE_STATUSES.has(s);
+  return !isSettledStatus(s) && !LIVE_STATUSES.has(s);
 }
 
 function isFiniteNumber(v: unknown): v is number {
