@@ -962,15 +962,56 @@ async def _fix_outcome_names_impl():
 
 
 async def _mark_resolved_impl():
-    """Mark futures markets as resolved when their resolution_date has passed."""
-    from sqlalchemy import update
-    from app.models import FuturesMarket
+    """Mark futures markets as resolved when their resolution_date has passed.
 
-    stats = {"marked_resolved": 0, "errors": []}
+    CAL-P086A (`C-WINNER-WRITER-1` [P0]): this task has NO winner evidence. It
+    knows one thing — a date passed — and it used to spend that on a bare
+    `status='resolved'`, which reads downstream as "this market settled" and
+    enlarges the calibration denominator without contributing a graded row.
+    Combined with `FuturesOutcome.is_winner`'s non-null `False` default, the
+    result is not an ungraded market but a market that looks all-loser.
+
+    The write still happens: markets stuck in `open` break every pipeline that
+    keys on `resolved` (gotcha #33), and stranding them would be a worse bug.
+    What changed is that it now SAYS what it is. Each row carries
+    `market_metadata.resolution_gate` naming the reason, so the population is
+    one query away instead of being inferable only from a silence — gotcha #53's
+    whole discipline, applied to a state transition instead of an HTTP body.
+
+    Codex's stronger recommendation — stop this task resolving prediction-market
+    sources at all — is deliberately NOT taken here. It is a coverage change to
+    a live producer and it belongs to Alex, who can now take it on a count.
+    """
+    import json as _json
+
+    from sqlalchemy import cast, func, literal, update
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    from app.models import FuturesMarket
+    from app.utils.resolved_write_gate import (
+        REASON_RESOLUTION_DATE_ELAPSED,
+        gate_stamp,
+    )
+
+    stats = {
+        "marked_resolved": 0,
+        # Named separately from `marked_resolved` because they are, for this
+        # task, the same number — and that IS the finding. If a future version
+        # of this task ever acquires winner evidence the two will diverge, and
+        # the day they diverge should be visible without a code read.
+        "marked_resolved_without_winner_proof": 0,
+        "resolution_gate_reason": REASON_RESOLUTION_DATE_ELAPSED,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
+            _stamp = gate_stamp(
+                task="mark_resolved_futures",
+                reason=REASON_RESOLUTION_DATE_ELAPSED,
+                at=now,
+            )
             result = await session.execute(
                 update(FuturesMarket)
                 .where(
@@ -978,16 +1019,26 @@ async def _mark_resolved_impl():
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date < now,
                 )
-                .values(status="resolved")
+                .values(
+                    status="resolved",
+                    # `||` merges, so a sibling metadata key is never clobbered.
+                    market_metadata=func.coalesce(
+                        FuturesMarket.market_metadata,
+                        cast(literal("{}"), JSONB),
+                    ).op("||")(cast(literal(_json.dumps(_stamp)), JSONB)),
+                )
             )
             await session.commit()
             stats["marked_resolved"] = result.rowcount
+            stats["marked_resolved_without_winner_proof"] = result.rowcount
     except Exception as e:
         stats["errors"].append(f"Error: {str(e)}")
 
     logger.info(
-        "mark_resolved_futures: marked %d markets as resolved",
+        "mark_resolved_futures: marked %d markets as resolved, all under the "
+        "recorded reason %r (no winner evidence available to this task)",
         stats["marked_resolved"],
+        REASON_RESOLUTION_DATE_ELAPSED,
     )
     return stats
 

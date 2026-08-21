@@ -1710,9 +1710,22 @@ async def _sync_polymarket_resolved_status():
 
     import json as json_module
 
+    from app.utils.resolved_write_gate import (
+        PROOF_WINNER,
+        REASON_CLOSED_WITHOUT_TERMINAL_PRICE,
+        gate_stamp,
+    )
+
+    _json_dumps = json_module.dumps
+
     stats = {
         "events_fetched": 0, "markets_resolved": 0,
         "outcomes_updated": 0,
+        # CAL-P086A: the resolves this task made with no winner to write. Kept
+        # beside `markets_resolved` rather than folded into it — a run that
+        # resolves 5,000 markets and grades none must not report the same
+        # headline as one that graded them all.
+        "resolved_without_winner_proof": 0,
         "already_resolved": 0, "not_in_db": 0, "errors": [],
     }
 
@@ -1785,12 +1798,63 @@ async def _sync_polymarket_resolved_status():
                     extended_cids.append(f"{cid}_yes")
                     extended_cids.append(f"{cid}_no")
 
+                # CAL-P086A (`C-WINNER-WRITER-1` [P0]). A closed Polymarket
+                # event does NOT imply a readable winner: codex's specimen is a
+                # closed market quoting 0.60/0.40, which used to come through
+                # here as `markets_resolved: 1, outcomes_updated: 0` — resolved,
+                # ungraded, and indistinguishable in the database from a market
+                # where everyone genuinely lost.
+                #
+                # Which rows have proof is already known at this point: it is
+                # exactly the terminal envelope the winner writes below use. So
+                # split the stamp by that same test rather than inventing a
+                # second one, and let each row record its own basis.
+                _terminal_cids = [
+                    cid
+                    for cid, (yes_price, _no) in settlement_prices.items()
+                    if yes_price >= 0.95 or yes_price <= 0.05
+                ]
+                _terminal_extended = list(_terminal_cids)
+                for cid in _terminal_cids:
+                    _terminal_extended.append(f"{cid}_yes")
+                    _terminal_extended.append(f"{cid}_no")
+
+                _proof_stamp = _json_dumps(
+                    gate_stamp(
+                        task="sync_polymarket_resolved_status",
+                        proof_kind=PROOF_WINNER,
+                    )
+                )
+                _reason_stamp = _json_dumps(
+                    gate_stamp(
+                        task="sync_polymarket_resolved_status",
+                        reason=REASON_CLOSED_WITHOUT_TERMINAL_PRICE,
+                    )
+                )
+
                 async with get_task_session() as session:
-                    # Resolve parent markets via outcome external_id match
+                    # Resolve parent markets via outcome external_id match.
+                    # The CASE writes each row's own basis; CAST(:p AS jsonb)
+                    # rather than `:p::jsonb`, because asyncpg drops a bind that
+                    # is immediately followed by a `::` cast (standing gotcha).
                     result = await session.execute(
                         text("""
                             UPDATE futures_markets
-                            SET status = 'resolved'
+                            SET status = 'resolved',
+                                market_metadata =
+                                    COALESCE(market_metadata, '{}'::jsonb)
+                                    || CASE WHEN (
+                                           id IN (
+                                               SELECT fo.market_id
+                                               FROM futures_outcomes fo
+                                               WHERE fo.external_id
+                                                     = ANY(:terminal_cids)
+                                           )
+                                           OR external_id = ANY(:terminal_raw)
+                                       )
+                                       THEN CAST(:proof_stamp AS jsonb)
+                                       ELSE CAST(:reason_stamp AS jsonb)
+                                       END
                             WHERE source = 'polymarket'
                               AND status != 'resolved'
                               AND (
@@ -1802,9 +1866,30 @@ async def _sync_polymarket_resolved_status():
                                   OR external_id = ANY(:raw_cids)
                               )
                         """),
-                        {"cids": extended_cids, "raw_cids": condition_ids},
+                        {
+                            "cids": extended_cids,
+                            "raw_cids": condition_ids,
+                            "terminal_cids": _terminal_extended,
+                            "terminal_raw": _terminal_cids,
+                            "proof_stamp": _proof_stamp,
+                            "reason_stamp": _reason_stamp,
+                        },
                     )
                     page_resolved = result.rowcount
+
+                    # How many of this page's resolves had no winner to write.
+                    # A count, not an estimate: it is the rows the CASE sent
+                    # down the reason branch. Reported so a run that resolves
+                    # thousands of ungradeable markets cannot read the same as
+                    # one that settled them (gotcha #53).
+                    _page_unproven = len(
+                        [
+                            cid
+                            for cid in condition_ids
+                            if cid not in set(_terminal_cids)
+                        ]
+                    )
+                    stats["resolved_without_winner_proof"] += _page_unproven
 
                     # Batch update settlement prices + set is_winner + resolution_source.
                     # All settlement prices with yes_price >= 0.95 are winners;
