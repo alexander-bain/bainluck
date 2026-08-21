@@ -108,7 +108,10 @@ from sqlalchemy import text
 
 from app.utils.event_fk_inventory import (
     CASCADING_CHILD_TABLES,
-    EVENT_POINTER_TABLES,
+    EVENT_PSEUDO_FK_SUBSTANCE,
+    PARENT_SUBSTANCE_COLUMNS,
+    parent_substance_predicate,
+    pseudo_fk_substance_predicate,
     substance_tables,
     unclassified_event_children,
 )
@@ -144,17 +147,30 @@ def _anchor_predicate(alias: str) -> str:
 
 
 def _substance_predicate(alias: str) -> str:
-    """SQL that is true when the row has NO child rows in any substance table.
+    """SQL true when the row holds NO observation — in a child table, in a polymorphic
+    pseudo-FK, **or in its own columns**.
 
     Built from the derived inventory rather than a literal list, so a new child table
     in ``models.py`` widens this predicate automatically. ``NOT EXISTS`` per table
     rather than a count: we never need the number, only whether it is zero, and the
     planner can stop at the first row.
+
+    **Rail v3 (C-DELETE-RAIL-PRE-R2 finding 1) adds the second and third clauses, and
+    the second one is the BLOCK.** This predicate previously read only the ten child
+    tables, so "childless" was silently equated with "carries nothing" — and codex
+    executed the real ``prune()`` deleting a childless row that was the only record of a
+    distinct completed 5–3 game. The event row is itself an observation; see
+    ``PARENT_SUBSTANCE_COLUMNS``.
     """
-    return " AND ".join(
+    child = " AND ".join(
         f"NOT EXISTS (SELECT 1 FROM {t} c_{i} WHERE c_{i}.event_id = {alias}.id)"
         for i, t in enumerate(substance_tables())
     )
+    return " AND ".join((
+        child,
+        parent_substance_predicate(alias),
+        pseudo_fk_substance_predicate(alias),
+    ))
 
 
 def _partition_cte() -> str:
@@ -204,8 +220,20 @@ def _census_sql():
            COALESCE(SUM(copies), 0)                AS total_rows,
            COALESCE(SUM(linked_copies), 0)         AS keepers,
            COALESCE(SUM(copies - linked_copies), 0) AS surplus,
-           COALESCE(SUM(anchored_copies), 0)       AS withheld_anchored,
+           COALESCE(SUM(anchored_copies), 0)       AS anchored_copies,
            COALESCE(SUM(substantive_surplus), 0)   AS withheld_substantive,
+           -- R2 finding 4: the surplus must ACCOUNT. `anchored_copies` counts anchored
+           -- ROWS, but one anchored copy withholds EVERY surplus row in its fixture, so
+           -- reporting it as the withheld population left readers unable to reconcile
+           -- why the live count shrank (one anchored keeper + ten empty siblings
+           -- reported `withheld_anchored: 1` against 10 undeletable rows).
+           -- This is the count of surplus rows withheld BECAUSE their fixture is
+           -- anchored — a different number, in the same unit as `surplus`.
+           COALESCE(SUM(
+               CASE WHEN anchored_copies > 0
+                    THEN copies - linked_copies - substantive_surplus
+                    ELSE 0 END
+           ), 0)                                   AS withheld_due_to_anchor,
            COALESCE(SUM(
                CASE WHEN anchored_copies = 0
                     THEN copies - linked_copies - substantive_surplus
@@ -342,8 +370,23 @@ def compute_plan_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+class CensusDoesNotAccount(Exception):
+    """The census's own populations do not sum to the surplus it reported."""
+
+
 async def census(session, *, sport_id: int, linked_copies: int) -> dict[str, int]:
-    """Count the partition. Pure read — safe to call on any path."""
+    """Count the partition. Pure read — safe to call on any path.
+
+    **R2 finding 3: the operating census must state its EXACT withheld and deletable
+    populations at run time, and they must ACCOUNT.** Every surplus row is in exactly
+    one of three buckets — withheld because it holds substance, withheld because its
+    fixture carries an anchor, or deletable — so the three must sum to ``surplus``. If
+    they do not, the census is describing a population the rail is not operating on, and
+    an attended operator reconciling "why did the live count shrink" has no way to tell
+    which number lied. That is a refusal, not a warning: the previous version could
+    report ``withheld_anchored: 1`` against ten undeletable rows and nothing noticed,
+    because nothing was ever required to add up.
+    """
     row = (
         await session.execute(
             _census_sql(),
@@ -354,15 +397,33 @@ async def census(session, *, sport_id: int, linked_copies: int) -> dict[str, int
             },
         )
     ).mappings().one()
-    return {
+    counts = {
         "fixtures": int(row["fixtures"] or 0),
         "total_rows": int(row["total_rows"] or 0),
         "keepers": int(row["keepers"] or 0),
         "surplus": int(row["surplus"] or 0),
-        "withheld_anchored": int(row["withheld_anchored"] or 0),
+        # Rows, not fixtures. Kept alongside the row-unit figure below precisely because
+        # confusing the two units is what finding 4 was.
+        "anchored_copies": int(row["anchored_copies"] or 0),
         "withheld_substantive": int(row["withheld_substantive"] or 0),
+        "withheld_due_to_anchor": int(row["withheld_due_to_anchor"] or 0),
         "deletable": int(row["deletable"] or 0),
     }
+    accounted = (
+        counts["withheld_substantive"]
+        + counts["withheld_due_to_anchor"]
+        + counts["deletable"]
+    )
+    counts["surplus_accounted"] = accounted
+    if accounted != counts["surplus"]:
+        raise CensusDoesNotAccount(
+            f"surplus={counts['surplus']} but withheld_substantive="
+            f"{counts['withheld_substantive']} + withheld_due_to_anchor="
+            f"{counts['withheld_due_to_anchor']} + deletable={counts['deletable']} "
+            f"= {accounted}. The census does not describe the population the rail "
+            f"operates on; refusing rather than reporting an unreconcilable count."
+        )
+    return counts
 
 
 async def _lock_and_reverify(
@@ -482,8 +543,11 @@ async def prune(
         "linked_copies": linked_copies,
         "keeper_rule": (
             "the futures-linked copy, AND only when every other copy of the fixture "
-            "is anchor-free and holds zero child rows in all "
-            f"{len(substance_tables())} substance tables (#2057 recut)"
+            "is anchor-free and holds NO observation of any kind — zero child rows in "
+            f"all {len(substance_tables())} substance tables (#2057 recut), zero rows "
+            f"in {len(EVENT_PSEUDO_FK_SUBSTANCE)} polymorphic pseudo-FK table(s), and "
+            f"all {len(PARENT_SUBSTANCE_COLUMNS)} parent-local substance columns empty "
+            "with a 'scheduled' status (rail v3 / R2 finding 1)"
             if linked_copies == 1
             else "UNDETERMINED — this rail only prunes partitions with exactly one "
                  "linked copy, so nothing is deletable here"
@@ -497,7 +561,10 @@ async def prune(
         # withheld — but the cascade is named so the reader knows what WOULD go.
         "substance_tables": list(substance_tables()),
         "cascading_tables": sorted(CASCADING_CHILD_TABLES),
-        "pointer_tables": sorted(EVENT_POINTER_TABLES),
+        # Renamed from `pointer_tables`, because they are no longer pointers the rail
+        # nulls — they are substance the rail withholds on (R2 finding 2).
+        "pseudo_fk_substance_tables": sorted(EVENT_PSEUDO_FK_SUBSTANCE),
+        "parent_substance_columns": list(PARENT_SUBSTANCE_COLUMNS),
     }
 
     if linked_copies != 1:
@@ -561,9 +628,11 @@ async def prune(
             "reason": (
                 "no deletable surplus rows in this partition — "
                 f"{counts['surplus']} surplus row(s) exist, of which "
-                f"{counts['withheld_substantive']} hold child data and "
-                f"{counts['withheld_anchored']} sit in a fixture with an anchored "
-                "copy. gotcha #53: this is not the same as an exhausted partition."
+                f"{counts['withheld_substantive']} hold an observation (child row, "
+                f"pin, or a non-empty column on the row itself) and "
+                f"{counts['withheld_due_to_anchor']} sit in a fixture with an anchored "
+                "copy. Those two plus deletable sum to surplus, checked. "
+                "gotcha #53: this is not the same as an exhausted partition."
             ),
         }
 
@@ -631,14 +700,13 @@ async def prune(
     # measure — it is ten statements that would silently start doing something if the
     # proof above ever weakened.
 
-    for table, (id_column, scope) in EVENT_POINTER_TABLES.items():
-        await session.execute(
-            text(
-                f"UPDATE {table} SET {id_column} = NULL "
-                f"WHERE {scope} AND {id_column} = ANY(:ids)"
-            ),
-            {"ids": batch},
-        )
+    # There is no pointer-nulling loop either, and its removal is R2's finding 2.
+    # It ran `UPDATE user_pins SET target_id = NULL`, a statement that CANNOT SUCCEED —
+    # `user_pins.target_id` is `nullable=False` in both the model and the migration, so
+    # a real database raises IntegrityError here and the DELETE below is never reached.
+    # Only the committed fake session, which accepts every UPDATE, made that green.
+    # A pin is now SUBSTANCE: a pinned row is withheld at the predicate and can never be
+    # in `batch`, so there is nothing left to null. See EVENT_PSEUDO_FK_SUBSTANCE.
 
     deleted = (
         await session.execute(
