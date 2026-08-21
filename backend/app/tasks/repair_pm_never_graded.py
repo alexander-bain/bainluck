@@ -298,7 +298,21 @@ async def census(session, apply: bool = False) -> dict[str, Any]:
 async def _save_plan(plan) -> tuple[bool, str]:
     """Persist the dry-run's plan. A failure is REPORTED, never swallowed — an
     operator who cannot be handed a plan hash must be told so, because the next
-    thing they will do is try to apply."""
+    thing they will do is try to apply.
+
+    **CAL-P085, consuming C-APPLY-PRE-1912-R3-R2 [P2].** Until now this trusted
+    ``result["status"]``. Codex's store-nothing publisher answered ``superseded``
+    and this returned ``(True, "ok")``. Unlike the obligation hole below, this
+    one writes no wrong rows — a later apply simply fails when :func:`_load_plan`
+    finds nothing. What it does is hand Alex a dry-run receipt saying an approved
+    ``plan_hash`` is durable when no such artifact exists, and the next thing
+    that happens is an attended window spent applying it.
+
+    So the plan is read back **through :func:`_load_plan`, the reader the apply
+    itself uses**, and re-digested. Comparing the stored ``plan_hash`` FIELD
+    would not do: a payload can carry a hash that does not describe its own body,
+    and the field would then agree with us about somebody else's legs.
+    """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
 
@@ -314,8 +328,27 @@ async def _save_plan(plan) -> tuple[bool, str]:
         )
     except Exception as exc:  # noqa: BLE001
         return False, f"plan persist raised: {type(exc).__name__}"
-    ok = result.get("status") in ("ok", "superseded")
-    return ok, "ok" if ok else f"plan persist rejected: {result.get('status')}"
+    if result.get("status") not in ("ok", "superseded"):
+        return False, f"plan persist rejected: {result.get('status')}"
+
+    # AFTER-READ, NOT ACKNOWLEDGEMENT. See the docstring.
+    try:
+        stored, read_note = await _load_plan()
+    except Exception as exc:  # noqa: BLE001
+        return False, f"plan persist UNPROVED — after-read raised: {type(exc).__name__}"
+    if stored is None:
+        return False, (
+            f"plan persist UNPROVED — the reader the APPLY uses says {read_note!r} "
+            "immediately after a write it acknowledged. Do not hand this "
+            "plan_hash to an operator: there is nothing for the apply to load."
+        )
+    if stored.plan_hash != plan.plan_hash:
+        return False, (
+            "plan persist UNPROVED — the readable plan re-digests to "
+            f"{stored.plan_hash!r}, not the {plan.plan_hash!r} just written. The "
+            "store holds a DIFFERENT plan under this identity."
+        )
+    return True, "ok (after-read proved)"
 
 
 async def _load_plan():
@@ -357,7 +390,47 @@ async def _load_obligation() -> tuple[dict[str, Any] | None, str]:
     return payload, "ok"
 
 
+#: The fields an obligation after-read must agree on before the write is claimed
+#: durable — CAL-P085, consuming C-APPLY-PRE-1912-R3-R2 [P1].
+#:
+#: ``plan_hash``/``owner``/``state`` say WHICH debt this is; the two id lists say
+#: HOW MUCH of it is named. The id lists are not decoration: ``new_obligation``
+#: stores the union of everything the plan has ever written precisely because on
+#: a retry ``written`` is empty and this record is the only surviving statement
+#: of what must be invalidated. A store that kept the right ``plan_hash`` and a
+#: SHORTER ``market_ids`` would leave part of the debt unnamed while reading
+#: correct in every field a lazy check looks at.
+OBLIGATION_PROOF_FIELDS = ("schema", "state", "plan_hash", "owner", "market_ids", "leg_ids")
+
+
 async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
+    """Persist the invalidation debt, and PROVE it landed.
+
+    **CAL-P085, consuming C-APPLY-PRE-1912-R3-R2 [P1].** This is the hole under
+    CAL-P081's fix. CAL-P081 made the apply refuse when this function returns
+    ``False`` — correct, tested, and **unreachable**, because nothing made this
+    function return ``False`` when the publisher lied. Codex patched
+    ``publish_snapshot_standalone`` to store nothing and answer ``ok`` (then
+    ``superseded``), drove the real apply, and measured **4 UPDATEs, 4 commits,
+    ``success: true``, ``obligation_persisted: true``** with an empty store.
+
+    The lesson is about the TEST as much as the code: CAL-P081's specimen
+    patched ``_save_obligation`` itself, so the function whose honesty was in
+    question was the one the test had replaced with an honest stub. A test that
+    stubs the layer under audit can only prove the stub.
+
+    The after-read goes through :func:`_load_obligation` — the reader a RETRY
+    uses to decide whether a debt is outstanding — for the same reason the halt
+    proves itself with ``_wave_halt_state``: a bespoke check can pass while the
+    reader that actually gates the behaviour still says ``missing``.
+
+    All three call sites are covered by putting it here rather than at the sites:
+    the intent write, the post-write union, and the discharge. The discharge is
+    the one that most needs it — a discharge "proved" by reading back a still-open
+    record reports the debt paid while the store says it is outstanding, and that
+    is the only direction that loses money, because an open debt at least
+    re-triggers the repair.
+    """
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
 
@@ -373,8 +446,36 @@ async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
         )
     except Exception as exc:  # noqa: BLE001
         return False, f"obligation persist raised: {type(exc).__name__}"
-    ok = result.get("status") in ("ok", "superseded")
-    return ok, "ok" if ok else f"obligation persist rejected: {result.get('status')}"
+    if result.get("status") not in ("ok", "superseded"):
+        return False, f"obligation persist rejected: {result.get('status')}"
+
+    # AFTER-READ, NOT ACKNOWLEDGEMENT. See the docstring.
+    try:
+        stored, read_note = await _load_obligation()
+    except Exception as exc:  # noqa: BLE001
+        return False, (
+            f"obligation persist UNPROVED — after-read raised: {type(exc).__name__}"
+        )
+    if stored is None:
+        # ``missing`` and ``unreadable`` are different facts and NEITHER of them
+        # is proof of a write (gotcha #53 at the durability layer). The operative
+        # consequence is identical: rows are about to be committed against a debt
+        # no reader can find.
+        return False, (
+            f"obligation persist UNPROVED — the reader a RETRY uses says "
+            f"{read_note!r} immediately after a write it acknowledged. Treat the "
+            "calibration debt as UNRECORDED and write nothing."
+        )
+    for field in OBLIGATION_PROOF_FIELDS:
+        if stored.get(field) != record.get(field):
+            return False, (
+                f"obligation persist UNPROVED — the readable record is a different "
+                f"one: {field}={stored.get(field)!r}, this write had "
+                f"{record.get(field)!r}. A debt belonging to some other plan is "
+                "still a debt, but it is not proof that THIS one was recorded, "
+                "and discharging it would silently drop ours."
+            )
+    return True, "ok (after-read proved)"
 
 
 _CANARY_SQL = f"""
