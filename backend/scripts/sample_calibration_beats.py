@@ -57,6 +57,14 @@ LEDGER_GAUGES = (
     "staged:units_this_beat",
     "staged:units_banked",
     "staged:units_planned",
+    # CAL-P083: the carry-withhold's predicate is literally
+    # ``units_done < units_planned`` (``MainBuildRunner.rebuild_in_flight``).
+    # Capturing ``planned`` without ``done`` left the captured row able to show
+    # the guard's VERDICT but not its INPUT, so "the guard fired" could only be
+    # asserted from the token it wrote rather than derived from the condition it
+    # tests. An instrument that cannot see a predicate's operands cannot prove
+    # the predicate; it can only agree with it.
+    "staged:units_done",
     "staged:units_completed_this_beat",
     "staged:beats_to_publish",
     "staged:unit_ms_mean",

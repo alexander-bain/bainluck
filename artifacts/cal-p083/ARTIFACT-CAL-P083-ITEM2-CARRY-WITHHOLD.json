@@ -1,0 +1,446 @@
+{
+ "beats": [
+  {
+   "generation": 1787261587576,
+   "generated_at": "2026-08-20 21:33:07.576173+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": null,
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 20,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 20,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787264491343,
+   "generated_at": "2026-08-20 22:21:31.343433+00:00",
+   "terminal": "cancelled",
+   "carried": [],
+   "banked": null,
+   "completed_required": [],
+   "units_planned": null,
+   "units_done": 24,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": null,
+   "futures_completed": false,
+   "units_this_beat": 5,
+   "units_banked": 24,
+   "state": "nothing_to_bank"
+  },
+  {
+   "generation": 1787268887906,
+   "generated_at": "2026-08-20 23:34:47.906233+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": null,
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 32,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 32,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787272621648,
+   "generated_at": "2026-08-21 00:37:01.648144+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 40,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 40,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787276341376,
+   "generated_at": "2026-08-21 01:39:01.376603+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 51,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 11,
+   "units_banked": 51,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787279813816,
+   "generated_at": "2026-08-21 02:36:53.816266+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 59,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 59,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787283189872,
+   "generated_at": "2026-08-21 03:33:09.872552+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 66,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 66,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787286952936,
+   "generated_at": "2026-08-21 04:35:52.936177+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 75,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 9,
+   "units_banked": 75,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787290697730,
+   "generated_at": "2026-08-21 05:38:17.730397+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 85,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 10,
+   "units_banked": 85,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787293983763,
+   "generated_at": "2026-08-21 06:33:03.763315+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 90,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 90,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787297985432,
+   "generated_at": "2026-08-21 07:39:45.432435+00:00",
+   "terminal": "failed",
+   "carried": [],
+   "banked": {
+    "futures": "rebuild_in_flight"
+   },
+   "completed_required": [
+    "futures"
+   ],
+   "units_planned": 128,
+   "units_done": 95,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 95,
+   "state": "withheld",
+   "effect": {
+    "observed": true,
+    "next_generation": 1787304789916,
+    "next_generated_at": "2026-08-21 09:33:09.916310+00:00",
+    "next_carried": [
+     "sports"
+    ],
+    "next_units_this_beat": 6,
+    "futures_not_carried": true,
+    "unit_loop_ran": true,
+    "bank_before": 95,
+    "bank_after": 106
+   }
+  },
+  {
+   "generation": 1787304789916,
+   "generated_at": "2026-08-21 09:33:09.916310+00:00",
+   "terminal": "complete",
+   "carried": [
+    "sports"
+   ],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 106,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 6,
+   "units_banked": 106,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787308336879,
+   "generated_at": "2026-08-21 10:32:16.879117+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 113,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 113,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787312177786,
+   "generated_at": "2026-08-21 11:36:17.786804+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 122,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 9,
+   "units_banked": 122,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787315424367,
+   "generated_at": "2026-08-21 12:30:24.367599+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": null,
+   "units_done_source": null,
+   "rebuild_in_flight": null,
+   "futures_completed": true,
+   "units_this_beat": 6,
+   "units_banked": 0,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787319343481,
+   "generated_at": "2026-08-21 13:35:43.481303+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 8,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 8,
+   "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787323095513,
+   "generated_at": "2026-08-21 14:38:15.513209+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 16,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 16,
+   "state": "guard_unreachable_complete"
+  }
+ ],
+ "counts": {
+  "guard_unreachable_complete": 15,
+  "nothing_to_bank": 1,
+  "withheld": 1
+ },
+ "firings": [
+  {
+   "generation": 1787297985432,
+   "generated_at": "2026-08-21 07:39:45.432435+00:00",
+   "terminal": "failed",
+   "carried": [],
+   "banked": {
+    "futures": "rebuild_in_flight"
+   },
+   "completed_required": [
+    "futures"
+   ],
+   "units_planned": 128,
+   "units_done": 95,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 7,
+   "units_banked": 95,
+   "state": "withheld",
+   "effect": {
+    "observed": true,
+    "next_generation": 1787304789916,
+    "next_generated_at": "2026-08-21 09:33:09.916310+00:00",
+    "next_carried": [
+     "sports"
+    ],
+    "next_units_this_beat": 6,
+    "futures_not_carried": true,
+    "unit_loop_ran": true,
+    "bank_before": 95,
+    "bank_after": 106
+   }
+  }
+ ],
+ "negative_controls": [
+  {
+   "generation": 1787264491343,
+   "generated_at": "2026-08-20 22:21:31.343433+00:00",
+   "terminal": "cancelled",
+   "carried": [],
+   "banked": null,
+   "completed_required": [],
+   "units_planned": null,
+   "units_done": 24,
+   "units_done_source": "unit_costs",
+   "rebuild_in_flight": null,
+   "futures_completed": false,
+   "units_this_beat": 5,
+   "units_banked": 24,
+   "state": "nothing_to_bank"
+  }
+ ],
+ "expected_firing_absent": [],
+ "verdict": "fired",
+ "negative_control_present": true
+}
