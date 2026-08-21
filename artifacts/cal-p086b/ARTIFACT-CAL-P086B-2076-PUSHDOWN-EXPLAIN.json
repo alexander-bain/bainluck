@@ -1,0 +1,874 @@
+{
+  "issue": 2076,
+  "window": "CAL-P086B",
+  "question": "does a source predicate reduce the fold's planned cost, and where must it go",
+  "caveat": "planner cost, not runtime; CAL-P085 measured >=2.35x understatement on this fold",
+  "cte_reference_counts": {
+    "market_info": 8,
+    "market_result_shape": 7,
+    "malformed_binaries": 1,
+    "no_winner_markets": 1,
+    "draw_authority_markets": 1,
+    "orphan_partition_markets": 1,
+    "nonexclusive_bundle_markets": 1,
+    "esports_multi_bundles": 1,
+    "golf_placeholder_markets": 1,
+    "mex_field_candidates": 3,
+    "mex_field_divisor": 1,
+    "group_sizes": 1,
+    "event_sizes": 1,
+    "virtual_market": 2,
+    "vm_stats": 1,
+    "clean_vms": 1,
+    "field_completeness": 1,
+    "normalized": 2,
+    "mode_prices": 1,
+    "deduped": 1
+  },
+  "sql_chars": 23519,
+  "variants": {
+    "V0_baseline": {
+      "total_cost": 9368253.4,
+      "plan_rows": 256,
+      "node_count": 110,
+      "duration_ms": 626.2,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 131586.17,
+          "plan_rows": 399814
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 393572.32,
+          "plan_rows": 3658603
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 27124.13,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 174712.69,
+          "plan_rows": 399814
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 8607096.48,
+          "plan_rows": 1046854
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 20701.74,
+          "plan_rows": 1046854
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 6781188.7,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 563937.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 455948.0,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 164353.0,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 135192.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 131586.2,
+          "node": "Seq Scan[futures_markets]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "1aff5ed8878fb8a2",
+      "ranked_outcomes_self_cost": 6781188.7,
+      "ranked_outcomes_pct_of_total": 72.4
+    },
+    "V1_tail_kalshi": {
+      "total_cost": 9368698.01,
+      "plan_rows": 2,
+      "node_count": 110,
+      "duration_ms": 758.7,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 131586.17,
+          "plan_rows": 399814
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 393572.32,
+          "plan_rows": 3658603
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 27124.13,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 174712.69,
+          "plan_rows": 399814
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 8607096.48,
+          "plan_rows": 1046854
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 20701.74,
+          "plan_rows": 1046854
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 6781188.7,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 563937.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 455948.0,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 164353.0,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 135192.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 131586.2,
+          "node": "Seq Scan[futures_markets]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "d9276b0411f70ef7",
+      "ranked_outcomes_self_cost": 6781188.7,
+      "ranked_outcomes_pct_of_total": 72.4
+    },
+    "V2_root_kalshi": {
+      "total_cost": 3087958.33,
+      "plan_rows": 72,
+      "node_count": 107,
+      "duration_ms": 645.8,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 127625.14,
+          "plan_rows": 113534
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 378381.88,
+          "plan_rows": 3658603
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 24833.89,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 54796.35,
+          "plan_rows": 113534
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 2492654.56,
+          "plan_rows": 297283
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 5878.84,
+          "plan_rows": 297283
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 1923080.6,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 135192.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 126393.0,
+          "node": "Bitmap Heap Scan[futures_markets]",
+          "pct": null
+        },
+        {
+          "self_cost": 67246.2,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 55835.1,
+          "node": "Hash Join",
+          "pct": null
+        },
+        {
+          "self_cost": 45671.8,
+          "node": "Nested Loop",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "0eb68d8a61b0adf3",
+      "ranked_outcomes_self_cost": 1923080.6,
+      "ranked_outcomes_pct_of_total": 62.3
+    },
+    "V2_root_polymarket": {
+      "total_cost": 7134610.09,
+      "plan_rows": 183,
+      "node_count": 107,
+      "duration_ms": 344.2,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 131670.02,
+          "plan_rows": 286107
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 386611.31,
+          "plan_rows": 3658603
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 26214.47,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 127488.7,
+          "plan_rows": 286107
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 6438212.98,
+          "plan_rows": 749160
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 14814.8,
+          "plan_rows": 749160
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 4851778.9,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 563937.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 325929.4,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 157035.8,
+          "node": "Seq Scan[futures_outcomes]",
+          "pct": null
+        },
+        {
+          "self_cost": 135192.3,
+          "node": "Sort",
+          "pct": null
+        },
+        {
+          "self_cost": 132833.5,
+          "node": "Nested Loop",
+          "pct": null
+        },
+        {
+          "self_cost": 131670.0,
+          "node": "Seq Scan[futures_markets]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "4200c3a12cc31ec1",
+      "ranked_outcomes_self_cost": 4851778.9,
+      "ranked_outcomes_pct_of_total": 68.0
+    },
+    "V2_root_odds_api": {
+      "total_cost": 465.56,
+      "plan_rows": 1,
+      "node_count": 86,
+      "duration_ms": 502.2,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 3.53,
+          "plan_rows": 1
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 65.72,
+          "plan_rows": 32
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 66.88,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 0.05,
+          "plan_rows": 1
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 329.26,
+          "plan_rows": 2
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 0.06,
+          "plan_rows": 2
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.0,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 65.2,
+          "node": "Index Scan[futures_outcomes]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "adcb6d92e06d2bc1",
+      "ranked_outcomes_self_cost": 0.0,
+      "ranked_outcomes_pct_of_total": 0.0
+    },
+    "V2_root_odds_api_bookmaker": {
+      "total_cost": 465.56,
+      "plan_rows": 1,
+      "node_count": 86,
+      "duration_ms": 52.5,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 3.53,
+          "plan_rows": 1
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 65.72,
+          "plan_rows": 32
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 66.88,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 0.05,
+          "plan_rows": 1
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 329.26,
+          "plan_rows": 2
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 0.06,
+          "plan_rows": 2
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.0,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 65.2,
+          "node": "Index Scan[futures_outcomes]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "a63eea5c4b1ecd2f",
+      "ranked_outcomes_self_cost": 0.0,
+      "ranked_outcomes_pct_of_total": 0.0
+    },
+    "V2_root_odds_api_totals": {
+      "total_cost": 465.56,
+      "plan_rows": 1,
+      "node_count": 86,
+      "duration_ms": 82.7,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 3.53,
+          "plan_rows": 1
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 65.72,
+          "plan_rows": 32
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 66.88,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 0.05,
+          "plan_rows": 1
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 329.26,
+          "plan_rows": 2
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 0.06,
+          "plan_rows": 2
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.0,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 65.2,
+          "node": "Index Scan[futures_outcomes]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "af7195a06597605d",
+      "ranked_outcomes_self_cost": 0.0,
+      "ranked_outcomes_pct_of_total": 0.0
+    },
+    "V2_root_odds_api_spreads": {
+      "total_cost": 465.56,
+      "plan_rows": 1,
+      "node_count": 86,
+      "duration_ms": 60.8,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 3.53,
+          "plan_rows": 1
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 65.72,
+          "plan_rows": 32
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 66.88,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 0.05,
+          "plan_rows": 1
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 329.26,
+          "plan_rows": 2
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 0.06,
+          "plan_rows": 2
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.0,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 65.2,
+          "node": "Index Scan[futures_outcomes]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "ca5d66e2666f1fcb",
+      "ranked_outcomes_self_cost": 0.0,
+      "ranked_outcomes_pct_of_total": 0.0
+    },
+    "V2_root_datagolf": {
+      "total_cost": 23640.13,
+      "plan_rows": 1,
+      "node_count": 92,
+      "duration_ms": 72.8,
+      "truncated": false,
+      "materialized_ctes": [
+        {
+          "cte": "market_info",
+          "total_cost": 549.43,
+          "plan_rows": 173
+        },
+        {
+          "cte": "market_result_shape",
+          "total_cost": 11215.26,
+          "plan_rows": 5608
+        },
+        {
+          "cte": "mex_field_candidates",
+          "total_cost": 111.56,
+          "plan_rows": 1
+        },
+        {
+          "cte": "virtual_market",
+          "total_cost": 7.42,
+          "plan_rows": 173
+        },
+        {
+          "cte": "ranked_outcomes",
+          "total_cost": 11756.21,
+          "plan_rows": 6
+        },
+        {
+          "cte": "normalized",
+          "total_cost": 0.14,
+          "plan_rows": 6
+        }
+      ],
+      "top_self_cost": [
+        {
+          "self_cost": 11028.5,
+          "node": "Nested Loop",
+          "pct": null
+        },
+        {
+          "self_cost": 11028.5,
+          "node": "Nested Loop",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        },
+        {
+          "self_cost": 916.5,
+          "node": "Index Scan[futures_odds_snapshots]",
+          "pct": null
+        }
+      ],
+      "sql_fingerprint": "c825d2849530df9d",
+      "ranked_outcomes_self_cost": 0.0,
+      "ranked_outcomes_pct_of_total": 0.0
+    }
+  },
+  "verdict": {
+    "baseline_total_cost": 9368253.4,
+    "V1_tail_kalshi": {
+      "ratio_vs_baseline": 1.0,
+      "seven_chunk_cost_multiple": 7.0
+    },
+    "V2_root_kalshi": {
+      "ratio_vs_baseline": 0.3296,
+      "seven_chunk_cost_multiple": 2.307
+    },
+    "V2_root_polymarket": {
+      "ratio_vs_baseline": 0.7616,
+      "seven_chunk_cost_multiple": 5.331
+    },
+    "V2_root_odds_api": {
+      "ratio_vs_baseline": 0.0,
+      "seven_chunk_cost_multiple": 0.0
+    },
+    "V2_root_odds_api_bookmaker": {
+      "ratio_vs_baseline": 0.0,
+      "seven_chunk_cost_multiple": 0.0
+    },
+    "V2_root_odds_api_totals": {
+      "ratio_vs_baseline": 0.0,
+      "seven_chunk_cost_multiple": 0.0
+    },
+    "V2_root_odds_api_spreads": {
+      "ratio_vs_baseline": 0.0,
+      "seven_chunk_cost_multiple": 0.0
+    },
+    "V2_root_datagolf": {
+      "ratio_vs_baseline": 0.0025,
+      "seven_chunk_cost_multiple": 0.018
+    },
+    "root_chunks": {
+      "per_source_cost": {
+        "kalshi": 3087958.33,
+        "polymarket": 7134610.09,
+        "odds_api": 465.56,
+        "odds_api_bookmaker": 465.56,
+        "odds_api_totals": 465.56,
+        "odds_api_spreads": 465.56,
+        "datagolf": 23640.13
+      },
+      "unmeasured": [],
+      "sum_cost": 10248070.8,
+      "sum_ratio_vs_baseline": 1.0939,
+      "max_chunk": "polymarket",
+      "max_chunk_ratio_vs_baseline": 0.7616
+    }
+  },
+  "measured_at_utc": "2026-08-21T23:0xZ (single window, CAL-P086B)",
+  "read_rail": {
+    "endpoint": "POST /api/admin/db-query",
+    "mode": "explain:true (FORMAT JSON, plan-only, NOT executed)"
+  },
+  "population_sources_measured": {
+    "query": "SELECT source, count(*) FROM futures_markets WHERE status='resolved' GROUP BY 1",
+    "polymarket": 569781,
+    "kalshi": 225274,
+    "datagolf": 295,
+    "note": "there is NO odds_api* row in this population. CAL-P084's seven-chunk decomposition (kalshi 593 / polymarket 462 / odds_api 236 / odds_api_bookmaker 229 / odds_api_totals 222 / odds_api_spreads 187 / datagolf 5) counts PUBLISHED PAYLOAD BUCKETS, not fold population rows. The fold's source partition is 3-way, and effectively 2-way."
+  },
+  "chunk_key_safety": {
+    "group_sizes": "GROUP BY group_id, source \u2014 source-scoped",
+    "event_sizes": "GROUP BY event_id, source \u2014 source-scoped",
+    "virtual_market": "LEFT JOINs carry AND gs.source = mi.source / AND es.source = mi.source",
+    "vm_stats": "GROUP BY vm.vm_id, vm.source, ... \u2014 source-scoped",
+    "mode_prices": "GROUP BY vm_id \u2014 NOT source-scoped",
+    "deduped": "LEFT JOIN mode_prices mp ON mp.vm_id = ro.vm_id \u2014 NOT source-scoped",
+    "hazard": "vm_id is 'g:'||group_id | 'e:'||event_id | 'm:'||market_id and carries no source. MEASURED: 1,271 event_ids reach event_size>=3 under MORE THAN ONE source (2,542 (vm_id, source) sides); 0 group_ids do. On those 1,271 an unchunked fold can suppress one source's legs with a mode price computed from the other source's legs, and a source-chunked fold cannot. NOT MEASURED: whether any of the 1,271 actually cross-suppresses today. So a source-chunked fold is NOT proven row-identical to the whole fold, and that is a correctness question before it is a cost one."
+  },
+  "twin_scope_measured": {
+    "source": "GET /api/calibration, 2026-08-21, availability=stale",
+    "published_cells": 285,
+    "published_buckets": 1934,
+    "published_outcomes": 867101,
+    "fold_reachable_cells": 82,
+    "fold_reachable_buckets": 1060,
+    "fold_reachable_outcomes": 731999,
+    "structurally_published_only_cells": 203,
+    "structurally_published_only_buckets": 874,
+    "structurally_published_only_outcomes": 135102,
+    "pct_cells_reachable": 28.8,
+    "pct_outcomes_reachable": 84.42,
+    "why": "_calibration_population_ctes() is the FUTURES population only. odds_api / odds_api_bookmaker / odds_api_totals / odds_api_spreads are built by separate SQL at precompute_calibration.py:3677 / :3729 / :3778 (+ the bookmaker path at :3838) over a different population, so the DB-direct twin can never produce a row for them."
+  }
+}
