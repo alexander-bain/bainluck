@@ -67,6 +67,15 @@ LEDGER_GAUGES = (
     "staged:units_drift_uncheckable",
     "staged:served_units",
     "staged:served_drifted",
+    # CAL-P083: WITHOUT THIS THE CAPTURED ROW CANNOT REPRODUCE THE BOUND.
+    # ``tolerance_pp`` scales on ``drifted + unknown``, and for a serving bank
+    # ``unknown`` is derived from this gauge alone. Omitting it made
+    # ``build_disclosure`` return ``units_drift_unknown: None`` off a replayed
+    # row where production published ``0`` — harmless while it IS zero, and
+    # exactly CAL-P069's failure the moment it is not, since an unmeasurable
+    # remainder can only push the bound UP. An instrument must not be blind to
+    # the term that would make its own number too flattering.
+    "staged:served_drift_uncheckable",
     "staged:served_at",
     "staged:cursor_resume",
     "staged:units_cancelled",
