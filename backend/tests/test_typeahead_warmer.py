@@ -298,13 +298,91 @@ class TestOneBadQueryDoesNotWipeTheRun:
 
 
 class TestHeadResolution:
-    async def test_redis_trending_wins_when_present(self):
-        session = _FakeSession(log_rows=["from the db"])
-        with _patch_redis(_FakeRedis(["stanley cup", "world series"])):
+    async def test_both_measured_sources_select_when_both_are_present(self):
+        """LAT-P078/#1866. This REPLACES `test_redis_trending_wins_when_present`.
+
+        That test pinned a strict first-non-empty cascade, and the cascade was
+        the defect: `_head_from_redis` is never empty in production, so the
+        query-log arm was unreachable and `search_query_logs` — the only source
+        in this system that cannot be polluted by the warmer — had never
+        selected a warmed term. The old assertion is preserved INVERTED below,
+        so the regression is named rather than merely absent.
+        """
+        session = _FakeSession(log_rows=["masters winner", "nba champion"])
+        with _patch_redis(_FakeRedis(["red sox", "yankees"])):
             head, source = await warmer.resolve_head(session, 10)
 
-        assert head == ["stanley cup", "world series"]
-        assert source == "redis:search:trending:24h"
+        assert "masters winner" in head, "the query-log head must reach the warmer"
+        assert "red sox" in head, "the zset head must still reach the warmer"
+        assert source.startswith("blend:"), source
+        # The inverted old assertion: the zset no longer WINS, it shares.
+        assert head != ["red sox", "yankees"], (
+            "trending must not be the whole head when the query log has rows — "
+            "that is the cascade this test replaced"
+        )
+
+    async def test_the_query_log_share_is_a_floor_the_zset_cannot_squeeze_out(self):
+        """The guarantee that makes the real head reachable at all.
+
+        Production shape: the zset is long (40 locked-in terms) and the query log
+        is the thing being starved. If the reservation were a best-effort the
+        long source would take the whole budget and nothing would change.
+        """
+        session = _FakeSession(log_rows=[f"log{i}" for i in range(20)])
+        with _patch_redis(_FakeRedis([f"zset{i}" for i in range(40)])):
+            head, _ = await warmer.resolve_head(session, 10)
+
+        from_log = [q for q in head if q.startswith("log")]
+        assert len(head) == 10
+        assert len(from_log) == 5, f"expected half the budget reserved, got {from_log}"
+
+    async def test_a_short_query_log_does_not_shrink_the_head(self):
+        """A short query log must not shrink the head below the old behaviour.
+
+        Warming fewer terms than the cascade did would make this change a
+        regression on the very metric it exists to move.
+
+        ⚠️ This test was originally named `..._an_unspent_reservation_is_
+        backfilled_...` and it did NOT test that: with a 1-row log and a 40-term
+        zset the budget is already full before the backfill runs, so deleting
+        the backfill left it green (LAT-P078 mutation M6, SURVIVED). The
+        backfill's real case is the mirror image and is the test below. Renamed
+        to what it actually pins.
+        """
+        session = _FakeSession(log_rows=["only one"])
+        with _patch_redis(_FakeRedis([f"zset{i}" for i in range(40)])):
+            head, _ = await warmer.resolve_head(session, 10)
+
+        assert len(head) == 10, "the budget must still be fully spent"
+        assert "only one" in head
+
+    async def test_a_short_zset_is_backfilled_from_the_query_log(self):
+        """The backfill's actual case: the OTHER source is the short one.
+
+        Reservation is 5 of 10 and the zset can only supply 2, so 3 slots can be
+        filled only by going back to the query log for terms beyond its
+        reservation. Without the backfill the head is 7 — the warmer would spend
+        70% of its budget and report a clean pass, which is this module's
+        signature failure mode (gotcha #53).
+        """
+        session = _FakeSession(log_rows=[f"log{i}" for i in range(20)])
+        # Lower-case on purpose: `_head_from_redis` normalises, so a mixed-case
+        # fixture asserts against a term the code never produces.
+        with _patch_redis(_FakeRedis(["zseta", "zsetb"])):
+            head, _ = await warmer.resolve_head(session, 10)
+
+        assert len(head) == 10, f"budget under-spent: {head}"
+        assert "zseta" in head and "zsetb" in head
+        assert len([q for q in head if q.startswith("log")]) == 8
+
+    async def test_a_term_in_both_sources_is_warmed_once(self):
+        """The expected steady state once the real head starts trending too."""
+        session = _FakeSession(log_rows=["stanley cup", "masters winner"])
+        with _patch_redis(_FakeRedis(["stanley cup", "red sox"])):
+            head, _ = await warmer.resolve_head(session, 10)
+
+        assert head.count("stanley cup") == 1
+        assert sorted(head) == ["masters winner", "red sox", "stanley cup"]
 
     async def test_falls_back_to_query_log_when_zset_empty(self):
         session = _FakeSession(log_rows=["world cup", "fed"])
@@ -1140,3 +1218,155 @@ class TestThePassCanStateItsOwnCadence:
         assert b["skip_reason"] == "min_period"
         assert a["skip_reason"] != b["skip_reason"]
         assert set(a) == set(b), "the two skip shapes must not drift apart"
+
+
+# --------------------------------------------------------------------------
+# LAT-P078 / #1866 — the warmer must not vote for its own head.
+#
+# `resolve_head` reads `search:trending:24h`; `_warm_one` warms by calling the
+# route; the route's last act was to `zincrby` the query into that same zset. So
+# every pass incremented all 40 of its own head terms, ~1,700 times a day each,
+# against ~3/day for a real user query. The head was self-sustaining and CLOSED.
+#
+# Production evidence, 2026-08-21: the top five scored 5414, 5411, 5403, 5400,
+# 5399 — a spread of 15 across five terms, which is a round-robin machine, not a
+# human distribution. Real traffic over the same window runs 102, 101, 95, 90, 82.
+# --------------------------------------------------------------------------
+
+
+class TestTheWarmerDoesNotVoteForItsOwnHead:
+    @pytest.mark.asyncio
+    async def test_the_route_call_runs_with_trending_writes_suppressed(self):
+        """The loop-break, observed at the seam where it has to hold.
+
+        Asserted INSIDE the route stand-in rather than after the call, because
+        the flag only has to be true for the duration of the route body — that
+        is the only window in which the `zincrby` could fire.
+        """
+        from app.routes.events import _suppress_trending_write
+
+        seen = []
+
+        async def _route(*, q, debug_evidence, debug_timing, db):
+            seen.append(_suppress_trending_write.get())
+            return {"suggestions": [], "query": q}
+
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _route), _patch_session(session):
+            await warmer._warm_typeahead(queries=["red sox", "yankees"])
+
+        assert seen == [True, True], (
+            "every warmed query must run with the trending write suppressed; "
+            f"got {seen}"
+        )
+
+    def test_a_real_user_request_still_counts(self):
+        """The suppression must not leak out of the warmer.
+
+        The ContextVar defaults to False and nothing outside `_warm_one` sets it,
+        so an ordinary request counts. If this ever failed, the trending zset
+        would stop being written at all and the head would freeze permanently —
+        the same outcome as the bug, reached from the opposite direction.
+        """
+        from app.routes.events import _suppress_trending_write
+
+        assert _suppress_trending_write.get() is False
+
+    def test_the_zincrby_is_actually_inside_the_guard(self):
+        """Source-shape guard, because the behavioural test cannot see a revert.
+
+        `_warm_one` sets the flag; the route reads it. A revert that deleted only
+        the route-side `if` would leave the warmer setting a flag nobody honours,
+        every behavioural test above would still pass, and the loop would be back
+        with its instrument reporting success. Reading the source is the only
+        thing that catches that, and this program has been bitten by the same
+        shape before (`test_heavy_beat_literals_match_their_effective_queue`).
+        """
+        import inspect
+
+        from app.routes import events as events_route
+
+        src = inspect.getsource(events_route.typeahead_search)
+        assert 'zincrby("search:trending:24h"' in src, (
+            "the trending write moved; re-point this guard at its new home"
+        )
+
+        guard = "if not _suppress_trending_write.get():"
+        assert guard in src, "the trending write is no longer guarded (#1866)"
+        assert src.index(guard) < src.index('zincrby("search:trending:24h"'), (
+            "the guard must precede the write it guards"
+        )
+
+    @pytest.mark.asyncio
+    async def test_warming_is_not_load_bearing_on_the_flag(self):
+        """A ContextVar failure must never break warming.
+
+        The flag is an instrument-integrity concern; the warm is the product.
+        If setting it ever raised, the head would go unwarmed — a far worse
+        outcome than a polluted count.
+        """
+        async def _route(*, q, debug_evidence, debug_timing, db):
+            return {"suggestions": [], "query": q}
+
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _route), _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert summary["warmed"] == 1
+        assert summary["terminal"] == "complete"
+
+
+# --------------------------------------------------------------------------
+# LAT-P078 / #1866 — the ring records the SET, not just its provenance.
+#
+# "Was the term I probed actually in the warmed set" was unanswerable from
+# production for four cycles. LAT-P076 published 80% -> 0% and LAT-P077
+# withdrew it, because both were measuring five `_STATIC_FLOOR` strings that the
+# warmer only uses when BOTH measured sources are empty.
+# --------------------------------------------------------------------------
+
+
+class TestTheRingCarriesTheHeadItself:
+    def test_a_real_pass_record_carries_the_head_and_its_true_length(self):
+        summary = {
+            "terminal": "complete",
+            "head_source": "blend:query_log+trending:5/10_from_log",
+            "head": [f"q{i}" for i in range(40)],
+        }
+        record = warmer._pass_ring_record(summary, at=1.0)
+
+        assert record["head"] == [f"q{i}" for i in range(warmer._RING_HEAD_SAMPLE)]
+        assert record["head_n"] == 40, (
+            "the TRUE head length must survive truncation, or a sampled list "
+            "reads as a short head"
+        )
+
+    def test_the_truncation_is_visible_rather_than_silent(self):
+        """`head_n` > `len(head)` is the reader's signal that it holds a sample."""
+        summary = {"head": [f"q{i}" for i in range(40)]}
+        record = warmer._pass_ring_record(summary, at=1.0)
+
+        assert len(record["head"]) < record["head_n"]
+
+    @pytest.mark.asyncio
+    async def test_a_skip_carries_an_empty_head_not_a_missing_one(self):
+        """Gotcha #53 at the field level: absent and empty are different facts."""
+        lock_held = _FakeRedis(lock_taken=True)
+        session = _FakeSession()
+
+        with _patch_redis(lock_held), _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox"])
+
+        assert "head" in summary, "the same-keys contract covers `head` too"
+        assert summary["head"] == []
+
+    @pytest.mark.asyncio
+    async def test_the_head_travels_from_the_pass_into_the_summary(self):
+        async def _route(*, q, debug_evidence, debug_timing, db):
+            return {"suggestions": [], "query": q}
+
+        session = _FakeSession()
+        with patch("app.routes.events.typeahead_search", _route), _patch_session(session):
+            summary = await warmer._warm_typeahead(queries=["red sox", "yankees"])
+
+        assert summary["head"] == ["red sox", "yankees"]
