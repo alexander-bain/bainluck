@@ -314,3 +314,77 @@ Same class as LAT-P078's M6.
 - **R2 at a ≥6 h WORKER horizon** — defeated a fourth time by a mid-window deploy. Sampler running.
 - **#2072** — filed, not fixed. Deliberately: it is a second behaviour change to the trending
   zset while #1866's first one is still ungraded.
+
+---
+
+## 8. ADDENDUM — `-71` MERGED MID-WINDOW, so §0's refusal is spent and P1–P4 WERE graded
+
+`program/latency-71` merged as **`dee32eee`** and deployed while this window was running. **The
+Phase-0 sampler caught the deploy rather than the window discovering it afterwards** — that is
+what it was started for:
+
+```
+2026-08-21T17:19Z  commit 0c7ccdf2  web_uptime 0.58 h
+2026-08-21T17:24Z  commit dee32eee  web_uptime 0.08 h     <- the deploy, in the series
+```
+
+(It is also the **fifth** consecutive defeat of the ≥6 h *worker* horizon read, by the fifth
+mid-window deploy. That read is not "later" — it belongs to an overnight or weekend window and
+should be scheduled there.)
+
+### The fix is live, confirmed from the INSTRUMENT and not from the SHA
+
+```
+head_source : blend:query_log+trending:24/40_from_log
+head_n      : 40
+head[:6]    : masters winner · stanley cup · world series · nba champion · world cup · ballon d'or
+```
+
+All three acceptance terms present, `head_n = 40`, and **24 of the 40 come from the query log** —
+above the `_QUERY_LOG_SHARE = 0.5` floor of 20, because the backfill claimed the unspent budget.
+
+### P4 — READ FIRST, as instructed. **PASSES**, on a paired split, not a pre-horizon read
+
+Every ring record stamps its own `head_source`, so the ring splits into attributable arms. This
+is not the distribution compared against itself: each pass is labelled with the head that
+produced it.
+
+| arm | n | wall p50 | wall p95 | wall max | walls > 65 s |
+|---|---|---|---|---|---|
+| **POST-FIX** (`blend:…`) | 8 | **43.310 s** | **45.421 s** | **45.952 s** | **0** |
+| PRE-FIX (`redis:search:trending:24h`) | 24 | 45.117 s | 51.981 s | 54.047 s | 0 |
+
+`walls_over_response_ttl = 0`, and the wall moved **down**: p95 −12.6 %, max −15.0 %. **P4 passes
+on both clauses.** The 44.1 s all-cold sizing in §5 predicted the risk direction and the risk did
+not materialise — consistent with LAT-P078's observation that the incumbent head was paying a full
+rebuild every pass anyway.
+
+🔴 **What this read does NOT establish: the tail.** The quantity that breached the TTL was the
+**max, 66.365 s**, taken from a 15.6 h ring. Neither arm here reaches it — the pre-fix arm's own
+max is 54.047 s — so this ring simply does not contain the tail. **P4's tail clause is still owed
+at a long horizon**, and `MEASURED_WALL_MAX_S` stays at 66.365 with its margin (§4) until then.
+
+### P1 / P2 / P3 — PROVISIONAL, at a ~20 min build horizon (n=30, all HTTP 200)
+
+Not the ≥6 h read the prediction table asks for, and labelled as such. Post-deploy caches are cold
+and the system is not in steady state (gotcha: post-deploy latency is not evidence).
+
+| | LAT-P078 baseline | now | prediction | verdict |
+|---|---|---|---|---|
+| **P1** `stanley cup` + `nba champion` | **93 % cold, p50 3.350 s** | **50 % cold, p50 0.286 s** | ≤ 50 % cold, ≤ 0.35 s | ✅ **PASS**, both clauses |
+| **P2** control (3 already-in-head terms) | 33–47 % cold, p50 0.23–0.27 s | **39 % cold, p50 0.250 s** | does not materially move | ✅ **PASS as a control** |
+| **P3** in-head residual persists | 40 % | 39 % | persists | ✅ **PASS** |
+
+**The control is the result.** The queue was explicit: *"A pass on P1 with a pass on P2 is the
+result. A pass on P1 with P2 ALSO improving is not — it means something other than composition
+moved."* P2 did not improve (39 % against a 33–47 % baseline; p50 0.250 s against 0.23–0.27 s). So
+**the 3.350 s → 0.286 s move on P1 is attributable to head composition**, which is what #1866
+claimed and what LAT-P076's withdrawn headline failed to establish.
+
+P3's residual is visible in the per-round data and identifies its own mechanism: rounds 1, 2, 5, 6
+were 0/2/1/0 cold and rounds 3–4 were **5 of 5 cold**. That is the warmer's pass period beating
+against the 95 s probe spacing — a pass-period defect, exactly as P3 registered in advance, and
+not a composition defect.
+
+**Still owed: all four at a ≥6 h build horizon.** These readings are directionally clear and the
+control is clean, but 20 minutes is not steady state and this document does not claim it is.
