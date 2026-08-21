@@ -1,0 +1,704 @@
+{
+ "$comment": [
+  "LIVE output of GET /api/admin/ranking-judgments/candidates?limit=100 captured",
+  "on 2026-08-21 against production ec636bae, BEFORE #2060's fix. Every",
+  "two-outcome card in that sample is kept (17 of them, the class under test)",
+  "plus 12 multi-outcome cards that the complement rule must not touch.",
+  "",
+  "It reproduces Alex's report exactly: 14 of the 17 two-outcome cards render a",
+  "sum other than 100, and market 59183794 'Los Angeles D vs Colorado' - the card",
+  "named in #2060 - is among them at 93 + 8 = 101."
+ ],
+ "captured_at": "2026-08-21",
+ "source": "GET /api/admin/ranking-judgments/candidates?limit=100",
+ "production_sha": "ec636bae",
+ "items": [
+  {
+   "id": 59183884,
+   "name": "Chicago WS vs Chicago C",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.605,
+   "top_outcomes": [
+    {
+     "name": "Chicago C",
+     "probability": 0.605
+    },
+    {
+     "name": "Chicago WS",
+     "probability": 0.395
+    }
+   ]
+  },
+  {
+   "id": 59183794,
+   "name": "Los Angeles D vs Colorado",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.925,
+   "top_outcomes": [
+    {
+     "name": "Los Angeles D",
+     "probability": 0.925
+    },
+    {
+     "name": "Colorado",
+     "probability": 0.075
+    }
+   ]
+  },
+  {
+   "id": 59183966,
+   "name": "Seattle vs Milwaukee",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.005,
+   "rendered_probability": 0.995,
+   "top_outcomes": [
+    {
+     "name": "Milwaukee",
+     "probability": 0.995
+    },
+    {
+     "name": "Seattle",
+     "probability": 0.01
+    }
+   ]
+  },
+  {
+   "id": 59183839,
+   "name": "Los Angeles A vs Houston",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.915,
+   "top_outcomes": [
+    {
+     "name": "Los Angeles A",
+     "probability": 0.915
+    },
+    {
+     "name": "Houston",
+     "probability": 0.085
+    }
+   ]
+  },
+  {
+   "id": 59183883,
+   "name": "Washington vs Texas",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.005,
+   "rendered_probability": 0.995,
+   "top_outcomes": [
+    {
+     "name": "Texas",
+     "probability": 0.995
+    },
+    {
+     "name": "Washington",
+     "probability": 0.01
+    }
+   ]
+  },
+  {
+   "id": 59183611,
+   "name": "Yang vs Vasileva",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.005,
+   "rendered_probability": 0.955,
+   "top_outcomes": [
+    {
+     "name": "Yidi Yang",
+     "probability": 0.955
+    },
+    {
+     "name": "Alisa Vasileva",
+     "probability": 0.05
+    }
+   ]
+  },
+  {
+   "id": 59194289,
+   "name": "Vaitiekunas vs Gerbaud",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.005,
+   "rendered_probability": 0.82,
+   "top_outcomes": [
+    {
+     "name": "Pijus Vaitiekunas",
+     "probability": 0.82
+    },
+    {
+     "name": "Thomas Gerbaud",
+     "probability": 0.185
+    }
+   ]
+  },
+  {
+   "id": 59252629,
+   "name": "Rolando Romero vs Teofimo Lopez",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.01,
+   "rendered_probability": 0.705,
+   "top_outcomes": [
+    {
+     "name": "Teofimo Lopez",
+     "probability": 0.705
+    },
+    {
+     "name": "Rolando Romero",
+     "probability": 0.305
+    }
+   ]
+  },
+  {
+   "id": 59194095,
+   "name": "Figl vs Castagnola",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 0.99,
+   "rendered_probability": 0.59,
+   "top_outcomes": [
+    {
+     "name": "Luca Castagnola",
+     "probability": 0.59
+    },
+    {
+     "name": "Maximilian Figl",
+     "probability": 0.4
+    }
+   ]
+  },
+  {
+   "id": 59184057,
+   "name": "Llamas Ruiz vs Comesana",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.615,
+   "top_outcomes": [
+    {
+     "name": "Pablo Llamas Ruiz",
+     "probability": 0.615
+    },
+    {
+     "name": "Francisco Comesana",
+     "probability": 0.385
+    }
+   ]
+  },
+  {
+   "id": 59194098,
+   "name": "Bilardo vs Gschwendtner",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 0.97,
+   "rendered_probability": 0.57,
+   "top_outcomes": [
+    {
+     "name": "Jacopo Bilardo",
+     "probability": 0.57
+    },
+    {
+     "name": "Jeremy Gschwendtner",
+     "probability": 0.4
+    }
+   ]
+  },
+  {
+   "id": 59193799,
+   "name": "Kokot vs Werblinski",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 0.995,
+   "rendered_probability": 0.955,
+   "top_outcomes": [
+    {
+     "name": "Bruno Kokot",
+     "probability": 0.955
+    },
+    {
+     "name": "Jan Werblinski",
+     "probability": 0.04
+    }
+   ]
+  },
+  {
+   "id": 59183610,
+   "name": "Zeng vs Kim",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.005,
+   "rendered_probability": 0.935,
+   "top_outcomes": [
+    {
+     "name": "Na Ri Kim",
+     "probability": 0.935
+    },
+    {
+     "name": "Zixuan Zeng",
+     "probability": 0.07
+    }
+   ]
+  },
+  {
+   "id": 59056140,
+   "name": "Fight Night: Hernandez vs Rodrigues",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.625,
+   "top_outcomes": [
+    {
+     "name": "Anthony Hernandez",
+     "probability": 0.625
+    },
+    {
+     "name": "Gregory Rodrigues",
+     "probability": 0.375
+    }
+   ]
+  },
+  {
+   "id": 59183615,
+   "name": "Tamm vs Jasika",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.965,
+   "top_outcomes": [
+    {
+     "name": "Omar Jasika",
+     "probability": 0.965
+    },
+    {
+     "name": "Kristjan Tamm",
+     "probability": 0.035
+    }
+   ]
+  },
+  {
+   "id": 59193705,
+   "name": "Hrazdil vs Jez",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 0.99,
+   "rendered_probability": 0.905,
+   "top_outcomes": [
+    {
+     "name": "Jan Hrazdil",
+     "probability": 0.905
+    },
+    {
+     "name": "Wiktor Jez",
+     "probability": 0.085
+    }
+   ]
+  },
+  {
+   "id": 109081,
+   "name": "Michigan Senate winner?",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0,
+   "rendered_probability": 0.565,
+   "top_outcomes": [
+    {
+     "name": "Abdul El-Sayed",
+     "probability": 0.565
+    },
+    {
+     "name": "Mike Rogers",
+     "probability": 0.435
+    }
+   ]
+  },
+  {
+   "id": 59087214,
+   "name": "BMW Championship Winner",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0435,
+   "rendered_probability": 0.19,
+   "top_outcomes": [
+    {
+     "name": "Rory McIlroy",
+     "probability": 0.19
+    },
+    {
+     "name": "Chris Gotterup",
+     "probability": 0.105
+    },
+    {
+     "name": "Wyndham Clark",
+     "probability": 0.105
+    },
+    {
+     "name": "Matt Fitzpatrick",
+     "probability": 0.0865
+    },
+    {
+     "name": "Ludvig \u00c5berg",
+     "probability": 0.0655
+    }
+   ]
+  },
+  {
+   "id": 108445,
+   "name": "2028 Democratic presidential nominee",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.0325,
+   "rendered_probability": 0.175,
+   "top_outcomes": [
+    {
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.175
+    },
+    {
+     "name": "Gavin Newsom",
+     "probability": 0.155
+    },
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.155
+    },
+    {
+     "name": "Kamala Harris",
+     "probability": 0.091
+    },
+    {
+     "name": "Pete Buttigieg",
+     "probability": 0.055
+    }
+   ]
+  },
+  {
+   "id": 59183857,
+   "name": "Washington vs Texas: Total Runs",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 3.05,
+   "rendered_probability": 0.99,
+   "top_outcomes": [
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.01
+    },
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.01
+    }
+   ]
+  },
+  {
+   "id": 59181729,
+   "name": "Sri Lanka vs India",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.02,
+   "rendered_probability": 0.925,
+   "top_outcomes": [
+    {
+     "name": "India",
+     "probability": 0.925
+    },
+    {
+     "name": "Draw/Tie",
+     "probability": 0.08
+    },
+    {
+     "name": "Sri Lanka",
+     "probability": 0.015
+    }
+   ]
+  },
+  {
+   "id": 59183781,
+   "name": "Los Angeles D vs Colorado: Total Runs",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 7.77,
+   "rendered_probability": 0.99,
+   "top_outcomes": [
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 8.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 9.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 10.5 runs scored",
+     "probability": 0.99
+    }
+   ]
+  },
+  {
+   "id": 59183858,
+   "name": "Chicago WS vs Chicago C: Total Runs",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 6.47,
+   "rendered_probability": 0.995,
+   "top_outcomes": [
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.995
+    },
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.99
+    }
+   ]
+  },
+  {
+   "id": 59137838,
+   "name": "Nexo Championship Winner",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 2.0995,
+   "rendered_probability": 0.12,
+   "top_outcomes": [
+    {
+     "name": "Marcus Kinhult",
+     "probability": 0.12
+    },
+    {
+     "name": "Jacob Skov Olesen",
+     "probability": 0.1105
+    },
+    {
+     "name": "Keita Nakajima",
+     "probability": 0.1
+    },
+    {
+     "name": "Connor Syme",
+     "probability": 0.1
+    },
+    {
+     "name": "Zander Lombard",
+     "probability": 0.09
+    }
+   ]
+  },
+  {
+   "id": 59182735,
+   "name": "Highest temperature in Los Angeles on Aug 18, 2026?",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": true,
+   "field_sum": 1.045,
+   "rendered_probability": 0.995,
+   "top_outcomes": [
+    {
+     "name": "81\u00b0 to 82\u00b0",
+     "probability": 0.995
+    },
+    {
+     "name": "74\u00b0 or below",
+     "probability": 0.01
+    },
+    {
+     "name": "75\u00b0 to 76\u00b0",
+     "probability": 0.01
+    },
+    {
+     "name": "77\u00b0 to 78\u00b0",
+     "probability": 0.01
+    },
+    {
+     "name": "79\u00b0 to 80\u00b0",
+     "probability": 0.01
+    }
+   ]
+  },
+  {
+   "id": 59183927,
+   "name": "Seattle vs Milwaukee: Total Runs",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 19.81,
+   "rendered_probability": 0.99,
+   "top_outcomes": [
+    {
+     "name": "Over 2.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.99
+    },
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.99
+    }
+   ]
+  },
+  {
+   "id": 40533,
+   "name": "2027 Pro Football Champion",
+   "source": "kalshi",
+   "display_scale": 1.0850000000000004,
+   "field_coherent": true,
+   "field_sum": 1.085,
+   "rendered_probability": 0.1336,
+   "top_outcomes": [
+    {
+     "name": "Los Angeles R",
+     "probability": 0.1336
+    },
+    {
+     "name": "Buffalo",
+     "probability": 0.0691
+    },
+    {
+     "name": "Seattle",
+     "probability": 0.0691
+    },
+    {
+     "name": "Baltimore",
+     "probability": 0.0599
+    },
+    {
+     "name": "Kansas City",
+     "probability": 0.0507
+    }
+   ]
+  },
+  {
+   "id": 59183784,
+   "name": "Los Angeles D vs Colorado: Spread",
+   "source": "kalshi",
+   "display_scale": 1.0,
+   "field_coherent": false,
+   "field_sum": 2.31,
+   "rendered_probability": 0.795,
+   "top_outcomes": [
+    {
+     "name": "Los Angeles D wins by over 1.5 runs",
+     "probability": 0.795
+    },
+    {
+     "name": "Los Angeles D wins by over 2.5 runs",
+     "probability": 0.66
+    },
+    {
+     "name": "Los Angeles D wins by over 3.5 runs",
+     "probability": 0.405
+    },
+    {
+     "name": "Los Angeles D wins by over 4.5 runs",
+     "probability": 0.265
+    },
+    {
+     "name": "Los Angeles D wins by over 5.5 runs",
+     "probability": 0.13
+    }
+   ]
+  },
+  {
+   "id": 59183826,
+   "name": "Los Angeles A vs Houston: Total Runs",
+   "source": "kalshi",
+   "display_scale": 1.6849999999999994,
+   "field_coherent": false,
+   "field_sum": 1.685,
+   "rendered_probability": 0.5875,
+   "top_outcomes": [
+    {
+     "name": "Over 3.5 runs scored",
+     "probability": 0.5875
+    },
+    {
+     "name": "Over 4.5 runs scored",
+     "probability": 0.1573
+    },
+    {
+     "name": "Over 5.5 runs scored",
+     "probability": 0.0742
+    },
+    {
+     "name": "Over 6.5 runs scored",
+     "probability": 0.0742
+    },
+    {
+     "name": "Over 7.5 runs scored",
+     "probability": 0.0326
+    }
+   ]
+  }
+ ]
+}

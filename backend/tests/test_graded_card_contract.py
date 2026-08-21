@@ -34,6 +34,8 @@ from app.utils.graded_card import (
     OMITTED,
     card_fingerprint,
     drift_outcome,
+    is_complement_pair,
+    rendered_card_percents,
     rendered_percent,
 )
 
@@ -42,6 +44,7 @@ CONTRACT_PATH = (
 )
 CONTRACT = json.loads(CONTRACT_PATH.read_text())
 CASES = CONTRACT["cases"]
+CARD_CASES = CONTRACT["card_cases"]
 
 
 # ── 1. THE PERCENT, AGAINST THE SHARED TABLE ────────────────────────────────
@@ -105,7 +108,99 @@ def test_contract_declares_all_three_runtimes_and_their_files_exist():
     for impl in CONTRACT["implementations"]:
         assert (repo / impl["path"]).exists(), impl["path"]
         assert (repo / impl["driven_by"]).exists(), impl["driven_by"]
-        assert impl["symbol"] in (repo / impl["path"]).read_text()
+        text = (repo / impl["path"]).read_text()
+        assert impl["symbol"] in text
+        # Version 2 (#2060) — every runtime owes the CARD rule too, or the three
+        # agree about each number and still disagree about the sum.
+        assert impl["card_symbol"] in text, (
+            f"{impl['runtime']} declares {impl['card_symbol']} in the contract "
+            f"but {impl['path']} does not define it"
+        )
+
+
+# ── 1b. THE CARD, AGAINST THE SHARED TABLE (#2060) ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    "case", CARD_CASES, ids=[str(c["probabilities"]) for c in CARD_CASES]
+)
+def test_rendered_card_percents_matches_the_contract(case):
+    assert rendered_card_percents(case["probabilities"]) == case["percents"]
+
+
+@pytest.mark.parametrize(
+    "case", CARD_CASES, ids=[str(c["probabilities"]) for c in CARD_CASES]
+)
+def test_complement_pair_flag_matches_the_contract(case):
+    assert is_complement_pair(case["probabilities"]) is case["complement_pair"]
+
+
+@pytest.mark.parametrize(
+    "case", CARD_CASES, ids=[str(c["probabilities"]) for c in CARD_CASES]
+)
+def test_the_naive_column_is_arithmetic_not_annotation(case):
+    """`naive` records what INDEPENDENT rounding gives, and is checked, not trusted.
+
+    It is the column that makes `discriminates` meaningful, so a wrong value there
+    would quietly disarm the row-preservation test below.
+    """
+    assert [rendered_percent(p) for p in case["probabilities"]] == case["naive"]
+
+
+def test_the_card_contract_keeps_the_rows_that_catch_independent_rounding():
+    """A table can be defanged by deleting rows while staying green.
+
+    Six rows disagree with independent per-outcome rounding; those six ARE the
+    defect. A suite keeping only the other nine passes against the exact bug the
+    rule was written for. The flag is verified against arithmetic rather than
+    believed.
+    """
+    discriminating = [c for c in CARD_CASES if c.get("discriminates")]
+    assert len(discriminating) >= 6
+
+    for case in discriminating:
+        assert case["percents"] != case["naive"], (
+            f"{case['probabilities']} is flagged as discriminating but the card "
+            f"rule agrees with independent rounding on it — the flag is wrong"
+        )
+    for case in CARD_CASES:
+        if case.get("discriminates"):
+            continue
+        assert case["percents"] == case["naive"], (
+            f"{case['probabilities']} is NOT flagged as discriminating but the "
+            f"card rule disagrees with independent rounding — the flag is wrong"
+        )
+
+
+def test_the_card_contract_pins_the_leave_alone_direction_too():
+    """Gotcha #43: a guard's tests must assert BOTH directions.
+
+    The table must keep two-outcome rows that are NOT complement pairs and whose
+    rendered sums are deliberately not 100 — otherwise a future 'simplification'
+    that normalizes every pair of outcomes passes the whole suite while inventing
+    probabilities on thin books.
+    """
+    left_alone = [
+        c
+        for c in CARD_CASES
+        if len(c["probabilities"]) == 2
+        and not c["complement_pair"]
+        and all(p is not None for p in c["probabilities"])
+    ]
+    assert len(left_alone) >= 4
+    sums = {sum(c["percents"]) for c in left_alone}
+    assert sums - {100}, (
+        "every left-alone row happens to sum to 100, so this test cannot "
+        "distinguish 'left alone' from 'normalized'"
+    )
+
+
+def test_a_complement_pair_always_renders_exactly_one_hundred():
+    """The display-layer invariant, stated once against the contract table."""
+    pairs = [c for c in CARD_CASES if c["complement_pair"]]
+    assert len(pairs) >= 6
+    for case in pairs:
+        assert sum(case["percents"]) == 100, case["probabilities"]
 
 
 def test_none_is_not_zero():

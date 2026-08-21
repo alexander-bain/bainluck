@@ -122,6 +122,100 @@ def rendered_percent(probability: Any) -> int | None:
         return None
 
 
+# ── THE TWO SIDES OF ONE QUESTION MUST SUM TO ONE HUNDRED (#2060) ────────────────
+#
+# `rendered_percent` above is correct and was never the bug. The bug is applying it
+# TWICE to one question and printing both answers.
+#
+# Alex's card, from his 08-20 gold session (market 59183794):
+#
+#     Los Angeles D   0.925  ->  93
+#     Colorado        0.075  ->   8      93 + 8 = 101
+#
+# Neither rounding is wrong. Kalshi quotes a complement pair on a HALF-CENT grid,
+# so `p * 100` lands on `.5` for **both sides at once**, and half-up — the rule this
+# module exists to pin — rounds both up. Measured on production 2026-08-21:
+# **10,198 of 21,524** open two-outcome markets render a sum other than 100, and
+# 8,982 of those are 101 against only 318 at 99. A 28:1 skew is not noise; it is one
+# systematic cause.
+#
+# ** WHY A BAND, AND WHY THIS BAND. ** Two outcomes are not automatically two sides
+# of one question. Measured over the same population, two-outcome field sums run from
+# 0.001 to 2.0, and normalizing a field that sums to 0.001 would invent a probability
+# rather than round one. But the distribution is not flat: **19,564 of 21,410 (91.4%)
+# sit in (0.99, 1.01]**, and 1.01 is already this codebase's own answer to "is this a
+# true binary" — `card_integrity.display_scale` uses exactly that threshold, and only
+# for two-outcome cards. So the band here is that constant made SYMMETRIC. The
+# asymmetry was itself half the defect: a pair summing to 0.99 rendered 99 and nothing
+# in the system considered that a problem.
+#
+# `field_coherence`'s [0.5, 1.5] band is deliberately NOT reused. It answers "can this
+# be drawn as a field at all", which is a different and much looser question — under
+# it a pair summing to 1.49 would be normalized, and that is fabrication.
+#
+#: A two-outcome field is a complement pair when its members sum into this band.
+#: Outside it the card is not claiming to be two sides of one question, the invariant
+#: does not apply, and the values are rendered independently and left alone.
+COMPLEMENT_MIN = 0.99
+COMPLEMENT_MAX = 1.01
+
+
+def is_complement_pair(probabilities: list[Any] | None) -> bool:
+    """Are these exactly two priced sides of one question?
+
+    Pure, and deliberately strict: exactly two entries, both priced, summing into
+    ``[COMPLEMENT_MIN, COMPLEMENT_MAX]``. Anything else is False, because the cost
+    of a false positive here is a fabricated percentage point on a card Alex grades.
+    """
+    if not probabilities or len(probabilities) != 2:
+        return False
+    try:
+        values = [float(p) for p in probabilities if p is not None]
+    except (TypeError, ValueError):
+        return False
+    if len(values) != 2:
+        return False
+    total = values[0] + values[1]
+    return COMPLEMENT_MIN <= total <= COMPLEMENT_MAX
+
+
+def rendered_card_percents(probabilities: list[Any] | None) -> list[int | None]:
+    """The whole percents a surface prints for ONE CARD's served outcomes.
+
+    This is the card-level decision that `rendered_percent` is the ingredient of
+    (ruling 021 — share the DECISION, not the ingredient). Every surface prints a
+    CARD, not a lone probability, so the card is the unit that has to be shared, or
+    three runtimes agree perfectly about each number and still disagree about the
+    sum.
+
+    ** COMPLEMENT PAIRS ARE NORMALIZED, ROUNDED ONCE, AND DERIVED. ** For a pair the
+    steps are: divide both by their true total (removing the vig SYMMETRICALLY rather
+    than dumping all of it on one side), round the **leader** with `rendered_percent`,
+    and derive the other as ``100 - leader``. Both halves of #2060's requested fix,
+    composed — normalize pre-rounding AND round once.
+
+    ``probabilities`` is in **SERVED ORDER**, and index 0 is the card's headline: it
+    is what `rendered_probability` reports and the first number Alex reads. So index 0
+    is the value that survives untouched and index 1 absorbs the derivation. Both
+    serializers sort descending before calling, so the headline is also the leader.
+
+    Everything that is not a complement pair is rendered exactly as before, one
+    `rendered_percent` per outcome. That direction is asserted by the invariant tests
+    as explicitly as the fixed direction is — a cap whose guard only proves it fires
+    is how the Sports tab got emptied (gotcha #43).
+    """
+    if not probabilities:
+        return []
+    if not is_complement_pair(probabilities):
+        return [rendered_percent(p) for p in probabilities]
+
+    total = float(probabilities[0]) + float(probabilities[1])
+    leader = rendered_percent(float(probabilities[0]) / total)
+    if leader is None:  # unreachable for a priced pair; never guess on the way out
+        return [rendered_percent(p) for p in probabilities]
+    return [leader, 100 - leader]
+
+
 def card_fingerprint(
     *,
     title: str | None,
@@ -140,7 +234,23 @@ def card_fingerprint(
 
     ``served_outcomes`` is the caller's own slice — see the constants above for
     why it has no default.
+
+    ** THE DIGEST IS TAKEN OVER `rendered_card_percents`, NOT `rendered_percent`. **
+    This module's load-bearing promise is that "the fingerprint changes exactly when
+    the picture changes", and after #2060 the picture of a two-outcome card is no
+    longer one independent rounding per side. Fingerprinting the per-outcome value
+    while the surface prints the derived one would break that promise at precisely
+    the boundary the complement rule exists for: the server would expect 93/8, every
+    client would show 93/7, and every verdict on a Kalshi binary would be refused for
+    a drift nobody could see. The slice is taken FIRST so the pair rule is applied to
+    what is served rather than to what exists.
     """
+    served = None if outcomes is None else outcomes[:served_outcomes]
+    percents = (
+        None
+        if served is None
+        else rendered_card_percents([o.get("probability") for o in served])
+    )
     payload = {
         "title": title,
         "status": status,
@@ -148,11 +258,8 @@ def card_fingerprint(
         "field_coherent": field_coherent,
         "outcomes": (
             None
-            if outcomes is None
-            else [
-                [o.get("name"), rendered_percent(o.get("probability"))]
-                for o in outcomes[:served_outcomes]
-            ]
+            if served is None
+            else [[o.get("name"), percents[i]] for i, o in enumerate(served)]
         ),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)

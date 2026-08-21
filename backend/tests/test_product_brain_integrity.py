@@ -664,7 +664,16 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: No number collision: 110 was claimed in `RULING-CLAIMS.md` and verified free across 490 refs,
 #: and master went on to take 111, 112 and 113 — so the index reads 110..113 with no gap.
-MINIMUM_BANKED_RULINGS = 111
+#:
+#: Raised to **112** by INT-104 merging `program/calibration-80`, `program/ux-100` and
+#: `program/latency-71`. Only ux-100 banks a ruling: **114** ("a settled card's quiet rows
+#: stay: no tail, no drop", Alex, #2060). The branch arrived carrying 109 and master held 111,
+#: so neither side's number was right — SIXTEENTH consecutive cycle in which that is true.
+#: latency-71 AMENDS `docs/rulings/110-*.md` in place and adds no file, so it moves nothing.
+#: COUNTED on the merged tree: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **112**.
+#: The index now reads 110..115 with no gap — 114 was the last hole and this merge fills it.
+#: Ruling 088 / #1910 — count, never add a delta, never take a side.
+MINIMUM_BANKED_RULINGS = 112
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

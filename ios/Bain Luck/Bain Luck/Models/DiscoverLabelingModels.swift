@@ -77,6 +77,27 @@ nonisolated struct DiscoverLabelingDebugItem: Decodable, Identifiable, Sendable 
     /// what asks the server to gate.
     let cardFingerprint: String?
 
+    /// `commence_time` — WHEN the thing being priced happens (#2060 item 2).
+    ///
+    /// The card used to carry only `resolution_date`, and on a Kalshi game market
+    /// that is the CLOSE time rather than the start (gotcha #14) — so the single
+    /// temporal fact on screen was the wrong one, and Alex's report was simply
+    /// "a probability is ungradeable without a when".
+    ///
+    /// Optional: 3 of 50,779 open markets genuinely have no commence time, and a
+    /// missing one must render as absent rather than as a guess.
+    let commenceTime: String?
+
+    /// `resolution_date` — kept beside `commenceTime` rather than replaced by it.
+    /// They answer different questions and the card now shows both.
+    let resolutionDate: String?
+
+    /// `name_at_source` — what the provider actually shipped, before #2060's
+    /// truncation repair rewrote `name`. Carried so a repair can be audited; a
+    /// repair that silently replaces its input is indistinguishable from a
+    /// corruption.
+    let nameAtSource: String?
+
     var stableId: String {
         "\(type)-\(id.map(String.init) ?? name)-\(rank)"
     }
@@ -95,8 +116,32 @@ nonisolated struct DiscoverLabelingOutcome: Codable, Sendable {
     /// but it must round-trip back into this same property, which it does.
     @TolerantNumeric var probabilityChange24h: Double?
 
+    /// `rendered_percent` — the whole percent the SERVER rendered for this
+    /// outcome (#2060).
+    ///
+    /// Served rather than re-derived here. The server has to compute it anyway
+    /// for the card fingerprint, and a client that recomputes it is a client that
+    /// can disagree with the digest gating its own write: after the card rule, a
+    /// complement pair summing to 1.01 renders 70/30, so re-rounding the raw
+    /// leader would print 71 against a digest taken over 70 and refuse the
+    /// judgment for a drift nobody could see.
+    ///
+    /// Optional, so a payload from a pre-#2060 server decodes and the view falls
+    /// back to `renderedCardPercents` locally.
+    ///
+    /// `var` with a default rather than `let`: these are TRAILING additions to a
+    /// struct whose memberwise initialiser is called by existing tests with the
+    /// old four-argument arity. A `let` would have broken those call sites, and a
+    /// `let` WITH a default is excluded from the synthesised `init(from:)`
+    /// entirely — it would silently never decode. `var x = nil` keeps both.
+    var renderedPercent: Int? = nil
+
+    /// `name_at_source` — the provider's text before the truncation repair.
+    var nameAtSource: String? = nil
+
     private enum CodingKeys: String, CodingKey {
         case name, probability, currentProbability
+        case renderedPercent, nameAtSource
         case probabilityChange24h = "probabilityChange24H"
     }
 }

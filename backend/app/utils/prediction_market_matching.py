@@ -1056,6 +1056,28 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
 
     Returns (team_a_name, team_b_name) tuple, or None if parsing fails.
     The names are team name fragments suitable for ILIKE matching.
+
+    Thin wrapper over ``extract_team_codes_from_ticker`` — ONE parse, so a caller
+    that needs the ticker CODES as well as the names cannot end up with a second
+    implementation of the same split (#2060; ruling 021).
+    """
+    pair = extract_team_codes_from_ticker(external_id)
+    return (pair[0][1], pair[1][1]) if pair else None
+
+
+def extract_team_codes_from_ticker(
+    external_id: str,
+) -> Optional[tuple[tuple[str, str], tuple[str, str]]]:
+    """
+    Extract ``((abbrev_a, name_a), (abbrev_b, name_b))`` from a Kalshi game ticker.
+
+    Example: "KXNBAGAME-26FEB21DETCHI" → (("det", "Pistons"), ("chi", "Bulls"))
+
+    The CODE half matters to display callers that must decide which shipped outcome
+    name is which team. Kalshi truncates `Los Angeles Angels` to `Los Angeles A`,
+    and `A` is equally consistent with "Angels" and "Astros" — but the codes `laa`
+    and `hou` are consistent with exactly one shipped name each. Returning only the
+    nicknames threw away the disambiguator (#2060 item 3, gotcha #16).
     """
     if not external_id:
         return None
@@ -1113,7 +1135,7 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
             name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b)
 
         if name_a and name_b:
-            best_pair = (name_a, name_b)
+            best_pair = ((abbrev_a, name_a), (abbrev_b, name_b))
             break  # First valid split wins
 
     return best_pair

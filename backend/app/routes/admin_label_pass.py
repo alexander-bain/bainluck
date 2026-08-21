@@ -54,7 +54,9 @@ from app.utils.graded_card import (
     card_fingerprint,
     compare_snapshot,
     drift_outcome,
+    rendered_card_percents,
 )
+from app.utils.kalshi_display_names import apply_name_repairs, repair_truncated_names
 from app.utils.gold_label_store import (
     gold_label_row,
     label_origin,
@@ -407,25 +409,53 @@ def _live_features(proposal, market, outcomes) -> dict:
             if leader is not None and leader.current_probability is not None
             else None
         )
+        served = outcomes[:LABEL_PASS_SERVED_OUTCOMES]
+        # #2060 items 1 + 3, applied here for the same reason the drift gate itself
+        # was lifted into `graded_card` (#1933): a card fix that lands on one
+        # surface is a card fix the other surface will not get. Both routes call
+        # the same two functions.
+        repairs = repair_truncated_names(
+            getattr(market, "external_id", None), [o.name for o in served]
+        )
+        percents = rendered_card_percents(
+            [
+                float(o.current_probability)
+                if o.current_probability is not None
+                else None
+                for o in served
+            ]
+        )
         features["outcomes"] = [
             {
-                "name": o.name,
+                "name": repairs.get(o.name, o.name),
+                "name_at_source": o.name,
                 "probability": (
                     float(o.current_probability)
                     if o.current_probability is not None
                     else None
                 ),
+                "rendered_percent": percents[i],
             }
-            for o in outcomes[:LABEL_PASS_SERVED_OUTCOMES]
+            for i, o in enumerate(served)
         ]
     else:
+        repairs = {}
         # Say why, rather than showing a number that cannot be true.
         features["probability"] = None
         features["outcomes"] = None
         features["field_withheld_reason"] = coherence["reason"]
 
-    features["title"] = _live_title(proposal, market)
+    features["title"] = apply_name_repairs(_live_title(proposal, market), repairs)
+    features["title_at_source"] = _live_title(proposal, market)
     features["title_at_write"] = getattr(proposal, "item_name", None)
+    # #2060 item 2 — a probability is ungradeable without a when. `resolution_date`
+    # above is Kalshi's CLOSE time on a game market (gotcha #14), so it was never
+    # the answer to "when is this".
+    features["commence_time"] = (
+        market.commence_time.isoformat()
+        if market is not None and getattr(market, "commence_time", None)
+        else None
+    )
     features["snapshot_at_write"] = snapshot
     # Three-way, never a boolean — a snapshot that carried no reading is not a
     # snapshot that drifted, and the old boolean counted it as one. See

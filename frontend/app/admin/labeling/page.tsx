@@ -8,13 +8,15 @@ import {
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { getIdToken } from "@/lib/firebase";
+import LabelingCard, {
+  pct,
+  type LabelingCardOutcome,
+} from "@/components/admin/LabelingCard";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface LabelingOutcome {
-  name: string | null;
-  probability: number | null;
-}
+// The card's outcome shape lives with the card component now (#2060).
+type LabelingOutcome = LabelingCardOutcome;
 
 interface LabelingCandidate {
   rank: number;
@@ -39,6 +41,11 @@ interface LabelingCandidate {
   reasons: string[];
   top_outcomes: LabelingOutcome[];
   rendered_probability: number | null;
+  /** #2060 item 2 — a probability is ungradeable without a when. */
+  commence_time?: string | null;
+  resolution_date?: string | null;
+  /** #2060 item 3 — `name` is the repaired text; this is what Kalshi shipped. */
+  name_at_source?: string | null;
   // The server's opaque digest of the card THIS payload rendered (#1933).
   // Echoed back verbatim on submit so the write can be refused if the card
   // re-priced while it sat on screen. Optional only because a candidate served
@@ -53,11 +60,6 @@ interface HistoryEntry {
 }
 
 const BAD_REASONS = ["boring", "duplicate", "stale", "bad image", "confusing", "niche"] as const;
-
-function pct(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return `${Math.round(val * 100)}%`;
-}
 
 export default function LabelingPage() {
   usePageTracking({ pageType: "admin_labeling", pageTitle: "Discover Labeling" });
@@ -306,51 +308,12 @@ export default function LabelingPage() {
         </div>
       ) : current ? (
         <div className="space-y-4">
-          {/* Card preview */}
-          <div className="bg-surface-card rounded-2xl border border-surface-border overflow-hidden shadow-sm">
-            {current.image_url && (
-              <div className="relative h-48 bg-surface-elevated">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={current.image_url}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              </div>
-            )}
-            <div className="p-5 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="text-base font-semibold text-text-primary leading-snug flex-1">
-                  {current.name}
-                </h2>
-                {current.rendered_probability != null && (
-                  <span className="text-2xl font-bold text-accent-brand shrink-0">
-                    {pct(current.rendered_probability)}
-                  </span>
-                )}
-              </div>
-              {current.hook_description && (
-                <p className="text-sm text-text-secondary leading-relaxed">
-                  {current.hook_description}
-                </p>
-              )}
-              {current.top_outcomes && current.top_outcomes.length > 1 && (
-                <div className="space-y-1 pt-1">
-                  {current.top_outcomes.slice(0, 4).map((o, i) => (
-                    <div key={i} className="flex items-center justify-between text-sm">
-                      <span className="text-text-secondary truncate flex-1 mr-2">{o.name || "Outcome"}</span>
-                      <span className="font-mono text-text-primary">{pct(o.probability)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-1.5 flex-wrap pt-1">
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">{current.category}</span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">{current.source}</span>
-              </div>
-            </div>
-          </div>
+          {/* Card preview — the component the display-layer invariant test in
+              `__tests__/components/labelingCardDisplayInvariant.test.tsx` renders
+              (#2060). While this JSX lived inline behind admin auth, the only
+              available check was a source grep, and a grep cannot tell a rendered
+              field from a declared one. */}
+          <LabelingCard card={current} />
 
           {/* Verdict buttons or bad reason chips */}
           {awaitingReason ? (

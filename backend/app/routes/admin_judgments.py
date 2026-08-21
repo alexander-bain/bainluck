@@ -33,8 +33,10 @@ from app.utils.graded_card import (
     card_fingerprint,
     drift_outcome,
     flip_readiness,
+    rendered_card_percents,
 )
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
+from app.utils.kalshi_display_names import apply_name_repairs, repair_truncated_names
 from app.utils.gold_label_store import (
     ORIGIN_KEY,
     gold_label_row,
@@ -471,6 +473,45 @@ def _serialize_labeling_candidate(
         ]
         withheld_reason = None
 
+    # ── #2060 items 1 + 3: RENDER THE CARD, THEN FINGERPRINT WHAT WAS RENDERED ──
+    #
+    # Item 3. Kalshi ships `Los Angeles D`; the ticker ships `LAD`. The repair is
+    # derived from the TICKER (gotcha #16) and never from `event_id`, whose link is
+    # known broken for exactly this cohort (#2057 — the exemplar's event is the
+    # 08-18 game while the market resolves 08-22). Unresolvable names ship
+    # unchanged, and the source text is kept beside the repair rather than replaced.
+    #
+    # `getattr` rather than attribute access, matching `_live_features`. These are
+    # OPTIONAL DISPLAY inputs: absent means "no repair" and "no when", which are
+    # both fine cards. Reading them directly would turn a partially-hydrated row
+    # — a `load_only` query, a test double — into an AttributeError inside a
+    # route, taking down the entire labeling queue over a field whose absence the
+    # card already knows how to render.
+    name_repairs = repair_truncated_names(
+        getattr(market, "external_id", None), [o.get("name") for o in top_outcomes]
+    )
+    display_name = apply_name_repairs(market.name, name_repairs)
+
+    # Item 1. One card-level decision for the whole field, so the two sides of one
+    # question cannot be rounded twice and printed as 101.
+    if display_outcomes is not None:
+        percents = rendered_card_percents(
+            [o.get("probability") for o in display_outcomes]
+        )
+        display_outcomes = [
+            {
+                **o,
+                "name": name_repairs.get(o.get("name"), o.get("name")),
+                "name_at_source": o.get("name"),
+                # SERVED, not left to each client to re-derive. The server already
+                # has to compute this for the fingerprint; serving it is what makes
+                # "all surfaces agree" true by construction rather than by three
+                # implementations happening to match.
+                "rendered_percent": percents[i],
+            }
+            for i, o in enumerate(display_outcomes)
+        ]
+
     category = (
         market.llm_sport_category
         or (market.sport.name if market.sport else None)
@@ -496,7 +537,11 @@ def _serialize_labeling_candidate(
         # four-part intersection is a false positive for this field; only the web side
         # ever declared it. The zero-read finding still holds, on weaker evidence.
         "stable_id": f"futures:{market.id}",
-        "name": market.name,
+        "name": display_name,
+        #: What the source actually shipped. Kept because a repair that silently
+        #: replaces its input leaves no way to audit the repair (same reason
+        #: `snapshot_at_write` is kept beside the live card).
+        "name_at_source": market.name,
         "category": category,
         "archetype": editorial_archetype(market.name, category),
         "source": market.source,
@@ -534,6 +579,27 @@ def _serialize_labeling_candidate(
         "resolution_date": (
             market.resolution_date.isoformat() if market.resolution_date else None
         ),
+        # ── #2060 item 2: WHEN ──────────────────────────────────────────────────
+        #
+        # "A probability is ungradeable without a when." The card served
+        # `resolution_date` and nothing else, and for a Kalshi game market that is
+        # the CLOSE time, not the start (gotcha #14) — so the one temporal fact on
+        # the card was the wrong one.
+        #
+        # The data was already there: measured 2026-08-21, **50,776 of 50,779**
+        # open markets carry `commence_time` (99.994%). This was a serve-side
+        # omission, not a gap.
+        #
+        # It is worth knowing what this exposes. The exemplar card (59183794)
+        # commences 2026-08-18 and was still being served as a labelling candidate
+        # on 08-21 — a three-day-old game, open only because Kalshi stops returning
+        # settled markets and our status goes stale (gotcha #33). Alex could not
+        # have seen that before, and now cannot miss it.
+        "commence_time": (
+            _commence_time.isoformat()
+            if (_commence_time := getattr(market, "commence_time", None))
+            else None
+        ),
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
         # ── THE BINDING BETWEEN THIS READ AND THE JUDGMENT THAT FOLLOWS IT ────
@@ -550,8 +616,12 @@ def _serialize_labeling_candidate(
         # a different rank tomorrow is the same card, and refusing a verdict over
         # its position would be a refusal nobody could explain by looking at the
         # screen. Pinned by a test that fingerprints one market at two ranks.
+        # `display_name`, not `market.name` — the digest is over what is RENDERED,
+        # which is this module's whole promise, and after #2060 the rendered title
+        # is the repaired one. Fingerprinting the source text would refuse a verdict
+        # whenever a repair became newly available, for a change nobody could see.
         "card_fingerprint": card_fingerprint(
-            title=market.name,
+            title=display_name,
             # Native does not PRINT status, so including it looks like a
             # violation of "fingerprint what is rendered". It is not: the
             # sampler's strata admit only live, unresolved markets, so status is

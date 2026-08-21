@@ -24,7 +24,11 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
-import { renderedPercent } from "../../lib/renderedPercent";
+import {
+  isComplementPair,
+  renderedCardPercents,
+  renderedPercent,
+} from "../../lib/renderedPercent";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const CONTRACT_PATH = join(REPO_ROOT, "contracts/rendered_percent.json");
@@ -34,11 +38,26 @@ interface Case {
   percent: number | null;
   discriminates?: boolean;
 }
+interface CardCase {
+  probabilities: (number | null)[];
+  percents: (number | null)[];
+  complement_pair: boolean;
+  naive: (number | null)[];
+  discriminates?: boolean;
+}
 interface Contract {
   version: number;
   rule: string;
-  implementations: { runtime: string; path: string; symbol: string; driven_by: string }[];
+  card_rule: string;
+  implementations: {
+    runtime: string;
+    path: string;
+    symbol: string;
+    card_symbol: string;
+    driven_by: string;
+  }[];
   cases: Case[];
+  card_cases: CardCase[];
 }
 
 const CONTRACT: Contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf8"));
@@ -84,6 +103,72 @@ describe("the contract still discriminates", () => {
       const differs = bankers(c.probability * 100) !== c.percent;
       expect([c.probability, differs]).toEqual([c.probability, Boolean(c.discriminates)]);
     }
+  });
+});
+
+// ── THE CARD RULE (#2060) ────────────────────────────────────────────────────
+
+describe("web renders the CARD the way the contract says", () => {
+  it.each(CONTRACT.card_cases.map((c) => [JSON.stringify(c.probabilities), c] as const))(
+    "%s",
+    (_label, c) => {
+      expect(renderedCardPercents(c.probabilities)).toEqual(c.percents);
+      expect(isComplementPair(c.probabilities)).toBe(c.complement_pair);
+    }
+  );
+
+  it("a complement pair always sums to exactly 100 — THE display invariant", () => {
+    const pairs = CONTRACT.card_cases.filter((c) => c.complement_pair);
+    expect(pairs.length).toBeGreaterThanOrEqual(6);
+    for (const c of pairs) {
+      const rendered = renderedCardPercents(c.probabilities) as number[];
+      expect([c.probabilities, rendered.reduce((a, b) => a + b, 0)]).toEqual([
+        c.probabilities,
+        100,
+      ]);
+    }
+  });
+
+  it("leaves non-complement cards exactly as independent rounding had them", () => {
+    // Gotcha #43 — the guard must be proved in BOTH directions, or a future
+    // "simplification" that normalizes every pair passes the whole suite while
+    // inventing probabilities on thin books.
+    const left = CONTRACT.card_cases.filter((c) => !c.complement_pair);
+    expect(left.length).toBeGreaterThanOrEqual(6);
+    for (const c of left) {
+      expect(renderedCardPercents(c.probabilities)).toEqual(
+        c.probabilities.map((p) => renderedPercent(p))
+      );
+    }
+  });
+
+  it("keeps the rows where the card rule differs from independent rounding", () => {
+    const discriminating = CONTRACT.card_cases.filter((c) => c.discriminates);
+    expect(discriminating.length).toBeGreaterThanOrEqual(6);
+    for (const c of CONTRACT.card_cases) {
+      const naive = c.probabilities.map((p) => renderedPercent(p));
+      // The `naive` column is checked against arithmetic, not trusted…
+      expect([c.probabilities, naive]).toEqual([c.probabilities, c.naive]);
+      // …and so is the flag derived from it.
+      const differs = JSON.stringify(c.percents) !== JSON.stringify(naive);
+      expect([c.probabilities, differs]).toEqual([
+        c.probabilities,
+        Boolean(c.discriminates),
+      ]);
+    }
+  });
+
+  it("the exemplar from #2060 renders 93 and 7, not 93 and 8", () => {
+    expect(renderedCardPercents([0.925, 0.075])).toEqual([93, 7]);
+    // …and the naive rendering it replaces really did sum to 101.
+    expect([renderedPercent(0.925), renderedPercent(0.075)]).toEqual([93, 8]);
+  });
+
+  it("undefined and empty are not a pair", () => {
+    expect(renderedCardPercents(undefined)).toEqual([]);
+    expect(renderedCardPercents(null)).toEqual([]);
+    expect(isComplementPair([0.6, undefined])).toBe(false);
+    expect(isComplementPair([NaN, 0.4])).toBe(false);
   });
 });
 
@@ -156,6 +241,79 @@ d("the Swift test table has not drifted from the contract", () => {
   });
 });
 
+d("the Swift CARD table has not drifted from the contract", () => {
+  const src = readFileSync(SWIFT_TEST, "utf8");
+  const start = src.indexOf("CARD ROWS BEGIN");
+  const end = src.indexOf("CARD ROWS END");
+
+  const parseList = (s: string): (number | null)[] =>
+    s.trim() === ""
+      ? []
+      : s
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+          .map((t) => (t === "nil" ? null : Number(t)));
+
+  const rows = () => {
+    const block = src.slice(start, end);
+    // ([probs], [percents], bool, [naive])
+    return [
+      ...block.matchAll(
+        /\(\s*\[([^\]]*)\]\s*,\s*\[([^\]]*)\]\s*,\s*(true|false)\s*,\s*\[([^\]]*)\]\s*\)/g
+      ),
+    ].map((m) => ({
+      probabilities: parseList(m[1]),
+      percents: parseList(m[2]),
+      complement_pair: m[3] === "true",
+      naive: parseList(m[4]),
+    }));
+  };
+
+  it("has the delimited block the drift check reads", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  it("contains exactly the contract's card rows, in order", () => {
+    expect(rows()).toEqual(
+      CONTRACT.card_cases.map((c) => ({
+        probabilities: c.probabilities,
+        percents: c.percents,
+        complement_pair: c.complement_pair,
+        naive: c.naive,
+      }))
+    );
+  });
+
+  it("is non-vacuous — the parse finds rows at all", () => {
+    expect(rows().length).toBe(CONTRACT.card_cases.length);
+    expect(rows().length).toBeGreaterThan(10);
+  });
+});
+
+d("native implements the card rule, not just the scalar one", () => {
+  const impl = readFileSync(SWIFT_IMPL, "utf8");
+  const code = impl
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("///") && !l.trim().startsWith("//"))
+    .join("\n");
+
+  it("defines renderedCardPercents and isComplementPair", () => {
+    expect(code).toContain("func renderedCardPercents");
+    expect(code).toContain("func isComplementPair");
+  });
+
+  it("derives the second side rather than rounding it", () => {
+    expect(code).toContain("100 - leader");
+  });
+
+  it("carries the same band as the contract", () => {
+    expect(code).toContain("0.99");
+    expect(code).toContain("1.01");
+  });
+});
+
 d("the labeling card renders through the shared function, not a second copy", () => {
   const view = readFileSync(
     join(REPO_ROOT, "ios/Bain Luck/Bain Luck/Views/DiscoverLabelingView.swift"),
@@ -166,14 +324,75 @@ d("the labeling card renders through the shared function, not a second copy", ()
     "utf8"
   );
 
+  const labelingPage = readFileSync(
+    join(REPO_ROOT, "frontend/app/admin/labeling/page.tsx"),
+    "utf8"
+  );
+  // #2060 extracted the card body out of the page so its rendered output could be
+  // asserted (see `__tests__/components/labelingCardDisplayInvariant.test.tsx`).
+  // The source-level claims below follow it to where the rendering now lives —
+  // a grep pointed at the file the code LEFT is a grep that passes forever.
+  const labeling = readFileSync(
+    join(REPO_ROOT, "frontend/components/admin/LabelingCard.tsx"),
+    "utf8"
+  );
+
   it("native calls renderedPercent", () => {
     expect(view).toContain("renderedPercent(value)");
     expect(view).not.toMatch(/Int\(\(value \* 100\)\.rounded\(\)\)/);
   });
 
   it("web calls renderedPercent", () => {
-    expect(page).toContain("renderedPercent(features.probability)");
+    expect(page).toContain("renderedPercent");
     expect(page).not.toMatch(/Math\.round\(features\.probability \* 100\)/);
+  });
+
+  // ── #2060: THERE WAS A FOURTH COPY, AND IT WAS ON THE PAGE THAT WROTE 61 OF
+  // THE STORE'S 88 ROWS ──────────────────────────────────────────────────────
+  //
+  // `frontend/app/admin/labeling/page.tsx` carried `Math.round(val * 100)`
+  // inline and never imported the shared function at all, so the contract that
+  // exists to keep runtimes agreeing was not consulted by one of the surfaces it
+  // is about. It computed the same answer, which is how this drift survives: it
+  // is right until the rule changes, and then it is silently the only place that
+  // did not change.
+
+  it("the labeling card imports the shared rule instead of inlining one", () => {
+    expect(labeling).toContain('from "@/lib/renderedPercent"');
+    // …and the page renders that card rather than a second copy of the JSX.
+    expect(labelingPage).toContain("@/components/admin/LabelingCard");
+  });
+
+  it("no admin labeling surface re-implements the percent inline", () => {
+    // Comments are stripped first, the same way the Swift arm above does it.
+    // Without that this matches its OWN prose describing the banned expression —
+    // which it did on the first run, and a check that flags the documentation of
+    // a bug as the bug is a check that gets deleted rather than fixed.
+    const codeOf = (src: string) =>
+      src
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+        .join("\n");
+    for (const [name, src] of [["label-pass", page], ["labeling", labeling]] as const) {
+      // `Math.round(<anything> * 100)` — the shape of every copy found so far.
+      expect([name, codeOf(src).match(/Math\.round\([^)]*\*\s*100\)/)]).toEqual([
+        name,
+        null,
+      ]);
+    }
+  });
+
+  it("both pages prefer the SERVER's rendered_percent over re-deriving it", () => {
+    // Since #2060 the card rule can move the leader by a point, so a client that
+    // re-rounds the raw float can print 71 against a digest taken over 70 and
+    // refuse its own write for a drift nobody could see.
+    expect(page).toContain("rendered_percent");
+    expect(labeling).toContain("rendered_percent");
+  });
+
+  it("both pages show the card's commence time", () => {
+    expect(page).toContain("commence_time");
+    expect(labeling).toContain("commence_time");
   });
 });
 
