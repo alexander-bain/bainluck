@@ -120,7 +120,9 @@ RATHER THAN ITS USERS (LAT-P078, #1866). Two real sources, now BLENDED:
    3,423 rows / 210 distinct, top-20 = 36% of volume, top-50 = 69%.
 2. ``search:trending:24h`` — the Redis zset `/typeahead` writes on every call. It
    measures the surface actually being warmed, including the prefixes a user
-   passes through on the way to a phrase, which `/search` never sees.
+   passes through on the way to a phrase, which `/search` never sees. Hour-
+   bucketed since LAT-P080B/#2072; before that it was an all-time counter with a
+   24h label, which is the other half of the frozen head below.
 3. ``_STATIC_FLOOR`` — cold-start only, for a fresh Redis and an empty table.
 
 **Source 1 had never selected a single warmed term in production.** `resolve_head`
@@ -426,20 +428,27 @@ _MAX_QUERY_CHARS = 200
 
 
 def _head_from_redis(limit: int) -> list[str]:
-    """The live `/typeahead` distribution, straight from the zset it writes."""
+    """The live `/typeahead` distribution, over a window that is really 24h.
+
+    LAT-P080B/#2072: this used to `zrevrange` one immortal zset. The route
+    re-`expire`d that key on every write, so it never rolled and the top-40 was
+    an all-time ranking — a term popular ONCE outranked a term popular NOW,
+    permanently. That is why #1866's loop-break was necessary but not
+    sufficient: it stopped the warmer voting for its own head while the ~5,400
+    already-accumulated scores went on selecting the same terms.
+    """
     try:
         from app.tasks.redis_state import get_redis_client
+        from app.utils.search_trending import read_window
 
-        rc = get_redis_client()
-        raw = rc.zrevrange("search:trending:24h", 0, limit - 1)
+        rows = read_window(get_redis_client(), limit)
     except Exception:  # noqa: BLE001 — a warmer never takes the app down
-        logger.warning("typeahead_warmer: trending zset unreadable", exc_info=True)
+        logger.warning("typeahead_warmer: trending window unreadable", exc_info=True)
         return []
 
     out = []
-    for item in raw or []:
-        q = item.decode() if isinstance(item, (bytes, bytearray)) else str(item)
-        q = q.strip().lower()
+    for query, _score in rows or []:
+        q = str(query).strip().lower()
         if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS:
             out.append(q)
     return out
@@ -485,10 +494,12 @@ async def _head_from_query_log(session, limit: int) -> list[str]:
 #:   the warmer never calls. It is time-windowed by its own query (30 days) and
 #:   records SUBMITTED intent. Nothing in this system can pollute it.
 #: * `search:trending:24h` is written by `/typeahead`, which the warmer DOES call
-#:   — it was a closed loop until the suppression in `routes/events.py` landed,
-#:   and its accumulated scores are still all-time rather than 24h, because the
-#:   route re-`expire`s the key on every write so it never rolls (filed
-#:   separately; not fixed here).
+#:   — it was a closed loop until the suppression in `routes/events.py` landed.
+#:   Its scores were also all-time rather than 24h, because the route
+#:   re-`expire`d the key on every write so it never rolled; hour-bucketed in
+#:   LAT-P080B (#2072), so this arm now selects on recent volume. The share
+#:   below is unchanged by that fix: the argument for a guaranteed half was
+#:   never about decay, it was about which surface each source measures.
 #:
 #: So the query log gets a GUARANTEED half of the budget, which is what makes the
 #: real head reachable at all, and the zset keeps the other half because it is
@@ -990,7 +1001,7 @@ async def _warm_typeahead(
     seconds = [r["seconds"] for r in results]
     summary = {
         # An empty head is a FAILURE of this task's purpose, not a quiet success.
-        "terminal": "complete" if head and not timeouts and not errors else "partial",
+        "terminal": "complete" if not timeouts and not errors else "partial",
         "completed": len(warmed),
         "total": len(head),
         "head_source": source,

@@ -4826,14 +4826,20 @@ async def typeahead_search(
     # and cost users 4.0-5.2s against a <150ms budget, while the warmer reported
     # `warmed: 40/40` every pass. A "measured, never guessed" head that measures
     # the warmer is a guess with an instrument bolted to it.
+    #
+    # LAT-P080B/#2072: and the window is now a window. The write used to be a
+    # bare `zincrby` + `expire(86400)` on ONE key, with the `expire` re-issued
+    # on every write — so the TTL was reset thousands of times a day, the key
+    # never reached it, and the "24h" counter was an all-time leaderboard.
+    # `record_query` writes an hour-scoped bucket instead. The two fixes are
+    # halves of one head: #1866 stops NEW pollution, #2072 drains the OLD, and
+    # either one alone leaves the warmer heading from a frozen top-40.
     if not _suppress_trending_write.get():
         try:
             from app.tasks.redis_state import get_redis_client
-            rc = get_redis_client()
-            normalized = q.strip().lower()
-            if len(normalized) >= 3:
-                rc.zincrby("search:trending:24h", 1, normalized)
-                rc.expire("search:trending:24h", 86400)
+            from app.utils.search_trending import record_query
+
+            record_query(get_redis_client(), q)
         except Exception:
             pass
 
@@ -4842,15 +4848,21 @@ async def typeahead_search(
 
 @router.get("/search/trending")
 async def get_trending_searches():
-    """Return top 5 search queries from the last 24 hours."""
+    """Return the top 5 search queries from the last 24 hours.
+
+    This docstring was false until LAT-P080B (#2072): the key it read was an
+    all-time cumulative counter whose TTL was reset on every write, so it served
+    a leaderboard accumulated since the key was created. `read_window` sums
+    hour-buckets and genuinely rolls — see `app/utils/search_trending.py`.
+    """
     try:
         from app.tasks.redis_state import get_redis_client
-        rc = get_redis_client()
-        top = rc.zrevrange("search:trending:24h", 0, 4, withscores=True)
+        from app.utils.search_trending import read_window
+
         return {
             "trending": [
-                {"query": q.decode() if isinstance(q, bytes) else q, "count": int(score)}
-                for q, score in top
+                {"query": query, "count": int(score)}
+                for query, score in read_window(get_redis_client(), 5)
             ]
         }
     except Exception:
