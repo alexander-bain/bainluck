@@ -262,6 +262,9 @@ class TestBeatScheduleCompleteness:
         "big-move-alerts",
         "morning-digest-daily",
         "precompute-calibration-main",
+        # CAL-P084 (#2007) — the beat gauge sampler. :05 and :45, deliberately
+        # outside the producer's :15-:35 window.
+        "calibration-beat-gauge-sampler",
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
         "precompute-source-intelligence",

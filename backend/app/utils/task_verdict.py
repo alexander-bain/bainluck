@@ -276,6 +276,17 @@ ENFORCED_TASKS = frozenset({
     # that "succeeded" with zero rows against a population of hundreds of
     # thousands. A gate that cannot measure must not read GREEN.
     "calibration_published_twin",      # terminal + measured + verdict + db_rows
+    # #2007 (CAL-P084): the beat gauge sampler. Enrolled AT BIRTH with terminals,
+    # and it is the purest instance of this module's founding shape yet — a
+    # SAMPLER's failure mode is not an error, it is running forever and capturing
+    # nothing, which is `kalshi_trades` exactly (500 fetched, 500 empty, GREEN
+    # every 6h for ten weeks). Its terminals: `complete` only when the current
+    # beat is in the ring, `failed` when the ledger could not be read / a
+    # required gauge was absent / the ring could not be written, and `partial`
+    # when the ledger reads fine but no beat has landed in over two periods —
+    # the sampler working over a producer that has stopped is the one state that
+    # would otherwise look identical to health.
+    "calibration_beat_gauge_sampler",  # terminal + appended + summary + ledger_age_s
 })
 
 

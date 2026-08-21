@@ -311,6 +311,27 @@ class TestEnforcementScope:
             # change — per the trap documented at `polymarket_winners` above,
             # adding the name alone would have been a no-op.
             "calibration_published_twin",
+            # #2007 (CAL-P084): the beat gauge sampler — the fifth enrolled at
+            # BIRTH, and the purest instance of what this set is for. A
+            # SAMPLER's failure mode is not an error, it is running forever and
+            # capturing nothing, which is `kalshi_trades` exactly. It exists
+            # because the phase ledger keeps ONE row per identity and is
+            # overwritten every beat, so the bound's first descent was captured
+            # only by a previous window's leftover shell process; an instrument
+            # written to end that blindness must not be able to go blind
+            # quietly.
+            #
+            # `complete` only when the current beat is in the ring, `failed` on
+            # an unreadable ledger / an absent required gauge / a failed write
+            # (for a sampler the RECORD is the product, so losing it is the run
+            # failing, not a lesser mishap), and `partial` when the ledger reads
+            # fine but no beat has landed in two periods — the sampler working
+            # over a stopped producer is the one state that would otherwise be
+            # indistinguishable from health.
+            #
+            # Terminal comes from `decide_terminal` in
+            # `app/tasks/calibration_beat_gauge_sampler.py`, in this same change.
+            "calibration_beat_gauge_sampler",
         }
 
     def test_enforced_task_partial_blocks_success(self):
