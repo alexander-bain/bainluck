@@ -53,9 +53,14 @@ Every unanchored row gets exactly one disposition, and all of them are counted:
     The row has acquired a provider id AND another row shares it. This is the
     literal "an id arrived" case. Handed to the merge rail under
     ``event_merge_invariant.assert_mergeable`` — never merged by name or window.
-``ANCHORED_NO_TWIN``
-    An id arrived and no other row shares it. Reconciliation succeeded; there was
-    simply no duplicate. Counted as reconciled, nothing to do.
+``ANCHORED_NO_DUPLICATE``
+    An id arrived, no other row shares it, and nothing else in the table looks
+    like the same game. Reconciliation succeeded; there was simply no duplicate.
+``ANCHORED_TWIN_UNSEEN``
+    An id arrived, no other row shares it — **and a duplicate is sitting there
+    anyway**, matching on participants and time, joined by no provider id. This
+    is NOT a success. It is ruling 048's accepted cost, still outstanding, in the
+    one shape the id-keyed drain is constitutionally unable to see.
 ``NO_ANCHOR_CHANNEL``
     The row's creating provider has no id column on ``events``. **No id can ever
     arrive.** This row is not waiting for reconciliation; it is outside it.
@@ -68,6 +73,33 @@ reporting ``0 reconciled`` over a population of 500 ``AWAITING_ANCHOR`` rows say
 "be patient"; over 499 ``NO_ANCHOR_CHANNEL`` rows it says "this will never happen",
 and those must not render identically (gotcha #53 — an empty read and an impossible
 one are different facts).
+
+WHY ``ANCHORED_NO_TWIN`` WAS SPLIT IN TWO (queue 387, Fable directive 2026-08-21)
+---------------------------------------------------------------------------------
+
+The single ``ANCHORED_NO_TWIN`` bucket asserted more than it measured. ``twin_count``
+is strictly id-keyed — deliberately, because ``NULL == NULL`` becoming a merge is the
+harm this whole module exists to refuse. But that makes "no twin" mean **"no row
+shares my id"**, and the bucket's name and docstring read it as **"no duplicate
+exists"**. Those are different claims, and the gap between them is exactly the
+population ruling 048 is accumulating: a duplicate whose two halves share no
+provider id is *invisible to the key* and *plainly visible to a human*.
+
+So one bucket became two. ``ANCHORED_NO_DUPLICATE`` is the honest success.
+``ANCHORED_TWIN_UNSEEN`` is the outstanding cost, and it is counted by a
+deliberately WEAKER predicate than the one that authorizes a merge — same sport,
+matching participants in either orientation, within
+``MAX_ABSORPTION_SEPARATION_SECONDS``, sharing no id.
+
+**That predicate is a METER and must never become a MERGE.** It is precisely the
+name-and-time reading ruling 048 deleted, and it is safe here only because nothing
+downstream consumes it: ``drainable`` is still built from ``twin_count`` alone, and
+the drain still goes through ``assert_mergeable``. A future reader who wires this
+count into the apply path has re-created the defect 048 was written to kill —
+5,142 / 540 / 2,097 rows of one game's data on another's (#1779/#1798). The
+separation window is shared with the invariant so the two cannot drift into
+disagreeing about what "the same game" means; a doubleheader is >6h apart and is
+therefore two real games, not an unseen twin.
 
 DRY-RUN BY DEFAULT. The apply path DELETEs, so it is opt-in and it goes through the
 shared invariant rather than its own SQL, per ``event_merge_invariant``'s docstring:
@@ -82,6 +114,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from app.utils.event_merge_invariant import (
+    MAX_ABSORPTION_SEPARATION_SECONDS,
     PROVIDER_ID_COLUMNS,
     UnanchoredMergeRefused,
     assert_mergeable,
@@ -108,9 +141,20 @@ SOURCE_TO_ID_COLUMN: dict[str, str] = {
 CHANNEL_LESS_SOURCES: frozenset[str] = frozenset({"kalshi", "polymarket"})
 
 DISPOSITION_DRAINABLE = "DRAINABLE"
-DISPOSITION_ANCHORED_NO_TWIN = "ANCHORED_NO_TWIN"
+#: An id arrived, nothing shares it, and nothing looks like this game either.
+DISPOSITION_ANCHORED_NO_DUPLICATE = "ANCHORED_NO_DUPLICATE"
+#: An id arrived, nothing shares it, and a duplicate is sitting there regardless.
+DISPOSITION_ANCHORED_TWIN_UNSEEN = "ANCHORED_TWIN_UNSEEN"
 DISPOSITION_NO_CHANNEL = "NO_ANCHOR_CHANNEL"
 DISPOSITION_AWAITING = "AWAITING_ANCHOR"
+
+#: The two dispositions the old single bucket collapsed into. Kept as a named pair
+#: rather than left implicit, because the ONE thing a reader must not do with the
+#: split is add the halves back together and call the sum a success.
+ANCHORED_DISPOSITIONS: tuple[str, ...] = (
+    DISPOSITION_ANCHORED_NO_DUPLICATE,
+    DISPOSITION_ANCHORED_TWIN_UNSEEN,
+)
 
 #: A bounded scan. This runs on a schedule against a hot table.
 DEFAULT_LIMIT = 1000
@@ -127,20 +171,23 @@ def _creating_sources(event_tags: Any) -> list[str]:
 def classify_row(row: Any) -> str:
     """One disposition per unanchored row. Pure — no DB, no clock.
 
-    ``row`` needs ``event_tags``, the three provider-id columns, and
-    ``twin_count`` (rows sharing at least one of this row's non-null ids).
+    ``row`` needs ``event_tags``, the three provider-id columns, ``twin_count``
+    (rows sharing at least one of this row's non-null ids) and
+    ``shadow_twin_count`` (rows that look like the same game and share NO id).
     """
     ids = {col: getattr(row, col, None) for col in PROVIDER_ID_COLUMNS}
     anchored = any(v is not None for v in ids.values())
 
     if anchored:
-        # An id DID arrive. Whether there is anything to drain is a separate
-        # question from whether reconciliation happened.
-        return (
-            DISPOSITION_DRAINABLE
-            if (getattr(row, "twin_count", 0) or 0) > 0
-            else DISPOSITION_ANCHORED_NO_TWIN
-        )
+        # An id DID arrive. Three separate questions follow, and the old code
+        # asked only the first: is there a twin the key can SEE (drainable), is
+        # there a twin the key CANNOT see (outstanding, undrainable by this
+        # rail), or is there genuinely no duplicate at all (the only success).
+        if (getattr(row, "twin_count", 0) or 0) > 0:
+            return DISPOSITION_DRAINABLE
+        if (getattr(row, "shadow_twin_count", 0) or 0) > 0:
+            return DISPOSITION_ANCHORED_TWIN_UNSEEN
+        return DISPOSITION_ANCHORED_NO_DUPLICATE
 
     sources = _creating_sources(getattr(row, "event_tags", None))
     if sources and all(s in CHANNEL_LESS_SOURCES for s in sources):
@@ -174,7 +221,52 @@ _CENSUS_SQL = text(
                   OR (e.statpal_fixture_id IS NOT NULL
                       AND o.statpal_fixture_id = e.statpal_fixture_id)
                 )
-           ) AS twin_count
+           ) AS twin_count,
+           CASE WHEN (e.external_id IS NOT NULL OR e.espn_id IS NOT NULL
+                      OR e.statpal_fixture_id IS NOT NULL) THEN (
+             -- The METER, not a merge predicate. See the module docstring: this
+             -- is the name-and-time reading ruling 048 deleted, computed here
+             -- ONLY so an invisible duplicate stops being counted as a success.
+             -- Nothing downstream may consume it to authorize a write.
+             --
+             -- The CASE is a COST GATE, and it is load-bearing. `classify_row`
+             -- consults this count only for ANCHORED rows, and anchored rows are
+             -- ~299 of 74,181 — so computing it for the whole census was ~99.6%
+             -- waste. Measured on production 2026-08-21: ungated, this subquery
+             -- ran 14,472 ms over 855K shared buffers for one 1,000-row scan.
+             -- PostgreSQL short-circuits CASE, so the correlated scan now runs
+             -- only where its answer can change a disposition.
+             --
+             -- Every arm is strict TRUE/FALSE on purpose. Writing the id-overlap
+             -- exclusion as a bare `NOT (a OR b OR c)` yields NULL — hence no
+             -- row — whenever the OTHER side's column is NULL, which is the
+             -- common case and would have silently zeroed this count.
+             SELECT COUNT(*) FROM events s
+              WHERE s.id <> e.id
+                AND s.sport_id = e.sport_id
+                AND s.commence_time
+                    BETWEEN e.commence_time - CAST(:sep AS interval)
+                        AND e.commence_time + CAST(:sep AS interval)
+                AND (
+                     (lower(COALESCE(s.home_team_normalized, s.home_team_name))
+                        = lower(COALESCE(e.home_team_normalized, e.home_team_name))
+                      AND lower(COALESCE(s.away_team_normalized, s.away_team_name))
+                        = lower(COALESCE(e.away_team_normalized, e.away_team_name)))
+                  OR (lower(COALESCE(s.home_team_normalized, s.home_team_name))
+                        = lower(COALESCE(e.away_team_normalized, e.away_team_name))
+                      AND lower(COALESCE(s.away_team_normalized, s.away_team_name))
+                        = lower(COALESCE(e.home_team_normalized, e.home_team_name)))
+                )
+                AND NOT (
+                     (e.external_id IS NOT NULL AND s.external_id IS NOT NULL
+                      AND s.external_id = e.external_id)
+                  OR (e.espn_id IS NOT NULL AND s.espn_id IS NOT NULL
+                      AND s.espn_id = e.espn_id)
+                  OR (e.statpal_fixture_id IS NOT NULL
+                      AND s.statpal_fixture_id IS NOT NULL
+                      AND s.statpal_fixture_id = e.statpal_fixture_id)
+                )
+           ) ELSE 0 END AS shadow_twin_count
       FROM events e
      WHERE e.event_tags @> CAST(:tag AS jsonb)
      ORDER BY e.commence_time DESC
@@ -229,7 +321,8 @@ async def reconcile(
     """
     census: dict[str, int] = {
         DISPOSITION_DRAINABLE: 0,
-        DISPOSITION_ANCHORED_NO_TWIN: 0,
+        DISPOSITION_ANCHORED_NO_DUPLICATE: 0,
+        DISPOSITION_ANCHORED_TWIN_UNSEEN: 0,
         DISPOSITION_NO_CHANNEL: 0,
         DISPOSITION_AWAITING: 0,
     }
@@ -239,7 +332,14 @@ async def reconcile(
 
     try:
         rows = (await session.execute(
-            _CENSUS_SQL, {"tag": f'["{UNANCHORED_TAG}"]', "lim": int(limit)}
+            _CENSUS_SQL,
+            {
+                "tag": f'["{UNANCHORED_TAG}"]',
+                "lim": int(limit),
+                # Shared with the invariant so the meter and the merge gate can
+                # never drift into disagreeing about what "the same game" means.
+                "sep": f"{MAX_ABSORPTION_SEPARATION_SECONDS} seconds",
+            },
         )).mappings().all()
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         # gotcha #53: a census that could not run must not render as a census
@@ -323,6 +423,12 @@ async def reconcile(
 
     reconciled = len(drained)
     unbounded = census[DISPOSITION_NO_CHANNEL]
+    # The half of the old ANCHORED_NO_TWIN bucket that was never a success. It is
+    # added to `unbounded` for the operator's purposes — both are outstanding cost
+    # that this rail cannot drain — but reported separately, because the REASONS
+    # differ and so do the fixes: NO_ANCHOR_CHANNEL wants #1946's anchor table,
+    # TWIN_UNSEEN wants an identity join the provider ids do not supply.
+    twin_unseen = census[DISPOSITION_ANCHORED_TWIN_UNSEEN]
 
     if errors:
         terminal = "partial"
@@ -337,7 +443,9 @@ async def reconcile(
         reason = (
             f"nothing drainable: {unbounded} rows have no anchoring channel "
             f"(their creating provider has no id column on events), "
-            f"{census[DISPOSITION_AWAITING]} still awaiting an id"
+            f"{census[DISPOSITION_AWAITING]} still awaiting an id, "
+            f"{twin_unseen} anchored rows have a duplicate this id-keyed rail "
+            f"CANNOT SEE (matching participants and time, no shared id)"
         )
 
     return {
@@ -354,8 +462,13 @@ async def reconcile(
         # Ruling 048's bargain, as two numbers an operator can read against each
         # other. ``unbounded`` is the part the ruling did not anticipate: rows for
         # which the bounding clause has no mechanism at all.
+        # `reconciled` is DRAINS — pairs actually absorbed. It has never been the
+        # count of rows that acquired an id, and the two must not be conflated:
+        # the admin provenance meter did exactly that and reported 299 rows that
+        # had merely been anchored under the field name `reconciled` (queue 387).
         "reconciled": reconciled,
         "unbounded": unbounded,
+        "twin_unseen": twin_unseen,
         "drained": drained[:50],
         "refused": refused[:50],
         "errors": errors,
@@ -399,7 +512,7 @@ class _Row:
     __slots__ = (
         "id", "sport_id", "commence_time", "status", "home_team_name",
         "away_team_name", "event_tags", "external_id", "espn_id",
-        "statpal_fixture_id", "twin_count",
+        "statpal_fixture_id", "twin_count", "shadow_twin_count",
     )
 
     def __init__(self, mapping):
@@ -444,9 +557,10 @@ def summarize_for_operator(result: dict[str, Any]) -> str:
         return f"UNMEASURED — {result.get('reason')}"
     census = result.get("census") or {}
     return (
-        f"{result.get('terminal')}: reconciled={result.get('reconciled')} "
+        f"{result.get('terminal')}: drained={result.get('reconciled')} "
         f"of {result.get('scanned')} unanchored · "
         f"no-channel={census.get(DISPOSITION_NO_CHANNEL)} "
         f"awaiting={census.get(DISPOSITION_AWAITING)} "
-        f"anchored-no-twin={census.get(DISPOSITION_ANCHORED_NO_TWIN)}"
+        f"anchored-no-duplicate={census.get(DISPOSITION_ANCHORED_NO_DUPLICATE)} "
+        f"anchored-TWIN-UNSEEN={census.get(DISPOSITION_ANCHORED_TWIN_UNSEEN)}"
     )

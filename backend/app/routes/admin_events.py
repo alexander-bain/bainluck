@@ -567,7 +567,7 @@ async def list_duplicate_events(
                 WHERE event_tags @> '["provenance:unanchored"]'::jsonb
                   AND (external_id IS NOT NULL OR espn_id IS NOT NULL
                        OR statpal_fixture_id IS NOT NULL)
-              ) AS reconciled,
+              ) AS anchored,
               COUNT(*) AS window_events
             FROM events
             WHERE commence_time > NOW() - INTERVAL '30 days'
@@ -578,8 +578,33 @@ async def list_duplicate_events(
             "window": "30d",
             # Rows the id-less create path produced (ruling 048's declared cost).
             "created_unanchored": m.created_unanchored or 0,
-            # Of those, the ones an id has since reached — the drain working.
-            "reconciled": m.reconciled or 0,
+            # Of those, the ones an id has since reached.
+            #
+            # ⚠️ THIS FIELD WAS CALLED `reconciled` AND ITS COMMENT SAID "the drain
+            # working". Both were wrong, in the way gotcha #145 describes: an id
+            # ARRIVING and a duplicate being DRAINED are different events, and this
+            # SQL only ever observed the first. It counts rows still present in
+            # `events` that happen to hold an id — a drained row is DELETED and can
+            # never appear in this count at all, so the field could not have
+            # measured drains even in principle. It read **299** while the drain
+            # had absorbed **zero** pairs, and 299 was reported as reconciliation
+            # succeeding (queue 387, Fable directive 2026-08-21).
+            "anchored": m.anchored or 0,
+            # Drains are not derivable from this table for the reason above. The
+            # honest value is "ask the task", and saying so beats a plausible zero.
+            "drained": None,
+            "drained_source": (
+                "GET /api/admin/task-metrics?task=reconcile_unanchored_events "
+                "— its `reconciled` field IS drains"
+            ),
+            # DEPRECATED ALIAS, retained ONLY so `flow_sentinel`'s
+            # `reconciled_delta` keeps reading across the rename. It carries the
+            # `anchored` value, which is what it always carried. Delete it once the
+            # sentinel reads `anchored`; do not build anything new on it.
+            "reconciled": m.anchored or 0,
+            "reconciled_deprecated": (
+                "alias of `anchored`; it never meant drains — see gotcha #145"
+            ),
             # Of those, the ones still anonymous — the OUTSTANDING cost. This is
             # the number that must not grow without bound; if it climbs while
             # `reconciled` stays flat, reconciliation is not draining.
