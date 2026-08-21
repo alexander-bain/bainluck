@@ -31,13 +31,14 @@ file must describe the branch that exists, because the Integrator's risk call is
 Two earlier drifts (`commits: 2`, `files: 8`) were already corrected by the `2c429334` refresh
 and are recorded here only so the correction history is one story rather than two.
 
-commits: 5          # 3 substantive + 2 token commits (this re-stamp makes it 6 / 3)
-commits_substantive: 3
+commits: 8          # 4 substantive + 4 token commits (this update is the 4th token commit)
+commits_substantive: 4
   b29edb44  whole-market fold        7 files
   ba7a6772  durability round 2       2 files
   973c304f  #2076 result             1 file  (artifact re-write)
-  # 1527abd9 + 2c429334 are READY-token commits; this re-stamp is the third
-files: 10
+  bb1cce05  gotcha 152               1 file  (docs/gotchas-reference.md — CAL-P086)
+  # 1527abd9, 2c429334, e93ec165 and this one are READY-token commits: that file only.
+files: 10           # UNCHANGED by CAL-P086 — gotchas-reference.md was already among the 10
 files_under_backend_app: 2
   backend/app/utils/calibration_price_provenance.py   # PURE — verified: imports only
                                                       # __future__ + typing; no session, no
@@ -63,10 +64,12 @@ stack_order: |
   keep-both with gotcha 149 UNCHANGED — still the first free number counted in the merged tree.
 
 gates: |
-  ⚠️ **RUN AT `973c304f`, NOT AT THIS HEAD.** The two commits since are this token and the
-  re-stamp — `READY-calibration-82.md` only, zero code, zero tests. The suite result below is
-  therefore still the truth about every executable byte on this branch, and I am saying which
-  commit it was taken at rather than implying it was taken at the tip.
+  ⚠️ **THE SUITE WAS RUN AT `973c304f`, NOT AT THIS HEAD.** Everything committed since is
+  **docs or this token** — `bb1cce05` adds one line to `docs/gotchas-reference.md`, and the
+  rest touch `READY-calibration-82.md` only. **Zero executable bytes have changed since the
+  suite ran**, so the 18,632 below remains the truth about this branch's code; I am naming the
+  commit rather than implying the tip.
+  ✅ `gotcha_numbering` WAS re-run at `bb1cce05`, after the new entry: **3 passed, EXIT CODE 0.**
 
   full_backend_suite: 18632 passed / 0 failed / 95 skipped / 61 xfailed — PYTEST EXIT CODE 0
                       at 973c304f (729.43 s; redirected to a log, not piped — gotcha #54)
@@ -74,7 +77,12 @@ gates: |
   durability_p085:    17 passed — EXIT CODE 0 (all 17 RED before the fix)
   codex_53:           53 passed, UNCHANGED (durability_p081 + halt_p076 + base)
   p077_suite:         41 passed, unchanged — EXIT CODE 0
-  gotcha_numbering:   3 passed — EXIT CODE 0
+  gotcha_numbering:   3 passed — EXIT CODE 0 (re-run at bb1cce05 with gotcha 152 in place)
+  ⚠️ gotcha_numbers:  this branch now carries TWO — **149** and **152**. 152 is NOT 150:
+                      master's ceiling is 148, but `program/ux-103` and `program/ux-104`
+                      already bank 150 AND 151 without claiming them in `RULING-CLAIMS.md`.
+                      Swept every local + remote ref; 152/153/154 have holders_found = 0.
+                      Recorded in the ledger so the next claimant's arithmetic is right.
   merge_tree:         git merge-tree --write-tree origin/master program/calibration-82
                       -> exit 0, 0 conflicts (re-run AFTER the rebase, against a13239f1)
   delta_reconciles:   CAL-P084's 17,821 no longer applies — the rebase moved the base 122
@@ -151,7 +159,12 @@ second_item: |
   2–8 times: 7 source chunks re-run all 6). #2076 is STRUCTURAL.
   🟢 **ACCEPTED BY ALEX (CAL-P086 directive):** the structural verdict stands and the structural
   repair is **PARKED AS A STAGED SUCCESSOR** with the query-plan evidence attached. **It does not
-  gate the apply.**
+  gate the apply.** Parked on the board 2026-08-21 —
+  `github.com/alexander-bain/bainluck/issues/2076#issuecomment-5374968309` carries the three-budget
+  table, the per-CTE cost/reference table, the chunking refutation, and the caveat against sizing
+  option 3 or 4 from planner cost (the model understates this fold by ≥1.57×, my own extrapolation
+  by ≥2.35×). `in-progress` removed; **the card still wants the `Parked` column** — `claim_issue.py`
+  has no such choice, so a human or the Integrator must move it.
 
 owed: |
   R3's verdict AND R3-R3's; #2059's 15-cell / 481-row enumeration as an artifact; the #2076
