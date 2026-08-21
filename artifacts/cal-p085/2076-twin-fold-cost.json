@@ -1,4 +1,31 @@
 {
+ "budget_series": {
+  "ceiling_lever": "EXHAUSTED \u2014 1_350_000 ms is the largest the task can honour (soft_time_limit 1800 s leaves 450 s of headroom). There is no larger budget to try inside this task shape.",
+  "note": "Three budgets, three identical outcomes. The fold has never once finished; it has only ever been cancelled, and each time it spent essentially the entire budget it was given. The ~1.2-2.0 s overhead is the cancellation path, not progress.",
+  "points": [
+   {
+    "db_rows": 0,
+    "fold_duration_s": 241.18,
+    "overhead_s": 1.18,
+    "timeout_ms": 240000,
+    "window": "CAL-P083"
+   },
+   {
+    "db_rows": 0,
+    "fold_duration_s": 901.96,
+    "overhead_s": 1.96,
+    "timeout_ms": 900000,
+    "window": "CAL-P084"
+   },
+   {
+    "db_rows": 0,
+    "fold_duration_s": 1351.95,
+    "overhead_s": 1.95,
+    "timeout_ms": 1350000,
+    "window": "CAL-P085"
+   }
+  ]
+ },
  "chunking_by_source": {
   "verdict": "REFUTED",
   "why": "every one of the 6 CTEs is an InitPlan root (materialised) and every one is referenced 2-8 times by CTE Scan. An outer WHERE source = X cannot push into a materialised CTE, so each of 7 source chunks re-runs all 6 in full \u2014 including ranked_outcomes at 94.0% of total cost."
@@ -17,10 +44,19 @@
   }
  },
  "does_it_fit_1350_s": {
-  "answer": "NOT SHOWN \u2014 and not measurable today",
-  "blocker": "MAX_TIMEOUT_MS = 1_350_000 rides program/calibration-81, UNMERGED. origin/master is dee32eee and /api/health reports commit dee32eee, so production still clamps at 900_000. Firing the twin today re-measures the already-refuted 900 s.",
-  "measured_floor_s": 901.96,
-  "upper_bound": null
+  "answer": "NO \u2014 MEASURED, NOT ESTIMATED",
+  "db_cells": 0,
+  "db_rows": 0,
+  "enqueue_to_start_lag_s": 396,
+  "enqueued_utc": "2026-08-21T18:55:14Z",
+  "fold_duration_s": 1351.95,
+  "measured_utc": "2026-08-21T19:24:23Z",
+  "note": "Ran on the deployed raised ceiling (program/calibration-81 merged as 81187ae4, master a13239f1). The clamp accepted timeout_ms=1350000, so the raise is live. The fold consumed the whole budget again.",
+  "started_utc": "2026-08-21T19:01:50Z",
+  "terminal": "failed",
+  "timeout_ms": 1350000,
+  "unmeasurable_reason": "QueryCanceledError: canceling statement due to statement timeout",
+  "verdict": "unmeasurable"
  },
  "live_commit": "dee32eee",
  "materialised_ctes": {
@@ -62,6 +98,12 @@
   }
  },
  "measured_utc": "2026-08-21",
+ "options": {
+  "1_raise_the_statement_timeout": "DEAD \u2014 refuted at 240 s, 900 s and now 1350 s, and 1350 s is the ceiling of the task shape.",
+  "2_chunk_by_source": "REFUTED from the query plan \u2014 6 materialised CTEs, each referenced 2-8 times, so an outer source filter cannot push down and 7 chunks re-run all 6.",
+  "3_narrow_at_market_info": "OPEN and now the leading candidate. 0.93% of cost but 8x referenced and everything downstream is built from it, so a filter THERE propagates. Frozen-builder edit \u2014 needs its own scoped ruling-009 exception.",
+  "4_attack_ranked_outcomes": "OPEN. 94.0% of cost; 77% of the whole fold is that one node self-cost over a ~1.09 GB external sort."
+ },
  "plan_only_explain": {
   "explain_wall_s": 1.45,
   "how": "comment-stripped: all 15 semicolons that made db-query answer \"Multi-statement queries not allowed\" are inside SQL comments; stripping them changes no plan",
