@@ -3038,10 +3038,18 @@ celery_app.conf.beat_schedule = {
         # execution source — duplicate sentinel fingerprints, stale Inbox cards,
         # template-P1 share, blocked-in-Inbox, missing area labels. Classifies REAL
         # vs UNKNOWN so RED means real; files one deduped cleanup issue and closes
-        # it on green via the shared filing rail. Daily (07:50 UTC, after the other
-        # sentinels so it observes a settled board). heavy queue (#233).
+        # it on green via the shared filing rail. Daily, LAST in the morning stagger
+        # so it observes a settled board. heavy queue (#233).
+        #
+        # 07:50 -> 07:55 (queue 388). `typeahead-index-sentinel` landed on master at
+        # 07:50 while this branch already held 07:50, so the collision existed in
+        # NEITHER tree alone and appeared only in the PR's merge ref — which is what
+        # `test_beat_does_not_collide_with_a_sibling_sentinel` is for (#232's
+        # congestion, #233's protected window). Both authors' stated intents are
+        # honoured by moving THIS one: typeahead only asks to be after the 07:45
+        # settled-concept sentinel, while this task asks to be last.
         "task": "app.tasks.board_sentinel",
-        "schedule": crontab(minute=50, hour=7),  # Daily 07:50 UTC
+        "schedule": crontab(minute=55, hour=7),  # Daily 07:55 UTC
         "options": {"queue": "heavy"},
     },
     "recategorize-other-daily": {
