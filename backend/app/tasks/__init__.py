@@ -722,6 +722,38 @@ HEAVY_TASKS = {
 for _heavy_task in HEAVY_TASKS:
     celery_app.conf.task_routes[_heavy_task] = {"queue": "heavy"}
 
+#: Sentry Crons is OFF and stays off. See `build_celery_integration`.
+#:
+#: A named constant rather than a bare literal so the guard test has something to
+#: pin that is not the source text of a call site.
+SENTRY_MONITOR_BEAT_TASKS = False
+
+
+def build_celery_integration() -> CeleryIntegration:
+    """The worker's Sentry Celery integration, with cron monitoring OFF.
+
+    ** THE CAPABILITY IS DELETED, NOT REMEMBERED. ** `monitor_beat_tasks=True`
+    makes the SDK auto-create one Sentry cron monitor per beat task on first
+    dispatch. It created **129 PAID monitors** and spent the whole $100
+    pay-as-you-go budget in 4 days (Fable/Alex, 2026-08-21).
+
+    `beat_schedule` carries **132** entries as measured on this tree, not 129 —
+    the reported monitor count is monitors that had DISPATCHED at least once, so
+    the two numbers are not the same quantity and the gap is three beats that had
+    not yet fired. Recorded rather than reconciled, because the cost scales with
+    the schedule and the schedule is the larger number.
+
+    Nothing is lost by turning it off. Beat observability here is `task-metrics`
+    plus the samplers — our own rail, already the thing every latency and
+    calibration read is taken against. Sentry Crons was a second, billed copy of
+    a signal we already own, and it was never the one anybody consulted.
+
+    Post-deploy the 129 monitors simply stop receiving check-ins and go quiet;
+    deleting them in the Sentry UI is cosmetic cleanup, not part of the fix.
+    """
+    return CeleryIntegration(monitor_beat_tasks=SENTRY_MONITOR_BEAT_TASKS)
+
+
 # Initialize Sentry for Celery workers
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
@@ -734,6 +766,18 @@ if sentry_dsn:
     # generate the flood. Shared policy, both entry points.
     from app.utils.sentry_filter import build_before_send
 
+    # WE KEEP ZERO SENTRY CRON MONITORS. `monitor_beat_tasks=True` auto-created
+    # ONE PAID CRON MONITOR PER BEAT TASK — 129 of them — and consumed the entire
+    # $100 pay-as-you-go budget in 4 days (Fable/Alex ruling, 2026-08-21). Beat
+    # observability is our own `task-metrics` rail and the samplers; the Sentry
+    # crons product duplicated it at a per-monitor price.
+    #
+    # ** `False` IS THE SDK'S OWN DEFAULT — we had explicitly turned this ON. **
+    # It is nonetheless passed explicitly, and through a factory rather than
+    # inline, for two reasons: the explicit kwarg records that OFF is a decision
+    # rather than an omission, and the factory is what lets the guard test
+    # introspect the integration this init actually builds instead of asserting
+    # on source text. A grep cannot prove a flag is wired.
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
@@ -742,7 +786,7 @@ if sentry_dsn:
         send_default_pii=False,
         before_send=build_before_send(),
         integrations=[
-            CeleryIntegration(monitor_beat_tasks=True),
+            build_celery_integration(),
         ],
     )
 
