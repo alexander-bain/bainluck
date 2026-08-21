@@ -104,7 +104,27 @@ EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
 
 #: Polymorphic references with no database FK. Not derivable — enumerated, and the
 #: reason is written next to it so the next reader does not "clean up" the duplication.
-EVENT_POINTER_TABLES: dict[str, tuple[str, str]] = {
+#:
+#: **RECLASSIFIED POINTER -> SUBSTANCE (rail v3, C-DELETE-RAIL-PRE-R2 finding 2).**
+#: These were treated as "a reference that carries no observation of its own, safe to
+#: null", and the rail emitted ``UPDATE user_pins SET target_id = NULL``. That write is
+#: **impossible under the declared schema** — both `models.py` and
+#: `add_auth_personalization.py` declare ``user_pins.target_id`` as ``nullable=False``,
+#: so a real database raises ``IntegrityError`` and the event DELETE is never reached.
+#: All 48 rail tests were green because the committed fake session accepts every UPDATE.
+#:
+#: Two things were wrong and only one of them was the NULL:
+#:
+#: 1. the write could not succeed, and a dry run could not reveal that, because the
+#:    rehearsal never executed the pointer path against a constraint-bearing session;
+#: 2. **a pin IS substance.** It is a user saying "I care about this game." A candidate
+#:    holding one does not "carry nothing", which is the exact claim the rail's whole
+#:    deletion predicate rests on.
+#:
+#: So the rail no longer nulls anything. A pinned row is WITHHELD at the predicate, and
+#: the impossible statement is deleted rather than repaired — a refusal that happens at
+#: selection is reviewable in a dry run; one that happens at the final write is not.
+EVENT_PSEUDO_FK_SUBSTANCE: dict[str, tuple[str, str]] = {
     # table: (id column, the predicate that scopes it to events)
     "user_pins": ("target_id", "pin_type = 'event'"),
 }
@@ -115,6 +135,77 @@ EVENT_POINTER_TABLES: dict[str, tuple[str, str]] = {
 CASCADING_CHILD_TABLES: frozenset[str] = frozenset(
     {"espn_snapshots", "game_moments", "win_prob_snapshots"}
 )
+
+
+#: Columns ON THE EVENT ROW ITSELF whose presence means the row is an observation.
+#:
+#: **C-DELETE-RAIL-PRE-R2 finding 1 — "childless" is not "carries nothing".** The rebuild
+#: turned "no child rows" into "holds no observation" and those are not the same claim,
+#: because *the parent row is itself the system's record of game-existence, result and
+#: line*. Codex executed the real ``prune()`` against a linked keeper and an anchorless,
+#: childless row representing a DISTINCT completed 5–3 game with opening 0.57 / closing
+#: 0.64, sharing only the stale name/time fixture key — and got ``deleted=1``.
+#:
+#: That is ruling 048 restated from the destructive side: the name/time fixture key
+#: cannot prove two rows are one game, so emptiness of the ten child tables cannot be
+#: read as duplicate identity. #2018 is the certified specimen — an exact-time collision
+#: between two genuinely different games.
+#:
+#: Every column here is a fact somebody recorded about a game. If any is present, the
+#: row is withheld; the rail's remaining population is rows that assert nothing at all.
+PARENT_SUBSTANCE_COLUMNS: tuple[str, ...] = (
+    "home_score",                 # the result
+    "away_score",
+    "completed_at",               # the settlement fact
+    "opening_home_probability",   # the opening line
+    "opening_away_probability",
+    "closing_home_probability",   # the closing line
+    "closing_away_probability",
+    "espn_win_prob_home",         # a source's own observation
+    "raw_ei",                     # a computed observation over the whole game
+)
+
+#: JSONB columns that must be tested for empty as well as NULL — ``{}`` is what an
+#: initialized-but-never-written blob looks like, and reading it as substance would
+#: withhold most of the population for holding nothing.
+PARENT_SUBSTANCE_JSONB: tuple[str, ...] = (
+    "box_score_data",
+    "win_probability_sources",
+)
+
+#: ``events.status`` is NOT NULL with a ``scheduled`` default, so it cannot be tested for
+#: presence. Anything OTHER than these is a claim about the game having happened.
+EMPTY_STATUSES: tuple[str, ...] = ("scheduled",)
+
+
+def parent_substance_predicate(alias: str) -> str:
+    """SQL true when the row's OWN columns record nothing about a game.
+
+    Deliberately built here, next to the column list, rather than in the rail: the list
+    and the predicate going out of sync is the same failure as the hand-maintained FK
+    tuple that R4 replaced.
+    """
+    parts = [f"{alias}.{col} IS NULL" for col in PARENT_SUBSTANCE_COLUMNS]
+    parts += [
+        f"({alias}.{col} IS NULL OR {alias}.{col}::text IN ('{{}}', '[]'))"
+        for col in PARENT_SUBSTANCE_JSONB
+    ]
+    statuses = ", ".join(f"'{s}'" for s in EMPTY_STATUSES)
+    parts.append(f"({alias}.status IS NULL OR {alias}.status IN ({statuses}))")
+    return " AND ".join(parts)
+
+
+def pseudo_fk_substance_predicate(alias: str) -> str:
+    """SQL true when no polymorphic pseudo-FK row points at this event.
+
+    Today this is exactly ``user_pins``. See ``EVENT_PSEUDO_FK_SUBSTANCE`` for why a pin
+    is substance and not a nullable pointer.
+    """
+    return " AND ".join(
+        f"NOT EXISTS (SELECT 1 FROM {t} p_{i} "
+        f"WHERE p_{i}.{col} = {alias}.id AND p_{i}.{scope})"
+        for i, (t, (col, scope)) in enumerate(EVENT_PSEUDO_FK_SUBSTANCE.items())
+    )
 
 
 def derive_event_child_tables() -> tuple[str, ...]:
