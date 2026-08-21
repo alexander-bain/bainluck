@@ -24,18 +24,42 @@ from app.tasks.calibration_published_twin_worker import (
 from app.utils.task_verdict import ENFORCED_TASKS, verdict_for
 
 
+#: A measured disclosure, of the shape ``build_disclosure`` returns.
+#:
+#: ⚠️ **CAL-P084 (#2076) MOVED WHERE THIS COMES FROM, AND THE MOVE IS THE FIX.**
+#: This suite used to hang it on the published payload under a ``staged`` key,
+#: because that is where ``build_artifact`` read it from. In production it was
+#: never there: the producer writes no ``staged`` block to
+#: ``bainluck:calibration:main``, and ``routes/calibration.py:1000`` composes one
+#: at REQUEST time onto a copy. So every real run took ``None``, and every
+#: verdict was ``unmeasurable`` no matter how the fold went.
+#:
+#: The fixture agreed with the code and both were wrong about production — which
+#: is worth stating plainly, because a suite that mirrors its subject's mistaken
+#: assumption is the one shape of test that cannot catch it. The bound is now
+#: passed in explicitly, sourced by ``read_served_disclosure`` from the same two
+#: durable rows the route reads.
+def _staged(**over):
+    base = {
+        "measured": True,
+        "units_banked": 128,
+        "units_drifted": 0,
+        "units_drift_unknown": 0,
+    }
+    base.update(over)
+    return base
+
+
 def _payload(**over):
-    """A published payload shaped like the real one, with a measured bank."""
+    """A published payload shaped like the real one.
+
+    Carries NO ``staged`` key by default — matching production, where it has
+    never had one.
+    """
     base = {
         "generated_at": "2026-08-20T17:17:43+00:00",
         "availability": "stale",
         "buckets": [],
-        "staged": {
-            "measured": True,
-            "units_banked": 128,
-            "units_drifted": 0,
-            "units_drift_unknown": 0,
-        },
     }
     base.update(over)
     return base
@@ -49,6 +73,7 @@ def _artifact(**over):
         "payload": _payload(),
         "payload_error": None,
         "timeout_ms": DEFAULT_TIMEOUT_MS,
+        "staged": _staged(),
     }
     kwargs.update(over)
     return build_artifact(**kwargs)
@@ -152,13 +177,32 @@ class TestTheArtifactSaysWhatItRead:
     def test_the_bound_is_carried_even_when_unmeasurable(self):
         # CAL-P079 separated the BOUND from the VERDICT precisely because the
         # bound is reachable when the fold is not. That separation must survive
-        # here: a run that could not fold still reports the tolerance the
-        # payload's own disclosure earns.
+        # here: a run that could not fold still reports the tolerance the served
+        # disclosure earns. CAL-P084 changed only WHERE that disclosure comes
+        # from — the invariant is unchanged and is why this test stayed.
         art = _artifact(fold_error="boom")
         assert art["verdict"] == "unmeasurable"
         assert art["tolerance_pp"] is not None
 
     def test_an_undisclosed_bank_earns_no_bound(self):
-        art = _artifact(payload=_payload(staged={"measured": False}))
+        art = _artifact(staged={"measured": False})
         assert art["tolerance_pp"] is None
         assert art["verdict"] == "unmeasurable"
+
+    def test_a_payload_carrying_its_own_staged_block_does_not_override_the_read(self):
+        """CAL-P084 (#2076): if the producer ever starts writing one, SAY SO.
+
+        The payload's ``staged`` is recorded beside the composed disclosure
+        rather than preferred over it. Preferring it would silently reintroduce
+        the blocker the moment a well-meaning change made the producer write a
+        block of its own — and the two disagreeing is a finding, not a
+        preference to be resolved quietly.
+        """
+        art = _artifact(
+            payload=_payload(staged={"measured": True, "units_banked": 1,
+                                     "units_drifted": 1, "units_drift_unknown": 0}),
+            staged=_staged(),
+        )
+        assert art["payload_carries_staged"] is True
+        assert art["tolerance_pp"] == pytest.approx(0.5)  # from the READ, not the payload
+        assert art["payload_staged"]["units_drifted"] == 1

@@ -85,6 +85,10 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.backfill_winners",
         "app.tasks.board_sentinel",
         "app.tasks.build_cohort_market_type",
+        # CAL-P084 (#2007): triggerable from
+        # ``POST /admin/calibration-beat-gauges/run`` so a fresh deploy can be
+        # proved without waiting up to 40 minutes for the next scheduled sample.
+        "app.tasks.calibration_beat_gauge_sampler",
         "app.tasks.calibration_published_twin",
         "app.tasks.calibration_sentinel",
         "app.tasks.canonicalize_entities",
