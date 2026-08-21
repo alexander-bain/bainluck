@@ -975,7 +975,7 @@ def free_background_slots(
 
 #: Beat entries whose EFFECTIVE queue is `background`. **55** name it
 #: explicitly; **45** more fall through `task_default_queue`. Pinned by
-#: `test_the_background_queue_carries_100_beats_and_45_are_fall_through`.
+#: `test_the_background_queue_carries_101_beats_and_45_are_fall_through`.
 #:
 #: 🔴 WAS 102 (57 explicit) UNTIL RULING 110, LAT-P077. Two explicitly-routed
 #: beats — `backfill_market_shapes` and `precompute_backfill_progress` — moved
@@ -989,7 +989,21 @@ def free_background_slots(
 #: 45 beats are still on this queue because nobody chose a queue for them —
 #: the split is the remedy question, and ruling 110 addressed the explicit
 #: half only. The hygiene lever (give the 45 an explicit home) remains open.
-BACKGROUND_BEAT_COUNT = 100
+#:
+#: 🔴 RE-DERIVED AGAIN at INT-105 (2026-08-21): 100 -> **101**, explicit 55 -> **56**.
+#: `program/calibration-81` (CAL-P084) added beat `calibration-beat-gauge-sampler`
+#: (`crontab(minute="5,45")`) with an EXPLICIT `options={"queue": "background"}`.
+#: Neither branch could see this alone: latency-72 asserts the census and
+#: calibration-81 adds the beat, so each was green on its own base and the pair
+#: is red. The merge is the first tree in which the number is measurable, which
+#: is exactly the #1910 case — RE-DERIVED by running the census over the merged
+#: `beat_schedule`, never adjusted by a delta and never resolved by taking a side.
+#:
+#: ✅ THE FALL-THROUGH HALF DID NOT MOVE: still **45**. That is the number this
+#: test exists to watch, and the new beat named its queue rather than defaulting
+#: into it — the benign direction the guard's own docstring reserves. The hygiene
+#: lever (give the 45 an explicit home) remains open and untouched.
+BACKGROUND_BEAT_COUNT = 101
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).

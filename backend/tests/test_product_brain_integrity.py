@@ -673,7 +673,17 @@ def test_ruling_numbers_are_unique() -> None:
 #: COUNTED on the merged tree: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **112**.
 #: The index now reads 110..115 with no gap — 114 was the last hole and this merge fills it.
 #: Ruling 088 / #1910 — count, never add a delta, never take a side.
-MINIMUM_BANKED_RULINGS = 112
+#:
+#: Raised to **113** by INT-105 banking ruling **116** (gotcha numbers claim through
+#: `RULING-CLAIMS.md`; collisions renumber at merge by counting the merged tree — Fable,
+#: 2026-08-21, after three lanes banked #145/#146 simultaneously in one cycle). No other
+#: branch in this eight-branch merge adds a ruling file; `latency-72` AMENDS `110-*.md` and
+#: this cycle adds a SECOND AMENDMENT to `103-*.md`, and an amendment moves no count.
+#: COUNTED on the merged tree: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **113**.
+#: 116 was verified free against the ledger AND the merged tree before it was written;
+#: `lane1/q353-process`, which was told to renumber its colliding 056 upward, is redirected
+#: to **117** in the same turn. Ruling 088 / #1910 — count, never add a delta.
+MINIMUM_BANKED_RULINGS = 113
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

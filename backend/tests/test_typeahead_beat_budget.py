@@ -726,8 +726,8 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
     )
 
 
-def test_the_background_queue_carries_100_beats_and_45_are_fall_through():
-    """55 beats NAME `background`. The queue carries 100.
+def test_the_background_queue_carries_101_beats_and_45_are_fall_through():
+    """56 beats NAME `background`. The queue carries 101.
 
     🔴 **RE-DERIVED at ruling 110 (LAT-P077): was 57 explicit / 102 total.**
     `backfill_market_shapes` and `precompute_backfill_progress` moved to
@@ -772,9 +772,9 @@ def test_the_background_queue_carries_100_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 55, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 56, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 100
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 101
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
