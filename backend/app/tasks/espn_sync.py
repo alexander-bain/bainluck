@@ -1185,6 +1185,10 @@ async def _backfill_espn_ids(limit: int = 1000):
                                 espn_team_matches(home_names, ee.home_team)
                                 and espn_team_matches(away_names, ee.away_team)
                             ),
+                            # FF1/#2058: this rail targets events with no id, so
+                            # the anchor is normally absent — pass it anyway so a
+                            # partially-stamped row is corroborated, not refused.
+                            anchor_espn_id=getattr(event, "espn_id", None),
                         )
                         if matched is not None:
                             event.espn_id = matched.espn_id
