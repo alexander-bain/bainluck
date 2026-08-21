@@ -523,6 +523,23 @@ async def calibration_twin_last(request: Request):
     a published payload that could not be read, and a fold that "succeeded" over
     zero rows — the last being the one that would otherwise present as perfect
     agreement.
+
+    **CAL-P083: those names were being written and then thrown away.** An
+    unmeasurable run banks with ``complete=False`` (correctly — it is not a
+    verdict and must never be SERVED as one), the envelope reader types that row
+    ``malformed``, and this endpoint used to answer the bare string
+    ``artifact_unreadable: malformed`` over a 195 KB artifact that said, in
+    full, *"QueryCanceledError: canceling statement due to statement timeout"*
+    after 241.18 s against a 240 s budget. So the one endpoint whose whole job is
+    to explain a failed gate run reported the least informative fact available
+    about it — gotcha #53's shape, inside the instrument written to avoid it.
+
+    The durability rule is unchanged: an incomplete envelope is still not
+    servable as a verdict. What changes is that a DIAGNOSTIC read now recovers
+    the banked artifact and returns it under ``measured: false``, with the
+    envelope's own status named beside it. ``verdict`` is deliberately NOT
+    promoted to the top level from an incomplete row — a caller keying on it
+    must still see ``measured: false`` first.
     """
     _check_admin_secret(request=request)
 
@@ -542,7 +559,41 @@ async def calibration_twin_last(request: Request):
             "reason": f"artifact_read_raised: {type(exc).__name__}",
         }
     if not read.ok or read.envelope is None:
-        return {"measured": False, "reason": f"artifact_unreadable: {read.status}"}
+        out: dict = {
+            "measured": False,
+            "reason": f"artifact_unreadable: {read.status}",
+            "envelope_status": read.status,
+            # `malformed` covers both "banked incomplete" and "checksum torn",
+            # and the operator response differs completely. Named, not inferred.
+            "envelope_error_class": read.error_class,
+            "envelope_error": read.error,
+        }
+        # Recover the diagnosis if the row is merely INCOMPLETE. A missing row
+        # has nothing to recover, and a checksum/version failure means the bytes
+        # cannot be trusted to describe themselves — neither is read here.
+        if read.status == "malformed" and read.envelope is not None:
+            banked = read.envelope.payload
+            if isinstance(banked, dict):
+                out["failed_run"] = {
+                    k: banked.get(k)
+                    for k in (
+                        "verdict",
+                        "unmeasurable_reason",
+                        "fold_error",
+                        "payload_error",
+                        "fold_duration_s",
+                        "timeout_ms",
+                        "db_rows",
+                        "db_cells",
+                        "terminal",
+                        "published_generated_at",
+                        "published_availability",
+                        "tolerance_pp",
+                    )
+                    if k in banked
+                }
+                out["artifact_generated_at"] = read.envelope.generated_at.isoformat()
+        return out
 
     payload = dict(read.envelope.payload or {})
     payload["artifact_generated_at"] = read.envelope.generated_at.isoformat()

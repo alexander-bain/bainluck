@@ -1,0 +1,42 @@
+{
+ "queue": "CAL-P083",
+ "item": 3,
+ "issue": [
+  1145,
+  2007,
+  2052
+ ],
+ "finding": "Gate 0 published-twin rail cannot produce a verdict \u2014 the DB-direct fold exceeds its 240s budget and is cancelled by the statement timeout.",
+ "measured_at": "2026-08-21T14:03:02.839467+00:00",
+ "twin_artifact": {
+  "identity": "calibration:published_twin",
+  "schema_version": "calibration-published-twin/v1",
+  "generation": 1787320982839,
+  "complete": false,
+  "payload_bytes": 195013,
+  "verdict": "unmeasurable",
+  "terminal": "failed",
+  "fold_duration_s": 241.18,
+  "timeout_ms": 240000,
+  "db_rows": 0,
+  "db_cells": 0,
+  "unmeasurable_reason": "QueryCanceledError: canceling statement due to statement timeout"
+ },
+ "endpoint_defect": {
+  "endpoint": "GET /api/admin/calibration-twin/last",
+  "before": {
+   "measured": false,
+   "reason": "artifact_unreadable: malformed"
+  },
+  "cause": "unmeasurable -> complete=False -> envelope typed malformed -> endpoint returned bare status and dropped the 195KB body",
+  "class": "gotcha #53 \u2014 the emptier reading standing in for a captured fact",
+  "fixed_in": "program/calibration-80 backend/app/routes/admin_cohort.py",
+  "not_mined": [
+   "checksum_mismatch",
+   "wrong_version",
+   "missing"
+  ]
+ },
+ "blocks": "gate 5 of CAL-APPLY-HINDSIGHT-EXCLUSION (a Gate 0 twin verdict taken inside the trough)",
+ "same_class_as": "#2052 statement timeout on the market_info CTE"
+}
