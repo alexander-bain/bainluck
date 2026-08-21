@@ -1001,7 +1001,7 @@ async def _warm_typeahead(
     seconds = [r["seconds"] for r in results]
     summary = {
         # An empty head is a FAILURE of this task's purpose, not a quiet success.
-        "terminal": "complete" if not timeouts and not errors else "partial",
+        "terminal": "complete" if head and not timeouts and not errors else "partial",
         "completed": len(warmed),
         "total": len(head),
         "head_source": source,
