@@ -19,3 +19,53 @@ export function renderedPercent(probability: number | null | undefined): number 
   if (!Number.isFinite(probability)) return null;
   return Math.round(probability * 100);
 }
+
+// ── The card-level half of the contract (#2060) ──────────────────────────────
+//
+// Getting each number right is not enough, because a surface prints a CARD and a
+// card has a SUM. `Los Angeles D 0.925 / Colorado 0.075` renders 93 and 8 above —
+// both correct, 101 together — because Kalshi quotes a complement pair on a
+// half-cent grid, so `p * 100` lands on `.5` for both sides at once and half-up
+// rounds both up.
+//
+// See `contracts/rendered_percent.json` for the measured population behind the
+// [0.99, 1.01] band and for why `field_coherence`'s much looser [0.5, 1.5] is
+// deliberately not the predicate.
+
+const COMPLEMENT_MIN = 0.99;
+const COMPLEMENT_MAX = 1.01;
+
+export function isComplementPair(
+  probabilities: Array<number | null | undefined> | null | undefined,
+): boolean {
+  if (!probabilities || probabilities.length !== 2) return false;
+  const values = probabilities.filter(
+    (p): p is number => p !== null && p !== undefined && Number.isFinite(p),
+  );
+  if (values.length !== 2) return false;
+  const total = values[0] + values[1];
+  return total >= COMPLEMENT_MIN && total <= COMPLEMENT_MAX;
+}
+
+/**
+ * The whole percents this surface prints for ONE CARD's served outcomes.
+ *
+ * A complement pair is normalized by its true total (removing the vig
+ * symmetrically rather than dumping it all on one side), index 0 is rounded once
+ * with `renderedPercent`, and index 1 is DERIVED as `100 - index0`. Index 0 is the
+ * card's headline, so it is the value that survives untouched.
+ *
+ * Everything else is rendered exactly as before — that direction is asserted by
+ * the contract suite as explicitly as the fixed one.
+ */
+export function renderedCardPercents(
+  probabilities: Array<number | null | undefined> | null | undefined,
+): Array<number | null> {
+  if (!probabilities || probabilities.length === 0) return [];
+  if (!isComplementPair(probabilities)) return probabilities.map(renderedPercent);
+
+  const total = (probabilities[0] as number) + (probabilities[1] as number);
+  const leader = renderedPercent((probabilities[0] as number) / total);
+  if (leader === null) return probabilities.map(renderedPercent);
+  return [leader, 100 - leader];
+}

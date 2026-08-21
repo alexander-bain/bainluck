@@ -37,27 +37,66 @@
     "then change the implementations."
   ],
 
-  "version": 1,
+  "version": 2,
 
   "rule": "floor(probability * 100 + 0.5), IEEE 754 double, multiply before rounding; null in, null out",
+
+  "$card_rule_comment": [
+    "VERSION 2 ADDS THE CARD-LEVEL DECISION (#2060). Getting every individual",
+    "number right is not enough, because a surface prints a CARD and a card has a",
+    "SUM. Alex's 08-20 gold session served `Los Angeles D 0.925 / Colorado 0.075`,",
+    "which this table renders as 93 and 8 — both correct, and 101 together.",
+    "",
+    "Kalshi quotes a complement pair on a HALF-CENT grid, so `p * 100` lands on `.5`",
+    "for BOTH sides at once and half-up rounds both up. Measured on production",
+    "2026-08-21: 10,198 of 21,524 open two-outcome markets render a sum other than",
+    "100, and 8,982 of those are 101 against 318 at 99 — a 28:1 skew, i.e. one",
+    "systematic cause rather than noise.",
+    "",
+    "THE RULE: if the card has exactly two priced outcomes summing into",
+    "[0.99, 1.01], divide both by that total, round INDEX 0 with the scalar rule",
+    "above, and derive index 1 as `100 - index0`. Otherwise render each outcome",
+    "independently and change nothing.",
+    "",
+    "WHY INDEX 0 SURVIVES: it is the card's headline — what `rendered_probability`",
+    "reports and the first number a reader reads. The derived +/-1 belongs on the",
+    "side nobody is quoting.",
+    "",
+    "WHY THE BAND IS [0.99, 1.01] AND NOT WIDER. Two outcomes are not automatically",
+    "two sides of one question; measured two-outcome field sums run from 0.001 to",
+    "2.0, and normalizing 0.001 would invent a probability rather than round one.",
+    "But 19,564 of 21,410 (91.4%) sit in (0.99, 1.01], and 1.01 is already this",
+    "codebase's own two-outcome 'true binary' threshold in",
+    "`card_integrity.display_scale`. So the band is that existing constant made",
+    "SYMMETRIC — and the missing lower half was itself part of the defect, since a",
+    "pair summing to 0.99 printed 99 and nothing considered that wrong.",
+    "",
+    "`field_coherence`'s [0.5, 1.5] band is deliberately NOT the predicate: under it",
+    "a pair summing to 1.49 would be normalized, which is fabrication."
+  ],
+
+  "card_rule": "exactly two priced outcomes summing into [0.99, 1.01] => normalize by the total, round index 0, derive index 1 as 100 - index0; otherwise render each independently",
 
   "implementations": [
     {
       "runtime": "python",
       "path": "backend/app/utils/graded_card.py",
       "symbol": "rendered_percent",
+      "card_symbol": "rendered_card_percents",
       "driven_by": "backend/tests/test_graded_card_contract.py"
     },
     {
       "runtime": "typescript",
       "path": "frontend/lib/renderedPercent.ts",
       "symbol": "renderedPercent",
+      "card_symbol": "renderedCardPercents",
       "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts"
     },
     {
       "runtime": "swift",
       "path": "ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift",
       "symbol": "renderedPercent",
+      "card_symbol": "renderedCardPercents",
       "driven_by": "ios/Bain Luck/BainLuckTests/RenderedPercentContractTests.swift"
     }
   ],
@@ -98,5 +137,38 @@
     { "probability": 0.575,  "percent": 57,   "discriminates": false, "$why": "57.49999999999999, same reason — pinned because it LOOKS like a .5 boundary and is not" },
     { "probability": 0.9999, "percent": 100,  "discriminates": false, "$why": "rounds up to a full 100 without ever exceeding it" },
     { "probability": 0.0001, "percent": 0,    "discriminates": false, "$why": "a real but invisible price prints 0, and 0 is not null" }
+  ],
+
+  "$card_cases_comment": [
+    "Every `percents` below was COMPUTED by the Python implementation and is",
+    "asserted identically by all three suites. `naive` records what INDEPENDENT",
+    "per-outcome rounding produces, and `discriminates` is true exactly where the",
+    "two disagree — those six rows are the bug. A suite that happens to omit all",
+    "six is green against the defect this rule exists for, so the Python contract",
+    "test asserts at least those six are still present.",
+    "",
+    "THE NON-DISCRIMINATING ROWS ARE NOT FILLER. Four of them (0.706/0.305 summing",
+    "to 102, 0.589/0.4, 0.57/0.4 summing to 97, 0.001/0.0) are two-outcome cards",
+    "that the rule must LEAVE ALONE, and their rendered sums are deliberately not",
+    "100. A guard whose tests only prove it fires is how a diversity cap emptied",
+    "the Sports tab (gotcha #43); both directions are pinned here."
+  ],
+
+  "card_cases": [
+    { "probabilities": [0.925, 0.075], "percents": [93, 7],  "complement_pair": true,  "naive": [93, 8],  "discriminates": true,  "$why": "THE EXEMPLAR — #2060, market 59183794, Alex's 08-20 gold session. Independent rounding printed 93 + 8 = 101" },
+    { "probabilities": [0.915, 0.085], "percents": [92, 8],  "complement_pair": true,  "naive": [92, 9],  "discriminates": true,  "$why": "same half-cent grid, the Angels/Astros card from the same slate" },
+    { "probabilities": [0.605, 0.395], "percents": [61, 39], "complement_pair": true,  "naive": [61, 40], "discriminates": true,  "$why": "mid-field pair — the defect is not confined to lopsided cards" },
+    { "probabilities": [0.995, 0.01],  "percents": [99, 1],  "complement_pair": true,  "naive": [100, 1], "discriminates": true,  "$why": "independent rounding printed a 100% side that was never 100%. Normalizing removes a false certainty, not just a stray point" },
+    { "probabilities": [0.705, 0.305], "percents": [70, 30], "complement_pair": true,  "naive": [71, 31], "discriminates": true,  "$why": "total is 1.01 exactly — the UPPER bound is inclusive. Naive gave 102" },
+    { "probabilities": [0.59, 0.4],    "percents": [60, 40], "complement_pair": true,  "naive": [59, 40], "discriminates": true,  "$why": "total is 0.99 exactly — the LOWER bound is inclusive. This is the 99 direction, which had no fix at all before" },
+    { "probabilities": [0.706, 0.305], "percents": [71, 31], "complement_pair": false, "naive": [71, 31], "discriminates": false, "$why": "total 1.011, just OUTSIDE the band — left alone, and its rendered sum is 102 on purpose" },
+    { "probabilities": [0.589, 0.4],   "percents": [59, 40], "complement_pair": false, "naive": [59, 40], "discriminates": false, "$why": "total 0.989, just outside the lower bound — the band is closed, and one thousandth past it changes the verdict" },
+    { "probabilities": [0.57, 0.4],    "percents": [57, 40], "complement_pair": false, "naive": [57, 40], "discriminates": false, "$why": "total 0.97 — a genuinely thin book. Forcing this to 100 would claim precision the market does not have" },
+    { "probabilities": [0.001, 0.0],   "percents": [0, 0],   "complement_pair": false, "naive": [0, 0],   "discriminates": false, "$why": "thinnest two-outcome sum observed in production; normalizing would invent a probability rather than round one" },
+    { "probabilities": [0.5, 0.5],     "percents": [50, 50], "complement_pair": true,  "naive": [50, 50], "discriminates": false, "$why": "a pair that is already consistent must stay consistent — the rule is not allowed to disturb it" },
+    { "probabilities": [0.5, 0.3, 0.2],"percents": [50, 30, 20], "complement_pair": false, "naive": [50, 30, 20], "discriminates": false, "$why": "three outcomes — the rule is two-outcome only and must not touch a multi-way field" },
+    { "probabilities": [0.6, null],    "percents": [60, null], "complement_pair": false, "naive": [60, null], "discriminates": false, "$why": "one side unpriced is not a priced pair; null stays null rather than becoming a derived 40" },
+    { "probabilities": [0.925],        "percents": [93],     "complement_pair": false, "naive": [93],     "discriminates": false, "$why": "a single outcome has no complement to derive" },
+    { "probabilities": [],             "percents": [],       "complement_pair": false, "naive": [],       "discriminates": false, "$why": "empty field in, empty field out" }
   ]
 }

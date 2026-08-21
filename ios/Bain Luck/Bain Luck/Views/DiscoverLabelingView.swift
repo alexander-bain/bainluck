@@ -1,5 +1,44 @@
 import SwiftUI
 
+
+// ── #2060 item 2: the card's WHEN, formatted ─────────────────────────────────
+//
+// File scope rather than static members of the View: a SwiftUI `View` is
+// implicitly `@MainActor`, so static stored properties on it are isolated and a
+// `nonisolated` helper cannot read them.
+//
+// TWO parsers, and that is not belt-and-braces. `ISO8601DateFormatter` with
+// `.withFractionalSeconds` REFUSES a timestamp that has none, and the server
+// sends `datetime.isoformat()` — which emits fractional seconds only when the
+// value has microseconds. A single parser would therefore work on some rows and
+// silently drop the date on others, which reads exactly like "this market has no
+// commence time" (gotcha #53: absence and failure must not share a representation).
+private let labelingISOParsers: [ISO8601DateFormatter] = {
+    let plain = ISO8601DateFormatter()
+    plain.formatOptions = [.withInternetDateTime]
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return [plain, fractional]
+}()
+
+private let labelingDisplayFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "EEE, MMM d 'at' h:mm a"
+    return f
+}()
+
+/// `"2026-08-18T00:40:00+00:00"` -> `"Mon, Aug 17 at 5:40 PM"` (device timezone).
+/// Returns nil for nil and for anything unparseable — never a placeholder date.
+nonisolated func labelingShortDate(_ iso: String?) -> String? {
+    guard let iso, !iso.isEmpty else { return nil }
+    for parser in labelingISOParsers {
+        if let date = parser.date(from: iso) {
+            return labelingDisplayFormatter.string(from: date)
+        }
+    }
+    return nil
+}
+
 struct DiscoverLabelingView: View {
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var viewModel = DiscoverLabelingViewModel()
@@ -194,15 +233,28 @@ struct DiscoverLabelingView: View {
                     .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             }
 
+            // #2060 item 2 — a probability is ungradeable without a when.
+            if let when = scheduleLine(item) {
+                Text(when)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let outcomes = item.topOutcomes, !outcomes.isEmpty {
+                // #2060 item 1 — the whole field is rendered by ONE decision, so
+                // the two sides of one question cannot be rounded twice and
+                // printed as 101. Computed once here rather than per row, because
+                // deriving a complement is a fact about the CARD.
+                let percents = cardPercents(outcomes)
                 VStack(spacing: 8) {
-                    ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, outcome in
+                    ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { index, outcome in
                         HStack {
                             Text(outcome.name ?? "Outcome")
                                 .font(.subheadline)
                                 .lineLimit(1)
                             Spacer()
-                            Text(probabilityText(outcome.probability ?? outcome.currentProbability))
+                            Text(percentText(percents.indices.contains(index) ? percents[index] : nil))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
@@ -348,6 +400,47 @@ struct DiscoverLabelingView: View {
     private func probabilityText(_ value: Double?) -> String {
         guard let percent = renderedPercent(value) else { return "--" }
         return "\(percent)%"
+    }
+
+    private func percentText(_ percent: Int?) -> String {
+        guard let percent else { return "--" }
+        return "\(percent)%"
+    }
+
+    /// The whole percents for one card's served outcomes (#2060).
+    ///
+    /// Prefers the SERVER's `rendered_percent`, which is the value the card
+    /// fingerprint was taken over — so the screen and the digest cannot disagree.
+    /// Falls back to computing the card rule locally when the payload predates
+    /// #2060, which keeps an older server renderable without letting it reopen
+    /// the 93 + 8 = 101 defect.
+    private func cardPercents(_ outcomes: [DiscoverLabelingOutcome]) -> [Int?] {
+        let served = outcomes.map(\.renderedPercent)
+        if served.contains(where: { $0 != nil }) {
+            return served
+        }
+        return renderedCardPercents(outcomes.map { $0.probability ?? $0.currentProbability })
+    }
+
+    /// "Starts Mon, Aug 18 at 5:40 PM · Resolves Fri, Aug 21" (#2060 item 2).
+    ///
+    /// Both dates, because they answer different questions: on a Kalshi game
+    /// market `resolution_date` is the CLOSE time, not the start (gotcha #14), so
+    /// showing only it told Alex the wrong thing about when.
+    private func scheduleLine(_ item: DiscoverLabelingDebugItem) -> String? {
+        var parts: [String] = []
+        if let starts = shortDate(item.commenceTime) {
+            parts.append("Starts \(starts)")
+        }
+        if let resolves = shortDate(item.resolutionDate) {
+            parts.append("Resolves \(resolves)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// An unparseable timestamp is omitted, never rendered as a placeholder date.
+    private func shortDate(_ iso: String?) -> String? {
+        labelingShortDate(iso)
     }
 
     private func displayTag(_ raw: String) -> String {

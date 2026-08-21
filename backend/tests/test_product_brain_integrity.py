@@ -648,7 +648,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: **108**, which is nobody's number and is the only one that has ever been right. FIFTEENTH
 #: consecutive cycle. `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` after the merge = 108.
 #: Never take a side, never add a delta (#1910, ruling 088).
-MINIMUM_BANKED_RULINGS = 108
+MINIMUM_BANKED_RULINGS = 109
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

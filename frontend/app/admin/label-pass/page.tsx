@@ -230,12 +230,38 @@ export default function LabelPassPage() {
 
   const item = current as Record<string, unknown>;
   const proposal = ((item.decision as string) || "").replace("llm_proposed_", "") || "unknown";
-  const features = (item.features || {}) as Record<string, number | null>;
+  const features = (item.features || {}) as Record<string, unknown>;
+  const featureNum = (key: string): number | null => {
+    const v = features[key];
+    return typeof v === "number" ? v : null;
+  };
+  const servedOutcomes = (Array.isArray(features.outcomes) ? features.outcomes : []) as Array<{
+    name?: string | null;
+    probability?: number | null;
+    rendered_percent?: number | null;
+  }>;
+  // ── #2060: read the SERVED percent, do not re-round the leader float ────────
+  //
   // The shared arm of `contracts/rendered_percent.json`. The server takes this
   // card's drift fingerprint at exactly this resolution, so an inline copy here
-  // is a second implementation of a cross-runtime rule (#1933).
-  const pct = renderedPercent(features.probability);
+  // is a second implementation of a cross-runtime rule (#1933) — and since #2060
+  // the card-level rule can move the leader by a point (a pair summing to 1.01
+  // renders 70/30, not 71/31). Rounding `features.probability` here would print
+  // 71 against a digest taken over 70, and refuse the verdict for a drift nobody
+  // could see. `renderedPercent` remains the fallback for a pre-#2060 payload.
+  const servedPct = servedOutcomes[0]?.rendered_percent;
+  const pct = servedPct != null ? servedPct : renderedPercent(featureNum("probability"));
   const probPct = pct != null ? `${pct}%` : "—";
+  const commenceLabel = (() => {
+    const iso = features.commence_time;
+    if (typeof iso !== "string") return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+      weekday: "short", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit",
+    });
+  })();
 
   return (
     <div className="max-w-2xl mx-auto p-8">
@@ -288,12 +314,33 @@ export default function LabelPassPage() {
         {item.admin_notes && (
           <p className="text-sm text-text-secondary leading-relaxed mb-3">{item.admin_notes as string}</p>
         )}
+        {/* #2060 item 1 — the served field, rendered from the SERVER's percents so
+            a two-outcome card cannot print 101. */}
+        {servedOutcomes.length > 1 && (
+          <div className="space-y-1 mb-3">
+            {servedOutcomes.slice(0, 4).map((o, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-text-secondary truncate flex-1 mr-2">{o.name || "Outcome"}</span>
+                <span className="font-mono text-text-primary">
+                  {o.rendered_percent != null
+                    ? `${o.rendered_percent}%`
+                    : (() => {
+                        const p = renderedPercent(o.probability ?? null);
+                        return p == null ? "--" : `${p}%`;
+                      })()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-4 text-xs text-text-muted">
-          {features.movement_24h != null && (
-            <span>24h: {features.movement_24h > 0 ? "+" : ""}{(features.movement_24h * 100).toFixed(1)}pts</span>
+          {/* #2060 item 2 — a probability is ungradeable without a when. */}
+          {commenceLabel && <span>Starts {commenceLabel}</span>}
+          {featureNum("movement_24h") != null && (
+            <span>24h: {featureNum("movement_24h")! > 0 ? "+" : ""}{(featureNum("movement_24h")! * 100).toFixed(1)}pts</span>
           )}
-          {features.volume_24h != null && (
-            <span>Vol: ${Math.round(features.volume_24h / 1000)}K</span>
+          {featureNum("volume_24h") != null && (
+            <span>Vol: ${Math.round(featureNum("volume_24h")! / 1000)}K</span>
           )}
           {item.archetype && <span>{item.archetype as string}</span>}
         </div>
