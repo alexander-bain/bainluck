@@ -65,6 +65,17 @@ nonisolated struct DiscoverLabelingDebugItem: Decodable, Identifiable, Sendable 
     let renderedProbability: Double?
     let topOutcomes: [DiscoverLabelingOutcome]?
     let reasons: [String]?
+    /// `card_fingerprint` — the server's opaque digest of the card THIS payload
+    /// rendered (#1933). The app never computes it and never inspects it; it
+    /// round-trips the string to `POST /api/admin/ranking-judgments`, where the
+    /// card is re-derived from live rows and the judgment is refused with a 409
+    /// if the question re-priced while it was on screen.
+    ///
+    /// Optional so an older server (or a payload from before the gate) decodes
+    /// rather than throwing — but see `RankingJudgmentRequest.cardFingerprint`:
+    /// this app always SENDS the key once it has one, and sending the key is
+    /// what asks the server to gate.
+    let cardFingerprint: String?
 
     var stableId: String {
         "\(type)-\(id.map(String.init) ?? name)-\(rank)"
@@ -142,6 +153,21 @@ nonisolated struct RankingJudgmentRequest: Encodable, Sendable {
     let feedRequestId: String?
     let cardSnapshot: DiscoverLabelingCardSnapshot
     let reviewer: String
+    /// Echoed verbatim from `DiscoverLabelingDebugItem.cardFingerprint`.
+    ///
+    /// ** SENDING THE KEY IS THE CAPABILITY DECLARATION, so it is NOT an
+    /// Optional. ** The server distinguishes three things: key absent (a build
+    /// that predates the gate — written unbound, stamped and counted), key
+    /// present but empty (a gate-aware build that had no digest — refused, with
+    /// "reload" as the remedy), and key present with a value (gated). Swift's
+    /// synthesised `Encodable` emits `encodeIfPresent` for Optionals, which OMITS
+    /// a nil key — so declaring this `String?` would make a gate-aware build
+    /// indistinguishable from a pre-gate one on exactly the payloads where the
+    /// digest is missing, i.e. the stale-read case the gate exists for.
+    ///
+    /// The caller passes `item.cardFingerprint ?? ""`. Empty is a real claim:
+    /// "I honour the gate and I have nothing to bind."
+    let cardFingerprint: String
 }
 
 nonisolated struct RankingJudgmentResponse: Decodable, Sendable {

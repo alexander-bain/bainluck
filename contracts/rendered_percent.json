@@ -1,0 +1,102 @@
+{
+  "$comment": [
+    "#1933 / UX-P111 — THE WHOLE PERCENT A SURFACE PRINTS FOR A PROBABILITY.",
+    "",
+    "Ruling 021: when several consumers must agree about the same input, the unit",
+    "to share is the DECISION, not the ingredient. Three runtimes print this",
+    "number — Python on the server, TypeScript on web, Swift on native — and no",
+    "import spans them. So the shared unit is this table, and every",
+    "implementation's test drives ITS function through EVERY row here.",
+    "",
+    "WHY IT MATTERS MORE THAN A ROUNDING RULE USUALLY DOES. The card fingerprint",
+    "that gates a graded verdict (`app/utils/graded_card.py`) is taken at this",
+    "resolution on purpose, so that it 'changes exactly when the picture changes'",
+    "and every refusal is explicable to the person who was looking at the card. If",
+    "the server rounds a card to 56 and the screen prints 57, that sentence is",
+    "false at precisely the values where it is hardest to be right — the card",
+    "would be refused for drift nobody can see, or pass while visibly different.",
+    "",
+    "WHAT WENT WRONG WITHOUT IT. UX-P110 shipped `rendered_percent` using Python's",
+    "built-in `round`, which is BANKER'S rounding: `round(56.5)` is 56, while",
+    "`Math.round(56.5)` is 57. The test next to it asserted the JavaScript answer",
+    "in a comment and the Python one in the assertion, so it was green and wrong",
+    "in the same file. A comment cannot keep two runtimes honest; it kept zero.",
+    "",
+    "THE RULE: floor(p * 100 + 0.5), evaluated in double precision, with the",
+    "multiply done FIRST. That is `Math.round` and Swift's default",
+    "`.rounded()` (.toNearestOrAwayFromZero) over the non-negative domain",
+    "probabilities live in, and it is deliberately NOT Python's `round`.",
+    "",
+    "THE MULTIPLY-FIRST PART IS LOAD-BEARING, and the 0.565 row is why: 0.565 * 100",
+    "is 56.49999999999999 in IEEE 754, not 56.5, so the honest answer is 56 in all",
+    "three runtimes — measured, in all three. An implementation that 'fixed' this",
+    "with a decimal type would print 57 and disagree with the other two. The table",
+    "pins the arithmetic, not an idealised mathematical rounding.",
+    "",
+    "TO CHANGE THE RULE: change the rows here first, watch all three suites go red,",
+    "then change the implementations."
+  ],
+
+  "version": 1,
+
+  "rule": "floor(probability * 100 + 0.5), IEEE 754 double, multiply before rounding; null in, null out",
+
+  "implementations": [
+    {
+      "runtime": "python",
+      "path": "backend/app/utils/graded_card.py",
+      "symbol": "rendered_percent",
+      "driven_by": "backend/tests/test_graded_card_contract.py"
+    },
+    {
+      "runtime": "typescript",
+      "path": "frontend/lib/renderedPercent.ts",
+      "symbol": "renderedPercent",
+      "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts"
+    },
+    {
+      "runtime": "swift",
+      "path": "ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift",
+      "symbol": "renderedPercent",
+      "driven_by": "ios/Bain Luck/BainLuckTests/RenderedPercentContractTests.swift"
+    }
+  ],
+
+  "$swift_note": [
+    "The Swift arm executes under `scripts/ios_native_gate.sh test`, which does",
+    "NOT run in CI — so its case table is inlined in the test file and the jest",
+    "contract suite asserts that table equals these rows. The runtime check runs",
+    "locally; the DRIFT check runs in CI. Putting only one of those in place is",
+    "how the Swift copy quietly stops being the same rule."
+  ],
+
+  "$cases_comment": [
+    "Every `percent` below was COMPUTED in all three runtimes and found to agree,",
+    "not reasoned about — the row this table replaces was reasoned about and was",
+    "wrong. `discriminates` marks the rows where Python's built-in `round` gives a",
+    "DIFFERENT answer; there are five of them, and a suite that happens to omit all",
+    "five is green against the exact bug this file exists for.",
+    "`test_graded_card_contract.py` asserts that at least those five are present,",
+    "so the table cannot be quietly defanged by deleting rows."
+  ],
+
+  "cases": [
+    { "probability": null,   "percent": null, "discriminates": false, "$why": "no price and 0% are different cards" },
+    { "probability": 0.0,    "percent": 0,    "discriminates": false },
+    { "probability": 1.0,    "percent": 100,  "discriminates": false },
+    { "probability": 0.5,    "percent": 50,   "discriminates": false },
+    { "probability": 0.92,   "percent": 92,   "discriminates": false },
+    { "probability": 0.005,  "percent": 1,    "discriminates": true,  "$why": "0.5 exactly — half-up; banker's gives 0" },
+    { "probability": 0.015,  "percent": 2,    "discriminates": false, "$why": "1.5 exactly — banker's also gives 2, so this row alone cannot catch the bug" },
+    { "probability": 0.025,  "percent": 3,    "discriminates": true,  "$why": "2.5 exactly — banker's gives 2" },
+    { "probability": 0.045,  "percent": 5,    "discriminates": true,  "$why": "4.5 exactly — banker's gives 4" },
+    { "probability": 0.125,  "percent": 13,   "discriminates": true,  "$why": "12.5 exactly (0.125 is representable) — banker's gives 12" },
+    { "probability": 0.375,  "percent": 38,   "discriminates": false, "$why": "37.5 exactly — banker's also gives 38; the pair with 0.125 shows the rule is not 'always up by one'" },
+    { "probability": 0.625,  "percent": 63,   "discriminates": true,  "$why": "62.5 exactly — banker's gives 62" },
+    { "probability": 0.875,  "percent": 88,   "discriminates": false, "$why": "87.5 exactly — banker's also gives 88" },
+    { "probability": 0.565,  "percent": 56,   "discriminates": false, "$why": "0.565*100 is 56.49999999999999 in double, NOT 56.5 — so 56 is the honest answer in every runtime, and an implementation using a decimal type would print 57 and break parity" },
+    { "probability": 0.575,  "percent": 57,   "discriminates": false, "$why": "57.49999999999999, same reason — pinned because it LOOKS like a .5 boundary and is not" },
+    { "probability": 0.9999, "percent": 100,  "discriminates": false, "$why": "rounds up to a full 100 without ever exceeding it" },
+    { "probability": 0.0001, "percent": 0,    "discriminates": false, "$why": "a real but invisible price prints 0, and 0 is not null" }
+  ]
+}

@@ -201,7 +201,11 @@ final class DiscoverLabelingViewModel: ObservableObject {
             headlineAtReview: item.headline,
             feedRequestId: itemFeedRequestIds[reviewKey(for: item)] ?? feedRequestId,
             cardSnapshot: snapshot(for: item),
-            reviewer: reviewer
+            reviewer: reviewer,
+            // Round-trip only — never computed here (#1933). `?? ""` is a real
+            // claim, not a fallback: see `RankingJudgmentRequest.cardFingerprint`
+            // for why an absent key and an empty one must mean different things.
+            cardFingerprint: item.cardFingerprint ?? ""
         )
         do {
             _ = try await APIClient.shared.submitRankingJudgment(request)
@@ -217,6 +221,15 @@ final class DiscoverLabelingViewModel: ObservableObject {
             switch apiError {
             case .httpError(let code, _) where code == 403:
                 self.error = "Admin access required to submit labels. Sign in with an admin account."
+            case .httpError(let code, let body) where code == 409:
+                // The refusal reaches the screen. A guard whose whole purpose is
+                // to protect Alex's label budget cannot spend one of his labels
+                // and then decline to say why — the web pass learned this in
+                // UX-P110 and native inherits the lesson, not just the gate.
+                self.error = Self.driftRefusalMessage(body)
+                // Nothing was written, so the card must NOT be marked reviewed
+                // and the queue must not advance. It stays on screen with the
+                // reason above it; a reload re-samples it at the current price.
             default:
                 self.error = apiError.localizedDescription
             }
@@ -225,6 +238,26 @@ final class DiscoverLabelingViewModel: ObservableObject {
         }
         submitting = false
         return false
+    }
+
+    /// What to tell the person whose tap was refused (#1933).
+    ///
+    /// Substring, not `JSONDecoder` — the same reasoning as
+    /// `verdictRefusal` on web: the body may be truncated by the transport, and
+    /// a truncated JSON does not decode, so reaching for a decoder here is how
+    /// this returns the generic message in exactly the case it exists for.
+    ///
+    /// `static` and `nonisolated` so a test can drive it without the view model
+    /// or the main actor.
+    nonisolated static func driftRefusalMessage(_ body: String?) -> String {
+        let text = body ?? ""
+        if text.contains("card_drifted") {
+            return "This question re-priced while you were reading it — nothing was recorded. Reload to grade the current card."
+        }
+        if text.contains("card_fingerprint_missing") {
+            return "This card was loaded before its current price — nothing was recorded. Reload to grade the current card."
+        }
+        return "This card went stale before the label landed — nothing was recorded. Reload and try again."
     }
 
     private func reviewKey(for item: DiscoverLabelingDebugItem) -> String {

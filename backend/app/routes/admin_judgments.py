@@ -25,6 +25,13 @@ from app.routes.admin_utils import (
 from app.services import get_db, get_db_rw
 from app.utils.card_integrity import display_scale, field_coherence, is_unlabelable
 from app.utils.discover_reason_tags import canonical_reason_tags
+from app.utils.graded_card import (
+    ABSENT_UNBOUND,
+    NATIVE_SERVED_OUTCOMES,
+    OMITTED,
+    card_fingerprint,
+    drift_outcome,
+)
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
 from app.utils.labeling_queue import load_reviewed_ranking_keys
 from app.utils.reviewer_tier import TIER_ALEX, with_tier
@@ -35,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 class RankingJudgmentCreate(BaseModel):
     secret: str | None = None
+    # The opaque digest `/candidates` stamped on the card this judgment grades
+    # (#1933). The client never computes it — it round-trips the string. Its
+    # ABSENCE is meaningful and distinct from a null: `model_dump(exclude_unset=
+    # True)` is what lets the route tell "an app build that predates the gate"
+    # from "a gate-aware client that sent nothing", and those two get different
+    # answers. See `graded_card.ABSENT_UNBOUND`.
+    card_fingerprint: str | None = None
     surface: str | None = None
     rank_seen: int | None = None
     item_type: str | None = None
@@ -378,6 +392,11 @@ def _serialize_labeling_candidate(
         ),
         reverse=True,
     )
+    # `NATIVE_SERVED_OUTCOMES` names this slice. The constant and the slice below
+    # are pinned to each other by `test_graded_card_contract.py`: a fingerprint
+    # taken over more rows than the surface renders refuses verdicts for changes
+    # nobody could have seen, and one taken over fewer is blind to a change they
+    # could.
     top_outcomes = [
         {
             "id": outcome.id,
@@ -394,7 +413,7 @@ def _serialize_labeling_candidate(
             ),
             "rank": outcome.rank,
         }
-        for outcome in outcomes[:5]
+        for outcome in outcomes[:NATIVE_SERVED_OUTCOMES]
     ]
     # #1933 / queue 363. Alex graded on the NATIVE surface and saw the precise
     # defect #1873 fixed — because #1873 landed in `admin_label_pass.py` only,
@@ -508,7 +527,55 @@ def _serialize_labeling_candidate(
         ),
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
+        # ── THE BINDING BETWEEN THIS READ AND THE JUDGMENT THAT FOLLOWS IT ────
+        #
+        # #1933's still-open acceptance bullet: "a card that went stale between
+        # sampling and grading is refused on BOTH surfaces with the same typed
+        # conflict." Stamped HERE, inside the serializer, rather than in the
+        # route — so `_native_card_fingerprint` below can re-derive it at verdict
+        # time by calling this same function, and the two can never be two
+        # derivations that merely agree (doctrine clause 5).
+        #
+        # `rank` and `stratum` are deliberately NOT in it: they describe where
+        # the card sat in a sampling run, not what it says. A card re-sampled at
+        # a different rank tomorrow is the same card, and refusing a verdict over
+        # its position would be a refusal nobody could explain by looking at the
+        # screen. Pinned by a test that fingerprints one market at two ranks.
+        "card_fingerprint": card_fingerprint(
+            title=market.name,
+            # Native does not PRINT status, so including it looks like a
+            # violation of "fingerprint what is rendered". It is not: the
+            # sampler's strata admit only live, unresolved markets, so status is
+            # what put the card on screen at all. A market that settled between
+            # sampling and grading is not a card whose picture moved — it is a
+            # card that would not be served now, and native has no lifecycle gate
+            # of its own to catch that. Status changes are rare and one-way, so
+            # this buys the lifecycle case without the spurious-refusal cost that
+            # fingerprinting raw floats would carry.
+            status=market.status,
+            resolution_date=(
+                market.resolution_date.isoformat() if market.resolution_date else None
+            ),
+            field_coherent=coherence["coherent"],
+            outcomes=display_outcomes,
+            served_outcomes=NATIVE_SERVED_OUTCOMES,
+        ),
     }
+
+
+def _native_card_fingerprint(market: FuturesMarket) -> str:
+    """The live fingerprint of the card native renders for this market.
+
+    One line, and that is the point: it re-runs the SERIALIZER, so the value the
+    verdict compares against is produced by the same code that produced the value
+    the client was given. A second hand-written derivation here would be a second
+    policy, which is exactly how the label-pass fix missed native in the first
+    place (#1933).
+
+    ``rank``/``stratum`` are placeholders — see the serializer for why they cannot
+    reach the digest.
+    """
+    return _serialize_labeling_candidate(market, rank=0, stratum="")["card_fingerprint"]
 
 
 def _merged_value(
@@ -765,6 +832,9 @@ def _build_fixable_clusters(rows: list[RankingJudgment]) -> list[dict[str, Any]]
 def _structured_label_metadata(
     body: dict[str, Any],
     explicit_metadata: Any,
+    *,
+    gate: dict[str, Any] | None = None,
+    live_card: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     metadata = dict(explicit_metadata) if isinstance(explicit_metadata, dict) else {}
     card_snapshot = body.get("card_snapshot")
@@ -772,6 +842,44 @@ def _structured_label_metadata(
         card_snapshot = metadata.pop("card_snapshot", None)
     if isinstance(card_snapshot, dict):
         metadata["card_snapshot"] = _normalize_card_snapshot(card_snapshot)
+
+    # ── THE CARD FIELDS ARE DERIVED, THE CONTEXT FIELDS ARE ACCEPTED ─────────
+    #
+    # UX-P110's finding on the web side, applied here: the snapshot on a stored
+    # judgment used to be whatever the phone posted, unvalidated, and it is read
+    # back as the record of what Alex saw. So the fields the server can verify
+    # are overwritten from the card this transaction actually re-derived, and the
+    # ones only the client knows — which sampling batch, which feed request,
+    # what rank it sat at — are kept as sent. Which half is which is written on
+    # the row rather than left for a reader to guess.
+    if live_card is not None:
+        snapshot = dict(metadata.get("card_snapshot") or {})
+        # Keep the posted copy beside the derived one when they differ, never
+        # instead of it. Queue 355's `snapshot_at_write` reasoning: a fix that
+        # silently swaps the stale value for the fresh one destroys the evidence
+        # for its own necessity.
+        posted_name = snapshot.get("name")
+        if posted_name and posted_name != live_card.get("name"):
+            snapshot["name_at_post"] = posted_name
+        for key in ("name", "top_outcomes", "rendered_probability"):
+            value = live_card.get(key)
+            if value is not None:
+                snapshot[key] = value
+        snapshot["field_coherent"] = live_card.get("field_coherent")
+        snapshot["resolution_date"] = live_card.get("resolution_date")
+        snapshot["card_fields_source"] = "server_derived"
+        metadata["card_snapshot"] = snapshot
+
+    if gate is not None:
+        # Never absent, never implied. A store that cannot say which of its rows
+        # were gated cannot report its own coverage, and "no drift_gate key"
+        # would read as "fine" to every future reader (ruling 086).
+        metadata["drift_gate"] = {
+            "bound": gate["status"] == "bound",
+            "reason": gate.get("reason"),
+            "fingerprint": gate.get("fingerprint") or gate.get("expected"),
+            "surface": "native_ranking_judgment",
+        }
 
     fixable_keys = [
         "would_be_interesting_if",
@@ -878,7 +986,30 @@ async def create_judgment(
     repair_target_entity: str | None = Query(None),
     repair_note: str | None = Query(None),
     reviewer: str | None = Query(None),
+    card_fingerprint_posted: str | None = Query(None, alias="card_fingerprint"),
 ):
+    """Record one native ranking judgment, gated against card drift (#1933).
+
+    ── THE GATE, AND WHY IT IS THE SAME ONE THE WEB PASS USES ───────────────────
+
+    #1873 taught the label-pass surface to derive the graded card from live
+    state, and UX-P110 bound that card to the verdict with a fingerprint checked
+    inside the write transaction. Both landed in ``admin_label_pass.py``. Native
+    writes ``RankingJudgment`` through this module, so it received neither, and
+    Alex — who #1933 records as preferring this surface — kept grading unbound.
+
+    So the decision is imported, not re-implemented: ``graded_card.drift_outcome``
+    is the one policy, and the card is re-derived here from live rows by calling
+    the same serializer ``/candidates`` serves from.
+
+    ** WHAT THIS DOES NOT CLAIM. ** The market row is re-read inside this
+    session before anything is added, and a refusal writes nothing — but the row
+    is not locked. Locking a market and all its outcomes on every label would
+    contend with the two-minute live poller for no real gain: the poller commits
+    per outcome, so the only thing a lock buys is a sub-millisecond torn read
+    that the next POST catches anyway. The web pass locks its PROPOSAL row and
+    has exactly the same property on outcomes, so this is parity, not a shortcut.
+    """
     body = payload.model_dump(exclude_unset=True) if payload else {}
     secret_value = _merged_value(body, "secret", secret)
     if not await _authorize_admin(secret_value, request, db):
@@ -887,6 +1018,73 @@ async def create_judgment(
     label_value = _merged_value(body, "label", label)
     if not label_value:
         raise HTTPException(status_code=400, detail="label is required")
+
+    # Presence, not truthiness. `_merged_value` cannot express this: it collapses
+    # "absent" and "null" onto one default, and telling those apart is the whole
+    # of the unbound policy.
+    if card_fingerprint_posted is not None:
+        posted_fingerprint: Any = card_fingerprint_posted
+    elif "card_fingerprint" in body:
+        posted_fingerprint = body["card_fingerprint"]
+    else:
+        posted_fingerprint = OMITTED
+
+    market_target = _merged_value(body, "market_id", market_id)
+    item_type_value = _merged_value(body, "item_type", item_type, "futures")
+
+    live_market = None
+    if market_target is not None and item_type_value == "futures":
+        live_market = (
+            await db.execute(
+                select(FuturesMarket)
+                .options(
+                    # Same eager loads as `_labeling_stratum_query`. Without
+                    # them the serializer lazy-loads inside an async session and
+                    # raises rather than fingerprinting.
+                    selectinload(FuturesMarket.outcomes).load_only(
+                        FuturesOutcome.id,
+                        FuturesOutcome.name,
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.probability_change_24h,
+                        FuturesOutcome.rank,
+                    ),
+                    selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
+                )
+                .where(FuturesMarket.id == int(market_target))
+            )
+        ).scalar_one_or_none()
+
+    if live_market is not None:
+        live_fingerprint = _native_card_fingerprint(live_market)
+        live_row = _serialize_labeling_candidate(live_market, rank=0, stratum="")
+        gate = drift_outcome(
+            posted_fingerprint,
+            live_fingerprint,
+            live_card={
+                "title": live_row.get("name"),
+                "status": live_market.status,
+                "probability": live_row.get("rendered_probability"),
+                "field_coherent": live_row.get("field_coherent"),
+            },
+            on_absent=ABSENT_UNBOUND,
+        )
+    else:
+        # No market to re-derive: an event judgment, or a target that no longer
+        # exists. Never silently "bound" — an ungradeable target is a fact about
+        # this row and it is recorded as one (ruling 086).
+        live_fingerprint = None
+        live_row = None
+        gate = {
+            "status": "unbound",
+            "reason": (
+                "no_market_target"
+                if market_target is None
+                else "market_missing"
+            ),
+        }
+
+    if gate["status"] == "conflict":
+        raise HTTPException(status_code=409, detail=gate)
 
     # Resolve reviewer identity: when the caller passes "native" (iOS default)
     # and is authenticated via Bearer token, persist the admin user's email so
@@ -903,7 +1101,15 @@ async def create_judgment(
         item_type=_merged_value(body, "item_type", item_type, "futures"),
         market_id=_merged_value(body, "market_id", market_id),
         event_id=_merged_value(body, "event_id", event_id),
-        market_name=_merged_value(body, "market_name", market_name),
+        # The title actually graded, from the live row where there is one — the
+        # same correction UX-P110 made to `item_name` on the web verdict. This
+        # column feeds `_cluster_identity`, so a stale copy silently forks one
+        # question into two clusters. The posted spelling is kept under
+        # `card_snapshot.name_at_post` when it differs.
+        market_name=(
+            (live_row or {}).get("name")
+            or _merged_value(body, "market_name", market_name)
+        ),
         label=label_value,
         reason_tags=_normalize_reason_tags(
             _merged_value(body, "reason_tags", reason_tags)
@@ -929,6 +1135,8 @@ async def create_judgment(
             _structured_label_metadata(
                 body,
                 _merged_value(body, "label_metadata", None),
+                gate=gate,
+                live_card=live_row,
             ),
             TIER_ALEX,
         ),
@@ -945,7 +1153,16 @@ async def create_judgment(
     db.add(judgment)
     await db.commit()
     await db.refresh(judgment)
-    return {"status": "ok", "id": judgment.id, "label": judgment.label}
+    return {
+        "status": "ok",
+        "id": judgment.id,
+        "label": judgment.label,
+        # Reported, not merely stored. A client that posted unbound should be
+        # able to see that it did without reading the database — otherwise the
+        # only way to discover a whole build's worth of ungated labels is to go
+        # looking for them.
+        "drift_gate": {"bound": gate["status"] == "bound", "reason": gate.get("reason")},
+    }
 
 
 @router.delete("/{judgment_id}")
@@ -1162,6 +1379,17 @@ async def labeling_coverage(
     by_category: dict[str, dict[str, int]] = {}
     by_reviewer: dict[str, int] = {}
     reviewer_daily: dict[str, dict[str, int]] = {}
+    # ── THE MANIFEST HALF OF THE GATE (#1933) ────────────────────────────────
+    #
+    # The gate can only bind a client that declares it, so the store will hold
+    # both kinds of row for as long as an old build is in the field. A coverage
+    # dashboard that reports a single "reviewed" number over a mixed population
+    # is the failure this whole queue is about, one level up: it would let an
+    # entire build's worth of ungated labels read as gated ones. Three keys,
+    # every row counted into exactly one, so "zero unbound" is a measurement
+    # rather than a silence.
+    drift_gate_tally: dict[str, int] = {"bound": 0, "unbound": 0, "unrecorded": 0}
+    unbound_reasons: dict[str, int] = {}
     total_reviewed = 0
     today_str = now.strftime("%Y-%m-%d")
     week_ago = now - timedelta(days=7)
@@ -1183,6 +1411,18 @@ async def labeling_coverage(
         label = j.label or "unknown"
         category = j.category_at_review or snapshot.get("category") or "uncategorized"
         reviewer_h = _reviewer_hash(j.reviewer)
+
+        gate_row = metadata.get("drift_gate")
+        if not isinstance(gate_row, dict):
+            # Written before the gate shipped. NOT "unbound" — that is a claim
+            # about a client, and about these rows nothing was ever asked.
+            drift_gate_tally["unrecorded"] += 1
+        elif gate_row.get("bound"):
+            drift_gate_tally["bound"] += 1
+        else:
+            drift_gate_tally["unbound"] += 1
+            reason = gate_row.get("reason") or "unspecified"
+            unbound_reasons[reason] = unbound_reasons.get(reason, 0) + 1
 
         by_stratum.setdefault(stratum, {})
         by_stratum[stratum][label] = by_stratum[stratum].get(label, 0) + 1
@@ -1259,6 +1499,17 @@ async def labeling_coverage(
         "reviewer_progress": reviewer_progress,
         "queue_health": queue_health,
         "insufficient_strata": insufficient_strata,
+        # #1933. How much of this corpus is bound to the card it graded.
+        "drift_gate": {
+            **drift_gate_tally,
+            "unbound_reasons": unbound_reasons,
+            "note": (
+                "bound = the card was re-derived and matched at write time. "
+                "unbound = written by a client that does not declare the gate "
+                "(see unbound_reasons). unrecorded = written before the gate "
+                "existed; nothing was asked of those rows, so they are neither."
+            ),
+        },
         "generated_at": now.isoformat(),
     }
 

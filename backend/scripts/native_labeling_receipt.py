@@ -146,6 +146,8 @@ def main() -> int:
             "COALESCE(label_metadata->>'reviewer_tier', '') AS tier, "
             "COALESCE(array_length(reason_tags, 1), 0) AS n_tags, "
             "(label_metadata ? 'card_snapshot') AS has_snapshot, "
+            "COALESCE(label_metadata->'drift_gate'->>'bound', 'unrecorded') AS gate, "
+            "COALESCE(label_metadata->'drift_gate'->>'reason', '') AS gate_reason, "
             "score_at_review, (feed_request_id IS NOT NULL) AS has_request_id, "
             "left(coalesce(market_name, ''), 60) AS name "
             f"FROM ranking_judgments WHERE created_at >= '{since}' "
@@ -172,10 +174,12 @@ def main() -> int:
 
     zero_score = 0
     no_request_id = 0
+    gate_tally: dict[str, int] = {}
+    gate_reasons: dict[str, int] = {}
     for r in native:
         (rid, created, surface, reviewer, label, rank_seen, item_type,
          market_id, event_id, tier_raw, n_tags, has_snapshot,
-         score, has_request_id, name) = r
+         gate, gate_reason, score, has_request_id, name) = r
 
         # Claim 3 through the production helper, so a change to tier semantics
         # moves the receipt with it rather than leaving it asserting the old rule.
@@ -202,10 +206,47 @@ def main() -> int:
         if not has_snapshot:
             failures.append(f"CLAIM 4 VALUES: id {rid} carries no card_snapshot")
 
+        gate_tally[gate] = gate_tally.get(gate, 0) + 1
+        if gate != "true" and gate_reason:
+            gate_reasons[gate_reason] = gate_reasons.get(gate_reason, 0) + 1
+
         if not score:
             zero_score += 1
         if not has_request_id:
             no_request_id += 1
+
+    # ---- claim 6: the drift gate, reported either way (#1933) ----------------
+    #
+    # This is a MANIFEST, not a pass/fail. The gate binds only clients that
+    # declare it, so an old build in the field legitimately writes unbound rows —
+    # and a receipt that printed nothing when they were all unbound would let a
+    # whole session of ungated labels read as gated ones. Zero bound is a
+    # measurement here, never a silence.
+    print("\nDRIFT GATE (#1933), all rows in the window:")
+    if not native:
+        print("  (no rows to classify)")
+    else:
+        labels = {"true": "bound", "false": "unbound", "unrecorded": "unrecorded"}
+        for key in ("true", "false", "unrecorded"):
+            count = gate_tally.get(key, 0)
+            print(f"  {labels[key]:11} {count}/{len(native)}")
+        for reason, count in sorted(gate_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"      {reason}: {count}")
+
+    if native and gate_tally.get("unrecorded"):
+        # A row written by a server that has the gate ALWAYS carries the stamp,
+        # so an unrecorded row in a post-deploy window means the write went down
+        # a path that never consulted it. That is a real failure, unlike unbound.
+        failures.append(
+            f"CLAIM 6 GATE: {gate_tally['unrecorded']} row(s) carry no drift_gate "
+            "stamp at all — a write path that never consulted the gate"
+        )
+    if native and gate_tally.get("false"):
+        gaps.append(
+            f"CLAIM 6 GATE: {gate_tally['false']}/{len(native)} rows are UNBOUND "
+            f"({', '.join(f'{k}={v}' for k, v in sorted(gate_reasons.items()))}) — "
+            "expected until the gate-aware build is the only one in the field"
+        )
 
     # Table-wide, pre-existing, and named rather than folded into a pass.
     if zero_score:

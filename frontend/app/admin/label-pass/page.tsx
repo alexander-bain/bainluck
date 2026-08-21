@@ -7,6 +7,7 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
 import { requireDestructiveToken } from "@/lib/destructiveToken";
 import { trackEvent } from "@/lib/analytics";
+import { renderedPercent } from "@/lib/renderedPercent";
 import {
   INITIAL_SESSION,
   keyToAction,
@@ -230,9 +231,11 @@ export default function LabelPassPage() {
   const item = current as Record<string, unknown>;
   const proposal = ((item.decision as string) || "").replace("llm_proposed_", "") || "unknown";
   const features = (item.features || {}) as Record<string, number | null>;
-  const probPct = features.probability != null
-    ? `${Math.round(features.probability * 100)}%`
-    : "—";
+  // The shared arm of `contracts/rendered_percent.json`. The server takes this
+  // card's drift fingerprint at exactly this resolution, so an inline copy here
+  // is a second implementation of a cross-runtime rule (#1933).
+  const pct = renderedPercent(features.probability);
+  const probPct = pct != null ? `${pct}%` : "—";
 
   return (
     <div className="max-w-2xl mx-auto p-8">
