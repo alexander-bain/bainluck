@@ -26,6 +26,34 @@ after it does not partially succeed; the rows are gone, permanently, and no late
 effort recovers them at any price. That asymmetry is the whole reason this module
 exists as an explicit ordering policy rather than an ``ORDER BY resolution_date``.
 
+THE HONEST DENOMINATOR — three ways a settlement is unreachable, and only one is a clock
+------------------------------------------------------------------------------------------
+
+The sweep's coverage number is meaningless unless the population it divides by excludes
+what no sweep can ever reach. Three classes are permanently out, for three different
+reasons, and collapsing them would make the burn-down report a debt it can never pay:
+
+* **``PURGED`` — retention.** Kalshi drops a settled market's record. A clock, and the
+  only one of the three the weekly sweep races.
+* **``PRICE_UNDETERMINABLE`` — form.** Polymarket's ``no_resolved`` class
+  (C-DEGRADED-FORM-1, ~8k, all 365+ days): the source still holds the record and the
+  record never carried a price. Nothing was lost; nothing will arrive.
+* **``no_eid`` — INGESTION.** ~153k Polymarket rows for which we never stored
+  ``polymarket_event_id``. C-EID-RECOVERY-1's verdict: **unverifiable by source
+  design** — there is no public ``conditionId`` → event route, so the key cannot be
+  recovered from outside. The capture sweep cannot save these at any speed.
+
+**The third one is the lesson of this whole program repeated one layer up, and it is
+worth saying plainly: the mapping EXISTED at ingest and is unrecoverable afterwards.**
+Retention gave us ~66 days to capture what Kalshi holds; ingestion gave us one instant,
+and we did not take it. The fix-forward is therefore not a sweep but a WRITE at mint
+time — store the id when it is in front of us — and it is a near-term item pending
+C-INGEST-EID-AUDIT-1's answer to whether ingestion still mints eventless rows today.
+A sweep can chase a closing window. It cannot chase a closed one.
+
+So the determinable population is **~404.8k**, and the committed scope is
+**Kalshi-weekly (dated) + Polymarket-on-demand (undated)**.
+
 THE ORDERING, WHICH IS NOT SIMPLY "OLDEST FIRST"
 ------------------------------------------------
 
